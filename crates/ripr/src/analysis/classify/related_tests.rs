@@ -33,6 +33,7 @@ mod equality_dispatch;
 mod implicit_dispatch;
 mod iterator_dispatch;
 mod operator_dispatch;
+mod path_arg;
 mod std_receiver;
 pub(in crate::analysis::classify) use operator_dispatch::stringified_ranges;
 
@@ -899,6 +900,30 @@ fn find_related_tests_with_candidates<'a>(
         }
     }
     let owner_name_is_unique = workspace_complete && same_name_function_count == 1;
+    // #11199: an inherent `Type::method` path value a helper runs. Established
+    // once per probe; it needs the owner's same-named definitions to prove no
+    // other impl or type could be the target of the path.
+    let path_arg_owner = owner_fn.and_then(|owner| {
+        if owner_name.is_empty()
+            || !matches!(owner.item.container, FunctionContainer::Inherent { .. })
+        {
+            return None;
+        }
+        let same_name: Vec<&FunctionSummary> = match candidates {
+            RelatedTestCandidates::Indexed(candidate_index) => candidate_index
+                .function_indices(owner_name)
+                .iter()
+                .map(|&function_index| index.functions().at(function_index))
+                .collect(),
+            #[cfg(test)]
+            RelatedTestCandidates::FullScan => index
+                .functions()
+                .iter()
+                .filter(|function| function.name == owner_name)
+                .collect(),
+        };
+        path_arg::PathArgOwner::new(owner, &same_name)
+    });
     // #8999: a user `PartialEq::eq`/`ne` a comparison macro runs unnamed.
     let equality_owner = owner_fn.and_then(|owner| equality_dispatch::equality_owner(owner, index));
     // #9567: a user operator, `Iterator::next` or `Drop::drop` that syntax runs
@@ -1529,12 +1554,22 @@ fn find_related_tests_with_candidates<'a>(
             && helper_chain.is_some_and(|chain| {
                 super::helper_transfer::test_calls_method_entry(index, test, chain)
             });
+        // #11199: the test hands `Type::method` to a same-file helper that
+        // provably runs the argument. In-file by construction, so it rides no
+        // cross-package bypass; a property-only call never reaches here.
+        let hands_owner_path_to_helper = !calls_owner
+            && !calls_helper_entry
+            && !property_only_owner_call
+            && path_arg_owner
+                .as_ref()
+                .is_some_and(|owner| owner.test_hands_path_to_invoking_helper(test, index));
         let helper_chain_reaches = !calls_owner
             && !assertions_reference_owner
             && (calls_helper_entry
                 || calls_method_entry
                 || dispatches_to_helper_fmt_entry
-                || calls_helper_method_entry);
+                || calls_helper_method_entry
+                || hands_owner_path_to_helper);
 
         if !calls_owner
             && !equality_asserts_owner
@@ -1671,6 +1706,28 @@ fn find_related_tests_with_candidates<'a>(
             .then_with(|| touched_by_diff(b).cmp(&touched_by_diff(a)))
     });
     related
+}
+
+/// Restore the finder's final order after a caller replaced or appended
+/// entries (#11151): confidence tier, then diff-touched, then name, file and
+/// start line. This is the composition of the finder's two stable sorts.
+pub(super) fn order_related(
+    related: &mut [(&TestSummary, RelationReason)],
+    candidate_index: &RelatedTestCandidateIndex,
+) {
+    let touched = |test: &TestSummary| {
+        candidate_index
+            .diff_touched()
+            .touches(&test.file, test.start_line)
+    };
+    related.sort_by(|(a, a_reason), (b, b_reason)| {
+        relation_rank(*b_reason)
+            .cmp(&relation_rank(*a_reason))
+            .then_with(|| touched(b).cmp(&touched(a)))
+            .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| a.file.cmp(&b.file))
+            .then_with(|| a.start_line.cmp(&b.start_line))
+    });
 }
 
 /// Sort rank of a relation: higher confidence ranks first.
@@ -5234,7 +5291,7 @@ fn executable_call_resolves(
 
 /// Both source and synthetic assertion trees obey the same execution boundary.
 /// Constructing an unpolled future does not execute calls in its body.
-fn node_executes_in(node: &SyntaxNode, function: &SyntaxNode) -> bool {
+pub(super) fn node_executes_in(node: &SyntaxNode, function: &SyntaxNode) -> bool {
     node.ancestors()
         .skip(1)
         .take_while(|scope| scope != function)
@@ -5587,33 +5644,15 @@ fn owner_impl_is_root_item_of(index: &RustIndex, owner: &FunctionSummary, file: 
     if owner.file != file {
         return false;
     }
-    let Some(tree) = index.source_syntax.get(index, file).and_then(|s| s.tree()) else {
+    let Some(snapshot) = index.source_syntax.get(index, file) else {
         return false;
     };
-    let syntax = tree.syntax();
-    let source = syntax.text().to_string();
-    let line_of = |offset: usize| {
-        1 + source.as_bytes()[..offset.min(source.len())]
-            .iter()
-            .filter(|byte| **byte == b'\n')
-            .count()
-    };
-    syntax
-        .descendants()
-        .filter_map(ast::Impl::cast)
-        .any(|item| {
-            let range = item.syntax().text_range();
-            let (start, end) = (
-                line_of(u32::from(range.start()) as usize),
-                line_of(u32::from(range.end()) as usize),
-            );
-            start <= owner.start_line
-                && owner.start_line <= end
-                && item
-                    .syntax()
-                    .parent()
-                    .is_some_and(|parent| ast::SourceFile::can_cast(parent.kind()))
-        })
+    // The ranges are read once per file snapshot. Rebuilding them per probe
+    // copied the whole file text and recounted its newlines for every `impl`.
+    snapshot
+        .root_impl_lines()
+        .iter()
+        .any(|&(start, end)| start <= owner.start_line && owner.start_line <= end)
 }
 
 /// Whether `file` has a `use` that names `ty` or a glob other than `self::*` /
@@ -5978,6 +6017,26 @@ fn impl_identity_is_shadowed(
         return true;
     }
     false
+}
+
+/// Whether the test's own scope rebinds the owner's impl type or trait, so a
+/// receiver of that name is not the production type (#11382). The seam-side
+/// relation applies the same refusal the finding-level relation applies to a
+/// direct owner call. Fails open: a free function, or an owner without an
+/// established impl type, is never reported as shadowed.
+pub(in crate::analysis) fn owner_impl_identity_shadowed(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    let Some(impl_type) = impl_self_type_name(&owner.id.0) else {
+        return false;
+    };
+    let test_source = index
+        .files()
+        .get(&test.file)
+        .map(|facts| facts.data().source.as_ref());
+    impl_identity_is_shadowed(test, owner, &impl_type, test_source, index)
 }
 
 fn owner_call_relation_reason(
@@ -9030,6 +9089,39 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 counter_default_fn_relation(body, vec![deref_implementor], ""),
                 RelationReason::DirectOwnerCall,
                 "an impl for {self_ty} can reach a Vec receiver"
+            );
+        }
+    }
+
+    /// #11236: an impl no indexed fn records (empty, qualified, aliased,
+    /// macro-generated, multi-letter blanket) still makes a std receiver the
+    /// trait's own, so the genuine call keeps `direct_owner_call`. The control
+    /// pins that an impl for a declared user type does not.
+    #[test]
+    fn given_unindexed_or_opaque_std_impl_when_calling_default_method_then_direct_owner_call() {
+        let body = "let names: Vec<u32> = Vec::new(); let ok = names.advance();";
+        for suffix in [
+            "impl Counter for Vec<u32> {}\n",
+            "impl Counter for std::vec::Vec<u32> {}\n",
+            "impl Counter for std::vec::Vec<u32> { fn step(&self) -> u32 { 1 } }\n",
+            "type Names = Vec<u32>;\nimpl Counter for Names {}\n",
+            "macro_rules! imp { ($t:ty) => { impl Counter for $t {} }; }\nimp!(Vec<u32>);\n",
+            "impl<Item> Counter for Item {}\n",
+        ] {
+            assert_eq!(
+                counter_default_fn_relation(body, Vec::new(), suffix),
+                RelationReason::DirectOwnerCall,
+                "{suffix}"
+            );
+        }
+        for suffix in [
+            "struct Other;\nimpl Counter for Other {}\n",
+            "impl Counter for Unit {}\n",
+        ] {
+            assert_eq!(
+                counter_default_fn_relation(body, Vec::new(), suffix),
+                RelationReason::WeakTokenSubstring,
+                "an impl for a declared user type must not keep the credit: {suffix}"
             );
         }
     }

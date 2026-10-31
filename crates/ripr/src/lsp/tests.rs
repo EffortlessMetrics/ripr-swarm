@@ -27,8 +27,8 @@ use super::gap_artifacts::{
     GapArtifactIdentity, GapArtifactKind, GapArtifactRejection, ValidatedGapArtifact,
 };
 use super::hover::{
-    classified_seam_hover_response, diagnostic_covers_position, hover_response_without_evidence,
-    hover_with_snapshot_status,
+    NoEvidenceState, classified_seam_hover_response, diagnostic_covers_position,
+    hover_response_without_evidence, hover_with_snapshot_status,
 };
 use super::input_identity::LspAnalysisInputIdentity;
 use super::lens::{code_lens_response, lens_title_is_static_language_clean, lens_view_identity};
@@ -49,7 +49,7 @@ use super::{
     COPY_AGENT_PACKET_COMMAND, COPY_AGENT_RECEIPT_COMMAND, COPY_AGENT_REPAIR_COMMAND,
     COPY_AGENT_VERIFY_COMMAND, COPY_CONTEXT_COMMAND, COPY_SUGGESTED_ASSERTION_COMMAND,
     COPY_TARGETED_TEST_BRIEF_COMMAND, HOVER_TEXT, OPEN_RELATED_TEST_COMMAND, REFRESH_COMMAND,
-    build_service,
+    SHOW_RELATED_TEST_COMMAND, build_service,
 };
 use crate::analysis::cancellation::AnalysisCancellationToken;
 use crate::analysis::is_test_surface_path;
@@ -146,6 +146,7 @@ fn initialize_result_exposes_existing_lsp_capabilities() -> Result<(), String> {
             COLLECT_REPAIR_PACKET_COMMAND,
             COLLECT_TOP_LIMITATION_COMMAND,
             COLLECT_RECEIPT_STATUS_COMMAND,
+            SHOW_RELATED_TEST_COMMAND,
         ]
     );
     Ok(())
@@ -261,6 +262,72 @@ fn watched_typescript_inputs_reload_config_and_refresh_analysis() -> Result<(), 
                 ..WatchedFileChanges::default()
             },
             "{relative} {typ:?}"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn watched_package_led_javascript_inputs_reload_on_presence_only() -> Result<(), String> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let backend_root = root.clone();
+    let (service, _socket) =
+        LspService::new(move |client| Backend::new(client, backend_root.clone()));
+    let backend = service.inner();
+    backend.initialize_test_workspace_root();
+
+    // (path, event type, expect a config reload plus TypeScript refresh)
+    let cases = [
+        ("package.json", FileChangeType::CREATED, true),
+        ("package.json", FileChangeType::DELETED, true),
+        ("index.js", FileChangeType::CREATED, true),
+        ("index.js", FileChangeType::DELETED, true),
+        ("src/app.js", FileChangeType::CREATED, true),
+        ("test/app.test.js", FileChangeType::DELETED, true),
+        ("tests/deep/app.test.mjs", FileChangeType::CREATED, true),
+        // Content-only edits of an existing manifest or source are not inputs
+        // for the package-led detector: no reload and no refresh.
+        ("package.json", FileChangeType::CHANGED, false),
+        ("index.js", FileChangeType::CHANGED, false),
+        ("src/app.js", FileChangeType::CHANGED, false),
+        ("test/app.test.js", FileChangeType::CHANGED, false),
+    ];
+    for (relative, typ, reload) in cases {
+        let uri = file_uri_for_path(&root.join(relative))
+            .map_err(|err| format!("{relative} URI failed: {err}"))?;
+        let changes = vec![FileEvent { uri, typ }];
+        assert_eq!(
+            backend.watched_file_change_kinds(&changes),
+            WatchedFileChanges {
+                config_changed: reload,
+                typescript_input_changed: reload,
+                ..WatchedFileChanges::default()
+            },
+            "{relative} {typ:?}"
+        );
+    }
+
+    // Tooling config, generated bundles, excluded trees and nested manifests
+    // never change package-led detection.
+    for relative in [
+        "eslint.config.js",
+        ".eslintrc.cjs",
+        "app.min.js",
+        "src/node_modules/p/i.js",
+        "scripts/app.js",
+        "pkg/package.json",
+    ] {
+        let uri = file_uri_for_path(&root.join(relative))
+            .map_err(|err| format!("{relative} URI failed: {err}"))?;
+        let changes = vec![FileEvent {
+            uri,
+            typ: FileChangeType::CREATED,
+        }];
+        assert_eq!(
+            backend.watched_file_change_kinds(&changes),
+            WatchedFileChanges::default(),
+            "{relative} must not invalidate anything"
         );
     }
     Ok(())
@@ -2409,7 +2476,7 @@ fn published_seam_diagnostic(
 #[test]
 fn hover_response_keeps_current_guidance_text() -> Result<(), String> {
     // The analyzed, Rust-only workspace renders the exact legacy generic text.
-    let hover = hover_response_without_evidence(true, &["Rust".to_string()]);
+    let hover = hover_response_without_evidence(NoEvidenceState::Analyzed, &["Rust".to_string()]);
 
     match hover.contents {
         HoverContents::Markup(markup) => {
@@ -2421,11 +2488,37 @@ fn hover_response_keeps_current_guidance_text() -> Result<(), String> {
 }
 
 #[test]
+fn hover_without_evidence_states_are_distinct_and_static() -> Result<(), String> {
+    // #11253: each state renders its own wording.
+    let rust = ["Rust".to_string()];
+    let text = |state| match hover_response_without_evidence(state, &rust).contents {
+        HoverContents::Markup(markup) => Ok(markup.value),
+        _ => Err("expected markup hover".to_string()),
+    };
+    let analyzing = text(NoEvidenceState::Analyzing)?;
+    let clean = text(NoEvidenceState::AnalyzedNoChanges { base: None })?;
+    let not_analyzed = text(NoEvidenceState::NotAnalyzed)?;
+    assert!(analyzing.contains("analysis is in progress"));
+    assert!(analyzing.contains("will appear"));
+    assert!(!analyzing.contains("ripr.refresh"));
+    assert!(clean.contains("found no changed lines against the base ref at its last analysis, so"));
+    assert!(clean.contains("nothing to grade"));
+    assert!(not_analyzed.contains("has not analyzed this workspace yet"));
+    assert!(!not_analyzed.contains("in progress"));
+    assert_ne!(analyzing, not_analyzed);
+    assert_ne!(clean, text(NoEvidenceState::Analyzed)?);
+    Ok(())
+}
+
+#[test]
 fn hover_without_evidence_before_analysis_points_at_refresh() -> Result<(), String> {
     // #9604 finding 32: before the first analysis the generic "run the CLI"
     // pointer names the wrong recovery — the `ripr.refresh` editor command
     // populates this server — and the languages come from configuration.
-    let hover = hover_response_without_evidence(false, &["Rust".to_string(), "Python".to_string()]);
+    let hover = hover_response_without_evidence(
+        NoEvidenceState::NotAnalyzed,
+        &["Rust".to_string(), "Python".to_string()],
+    );
 
     match hover.contents {
         HoverContents::Markup(markup) => {
@@ -2459,8 +2552,10 @@ fn hover_without_evidence_before_analysis_points_at_refresh() -> Result<(), Stri
 fn hover_without_evidence_after_analysis_keeps_cli_pointer() -> Result<(), String> {
     // #9604 finding 32: after analysis the CLI pointer stays, with the
     // configured language list instead of a hardcoded "Rust".
-    let hover =
-        hover_response_without_evidence(true, &["Rust".to_string(), "TypeScript".to_string()]);
+    let hover = hover_response_without_evidence(
+        NoEvidenceState::Analyzed,
+        &["Rust".to_string(), "TypeScript".to_string()],
+    );
 
     match hover.contents {
         HoverContents::Markup(markup) => {
@@ -2498,9 +2593,13 @@ fn hover_language_list_reads_naturally() {
             .map(|value| value.to_string())
             .collect::<Vec<_>>()
     };
-    let one = hover_response_without_evidence(false, &labels(&["Python"]));
-    let two = hover_response_without_evidence(false, &labels(&["Rust", "Python"]));
-    let three = hover_response_without_evidence(false, &labels(&["Rust", "Python", "TypeScript"]));
+    let one = hover_response_without_evidence(NoEvidenceState::NotAnalyzed, &labels(&["Python"]));
+    let two =
+        hover_response_without_evidence(NoEvidenceState::NotAnalyzed, &labels(&["Rust", "Python"]));
+    let three = hover_response_without_evidence(
+        NoEvidenceState::NotAnalyzed,
+        &labels(&["Rust", "Python", "TypeScript"]),
+    );
     let text = |hover: &tower_lsp_server::ls_types::Hover| -> String {
         match &hover.contents {
             HoverContents::Markup(markup) => markup.value.clone(),
@@ -3162,7 +3261,7 @@ fn hover_for_position_returns_none_when_no_diagnostic_matches() -> Result<(), St
         "expected None when no diagnostic matches position"
     );
 
-    let generic = hover_response_without_evidence(true, &["Rust".to_string()]);
+    let generic = hover_response_without_evidence(NoEvidenceState::Analyzed, &["Rust".to_string()]);
     match generic.contents {
         HoverContents::Markup(markup) => {
             assert_eq!(markup.value, HOVER_TEXT);
@@ -3631,6 +3730,43 @@ fn refresh_completion_log_message_counts_profile_withheld_unknown_findings() -> 
         message.contains("withheld_unknown=0"),
         "the full profile withholds nothing: {message}"
     );
+    Ok(())
+}
+
+/// #11296: the completion log names the preview-language findings the
+/// actionable profile withheld, so `findings=1, diagnostics=0` is explained.
+#[test]
+fn refresh_completion_log_message_counts_profile_withheld_preview_findings() -> Result<(), String> {
+    let mut preview = sample_finding();
+    preview.language = Some(crate::domain::LanguageId::Python);
+    preview.language_status = Some(crate::domain::LanguageStatus::Preview);
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let mut snapshot = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        uri,
+        Vec::new(),
+        vec![preview.clone()],
+    );
+    snapshot.refresh.record_duration(Duration::from_millis(5));
+
+    snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Actionable;
+    let message =
+        refresh_completed_log_message(&RefreshLogSummary::from_snapshot(9, &snapshot), 0, 0);
+    assert!(message.contains("withheld_preview=1"), "{message}");
+
+    snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Full;
+    let message =
+        refresh_completed_log_message(&RefreshLogSummary::from_snapshot(9, &snapshot), 0, 0);
+    assert!(message.contains("withheld_preview=0"), "{message}");
+
+    // Negative control: a non-preview hidden gap is not a preview withholding.
+    let mut rust = sample_finding();
+    rust.language_status = None;
+    snapshot.findings = vec![rust];
+    snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Actionable;
+    let message =
+        refresh_completed_log_message(&RefreshLogSummary::from_snapshot(9, &snapshot), 0, 0);
+    assert!(message.contains("withheld_preview=0"), "{message}");
     Ok(())
 }
 
@@ -20524,8 +20660,8 @@ fn execute_command_collect_repair_packet_registered_in_capabilities() -> Result<
     };
     assert_eq!(
         provider.commands.len(),
-        7,
-        "expected 7 registered commands (REFRESH, COLLECT_CONTEXT, COLLECT_EVIDENCE_CONTEXT, COLLECT_WORKSPACE_STATUS, COLLECT_REPAIR_PACKET, COLLECT_TOP_LIMITATION, COLLECT_RECEIPT_STATUS), got {:?}",
+        8,
+        "expected 8 registered commands (REFRESH, COLLECT_CONTEXT, COLLECT_EVIDENCE_CONTEXT, COLLECT_WORKSPACE_STATUS, COLLECT_REPAIR_PACKET, COLLECT_TOP_LIMITATION, COLLECT_RECEIPT_STATUS, SHOW_RELATED_TEST), got {:?}",
         provider.commands
     );
     assert!(
@@ -20674,8 +20810,8 @@ fn execute_command_collect_top_limitation_registered_in_capabilities() -> Result
     };
     assert_eq!(
         provider.commands.len(),
-        7,
-        "expected 7 registered commands (REFRESH, COLLECT_CONTEXT, COLLECT_EVIDENCE_CONTEXT, COLLECT_WORKSPACE_STATUS, COLLECT_REPAIR_PACKET, COLLECT_TOP_LIMITATION, COLLECT_RECEIPT_STATUS), got {:?}",
+        8,
+        "expected 8 registered commands (REFRESH, COLLECT_CONTEXT, COLLECT_EVIDENCE_CONTEXT, COLLECT_WORKSPACE_STATUS, COLLECT_REPAIR_PACKET, COLLECT_TOP_LIMITATION, COLLECT_RECEIPT_STATUS, SHOW_RELATED_TEST), got {:?}",
         provider.commands
     );
     assert!(
@@ -22708,6 +22844,72 @@ fn open_document_entry<'a>(
         .ok_or_else(|| format!("missing open_documents entry for {uri}: {status}"))
 }
 
+/// #11296: the passive preview-withheld marker is served on a clean
+/// document next to the real diagnostics, and a dirty (quarantined) buffer
+/// withdraws it with the rest, leaving only the quarantine marker.
+#[tokio::test]
+async fn preview_withheld_marker_respects_document_quarantine() -> Result<(), String> {
+    let fixture = quarantine_fixture("preview-withheld-quarantine")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
+        .await;
+    let mut workspace = quarantine_workspace_diagnostics(&fixture, QUARANTINE_TEXT_A);
+    let marker = super::diagnostics::withheld_preview_diagnostic(
+        Range::default(),
+        Some("python"),
+        1,
+        "set diagnosticProfile: full or run `ripr check`",
+        "src/a.rs",
+    );
+    workspace
+        .snapshot
+        .diagnostics_by_uri
+        .entry(fixture.uri_a.clone())
+        .or_default()
+        .push(marker.clone());
+    workspace.batches[0].diagnostics.push(marker.clone());
+    backend
+        .refresh_plan(workspace)
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+
+    let has_marker = |report: &serde_json::Value| {
+        report
+            .get("items")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|items| {
+                items.iter().any(|item| {
+                    item.get("code").and_then(serde_json::Value::as_str)
+                        == Some("ripr-diagnostic-preview-withheld")
+                })
+            })
+    };
+    let served = pull_document_json(backend, &fixture.uri_a, None).await?;
+    if !has_marker(&served) {
+        return Err(format!("a clean document must serve the marker: {served}"));
+    }
+    if report_kind_and_items(&served).1 < 2 {
+        return Err(format!("the real diagnostic must be served too: {served}"));
+    }
+
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.uri_a,
+            2,
+            QUARANTINE_TEXT_A_DIRTY,
+        ))
+        .await;
+    let withdrawn = pull_document_json(backend, &fixture.uri_a, None).await?;
+    if !report_is_quarantine_withdrawal(&withdrawn) || has_marker(&withdrawn) {
+        return Err(format!(
+            "a quarantined document must withdraw the marker too: {withdrawn}"
+        ));
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn dirty_document_withdraws_line_local_diagnostics_and_discloses() -> Result<(), String> {
     let fixture = quarantine_fixture("dirty-withdraw")?;
@@ -22897,6 +23099,79 @@ async fn hover_without_evidence_names_an_unsaved_buffer() -> Result<(), String> 
         return Err(format!(
             "clean document hover must not report a pause: {clean}"
         ));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn code_lens_is_withdrawn_for_an_unsaved_buffer_and_restored_when_buffer_matches_analyzed_content()
+-> Result<(), String> {
+    // Lenses anchor at the analyzed saved file's line. Diagnostics and hover
+    // already pause for a divergent buffer; a lens that stayed would sit on
+    // the wrong line after any edit that shifts lines.
+    let fixture = quarantine_fixture("dirty-lens")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .initialize(initialize_params(
+            None,
+            Some(
+                file_uri_for_path(&fixture.root)
+                    .map_err(|err| format!("root URI failed: {err}"))?,
+            ),
+        ))
+        .await
+        .map_err(|err| format!("initialize failed: {err}"))?;
+    backend
+        .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
+        .await;
+    backend
+        .did_open(quarantine_open_params(&fixture.uri_b, QUARANTINE_TEXT_B))
+        .await;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
+    let lens_count = |uri: &tower_lsp_server::ls_types::Uri| {
+        let params = tower_lsp_server::ls_types::CodeLensParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            work_done_progress_params: Default::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+        async move {
+            backend
+                .code_lens(params)
+                .await
+                .map_err(|err| format!("code lens failed: {err}"))
+                .map(|lenses| lenses.map_or(0, |lenses| lenses.len()))
+        }
+    };
+    if lens_count(&fixture.uri_a).await? == 0 {
+        return Err("a clean document must keep its lens".to_string());
+    }
+
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.uri_a,
+            2,
+            QUARANTINE_TEXT_A_DIRTY,
+        ))
+        .await;
+    if lens_count(&fixture.uri_a).await? != 0 {
+        return Err("a divergent buffer must not keep a lens on stale lines".to_string());
+    }
+    if lens_count(&fixture.uri_b).await? == 0 {
+        return Err("a clean sibling document must keep its lens".to_string());
+    }
+
+    // Reverting the buffer to the analyzed saved content lifts the pause.
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.uri_a,
+            3,
+            QUARANTINE_TEXT_A,
+        ))
+        .await;
+    if lens_count(&fixture.uri_a).await? == 0 {
+        return Err("a buffer matching the analyzed content must restore its lens".to_string());
     }
     Ok(())
 }
@@ -29696,4 +29971,580 @@ async fn real_refresh_binds_a_disabled_language_document_not_analyzed() -> Resul
 fn real_refresh_records_an_uncompiled_language_as_not_selected() -> Result<(), String> {
     let (_root, diagnostics) = real_refresh_with_python_changed()?;
     assert_python_recorded_not_selected(&diagnostics)
+}
+
+/// A generic client that advertises `window/showDocument` and no `riprEditor`
+/// block (Helix, Neovim, Zed shape).
+fn show_document_client_features(show_document: bool) -> Result<ClientFeatureProfile, String> {
+    let params: InitializeParams = serde_json::from_value(serde_json::json!({
+        "capabilities": { "window": { "showDocument": { "support": show_document } } }
+    }))
+    .map_err(|err| format!("fixture params must parse: {err}"))?;
+    Ok(ClientFeatureProfile::from_initialize_params(&params))
+}
+
+fn navigation_commands(
+    profile: &ClientFeatureProfile,
+) -> Result<Vec<(String, Vec<serde_json::Value>)>, String> {
+    let (params, snapshot) = seam_code_action_request()?;
+    Ok(
+        code_action_commands(&code_action_response(&params, Some(&snapshot), profile))?
+            .into_iter()
+            .filter(|(_, command, _)| {
+                command == SHOW_RELATED_TEST_COMMAND || command == OPEN_RELATED_TEST_COMMAND
+            })
+            .map(|(_, command, args)| (command, args))
+            .collect(),
+    )
+}
+
+#[test]
+fn show_document_client_gets_server_navigation_and_never_the_client_command() -> Result<(), String>
+{
+    let commands = navigation_commands(&show_document_client_features(true)?)?;
+    assert_eq!(
+        commands.len(),
+        1,
+        "exactly one navigation action: {commands:?}"
+    );
+    assert_eq!(commands[0].0, SHOW_RELATED_TEST_COMMAND);
+    let target = &commands[0].1[0];
+    assert_eq!(target["uri"], "file:///workspace/tests/pricing.rs");
+    assert_eq!(target["line"], 12);
+    assert!(
+        SERVER_EXECUTED_COMMANDS.contains(&SHOW_RELATED_TEST_COMMAND),
+        "the navigation command must be server-executed"
+    );
+    Ok(())
+}
+
+#[test]
+fn client_without_show_document_or_open_location_gets_no_navigation_action() -> Result<(), String> {
+    // Discriminating negative: no `window/showDocument` capability means no
+    // navigation action of either kind, rather than one that cannot run.
+    assert!(navigation_commands(&show_document_client_features(false)?)?.is_empty());
+    assert!(navigation_commands(&ClientFeatureProfile::unsupported())?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn open_location_client_keeps_its_client_command_without_a_duplicate() -> Result<(), String> {
+    for profile in [
+        client_features_with_commands(&[OPEN_RELATED_TEST_COMMAND])?,
+        vscode_client_features()?,
+    ] {
+        let commands = navigation_commands(&profile)?;
+        assert_eq!(commands.len(), 1, "no duplicate navigation: {commands:?}");
+        assert_eq!(commands[0].0, OPEN_RELATED_TEST_COMMAND);
+    }
+    Ok(())
+}
+
+#[test]
+fn show_related_test_params_are_fail_closed() -> Result<(), String> {
+    use super::actions::show_related_test_params;
+    let root = unique_lsp_test_root("show-related-test")?;
+    fs::create_dir_all(root.path().join("tests")).map_err(|err| err.to_string())?;
+    fs::write(root.path().join("tests/pricing.rs"), "#[test]\nfn t() {}\n")
+        .map_err(|err| err.to_string())?;
+    let (_, snapshot) = retained_seam_action_request_at(root.path())?;
+    let uri = file_uri_for_path(&root.path().join("tests/pricing.rs"))?;
+    let identity = snapshot.input_identity_id();
+    assert!(
+        identity.is_some(),
+        "fixture snapshot must carry an identity"
+    );
+    let target = |uri: &str, line: u64, identity: &Option<String>| {
+        let mut object = serde_json::json!({"uri": uri, "line": line});
+        if let Some(identity) = identity {
+            object["input_identity"] = serde_json::json!(identity);
+        }
+        vec![object]
+    };
+    let capable = show_document_client_features(true)?;
+    // Each refusal must fail for its own reason, not just fail.
+    let refused = |result: Result<_, String>, reason: &str| -> Result<(), String> {
+        match result {
+            Ok(_) => Err(format!("expected a refusal mentioning {reason:?}")),
+            Err(error) if error.contains(reason) => Ok(()),
+            Err(error) => Err(format!(
+                "refused for the wrong reason ({reason:?}): {error}"
+            )),
+        }
+    };
+
+    let params = show_related_test_params(
+        &target(uri.as_str(), 2, &identity),
+        Some(&snapshot),
+        &capable,
+    )?;
+    assert_eq!(params.uri, uri);
+    assert_eq!(params.selection.map(|range| range.start.line), Some(1));
+    assert_eq!(params.external, Some(false));
+    assert_eq!(params.take_focus, Some(true));
+
+    refused(
+        show_related_test_params(
+            &target(uri.as_str(), 2, &identity),
+            Some(&snapshot),
+            &show_document_client_features(false)?,
+        ),
+        "window/showDocument",
+    )?;
+    refused(
+        show_related_test_params(&target(uri.as_str(), 2, &identity), None, &capable),
+        "current analysis snapshot",
+    )?;
+    let stale = Some("input:fnv1a64:stale".to_string());
+    refused(
+        show_related_test_params(&target(uri.as_str(), 2, &stale), Some(&snapshot), &capable),
+        "stale",
+    )?;
+    // A request that omits the identity must not pass (fail-open guard).
+    refused(
+        show_related_test_params(&target(uri.as_str(), 2, &None), Some(&snapshot), &capable),
+        "no `input_identity`",
+    )?;
+    // A snapshot with no identity cannot bind the request either.
+    let mut unbound = snapshot.clone();
+    unbound.input_identity = None;
+    refused(
+        show_related_test_params(&target(uri.as_str(), 2, &None), Some(&unbound), &capable),
+        "no `input_identity`",
+    )?;
+    refused(
+        show_related_test_params(
+            &target(uri.as_str(), 2, &identity),
+            Some(&unbound),
+            &capable,
+        ),
+        "no `input_identity`",
+    )?;
+    let outside = file_uri_for_path(&std::env::temp_dir().join("elsewhere.rs"))?;
+    refused(
+        show_related_test_params(
+            &target(outside.as_str(), 2, &identity),
+            Some(&snapshot),
+            &capable,
+        ),
+        "inside the workspace",
+    )?;
+    let missing = file_uri_for_path(&root.path().join("tests/gone.rs"))?;
+    refused(
+        show_related_test_params(
+            &target(missing.as_str(), 2, &identity),
+            Some(&snapshot),
+            &capable,
+        ),
+        "existing file",
+    )?;
+    refused(
+        show_related_test_params(
+            &target(uri.as_str(), 0, &identity),
+            Some(&snapshot),
+            &capable,
+        ),
+        "1-based `line`",
+    )?;
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn show_related_test_params_refuse_a_symlink_that_escapes_the_root() -> Result<(), String> {
+    use super::actions::show_related_test_params;
+    let root = unique_lsp_test_root("show-related-symlink")?;
+    let outside = unique_lsp_test_root("show-related-symlink-outside")?;
+    fs::write(outside.path().join("secret.rs"), "fn secret() {}\n")
+        .map_err(|err| err.to_string())?;
+    fs::create_dir_all(root.path().join("tests")).map_err(|err| err.to_string())?;
+    std::os::unix::fs::symlink(
+        outside.path().join("secret.rs"),
+        root.path().join("tests/link.rs"),
+    )
+    .map_err(|err| err.to_string())?;
+    let (_, snapshot) = retained_seam_action_request_at(root.path())?;
+    let link = file_uri_for_path(&root.path().join("tests/link.rs"))?;
+    let result = show_related_test_params(
+        &[serde_json::json!({
+            "uri": link.as_str(),
+            "line": 1,
+            "input_identity": snapshot.input_identity_id(),
+        })],
+        Some(&snapshot),
+        &show_document_client_features(true)?,
+    );
+    match result {
+        Ok(_) => Err("a symlink escaping the workspace root must be refused".to_string()),
+        Err(error) if error.contains("inside the workspace") => Ok(()),
+        Err(error) => Err(format!("refused for the wrong reason: {error}")),
+    }
+}
+
+#[test]
+fn snapshot_without_input_identity_offers_no_server_navigation() -> Result<(), String> {
+    let (params, mut snapshot) = seam_code_action_request()?;
+    snapshot.input_identity = None;
+    let actions = code_action_response(
+        &params,
+        Some(&snapshot),
+        &show_document_client_features(true)?,
+    );
+    assert!(
+        code_action_commands(&actions)?
+            .iter()
+            .all(|(_, command, _)| command != SHOW_RELATED_TEST_COMMAND),
+        "an unbindable snapshot must not offer ripr.showRelatedTest"
+    );
+    Ok(())
+}
+
+/// Thin `LanguageServer` over a shared `Backend`, so a wire test can reach the
+/// backend (to commit a snapshot after `initialize`) while a real framed
+/// session drives `initialize` and `workspace/executeCommand`.
+struct SharedBackend(std::sync::Arc<Backend>);
+
+impl LanguageServer for SharedBackend {
+    async fn initialize(
+        &self,
+        params: InitializeParams,
+    ) -> tower_lsp_server::jsonrpc::Result<tower_lsp_server::ls_types::InitializeResult> {
+        self.0.initialize(params).await
+    }
+
+    async fn shutdown(&self) -> tower_lsp_server::jsonrpc::Result<()> {
+        self.0.shutdown().await
+    }
+
+    async fn execute_command(
+        &self,
+        params: ExecuteCommandParams,
+    ) -> tower_lsp_server::jsonrpc::Result<Option<serde_json::Value>> {
+        self.0.execute_command(params).await
+    }
+}
+
+/// Drives `workspace/executeCommand ripr.showRelatedTest` over a real framed
+/// session with a committed snapshot. `answer` is how the fake client replies
+/// to `window/showDocument` (`None` never answers).
+async fn run_show_related_test_over_the_wire(
+    answer: Option<serde_json::Value>,
+    arguments: impl FnOnce(&Path, Option<String>) -> Result<Vec<serde_json::Value>, String>,
+) -> Result<(serde_json::Value, Option<serde_json::Value>), String> {
+    let root = unique_lsp_test_root("show-related-wire")?;
+    fs::create_dir_all(root.path().join("tests")).map_err(|err| err.to_string())?;
+    fs::write(root.path().join("tests/pricing.rs"), "#[test]\nfn t() {}\n")
+        .map_err(|err| err.to_string())?;
+    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+    let (mut client_read, mut client_write) = tokio::io::split(client_io);
+    let (server_read, server_write) = tokio::io::split(server_io);
+    let backend_root = root.path().to_path_buf();
+    let cell = std::sync::Arc::new(std::sync::Mutex::new(None::<std::sync::Arc<Backend>>));
+    let closure_cell = cell.clone();
+    let (service, socket) = LspService::new(move |client| {
+        let backend = std::sync::Arc::new(
+            Backend::new(client, backend_root.clone())
+                .with_client_request_timeout(Duration::from_millis(500)),
+        );
+        if let Ok(mut slot) = closure_cell.lock() {
+            *slot = Some(backend.clone());
+        }
+        SharedBackend(backend)
+    });
+    let server_task = tokio::spawn(async move {
+        Server::new(server_read, server_write, socket)
+            .serve(service)
+            .await;
+    });
+    let root_uri = file_uri_for_path(root.path())?;
+    write_lsp_message(
+        &mut client_write,
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {
+                "processId": null,
+                "rootUri": root_uri.as_str(),
+                "capabilities": {"window": {"showDocument": {"support": true}}}
+            }
+        }),
+    )
+    .await?;
+    read_lsp_response(&mut client_read, 1).await?;
+    let backend = cell
+        .lock()
+        .map_err(|err| err.to_string())?
+        .clone()
+        .ok_or("backend was never constructed")?;
+    let (params, snapshot) = retained_seam_action_request_at(root.path())?;
+    let uri = params.text_document.uri.clone();
+    let diagnostics = snapshot
+        .diagnostics_by_uri
+        .get(&uri)
+        .cloned()
+        .unwrap_or_default();
+    backend
+        .refresh_plan(WorkspaceDiagnostics {
+            batches: vec![DiagnosticBatch { uri, diagnostics }],
+            snapshot,
+        })
+        .ok_or("snapshot commit failed")?;
+    backend.set_analysis_attempt_state_for_test(AnalysisAttemptState::Succeeded);
+    let identity = backend
+        .latest_analysis_snapshot()
+        .and_then(|snapshot| snapshot.input_identity_id());
+    write_lsp_message(
+        &mut client_write,
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 2, "method": "workspace/executeCommand",
+            "params": {
+                "command": SHOW_RELATED_TEST_COMMAND,
+                "arguments": arguments(root.path(), identity)?
+            }
+        }),
+    )
+    .await?;
+    let mut show_request = None;
+    let response = tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let message = read_lsp_message(&mut client_read).await?;
+            if message.get("method").and_then(serde_json::Value::as_str)
+                == Some("window/showDocument")
+            {
+                if let (Some(answer), Some(id)) = (&answer, message.get("id").cloned()) {
+                    write_lsp_message(
+                        &mut client_write,
+                        serde_json::json!({"jsonrpc": "2.0", "id": id, "result": answer}),
+                    )
+                    .await?;
+                }
+                show_request = Some(message);
+                continue;
+            }
+            if message.get("method").is_none()
+                && message.get("id").and_then(serde_json::Value::as_u64) == Some(2)
+            {
+                return Ok::<_, String>(message);
+            }
+        }
+    })
+    .await
+    .map_err(|_elapsed| "executeCommand never answered".to_string())??;
+    server_task.abort();
+    Ok((response, show_request))
+}
+
+fn show_related_arguments(
+    root: &Path,
+    identity: Option<String>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let uri = file_uri_for_path(&root.join("tests/pricing.rs"))?;
+    Ok(vec![
+        serde_json::json!({"uri": uri.as_str(), "line": 2, "input_identity": identity}),
+    ])
+}
+
+#[test]
+#[serial]
+fn show_related_test_sends_show_document_and_reports_shown_over_the_wire() -> Result<(), String> {
+    work_done_progress_runtime()?.block_on(async {
+        let (response, request) = run_show_related_test_over_the_wire(
+            Some(serde_json::json!({"success": true})),
+            show_related_arguments,
+        )
+        .await?;
+        let request = request.ok_or("no window/showDocument request was sent")?;
+        let params = &request["params"];
+        assert!(
+            params["uri"]
+                .as_str()
+                .is_some_and(|uri| uri.ends_with("/tests/pricing.rs")),
+            "{params}"
+        );
+        assert_eq!(params["selection"]["start"]["line"], 1, "0-based line");
+        assert_eq!(params["selection"]["start"]["character"], 0);
+        assert_eq!(params["takeFocus"], true);
+        assert_eq!(response["result"], serde_json::json!({"shown": true}));
+
+        let (declined, _) = run_show_related_test_over_the_wire(
+            Some(serde_json::json!({"success": false})),
+            show_related_arguments,
+        )
+        .await?;
+        assert_eq!(declined["result"], serde_json::json!({"shown": false}));
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn show_related_test_does_not_park_on_a_client_that_never_answers() -> Result<(), String> {
+    work_done_progress_runtime()?.block_on(async {
+        let (response, request) =
+            run_show_related_test_over_the_wire(None, show_related_arguments).await?;
+        assert!(request.is_some(), "the request must still be sent");
+        assert_eq!(response["result"], serde_json::json!({"shown": false}));
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn show_related_test_refusal_maps_to_invalid_params_over_the_wire() -> Result<(), String> {
+    work_done_progress_runtime()?.block_on(async {
+        for (label, reason, build) in [
+            (
+                "missing identity",
+                "no `input_identity`",
+                (|root: &Path, _: Option<String>| show_related_arguments(root, None))
+                    as fn(&Path, Option<String>) -> Result<Vec<serde_json::Value>, String>,
+            ),
+            (
+                "stale identity",
+                "stale",
+                |root: &Path, _: Option<String>| {
+                    show_related_arguments(root, Some("input:fnv1a64:stale".to_string()))
+                },
+            ),
+        ] {
+            let (response, request) = run_show_related_test_over_the_wire(None, build).await?;
+            assert!(request.is_none(), "{label}: no showDocument may be sent");
+            assert_eq!(response["error"]["code"], -32602, "{label}: {response}");
+            assert!(
+                response["error"]["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains(reason)),
+                "{label}: {response}"
+            );
+        }
+        Ok(())
+    })
+}
+
+/// A committed Python repo with a weak test and one working-tree edit to a
+/// call-argument change (a preview finding without a fix route), analyzed with the Python preview adapter enabled.
+#[cfg(feature = "lang-python")]
+fn python_preview_edit_fixture(name: &str) -> Result<TempLspRoot, String> {
+    let root = unique_lsp_test_root(name)?;
+    std::fs::create_dir_all(root.path().join("src"))
+        .map_err(|err| format!("create src failed: {err}"))?;
+    std::fs::create_dir_all(root.path().join("tests"))
+        .map_err(|err| format!("create tests failed: {err}"))?;
+    std::fs::write(
+        root.path().join("src/pricing.py"),
+        "def log_value(x):\n    print(x)\n    return x\n",
+    )
+    .map_err(|err| format!("write pricing.py failed: {err}"))?;
+    std::fs::write(
+        root.path().join("tests/test_pricing.py"),
+        "from src.pricing import log_value\n\n\ndef test_log_value_runs():\n    assert log_value(1) is not None\n",
+    )
+    .map_err(|err| format!("write test_pricing.py failed: {err}"))?;
+    run_lsp_scope_git(root.path(), &["init", "-q"])?;
+    run_lsp_scope_git(root.path(), &["add", "-A"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &[
+            "-c",
+            "user.email=ripr-test@example.com",
+            "-c",
+            "user.name=ripr-test",
+            "-c",
+            "commit.gpgSign=false",
+            "commit",
+            "-qm",
+            "baseline",
+        ],
+    )?;
+    std::fs::write(
+        root.path().join("src/pricing.py"),
+        "def log_value(x):\n    print(x, x)\n    return x\n",
+    )
+    .map_err(|err| format!("edit pricing.py failed: {err}"))?;
+    Ok(root)
+}
+
+/// #11296 through the real workspace entry point: a Python preview edit is
+/// withheld by the actionable profile and disclosed by one passive marker
+/// that the snapshot's consistency check accounts for; the full profile
+/// publishes the real Information finding and no marker; and once the edit
+/// is reverted the finding and the marker are gone together.
+#[test]
+#[cfg(feature = "lang-python")]
+fn python_preview_edit_discloses_withheld_marker_only_under_actionable_profile()
+-> Result<(), String> {
+    use crate::lsp::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE;
+    let root = python_preview_edit_fixture("preview-withheld-entry")?;
+    let analyze = |profile| {
+        let config = LspAnalysisConfig {
+            base_ref: Some("HEAD".to_string()),
+            mode: Mode::Instant,
+            diagnostic_profile: profile,
+            repo_config: crate::config::tests_only_parse(
+                "[languages]\nenabled = [\"rust\", \"python\"]\n",
+            )?,
+            ..LspAnalysisConfig::default()
+        };
+        workspace_diagnostics_with_config(root.path(), &config, true)
+    };
+    let is_marker = |diagnostic: &Diagnostic| {
+        diagnostic.code
+            == Some(NumberOrString::String(
+                DIAGNOSTIC_PREVIEW_WITHHELD_CODE.to_string(),
+            ))
+    };
+
+    let actionable = analyze(crate::config::LspDiagnosticProfile::Actionable)?;
+    if actionable.snapshot.findings.is_empty() {
+        return Err("fixture must produce a Python preview finding".to_string());
+    }
+    let diagnostics = actionable
+        .batches
+        .iter()
+        .flat_map(|batch| batch.diagnostics.iter())
+        .collect::<Vec<_>>();
+    let [marker] = diagnostics.as_slice() else {
+        return Err(format!(
+            "actionable: exactly one marker expected: {diagnostics:?}"
+        ));
+    };
+    if !is_marker(marker) || marker.severity != Some(DiagnosticSeverity::HINT) {
+        return Err(format!(
+            "actionable: the lone diagnostic must be the Hint marker: {marker:?}"
+        ));
+    }
+    if !actionable.snapshot.is_consistent() {
+        return Err("actionable: snapshot with the marker must be consistent".to_string());
+    }
+
+    let full = analyze(crate::config::LspDiagnosticProfile::Full)?;
+    let full_diagnostics = full
+        .batches
+        .iter()
+        .flat_map(|batch| batch.diagnostics.iter())
+        .collect::<Vec<_>>();
+    if full_diagnostics.is_empty()
+        || full_diagnostics.iter().copied().any(is_marker)
+        || !full_diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.severity == Some(DiagnosticSeverity::INFORMATION))
+    {
+        return Err(format!(
+            "full: Information finding and no marker expected: {full_diagnostics:?}"
+        ));
+    }
+    if !full.snapshot.is_consistent() {
+        return Err("full: snapshot must be consistent".to_string());
+    }
+
+    run_lsp_scope_git(root.path(), &["checkout", "--", "src/pricing.py"])?;
+    let reverted = analyze(crate::config::LspDiagnosticProfile::Actionable)?;
+    if reverted
+        .batches
+        .iter()
+        .flat_map(|batch| batch.diagnostics.iter())
+        .any(is_marker)
+    {
+        return Err("reverted edit: the marker must disappear with its finding".to_string());
+    }
+    Ok(())
 }

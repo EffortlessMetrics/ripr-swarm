@@ -9,6 +9,7 @@ Created: 2026-07-18
 Linked issues:
 
 - #1662
+- #11253
 
 ## Problem
 
@@ -50,7 +51,10 @@ constructor that is the single source of truth for that family:
   report that would claim a clean workspace;
   `ripr-diagnostic-language-not-analyzed` (#10715) names a changed file whose
   language adapter is not enabled, so an empty list for it is not a clean
-  result (served for every document of that language when the producer's file sample is incomplete). These are not analyzer findings or actionable repairs.
+  result (served for every document of that language when the producer's file sample is incomplete);
+  `ripr-diagnostic-preview-withheld` (#11296) is the Hint on a file whose
+  preview-language findings the actionable profile withheld, outside the
+  delivery budget. These are not analyzer findings or actionable repairs.
 
 Each catalog entry carries the code identity used today: the stable `code` and
 the deprecated `aliases` that still resolve to it. Compatibility aliases are
@@ -71,6 +75,29 @@ registered rather than surfacing an unregistered code.
 For every known kind the emitted diagnostic wire shape is unchanged: the
 constructors produce the same code strings the previous inline `format!` calls
 produced, so no golden output changes in this slice.
+
+### No-evidence hover states
+
+The hover on a position with no evidence (`hover_without_evidence`) states
+the pending/clean condition the same way the pending marker does, and never
+asks for an action that is already underway (#11253):
+
+- A committed snapshot whose typed `analysis_outcome.kind` is
+  `no_changed_lines` renders "found no changed lines against the base ref at its last analysis"
+  (naming the snapshot's base when known) and says there is nothing to grade.
+  Any other committed snapshot keeps the generic static-exposure text. A
+  committed snapshot takes precedence over a queued or running attempt: the
+  clean statement is scoped to "its last analysis", so it stays true (and
+  honest about its age) while a refresh runs or after one failed.
+- With no committed snapshot, a `queued` or `running` analysis attempt renders
+  "analysis is in progress" and says the result will appear; it does not
+  request `ripr.refresh`.
+- With no committed snapshot and no queued or running attempt, the existing
+  "has not analyzed this workspace yet" wording and `ripr.refresh` route stay.
+
+The `ripr-diagnostic-analysis-pending` marker, its result ids and its wire
+shape are unchanged. These are advisory hover words using static vocabulary;
+they make no runtime-outcome or test-sufficiency claim.
 
 ## Required Evidence
 
@@ -115,6 +142,10 @@ produced, so no golden output changes in this slice.
 - `diagnostics.rs::tests::gap_record_diagnostic_fails_closed_for_unregistered_kind`
   covers the emission site itself: a gap record whose kind is not a governed
   code produces no diagnostic, while a registered kind still emits one.
+- `lsp/tests.rs::hover_without_evidence_states_are_distinct_and_static` and
+  the two `backend.rs::pull_disclosure_dedup_tests::no_evidence_hover_*` tests pin the in-progress
+  and clean-workspace hover states against their discriminating negatives
+  (idle session, snapshot without `no_changed_lines`).
 - The existing LSP diagnostic unit tests continue to pass unchanged, pinning
   the byte-identical emitted code strings for known kinds.
 

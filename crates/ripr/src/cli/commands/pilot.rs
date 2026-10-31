@@ -114,7 +114,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     let config = load_for_root(&options.root)?;
     // Refuse an invalid RIPR_PILOT_SEAM_BUDGET (#4529) before the analysis
     // it would bound, not after it.
-    analysis::pilot_seam_budget()?;
+    // The same guard bounds the built-in inventory cap by that budget (#10726).
+    let _pilot_inventory_default = analysis::PilotInventoryDefault::enter()?;
     // RIPR_GIT_TIMEOUT bounds pilot's current-change git calls as it bounds
     // check's (#2613): seconds, `0` disables the deadline, and an invalid
     // value fails closed here rather than running with the default.
@@ -384,9 +385,29 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         .with_absent_file_limitations(absent_file_limitations)
         .with_seams_counted(&classified, folded.caveat_limit);
     let budget_started = Instant::now();
-    let pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
+    let mut pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
         current_change.keeps_past_budget(entry)
     })?;
+    // The pilot-scoped default inventory cap (#10726) is the pilot budget cut
+    // earlier. Disclose it as the budget, naming `RIPR_PILOT_SEAM_BUDGET`, and
+    // not as an inventory cut whose repair route would not lift the budget.
+    // The total is the real inventory even when current-change seams folded in
+    // past the cap made the budget fire too (its own total then counts the
+    // capped inventory plus the folded seams). The population is also not what
+    // `ripr check` analyzes, so the snapshot carries no comparable identity,
+    // exactly as for a budget cut.
+    if let Some(default_cut) =
+        analysis::PilotInventoryDefault::as_budget_cut(inventory_limit_info.as_ref())
+    {
+        pilot_budget_info = Some(match pilot_budget_info {
+            Some(budget) => analysis::SeamLimitInfo {
+                total: default_cut.total,
+                ..budget
+            },
+            None => default_cut,
+        });
+        inventory_limit_info = None;
+    }
     timings.record("seam_budget", budget_started, Some(classified.len()));
     let pilot_budget_truncated = pilot_budget_info.is_some();
     // The summary's disclosure counts from the outermost population: when
@@ -944,9 +965,7 @@ const DEFAULT_PILOT_OUT_DIR: &str = "target/ripr/pilot";
 /// complete" with no recommendation and write `target/ripr/` into the folder.
 /// Returns the refusal message, or `None` when the root has something to inspect.
 fn pilot_root_without_workspace(root: &Path) -> Option<String> {
-    let has_inspectable_content =
-        root.join("Cargo.toml").is_file() || analysis::workspace_has_inspectable_source(root);
-    (!has_inspectable_content).then(|| {
+    analysis::root_has_no_inspectable_workspace(root).then(|| {
         format!(
             "pilot root {} has no Cargo.toml and no source files to inspect; pass --root <dir> for the directory that contains your workspace (nothing was written)",
             root.display()
@@ -1023,7 +1042,10 @@ where
             Ok(PilotAnalysisResult::TimedOut)
         }
         Err(mpsc::RecvTimeoutError::Disconnected) => {
-            Err("pilot analysis stopped before producing a result".to_string())
+            Err(super::check_budget::worker_stopped_detail(
+                "ripr pilot",
+                "lower --max-seams or narrow the scope",
+            ))
         }
     }
 }
@@ -1554,6 +1576,22 @@ mod tests {
 
         assert!(matches!(result, Ok(PilotAnalysisResult::TimedOut)));
         assert_eq!(cancelled_rx.recv_timeout(Duration::from_secs(1)), Ok(()));
+    }
+
+    #[test]
+    fn pilot_worker_that_unwinds_reports_the_named_stop_not_a_result() -> Result<(), String> {
+        let result = run_pilot_analysis_with_timeout::<(), _>(
+            30_000,
+            None,
+            || {},
+            || std::panic::resume_unwind(Box::new("injected pilot worker fault (#11116)")),
+        );
+        let Err(message) = result else {
+            return Err("a dead pilot worker must not yield a result".to_string());
+        };
+        assert!(message.contains("analysis_worker_stopped"), "{message}");
+        assert!(message.contains("--max-seams"), "{message}");
+        Ok(())
     }
 
     #[test]

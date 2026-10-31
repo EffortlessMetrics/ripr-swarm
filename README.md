@@ -112,17 +112,17 @@ published-versus-development split and build times.
 | Work in VS Code | Inspect saved-workspace diagnostics, open a related test, and copy a test brief. | [Editor quickstart](docs/QUICKSTART.md#vs-code-first-hour) |
 | Review in GitHub | Run `ripr init --ci github` to generate an advisory PR workflow with a summary and downloadable evidence. | [CI quickstart](docs/QUICKSTART.md#ci-first-hour) |
 
-`ripr check` inspects a change. `ripr pilot` explores the repository more broadly.
+`ripr check` inspects a change. `ripr pilot` is optional broader repository exploration.
 `ripr repair` records a supported before/edit/after attempt, continued with
 `ripr continue` and inspected with `ripr status` (`ripr agent repair` and
 `ripr agent status` are the advanced spellings of the same transaction); you or
 your agent write the test. `ripr first-pr` composes existing PR evidence rather than
 running analysis. See the [command guide](docs/COMMAND_HIERARCHY.md) for the
-complete paths, including read-only [MCP status](docs/interop/mcp.md).
+complete paths, including the read-only [MCP analysis session](docs/interop/mcp.md).
 
 Using a coding agent? Run `ripr check`, then run the follow-up commands it
 prints exactly as printed; their IDs belong to that run. For repairs,
-`ripr pilot --root .` names one supported repair or explains why none is ready.
+`ripr check` prints the `ripr repair` command when an eligible repair exists; `ripr pilot --root .` is optional broader exploration.
 Add `--format json` for machine-readable results. Repair-attempt file rules,
 card handoff and exit codes are in the
 [agent repair details](docs/QUICKSTART.md#agent-repair-details),
@@ -155,8 +155,8 @@ a promise that every surface is available from the published package.
 | Language | Current scope |
 | --- | --- |
 | Rust | Static analysis and bounded test-only repair are `usable alpha`. Repairs require a valid route; ordinary real-repository route yield and success remain unestablished. |
-| Python | Analysis is `preview`. Selected pytest/unittest repair routes are `usable alpha`; a finding without a complete route has no repair card. The [Python first hour](docs/QUICKSTART.md#python-first-hour-preview) quickstart covers the marker-based auto-enable, the `check`/`pilot` flow, and the preview caveat. |
-| TypeScript / JavaScript | `preview` analysis, auto-enabled for detected TypeScript projects when no `ripr.toml` exists (opt out with `enabled = ["rust"]`). When a finding has a complete repair packet, `check` names the test file, the missing case, and the test command to run. |
+| Python | Analysis is `preview`. Selected pytest/unittest repair routes are `usable alpha`; a finding without a complete route has no repair card. The [Python first hour](docs/QUICKSTART.md#python-first-hour-preview) quickstart covers the marker-based auto-enable, the `check`/`pilot` flow, and the preview caveat. `ripr repair` and `ripr agent stub` are Rust-only; follow `check` -> `agent repair --gap-id` -> edit test -> commit -> `continue`. |
+| TypeScript / JavaScript | `preview` analysis, auto-enabled for detected TypeScript projects when no `ripr.toml` exists (opt out with `enabled = ["rust"]`). When a finding has a complete repair packet, `check` names the test file, the missing case, and the test command to run; see the [TypeScript first hour](docs/QUICKSTART.md#typescript-first-hour-preview). `ripr repair` and `ripr agent stub` are Rust-only. |
 | Perl | `preview` / advisory development only. It needs a `lang-perl` build and the unpublished `perl-ripr-facts` exporter (build it from `crates/perl-ripr-facts` in `EffortlessMetrics/perl-lsp` with `cargo build --release -p perl-ripr-facts`, put it on `PATH`, and set `[languages] enabled = ["perl"]` plus `[perl] producer = "perl-ripr-facts"`); no released build/exporter combination is usable yet. |
 
 With no `ripr.toml`, ripr analyzes Rust and also enables Python preview when

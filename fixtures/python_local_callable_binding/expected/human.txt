@@ -24,7 +24,7 @@ Start here:
   Related test: tests/test_stop.py:7 test_stop_after_attempt (assertion too weak to tell the old behavior from the new)
   Suggested test file: tests/test_stop.py
   Suggested test: test_stop_after_attempt
-  Verify command: python -m unittest tests.test_stop.StopTest.test_stop_after_attempt (high)
+  Suggested command (unverified; inspect and run from the selected root): python -m unittest tests.test_stop.StopTest.test_stop_after_attempt
   Next step — Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `attempt_number == self.max_attempt_number`
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

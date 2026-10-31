@@ -32,10 +32,12 @@ use crate::agent::loop_commands::{
     WORKFLOW_AGENT_REVIEW_SUMMARY_ARTIFACT, WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT,
     WORKFLOW_AGENT_SEAM_PACKETS_ARTIFACT, WORKFLOW_AGENT_STATUS_ARTIFACT,
     WORKFLOW_AGENT_STATUS_MARKDOWN_ARTIFACT, WORKFLOW_AGENT_VERIFY_ARTIFACT,
-    WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+    WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, shell_arg,
 };
 use crate::cli::suggest::unknown_argument;
 use crate::output::ci_summary::annotations::render_workflow_annotations;
+use crate::output::ci_summary::effective_comment_mode;
+use crate::output::first_pr::base_fetch_refspec;
 use crate::process_owner::OwnedProcess;
 use serde::Serialize;
 use serde_json::Value;
@@ -145,6 +147,10 @@ pub(super) struct CiSettings {
     pub(super) gate_baseline: String,
     pub(super) comment_mode: String,
     pub(super) upload_sarif: String,
+    /// `RIPR_PILOT_TIMEOUT_MS`: the pilot deadline in milliseconds, passed
+    /// to `ripr pilot --timeout-ms` (#11205). `None` keeps pilot's default
+    /// deadline and its automatic cold-run extension.
+    pub(super) pilot_timeout_ms: Option<u64>,
     /// `github.event_name`.
     pub(super) event_name: String,
     /// `github.base_ref`: empty outside a pull request.
@@ -175,6 +181,7 @@ impl Default for CiSettings {
             gate_baseline: String::new(),
             comment_mode: String::new(),
             upload_sarif: String::new(),
+            pilot_timeout_ms: None,
             event_name: String::new(),
             base_ref: String::new(),
             default_branch: String::new(),
@@ -211,6 +218,7 @@ impl CiSettings {
         settings.gate_baseline = var("RIPR_GATE_BASELINE");
         settings.comment_mode = var("RIPR_COMMENT_MODE");
         settings.upload_sarif = var("RIPR_UPLOAD_SARIF");
+        settings.pilot_timeout_ms = parse_pilot_timeout_ms(&var("RIPR_PILOT_TIMEOUT_MS"))?;
         settings.event_name = var("GITHUB_EVENT_NAME");
         settings.base_ref = var("GITHUB_BASE_REF");
         settings.repository = var("GITHUB_REPOSITORY");
@@ -262,6 +270,45 @@ impl CiSettings {
     fn advisory(&self) -> bool {
         self.gate_mode.is_empty() || self.gate_mode == "visible-only"
     }
+}
+
+/// `RIPR_PILOT_TIMEOUT_MS`: unset or empty keeps pilot's default deadline;
+/// anything else must be a positive integer of milliseconds. An invalid value
+/// is refused up front instead of silently running with the default deadline,
+/// because the variable is the control the step summary tells a PR author to
+/// raise after a pilot timeout (#11205).
+fn parse_pilot_timeout_ms(value: &str) -> Result<Option<u64>, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    match value.parse::<u64>() {
+        Ok(ms) if ms > 0 => Ok(Some(ms)),
+        _ => Err(format!(
+            "{COMMAND}: RIPR_PILOT_TIMEOUT_MS must be a positive integer of milliseconds; got {value:?}"
+        )),
+    }
+}
+
+/// The pilot step's argv. An explicit deadline is a hard limit with no
+/// automatic extension, exactly as `ripr pilot --timeout-ms` (#11205).
+fn pilot_argv(timeout_ms: Option<u64>) -> Vec<String> {
+    let mut argv = args(&[
+        "pilot",
+        "--root",
+        ".",
+        "--out",
+        "target/ripr/pilot",
+        "--mode",
+        "ready",
+        "--max-seams",
+        "5",
+    ]);
+    if let Some(ms) = timeout_ms {
+        argv.push("--timeout-ms".to_string());
+        argv.push(ms.to_string());
+    }
+    argv
 }
 
 /// How a retired step's failure counted.
@@ -432,11 +479,29 @@ impl PacketRun {
     }
 
     fn spawn_env(&self, args: &[String], stdout: Stdio, env: &[(&str, &str)]) -> StageResult {
+        match self.spawn_code(args, stdout, env)? {
+            Some(0) => Ok(()),
+            Some(code) => Err(format!("`ripr {}` exited {code}", args.join(" "))),
+            None => Err(format!(
+                "`ripr {}` was terminated by a signal",
+                args.join(" ")
+            )),
+        }
+    }
+
+    /// Runs one child and returns its exit code (`None` when a signal ended
+    /// it). A recorded run reports `Some(0)`.
+    fn spawn_code(
+        &self,
+        args: &[String],
+        stdout: Stdio,
+        env: &[(&str, &str)],
+    ) -> Result<Option<i32>, String> {
         if let Some(recorded) = &self.recorded {
             recorded
                 .borrow_mut()
                 .push(format!("ripr {}", args.join(" ")));
-            return Ok(());
+            return Ok(Some(0));
         }
         let _ = std::io::stdout().flush();
         let mut command = Command::new(&self.exe);
@@ -453,14 +518,7 @@ impl PacketRun {
         let status = OwnedProcess::spawn(command)
             .and_then(|mut child| child.wait())
             .map_err(|err| format!("`{shown}` could not run: {err}"))?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(match status.code() {
-                Some(code) => format!("`{shown}` exited {code}"),
-                None => format!("`{shown}` was terminated by a signal"),
-            })
-        }
+        Ok(status.code())
     }
 
     fn all_stages(&mut self) {
@@ -472,17 +530,8 @@ impl PacketRun {
             Role::Advisory,
             true,
             |run| {
-                run.ripr(&args(&[
-                    "pilot",
-                    "--root",
-                    ".",
-                    "--out",
-                    "target/ripr/pilot",
-                    "--mode",
-                    "ready",
-                    "--max-seams",
-                    "5",
-                ]))
+                let argv = pilot_argv(run.settings.pilot_timeout_ms);
+                run.ripr(&argv)
             },
         );
 
@@ -553,7 +602,10 @@ impl PacketRun {
             "Plan RIPR inline comments",
             When::Always,
             Role::Advisory,
-            pr && self.settings.comment_mode != "off" && self.exists(COMMENTS_JSON),
+            // An empty mode means `off`, as `--comment-mode` documents and
+            // `ci-summary` reads it (#11146); only a named mode is planned.
+            pr && effective_comment_mode(&self.settings.comment_mode) != "off"
+                && self.exists(COMMENTS_JSON),
             Self::plan_inline_comments,
         );
 
@@ -1175,7 +1227,7 @@ impl PacketRun {
         // creates both output directories itself.
         self.mkdir("target/ripr/workflow")?;
         self.mkdir("target/ripr/agent")?;
-        self.ripr(&args(&[
+        let start = args(&[
             "agent",
             "start",
             "--root",
@@ -1184,7 +1236,28 @@ impl PacketRun {
             seam,
             "--out",
             "target/ripr/workflow",
-        ]))?;
+        ]);
+        match self.spawn_code(&start, Stdio::inherit(), &[])? {
+            Some(0) => {}
+            // Exit 3 is "ripr declined" (docs/EXIT_CODES.md): ripr ran and
+            // chose not to start a repair for this seam. That is an expected
+            // outcome, not a failure; there is no brief to package (#11206).
+            Some(3) => {
+                println!(
+                    "RIPR agent loop skipped: `ripr agent start` declined seam {seam} (exit 3). \
+                     This is an expected decline, not a failure; the output above says why. \
+                     No agent brief or packet was written for this seam."
+                );
+                return Ok(());
+            }
+            Some(code) => return Err(format!("`ripr {}` exited {code}", start.join(" "))),
+            None => {
+                return Err(format!(
+                    "`ripr {}` was terminated by a signal",
+                    start.join(" ")
+                ));
+            }
+        }
         let pending = format!("{WORKFLOW_AGENT_PACKET_ARTIFACT}.partial");
         let rendered = self.ripr_to(
             &args(&[
@@ -1228,7 +1301,7 @@ impl PacketRun {
             &self.root,
             &["rev-parse", "--verify", &format!("{base_ref}^{{commit}}")],
         )
-        .map_err(|err| format!("ripr: cannot resolve base ref {base_ref}: {err}"))?;
+        .map_err(|err| unresolved_base_message(&self.root, &base_ref, &err.to_string()))?;
         let head_sha = crate::git::run_git(&self.root, &["rev-parse", "--verify", "HEAD^{commit}"])
             .map_err(|err| format!("ripr: cannot resolve HEAD: {err}"))?;
         let range = format!("{base_sha}...{head_sha}");
@@ -1343,7 +1416,7 @@ impl PacketRun {
             "--pr-guidance",
             COMMENTS_JSON,
             "--mode",
-            &settings.comment_mode,
+            effective_comment_mode(&settings.comment_mode),
             "--event-name",
             &settings.event_name,
             "--pull-request",
@@ -1719,6 +1792,42 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// The error for a pull request base that is not in the checkout, naming the
+/// cause and the repair instead of Git's raw `Needed a single revision`.
+///
+/// The usual cause is a shallow `actions/checkout` (its default `fetch-depth`
+/// is 1), which fetches the head commit only. `ripr check` already names that
+/// repair; the packet is the step a first-time adopter reads when the job
+/// turns red, so it names it too. Git's own last line stays at the end for
+/// causes this wording does not cover.
+fn unresolved_base_message(root: &Path, base_ref: &str, detail: &str) -> String {
+    let branch = base_ref.strip_prefix("origin/").unwrap_or(base_ref);
+    let repair = if branch.is_empty() {
+        // `GITHUB_BASE_REF` is empty (not a pull_request event payload), so
+        // the base is `origin/` and no fetch can name a branch.
+        "GITHUB_BASE_REF is empty, so there is no base branch to compare against; run this \
+         on a pull_request event."
+            .to_string()
+    } else if crate::analysis::is_shallow_repository(root, None) {
+        let refspec = shell_arg(&base_fetch_refspec(branch));
+        format!(
+            "This is most likely a shallow clone: set `fetch-depth: 0` on actions/checkout (or \
+             run `git fetch --unshallow origin {refspec}`), then re-run."
+        )
+    } else {
+        let refspec = shell_arg(&base_fetch_refspec(branch));
+        format!(
+            "Fetch the base branch (`git fetch origin {refspec}`; actions/checkout with \
+             `fetch-depth: 0` fetches every branch), then re-run."
+        )
+    };
+    format!(
+        "ripr: the pull request base `{base_ref}` is not in this checkout (the analysis did not \
+         run). {repair} Git said: {}",
+        detail.lines().last().unwrap_or(detail).trim()
+    )
+}
+
 /// Raw stdout of a successful git invocation; the diff is bytes, not text.
 fn git_bytes(root: &Path, git_args: &[&str]) -> Result<Vec<u8>, String> {
     let output = crate::git::run_git_output_with_deadline(root, git_args, None)?;
@@ -1868,6 +1977,7 @@ fn full_packet_settings() -> CiSettings {
         gate_baseline: ".ripr/gate-baseline.json".to_string(),
         comment_mode: "inline".to_string(),
         upload_sarif: "true".to_string(),
+        pilot_timeout_ms: None,
         event_name: "pull_request".to_string(),
         base_ref: "main".to_string(),
         default_branch: "main".to_string(),
@@ -2134,6 +2244,106 @@ mod tests {
         Ok(())
     }
 
+    /// #11146: an empty (or blank) `RIPR_COMMENT_MODE` means `off`, so the plan
+    /// stage must not run and fail with `unknown pr-comments plan mode ""`.
+    /// `plan` and an unknown value still plan (the unknown one fails loudly).
+    #[test]
+    fn empty_comment_mode_skips_the_inline_plan_like_off() -> Result<(), String> {
+        let planned = |mode: &str| -> Result<bool, String> {
+            let (packet, _failed) = recorded_packet_with(CiSettings {
+                comment_mode: mode.to_string(),
+                ..full_packet_settings()
+            })?;
+            Ok(packet.contains("ripr pr-comments plan "))
+        };
+        assert!(planned("inline")?, "inline must plan");
+        assert!(planned("plan")?, "plan must plan");
+        assert!(
+            planned("post")?,
+            "an unknown mode must still reach the plan"
+        );
+        assert!(!planned("off")?, "off must not plan");
+        assert!(!planned("")?, "empty must not plan");
+        assert!(!planned("  ")?, "blank must not plan");
+        // A padded value plans, and plans the trimmed mode (the summary reads
+        // it the same way), never `--mode " inline"`.
+        let (padded, _) = recorded_packet_with(CiSettings {
+            comment_mode: " inline ".to_string(),
+            ..full_packet_settings()
+        })?;
+        let plan_line = padded
+            .lines()
+            .find(|line| line.starts_with("ripr pr-comments plan "))
+            .unwrap_or_default();
+        assert!(
+            plan_line.contains(" --mode inline --event-name "),
+            "{plan_line}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn pilot_deadline_variable_reaches_the_pilot_step_only_when_set() -> Result<(), String> {
+        // #11205: unset keeps pilot's default deadline and its automatic
+        // cold-run extension; a set value is passed as an explicit hard limit.
+        let pilot_line = |settings: CiSettings| -> Result<String, String> {
+            let (packet, failed) = recorded_packet_with(settings)?;
+            assert!(failed.is_empty(), "{failed:?}");
+            packet
+                .lines()
+                .find(|line| line.starts_with("ripr pilot "))
+                .map(str::to_string)
+                .ok_or_else(|| format!("no pilot line in {packet}"))
+        };
+        assert_eq!(
+            pilot_line(full_packet_settings())?,
+            "ripr pilot --root . --out target/ripr/pilot --mode ready --max-seams 5"
+        );
+        assert_eq!(
+            pilot_line(CiSettings {
+                pilot_timeout_ms: Some(900_000),
+                ..full_packet_settings()
+            })?,
+            "ripr pilot --root . --out target/ripr/pilot --mode ready --max-seams 5 --timeout-ms 900000"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn pilot_deadline_is_a_distinct_argv_pair_with_the_exact_value() {
+        let base = args(&[
+            "pilot",
+            "--root",
+            ".",
+            "--out",
+            "target/ripr/pilot",
+            "--mode",
+            "ready",
+            "--max-seams",
+            "5",
+        ]);
+        assert_eq!(pilot_argv(None), base);
+        let mut with = base;
+        with.extend(args(&["--timeout-ms", "900000"]));
+        assert_eq!(pilot_argv(Some(900_000)), with);
+    }
+
+    #[test]
+    fn pilot_deadline_variable_is_a_positive_integer_or_refused() {
+        assert_eq!(parse_pilot_timeout_ms(""), Ok(None));
+        assert_eq!(parse_pilot_timeout_ms("  "), Ok(None));
+        assert_eq!(parse_pilot_timeout_ms("900000"), Ok(Some(900_000)));
+        assert_eq!(parse_pilot_timeout_ms(" 600000 "), Ok(Some(600_000)));
+        for bad in ["0", "-5", "90s", "1.5", "abc"] {
+            let refused = parse_pilot_timeout_ms(bad);
+            assert!(
+                matches!(&refused, Err(message) if message.contains("RIPR_PILOT_TIMEOUT_MS")
+                    && message.contains(bad)),
+                "{bad:?} must be refused naming the variable: {refused:?}"
+            );
+        }
+    }
+
     /// The YAML steps' `continue-on-error` and `always()`, as the packet
     /// keeps them (#2009: SARIF and guidance producers block only when the
     /// operator chose a blocking gate).
@@ -2231,6 +2441,60 @@ mod tests {
             !commands.iter().any(|line| line.starts_with("ripr pilot")),
             "{commands:?}"
         );
+        Ok(())
+    }
+
+    /// A real child that exits `code` for `agent start`, so the stage's exit
+    /// handling (not the recorded seam) is what the tests exercise.
+    #[cfg(unix)]
+    fn agent_loop_after_start_exit(
+        code: i32,
+        tag: &str,
+    ) -> Result<(bool, Result<(), String>), String> {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!(
+            "ripr-ci-packet-start-exit-{tag}-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+        let exe = root.join("fake-ripr.sh");
+        fs::write(&exe, format!("#!/bin/sh\nexit {code}\n")).map_err(|err| err.to_string())?;
+        fs::set_permissions(&exe, fs::Permissions::from_mode(0o755))
+            .map_err(|err| err.to_string())?;
+        let mut run = PacketRun {
+            root: root.clone(),
+            exe,
+            settings: CiSettings::default(),
+            only: Vec::new(),
+            seen: Vec::new(),
+            top_seam: None,
+            failed: Vec::new(),
+            recorded: None,
+        };
+        let result = run.agent_loop("seam-1");
+        let wrote_brief = root.join(EDITOR_AGENT_BRIEF_ARTIFACT).exists();
+        let _ = fs::remove_dir_all(&root);
+        Ok((wrote_brief, result))
+    }
+
+    /// #11206: `ripr agent start` exiting 3 is a decline, not a failure.
+    #[cfg(unix)]
+    #[test]
+    fn agent_start_decline_is_not_a_failed_step() -> Result<(), String> {
+        let (wrote_brief, result) = agent_loop_after_start_exit(3, "decline")?;
+        assert_eq!(result, Ok(()));
+        assert!(!wrote_brief, "a declined start writes no editor brief");
+        Ok(())
+    }
+
+    /// Discriminating negative for the decline above: any other nonzero exit
+    /// from `agent start` stays a failure that names its exit code.
+    #[cfg(unix)]
+    #[test]
+    fn agent_start_operational_error_stays_a_failed_step() -> Result<(), String> {
+        let (_, result) = agent_loop_after_start_exit(2, "error")?;
+        let message = result.err().ok_or("exit 2 must remain an error")?;
+        assert!(message.contains("exited 2"), "{message}");
         Ok(())
     }
 
@@ -2378,7 +2642,6 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(unix)]
     fn recording_run(root: &Path) -> PacketRun {
         PacketRun {
             root: root.to_path_buf(),
@@ -2621,6 +2884,138 @@ mod tests {
         assert!(
             diff.contains("vendor/lib"),
             "gitlink bump was hidden: {diff:?}"
+        );
+        Ok(())
+    }
+
+    /// Build a two-commit repository, then a depth-1 clone of it: what a
+    /// default `actions/checkout` produces. Returns `(scratch, full, shallow)`.
+    fn full_and_shallow_clone(label: &str) -> Result<(PathBuf, PathBuf, PathBuf), String> {
+        let scratch = std::env::temp_dir().join(format!(
+            "ripr-ci-packet-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0)
+        ));
+        let full = scratch.join("full");
+        fs::create_dir_all(&full).map_err(|e| e.to_string())?;
+        let git = |root: &Path, args: &[&str]| -> Result<String, String> {
+            crate::git::run_git(root, args).map_err(|err| err.to_string())
+        };
+        git(&full, &["init", "--initial-branch=main"])?;
+        git(&full, &["config", "user.email", "ripr@example.invalid"])?;
+        git(&full, &["config", "user.name", "ripr test"])?;
+        git(&full, &["config", "commit.gpgSign", "false"])?;
+        fs::write(full.join("a.txt"), "one\n").map_err(|e| e.to_string())?;
+        git(&full, &["add", "a.txt"])?;
+        git(&full, &["commit", "-m", "base"])?;
+        fs::write(full.join("a.txt"), "two\n").map_err(|e| e.to_string())?;
+        git(&full, &["commit", "-am", "change"])?;
+        // A pull request checkout fetches the head branch only, so the base
+        // branch (`main`) never exists as `origin/main` in the clone.
+        git(&full, &["checkout", "--quiet", "-b", "feature"])?;
+        let url = format!("file://{}", full.display());
+        git(
+            &scratch,
+            &[
+                "clone", "--quiet", "--depth", "1", "--branch", "feature", &url, "shallow",
+            ],
+        )?;
+        let shallow = scratch.join("shallow");
+        Ok((scratch, full, shallow))
+    }
+
+    fn capture_error(root: &Path, base_ref: &str) -> String {
+        let mut run = recording_run(root);
+        run.recorded = None;
+        run.settings.base_ref = base_ref.to_string();
+        run.capture_pull_request_diff().err().unwrap_or_default()
+    }
+
+    /// The default `actions/checkout` is a depth-1 clone with no base branch.
+    /// The failing step must name that cause and the `fetch-depth: 0` repair,
+    /// not Git's raw `Needed a single revision` (the `ripr check` wording).
+    #[test]
+    fn missing_base_in_a_shallow_checkout_names_fetch_depth() -> Result<(), String> {
+        let (scratch, _full, shallow) = full_and_shallow_clone("shallow-base")?;
+        let message = capture_error(&shallow, "main");
+        let _ = fs::remove_dir_all(&scratch);
+        assert!(
+            message.contains("`origin/main` is not in this checkout"),
+            "{message}"
+        );
+        assert!(message.contains("most likely a shallow clone"), "{message}");
+        assert!(message.contains("`fetch-depth: 0`"), "{message}");
+        assert!(
+            message
+                .contains("fetch --unshallow origin '+refs/heads/main:refs/remotes/origin/main'"),
+            "{message}"
+        );
+        assert!(
+            !message.contains("git fetch origin main"),
+            "a shallow clone is repaired by fetch-depth, not a one-branch fetch: {message}"
+        );
+        Ok(())
+    }
+
+    /// An empty `GITHUB_BASE_REF` makes the base `origin/`; advice must not
+    /// tell the reader to `git fetch origin ` with no branch.
+    #[test]
+    fn empty_base_ref_names_the_missing_event_not_a_blank_branch() -> Result<(), String> {
+        let (scratch, full, shallow) = full_and_shallow_clone("empty-base")?;
+        let messages = [capture_error(&full, ""), capture_error(&shallow, "")];
+        let _ = fs::remove_dir_all(&scratch);
+        for message in messages {
+            assert!(message.contains("GITHUB_BASE_REF is empty"), "{message}");
+            assert!(!message.contains("git fetch origin "), "{message}");
+            assert!(!message.contains("refs/heads/:"), "{message}");
+        }
+        Ok(())
+    }
+
+    /// Discriminating negative: a complete repository with a mistyped base is
+    /// not a shallow clone, so it must get the fetch advice and never the
+    /// shallow diagnosis.
+    #[test]
+    fn missing_base_in_a_full_checkout_names_the_fetch_not_a_shallow_clone() -> Result<(), String> {
+        let (scratch, full, _shallow) = full_and_shallow_clone("full-base")?;
+        let message = capture_error(&full, "no-such-branch");
+        let _ = fs::remove_dir_all(&scratch);
+        assert!(
+            message.contains("`origin/no-such-branch` is not in this checkout"),
+            "{message}"
+        );
+        assert!(
+            message.contains(
+                "git fetch origin '+refs/heads/no-such-branch:refs/remotes/origin/no-such-branch'"
+            ),
+            "{message}"
+        );
+        assert!(!message.contains("shallow clone"), "{message}");
+        Ok(())
+    }
+
+    /// The branch comes from the event payload; an apostrophe must not close
+    /// the quoted refspec and leave the rest as shell syntax.
+    #[test]
+    fn missing_base_with_an_awkward_branch_name_is_shell_escaped() -> Result<(), String> {
+        let (scratch, full, _shallow) = full_and_shallow_clone("quote-base")?;
+        let message = capture_error(&full, "feat/it's");
+        let _ = fs::remove_dir_all(&scratch);
+        let escaped = shell_arg(&base_fetch_refspec("feat/it's"));
+        assert_ne!(
+            escaped, "'+refs/heads/feat/it's:refs/remotes/origin/feat/it's'",
+            "escaping must change a branch containing an apostrophe"
+        );
+        assert!(
+            message.contains(&format!("git fetch origin {escaped}")),
+            "{message}"
+        );
+        assert!(
+            !message.contains("origin '+refs/heads/feat/it's:"),
+            "unescaped apostrophe: {message}"
         );
         Ok(())
     }

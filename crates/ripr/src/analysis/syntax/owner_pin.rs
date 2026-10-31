@@ -389,6 +389,11 @@ pub(crate) struct MacroBindingSite {
     /// or a non-exported definition. Exported definitions, `pub` imports,
     /// opaque macro arguments and unparsed files may reach other crates.
     pub(crate) crate_local: bool,
+    /// An unscoped private `use` glob: visible only in this file's module and
+    /// the modules declared beneath it, even though `scope` is `None`. A
+    /// consumer that can establish the file's module ancestry may confine the
+    /// site to those descendants; one that cannot treats it as workspace-wide.
+    pub(crate) module_local: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -734,6 +739,7 @@ fn macro_binding_ambiguity_sets(
             kind: MacroBindingKind::Unparsed,
             scope: None,
             crate_local: false,
+            module_local: false,
         };
         let union: NamedMacroSites = trusted
             .iter()
@@ -791,6 +797,7 @@ fn macro_binding_sites_in_tree(
                         kind: kind.clone(),
                         scope: None,
                         crate_local,
+                        module_local: false,
                     },
                 )
             })
@@ -861,7 +868,13 @@ fn macro_binding_sites_in_tree(
     for node in &binding_free.site_nodes {
         // `extern crate other as std;` at a crate root rebinds the name for
         // every file, so a standard-root glob elsewhere cannot be trusted.
-        if let Some(rename) = ast::ExternCrate::cast(node.clone()).and_then(|k| k.rename())
+        // `extern crate self as std;` names this crate, whose exported macros
+        // the workspace scan already reports, so it imports nothing foreign.
+        if let Some(krate) = ast::ExternCrate::cast(node.clone())
+            && krate
+                .name_ref()
+                .is_some_and(|name| name.text().trim_start_matches("r#") != "self")
+            && let Some(rename) = krate.rename()
             && rename.name().is_some_and(|name| {
                 matches!(
                     name.text().trim_start_matches("r#"),
@@ -881,6 +894,7 @@ fn macro_binding_sites_in_tree(
                     kind: MacroBindingKind::Import,
                     scope: None,
                     crate_local: false,
+                    module_local: false,
                 },
             ));
         }
@@ -902,6 +916,7 @@ fn macro_binding_sites_in_tree(
                         kind: MacroBindingKind::Definition,
                         scope,
                         crate_local: !is_exported_macro(node),
+                        module_local: false,
                     },
                 ));
             }
@@ -953,6 +968,7 @@ fn macro_binding_sites_in_tree(
                         kind: MacroBindingKind::MacroBody(macro_name.clone()),
                         scope: None,
                         crate_local,
+                        module_local: false,
                     },
                 ));
             }
@@ -1071,6 +1087,7 @@ fn macro_binding_sites_in_tree(
                             kind: MacroBindingKind::MacroArgument(path.syntax().text().to_string()),
                             scope: None,
                             crate_local: false,
+                            module_local: false,
                         },
                     ));
                 }
@@ -1192,7 +1209,39 @@ fn macro_binding_sites_in_tree(
                     let path = import.syntax().text().to_string();
                     let line = line_of(node);
                     let Some(scope) = scope_of(import_scope(&import)) else {
-                        ambiguous.extend(all(line, MacroBindingKind::ForeignGlob(path), private));
+                        // A private file-level glob is visible only in this
+                        // module and its descendants (`module_local`). Its
+                        // descendants are the modules this file declares, so
+                        // every out-of-line declaration must resolve to an
+                        // indexed file; one that does not may lead to a test
+                        // the module edges cannot place beneath this file.
+                        let confined = private
+                            && import
+                                .syntax()
+                                .ancestors()
+                                .last()
+                                .into_iter()
+                                .flat_map(|root| root.descendants())
+                                .filter_map(ast::Module::cast)
+                                .filter(|module| module.item_list().is_none())
+                                .all(|module| {
+                                    module.mod_token().zip(module.name()).is_some_and(
+                                        |(token, name)| {
+                                            let line = lines
+                                                .get_or_init(|| LineIndex::new(source))
+                                                .line(token.text_range().start());
+                                            module_resolved(line, &format!("mod {};", name.text()))
+                                        },
+                                    )
+                                });
+                        ambiguous.extend(
+                            all(line, MacroBindingKind::ForeignGlob(path), private)
+                                .into_iter()
+                                .map(|(name, mut site)| {
+                                    site.module_local = confined;
+                                    (name, site)
+                                }),
+                        );
                         continue;
                     };
                     ambiguous.extend(trusted.iter().map(|name| {
@@ -1203,6 +1252,7 @@ fn macro_binding_sites_in_tree(
                                 kind: MacroBindingKind::ForeignGlob(path.clone()),
                                 scope: Some(scope),
                                 crate_local: private,
+                                module_local: false,
                             },
                         )
                     }));
@@ -1240,6 +1290,7 @@ fn macro_binding_sites_in_tree(
                                 kind,
                                 scope: scope_of(import_scope(&import)),
                                 crate_local: private,
+                                module_local: false,
                             },
                         ));
                     }
@@ -1326,6 +1377,7 @@ fn macro_binding_sites_in_tree(
                             kind: MacroBindingKind::MacroArgument(path.clone()),
                             scope: None,
                             crate_local: false,
+                            module_local: false,
                         },
                     ));
                 }
@@ -2230,6 +2282,61 @@ pub(crate) fn debug_assert_eq_calls(source: &str) -> Vec<(usize, String)> {
 }
 
 pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAssertions {
+    owner_pin_assertions_with_matches(source, trusted, false)
+}
+
+/// The same execution authority for return/error `assert!(matches!(..))`.
+/// A sole assertion can discriminate through an expected panic's inverted
+/// success condition. This establishes execution only, never a value pin.
+pub(crate) fn owner_pin_matches_assertions(source: &str, trusted: &[&str]) -> OwnerPinAssertions {
+    owner_pin_assertions_with_matches(source, trusted, true)
+}
+
+fn matches_preserves_assertion_execution(attr: &ast::Attr, function: &ast::Fn) -> bool {
+    if let Some(ast::Meta::CfgAttrMeta(meta)) = attr.meta()
+        && meta.metas().next().is_some()
+        && let Some(condition) = meta.cfg_predicate()
+        && attribute_test_build_availability(&format!("#[cfg({})]", condition.syntax().text()))
+            == Some(false)
+    {
+        return true;
+    }
+    if attr.simple_name().as_deref() != Some("should_panic") {
+        return false;
+    }
+    let Some(list) = function.body().and_then(|body| body.stmt_list()) else {
+        return false;
+    };
+    if list.tail_expr().is_some() {
+        return false;
+    }
+    let mut statements = list.statements();
+    let (Some(ast::Stmt::ExprStmt(statement)), None) = (statements.next(), statements.next())
+    else {
+        return false;
+    };
+    let Some(ast::Expr::MacroExpr(expression)) = statement.expr() else {
+        return false;
+    };
+    let Some(call) = expression.macro_call() else {
+        return false;
+    };
+    call.path()
+        .and_then(|path| path.segment())
+        .and_then(|segment| segment.name_ref())
+        .is_some_and(|name| name.text() == "assert")
+        && invoked_macro_names(call.syntax())
+            .iter()
+            .map(|path| path.rsplit("::").next().unwrap_or(path))
+            .collect::<BTreeSet<_>>()
+            == BTreeSet::from(["assert", "matches"])
+}
+
+fn owner_pin_assertions_with_matches(
+    source: &str,
+    trusted: &[&str],
+    matches_context: bool,
+) -> OwnerPinAssertions {
     let mut result = OwnerPinAssertions::default();
     let Some(parse) = parse_clean_source_file(source) else {
         return result;
@@ -2305,10 +2412,10 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
         *identities.entry(key.clone()).or_default() += 1;
         // An outcome-settling attribute is named first wherever it sits: it
         // is evidence of a gap, which RIPR-SPEC-0240 must not withhold.
-        let refusal = if let Some(attr) = function
-            .attrs()
-            .find(|attr| attribute_settles_test_outcome(&attr.syntax().text().to_string()))
-        {
+        let refusal = if let Some(attr) = function.attrs().find(|attr| {
+            attribute_settles_test_outcome(&attr.syntax().text().to_string())
+                && !(matches_context && matches_preserves_assertion_execution(attr, &function))
+        }) {
             Some(AssertionContextRefusal::TestAttribute(
                 attr.syntax().text().to_string(),
             ))
@@ -2318,13 +2425,18 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                 .any(|attr| tokio_test_runs_body(&attr, function.syntax()))
         {
             Some(AssertionContextRefusal::AsyncTest)
-        } else if let Some(refusal) = has_escape(body.syntax(), trusted, &empty_macros, &json_uses)
-        {
+        } else if let Some(refusal) = has_escape(
+            body.syntax(),
+            trusted,
+            &empty_macros,
+            &json_uses,
+            matches_context,
+        ) {
             Some(refusal)
-        } else if let Some(attr) = function
-            .attrs()
-            .find(|attr| !runs_body_unchanged(attr, function.syntax()))
-        {
+        } else if let Some(attr) = function.attrs().find(|attr| {
+            !(runs_body_unchanged(attr, function.syntax())
+                || matches_context && matches_preserves_assertion_execution(attr, &function))
+        }) {
             Some(AssertionContextRefusal::TestAttribute(
                 attr.syntax().text().to_string(),
             ))
@@ -2342,6 +2454,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                     &empty_macros,
                     &json_uses,
                     COMPARISON_NESTED_MACROS,
+                    false,
                 )
                 .is_none()
                 && function
@@ -2995,7 +3108,7 @@ fn plain_check_helper(
         && !body.syntax().descendants().any(|node| {
             ast::ReturnExpr::can_cast(node.kind()) || ast::TryExpr::can_cast(node.kind())
         })
-        && has_escape(body.syntax(), trusted, empty_macros, json_uses).is_none()
+        && has_escape(body.syntax(), trusted, empty_macros, json_uses, false).is_none()
         && supported_item_context(helper.syntax())
 }
 
@@ -4325,8 +4438,9 @@ fn has_escape(
     trusted: &[&str],
     empty: &BTreeMap<String, ast::MacroRules>,
     json_uses: &[ast::Use],
+    qualified_matches: bool,
 ) -> Option<AssertionContextRefusal> {
-    has_escape_among(body, trusted, empty, json_uses, &[])
+    has_escape_among(body, trusted, empty, json_uses, &[], qualified_matches)
 }
 
 /// [`has_escape`] with `plain_nested` names also read as plain nested
@@ -4337,6 +4451,7 @@ fn has_escape_among(
     empty: &BTreeMap<String, ast::MacroRules>,
     json_uses: &[ast::Use],
     plain_nested: &[&str],
+    qualified_matches: bool,
 ) -> Option<AssertionContextRefusal> {
     body.descendants().find_map(|node| {
         if let Some(call) = ast::MacroCall::cast(node.clone()) {
@@ -4367,6 +4482,7 @@ fn has_escape_among(
                     &tree,
                     trusted.contains(&"json") && json_visible,
                     plain_nested,
+                    qualified_matches,
                 )
             }) {
                 return Some(AssertionContextRefusal::MacroOperandExit(path));
@@ -4403,17 +4519,18 @@ fn has_escape_among(
 /// (#9981) gates its credit on this before copying any facts, so diff output
 /// and the repo-exposure consumer agree on what may have exited.
 pub(crate) fn node_has_macro_escape(node: &SyntaxNode) -> bool {
-    has_escape(node, TRUSTED_MACRO_NAMES, &BTreeMap::new(), &[]).is_some()
+    has_escape(node, TRUSTED_MACRO_NAMES, &BTreeMap::new(), &[], false).is_some()
 }
 
 fn opaque_macro_operand(tree: &ast::TokenTree) -> bool {
-    opaque_macro_operand_with_json(tree, false, &[])
+    opaque_macro_operand_with_json(tree, false, &[], false)
 }
 
 fn opaque_macro_operand_with_json(
     tree: &ast::TokenTree,
     literal_json: bool,
     plain_nested: &[&str],
+    qualified_matches: bool,
 ) -> bool {
     let tokens = operand_tokens(tree);
     tokens.iter().any(|token| {
@@ -4421,11 +4538,15 @@ fn opaque_macro_operand_with_json(
             token.text(),
             "return" | "break" | "continue" | "yield" | "?"
         )
-    }) || nested_invocations(&tokens).any(|(name, plain)| {
+    }) || nested_invocation_sites(&tokens).any(|(at, name, plain)| {
         !(plain
             && (NESTED_EXPANSIONS.contains(&name)
                 || plain_nested.contains(&name)
-                || name == "json" && literal_json))
+                || name == "json" && literal_json)
+            || qualified_matches
+                && name == "matches"
+                && qualified_matches_path(&tokens, at)
+                    .is_some_and(|path| std_macro_root_is_unrebound(&path, tree.syntax())))
     }) || tokens.windows(3).enumerate().any(|(at, window)| {
         window[0].text() == "json"
             && window[1].text() == "!"
@@ -4460,6 +4581,12 @@ fn operand_tokens(tree: &ast::TokenTree) -> Vec<ra_ap_syntax::SyntaxToken> {
 fn nested_invocations(
     tokens: &[ra_ap_syntax::SyntaxToken],
 ) -> impl Iterator<Item = (&str, bool)> + '_ {
+    nested_invocation_sites(tokens).map(|(_, name, plain)| (name, plain))
+}
+
+fn nested_invocation_sites(
+    tokens: &[ra_ap_syntax::SyntaxToken],
+) -> impl Iterator<Item = (usize, &str, bool)> + '_ {
     tokens
         .windows(3)
         .enumerate()
@@ -4482,8 +4609,37 @@ fn nested_invocations(
             };
             let qualified =
                 before(1) == Some("::") || (before(1) == Some(":") && before(2) == Some(":"));
-            Some((name.text(), !qualified))
+            Some((at, name.text(), !qualified))
         })
+}
+
+fn qualified_matches_path(tokens: &[ra_ap_syntax::SyntaxToken], at: usize) -> Option<String> {
+    let prefix: Vec<_> = tokens[..at]
+        .iter()
+        .rev()
+        .take_while(|token| {
+            token.kind() == ra_ap_syntax::SyntaxKind::IDENT || matches!(token.text(), ":" | "::")
+        })
+        .collect();
+    let prefix: String = prefix.into_iter().rev().map(|token| token.text()).collect();
+    matches!(prefix.as_str(), "std::" | "core::" | "::std::" | "::core::")
+        .then(|| format!("{prefix}matches"))
+}
+
+/// Qualified nested matches! calls need the same workspace root proof as
+/// the enclosing assertion, in addition to the file-local escape check.
+pub(crate) fn qualified_matches_paths(root: &SyntaxNode) -> BTreeSet<String> {
+    root.descendants()
+        .filter_map(ast::MacroCall::cast)
+        .filter_map(|call| call.token_tree())
+        .flat_map(|tree| {
+            let tokens = operand_tokens(&tree);
+            nested_invocation_sites(&tokens)
+                .filter(|(_, name, plain)| *name == "matches" && !plain)
+                .filter_map(|(at, _, _)| qualified_matches_path(&tokens, at))
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 /// The macros `node` invokes: every macro call's path, plus every name

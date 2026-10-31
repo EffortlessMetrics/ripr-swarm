@@ -11,7 +11,7 @@ fn changed(path: &str) -> ChangedFile {
     }
 }
 
-fn test_owner(name: &str, file: &str) -> TypeScriptOwner {
+pub(super) fn test_owner(name: &str, file: &str) -> TypeScriptOwner {
     TypeScriptOwner {
         name: name.to_string(),
         file: PathBuf::from(file),
@@ -120,7 +120,7 @@ fn smoke_assertion() -> TypeScriptAssertion {
     }
 }
 
-fn weak_direct_test_for(owner_name: &str) -> TypeScriptTest {
+pub(super) fn weak_direct_test_for(owner_name: &str) -> TypeScriptTest {
     TypeScriptTest {
         name: format!("{owner_name} smoke"),
         local_name: format!("{owner_name} smoke"),
@@ -136,6 +136,7 @@ fn weak_direct_test_for(owner_name: &str) -> TypeScriptTest {
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -207,6 +208,7 @@ fn mock_interaction_test_for(owner_name: &str) -> TypeScriptTest {
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -223,7 +225,7 @@ fn mock_interaction_test_for(owner_name: &str) -> TypeScriptTest {
     }
 }
 
-fn direct_test_with_assertion(
+pub(super) fn direct_test_with_assertion(
     test_name: &str,
     owner_name: &str,
     body_text: impl Into<String>,
@@ -264,6 +266,7 @@ fn direct_test_with_assertion(
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -315,6 +318,7 @@ fn heuristic_name_test_for(owner_name: &str) -> TypeScriptTest {
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -341,7 +345,7 @@ fn classify_weak_direct_line(line_text: &str) -> Result<Finding, String> {
     .ok_or_else(|| "expected TypeScript preview finding".to_string())
 }
 
-fn missing_discriminator_values(finding: &Finding) -> Vec<String> {
+pub(super) fn missing_discriminator_values(finding: &Finding) -> Vec<String> {
     finding
         .activation
         .missing_discriminators
@@ -1881,6 +1885,7 @@ fn find_related_tests_matches_by_call_name() {
             identity_helpers_in_file: Default::default(),
             default_member_only_locals_in_file: Default::default(),
             written_locals_in_file: Default::default(),
+            member_replacements_in_file: Default::default(),
             mock_factories_in_file: Default::default(),
             mock_spread_sources_in_file: Default::default(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -1905,6 +1910,7 @@ fn find_related_tests_matches_by_call_name() {
             identity_helpers_in_file: Default::default(),
             default_member_only_locals_in_file: Default::default(),
             written_locals_in_file: Default::default(),
+            member_replacements_in_file: Default::default(),
             mock_factories_in_file: Default::default(),
             mock_spread_sources_in_file: Default::default(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -1956,6 +1962,7 @@ fn find_related_tests_ignores_object_method_calls_for_function_owners() {
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -3706,6 +3713,7 @@ fn find_related_tests_ignores_call_shaped_string_mentions() {
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -3758,6 +3766,7 @@ fn find_related_tests_ignores_call_shaped_comment_mentions() {
             identity_helpers_in_file: Default::default(),
             default_member_only_locals_in_file: Default::default(),
             written_locals_in_file: Default::default(),
+            member_replacements_in_file: Default::default(),
             mock_factories_in_file: Default::default(),
             mock_spread_sources_in_file: Default::default(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -3781,6 +3790,7 @@ fn find_related_tests_ignores_call_shaped_comment_mentions() {
             identity_helpers_in_file: Default::default(),
             default_member_only_locals_in_file: Default::default(),
             written_locals_in_file: Default::default(),
+            member_replacements_in_file: Default::default(),
             mock_factories_in_file: Default::default(),
             mock_spread_sources_in_file: Default::default(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -4025,6 +4035,7 @@ fn classify_change_returns_weakly_exposed_when_related_test_exists() -> Result<(
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -4377,6 +4388,7 @@ fn classify_change_labels_javascript_sources_separately() -> Result<(), String> 
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -4463,6 +4475,7 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             identity_helpers_in_file: Default::default(),
             default_member_only_locals_in_file: Default::default(),
             written_locals_in_file: Default::default(),
+            member_replacements_in_file: Default::default(),
             mock_factories_in_file: Default::default(),
             mock_spread_sources_in_file: Default::default(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -4486,6 +4499,7 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             identity_helpers_in_file: Default::default(),
             default_member_only_locals_in_file: Default::default(),
             written_locals_in_file: Default::default(),
+            member_replacements_in_file: Default::default(),
             mock_factories_in_file: Default::default(),
             mock_spread_sources_in_file: Default::default(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -5319,6 +5333,7 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -5416,6 +5431,7 @@ fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -6735,6 +6751,73 @@ fn classify_probe_shape_reads_a_returned_ternary_as_its_condition_boundary() {
     }
 }
 
+/// #11256: a quoted operand is one operand, and an operator inside a string
+/// literal is no comparison.
+#[test]
+fn boundary_discriminator_is_faithful_or_withheld() {
+    // A plain quoted literal is named whole.
+    assert_eq!(
+        typescript_boundary_discriminator("  if (arg === \"stop\") {").as_deref(),
+        Some("arg == \"stop\"")
+    );
+    assert_eq!(
+        typescript_boundary_discriminator("  if (\"stop\" === arg) {").as_deref(),
+        Some("\"stop\" == arg")
+    );
+    // A literal holding `-` or a space was cut at that character (`arg == "`).
+    for line in [
+        "  if (arg !== \"--\") {",
+        "  if (\"--\" === arg) {",
+        "  if (mode === \"a b\") {",
+        "  if (mode === 'a-b') {",
+        "  if (mode === \"unterminated) {",
+    ] {
+        assert_eq!(typescript_boundary_discriminator(line), None, "{line}");
+    }
+    // A comparison-looking operator inside a string, or an arrow, is not a
+    // second comparison.
+    assert_eq!(
+        typescript_boundary_discriminator("  if (total >= 100 && ready) {").as_deref(),
+        Some("total == 100")
+    );
+    assert_eq!(
+        typescript_boundary_discriminator("  if (kind === \"a>=b\") {").as_deref(),
+        None,
+        "an unsimple literal is withheld"
+    );
+    assert_eq!(
+        typescript_boundary_discriminator("  if (kind === \"ab\" && ok) {").as_deref(),
+        Some("kind == \"ab\"")
+    );
+    // Through the changed-comparison selection the production path uses: the
+    // `--` edit names no discriminator (it was `arg == "`), and the compound
+    // edit names its own comparison, not the neighbouring `typeof` test.
+    let narrowed = |old: &str, new: &str| {
+        typescript_boundary_discriminator(&typescript_changed_boundary_text(
+            Path::new("src/_parser.ts"),
+            &ProbeFamily::Predicate,
+            Some(old),
+            new,
+        ))
+    };
+    assert_eq!(
+        narrowed("    if (arg === \"--\") {", "    if (arg !== \"--\") {"),
+        None
+    );
+    assert_eq!(
+        narrowed("    if (arg === \"stop\") {", "    if (arg !== \"stop\") {").as_deref(),
+        Some("arg == \"stop\"")
+    );
+    assert_eq!(
+        narrowed(
+            "    if (type === \"boolean\" && typeof value === \"string\") {",
+            "    if (type !== \"boolean\" && typeof value === \"string\") {"
+        )
+        .as_deref(),
+        Some("type == \"boolean\"")
+    );
+}
+
 #[test]
 fn boundary_discriminator_reads_the_condition_of_a_one_line_guard_statement() {
     // `if (cond) return x;` is the same boundary as the braced form; the
@@ -7417,6 +7500,7 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
             identity_helpers_in_file: Default::default(),
             default_member_only_locals_in_file: Default::default(),
             written_locals_in_file: Default::default(),
+            member_replacements_in_file: Default::default(),
             mock_factories_in_file: Default::default(),
             mock_spread_sources_in_file: Default::default(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -7446,6 +7530,7 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
             identity_helpers_in_file: Default::default(),
             default_member_only_locals_in_file: Default::default(),
             written_locals_in_file: Default::default(),
+            member_replacements_in_file: Default::default(),
             mock_factories_in_file: Default::default(),
             mock_spread_sources_in_file: Default::default(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -7509,6 +7594,7 @@ fn collect_related_mock_paths_ignores_unrelated_tests() {
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -7565,6 +7651,7 @@ fn collect_related_mock_paths_ignores_object_method_mentions() {
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -7622,6 +7709,7 @@ fn classify_change_surfaces_mocked_module_static_limit_in_missing_and_evidence()
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -7720,6 +7808,7 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -7865,6 +7954,7 @@ fn named_limitation_mock_only_observer_emitted_for_mocked_module_static_limit() 
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -7975,6 +8065,7 @@ fn named_limitation_import_graph_unresolved_emitted_for_missing_import_graph() -
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -8239,6 +8330,7 @@ fn named_limitation_oracle_based_not_emitted_for_heuristic_only_relation() -> Re
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -8657,17 +8749,18 @@ fn ava_reference_equality_array_literal_stays_dynamic() {
     }
 }
 
-/// Jest: `toEqual` / `toStrictEqual` accept an all-literal array (including
-/// `[]`); `toBe` / `toMatchObject` and arrays holding a non-literal such as
+/// Jest: `toEqual` / `toStrictEqual` / `toMatchObject` accept an all-literal
+/// array (including `[]`); `toBe` and arrays holding a non-literal such as
 /// `[-x]` stay dynamic.
 #[test]
-fn jest_array_expected_values_are_literal_only_for_deep_equality() {
+fn jest_array_expected_values_are_literal_for_equality_matchers() {
     for (call, dynamic) in [
         ("expect(f(1)).toEqual([1, 2])", false),
         ("expect(f(1)).toStrictEqual([1, 'a', [2]])", false),
         ("expect(f(1)).toEqual([])", false),
         ("expect(f(1)).toBe([1])", true),
-        ("expect(f(1)).toMatchObject([1])", true),
+        // #11255: `toMatchObject` takes an all-literal container too.
+        ("expect(f(1)).toMatchObject([1])", false),
         ("expect(f(1)).toEqual([-x])", true),
         ("expect(f(1)).toEqual([1, y])", true),
     ] {
@@ -8850,6 +8943,7 @@ fn named_limitation_dynamic_assertion_emitted_for_dynamic_matcher_arg() -> Resul
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -8938,6 +9032,7 @@ fn named_limitation_dynamic_assertion_not_emitted_for_other_family_assertion() -
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -9010,6 +9105,7 @@ fn named_limitation_dynamic_assertion_emitted_for_error_family_assertion_on_erro
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -9079,6 +9175,7 @@ fn named_limitation_table_case_emitted_for_table_dynamic_matcher_arg() -> Result
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -9164,6 +9261,7 @@ fn named_limitation_dynamic_assertion_not_emitted_for_heuristic_only_relation() 
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -9353,6 +9451,7 @@ fn package_local_filter_selects_same_package_test() {
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -9449,6 +9548,7 @@ fn package_local_filter_rejects_cross_package_test() {
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -9501,6 +9601,7 @@ fn package_local_filter_admits_cross_package_test_importing_owner_file() -> Resu
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -9574,6 +9675,7 @@ fn cross_package_constructor_requires_owner_class_import() -> Result<(), String>
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -9807,6 +9909,7 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -9831,6 +9934,7 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -9913,6 +10017,7 @@ fn unresolved_ownership_import_branch_with_relative_paths() -> Result<(), String
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -10054,6 +10159,7 @@ fn named_limitation_target_unresolved_not_emitted_for_same_package() -> Result<(
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -10168,6 +10274,7 @@ fn ts_swallowed_console_log_exposed_downgrade() -> Result<(), String> {
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -10280,6 +10387,7 @@ fn ts_returnvalue_genuinely_observed_control() -> Result<(), String> {
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -10385,6 +10493,7 @@ fn ts_returnvalue_unrelated_strong_assertion_downgrades() -> Result<(), String> 
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -10490,6 +10599,7 @@ fn ts_returnvalue_owner_call_observation_stays_exposed() -> Result<(), String> {
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -10593,6 +10703,7 @@ fn ts_returnvalue_owner_aliased_local_observation_stays_exposed() -> Result<(), 
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -10696,6 +10807,7 @@ fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -10820,6 +10932,7 @@ fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -10917,6 +11030,7 @@ fn ts_field_construction_observed_control() -> Result<(), String> {
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -11021,6 +11135,7 @@ fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), St
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -11195,6 +11310,7 @@ fn ts_side_effect_observed_by_mock_expectation_stays_exposed() -> Result<(), Str
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -11300,6 +11416,7 @@ fn ts_side_effect_includes_template_word_does_not_confirm() -> Result<(), String
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -11436,6 +11553,7 @@ fn tsconfig_alias_resolution_flag_on_credits_test_as_exposed() -> Result<(), Str
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -11525,6 +11643,7 @@ fn tsconfig_alias_resolution_flag_off_stays_no_static_path_with_disclosure() -> 
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -11616,6 +11735,7 @@ fn unresolved_alias_import_names_the_import_in_no_reach_text() -> Result<(), Str
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -11927,6 +12047,7 @@ fn tsconfig_alias_resolution_multi_entry_value_fails_closed() -> Result<(), Stri
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -12012,6 +12133,7 @@ fn tsconfig_alias_non_owner_import_emits_no_limitation() -> Result<(), String> {
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -12090,6 +12212,7 @@ fn tsconfig_alias_default_import_local_name_mismatch_emits_no_limitation() -> Re
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -12165,6 +12288,7 @@ fn tsconfig_alias_default_import_local_name_match_emits_limitation() -> Result<(
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -12241,6 +12365,7 @@ fn tsconfig_alias_advice_names_map_unavailable_cause() -> Result<(), String> {
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -12333,6 +12458,7 @@ fn tsconfig_alias_advice_names_unmatched_pattern_cause() -> Result<(), String> {
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -12426,6 +12552,7 @@ fn tsconfig_alias_advice_names_unresolved_candidate_cause() -> Result<(), String
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -12528,6 +12655,7 @@ fn tsconfig_alias_advice_names_absolute_base_url_cause() -> Result<(), String> {
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -12635,6 +12763,7 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -12683,6 +12812,7 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -12789,6 +12919,7 @@ fn spec_0104_no_over_correct_return_value_with_exact_value_stays_exposed() -> Re
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -12890,6 +13021,7 @@ fn spec_0104_no_over_correct_error_path_with_exact_error_variant_stays_exposed()
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -13024,6 +13156,7 @@ fn spec_0104_single_test_both_assertions_retains_matching_family_assertion_stays
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -13920,6 +14053,7 @@ fn parse_limit_owner_and_exact_value_test() -> (TypeScriptOwner, TypeScriptTest)
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -14002,7 +14136,7 @@ fn oracle_metadata_is_kept_for_a_matching_family_assertion() -> Result<(), Strin
 
 // ── RIPR-SPEC-0027: predicate boundary witness ───────────────────────────────
 
-fn exact_value_test(owner_name: &str, observed: &str, expected: &str) -> TypeScriptTest {
+pub(super) fn exact_value_test(owner_name: &str, observed: &str, expected: &str) -> TypeScriptTest {
     TypeScriptTest {
         name: format!("{owner_name} {observed}"),
         local_name: format!("{owner_name} {observed}"),
@@ -14035,6 +14169,7 @@ fn exact_value_test(owner_name: &str, observed: &str, expected: &str) -> TypeScr
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -14960,7 +15095,7 @@ fn overcredit_4103_spy_fabrication_must_be_tied_to_owner_spy() -> Result<(), Str
 /// 90) and `return total;` (unchanged behavior there: 100). These are the
 /// extraction-populated facts the witness needs for position/arity matching
 /// and expected-side liveness.
-fn boundary_witness_owner() -> TypeScriptOwner {
+pub(super) fn boundary_witness_owner() -> TypeScriptOwner {
     TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
@@ -14993,7 +15128,7 @@ fn boundary_witness_owner() -> TypeScriptOwner {
     }
 }
 
-fn classify_boundary_line_for_owner(
+pub(super) fn classify_boundary_line_for_owner(
     owner: &TypeScriptOwner,
     line_text: &str,
     tests: &[TypeScriptTest],
@@ -19819,6 +19954,7 @@ mod comparison_edit_tests;
 mod custom_matcher_tests;
 mod decorated_reach_tests;
 mod default_object_member_tests;
+mod derived_operand_tests;
 mod directory_specifier_tests;
 mod dropped_term_tests;
 mod enum_member_tests;
@@ -19828,7 +19964,12 @@ mod gap_reach_config_tests;
 mod guard_entry_tests;
 mod infection_tests;
 mod instance_class_tests;
+mod instance_factory_tests;
+mod issue10925_alias_resolution_tests;
+mod issue10925_shadow_index_tests;
+mod issue10925_shadow_scan_tests;
 mod issue7507_shadow_tests;
+mod literal_container_tests;
 mod literal_matcher_tests;
 mod lookup_table_tests;
 mod loop_count_tests;
@@ -19898,6 +20039,7 @@ fn unresolved_workspace_package_import_names_the_manifest() -> Result<(), String
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -20581,6 +20723,57 @@ fn unrelated_guarded_test_in_a_shared_file_does_not_mark_the_outcome_partial() -
         result.limitations
     );
     let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// RIPR-SPEC-0243 rule 11: a conditional assertion in one test of a shared
+/// test file marks the analysis incomplete only for findings that consulted
+/// that test. `f` is pinned by the unconditional test; `g` rests on the
+/// conditional one.
+#[test]
+fn unrelated_conditional_assertion_in_a_shared_file_does_not_mark_the_outcome_incomplete()
+-> Result<(), String> {
+    let owner = "export function f(a: number): number {\n  return a + 1;\n}\nexport function g(a: number): number {\n  return a * 2;\n}\n";
+    let tests = concat!(
+        "import { f, g } from '../src/calc';\n",
+        "test('g doubles', () => {\n",
+        "  if (ok) {\n",
+        "    expect(g(2)).toBe(4);\n",
+        "  }\n",
+        "});\n",
+        "test('f increments', () => {\n",
+        "  expect(f(1)).toBe(2);\n",
+        "});\n",
+    );
+    let condition_limited = |changed: &[(usize, &str)]| -> Result<bool, String> {
+        let root = ts_unique_tempdir("credit-scope")?;
+        ts_write_file(&root.join("src/calc.ts"), owner)?;
+        ts_write_file(&root.join("tests/mixed.test.ts"), tests)?;
+        let adapter = TypeScriptAdapter;
+        let options = ts_analysis_options(root.clone());
+        let result = adapter.analyze_diff(
+            &options,
+            &OraclePolicy::default(),
+            &[changed_with_lines("src/calc.ts", changed)],
+        )?;
+        assert_eq!(result.findings.len(), 1, "{:?}", result.findings);
+        let limited = result.limitations.iter().any(|limitation| {
+            matches!(
+                limitation.kind,
+                AnalysisLimitationKind::UnevaluatedCondition
+            )
+        });
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(limited)
+    };
+    assert!(
+        !condition_limited(&[(2, "  return a + 1;")])?,
+        "f rests only on the unconditional test, so the conditional in g's test is not its limitation"
+    );
+    assert!(
+        condition_limited(&[(5, "  return a * 2;")])?,
+        "g rests on the conditional test, so the limitation must stay"
+    );
     Ok(())
 }
 

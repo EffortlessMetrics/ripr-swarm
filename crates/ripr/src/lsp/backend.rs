@@ -20,6 +20,7 @@ use super::diagnostics::{
     delivered_diagnostics_for_uri, delivery_omission_diagnostic, diagnostic_refresh_plan,
     take_all_uris, withdrawn_quarantine_diagnostics,
 };
+use super::hover::NoEvidenceState;
 use super::hover::{
     classified_seam_hover_response, diagnostic_at_position, diagnostic_covers_position,
     diagnostic_hover_response, finding_hover_response, hover_response_without_evidence,
@@ -50,17 +51,19 @@ use super::uri::{
 use super::{
     COLLECT_CONTEXT_COMMAND, COLLECT_EVIDENCE_CONTEXT_COMMAND, COLLECT_RECEIPT_STATUS_COMMAND,
     COLLECT_REPAIR_PACKET_COMMAND, COLLECT_TOP_LIMITATION_COMMAND,
-    COLLECT_WORKSPACE_STATUS_COMMAND, REFRESH_COMMAND,
+    COLLECT_WORKSPACE_STATUS_COMMAND, REFRESH_COMMAND, SHOW_RELATED_TEST_COMMAND,
 };
 use crate::agent::loop_commands;
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::cancellation::AnalysisAbortKind;
 use crate::config::{
-    CONFIG_FILE_NAME, LspDiagnosticProfile, PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS,
-    TYPESCRIPT_PROJECT_MARKERS, TYPESCRIPT_SOURCE_DIR_MARKERS, is_detectable_python_source_name,
-    is_detectable_typescript_source_name, is_python_excluded_dir_everywhere,
-    is_typescript_excluded_dir_everywhere, python_project_marker_name,
-    python_source_dir_marker_name, typescript_project_marker_name,
+    CONFIG_FILE_NAME, JAVASCRIPT_LED_MANIFESTS, JAVASCRIPT_LED_SOURCE_DIRS, LspDiagnosticProfile,
+    PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, TYPESCRIPT_PROJECT_MARKERS,
+    TYPESCRIPT_SOURCE_DIR_MARKERS, is_detectable_package_source_name,
+    is_detectable_python_source_name, is_detectable_typescript_source_name,
+    is_python_excluded_dir_everywhere, is_typescript_excluded_dir_everywhere,
+    javascript_led_manifest_name, javascript_led_source_dir_marker_name,
+    python_project_marker_name, python_source_dir_marker_name, typescript_project_marker_name,
     typescript_source_dir_marker_name,
 };
 use crate::domain::{StageEvidence, StageState};
@@ -2554,7 +2557,7 @@ impl Backend {
                         })
                         .collect::<Vec<_>>(),
                     value.analysis_outcome.clone(),
-                    withheld_unknown_summary(value),
+                    withheld_findings_summary(value),
                     value.partial_scope.clone(),
                 )
             })
@@ -3492,13 +3495,22 @@ impl Backend {
             let Some(kind) = self.file_event_workspace_input_kind(event) else {
                 continue;
             };
+            // Package-led JavaScript detection reads only presence, so a
+            // content-only edit of `package.json` or a source file is no
+            // input at all (not even a config reload).
+            if kind == WorkspaceInputKind::JavascriptPackagePresence
+                && event.typ == tower_lsp_server::ls_types::FileChangeType::CHANGED
+            {
+                continue;
+            }
             kinds.config_changed |= kind.reloads_repository_config();
             kinds.workspace_graph_changed |= kind.invalidates_workspace_graph();
             // Source presence only matters when a file appears or disappears;
             // an ordinary save of an existing TypeScript file is not an input.
             kinds.typescript_input_changed |= match kind {
                 WorkspaceInputKind::TypescriptProjectMarker => true,
-                WorkspaceInputKind::TypescriptSourcePresence => {
+                WorkspaceInputKind::TypescriptSourcePresence
+                | WorkspaceInputKind::JavascriptPackagePresence => {
                     event.typ != tower_lsp_server::ls_types::FileChangeType::CHANGED
                 }
                 _ => false,
@@ -3700,18 +3712,41 @@ impl Backend {
         // `ripr.refresh` editor command, and the language list comes from
         // the session configuration instead of a hardcoded `Rust`.
         hover_response_without_evidence(
-            self.has_committed_analysis(),
+            self.no_evidence_state(),
             &self.configured_language_labels(),
         )
     }
 
-    /// Whether any analysis snapshot has committed in this session.
-    fn has_committed_analysis(&self) -> bool {
-        self.latest_analysis
+    /// What the no-evidence hover may say (#11253): a committed snapshot whose
+    /// producer outcome is `no_changed_lines` is a clean workspace against its
+    /// base; with no snapshot, a queued or running attempt means the result is
+    /// on its way rather than missing.
+    fn no_evidence_state(&self) -> NoEvidenceState {
+        let committed = self
+            .latest_analysis
             .lock()
             .ok()
-            .and_then(|value| value.clone())
-            .is_some()
+            .and_then(|value| value.clone());
+        if let Some(snapshot) = committed {
+            let no_changes = snapshot.analysis_outcome.as_ref().is_some_and(|outcome| {
+                outcome.kind == crate::analysis_outcome::AnalysisOutcomeKind::NoChangedLines
+            });
+            return if no_changes {
+                NoEvidenceState::AnalyzedNoChanges {
+                    base: snapshot.base.clone(),
+                }
+            } else {
+                NoEvidenceState::Analyzed
+            };
+        }
+        if matches!(
+            self.analysis_health_snapshot().state,
+            AnalysisAttemptState::Queued | AnalysisAttemptState::Running
+        ) {
+            NoEvidenceState::Analyzing
+        } else {
+            NoEvidenceState::NotAnalyzed
+        }
     }
 
     /// The enabled language labels from the session configuration, for
@@ -4239,6 +4274,11 @@ enum WorkspaceInputKind {
     TypescriptProjectMarker,
     /// Detectable TypeScript source below a root `src`/`tests` directory.
     TypescriptSourcePresence,
+    /// Package-led JavaScript detection input (#11336): root `package.json`,
+    /// or a detectable JS/TS source file at the root or below `src`/`test`/
+    /// `tests`. Presence-only like the source classes: a content-only edit is
+    /// not an input.
+    JavascriptPackagePresence,
     /// Root gap decision ledger or root `.git/HEAD` (#4896): diagnostics
     /// read both on every refresh, but neither is a configuration or
     /// workspace-graph input.
@@ -4253,6 +4293,7 @@ impl WorkspaceInputKind {
                 | Self::PythonSourcePresence
                 | Self::TypescriptProjectMarker
                 | Self::TypescriptSourcePresence
+                | Self::JavascriptPackagePresence
         )
     }
 
@@ -4306,8 +4347,39 @@ fn workspace_input_kind(root: &Path, path: &Path) -> Option<WorkspaceInputKind> 
     if path_is_detectable_source_dir_python(root, path) {
         return Some(WorkspaceInputKind::PythonSourcePresence);
     }
-    path_is_detectable_source_dir_typescript(root, path)
-        .then_some(WorkspaceInputKind::TypescriptSourcePresence)
+    if path_is_detectable_source_dir_typescript(root, path) {
+        return Some(WorkspaceInputKind::TypescriptSourcePresence);
+    }
+    if let Some(manifest) = javascript_led_manifest_name(name)
+        && path_matches_root_file(root, path, manifest)
+    {
+        return Some(WorkspaceInputKind::JavascriptPackagePresence);
+    }
+    path_is_detectable_package_source(root, path)
+        .then_some(WorkspaceInputKind::JavascriptPackagePresence)
+}
+
+/// Package-led JavaScript form of [`path_is_detectable_source_dir_typescript`]:
+/// a detectable JS/TS source file directly at the root or below a root
+/// `src`/`test`/`tests` directory, outside dot-directories and the excluded
+/// directories, exactly as `detect_javascript_led_root` walks. Presence-only.
+fn path_is_detectable_package_source(root: &Path, path: &Path) -> bool {
+    let Some(relative) = root_relative_components(root, path) else {
+        return false;
+    };
+    let Some((file_name, directories)) = relative.split_last() else {
+        return false;
+    };
+    if !is_detectable_package_source_name(file_name) {
+        return false;
+    }
+    let Some((marker, below)) = directories.split_first() else {
+        return true;
+    };
+    javascript_led_source_dir_marker_name(marker).is_some()
+        && below
+            .iter()
+            .all(|dir| !dir.starts_with('.') && !is_typescript_excluded_dir_everywhere(dir))
 }
 
 /// TypeScript form of [`path_is_detectable_source_dir_python`]: a detectable
@@ -4456,6 +4528,35 @@ fn workspace_input_watchers() -> Vec<LSPAny> {
             // Same root-scoped shape for the TypeScript detection extensions.
             serde_json::json!({"globPattern": format!("{dir}/**/*.{{ts,tsx,mts,cts}}")})
         }))
+        .chain(JAVASCRIPT_LED_MANIFESTS.iter().map(|manifest| {
+            // Package-led JavaScript detection (#11336): the root manifest
+            // plus JS/TS source at the root or below its source directories.
+            serde_json::json!({"globPattern": *manifest})
+        }))
+        .chain(javascript_led_source_globs())
+        .collect()
+}
+
+/// Root-scoped globs for the package-led JavaScript source files: direct
+/// children of the root plus each `JAVASCRIPT_LED_SOURCE_DIRS` subtree. Empty
+/// when the adapter is compiled out, like the other detection inputs.
+fn javascript_led_source_globs() -> Vec<LSPAny> {
+    if JAVASCRIPT_LED_MANIFESTS.is_empty() {
+        return Vec::new();
+    }
+    let extensions = crate::analysis::TYPESCRIPT_SOURCE_EXTENSIONS
+        .iter()
+        .chain(crate::analysis::JAVASCRIPT_SOURCE_EXTENSIONS)
+        .copied()
+        .collect::<Vec<_>>()
+        .join(",");
+    std::iter::once(format!("*.{{{extensions}}}"))
+        .chain(
+            JAVASCRIPT_LED_SOURCE_DIRS
+                .iter()
+                .map(|dir| format!("{dir}/**/*.{{{extensions}}}")),
+        )
+        .map(|glob| serde_json::json!({"globPattern": glob}))
         .collect()
 }
 
@@ -4602,7 +4703,6 @@ mod workspace_input_tests {
             );
         }
         for non_input in [
-            "src/app.js",
             "src/api.generated.ts",
             "src/types.d.ts",
             "src/node_modules/p/i.ts",
@@ -4618,6 +4718,83 @@ mod workspace_input_tests {
         assert!(WorkspaceInputKind::TypescriptProjectMarker.reloads_repository_config());
         assert!(WorkspaceInputKind::TypescriptSourcePresence.reloads_repository_config());
         assert!(!WorkspaceInputKind::TypescriptSourcePresence.invalidates_workspace_graph());
+    }
+
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn package_led_javascript_inputs_classify_like_the_detector() {
+        let root = std::env::temp_dir().join("ripr-workspace-input-root");
+        let outside = std::env::temp_dir().join("ripr-workspace-input-outside");
+
+        assert_eq!(
+            workspace_input_kind(&root, &root.join("package.json")),
+            Some(WorkspaceInputKind::JavascriptPackagePresence)
+        );
+        for non_input in ["pkg/package.json", "src/package.json"] {
+            assert_eq!(
+                workspace_input_kind(&root, &root.join(non_input)),
+                None,
+                "{non_input}"
+            );
+        }
+        assert_eq!(
+            workspace_input_kind(&root, &outside.join("package.json")),
+            None
+        );
+        for source in [
+            "index.js",
+            "test.mjs",
+            "app.ts",
+            "src/app.js",
+            "src/deep/view.jsx",
+            "test/a.cjs",
+            "test/a.ts",
+            "tests/a.js",
+        ] {
+            assert_eq!(
+                workspace_input_kind(&root, &root.join(source)),
+                Some(WorkspaceInputKind::JavascriptPackagePresence),
+                "{source}"
+            );
+        }
+        // src/tests TypeScript keeps its existing presence class.
+        assert_eq!(
+            workspace_input_kind(&root, &root.join("src/app.ts")),
+            Some(WorkspaceInputKind::TypescriptSourcePresence)
+        );
+        for non_input in [
+            "eslint.config.js",
+            ".eslintrc.cjs",
+            "app.min.js",
+            "src/webpack.config.mjs",
+            "src/node_modules/p/i.js",
+            "src/.cache/i.js",
+            "lib/app.js",
+            "scripts/app.js",
+            "README.md",
+        ] {
+            assert_eq!(
+                workspace_input_kind(&root, &root.join(non_input)),
+                None,
+                "{non_input}"
+            );
+        }
+        assert!(WorkspaceInputKind::JavascriptPackagePresence.reloads_repository_config());
+        assert!(!WorkspaceInputKind::JavascriptPackagePresence.invalidates_workspace_graph());
+
+        // #11419: source-directory markers resolve through the host
+        // filesystem, so on a case-insensitive host (Windows, macOS) the
+        // differently-cased spellings classify like the canonical ones —
+        // exactly what the detector sees through `root.join(dir)`.
+        if crate::output::path::host_paths_case_insensitive() {
+            for source in ["Src/app.js", "Test/a.js", "TESTS/a.js", "Src/deep/view.jsx"] {
+                assert_eq!(
+                    workspace_input_kind(&root, &root.join(source)),
+                    Some(WorkspaceInputKind::JavascriptPackagePresence),
+                    "{source}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -4637,9 +4814,12 @@ mod workspace_input_tests {
 
         assert!(!WorkspaceInputKind::CargoGraph.reloads_repository_config());
         assert!(WorkspaceInputKind::CargoGraph.invalidates_workspace_graph());
+        // `package.json` is a package-led JavaScript input only with the
+        // TypeScript adapter compiled in.
         assert_eq!(
             workspace_input_kind(&root, &root.join("package.json")),
-            None
+            cfg!(feature = "lang-typescript")
+                .then_some(WorkspaceInputKind::JavascriptPackagePresence)
         );
         Ok(())
     }
@@ -4767,6 +4947,16 @@ mod workspace_input_tests {
                 TYPESCRIPT_SOURCE_DIR_MARKERS
                     .iter()
                     .map(|dir| format!("{dir}/**/*.{{ts,tsx,mts,cts}}")),
+            )
+            .chain(JAVASCRIPT_LED_MANIFESTS.iter().map(|name| name.to_string()))
+            .chain(
+                (!JAVASCRIPT_LED_MANIFESTS.is_empty())
+                    .then(|| "*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}".to_string()),
+            )
+            .chain(
+                JAVASCRIPT_LED_SOURCE_DIRS
+                    .iter()
+                    .map(|dir| format!("{dir}/**/*.{{ts,tsx,mts,cts,js,jsx,mjs,cjs}}")),
             )
             .collect::<BTreeSet<_>>();
 
@@ -4973,6 +5163,7 @@ pub(super) struct RefreshLogSummary {
     gap_artifact_rejections: usize,
     gap_artifact_rejection_kinds: Vec<&'static str>,
     withheld_unknown: usize,
+    withheld_preview: usize,
     enabled_languages: usize,
     enabled_language_names: Vec<&'static str>,
 }
@@ -5035,6 +5226,7 @@ impl RefreshLogSummary {
                 .into_iter()
                 .collect(),
             withheld_unknown: withheld_unknown_summary(snapshot).map_or(0, |(count, _)| count),
+            withheld_preview: withheld_preview_summary(snapshot).0,
             enabled_languages: 1,
             enabled_language_names: vec!["rust"],
         }
@@ -5195,7 +5387,7 @@ fn refresh_completed_log_message_with_telemetry(
 ) -> String {
     let duration = format_duration(summary.duration);
     format!(
-        "ripr analysis refresh completed in {duration}: generation={}, diagnostics={}, files={}, findings={}, preview_findings={}, static_limits={}, seam_diagnostics={}, gap_artifacts={}, actionable_gap_artifacts={}, preview_gap_artifacts={}, no_action_gap_artifacts={}, gap_static_limits={}, gap_artifact_rejections={}, gap_artifact_rejection_kinds={}, withheld_unknown={}, enabled_languages={}, enabled_language_names={}, computed_files={}, published_files={}, unchanged_files={}, cleared_files={}, published_payload_bytes={}, suppressed_payload_bytes={}",
+        "ripr analysis refresh completed in {duration}: generation={}, diagnostics={}, files={}, findings={}, preview_findings={}, static_limits={}, seam_diagnostics={}, gap_artifacts={}, actionable_gap_artifacts={}, preview_gap_artifacts={}, no_action_gap_artifacts={}, gap_static_limits={}, gap_artifact_rejections={}, gap_artifact_rejection_kinds={}, withheld_unknown={}, withheld_preview={}, enabled_languages={}, enabled_language_names={}, computed_files={}, published_files={}, unchanged_files={}, cleared_files={}, published_payload_bytes={}, suppressed_payload_bytes={}",
         summary.generation,
         summary.diagnostics,
         summary.files,
@@ -5211,6 +5403,7 @@ fn refresh_completed_log_message_with_telemetry(
         summary.gap_artifact_rejections,
         summary.gap_artifact_rejection_kinds.join("|"),
         summary.withheld_unknown,
+        summary.withheld_preview,
         summary.enabled_languages,
         summary.enabled_language_names.join("|"),
         summary.files,
@@ -6663,9 +6856,10 @@ impl LanguageServer for Backend {
     /// Locks `latest_analysis` read-only exactly like `hover_for_position` and
     /// `code_action`, then delegates to the pure `code_lens_response` helper in
     /// `lsp/lens.rs`. Returns `Some([])` (not `None`) so the client removes any
-    /// stale lenses from a previous snapshot. Returns an empty Vec when no
-    /// snapshot is available — absence of analysis is not absence of tests, and
-    /// we must not fabricate a 0-count lens.
+    /// stale lenses from a previous snapshot, including for a quarantined
+    /// (unsaved or divergent) buffer whose lines no longer match the snapshot.
+    /// Returns an empty Vec when no snapshot is available — absence of analysis
+    /// is not absence of tests, and we must not fabricate a 0-count lens.
     async fn code_lens(&self, params: CodeLensParams) -> LspResult<Option<Vec<CodeLens>>> {
         self.trace_inbound(
             "request",
@@ -6679,10 +6873,20 @@ impl LanguageServer for Backend {
             .ok()
             .and_then(|value| value.clone());
         let uri = &params.text_document.uri;
-        let result = Ok(Some(code_lens_response(
-            uri,
-            snapshot.as_ref().map(|snapshot| snapshot.as_ref()),
-        )));
+        // A lens anchors at the finding's line in the analyzed saved file. A
+        // buffer that diverges from that content (an unsaved edit, or an
+        // external rewrite the client reloaded) has moved lines, so the
+        // lens would sit on the wrong line while diagnostics and hover are
+        // already paused. Withdraw it with them; the paused marker and hover
+        // name the recovery.
+        let result = if self.document_quarantine(uri).is_some() {
+            Ok(Some(Vec::new()))
+        } else {
+            Ok(Some(code_lens_response(
+                uri,
+                snapshot.as_ref().map(|snapshot| snapshot.as_ref()),
+            )))
+        };
         self.trace_response("textDocument/codeLens", &result).await;
         result
     }
@@ -7140,6 +7344,42 @@ impl Backend {
         }
         if params.command == COLLECT_RECEIPT_STATUS_COMMAND {
             return Ok(self.collect_receipt_status());
+        }
+        if params.command == SHOW_RELATED_TEST_COMMAND {
+            // Generic-client related-test navigation: answer with
+            // `window/showDocument`, guarded by the negotiated capability
+            // and the current snapshot. Navigation only.
+            let snapshot = if self.analysis_health_snapshot().allows_current_repairs()
+                && self.workspace_root_authority().allows_analysis()
+            {
+                self.latest_analysis
+                    .lock()
+                    .ok()
+                    .and_then(|value| value.clone())
+            } else {
+                None
+            };
+            let client_features = self
+                .client_features
+                .lock()
+                .map(|features| features.clone())
+                .unwrap_or_else(|_| ClientFeatureProfile::unsupported());
+            let show = super::actions::show_related_test_params(
+                &params.arguments,
+                snapshot.as_ref().map(|snapshot| snapshot.as_ref()),
+                &client_features,
+            )
+            .map_err(LspError::invalid_params)?;
+            // Bounded by the shared client-request liveness bound (#5278): a
+            // client that advertises showDocument but never answers must not
+            // park the command handler. Any failure or timeout reports
+            // `shown: false`.
+            let shown = self
+                .bounded_client_request(self.client.show_document(show))
+                .await;
+            return Ok(Some(
+                serde_json::json!({ "shown": matches!(shown, Ok(true)) }),
+            ));
         }
         // Stable unsupported-command response (#1628): a command the server
         // does not execute — including client-registered `ripr.copy*` and
@@ -7797,17 +8037,47 @@ fn withheld_unknown_summary(snapshot: &AnalysisSnapshot) -> Option<(usize, Vec<&
     Some((count, classes.into_iter().collect()))
 }
 
+/// Count/class summary of the preview-language gap-class findings the
+/// actionable profile withholds (#11296). Counted per canonical group, like
+/// `withheld_unknown_summary`. A non-actionable profile withholds nothing.
+fn withheld_preview_summary(snapshot: &AnalysisSnapshot) -> (usize, Vec<&'static str>) {
+    let withheld = super::diagnostics::withheld_preview_gap_findings(
+        snapshot.diagnostic_profile,
+        &snapshot.findings,
+    );
+    let classes = withheld
+        .iter()
+        .map(|finding| finding.class.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    (withheld.len(), classes.into_iter().collect())
+}
+
+/// Combined disclosure summary (#5276, #11296): `*_unknown` plus preview gap
+/// findings withheld by the actionable profile, with the preview share kept
+/// separate so a client can say "preview" without re-deriving it.
+fn withheld_findings_summary(
+    snapshot: &AnalysisSnapshot,
+) -> Option<(usize, Vec<&'static str>, usize)> {
+    let (unknown, mut classes) = withheld_unknown_summary(snapshot)?;
+    let (preview, preview_classes) = withheld_preview_summary(snapshot);
+    classes.extend(preview_classes);
+    classes.sort_unstable();
+    classes.dedup();
+    Some((unknown + preview, classes, preview))
+}
+
 /// The status-surface payload for profile withholding (#5276): present with
 /// a zero count when nothing is withheld, and `null` only when no snapshot
-/// exists.
-fn withheld_findings_status_payload(summary: Option<(usize, Vec<&'static str>)>) -> LSPAny {
+/// exists. `preview_count` (#11296) is the preview-language share of `count`.
+fn withheld_findings_status_payload(summary: Option<(usize, Vec<&'static str>, usize)>) -> LSPAny {
     match summary {
         None => serde_json::Value::Null,
-        Some((0, _)) => {
-            serde_json::json!({ "count": 0, "classes": [], "recovery_route": serde_json::Value::Null })
+        Some((0, _, _)) => {
+            serde_json::json!({ "count": 0, "preview_count": 0, "classes": [], "recovery_route": serde_json::Value::Null })
         }
-        Some((count, classes)) => serde_json::json!({
+        Some((count, classes, preview_count)) => serde_json::json!({
             "count": count,
+            "preview_count": preview_count,
             "classes": classes,
             "recovery_route": diagnostic_profile_full_recovery_route(),
         }),
@@ -7819,10 +8089,19 @@ fn withheld_findings_status_payload(summary: Option<(usize, Vec<&'static str>)>)
 /// the same one-line disclosure the status and listing surfaces carry names
 /// the withholding and the `full` escape hatch here too.
 fn profile_withholding_pull_disclosure(snapshot: &AnalysisSnapshot) -> Option<String> {
-    let (count, _) = withheld_unknown_summary(snapshot)?;
+    let (count, _, preview) = withheld_findings_summary(snapshot)?;
     (count > 0).then(|| {
+        // The `*_unknown` wording is unchanged when no preview finding is
+        // withheld; the preview share is named only when it exists.
+        let subject = match (count - preview, preview) {
+            (_, 0) => format!("{count} finding(s) of the *_unknown classes"),
+            (0, _) => format!("{count} preview-language finding(s)"),
+            (unknown, preview) => format!(
+                "{count} finding(s) ({unknown} of the *_unknown classes, {preview} preview-language)"
+            ),
+        };
         format!(
-            "ripr withheld {count} finding(s) of the *_unknown classes from diagnostics (actionable profile, RIPR-SPEC-0069); {}",
+            "ripr withheld {subject} from diagnostics (actionable profile, RIPR-SPEC-0069); {}",
             diagnostic_profile_full_recovery_route()
         )
     })
@@ -13516,6 +13795,75 @@ mod list_actionable_items_tests {
         Ok(())
     }
 
+    fn preview_finding(language: crate::domain::LanguageId, file: &str) -> crate::domain::Finding {
+        let mut finding = crate::lsp::tests::sample_finding();
+        finding.probe.location.file = PathBuf::from(file);
+        finding.language = Some(language);
+        finding.language_status = Some(crate::domain::LanguageStatus::Preview);
+        finding
+    }
+
+    /// #11296: Python and TypeScript preview findings withheld by the
+    /// actionable profile (no producer-backed fix route) must be disclosed
+    /// on the pull channel, never silently reading as a clean file. The
+    /// actionable eligibility predicate stays unchanged: nothing is
+    /// promoted to a diagnostic here.
+    #[test]
+    fn actionable_profile_discloses_withheld_python_and_typescript_preview_findings()
+    -> Result<(), String> {
+        for (language, file) in [
+            (crate::domain::LanguageId::Python, "src/click/core.py"),
+            (crate::domain::LanguageId::TypeScript, "src/v4/core/util.ts"),
+        ] {
+            let mut snapshot = snapshot_with_selection(Some(applied_selection()?));
+            snapshot.findings = vec![preview_finding(language, file)];
+            snapshot.diagnostic_profile = LspDiagnosticProfile::Actionable;
+
+            // Fail-closed: the finding is still not an eligible diagnostic.
+            assert_eq!(snapshot.actionable_diagnostic_count(), 0, "{file}");
+            let disclosure = super::profile_withholding_pull_disclosure(&snapshot)
+                .ok_or_else(|| format!("{file}: withheld preview finding must disclose"))?;
+            assert!(
+                disclosure.contains("1 preview-language finding(s)")
+                    && disclosure.contains("diagnosticProfile"),
+                "{file}: {disclosure}"
+            );
+            let (count, classes, preview) =
+                super::withheld_findings_summary(&snapshot).ok_or("a snapshot yields a summary")?;
+            assert_eq!((count, preview), (1, 1), "{file}");
+            assert_eq!(classes, vec!["weakly_exposed"], "{file}");
+            let status = super::withheld_findings_status_payload(Some((count, classes, preview)));
+            assert_eq!(status["count"], 1, "{status}");
+            assert_eq!(status["preview_count"], 1, "{status}");
+            assert!(status["recovery_route"].is_string(), "{status}");
+
+            // Negative control: the full profile publishes it instead, so
+            // there is nothing withheld to disclose.
+            snapshot.diagnostic_profile = LspDiagnosticProfile::Full;
+            assert_eq!(super::profile_withholding_pull_disclosure(&snapshot), None);
+        }
+        Ok(())
+    }
+
+    /// #11296 negative control: a withheld non-preview (Rust) gap-class
+    /// finding is already named by `hidden_gaps`; it must not be counted as
+    /// a preview withholding, and a preview finding that is not candidate
+    /// current stays silent.
+    #[test]
+    fn preview_withholding_disclosure_ignores_non_preview_and_non_current_findings()
+    -> Result<(), String> {
+        let mut snapshot = snapshot_with_selection(Some(applied_selection()?));
+        snapshot.diagnostic_profile = LspDiagnosticProfile::Actionable;
+        snapshot.findings = vec![crate::lsp::tests::sample_finding()];
+        assert_eq!(
+            super::profile_withholding_pull_disclosure(&snapshot),
+            None,
+            "a non-preview hidden gap is not a preview withholding"
+        );
+        assert_eq!(super::withheld_preview_summary(&snapshot).0, 0);
+        Ok(())
+    }
+
     /// Sort a JSON object's keys for a closed-shape comparison.
     fn sorted_keys(value: &serde_json::Value) -> Vec<String> {
         let mut keys: Vec<String> = value
@@ -13673,8 +14021,13 @@ mod analysis_error_cancellation_tests {
 #[cfg(test)]
 mod pull_disclosure_dedup_tests {
     use super::*;
+    use crate::analysis_outcome::{
+        AnalysisIdentity, AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind,
+    };
+    use crate::lsp::hover::{NoEvidenceState, hover_response_without_evidence};
     use std::path::PathBuf;
     use tower_lsp_server::LspService;
+    use tower_lsp_server::ls_types::{Hover, HoverContents};
 
     #[test]
     fn pull_delivery_disclosure_logs_once_per_snapshot_identity() {
@@ -13743,8 +14096,9 @@ mod pull_disclosure_dedup_tests {
         // snapshot; the configured default analyzes Rust.
         let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
         let backend = service.inner();
-        assert!(
-            !backend.has_committed_analysis(),
+        assert_eq!(
+            backend.no_evidence_state(),
+            NoEvidenceState::NotAnalyzed,
             "a fresh session has no committed analysis"
         );
         assert_eq!(
@@ -13758,10 +14112,116 @@ mod pull_disclosure_dedup_tests {
                 batches: Vec::new(),
             })
             .ok_or_else(|| "expected committed snapshot".to_string())?;
-        assert!(
-            backend.has_committed_analysis(),
+        assert_eq!(
+            backend.no_evidence_state(),
+            NoEvidenceState::Analyzed,
             "a committed snapshot flips the analyzed state"
         );
+        Ok(())
+    }
+
+    fn hover_text_of(hover: &Hover) -> Result<String, String> {
+        match &hover.contents {
+            HoverContents::Markup(markup) => Ok(markup.value.clone()),
+            other => Err(format!("expected markup hover, got {other:?}")),
+        }
+    }
+
+    fn no_changes_snapshot() -> Result<crate::lsp::state::AnalysisSnapshot, String> {
+        let mut snapshot = snapshot_fixture()?;
+        snapshot.analysis_outcome = Some(AnalysisOutcome::new(
+            AnalysisOutcomeKind::NoChangedLines,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts::default(),
+            Vec::new(),
+        )?);
+        Ok(snapshot)
+    }
+
+    fn commit(
+        backend: &Backend,
+        snapshot: crate::lsp::state::AnalysisSnapshot,
+    ) -> Result<(), String> {
+        backend
+            .refresh_plan(crate::lsp::diagnostics::WorkspaceDiagnostics {
+                snapshot,
+                batches: Vec::new(),
+            })
+            .map(|_| ())
+            .ok_or_else(|| "expected committed snapshot".to_string())
+    }
+
+    fn rendered(backend: &Backend) -> Result<String, String> {
+        hover_text_of(&hover_response_without_evidence(
+            backend.no_evidence_state(),
+            &backend.configured_language_labels(),
+        ))
+    }
+
+    #[test]
+    fn no_evidence_hover_says_analysis_is_in_progress_only_while_an_attempt_runs()
+    -> Result<(), String> {
+        // #11253: with no snapshot, a queued or running attempt means the
+        // result is on its way; an idle session keeps "not analyzed yet".
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        for state in [AnalysisAttemptState::Queued, AnalysisAttemptState::Running] {
+            backend.set_analysis_attempt_state_for_test(state);
+            assert_eq!(backend.no_evidence_state(), NoEvidenceState::Analyzing);
+            let text = rendered(backend)?;
+            assert!(text.contains("analysis is in progress"), "{text}");
+            assert!(text.contains("will appear"), "{text}");
+            assert!(!text.contains("has not analyzed"), "{text}");
+            assert!(
+                !text.contains("ripr.refresh"),
+                "no action is requested: {text}"
+            );
+        }
+        backend.set_analysis_attempt_state_for_test(AnalysisAttemptState::Failed);
+        assert_eq!(backend.no_evidence_state(), NoEvidenceState::NotAnalyzed);
+        let idle = rendered(backend)?;
+        assert!(
+            idle.contains("has not analyzed this workspace yet"),
+            "{idle}"
+        );
+        assert!(!idle.contains("in progress"), "{idle}");
+        Ok(())
+    }
+
+    #[test]
+    fn no_evidence_hover_reports_a_clean_workspace_only_for_no_changed_lines() -> Result<(), String>
+    {
+        // #11253: `no_changed_lines` names the base and says there is nothing
+        // to grade; a snapshot without that outcome keeps the generic text.
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        commit(backend, no_changes_snapshot()?)?;
+        let clean = rendered(backend)?;
+        assert!(
+            clean.contains(
+                "found no changed lines against the base ref `origin/main` at its last analysis"
+            ),
+            "{clean}"
+        );
+        assert!(clean.contains("nothing to grade"), "{clean}");
+        // A committed snapshot outranks an attempt in flight or a failed one;
+        // the statement is scoped to the last analysis.
+        for state in [
+            AnalysisAttemptState::Queued,
+            AnalysisAttemptState::Running,
+            AnalysisAttemptState::Failed,
+        ] {
+            backend.set_analysis_attempt_state_for_test(state);
+            let text = rendered(backend)?;
+            assert!(text.contains("at its last analysis"), "{text}");
+            assert!(!text.contains("in progress"), "{text}");
+        }
+
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        commit(backend, snapshot_fixture()?)?;
+        assert_eq!(backend.no_evidence_state(), NoEvidenceState::Analyzed);
+        assert_eq!(rendered(backend)?, crate::lsp::HOVER_TEXT);
         Ok(())
     }
 

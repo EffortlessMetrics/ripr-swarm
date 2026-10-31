@@ -4,7 +4,7 @@ use crate::agent::loop_commands::{
 };
 use crate::app::agent_status::pilot_select_command;
 use crate::config::{detect_python_project, detect_typescript_project};
-use crate::domain::CommandSpec;
+use crate::domain::{CommandSpec, LanguageId};
 use crate::output::gap_decision_ledger::projection_eligible_from_value;
 use crate::output::receipt_lifecycle::receipt_lifecycle_state;
 use crate::output::receipt_write::receipt_write_command;
@@ -855,6 +855,39 @@ fn root_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Sele
         if detect_python_project(root) || detect_typescript_project(root) {
             return None;
         }
+        // `doctor` detects TypeScript or JavaScript from a `package.json` or
+        // shallow source files, but the no-config rule above enables the
+        // adapter only from a `tsconfig.json`/`jsconfig.json` marker, or from a
+        // `package.json` beside JavaScript or TypeScript source at the root or
+        // in `src`/`test`/`tests` (`package.json` alone is deliberately not a
+        // marker). The root is the right one in that case, so name the
+        // missing marker instead of calling it a wrong root and looping back
+        // to `doctor` (#10713). A root `doctor` also detects as Python keeps
+        // `wrong_root` (its `package.json` is likely tooling), and Rust below
+        // the root still means a wrong root.
+        let doctor_languages = crate::cli::commands::detect_languages(root);
+        let doctor_javascript = doctor_languages.contains(&LanguageId::JavaScript);
+        if LanguageId::TypeScript.is_available()
+            && (doctor_javascript || doctor_languages.contains(&LanguageId::TypeScript))
+            && !doctor_languages.contains(&LanguageId::Python)
+            && !doctor_languages.contains(&LanguageId::Rust)
+            && crate::analysis::workspace_rust_files(root).is_empty()
+        {
+            let (kind, marker) = if doctor_javascript {
+                ("JavaScript", "jsconfig.json")
+            } else {
+                ("TypeScript", "tsconfig.json")
+            };
+            return Some(Selection::blocked_with_reason(
+                "blocked_artifact",
+                "typescript_project_marker_missing",
+                format!(
+                    "The first-pr root `{}` looks like a {kind} project, but first-pr needs a `tsconfig.json` or `jsconfig.json` at the root, or a `package.json` with JavaScript or TypeScript files at the root or under `src/`, `test/` or `tests/`; a `package.json` alone is not enough. This root is not necessarily wrong: add a `{marker}` (an empty `{{}}` is enough) and rerun `ripr first-pr`.",
+                    options.root
+                ),
+                None,
+            ));
+        }
         // A Go or Java repository is the right root; sending it to `--root`
         // and doctor loops. Name the languages ripr cannot analyze instead.
         // Rust or preview source below the root (a nested crate) means the
@@ -917,6 +950,22 @@ fn git_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Selec
     match git_rev_exists(root, &options.base) {
         Ok(true) => {}
         Ok(false) => {
+            // A shallow clone (actions/checkout's default `fetch-depth: 1`)
+            // is a likely cause in CI: the base branch is usually not
+            // fetched. A mistyped `--base` lands here too, so the wording
+            // stays conditional. The command fetches the base branch with
+            // full history; a bare `fetch --unshallow` would not create
+            // `origin/<base>` in a single-branch clone.
+            if crate::analysis::is_shallow_repository(root, None) {
+                return Some(Selection::blocked(
+                    "blocked_artifact",
+                    format!(
+                        "The first-pr base `{}` does not resolve to a commit. This is a shallow clone, which usually means the base branch was not fetched (in GitHub Actions, set `fetch-depth: 0` on actions/checkout); if you passed `--base`, also check its spelling. Fix the base before assigning repair work.",
+                        options.base
+                    ),
+                    Some(fetch_base_deep_command(options)),
+                ));
+            }
             return Some(Selection::blocked(
                 "blocked_artifact",
                 format!(
@@ -1253,6 +1302,12 @@ struct TopGapSelection {
     /// gap came from. `None` when that report is absent or a repair start
     /// carries its own after phase.
     static_recheck_command: Option<String>,
+    /// The one recommended follow-through for a Python/TypeScript ledger gap
+    /// (#10709): the gap-bound `ripr agent repair` start, present only when
+    /// the shared agent-packet validator accepts the record, the same
+    /// decision `ripr check` uses to print that start. `None` leaves the
+    /// by-hand verify/receipt route as the only route (fail closed).
+    recommended_repair_command: Option<String>,
 }
 
 impl TopGapSelection {
@@ -1300,6 +1355,9 @@ impl TopGapSelection {
         // selections keep their existing shape.
         if let Some(command) = &self.repair_command {
             value["repair_command"] = Value::String(command.clone());
+        }
+        if let Some(command) = &self.recommended_repair_command {
+            value["recommended_repair_command"] = Value::String(command.clone());
         }
         if let Some(command) = &self.analysis_outcome_command {
             value["analysis_outcome_command"] = Value::String(command.clone());
@@ -1939,6 +1997,7 @@ fn top_gap_from_review_card(card: &Value, options: &FirstPrOptions) -> Option<To
         agent_packet_command: None,
         repair_command: Some(repair_command),
         static_recheck_command: None,
+        recommended_repair_command: None,
     })
 }
 
@@ -2338,6 +2397,7 @@ fn top_gap_from_record(
     } else {
         None
     };
+    let recommended_repair_command = recommended_gap_repair_command(record, gap_ledger, options);
     let repair_route_kind = string_from_sources(&[(repair_route, &["route_kind"])])
         .unwrap_or_else(|| "RepairRouteUnavailable".to_string());
     let target_file = string_from_sources(&[(repair_route, &["target_file"])]);
@@ -2390,6 +2450,7 @@ fn top_gap_from_record(
         static_limit_detail: string_path(record, &["static_limit_detail"]),
         repair_command: None,
         static_recheck_command,
+        recommended_repair_command,
         agent_packet_command: Some(format!(
             "ripr agent packet --root {} --gap-ledger {} --gap-id {} --json > {}",
             shell_arg(&options.command_root()),
@@ -2402,6 +2463,85 @@ fn top_gap_from_record(
             options.anchored_arg(&options.agent_packet)
         )),
     }
+}
+
+/// The gap-bound start `ripr check` recommends for a Python/TypeScript gap
+/// (#10709), so `first-pr` and `check` name one route. The ledger record is
+/// parsed back into the typed `GapRecord` and judged by the shared
+/// `validate_agent_gap_record_packet`; nothing is decided here. A record that
+/// does not parse, has no canonical gap id, is another language, or fails the
+/// validator yields `None` and keeps the by-hand route alone. The command is
+/// spelled as `check` spells it (`--base`, `--root`, `--phase before`). This
+/// judges the ledger record and the ledger's recorded analysis outcome. Unlike
+/// `check`, first-pr cannot see the working tree, so it does not decide
+/// whether the start is currently available: the start itself still refuses a
+/// dirty tree, and the rendered text says to commit first.
+fn recommended_gap_repair_command(
+    record: &Value,
+    gap_ledger: &Value,
+    options: &FirstPrOptions,
+) -> Option<String> {
+    use crate::output::agent_seam_packets::validate_agent_gap_record_packet;
+    use crate::output::gap_decision_ledger::GapRecord;
+    let language = string_path(record, &["language"])?;
+    if !matches!(language.as_str(), "python" | "typescript") {
+        return None;
+    }
+    if string_path(record, &["gap_state"]).as_deref() != Some("actionable") {
+        return None;
+    }
+    if options.base.trim().is_empty() {
+        return None;
+    }
+    // `check` withholds the start unless the producing run's analysis was
+    // complete (`gap_bound_route`); the ledger carries that outcome, so read
+    // it through the same predicate. Missing or incomplete fails closed, and
+    // so does a bounded run (`run_limitations`).
+    let outcome = gap_ledger.get("analysis_outcome");
+    let analysis_complete = outcome
+        .and_then(|value| value.get("analysis_complete"))
+        .and_then(Value::as_bool);
+    let document_complete = outcome
+        .and_then(|value| value.get("document_complete"))
+        .and_then(Value::as_bool);
+    if !crate::agent::artifact::check_findings_outcome_is_complete(
+        analysis_complete,
+        document_complete,
+    ) || gap_ledger
+        .get("run_limitations")
+        .and_then(Value::as_array)
+        .is_some_and(|limits| !limits.is_empty())
+    {
+        return None;
+    }
+    // A canonical gap id shared by two records is ambiguous; `check` refuses
+    // it for Python, so refuse it here for every language.
+    let canonical = string_path(record, &["canonical_gap_id"])?;
+    let sharing = gap_ledger
+        .get("records")
+        .and_then(Value::as_array)
+        .map_or(0, |records| {
+            records
+                .iter()
+                .filter(|other| {
+                    string_path(other, &["canonical_gap_id"]).as_deref() == Some(canonical.as_str())
+                })
+                .count()
+        });
+    if sharing > 1 {
+        return None;
+    }
+    let typed: GapRecord = serde_json::from_value(record.clone()).ok()?;
+    if typed.canonical_gap_id.trim().is_empty() {
+        return None;
+    }
+    validate_agent_gap_record_packet(&typed).ok()?;
+    Some(format!(
+        "ripr agent repair --gap-id {} --base {} --root {} --phase before",
+        shell_arg(&typed.canonical_gap_id),
+        shell_arg(&options.base),
+        shell_arg(&options.command_root())
+    ))
 }
 
 fn current_evidence_strength_for_gap(kind: &str, language: Option<&str>) -> String {
@@ -3036,7 +3176,7 @@ fn git_success_with_ceiling(
 /// checkout the remote has no mapping for the branch, so a bare
 /// `git fetch origin -- <branch>` only fills FETCH_HEAD and `origin/<branch>`
 /// stays unresolved. Every printed missing-base fetch uses this one spelling.
-fn base_fetch_refspec(branch: &str) -> String {
+pub(crate) fn base_fetch_refspec(branch: &str) -> String {
     format!("+refs/heads/{branch}:refs/remotes/origin/{branch}")
 }
 
@@ -3087,6 +3227,21 @@ fn diff_range_command(options: &FirstPrOptions) -> String {
         shell_arg(&options.command_root()),
         shell_arg(&format!("{}...{}", options.base, options.head))
     )
+}
+
+/// Fetch the base branch with its full history into a shallow clone. Unlike a
+/// bare `fetch --unshallow`, the explicit refspec creates `origin/<base>` even
+/// in a single-branch clone. Without a nameable `origin/<branch>` base there
+/// is nothing to fetch by name, so it falls back to the plain unshallow.
+fn fetch_base_deep_command(options: &FirstPrOptions) -> String {
+    match options.base.strip_prefix("origin/") {
+        Some(branch) if !branch.is_empty() => format!(
+            "git -C {} fetch --unshallow origin -- {}",
+            shell_arg(&options.command_root()),
+            shell_arg(&base_fetch_refspec(branch))
+        ),
+        _ => unshallow_command(options),
+    }
 }
 
 fn unshallow_command(options: &FirstPrOptions) -> String {
@@ -3765,12 +3920,13 @@ mod tests {
                 .as_str()
                 .is_some_and(|command| command.contains("ripr reports gap-ledger"))
         );
-        assert!(summary.contains(
-            "Also missing: Gap decision ledger at `target/ripr/reports/gap-decision-ledger.json`"
-        ));
-        assert!(summary.contains("Then run: `ripr reports gap-ledger"));
-        // #3905: the third step of the chain is disclosed in the same run,
-        // after the ledger, with its conditional need and literal command.
+        // #11298: the human output carries one command; the later chain steps
+        // are named without commands, in dependency order, and the packet
+        // JSON keeps the full chain with literal commands.
+        assert!(!summary.contains("Also missing:"), "{summary}");
+        assert!(!summary.contains("Then run:"), "{summary}");
+        assert!(!summary.contains("ripr reports gap-ledger"), "{summary}");
+        assert!(!summary.contains("ripr review-comments"), "{summary}");
         assert_eq!(
             packet["selected"]["also_missing"][1]["id"],
             "review_comments"
@@ -3788,32 +3944,25 @@ mod tests {
             packet["selected"]["also_missing"].as_array().map(Vec::len),
             Some(2)
         );
-        assert!(summary.contains(
-            "Also missing: PR repair cards at `target/ripr/review/comments.json` (needed when the gap ledger names no repair start)"
-        ));
-        assert!(summary.contains("Then run: `ripr review-comments"));
-        let ledger_at = summary
-            .find("Also missing: Gap decision ledger")
+        let later_line = summary
+            .lines()
+            .find(|line| line.starts_with("Later steps"))
             .ok_or_else(|| summary.clone())?;
-        let cards_at = summary
-            .find("Also missing: PR repair cards")
-            .ok_or_else(|| summary.clone())?;
-        assert!(ledger_at < cards_at, "ledger precedes cards: {summary}");
-        // Resolve both positions: the recovery command carries a `(Bash)`
-        // label once a PowerShell variant exists, so an unlabeled `find`
-        // returns `None` and `None < Some(_)` would pass vacuously.
+        let ledger_at = later_line
+            .find("Gap decision ledger")
+            .ok_or_else(|| later_line.to_string())?;
+        let cards_at = later_line
+            .find("PR repair cards (needed when the gap ledger names no repair start)")
+            .ok_or_else(|| later_line.to_string())?;
+        assert!(ledger_at < cards_at, "ledger precedes cards: {later_line}");
         let regen_at = summary
             .find("Regeneration command (Bash):")
             .ok_or_else(|| summary.clone())?;
-        let also_missing_at = summary
-            .find("Also missing:")
-            .ok_or_else(|| summary.clone())?;
-        assert!(
-            regen_at < also_missing_at,
-            "repo exposure recovery must precede the dependent ledger: {summary}"
-        );
+        let later_at = summary.find("Later steps").ok_or_else(|| summary.clone())?;
+        assert!(regen_at < later_at, "{summary}");
         let markdown = render_start_here_markdown(&packet);
-        assert!(markdown.contains("- Also missing: Gap decision ledger"));
+        assert!(markdown.contains("- Later steps (rerun `ripr first-pr`"));
+        assert!(!markdown.contains("Also missing"), "{markdown}");
         check_blocked_packet_is_current(&repo, &options)?;
         cleanup(&repo)
     }
@@ -4410,6 +4559,142 @@ mod tests {
         let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
         assert_eq!(packet["status"], "blocked", "{packet}");
         assert_eq!(packet["selected"]["state"], "wrong_root", "{packet}");
+        cleanup(&repo)
+    }
+
+    /// #10713: `doctor` detects a `package.json` + `.ts` repository as
+    /// TypeScript, so first-pr must not call it a wrong root or send the
+    /// reader back to `doctor`; it names the marker the config rules need.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn package_json_only_typescript_root_names_the_missing_marker_not_wrong_root()
+    -> Result<(), String> {
+        let repo = write_temp_root(&env::temp_dir(), "first-pr-package-json-only-ts")?;
+        fs::write(
+            repo.join("package.json"),
+            r#"{"devDependencies":{"jest":"^30"}}"#,
+        )
+        .map_err(|err| format!("write package.json: {err}"))?;
+        // Source below an undetected directory (`lib/`): root-level or
+        // `src/`/`test/` source with a `package.json` is detected since
+        // #11336, so this is the manifest-without-marker shape that remains.
+        fs::create_dir_all(repo.join("lib")).map_err(|err| format!("create lib: {err}"))?;
+        fs::write(
+            repo.join("lib/pricing.ts"),
+            "export const p = (x: number) => x;\n",
+        )
+        .map_err(|err| format!("write pricing.ts: {err}"))?;
+        fs::write(repo.join("lib/pricing.test.ts"), "test('p', () => {});\n")
+            .map_err(|err| format!("write pricing.test.ts: {err}"))?;
+        init_git_repo_with_initial_files(
+            &repo,
+            &["package.json", "lib/pricing.ts", "lib/pricing.test.ts"],
+        )?;
+        let doctor_languages = crate::cli::commands::detect_languages(&repo);
+        assert!(
+            doctor_languages.contains(&LanguageId::TypeScript),
+            "fixture must be TypeScript to doctor: {doctor_languages:?}"
+        );
+        assert!(
+            !detect_typescript_project(&repo),
+            "package.json is not a marker"
+        );
+
+        let options = FirstPrOptions::default();
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        let selected = &packet["selected"];
+        assert_eq!(packet["status"], "blocked", "{packet}");
+        assert_ne!(selected["state"], "wrong_root", "{packet}");
+        assert_eq!(
+            selected["reason_code"], "typescript_project_marker_missing",
+            "{packet}"
+        );
+        let message = selected["message"].as_str().ok_or("missing message")?;
+        assert!(message.contains("add a `tsconfig.json`"), "{message}");
+        assert!(!message.contains("project marker"), "{message}");
+        assert!(!message.contains("Pass the repository root"), "{message}");
+        assert!(
+            selected["next_command"].is_null(),
+            "no doctor loop: {packet}"
+        );
+
+        // The named marker resolves it: the same root now takes the
+        // TypeScript route instead of the marker refusal.
+        fs::write(repo.join("tsconfig.json"), "{}\n")
+            .map_err(|err| format!("write tsconfig.json: {err}"))?;
+        // Pin the exact post-marker state reachable by reading the code: the
+        // marker makes `detect_typescript_project` true, so the root
+        // preflight recovers nothing and hands the root on to the
+        // TypeScript route. (Not compiled or run in the authoring sandbox.)
+        assert!(
+            detect_typescript_project(&repo),
+            "tsconfig.json is a marker"
+        );
+        assert!(
+            root_preflight_recovery(&repo, &options).is_none(),
+            "marker present: no root-level refusal"
+        );
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_ne!(
+            packet["selected"]["reason_code"], "typescript_project_marker_missing",
+            "{packet}"
+        );
+        assert_ne!(packet["selected"]["state"], "wrong_root", "{packet}");
+        cleanup(&repo)
+    }
+
+    /// #10713: a JavaScript-only root (no `package.json`, no TypeScript) is
+    /// told to add `jsconfig.json`, not `tsconfig.json`.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn javascript_only_root_names_jsconfig_marker() -> Result<(), String> {
+        let repo = write_temp_root(&env::temp_dir(), "first-pr-js-only")?;
+        fs::write(repo.join("index.js"), "module.exports = (x) => x;\n")
+            .map_err(|err| format!("write index.js: {err}"))?;
+        init_git_repo_with_initial_files(&repo, &["index.js"])?;
+        let doctor_languages = crate::cli::commands::detect_languages(&repo);
+        assert!(
+            doctor_languages.contains(&LanguageId::JavaScript),
+            "fixture must be JavaScript to doctor: {doctor_languages:?}"
+        );
+        write_first_pr(&repo, &FirstPrOptions::default())?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        let selected = &packet["selected"];
+        assert_eq!(
+            selected["reason_code"], "typescript_project_marker_missing",
+            "{packet}"
+        );
+        let message = selected["message"].as_str().ok_or("missing message")?;
+        assert!(message.contains("add a `jsconfig.json`"), "{message}");
+        cleanup(&repo)
+    }
+
+    /// #10713: a root `doctor` also detects as Python keeps `wrong_root`
+    /// even with a `package.json` (likely tooling), not the TypeScript hint.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn python_root_with_package_json_keeps_wrong_root() -> Result<(), String> {
+        let repo = write_temp_root(&env::temp_dir(), "first-pr-python-package-json")?;
+        fs::write(repo.join("package.json"), "{}")
+            .map_err(|err| format!("write package.json: {err}"))?;
+        fs::write(repo.join("app.py"), "def f():\n    return 1\n")
+            .map_err(|err| format!("write app.py: {err}"))?;
+        init_git_repo_with_initial_files(&repo, &["package.json", "app.py"])?;
+        let doctor_languages = crate::cli::commands::detect_languages(&repo);
+        assert!(
+            doctor_languages.contains(&LanguageId::Python),
+            "fixture must be Python to doctor: {doctor_languages:?}"
+        );
+        assert!(!detect_python_project(&repo), "shallow Python only");
+        write_first_pr(&repo, &FirstPrOptions::default())?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["selected"]["state"], "wrong_root", "{packet}");
+        assert_ne!(
+            packet["selected"]["reason_code"], "typescript_project_marker_missing",
+            "{packet}"
+        );
         cleanup(&repo)
     }
 
@@ -5024,6 +5309,79 @@ mod tests {
             packet["selected"]["next_command"],
             format!("git -C {} fetch --unshallow", bound_arg("."))
         );
+        cleanup(&shallow)?;
+        cleanup(&origin)
+    }
+
+    #[test]
+    fn shallow_checkout_without_the_base_branch_points_at_fetch_depth() -> Result<(), String> {
+        // A default `actions/checkout` (fetch-depth 1) fetches only the head
+        // commit, so `origin/main` does not exist at all. A one-branch fetch
+        // is not the repair; the checkout setting and a deep fetch of the
+        // base branch are. The full-clone twin above keeps the plain fetch advice.
+        let origin = temp_repo("first-pr-shallow-nobase-origin")?;
+        run_git_setup(&origin, &["branch", "-M", "main"])?;
+        run_git_setup(&origin, &["checkout", "-q", "-b", "feature"])?;
+        run_git_setup(&origin, &["commit", "-q", "--allow-empty", "-m", "feature"])?;
+        let shallow = write_temp_root(&env::temp_dir(), "first-pr-shallow-nobase-clone")?;
+        let origin_path = origin.display().to_string().replace('\\', "/");
+        let url = if origin_path.starts_with('/') {
+            format!("file://{origin_path}")
+        } else {
+            format!("file:///{origin_path}")
+        };
+        run_git_setup(&shallow, &["init", "-q"])?;
+        run_git_setup(&shallow, &["remote", "add", "origin", &url])?;
+        run_git_setup(
+            &shallow,
+            &[
+                "fetch",
+                "-q",
+                "--depth=1",
+                "origin",
+                "+refs/heads/feature:refs/remotes/origin/feature",
+            ],
+        )?;
+        run_git_setup(&shallow, &["checkout", "-q", "--detach", "origin/feature"])?;
+        write_json(
+            &shallow.join(DEFAULT_GAP_LEDGER),
+            ledger_with_repairable_gap(),
+        )?;
+        let options = FirstPrOptions {
+            base: "origin/main".to_string(),
+            ..FirstPrOptions::default()
+        };
+        write_first_pr(&shallow, &options)?;
+        let packet = read_packet(&shallow.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["selected"]["state"], "blocked_artifact");
+        let message = packet["selected"]["message"].as_str().unwrap_or_default();
+        assert!(
+            message.contains("does not resolve to a commit")
+                && message.contains("shallow clone")
+                && message.contains("fetch-depth: 0")
+                && message.contains("usually means")
+                && message.contains("spelling")
+                && !message.contains("was never fetched"),
+            "unexpected message: {message}"
+        );
+        let refspec = "+refs/heads/main:refs/remotes/origin/main";
+        assert_eq!(
+            packet["selected"]["next_command"],
+            format!(
+                "git -C {} fetch --unshallow origin -- {}",
+                bound_arg("."),
+                shell_arg(refspec)
+            )
+        );
+        // Precondition, then the advertised repair on this very single-branch
+        // depth-1 clone.
+        if git_rev_exists(&shallow, "origin/main")? {
+            return Err("fixture must start without origin/main".to_string());
+        }
+        run_git_setup(&shallow, &["fetch", "-q", "--unshallow", "origin", refspec])?;
+        if !git_rev_exists(&shallow, "origin/main")? {
+            return Err("the advertised fetch did not create origin/main".to_string());
+        }
         cleanup(&shallow)?;
         cleanup(&origin)
     }
@@ -7648,6 +8006,201 @@ mod tests {
                 }
             ]
         })
+    }
+
+    /// #10709: the recommended gap-bound start is derived only from a record
+    /// the shared agent-packet validator accepts, so a record it refuses (or
+    /// another language, or a non-actionable gap) recommends nothing.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn recommended_repair_command_follows_the_shared_validator_and_fails_closed()
+    -> Result<(), String> {
+        let mut record = ledger_with_typescript_repairable_gap()["records"][0].clone();
+        record["projection_eligibility"] = json!({
+            "agent_packet": {"eligible": true, "reason": "bounded_repair_route"}
+        });
+        // The shared projection check also requires a current candidate.
+        record["source_currentness"] = json!("candidate_current");
+        let options = FirstPrOptions {
+            base: "HEAD~1".to_string(),
+            ..FirstPrOptions::default()
+        };
+        let ledger = json!({
+            "analysis_outcome": {"analysis_complete": true},
+            "records": [record.clone()]
+        });
+        let command = recommended_gap_repair_command(&record, &ledger, &options)
+            .ok_or("validator-accepted TypeScript record must recommend the start")?;
+        assert!(
+            command.starts_with(
+                "ripr agent repair --gap-id gap:typescript:typescript_preview:2396aec1 --base 'HEAD~1' --root "
+            ),
+            "{command}"
+        );
+        assert!(command.ends_with(" --phase before"), "{command}");
+
+        // Negative: the ledger's analysis outcome missing, incomplete or
+        // bounded withholds the recommendation, as `check` withholds the start.
+        let mut missing_outcome = ledger.clone();
+        if let Some(object) = missing_outcome.as_object_mut() {
+            object.remove("analysis_outcome");
+        }
+        assert_eq!(
+            recommended_gap_repair_command(&record, &missing_outcome, &options),
+            None
+        );
+        let mut incomplete = ledger.clone();
+        incomplete["analysis_outcome"]["analysis_complete"] = json!(false);
+        assert_eq!(
+            recommended_gap_repair_command(&record, &incomplete, &options),
+            None
+        );
+        let mut bounded = ledger.clone();
+        bounded["run_limitations"] = json!([{"kind": "bounded"}]);
+        assert_eq!(
+            recommended_gap_repair_command(&record, &bounded, &options),
+            None
+        );
+        // Negative: a canonical gap id shared by two records is ambiguous.
+        let mut shared = ledger.clone();
+        shared["records"] = json!([record.clone(), record.clone()]);
+        assert_eq!(
+            recommended_gap_repair_command(&record, &shared, &options),
+            None
+        );
+
+        let mut ineligible = record.clone();
+        ineligible["projection_eligibility"]["agent_packet"]["eligible"] = json!(false);
+        assert_eq!(
+            recommended_gap_repair_command(&ineligible, &ledger, &options),
+            None
+        );
+
+        let mut no_projection = record.clone();
+        if let Some(object) = no_projection.as_object_mut() {
+            object.remove("projection_eligibility");
+        }
+        assert_eq!(
+            recommended_gap_repair_command(&no_projection, &ledger, &options),
+            None
+        );
+
+        let mut no_receipt = record.clone();
+        no_receipt["receipt_command"] = json!("  ");
+        assert_eq!(
+            recommended_gap_repair_command(&no_receipt, &ledger, &options),
+            None
+        );
+
+        let mut rust = record.clone();
+        rust["language"] = json!("rust");
+        assert_eq!(
+            recommended_gap_repair_command(&rust, &ledger, &options),
+            None
+        );
+
+        let mut not_actionable = record.clone();
+        not_actionable["gap_state"] = json!("no_action");
+        assert_eq!(
+            recommended_gap_repair_command(&not_actionable, &ledger, &options),
+            None
+        );
+
+        let mut no_canonical = record;
+        if let Some(object) = no_canonical.as_object_mut() {
+            object.remove("canonical_gap_id");
+        }
+        assert_eq!(
+            recommended_gap_repair_command(&no_canonical, &ledger, &options),
+            None
+        );
+        Ok(())
+    }
+
+    /// #10709: end to end from the saved TypeScript check output through the
+    /// real ledger producer, `first-pr` recommends the gap-bound start only
+    /// when the producer-emitted record is candidate-current and the recorded
+    /// analysis outcome is complete. Every other state recommends nothing.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn producer_made_typescript_ledger_recommends_only_when_current_and_complete()
+    -> Result<(), String> {
+        use crate::output::gap_decision_ledger::{
+            GapDecisionLedgerInput, GapDecisionLedgerSourceKind, build_gap_decision_ledger_report,
+            render_gap_decision_ledger_json,
+        };
+        let check: Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/first_successful_pr/typescript-preview-gap/inputs/reports/before-check.json"
+        ))
+        .map_err(|error| format!("parse TypeScript check fixture: {error}"))?;
+        let options = FirstPrOptions {
+            base: "HEAD~1".to_string(),
+            ..FirstPrOptions::default()
+        };
+        let recommend = |mutate: &dyn Fn(&mut Value)| -> Result<Option<String>, String> {
+            let mut check = check.clone();
+            mutate(&mut check);
+            let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+                root: ".".to_string(),
+                generated_at: "test".to_string(),
+                source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+                records_path: "check.json".to_string(),
+                records_json: Ok(check.to_string()),
+            });
+            let ledger: Value = serde_json::from_str(&render_gap_decision_ledger_json(&report)?)
+                .map_err(|error| error.to_string())?;
+            let Some(record) = ledger["records"].get(0) else {
+                return Ok(None);
+            };
+            Ok(recommended_gap_repair_command(record, &ledger, &options))
+        };
+
+        let command = recommend(&|_| {})?
+            .ok_or("a current, complete, producer-made TypeScript record must recommend")?;
+        assert!(
+            command.starts_with(
+                "ripr agent repair --gap-id gap:typescript:typescript_preview:2396aec1 --base 'HEAD~1' --root "
+            ) && command.ends_with(" --phase before"),
+            "{command}"
+        );
+
+        // Missing and non-current source currentness: no recommendation.
+        assert_eq!(
+            recommend(&|check| {
+                if let Some(finding) = check["findings"][0].as_object_mut() {
+                    finding.remove("source_currentness");
+                }
+            })?,
+            None
+        );
+        assert_eq!(
+            recommend(&|check| check["findings"][0]["source_currentness"] = json!("unknown"))?,
+            None
+        );
+        assert_eq!(
+            recommend(
+                &|check| check["findings"][0]["source_currentness"] = json!("moved_or_renamed")
+            )?,
+            None
+        );
+        // Missing, incomplete or bounded analysis outcome: no recommendation.
+        assert_eq!(
+            recommend(&|check| {
+                if let Some(object) = check.as_object_mut() {
+                    object.remove("analysis_outcome");
+                }
+            })?,
+            None
+        );
+        assert_eq!(
+            recommend(&|check| check["analysis_outcome"]["analysis_complete"] = json!(false))?,
+            None
+        );
+        assert_eq!(
+            recommend(&|check| check["analysis_outcome"]["document_complete"] = json!(false))?,
+            None
+        );
+        Ok(())
     }
 
     #[test]

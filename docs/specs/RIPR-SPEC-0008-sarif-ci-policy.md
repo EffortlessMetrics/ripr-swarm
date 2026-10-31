@@ -44,7 +44,14 @@ The SARIF layer should:
   complete run is not indistinguishable from a clean analysis (#5091).
   The property is absent when the count is zero. Omitted findings stay
   out of `results`; the property only discloses the filter, matching the
-  GitHub annotation denominator notice (#4393).
+  GitHub annotation denominator notice (#4393);
+- fold diff-scoped results that share a rule, file, line and suppression
+  state into the first one, so one changed line is one code-scanning alert
+  (#11219). The kept result is the one with the smallest fingerprint (input order never
+  changes it), keeps its message and fingerprint, lists the
+  folded results in `properties.folded_results`, and the run records the
+  count in `runs[].properties.folded_same_line_results` (absent when zero).
+  Different classes never fold: a weaker class does not hide a stronger one.
 
 ## Rule IDs
 
@@ -107,7 +114,7 @@ Every SARIF result should include:
 - `ruleId` matching the tables above;
 - `level` from configured severity;
 - one primary physical location when file and line are known;
-- a short message that uses static exposure vocabulary;
+- a short message that uses static exposure vocabulary; finding results (not seam results) lead with the first missing check when one exists and bound that evidence head to 240 characters (the reconciled next step is appended whole per RIPR-SPEC-0088), with full evidence kept in `properties` (#11219);
 - `partialFingerprints.riprFingerprintV1`;
 - `properties.tool = "ripr"`;
 - `properties.kind = "finding"` or `"seam"`;
@@ -126,8 +133,30 @@ rule_id | finding_id | probe_id | normalized_file | line
 Seam fingerprints should prefer:
 
 ```text
-rule_id | seam_id | normalized_file | line
+rule_id | normalized_file | identity_hash | ordinal
 ```
+
+A seam fingerprint is independent of the display line, the byte offset and the
+offset-derived `seam_id` (#11219), so an unrelated edit above a seam keeps its
+code-scanning alert. `identity_hash` is a 128-bit stable hash (32 lowercase hex
+characters) over the length-prefixed seam owner, seam kind and
+expression with whitespace between tokens collapsed to one space; the
+contents of string literals (including raw strings) are kept byte for byte, so
+`"a  b"` and `"a b"` stay distinct. `ordinal` is the zero-based source-order rank
+among seams of the same file, owner, kind and expression in the classified
+set, assigned before severity filtering so another seam's class or `off`
+setting never renumbers it. Seams that differ in file, owner, kind or
+expression get different hash inputs, and textual duplicates are told apart by
+ordinal, so distinct seams do not share a fingerprint by construction; the
+hash is not cryptographic, so an accidental 128-bit collision between
+different inputs is negligible rather than mathematically excluded. The grip class
+stays in `rule_id`, so a reclassified seam is a new alert. Reordering
+identical duplicate seams, or a seam-limit cap that changes which duplicates
+are analyzed, can swap ordinals because static evidence cannot tell them
+apart. Renaming the owner, changing the seam kind or editing the expression
+is a different seam identity and opens a new alert; the fingerprint follows
+the seam's text and scope, not a tracked "same seam" across edits.
+`properties.seam_id` is unchanged.
 
 `normalized_file` and the physical location `uri` do not depend on how
 `--root` is spelled: `.`, `./` and the checkout's absolute path render the
@@ -271,6 +300,21 @@ then results is empty, run_status is complete, and
 runs[].properties.omitted_not_current is absent.
 ```
 
+### Same-line findings of one class fold into one alert
+
+```text
+Given two current findings of the same class on one file and line,
+when they are rendered as SARIF,
+then results holds one entry with properties.folded_results naming the
+other, and runs[].properties.folded_same_line_results equals 1.
+```
+
+```text
+Given findings that differ in class or line,
+when they are rendered as SARIF,
+then every one is its own result and folded_same_line_results is absent.
+```
+
 ### Baseline policy flags new warnings
 
 ```text
@@ -299,6 +343,11 @@ Implemented renderer tests:
 - `crates/ripr/src/output/sarif.rs::tests::sarif_run_with_only_not_current_findings_records_omitted_property`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_empty_findings_run_omits_omitted_not_current_property`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_mixed_current_and_not_current_records_omitted_count_beside_results`
+- `crates/ripr/src/output/sarif.rs::tests::same_line_same_class_findings_fold_into_one_alert_that_names_the_rest`
+- `crates/ripr/src/output/sarif.rs::tests::findings_that_differ_in_class_or_line_stay_separate`
+- `crates/ripr/src/output/sarif.rs::tests::the_kept_alert_does_not_depend_on_input_order`
+- `crates/ripr/src/output/sarif.rs::tests::a_suppressed_finding_is_not_folded_into_an_active_one`
+- `crates/ripr/src/output/sarif.rs::tests::findings_without_a_line_are_never_folded`
 
 Implemented policy tests:
 

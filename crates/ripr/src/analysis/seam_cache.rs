@@ -62,8 +62,8 @@ use super::test_grip_evidence::RelatedTestGrip;
 use super::test_grip_evidence::shared_grips::SharedGrips;
 use crate::config::{
     PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, TYPESCRIPT_PROJECT_MARKERS,
-    TYPESCRIPT_SOURCE_DIR_MARKERS, source_dir_contains_detectable_python,
-    source_dir_contains_detectable_typescript,
+    TYPESCRIPT_SOURCE_DIR_MARKERS, detect_javascript_led_root,
+    source_dir_contains_detectable_python, source_dir_contains_detectable_typescript,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -584,15 +584,17 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.119`: a direct bare boolean assertion can grip its whole primitive
 /// integer boundary after owner admission, consistency and exact-call pairing
 /// (#8610). Old entries retain the missed weak repair result.
-/// `1.122`: a pushed element embedding a type from outside the scanned workspace
-/// no longer reads as comparing by its fields (#10684).
-/// `1.121`: a Display `write!` tail whose format template changed beyond
-/// fixed text no longer borrows an exact output pin (#9836).
 /// `1.120`: a literal-only integer expression that folds exactly adds its value
 /// as an owner-scoped probe token, and the sole glob of the owner's declared
 /// dependency reaches a `T::name(..)` owner (RIPR-SPEC-0158, RIPR-SPEC-0172,
 /// #10479). Old entries keep the missed observation and the abstain.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.122";
+/// `1.121`: a Display `write!` tail whose format template changed beyond
+/// fixed text no longer borrows an exact output pin (#9836).
+/// `1.122`: a pushed element embedding a type from outside the scanned workspace
+/// no longer reads as comparing by its fields (#10684).
+/// `1.123`: return/error matches! assertions require shared test execution
+/// admission. Older entries may credit ignored or broad expected-panic tests.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.123";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -758,9 +760,10 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.122";
 /// `0.124`: same suffixed decimal argument values as full `1.117` (#10839).
 /// `0.125`: same scope-end carrier as full `1.118` (#10814).
 /// `0.126`: same boolean boundary grip as full `1.119` (#8610).
-/// `0.128`: same Display placeholder-edit refusal as full `1.121` (#9836).
 /// `0.127`: same literal fold and sole-glob reach as full `1.120` (#10479).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.129";
+/// `0.128`: same Display placeholder-edit refusal as full `1.121` (#9836).
+/// `0.130`: same matches! execution admission as full `1.123`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.130";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -928,9 +931,10 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.129";
 /// `0.124`: same suffixed decimal argument values as full `1.117` (#10839).
 /// `0.125`: same scope-end carrier as full `1.118` (#10814).
 /// `0.126`: same boolean boundary grip as full `1.119` (#8610).
-/// `0.128`: same Display placeholder-edit refusal as full `1.121` (#9836).
 /// `0.127`: same literal fold and sole-glob reach as full `1.120` (#10479).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.129";
+/// `0.128`: same Display placeholder-edit refusal as full `1.121` (#9836).
+/// `0.130`: same matches! execution admission as full `1.123`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.130";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4649,6 +4653,11 @@ fn hash_named_workspace_files(root: &Path, file_name: &str) -> String {
 /// (bounded to two presence booleans — never a per-file enumeration).
 /// TypeScript no-config detection (`tsconfig.json`/`jsconfig.json` and
 /// detectable TypeScript source below `src`/`tests`) binds the same way.
+/// A package-led JavaScript root (#11336: root `package.json` plus detectable
+/// JS/TS source at the root or below `src`/`test`/`tests`) also selects the
+/// TypeScript adapter, so its effective detection result binds as one
+/// `js_led_root=1` line, only when true. Roots where it is false keep their
+/// prior identities byte-for-byte.
 /// Content-only edits intentionally preserve this identity while creation
 /// and deletion invalidate it. Generated files and excluded directories do
 /// not participate: detection ignores them, so binding them would orphan
@@ -4675,10 +4684,12 @@ fn hash_workspace_manifests(root: &Path) -> String {
         .copied()
         .filter(|dir| source_dir_contains_detectable_typescript(root, dir))
         .collect();
+    let javascript_led_root = detect_javascript_led_root(root);
     if present_python_markers.is_empty()
         && detectable_source_dirs.is_empty()
         && present_typescript_markers.is_empty()
         && detectable_typescript_dirs.is_empty()
+        && !javascript_led_root
     {
         return cargo_identity;
     }
@@ -4703,6 +4714,9 @@ fn hash_workspace_manifests(root: &Path) -> String {
         identity.push_str("typescript_source_dir=");
         identity.push_str(dir);
         identity.push('\n');
+    }
+    if javascript_led_root {
+        identity.push_str("js_led_root=1\n");
     }
     hash_str(&identity)
 }
@@ -5343,8 +5357,11 @@ mod tests {
         // 1.116 -> 1.117: whole suffixed decimal arguments feed repository activation (#10839).
         // 1.117 -> 1.118: scope-end carrier for a standard Drop (#10814).
         // 1.118 -> 1.119: direct boolean boundary owner grip (RIPR-SPEC-0197, #8610).
+        // 1.119 -> 1.120: literal-only fold and sole-glob reach (#10479).
+        // 1.120 -> 1.121: Display placeholder-edit refusal (#9836).
         // 1.121 -> 1.122: foreign embedded-type equality reading (#10684).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.122");
+        // 1.122 -> 1.123: return/error matches! execution admission.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.123");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5450,9 +5467,12 @@ mod tests {
         // 0.123 -> 0.124: same suffixed decimal argument values as full 1.117.
         // 0.124 -> 0.125: same scope-end carrier as full 1.118.
         // 0.125 -> 0.126: same boolean boundary grip as full 1.119 (#8610).
+        // 0.126 -> 0.127: same literal fold and sole-glob reach as full 1.120.
+        // 0.127 -> 0.128: same Display placeholder-edit refusal as full 1.121.
         // 0.128 -> 0.129: same foreign embedded-type reading as full 1.122.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.129");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.129");
+        // 0.129 -> 0.130: same matches! admission as full 1.123.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.130");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.130");
     }
 
     #[test]
@@ -7526,6 +7546,85 @@ mod tests {
             baseline.workspace_manifests_hash,
             cache_key().workspace_manifests_hash
         );
+
+        ignore_remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn package_led_javascript_root_changes_cache_identity() -> Result<(), String> {
+        let root = isolated_dir("javascript-led-root");
+        ignore_remove_dir_all(&root);
+        std::fs::create_dir_all(&root).map_err(|err| format!("create workspace: {err}"))?;
+        let identity = || hash_workspace_manifests(&root);
+        let cargo_only = hash_named_workspace_files(&root, "Cargo.toml");
+
+        // JavaScript with no manifest is not detected: the identity stays the
+        // bare Cargo identity (the early-return path), byte for byte.
+        std::fs::write(root.join("index.js"), "x").map_err(|err| format!("write index: {err}"))?;
+        assert!(!detect_javascript_led_root(&root));
+        assert_eq!(identity(), cargo_only);
+
+        let manifest = root.join("package.json");
+        std::fs::write(&manifest, "{}").map_err(|err| format!("write package.json: {err}"))?;
+        assert!(detect_javascript_led_root(&root));
+        let with_manifest = identity();
+        assert_ne!(with_manifest, cargo_only, "package.json creation flips it");
+
+        std::fs::write(&manifest, "{\"name\":\"edited\"}")
+            .map_err(|err| format!("rewrite package.json: {err}"))?;
+        assert_eq!(
+            with_manifest,
+            identity(),
+            "content-only package.json edits preserve the presence identity"
+        );
+
+        std::fs::remove_file(&manifest).map_err(|err| format!("remove package.json: {err}"))?;
+        assert_eq!(identity(), cargo_only, "package.json deletion restores it");
+
+        // A manifest alone is not a marker either.
+        std::fs::remove_file(root.join("index.js")).map_err(|err| format!("remove: {err}"))?;
+        std::fs::write(&manifest, "{}").map_err(|err| format!("write package.json: {err}"))?;
+        assert_eq!(identity(), cargo_only);
+
+        // #11419: each package-led source directory (`src/`, `test/`,
+        // `tests/`) participates in the identity, mirroring the detector's
+        // own per-directory coverage — not just the root source.
+        for dir in ["src", "test", "tests"] {
+            let source = root.join(dir).join("present.js");
+            std::fs::create_dir_all(root.join(dir))
+                .map_err(|err| format!("create {dir}: {err}"))?;
+            std::fs::write(&source, "x").map_err(|err| format!("write {dir}: {err}"))?;
+            assert!(
+                detect_javascript_led_root(&root),
+                "{dir}/ source selects the adapter"
+            );
+            assert_ne!(
+                identity(),
+                cargo_only,
+                "creating the first {dir} source must invalidate the cache identity"
+            );
+
+            std::fs::remove_file(&source).map_err(|err| format!("remove {dir}: {err}"))?;
+            assert_eq!(
+                identity(),
+                cargo_only,
+                "removing the last {dir} source must restore the baseline identity"
+            );
+
+            // Nested sources are covered by the recursive detector walk.
+            let nested = root.join(dir).join("pkg").join("nested.js");
+            std::fs::create_dir_all(root.join(dir).join("pkg"))
+                .map_err(|err| format!("create {dir}/pkg: {err}"))?;
+            std::fs::write(&nested, "x").map_err(|err| format!("write {dir}/pkg: {err}"))?;
+            assert_ne!(
+                identity(),
+                cargo_only,
+                "nested {dir} sources participate in detection identity"
+            );
+            std::fs::remove_file(&nested).map_err(|err| format!("remove nested {dir}: {err}"))?;
+        }
 
         ignore_remove_dir_all(&root);
         Ok(())

@@ -2518,6 +2518,7 @@ impl RustAdapter {
         // limitation.
         let mut files_with_findings = std::collections::BTreeSet::new();
         let mut seeded_probes = Vec::new();
+        let mut panicked_files: BTreeSet<PathBuf> = BTreeSet::new();
         for changed in analyzable_changed_files
             .iter()
             .filter(|file| self.accepts_path(&file.path))
@@ -2578,7 +2579,7 @@ impl RustAdapter {
         // Workers inherit this thread's cancellation token and
         // committed-source overlay; a cancelled worker drops its probe and the
         // checkpoint after the pass discards the partial result.
-        let classified: Vec<Option<Finding>> = if seeded_probes.is_empty() {
+        let classified: Vec<ClassifiedProbe> = if seeded_probes.is_empty() {
             Vec::new()
         } else {
             let related_test_candidate_index = classify::RelatedTestCandidateIndex::new(&index)
@@ -2596,17 +2597,36 @@ impl RustAdapter {
                     cancellation::with_optional_token(token.as_ref(), || {
                         committed_source::with_overlay(overlay.clone(), || {
                             graph_counter.run(|| {
-                                cancellation::checkpoint().ok()?;
-                                Some(classifier::classify_probe_with_candidate_index_and_origins(
-                                    &seeded.probe,
-                                    &index,
-                                    workspace_index_complete,
-                                    dependency_edges.as_ref(),
-                                    &related_test_candidate_index,
-                                    &transitive_reach,
-                                    seeded.propagation_origin.as_ref(),
-                                    Some(&value_origins),
-                                ))
+                                if cancellation::checkpoint().is_err() {
+                                    return ClassifiedProbe::Dropped;
+                                }
+                                // #11116: one probe's internal failure must not
+                                // unwind the pool and abort every other file's
+                                // result. The payload is not kept: it can quote
+                                // repository text and the panic hook has
+                                // already reported it.
+                                let contained =
+                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                        #[cfg(test)]
+                                        injected_classify_panic::fire(
+                                            &options.root,
+                                            &seeded.probe.location.file,
+                                        );
+                                        classifier::classify_probe_with_candidate_index_and_origins(
+                                            &seeded.probe,
+                                            &index,
+                                            workspace_index_complete,
+                                            dependency_edges.as_ref(),
+                                            &related_test_candidate_index,
+                                            &transitive_reach,
+                                            seeded.propagation_origin.as_ref(),
+                                            Some(&value_origins),
+                                        )
+                                    }));
+                                match contained {
+                                    Ok(finding) => ClassifiedProbe::Classified(Box::new(finding)),
+                                    Err(_payload) => ClassifiedProbe::Panicked,
+                                }
                             })
                         })
                     })
@@ -2651,11 +2671,32 @@ impl RustAdapter {
 
         {
             for ((changed, seeded), classified) in seeded_probes.into_iter().zip(classified) {
-                let Some(mut finding) = classified else {
-                    // A worker only drops its probe when the run was
-                    // cancelled, which the checkpoint above has reported.
-                    cancellation::checkpoint()?;
-                    continue;
+                let mut finding = match classified {
+                    ClassifiedProbe::Classified(finding) => *finding,
+                    ClassifiedProbe::Dropped => {
+                        // A worker only drops its probe when the run was
+                        // cancelled, which the checkpoint above has reported.
+                        cancellation::checkpoint()?;
+                        continue;
+                    }
+                    ClassifiedProbe::Panicked => {
+                        // #11116: fail closed. The probe keeps a
+                        // `static_unknown` stand-in with no gap, no related
+                        // test and no repair signal, and none of the
+                        // reach/limit shaping below runs on it, so it can
+                        // never be promoted to `exposed` or actionable.
+                        let mut finding =
+                            classifier::classification_incomplete_finding(&seeded.probe);
+                        finding.language = Some(LanguageId::Rust);
+                        finding.source_currentness =
+                            analysis_probes::resolve_probe_source_currentness(
+                                changed,
+                                &seeded.probe,
+                            );
+                        panicked_files.insert(changed.path.clone());
+                        push_retained_finding(&mut findings, finding);
+                        continue;
+                    }
                 };
                 let probe = seeded.probe;
                 let binding_relation = seeded.binding_relation;
@@ -2814,6 +2855,10 @@ impl RustAdapter {
                 push_retained_finding(&mut findings, finding);
             }
         }
+
+        // #11116: a file whose probe classification panicked is incomplete
+        // even though its stand-in finding is retained.
+        limitations.extend(classification_panic_limitations(&panicked_files)?);
 
         // #4775: unchanged lexical-fallback test files are a separate
         // language-scope limitation. Compose with #4722 rather than
@@ -2986,6 +3031,96 @@ fn unreached_module_limitations<'a>(
                 )
         })
         .collect()
+}
+
+/// Outcome of classifying one seeded probe on the classify pool (#11116).
+enum ClassifiedProbe {
+    Classified(Box<Finding>),
+    /// The run was cancelled before this probe was classified.
+    Dropped,
+    /// Classification panicked; contained to this probe.
+    Panicked,
+}
+
+/// One `producer_failure` limitation per changed Rust file whose probe
+/// classification panicked (#11116), so the run reads incomplete and names the
+/// file instead of presenting the stand-in `static_unknown` rows as complete.
+fn classification_panic_limitations(
+    files: &BTreeSet<PathBuf>,
+) -> Result<Vec<crate::analysis_outcome::AnalysisLimitation>, String> {
+    use crate::analysis_outcome::{
+        AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
+        AnalysisStage,
+    };
+    let mut limitations = Vec::new();
+    for path in files {
+        let portable = path.to_string_lossy().replace('\\', "/");
+        let limitation = AnalysisLimitation::new(
+            AnalysisLimitationKind::ProducerFailure,
+            AnalysisStage::LanguageAdapter,
+            AnalysisRecovery::new(
+                AnalysisRecoveryKind::InspectFailure,
+                "Report the failure with the file and diff, then re-run; the affected findings are static_unknown until it is fixed.",
+            )?,
+        )
+        .with_detail(
+            format!(
+                "{portable}: classification stopped on an internal error (classification_incomplete); \
+                 the affected findings are static_unknown stand-ins that make no exposure claim."
+            )
+            .chars()
+            .take(crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS)
+            .collect::<String>(),
+        )?;
+        let limitation = match limitation.clone().with_path(&portable) {
+            Ok(with_path) => with_path,
+            Err(_) => limitation,
+        };
+        limitations.push(limitation);
+    }
+    Ok(limitations)
+}
+
+/// Test-only fault injection for the classify pool (#11116): raise a panic
+/// while classifying a probe in an armed `(root, file)`, so tests drive the
+/// production containment. Keyed by root and file so concurrent tests never
+/// see each other's arming.
+#[cfg(test)]
+pub(crate) mod injected_classify_panic {
+    use std::collections::BTreeSet;
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+
+    static ARMED: Mutex<BTreeSet<(PathBuf, PathBuf)>> = Mutex::new(BTreeSet::new());
+
+    /// Disarms on drop.
+    pub(crate) struct Armed(PathBuf, PathBuf);
+
+    impl Drop for Armed {
+        fn drop(&mut self) {
+            if let Ok(mut armed) = ARMED.lock() {
+                armed.remove(&(self.0.clone(), self.1.clone()));
+            }
+        }
+    }
+
+    pub(crate) fn arm(root: &Path, file: &Path) -> Armed {
+        let key = (root.to_path_buf(), file.to_path_buf());
+        if let Ok(mut armed) = ARMED.lock() {
+            armed.insert(key.clone());
+        }
+        Armed(key.0, key.1)
+    }
+
+    pub(super) fn fire(root: &Path, file: &Path) {
+        let due = ARMED
+            .lock()
+            .map(|armed| armed.contains(&(root.to_path_buf(), file.to_path_buf())))
+            .unwrap_or(false);
+        if due {
+            std::panic::resume_unwind(Box::new("injected classify panic (#11116)"));
+        }
+    }
 }
 
 /// One typed limitation per changed Rust file whose facts came from the
@@ -4315,6 +4450,118 @@ mod tests {
             .iter()
             .map(|path| path.to_string_lossy().replace('\\', "/"))
             .collect()
+    }
+
+    /// #10191: exercise the real name-admission path, with a nonempty
+    /// withheld binary, instead of only Ready's whole-workspace index.
+    /// Credit agrees even when narrowed composition is an analyzer limit,
+    /// while the full index establishes a real shadow (RIPR-SPEC-0240).
+    #[test]
+    fn binary_macro_boundaries_preserve_credit_with_withheld_binary() -> Result<(), String> {
+        use dependent_scope::DependentScopeMode;
+        for shared in [false, true] {
+            let root = temp_root("binary-macro-dependent-scope")?;
+            for (path, source) in [
+                (
+                    "Cargo.toml",
+                    "[workspace]\nmembers=['a','b','island']\nresolver='2'\n",
+                ),
+                (
+                    "a/Cargo.toml",
+                    "[package]\nname='scope_a'\nversion='0.0.0'\nedition='2024'\n",
+                ),
+                ("a/src/lib.rs", "pub fn answer() -> u8 {\n    7\n}\n"),
+                (
+                    "b/Cargo.toml",
+                    "[package]\nname='macro_binary'\nversion='0.0.0'\nedition='2024'\n[[bin]]\nname='parse'\npath='parse.rs'\n[dependencies]\nscope_a={path='../a'}\n",
+                ),
+                (
+                    "b/parse.rs",
+                    "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {} }\nfn main() {}\n",
+                ),
+                (
+                    "island/Cargo.toml",
+                    "[package]\nname='island'\nversion='0.0.0'\n",
+                ),
+                ("island/src/lib.rs", "pub fn unrelated() {}\n"),
+            ] {
+                write(&root.join(path), source)?;
+            }
+            let prefix = if shared {
+                "#[macro_use]\n#[path = \"../../b/parse.rs\"]\nmod shadow;\n"
+            } else {
+                ""
+            };
+            write(
+                &root.join("a/tests/pin.rs"),
+                &format!(
+                    "{prefix}use scope_a::answer;\n#[test]\nfn pin() {{ assert_eq!(answer(), 7); }}\n"
+                ),
+            )?;
+            let changed = diff::parse_unified_diff(
+                "diff --git a/a/src/lib.rs b/a/src/lib.rs\n--- a/a/src/lib.rs\n+++ b/a/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn answer() -> u8 {\n-    6\n+    7\n }\n",
+            );
+            let run = |mode| {
+                dependent_scope::with_forced_mode(mode, || {
+                    let result = RustAdapter.analyze_diff(
+                        &diff_options(root.clone(), AnalysisMode::Draft),
+                        &OraclePolicy::default(),
+                        &changed,
+                    )?;
+                    let mut findings = result.findings.into_iter().filter(|finding| {
+                        finding.probe.family == ProbeFamily::ReturnValue
+                            && finding.probe.expression == "7"
+                    });
+                    let finding = findings.next().ok_or("missing changed return")?;
+                    assert!(findings.next().is_none(), "one changed return");
+                    Ok::<_, String>((finding, dependent_scope::observed_main_files()))
+                })
+            };
+            let (full, full_main) = run(DependentScopeMode::Full)?;
+            let (named, main) = run(DependentScopeMode::NameAdmitted)?;
+            assert!(full_main.is_none(), "full control must not narrow");
+            let main = slash_paths(&main.ok_or("named control must actually narrow")?);
+            assert!(main.contains(&"a/tests/pin.rs".to_string()), "{main:?}");
+            assert!(
+                !main.contains(&"b/parse.rs".to_string()),
+                "binary must be withheld: {main:?}"
+            );
+            assert_eq!(named.related_tests.len(), 1);
+            assert_eq!(full.related_tests.len(), 1);
+            if shared {
+                assert_eq!(full.class, ExposureClass::ReachableUnrevealed);
+                assert_eq!(named.class, ExposureClass::StaticUnknown);
+                assert_eq!(
+                    named.static_limit_kind,
+                    Some(StaticLimitKind::RustAssertionContextUnresolved)
+                );
+                assert!(full.static_limit_kind.is_none());
+                for finding in [&full, &named] {
+                    assert_eq!(finding.ripr.reveal.observe.state, StageState::No);
+                    assert_eq!(finding.ripr.reveal.discriminate.state, StageState::No);
+                    let test = &finding.related_tests[0];
+                    assert!(test.oracle.is_none());
+                    assert_eq!(test.oracle_kind, OracleKind::Unknown);
+                    assert_eq!(test.oracle_strength, OracleStrength::None);
+                    assert_eq!(
+                        test.miss,
+                        Some(crate::domain::RelatedTestMiss::AssertionNotCredited)
+                    );
+                }
+            } else {
+                for finding in [&full, &named] {
+                    assert_eq!(finding.class, ExposureClass::Exposed);
+                    assert_eq!(finding.ripr.reveal.observe.state, StageState::Yes);
+                    assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Yes);
+                    assert_eq!(
+                        finding.related_tests[0].oracle_strength,
+                        OracleStrength::Strong
+                    );
+                }
+            }
+            fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        }
+        Ok(())
     }
 
     /// #5320: the name-admitted scope indexes `a` plus the one dependent file
@@ -9586,6 +9833,8 @@ fn absent_delimiter_boundary_returns_head() {
     }
 }
 
+#[cfg(test)]
+mod classify_panic_tests;
 #[cfg(test)]
 mod facade_reach_tests;
 #[cfg(test)]

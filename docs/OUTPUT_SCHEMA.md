@@ -138,7 +138,10 @@ The MCP tool envelopes carry the schema-versioned document as
 double-carry envelope cannot fit the id-aware response bound refuses typed
 with `result_too_large` instead of shipping a success without
 `structuredContent` (#7768; details in
-[MCP workspace status server](interop/mcp.md)).
+[MCP workspace status server](interop/mcp.md)). `content[0].text` is the
+compact JSON copy by default; `RIPR_MCP_TEXT_CONTENT=summary` opts a server
+process into a digest instead while `structuredContent` stays the one
+complete result (#9360).
 
 The published JSON Schemas have these current versions. Each row is checked
 against the schema's pinned `const` and every named producer source by
@@ -1079,6 +1082,7 @@ zeroed `summary`, same empty `findings`, same
 | `diff_input_unsupported` | `analysis/diff-input` | The shared diff parser refused a region, admission, or truncated textual section of an `agent brief --diff` or `--base` input; no brief selection ran. |
 | `git_invocation_timeout` | `analysis/git-timeout` | A git invocation exceeded its cooperative deadline and was terminated. |
 | `analysis_timeout` | `analysis/timeout` | The `ripr check` wall-clock budget (`--timeout SECS`, `RIPR_CHECK_TIMEOUT`) ran out before analysis finished; no findings were produced (#5369). |
+| `analysis_worker_stopped` | `analysis/worker-stopped` | The `ripr check` analysis worker thread stopped without producing a result, almost always a panic whose message the panic hook printed on stderr; no findings were produced and the result is never a clean pass (#11116). Re-run, report with the panic output, and narrow the diff or base range. |
 | `analysis_failed` | `analysis/failure` | Honest fallback for any other failure: the run produced no findings, with no claim about which stage stopped. |
 
 The scope-guard identities (`diff_scope_oversized`, `repo_scope_oversized`)
@@ -1992,6 +1996,14 @@ The evidence-first fields are additive in schema `0.2`:
       related test assertion has `OracleKind::Unknown` AND a non-empty matcher
       name that is not in the recognised matcher set (real oxc-parsed AST
       evidence).
+    - `typescript_match_object_scalar_unresolved` — fired (RIPR-SPEC-0250 rule
+      4) when an oracle-eligible related test calls `toMatchObject` with a
+      scalar literal; Vitest reads it as plain equality and Jest rejects it, so
+      the row reads `unknown` and no repair start is offered.
+    - `typescript_boundary_operand_derived_unresolved` — fired (RIPR-SPEC-0027)
+      when a changed predicate compares a literal with a local the owner binds
+      only from a call that names no owner parameter, so no test call can set
+      it; no repair start is offered.
     - `typescript_dynamic_assertion_unresolved` — fired (RIPR-SPEC-0085 §PR5)
       when an oracle-eligible related test assertion in the changed seam's
       oracle family (RIPR-SPEC-0104) has a non-literal dynamic matcher argument
@@ -2224,7 +2236,8 @@ JSON fields:
     source text, emitted ONLY when the argument is a concrete resolvable literal
     (string, number, boolean, null, a safe all-literal object, or, for the
     deep-equality matchers AVA `deepEqual` and Jest `toEqual` / `toStrictEqual`,
-    an all-literal array). NOT emitted
+    an all-literal array; for Jest `toEqual` / `toStrictEqual` / `toMatchObject`
+    also an all-literal object or array nested to any depth). NOT emitted
     for dynamic/non-literal arguments; those trigger
     `typescript_dynamic_assertion_unresolved` instead.
   - `typescript_oracle_confidence: <level>` — additive; confidence derived from
@@ -2244,7 +2257,10 @@ JSON fields:
   `oracle_strength`, optional `bun_cross_language_grip`, optional
   `missing_discriminator`, `suggested_assertion_shape`, `static_limits`,
   nullable `verify.command`, `why_not_actionable`, `repair_route`,
-  `repair_packet_ready`, and `limits`. The optional
+  `repair_packet_ready`, and `limits`. When `repair_packet_ready` is `true`
+  the final `limits` entry reads that the card is an advisory summary and the
+  complete repair packet is projected separately (#10709); only a card whose
+  packet is not ready says it "is not a repair packet". The optional
   `bun_cross_language_grip` object carries one coherent configured Bun bridge
   profile selected from the related evidence (including Blob,
   `copy_to_unshared`, and Markdown resizable profiles). It carries `state`,
@@ -3683,7 +3699,7 @@ The JSON report is repo automation output with schema version `"0.1"`:
     {
       "rule_id": "ripr.seam.weakly_gripped",
       "level": "warning",
-      "fingerprint": "ripr.seam.weakly_gripped|abc123|src/lib.rs|42",
+      "fingerprint": "ripr.seam.weakly_gripped|src/lib.rs|0123456789abcdef0123456789abcdef|0",
       "uri": "src/lib.rs",
       "line": 42,
       "message": "weakly_gripped seam grip for predicate_boundary"
@@ -9796,7 +9812,11 @@ Field contract:
   already-current items.
 - `skip_reason` is `mode_off`, `summary_only`, `suppressed`,
   `inline_comment_cap_reached`, `comment_body_too_large`, `unchanged_tests`,
-  `not_publishable`, or `already_current`.
+  `not_publishable`, or `already_current`. A `comments[]` item whose
+  `gap_state` is anything other than `actionable` (a named `static_limitation`,
+  `already_observed`, `internal_only`, or no `gap_state` at all) offers no test to add and is recorded in
+  `skipped[]` as `not_publishable` instead of an operation, so it never
+  becomes an inline review comment or uses a slot of the cap.
 - Each untrusted field of `operations[].body` is bounded before rendering:
   1,000 characters for a code-span field (changed behavior, verify or repair
   start command), 2,000 for prose (why this matters, repair, reason), and 200
@@ -14335,7 +14355,31 @@ Field contract:
   a gap-ledger record. The card is used only when the review-comments report
   is `tool = "ripr"`, `status = "advisory"`, and names the same root, base,
   and head as the first-pr invocation. Ledger-selected top gaps never carry
-  `repair_command`. `commands` does not repeat the repair start, so editor
+  `repair_command`. Instead a Python or TypeScript preview ledger gap
+  carries `selected.recommended_repair_command` (#10709), and only when all of
+  these hold: the record is `gap_state = "actionable"` with a
+  `canonical_gap_id` that no other record shares; it passes the shared
+  `validate_agent_gap_record_packet` validator; and the ledger's recorded
+  `analysis_outcome` is complete with no `run_limitations`, judged by the
+  predicate `ripr check` applies. The validator's candidate-current
+  requirement reads the record's `source_currentness`, which the ledger
+  producer (`ripr reports gap-ledger --check-output`, and `first-pr
+  --check-output`) copies from the check finding for Python and TypeScript
+  alike, and `analysis_outcome` is copied from the same check document. A
+  record whose `source_currentness` is missing, `unknown` or stale (a finding
+  that is `base_deleted` or `moved_or_renamed` forms no record), or a ledger
+  whose `analysis_outcome` is missing or incomplete, recommends nothing. The
+  checked-in TypeScript `first_successful_pr` ledger carries both fields so
+  its start-here packet recommends the same route as the Python case. The command is
+  `ripr agent repair --gap-id <id> --base <base> --root <root> --phase before`.
+  `ripr check` may print the resolved dirty origin as `--base` where first-pr
+  prints its own `--base`, and first-pr cannot see the working tree, so the
+  start itself still refuses a dirty production tree; the rendered text says
+  to commit first. When present, the CLI and markdown `Safe next action` name
+  it as the recommended route and the by-hand verify/receipt path as the one
+  alternative; when absent (validator refusal, missing or incomplete analysis
+  outcome, other language) the by-hand route stands alone and nothing is
+  recommended. `commands` does not repeat the repair start, so editor
   projections that allowlist `commands` values are unaffected.
 - `selected.verify_command`, `selected.receipt_command`,
   `selected.receipt_path`, `selected.receipt_command_source`, and
@@ -14369,6 +14413,16 @@ Field contract:
 - `missing_artifact`, `malformed_artifact`, `stale_artifact`, `wrong_root`,
   `blocked_artifact`, and `timeout` require `status = "blocked"` and a
   bounded next command when one is known.
+- A root without `Cargo.toml` that `ripr doctor` detects as TypeScript or
+  JavaScript (for example a `package.json` plus `.ts` files), not also as
+  Python, and that has no `tsconfig.json` or `jsconfig.json` at the root and
+  no `package.json` with JavaScript or TypeScript source at the root or under
+  `src/`, `test/` or `tests/` (`package.json` alone is not enough)
+  reports `blocked_artifact` with
+  `selected.reason_code = "typescript_project_marker_missing"` and no next
+  command, not `wrong_root`. Its message says to add `tsconfig.json`
+  (`jsconfig.json` for a JavaScript-only root). A root also detected as
+  Python keeps `wrong_root`.
 - For a check-output-derived or legacy preview/mixed, presentation-text, or unclassifiable
   records ledger with no selected repair, `blocked_artifact`
   carries `selected.reason_code = "source_currentness_unavailable"`
@@ -17407,7 +17461,11 @@ Field contract:
   the closing line names raising `RIPR_PILOT_SEAM_BUDGET` and
   `RIPR_REPO_EXPOSURE_SEAM_LIMIT` instead of "No gap to test", because the
   cut seams were never classified. `null` for partial summaries.
-- `top_actionable_seams[]` — ranked seams using class order
+- `top_actionable_seams[]` — ranked seams. Seams on lines of the current
+  change come first; inside each of those groups a seam with a repair route
+  (one `ripr agent repair` can start from) comes before one without, even
+  when the routable seam has a weaker class (#11292), so `next.repair_command`
+  can name a different seam than before. Then class order
   `weakly_gripped`, `ungripped`, `reachable_unrevealed` (static limitations are
   withheld, see above), with evidence tie-breakers for missing discriminator, related
   test, suggested assertion, and stable location. Within each class, each
@@ -18946,7 +19004,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.122",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.123",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -19731,7 +19789,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.122",
+      "schema_version": "1.123",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

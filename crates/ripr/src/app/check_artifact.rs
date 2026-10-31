@@ -322,7 +322,10 @@ fn build_identity_at_load(
 }
 
 /// Compare the recomputed identity against the recording, field by field,
-/// and fail closed naming every mismatched field.
+/// and fail closed naming every mismatched field. An `analyzer_version`
+/// mismatch names both identities, recorded and current, so a binary
+/// swapped between the artifact's write and read execs is self-describing
+/// (#11197).
 fn verify_identity(
     artifact: &CheckArtifactV1,
     current: &CheckArtifactIdentityV1,
@@ -361,18 +364,26 @@ fn verify_identity(
     if recorded.config_identity_hash != current.config_identity_hash {
         mismatched.push("config_identity_hash");
     }
-    if artifact.analyzer_version != crate::build_identity::cache_identity() {
+    let current_analyzer_version = crate::build_identity::cache_identity();
+    if artifact.analyzer_version != current_analyzer_version {
         mismatched.push("analyzer_version");
     }
     if mismatched.is_empty() {
         return Ok(());
+    }
+    let mut fields = mismatched.join(", ");
+    if mismatched.contains(&"analyzer_version") {
+        fields.push_str(&format!(
+            " (analyzer_version recorded `{}` vs current `{}`)",
+            artifact.analyzer_version, current_analyzer_version
+        ));
     }
     Err(format!(
         "check artifact at {} cannot be reused: identity mismatch on {}. \
          The artifact was produced from a different analysis input; \
          re-run `ripr check --write-artifact` with the current input.",
         path.display(),
-        mismatched.join(", ")
+        fields
     ))
 }
 

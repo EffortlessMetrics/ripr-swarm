@@ -28,7 +28,7 @@ Start here:
   Suggested test file: tests/test_pricing.py
   Suggested test: test_discount
   Test node: tests/test_pricing.py::test_discount
-  Verify command: python -m pytest tests/test_pricing.py::test_discount (high)
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_dynamic_namespace_dunder_setattr/input && python -m pytest tests/test_pricing.py::test_discount) (high)
   Evidence: reach yes · infection weak · propagation weak · observation yes · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -51,7 +51,9 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (Python preview: 1).
-    - shop/route.py:7 (unknown); kind: field_construction; reason: A mocked module replaces the real implementation, so a passing test may not observe the actual changed behavior.
+    - shop/route.py:7 (unknown: static analysis limited); kind: field_construction; reason: A mocked module replaces the real implementation, so a passing test may not observe the actual changed behavior.
+  Hidden classes:
+    unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

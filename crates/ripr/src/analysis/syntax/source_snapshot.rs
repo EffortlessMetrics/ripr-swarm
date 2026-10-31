@@ -129,6 +129,7 @@ pub(crate) struct SourceSnapshot {
     shadows: Mutex<BTreeMap<ShadowKey, bool>>,
     root_shadows: Mutex<BTreeMap<(String, bool), RootShadow>>,
     masked: OnceLock<String>,
+    root_impl_lines: OnceLock<Vec<(usize, usize)>>,
     #[cfg(test)]
     shadow_computations: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
@@ -151,11 +152,35 @@ impl SourceSnapshot {
             shadows: Mutex::default(),
             root_shadows: Mutex::default(),
             masked: OnceLock::new(),
+            root_impl_lines: OnceLock::new(),
             #[cfg(test)]
             shadow_computations: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             root_shadow_computations: std::sync::atomic::AtomicUsize::new(0),
         }
+    }
+
+    /// Inclusive 1-based line ranges of the `impl` blocks that are direct items
+    /// of the file root, in source order, built once per snapshot. Lines count
+    /// the parsed tree's own text, so the answer is identical to counting
+    /// newlines before each range edge; a per-probe rebuild copied the whole
+    /// file text and rescanned it for every `impl`.
+    pub(crate) fn root_impl_lines(&self) -> &[(usize, usize)] {
+        self.root_impl_lines.get_or_init(|| {
+            let Some(tree) = self.tree() else {
+                return Vec::new();
+            };
+            let syntax = tree.syntax();
+            let lines = LineIndex::new(&syntax.text().to_string());
+            syntax
+                .children()
+                .filter_map(ast::Impl::cast)
+                .map(|item| {
+                    let range = item.syntax().text_range();
+                    (lines.line(range.start()), lines.line(range.end()))
+                })
+                .collect()
+        })
     }
 
     pub(crate) fn lexical_items(&self) -> Option<&SourceScopes> {
@@ -209,9 +234,19 @@ impl SourceSnapshot {
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             compute()
         };
+        // Compute outside the lock: a miss parses and scans the file, and a
+        // guard held across that stalled every other worker that needed any
+        // key of this snapshot. The answer is pure in the snapshot and the
+        // key, so workers that miss together agree and the first insert wins.
+        if let Ok(memo) = self.shadows.lock()
+            && let Some(found) = memo.get(&key)
+        {
+            return *found;
+        }
+        let answer = compute();
         match self.shadows.lock() {
-            Ok(mut memo) => *memo.entry(key).or_insert_with(compute),
-            Err(_) => compute(),
+            Ok(mut memo) => *memo.entry(key).or_insert(answer),
+            Err(_) => answer,
         }
     }
 
@@ -416,6 +451,22 @@ mod tests {
     use crate::analysis::rust_index::summarize_file;
 
     #[test]
+    fn root_impl_lines_cover_only_direct_root_impls() {
+        // Lines: 1 impl A, 2-4 mod m (with a nested impl B on 3), 5-7 impl C
+        // spanning three lines, 8 fn with a local impl D.
+        let source = "impl A { fn a() {} }\nmod m {\n    impl B { fn b() {} }\n}\nimpl C {\n    fn c() {}\n}\nfn f() { impl D {} }\n";
+        let snapshot = SourceSnapshot::new(source);
+        // The nested `impl B` (line 3) and the fn-local `impl D` (line 8) are
+        // not root items; a descendants-wide answer would include them.
+        assert_eq!(snapshot.root_impl_lines(), &[(1, 1), (5, 7)]);
+        assert!(
+            SourceSnapshot::new("fn broken( {")
+                .root_impl_lines()
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn fragment_parses_share_only_exact_bytes_and_clones_start_empty() -> Result<(), String> {
         let memos = SourceSyntaxMemos::default();
         let text = "fn subject() { assert!(Widget.read()); }";
@@ -488,6 +539,65 @@ mod tests {
             .source_syntax
             .get(index, Path::new(FILE))
             .ok_or_else(|| "indexed source missing".to_string())
+    }
+
+    #[test]
+    fn shadow_miss_computes_without_holding_memo_lock() -> Result<(), String> {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let index = index("fn subject() {}");
+        let snapshot = snapshot(&index)?;
+        let key =
+            |name: &str| -> ShadowKey { (name.to_owned(), 1, 1, name.to_owned(), false, None) };
+        let (entered_tx, entered_rx) = mpsc::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let first_snapshot = Arc::clone(&snapshot);
+        let first = std::thread::spawn(move || {
+            first_snapshot.shadow_answer(key("first"), || {
+                // A failed send or recv only means the test already gave up.
+                let _ = entered_tx.send(());
+                let _ = release_rx.recv();
+                true
+            })
+        });
+        let entered = entered_rx.recv_timeout(Duration::from_secs(5));
+        let (done_tx, done_rx) = mpsc::channel::<bool>();
+        let second_snapshot = Arc::clone(&snapshot);
+        let second = std::thread::spawn(move || {
+            let answer = second_snapshot.shadow_answer(key("second"), || false);
+            let _ = done_tx.send(answer);
+        });
+        // A different key must finish while the first computation is blocked.
+        let while_first_blocked = if entered.is_ok() {
+            done_rx.recv_timeout(Duration::from_secs(5))
+        } else {
+            Err(mpsc::RecvTimeoutError::Timeout)
+        };
+        // Always release the first worker, including on timeout, so a
+        // lock-held regression fails instead of deadlocking the suite.
+        let _ = release_tx.send(());
+        let first_answer = first
+            .join()
+            .map_err(|e| format!("first worker panicked: {e:?}"))?;
+        second
+            .join()
+            .map_err(|e| format!("second worker panicked: {e:?}"))?;
+        entered.map_err(|e| format!("first computation never started: {e}"))?;
+        let second_answer = while_first_blocked
+            .map_err(|e| format!("a different key stalled behind the first compute: {e}"))?;
+        assert!(first_answer);
+        assert!(!second_answer);
+        // Both answers are now cached: a recompute would return the opposite.
+        assert!(snapshot.shadow_answer(key("first"), || false));
+        assert!(!snapshot.shadow_answer(key("second"), || true));
+        assert_eq!(
+            snapshot
+                .shadow_computations
+                .load(std::sync::atomic::Ordering::Relaxed),
+            2
+        );
+        Ok(())
     }
 
     #[test]

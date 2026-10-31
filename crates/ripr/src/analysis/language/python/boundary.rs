@@ -167,7 +167,24 @@ pub(super) fn python_boundary_evidence(
     let condition = predicate_condition(line_text);
     let relational = relational_operators(&condition);
     let (operators, old_equality_operands) = if relational.is_empty() {
-        let gate = equality_predicate_gate(&condition, old_line_text)?;
+        let Some(gate) = equality_predicate_gate(&condition, old_line_text) else {
+            // A single-operand test swap (`x is None` -> `not x`, #9186).
+            use super::truthiness_swap::strip_trailing_comment;
+            let old_line_text = strip_trailing_comment(old_line_text?);
+            let line_text = strip_trailing_comment(line_text);
+            return super::truthiness_swap::python_truthiness_swap_evidence(
+                line_text,
+                old_line_text,
+                (
+                    &predicate_condition(line_text),
+                    &predicate_condition(old_line_text),
+                ),
+                owner,
+                owner_source,
+                related_candidates,
+                focus,
+            );
+        };
         (gate.operators, gate.old_operands)
     } else {
         (relational, None)
@@ -181,7 +198,8 @@ pub(super) fn python_boundary_evidence(
         .map(|(left, right)| format!("{left} == {right}"));
 
     let constants = unrebound_constants(owner, related_candidates);
-    let mut rows = strong_owner_call_rows(owner, &constants, related_candidates, focus);
+    let (mut rows, gaps) =
+        strong_owner_call_rows_with_gaps(owner, &constants, related_candidates, focus);
     // A once-bound `local = len(param)` takes the length of the literal string
     // each call passes, so the comparison against it is readable (#11103).
     let mut derived_locals: Vec<String> = Vec::new();
@@ -215,6 +233,30 @@ pub(super) fn python_boundary_evidence(
         // through to the adjacent-boundary rules below and stay unproven.
         return None;
     }
+    // A literal argument normally cannot stand for a rebound parameter.
+    // The sole-yield, unit-step generator grammar is a closed exception.
+    let walk = operands.as_ref().and_then(|(left, right)| {
+        let walk = super::loop_walk::generator_walk(
+            owner_source?,
+            owner,
+            line_text,
+            old_line_text,
+            left,
+            right,
+        )?;
+        (!gaps
+            && !rows.is_empty()
+            && rows.iter().all(|row| {
+                resolve_operand(left, row, &constants)
+                    .is_some_and(|value| value.parse::<i128>().is_ok())
+                    && super::loop_walk::sequence_oracle_observes_row(
+                        row,
+                        owner,
+                        related_candidates,
+                    )
+            }))
+        .then_some(walk)
+    });
     if let (Some((left, right)), Some(source)) = (&operands, owner_source) {
         for operand in [left, right] {
             if owner
@@ -222,6 +264,7 @@ pub(super) fn python_boundary_evidence(
                 .iter()
                 .any(|parameter| parameter.name == *operand)
                 && name_rebound_in_owner(source, owner, operand)
+                && walk.is_none()
             {
                 // The owner rebinds the operand (a loop counter such as
                 // `start -= 1`), so the call argument does not stay the
@@ -316,9 +359,20 @@ pub(super) fn python_boundary_evidence(
                 .get(filter.iterable)
                 .cloned()
                 .unwrap_or_default(),
-            _ => resolve_operand(operand, row, &constants)
-                .into_iter()
-                .collect(),
+            _ => {
+                let mut values: Vec<_> = resolve_operand(operand, row, &constants)
+                    .into_iter()
+                    .collect();
+                if let Some(walk) = &walk
+                    && operand == walk.local
+                    && values
+                        .iter()
+                        .any(|value| value.parse::<i128>().is_ok_and(|start| walk.reaches(start)))
+                {
+                    values.push(walk.bound.clone());
+                }
+                values
+            }
         }
     };
     for row in &rows {
@@ -336,7 +390,11 @@ pub(super) fn python_boundary_evidence(
                 line: row.line,
                 text: format!(
                     "{} | {}; {}",
-                    row.text,
+                    if walk.is_some() {
+                        format!("{} (unit-step generator walk)", row.text)
+                    } else {
+                        row.text.clone()
+                    },
                     operand_provenance(&left, left_value, &constants),
                     operand_provenance(&right, right_value, &constants)
                 ),
@@ -1471,15 +1529,6 @@ pub(super) struct CallRow {
 /// Owner calls from related tests whose strongest assertion is strong: the
 /// same tests that could credit `exposed`. Each analyzable call binds owner
 /// parameters to literal arguments (or literal defaults when omitted).
-pub(super) fn strong_owner_call_rows(
-    owner: &PythonOwner,
-    constants: &[PythonModuleConstant],
-    related_candidates: &[PythonRelatedCandidate<'_>],
-    focus: &PythonAssertionFocus,
-) -> Vec<CallRow> {
-    strong_owner_call_rows_with_gaps(owner, constants, related_candidates, focus).0
-}
-
 /// The strong owner-call rows, and whether some strong related test has an
 /// owner call that binds no row (a `*args` unpack, a comment inside the
 /// argument list) or no owner call this reader recognizes at all. A rule
@@ -1570,9 +1619,18 @@ fn candidate_call_rows(
     for name in owner_call_names(owner, candidate.test, method_call) {
         for (first_line, text) in &sources {
             for (offset, arglist) in call_arglists_with_offsets(text, &name, method_call) {
-                let Some((bindings, case_arguments, elements)) =
-                    bind_call_arguments(owner, constants, candidate.test, skip, arglist)
-                else {
+                // A name's value is only read from the test body itself, at
+                // the call's position in it (#10707).
+                let call_start = std::ptr::eq(*text, candidate.test.body_text.as_str())
+                    .then(|| arglist.as_ptr().addr() - text.as_ptr().addr());
+                let Some((bindings, case_arguments, elements)) = bind_call_arguments(
+                    owner,
+                    constants,
+                    candidate.test,
+                    skip,
+                    arglist,
+                    call_start,
+                ) else {
                     gaps = true;
                     continue;
                 };
@@ -1715,6 +1773,7 @@ fn bind_call_arguments(
     test: &PythonTest,
     skip: usize,
     arglist: &str,
+    call_start: Option<usize>,
 ) -> Option<BoundArguments> {
     let positional: Vec<&str> = owner
         .parameters
@@ -1771,6 +1830,24 @@ fn bind_call_arguments(
         } else if let Some(value) =
             literal_value(value).or_else(|| imported_constant_value(owner, constants, test, value))
         {
+            bindings.insert(
+                name,
+                Binding {
+                    value,
+                    from_default: false,
+                },
+            );
+        } else if let Some(value) = call_start
+            .and_then(|start| super::test_local_literal::test_local_literal(test, value, start))
+        {
+            bindings.insert(
+                name,
+                Binding {
+                    value,
+                    from_default: false,
+                },
+            );
+        } else if let Some(value) = super::test_local_literal::test_module_constant(test, value) {
             bindings.insert(
                 name,
                 Binding {

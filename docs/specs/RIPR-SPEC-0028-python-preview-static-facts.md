@@ -404,14 +404,19 @@ delimiter nested in a field (3.12), a single-line f-string with a field of its
 own inside a field (3.12 same-quote nesting), a field or nested literal that is
 not closed, and nesting deeper than four levels. A colon that may or may not be
 the spec colon hides. The triple-quoted scanning here gives up and hides
-rather than inventing a call for the cases above. Known limits: inside
+rather than inventing a call for the cases above. A top-level single-line
+f-string (any `f`/`rf`/`fr` prefix, either quote) whose quote pairing cannot be
+followed also hides the rest of the text: its own quote nested inside a
+replacement field (Python 3.12: `f"{ "helper(1)" }"`, `f"{y["helper(1)"]}"`) or
+a newline inside a field (`f"{\n y\n}  helper(1)"`). Pairing that does follow
+(`f"{x}"`, `f"{d['k']}"`, `f"{{"`, a nested spec field) typically keeps a real call after
+it visible; a brace or quote inside a nested string literal in a field
+(`f"{'{'}"`) or a quote in format-spec text can over-hide, which is a miss and
+fails closed (#9230). Known limits: inside
 triple-quoted f-strings a replacement field on the same line as the opening
-quote is hidden by the line-prefix quote check, and a real call after a field the
-scanner gave up on is hidden too (misses). Separately, and not changed by this
-change, top-level single-line f-strings that use Python 3.12 same-quote nesting
-(`f"{ "helper(1)" }"`, `f"{y["helper(1)"]}"`) or a newline inside a
-replacement field (`f"{\n y\n}  helper(1)"`) can expose text that is not a
-call (#9230).
+quote is hidden by the line-prefix quote check, a real call after a field the
+scanner gave up on is hidden too, and a real call after a single-line f-string
+the pairing cannot follow is hidden (misses).
 
 A pytest test that names a module-level `@pytest.fixture` function (in its own
 module or a `conftest.py` up its directory chain, nearest wins) as a parameter
@@ -627,6 +632,42 @@ source assertion, independently of the boolean oracle's normalized gate text.
 A workspace assignment to a function's `__code__`, `__defaults__`, `__kwdefaults__` or
 `__closure__` can replace a reader without rebinding its name, so it withholds the module
 constant's credit for scalar and table constants alike (#10626).
+
+A boundary input that a test passes as a plain name resolves like a literal
+when the name is bound once in the test body, by a top-level single-target
+assignment of a literal before the call (#10707). The test is parsed; the name
+is refused if it is a parameter, is stored, deleted, imported, declared
+`global`/`nonlocal`, bound by a `for`, `with`, `except`, walrus, comprehension,
+nested `def`/`class`/`lambda`, tuple unpack or augmented assignment, or if the
+body contains a `match`. A refused name stays unresolved, so the verdict is
+the weak one.
+
+The same input also resolves when the name is a scalar-literal constant of the
+test's own module (`THRESHOLD = 50` above the tests, #10707). The module must
+bind it exactly once at top level, with no `global` rebind, no attribute
+assignment of it, no dynamic namespace write and no opaque construct; the
+test must not bind the name in any scope (parameter, store, loop or
+comprehension target, lambda or nested parameter, import, `match`); the body
+must not mention `monkeypatch`, `patch`, `setattr`, `globals`, `vars`, `exec`
+or `eval`; the module must hold no code that runs outside the tests (autouse
+fixture, `pytestmark`, setup or teardown hook, module-level call, or a
+`conftest.py` on the directory chain that declares a fixture or hook); and a
+test file that the diff also changes gets no credit. Anything else keeps the
+input unresolved. A plain write to the constant from another file that runs
+before the test (a sibling test module assigning `module.THRESHOLD` at
+import) is not seen; no extra fact is read for it.
+
+A changed line whose old and new text differ only in a trailing `#` comment or
+in whitespace between tokens emits no probe (#10706). Both lines are lexed and
+compared by the source spelling of each token, so the statement is the same
+code; a `#` inside a string, a respelling (`0x1` to `1`, a requoted string), a
+changed token or a changed indentation is still an edit, and a line that does
+not lex alone (part of a multi-line construct) stays analyzed. A line inside a
+string literal that crosses a line break is string content, so the guard does
+not apply there, on either the new line or its paired old line (read from the
+reconstructed old source); a file that cannot be lexed to rule that out gets no
+guard. No gap id or
+discriminator can then embed comment text.
 
 A one-line module-level dict literal of unique `str` or `int` keys and scalar
 values (#9619) is a constant of the same kind, read only by a module function
@@ -1018,6 +1059,22 @@ argument (test locals, `*args`, a construct-call passing a dict), static
 evidence cannot see the activating input either way: the oracle verdict stands
 and an `exposed` finding carries a `boundary_activation_unresolved` evidence
 line naming that limitation.
+
+For an adjacent `>`/`>=` or `<`/`<=` while-bound edit with an unchanged
+integer bound, a closed generator walk can resolve a rebound parameter. It
+accepts only an owner consisting of the loop, whose body is `yield name`
+followed by one unconditional `name -= 1` (descending) or `name += 1`
+(ascending). Every strong call must bind a readable integer and occur in a
+direct whole-list or whole-tuple equality against an integer-literal sequence.
+The builtin constructor and imported free-function owner must retain their
+identity. A near-side or equal input reaches the bound; a past-bound input
+does not (#9733). Partial/lossy consumers such as `next` and `sum`, slices,
+unobserved calls, assertion-message calls, nested calls, shadowed constructors,
+and unsupported assertion shapes retain the unresolved limitation: potential
+iteration alone does not establish observation of the changed final element.
+Step-two, conditional, early-exit, pre-loop rebinding, other statements and
+unreadable calls retain the existing unresolved boundary limitation. This is
+not general loop evaluation.
 
 Static-limit findings must fail closed. They keep any observed reachability and
 oracle facts, but their infection and propagation stages remain `unknown`, the
@@ -1493,6 +1550,31 @@ argument or a helper with control flow stays `no_static_path`.
 This differs from `helper_assertions` (#9419, #9711): it is a same-file,
 literal-argument, multi-assert source rewrite that runs first, so
 `helper_assertions` then sees no call to resolve.
+
+## Predicate Swap Amendment (2026-10-30, #9186)
+
+A changed predicate that swaps one single-operand test of an owner parameter
+for another (`x is None` to `not x`) is `weakly_exposed`, not `exposed`, when
+every strong related call binds that parameter to a literal on which both
+tests agree. The rule is a closed allow-list that keeps the existing verdict
+on anything unrecognized: the parameter may be mentioned in the owner body
+only in plain read statements (the changed line included), and a related test
+body may make only recognized calls (the owner, the `assert` statement, named
+`self.assert*` methods, known builtins and `pytest` helpers) with no
+non-ASCII identifier letters, f-strings in the owner, subscript or call-result
+callees, f-strings, or non-call mentions of the owner. A function owner is
+recognized only under its imported name or a module alias the reader
+resolves, never through a receiver alias (`m = src.lib; m.pick(0, 3)`,
+`self.lib.pick(0, 3)`); an owner docstring holding `>>>` refuses. The test
+file source is not read, so these shapes are known limits: an owner call at
+module level (`R = pick(0, 3)`), in a class attribute, in `setUp`, in a
+decorator (`@pytest.mark.parametrize('v', [pick(0, 3)])`), or in a conftest
+or autouse fixture, a module-docstring, README or `.txt` doctest, a
+`--doctest-modules` run over test or source files, a helper or runner table defined at module level
+and seen only through its call in the test body, a discriminating call under
+a non-strong oracle (`assert not pick(0, 3)`), and an owner doctest the
+reader does not see. The change is only `exposed` to `weakly_exposed`, the
+conservative direction.
 
 ## Metrics
 

@@ -3034,13 +3034,17 @@ fn oracles_match_sink(
             )
         })
         .any(|oracle| match seam.expected_sink() {
-            ExpectedSink::ReturnValue | ExpectedSink::OutputField => matches!(
-                oracle.kind,
-                OracleKind::ExactValue
-                    | OracleKind::WholeObjectEquality
-                    | OracleKind::Snapshot
-                    | OracleKind::RelationalCheck
-            ),
+            ExpectedSink::ReturnValue | ExpectedSink::OutputField => {
+                matches!(
+                    oracle.kind,
+                    OracleKind::ExactValue
+                        | OracleKind::WholeObjectEquality
+                        | OracleKind::Snapshot
+                        | OracleKind::RelationalCheck
+                ) || (seam.kind() == SeamKind::ReturnValue
+                    && matches!(oracle.kind, OracleKind::ExactErrorVariant)
+                    && exact_err_return_matches_error_pin(seam, &oracle.text))
+            }
             ExpectedSink::ErrorChannel => matches!(
                 oracle.kind,
                 OracleKind::ExactErrorVariant | OracleKind::BroadError
@@ -3397,6 +3401,15 @@ fn oracle_discriminates_seam(seam: &RepoSeam, oracle: &super::facts::OracleFact)
                 seam.kind() == SeamKind::CallPresence,
             );
     }
+    // #11111: a return-value seam whose changed expression constructs an exact
+    // `Err(Type::Variant)` is the same behavior the error-variant seam over
+    // that span grades, so an exact error-variant pin naming that variant
+    // discriminates it too (equalizes the two seams; only ever lowers repair
+    // actionability). Any other oracle kind keeps the ordinary kind rule.
+    if seam.kind() == SeamKind::ReturnValue && matches!(oracle.kind, OracleKind::ExactErrorVariant)
+    {
+        return exact_err_return_matches_error_pin(seam, &oracle.text);
+    }
     if !oracle_kind_matches_seam(seam, &oracle.kind) {
         return false;
     }
@@ -3654,6 +3667,25 @@ fn error_variant_oracle_matches_seam_variant(seam: &RepoSeam, oracle_text: &str)
         _ => return false,
     };
 
+    // Credit only when the oracle names the seam's exact variant.
+    if !oracle_names_error_variant(oracle_text, &seam_variant) {
+        return false;
+    }
+    // Tuple-variant payload guard (#3244 review): when the seam expression
+    // constructs the variant with string-literal payloads, the oracle must
+    // construct the same path with the same literals. Naming the variant
+    // while observing a different payload is identity coincidence, not
+    // discrimination — the token-coincidence over-credit family. Seams whose
+    // payloads carry no string literals stay identity-creditable: there is
+    // nothing statically observable to compare.
+    tuple_variant_payload_oracle_matches_seam(seam, oracle_text)
+}
+
+/// True when the oracle assertion text names `seam_variant` as the error
+/// variant it pins.
+fn oracle_names_error_variant(oracle_text: &str, seam_variant: &str) -> bool {
+    use super::classify::{enum_variant_values, exact_error_variant};
+
     // Extract the variant(s) named in the oracle assertion text.
     // For `assert_eq!(err, MyError::Negative)` there is no `Err(` in the text,
     // so we use `enum_variant_values` directly on the full oracle text.
@@ -3667,19 +3699,23 @@ fn error_variant_oracle_matches_seam_variant(seam: &RepoSeam, oracle_text: &str)
         // Unwrap_err-bound form: `assert_eq!(err, MyError::Negative)`
         enum_variant_values(oracle_text)
     };
+    oracle_variants.iter().any(|v| v == seam_variant)
+}
 
-    // Credit only when the oracle names the seam's exact variant.
-    if !oracle_variants.iter().any(|v| v == &seam_variant) {
+/// A `ReturnValue` seam whose changed expression constructs an exact
+/// `Err(Type::Variant)` is discriminated by an exact error-variant pin that
+/// names that same variant, with the same string-payload guard the
+/// error-variant seam applies. Fail-closed: an expression that is not a plain
+/// `Err(..)` construction (`.ok_or(..)?`, a success payload) or a pin naming
+/// another variant never discriminates.
+fn exact_err_return_matches_error_pin(seam: &RepoSeam, oracle_text: &str) -> bool {
+    use super::classify::exact_error_variant;
+
+    let Some(seam_variant) = exact_error_variant(seam.expression()) else {
         return false;
-    }
-    // Tuple-variant payload guard (#3244 review): when the seam expression
-    // constructs the variant with string-literal payloads, the oracle must
-    // construct the same path with the same literals. Naming the variant
-    // while observing a different payload is identity coincidence, not
-    // discrimination — the token-coincidence over-credit family. Seams whose
-    // payloads carry no string literals stay identity-creditable: there is
-    // nothing statically observable to compare.
-    tuple_variant_payload_oracle_matches_seam(seam, oracle_text)
+    };
+    oracle_names_error_variant(oracle_text, &seam_variant)
+        && tuple_variant_payload_oracle_matches_seam(seam, oracle_text)
 }
 
 /// Payload-level complement to the variant-identity route above. The

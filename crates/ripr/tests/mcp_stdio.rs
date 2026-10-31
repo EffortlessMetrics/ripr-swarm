@@ -2595,6 +2595,9 @@ impl SequentialStdio {
     fn spawn_with_env(root: &Path, env: &[(&str, &str)]) -> Result<Self, String> {
         let mut command = worktree_ripr();
         command.args(["mcp", "--stdio", "--root"]).arg(root);
+        // An ambient text-content mode must not leak into a session that
+        // does not ask for one (#9360).
+        command.env_remove("RIPR_MCP_TEXT_CONTENT");
         for (key, value) in env {
             command.env(key, value);
         }
@@ -4940,7 +4943,9 @@ fn mcp_readiness_never_exceeds_the_cli_repair_gate() -> Result<(), String> {
         }
         if id == ARM {
             let refusal = refusal.ok_or("`ripr repair` must refuse the gripped arm")?;
-            if !refusal.contains("not repair-eligible") || !refusal.contains("already grip") {
+            if !refusal.contains("not ready for an automatic repair")
+                || !refusal.contains("already grip")
+            {
                 return Err(format!("CLI refusal changed shape: {refusal}"));
             }
             if item["repair_ineligibility"] != "seam_already_gripped"
@@ -5760,8 +5765,8 @@ fn refresh_source_worktree_analyzes_saved_tracked_edits_without_cross_kind_reuse
             .pointer("/scope/analyzed")
             .and_then(Value::as_str)
             .is_none_or(|analyzed| !analyzed.starts_with("saved tracked-worktree diff"))
-        || unstaged.pointer("/scope/consumed_source_commitment") != Some(&json!("not_established"))
-        || unstaged.pointer("/scope/repair_cards") != Some(&json!("withheld"))
+        || unstaged.pointer("/scope/consumed_source_commitment") != Some(&json!("established"))
+        || unstaged.pointer("/scope/repair_cards") != Some(&json!("available"))
         || unstaged
             .pointer("/snapshot/total_items")
             .and_then(Value::as_u64)
@@ -5802,10 +5807,16 @@ fn refresh_source_worktree_analyzes_saved_tracked_edits_without_cross_kind_reuse
         ));
     }
     for item in items {
-        // A finding that fails its own gate keeps that first reason; a
-        // finding-ready one is refused with the worktree-source reason.
-        if item["repair_packet_ready"] != json!(false) || item["repair_ineligibility"].is_null() {
-            return Err(format!("worktree items must never be repair ready: {item}"));
+        // Agreeing producers (the saved bytes are stable here) establish
+        // custody, so no item is refused for the source; each item is ready or
+        // carries the shared validator's own typed reason.
+        if item["repair_ineligibility"] == json!("worktree_source_not_committed") {
+            return Err(format!(
+                "established custody must not withhold for the source: {item}"
+            ));
+        }
+        if item["repair_packet_ready"] == json!(false) && item["repair_ineligibility"].is_null() {
+            return Err(format!("a refused item must name its reason: {item}"));
         }
     }
 
@@ -6032,13 +6043,14 @@ fn refresh_source_worktree_discloses_untracked_input_and_the_intent_to_add_remed
     Ok(())
 }
 
-/// A repair-ready committed item is withheld under the worktree source
-/// (#7357): same item, same repository, but no repair readiness, no attempt
-/// and no card, because no consumed-source commitment spans the worktree
-/// findings and the later live seam inventory.
+/// Worktree repair cards and readiness (#7357): with established producer
+/// custody the saved-worktree refresh serves the same repair-ready item, card
+/// and attempt the committed refresh serves for the same input, and a dirty
+/// saved edit to a consumed test is bound into a fresh snapshot whose card
+/// agrees with the shared CLI card for the same seam.
 #[cfg(feature = "lang-rust")]
 #[test]
-fn refresh_source_worktree_withholds_repair_card_and_readiness_for_a_ready_item()
+fn refresh_source_worktree_serves_repair_card_and_readiness_with_established_custody()
 -> Result<(), String> {
     const TIMEOUT: Duration = Duration::from_mins(3);
     // `main` holds `>=`, the checked-out `journey` branch narrows to `>`:
@@ -6061,13 +6073,17 @@ fn refresh_source_worktree_withholds_repair_card_and_readiness_for_a_ready_item(
         .and_then(|item| item["canonical_id"].as_str())
         .ok_or_else(|| format!("control must yield a repair-ready item: {listed}"))?
         .to_string();
-    let card = session.call_tool(
+    let committed_card = session.call_tool(
         "card-c",
         "ripr_get_repair_card",
         json!({ "canonical_id": ready_id }),
         TIMEOUT,
     )?;
-    structured_tool_success(&card, "committed card control")?;
+    let committed_card = structured_tool_success(&committed_card, "committed card control")?;
+    let mut committed_card = committed_card
+        .get("card")
+        .cloned()
+        .ok_or("committed control carried no card")?;
 
     let reply = session.call_tool(
         "worktree",
@@ -6078,23 +6094,21 @@ fn refresh_source_worktree_withholds_repair_card_and_readiness_for_a_ready_item(
     let worktree = structured_tool_success(&reply, "ripr_refresh")?;
     if worktree.pointer("/attempt/state") != Some(&json!("completed"))
         || worktree.get("captured_source") != Some(&json!("worktree"))
+        || worktree.pointer("/scope/consumed_source_commitment") != Some(&json!("established"))
+        || worktree.pointer("/scope/repair_cards") != Some(&json!("available"))
     {
-        return Err(format!("worktree refresh must complete: {worktree}"));
+        return Err(format!(
+            "worktree refresh must complete with established custody: {worktree}"
+        ));
     }
     let listed = session.call_tool("list-w", "ripr_list_gaps", json!({}), TIMEOUT)?;
     let listed = structured_tool_success(&listed, "ripr_list_gaps")?;
     let items = listed["items"].as_array().ok_or("list omitted items")?;
-    if items.is_empty()
-        || items
-            .iter()
-            .any(|item| item["repair_packet_ready"] != json!(false))
-        || !items.iter().any(|item| {
-            item["canonical_id"] == ready_id.as_str()
-                && item["repair_ineligibility"] == json!("worktree_source_not_committed")
-        })
-    {
+    if !items.iter().any(|item| {
+        item["canonical_id"] == ready_id.as_str() && item["repair_packet_ready"] == json!(true)
+    }) {
         return Err(format!(
-            "the previously ready item must be refused for the worktree source: {listed}"
+            "the item the committed refresh readied must be ready under the worktree source: {listed}"
         ));
     }
     let card = session.call_tool(
@@ -6103,15 +6117,15 @@ fn refresh_source_worktree_withholds_repair_card_and_readiness_for_a_ready_item(
         json!({ "canonical_id": ready_id }),
         TIMEOUT,
     )?;
-    let failure = card
-        .pointer("/result/structuredContent/failure")
-        .ok_or_else(|| format!("worktree card must be refused: {card}"))?;
-    if failure.get("code") != Some(&json!("incomplete_inventory"))
-        || card.pointer("/result/structuredContent/card").is_some()
-        || !failure.to_string().contains("tracked-worktree")
-    {
+    let card = structured_tool_success(&card, "worktree card")?;
+    let mut worktree_card = card.get("card").cloned().ok_or("worktree card missing")?;
+    // Same input, same shared producers: the clean-tree worktree card is the
+    // committed card (presentation displays aside).
+    blank_presentation_displays(&mut committed_card);
+    blank_presentation_displays(&mut worktree_card);
+    if committed_card != worktree_card {
         return Err(format!(
-            "worktree card must disclose unavailability: {card}"
+            "clean-tree worktree card diverged from the committed card:\nworktree={worktree_card}\ncommitted={committed_card}"
         ));
     }
     let prepared = session.call_tool(
@@ -6121,20 +6135,208 @@ fn refresh_source_worktree_withholds_repair_card_and_readiness_for_a_ready_item(
         TIMEOUT,
     )?;
     let prepared = structured_tool_success(&prepared, "ripr_prepare_repair")?;
-    if prepared.get("repair_packet_ready") != Some(&json!(false))
-        || !prepared.get("attempt").is_none_or(Value::is_null)
+    if prepared.get("repair_packet_ready") != Some(&json!(true))
+        || prepared.pointer("/attempt/state") != Some(&json!("awaiting_edit"))
     {
-        return Err(format!("worktree must not prepare a repair: {prepared}"));
+        return Err(format!(
+            "an established worktree item must prepare a repair: {prepared}"
+        ));
     }
-    // Switching back restores the committed card: nothing leaked across kinds.
-    let reply = session.call_tool("committed-2", "ripr_refresh", json!({}), TIMEOUT)?;
-    structured_tool_success(&reply, "ripr_refresh")?;
-    let card = session.call_tool(
-        "card-c2",
-        "ripr_get_repair_card",
-        json!({ "canonical_id": ready_id }),
+
+    // A saved unstaged edit to a consumed test (appended, so no line moves):
+    // the producers agree on the new bytes, the identity moves, and the card
+    // matches the shared CLI card for the same seam.
+    let before_id = worktree
+        .pointer("/snapshot/snapshot_id")
+        .and_then(Value::as_str)
+        .ok_or("worktree refresh returned no snapshot id")?
+        .to_string();
+    let tests_path = root.join("tests/pricing.rs");
+    let original_tests = std::fs::read_to_string(&tests_path).map_err(|error| error.to_string())?;
+    std::fs::write(
+        &tests_path,
+        format!("{original_tests}\n// saved but uncommitted edit\n"),
+    )
+    .map_err(|error| error.to_string())?;
+    let dirty = session.call_tool(
+        "worktree-dirty",
+        "ripr_refresh",
+        json!({ "source": "worktree" }),
         TIMEOUT,
     )?;
-    structured_tool_success(&card, "committed card after worktree")?;
+    let dirty = structured_tool_success(&dirty, "ripr_refresh")?;
+    if dirty.pointer("/scope/consumed_source_commitment") != Some(&json!("established"))
+        || dirty
+            .pointer("/snapshot/snapshot_id")
+            .and_then(Value::as_str)
+            == Some(&before_id)
+    {
+        return Err(format!(
+            "a saved test edit must produce a new established snapshot: {dirty}"
+        ));
+    }
+    let listed = session.call_tool("list-d", "ripr_list_gaps", json!({}), TIMEOUT)?;
+    let listed = structured_tool_success(&listed, "ripr_list_gaps")?;
+    let dirty_id = listed["items"]
+        .as_array()
+        .ok_or("list omitted items")?
+        .iter()
+        .find(|item| {
+            item["repair_packet_ready"] == json!(true)
+                && item["file"]
+                    .as_str()
+                    .is_some_and(|file| file.ends_with("src/lib.rs"))
+        })
+        .and_then(|item| item["canonical_id"].as_str())
+        .ok_or_else(|| format!("the dirty refresh must keep a ready boundary item: {listed}"))?
+        .to_string();
+    let card = session.call_tool(
+        "card-d",
+        "ripr_get_repair_card",
+        json!({ "canonical_id": dirty_id }),
+        TIMEOUT,
+    )?;
+    drop(session);
+    let card = structured_tool_success(&card, "dirty worktree card")?;
+    let mut mcp_card = card.get("card").cloned().ok_or("dirty card missing")?;
+    let seam_id = mcp_card
+        .pointer("/subject/seam_id")
+        .and_then(Value::as_str)
+        .ok_or("dirty card omitted its seam")?
+        .to_string();
+    if mcp_card.pointer("/snapshot/currentness") != Some(&json!("accepted_dirty_draft")) {
+        return Err(format!(
+            "a dirty consumed test must project the dirty-draft currentness: {mcp_card}"
+        ));
+    }
+    let mut cli_card = run_cli_agent_card(&root, &seam_id)?;
+    blank_presentation_displays(&mut mcp_card);
+    blank_presentation_displays(&mut cli_card);
+    if mcp_card != cli_card {
+        return Err(format!(
+            "dirty worktree MCP card diverged from the shared CLI card:\nmcp={mcp_card}\ncli={cli_card}"
+        ));
+    }
+    Ok(())
+}
+
+/// #9360: the text companion of a successful tool result is selectable per
+/// server process. The default stays the lossless JSON copy (a host that
+/// reads only text content loses nothing); `RIPR_MCP_TEXT_CONTENT=summary`
+/// opts into a digest that says it is not a copy, while `structuredContent`
+/// stays the one complete result and is identical in both modes. An
+/// unrecognized spelling keeps the lossless default.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn summary_text_mode_is_opt_in_and_keeps_structured_content_whole_over_stdio() -> Result<(), String>
+{
+    let timeout = Duration::from_mins(1);
+    let root = install_gap_filter_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut observed: Vec<(Value, String, usize)> = Vec::new();
+    let mut get_gap_wire: Vec<usize> = Vec::new();
+    for env in [
+        &[][..],
+        &[("RIPR_MCP_TEXT_CONTENT", "summary")][..],
+        &[("RIPR_MCP_TEXT_CONTENT", "summry")][..],
+    ] {
+        let mut session = SequentialStdio::spawn_with_env(&root, env)?;
+        session.call("discover", "server/discover", json!({}), timeout)?;
+        let refresh =
+            session.call_tool("refresh", "ripr_refresh", json!({}), Duration::from_mins(3))?;
+        structured_tool_success(&refresh, "refresh")?;
+        let list = session.call_tool("list", "ripr_list_gaps", json!({}), timeout)?;
+        let result = list
+            .get("result")
+            .ok_or_else(|| format!("list lost its result: {list}"))?;
+        let structured = structured_tool_success(&list, "list")?;
+        let text = result
+            .pointer("/content/0/text")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("list lost its text content: {result}"))?
+            .to_string();
+        let wire = serde_json::to_string(&list)
+            .map_err(|error| error.to_string())?
+            .len();
+        let first = structured["items"][0]["canonical_id"]
+            .as_str()
+            .ok_or("list omitted its first canonical_id")?
+            .to_string();
+        let gap = session.call_tool(
+            "get",
+            "ripr_get_gap",
+            json!({ "canonical_id": first }),
+            timeout,
+        )?;
+        structured_tool_success(&gap, "get gap")?;
+        get_gap_wire.push(
+            serde_json::to_string(&gap)
+                .map_err(|error| error.to_string())?
+                .len(),
+        );
+        observed.push((structured, text, wire));
+    }
+    let [
+        (default_doc, default_text, default_wire),
+        (summary_doc, summary_text, summary_wire),
+        (typo_doc, typo_text, _),
+    ] = observed.as_slice()
+    else {
+        return Err("expected three sessions".to_string());
+    };
+    // The default text is the compact JSON copy of the one document.
+    let reparsed: Value = serde_json::from_str(default_text)
+        .map_err(|error| format!("default text must stay the JSON copy: {error}"))?;
+    if &reparsed != default_doc {
+        return Err("default text drifted from structuredContent".to_string());
+    }
+    // A typo keeps the lossless default.
+    if typo_text != default_text || typo_doc != default_doc {
+        return Err("an unrecognized mode spelling must keep the default".to_string());
+    }
+    // Summary: same complete structured result, digest text.
+    if summary_doc != default_doc {
+        return Err("structuredContent must be identical in both modes".to_string());
+    }
+    if serde_json::from_str::<Value>(summary_text).is_ok() {
+        return Err("summary text must not masquerade as the JSON document".to_string());
+    }
+    let schema = default_doc["schema_version"]
+        .as_str()
+        .ok_or("list omitted schema_version")?;
+    let first_id = default_doc["items"][0]["canonical_id"]
+        .as_str()
+        .ok_or("list omitted its first canonical_id")?;
+    for needle in [
+        schema,
+        "not a copy",
+        "structuredContent",
+        "RIPR_MCP_TEXT_CONTENT=full",
+        first_id,
+    ] {
+        if !summary_text.contains(needle) {
+            return Err(format!("summary text lost {needle:?}: {summary_text}"));
+        }
+    }
+    if summary_wire >= default_wire {
+        return Err(format!(
+            "summary mode must shrink the wire response: {summary_wire} vs {default_wire}"
+        ));
+    }
+    // The single-item evidence document is where the duplicate is large:
+    // the digest must cut the whole response by at least a third.
+    let [default_get, summary_get, typo_get] = get_gap_wire.as_slice() else {
+        return Err("expected three get_gap measurements".to_string());
+    };
+    if summary_get * 3 > default_get * 2 || typo_get != default_get {
+        return Err(format!(
+            "ripr_get_gap summary must be at most two thirds of default: default={default_get} summary={summary_get} typo={typo_get}"
+        ));
+    }
+    eprintln!(
+        "ripr_list_gaps wire bytes: default={default_wire} summary={summary_wire} (text {} -> {})",
+        default_text.len(),
+        summary_text.len()
+    );
     Ok(())
 }

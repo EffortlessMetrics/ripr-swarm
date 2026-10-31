@@ -226,9 +226,12 @@ fn duplicate_language_entry_fails() -> Result<(), String> {
 
 #[test]
 fn parse_args_accepts_known_shapes_and_rejects_the_rest() -> Result<(), String> {
-    assert_eq!(parse_args(&[])?, None);
+    assert_eq!(parse_args(&[])?, super::Options::default());
     let ok = ["--registry-json", "r.json"].map(String::from);
-    assert_eq!(parse_args(&ok)?, Some(std::path::PathBuf::from("r.json")));
+    assert_eq!(
+        parse_args(&ok)?.registry_file,
+        Some(std::path::PathBuf::from("r.json"))
+    );
     for bad in [
         vec!["--registry-json".to_string()],
         vec!["--bogus".to_string()],
@@ -297,4 +300,182 @@ fn enum_parser_rejects_discriminants_and_multiline_attributes() -> Result<(), St
         }
     }
     Ok(())
+}
+
+fn build_registry(compiled: &[&str]) -> Value {
+    // Literal contract pins independent of cfg! or the production feature resolver.
+    json!({"languages": [
+        {"language": "rust", "required_feature": "lang-rust", "adapter_compiled": compiled.contains(&"rust")},
+        {"language": "typescript", "required_feature": "lang-typescript", "adapter_compiled": compiled.contains(&"typescript")},
+        {"language": "javascript", "required_feature": "lang-typescript", "adapter_compiled": compiled.contains(&"javascript")},
+        {"language": "python", "required_feature": "lang-python", "adapter_compiled": compiled.contains(&"python")},
+        {"language": "perl", "required_feature": "lang-perl", "adapter_compiled": compiled.contains(&"perl")}
+    ]})
+}
+
+#[test]
+fn minimal_and_individual_builds_require_exact_producer_presence() -> Result<(), String> {
+    use super::features::{BuildSelection, compiled_feature_violations};
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let manifest =
+        std::fs::read_to_string(root.join(super::RIPR_CARGO_TOML)).map_err(|e| e.to_string())?;
+    let inv = read_inventory(&root)?;
+    let cases = [
+        ("lang-rust", vec!["rust"]),
+        ("lang-typescript", vec!["rust", "typescript", "javascript"]),
+        ("lang-python", vec!["rust", "python"]),
+        ("lang-perl", vec!["rust", "perl"]),
+    ];
+    assert_eq!(
+        inv.lang_features,
+        set(&["lang-rust", "lang-typescript", "lang-python", "lang-perl"]),
+        "new language features need an explicit presence/absence control"
+    );
+    for (feature, compiled) in cases {
+        let selection = BuildSelection {
+            no_default_features: true,
+            features: set(&["lang-rust", feature]),
+        };
+        let enabled = selection.enabled_features(&manifest)?;
+        assert_eq!(enabled, set(&["lang-rust", feature]));
+        let good = build_registry(&compiled);
+        assert_eq!(
+            compiled_feature_violations(&good, &enabled),
+            Vec::<String>::new()
+        );
+        // Flip EVERY language separately, testing missing enabled producers and
+        // phantom disabled producers (including the shared TS/JS feature).
+        for index in 0..5 {
+            let mut bad = good.clone();
+            let present = bad["languages"][index]["adapter_compiled"]
+                .as_bool()
+                .ok_or("bool")?;
+            bad["languages"][index]["adapter_compiled"] = json!(!present);
+            only(
+                &compiled_feature_violations(&bad, &enabled),
+                "adapter_compiled must be",
+            )?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn selected_features_and_manifest_defaults_match_cargo_arguments() -> Result<(), String> {
+    use super::features::compiled_feature_violations;
+    let manifest = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join(super::RIPR_CARGO_TOML),
+    )
+    .map_err(|e| e.to_string())?;
+    let defaults = parse_args(&[])?;
+    assert_eq!(
+        defaults.build.rerun_command(),
+        "cargo xtask check-capability-producers"
+    );
+    assert_eq!(
+        defaults.build.enabled_features(&manifest)?,
+        set(&["lang-rust", "lang-typescript", "lang-python"])
+    );
+    assert_eq!(
+        defaults.build.cargo_args(),
+        ["build", "-p", "ripr", "--quiet"]
+    );
+    assert_eq!(
+        compiled_feature_violations(
+            &build_registry(&["rust", "typescript", "javascript", "python"]),
+            &defaults.build.enabled_features(&manifest)?
+        ),
+        Vec::<String>::new()
+    );
+    let options = parse_args(
+        &[
+            "--registry-json",
+            "offline.json",
+            "--no-default-features",
+            "--features",
+            "lang-rust,lang-python,lang-perl",
+        ]
+        .map(String::from),
+    )?;
+    assert_eq!(
+        options.build.cargo_args(),
+        [
+            "build",
+            "-p",
+            "ripr",
+            "--quiet",
+            "--no-default-features",
+            "--features",
+            "lang-perl,lang-python,lang-rust"
+        ]
+    );
+    assert_eq!(
+        options.build.enabled_features(&manifest)?,
+        set(&["lang-rust", "lang-python", "lang-perl"])
+    );
+    assert_eq!(
+        options.build.rerun_command(),
+        "cargo xtask check-capability-producers --no-default-features --features lang-perl,lang-python,lang-rust"
+    );
+    let additive = parse_args(&["--features", "lang-perl"].map(String::from))?;
+    assert_eq!(
+        additive.build.enabled_features(&manifest)?,
+        set(&["lang-rust", "lang-typescript", "lang-python", "lang-perl"])
+    );
+    let unknown = parse_args(&["--features", "lang-go"].map(String::from))?;
+    if let Ok(enabled) = unknown.build.enabled_features(&manifest) {
+        return Err(format!("unknown language feature accepted: {enabled:?}"));
+    }
+    for features in [
+        None,
+        Some("lang-typescript"),
+        Some("lang-python"),
+        Some("lang-perl"),
+    ] {
+        let selection = super::features::BuildSelection {
+            no_default_features: true,
+            features: features.into_iter().map(String::from).collect(),
+        };
+        assert!(
+            selection.enabled_features(&manifest).is_err(),
+            "Rust-disabled selection must fail before building or reading offline JSON"
+        );
+    }
+    for args in [
+        vec!["--features"],
+        vec!["--features", ""],
+        vec!["--features", "lang-rust,"],
+        vec!["--features", "lang-rust,lang-rust"],
+        vec!["--no-default-features", "--no-default-features"],
+        vec!["--features", "lang-rust", "--features", "lang-perl"],
+    ] {
+        if let Ok(parsed) = parse_args(&args.into_iter().map(String::from).collect::<Vec<_>>()) {
+            return Err(format!("invalid arguments accepted: {parsed:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn compiled_producers_fail_closed_on_missing_or_non_boolean_availability() -> Result<(), String> {
+    use super::features::compiled_feature_violations;
+    for availability in [json!(null), json!("false"), json!(0)] {
+        let mut reg = build_registry(&[]);
+        reg["languages"][0]["adapter_compiled"] = availability;
+        only(
+            &compiled_feature_violations(&reg, &set(&[])),
+            "adapter_compiled must be false",
+        )?;
+    }
+    let mut reg = build_registry(&[]);
+    reg["languages"][0]
+        .as_object_mut()
+        .ok_or("language")?
+        .remove("adapter_compiled");
+    only(
+        &compiled_feature_violations(&reg, &set(&[])),
+        "adapter_compiled must be false",
+    )
 }

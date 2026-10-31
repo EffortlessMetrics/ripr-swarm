@@ -1370,6 +1370,18 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
             "bind the queued commit's tree to the live head merged onto the group base",
             "[ \"${merged%%$'\\n'*}\" = \"$(git rev-parse \"${GROUP_HEAD_SHA}^{tree}\")\" ]",
         ),
+        (
+            "consume the same-head succession read as the last live eligibility check",
+            "            read_succession\n          }\n",
+        ),
+        (
+            "refuse an older run or a newer attempt of the same head and request",
+            ".id != $id and .run_number >= $number)] | length) == 0",
+        ),
+        (
+            "bind the succession read to this run's own attempt",
+            ".id == $id and .run_attempt == $attempt and .head_sha == $head",
+        ),
     ] {
         if !workflow.contains(snippet) {
             violations.push(format!(

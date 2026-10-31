@@ -130,7 +130,7 @@ resolve through the default directory. An explicit store outside
 
 The exact filenames follow the command-owned source artifacts. `attempt.json` identifies them by semantic role and binds each retained file by path, byte count, and SHA-256 digest. After-phase `agent_receipt` / `agent_verify` files are recorded in `terminal_artifacts` and are excluded from the before commitment. Attempt identity alone does not bind the verdict: every read that can report `finished` (CLI status, `--attempt` status, and the MCP receipt/attempt documents) re-validates the receipt against its verify document — schema, verify digest linkage, the retained before content commitment, and the seam movement, lifecycle state, and guidance kind the verify document records. A pair that fails any of those checks reads `unconfirmed`/`unavailable` with the reason, never `finished`. Pending retention additionally requires the verify document to pass the same canonical receipt-issuance validation the after phase applies before it promotes the pair.
 
-Repository-global files under `target/ripr/workflow/` and `target/ripr/reports/agent-receipt.json` remain compatibility projections for existing cockpit and review consumers. They are not repair-attempt identity, and they are not the sole surviving copy of a finished attempt's result.
+Repository-global files under `target/ripr/workflow/` and `target/ripr/reports/agent-receipt.json` remain compatibility projections for existing cockpit and review consumers. They are not repair-attempt identity, and they are not the sole surviving copy of a finished attempt's result. A newly finished gap-bound attempt also retains the raw `after_check_findings` snapshot. Its retained receipt, verify and snapshot are cross-bound to the attempt and recorded after head. If exact producer projections are later absent, currentness may reconstruct their identities in memory only when that retained evidence and the complete bound delta agree. Present drift, tracked or authored files, unrelated neighbors, and missing or invalid evidence are not excused. Legacy two-role retention does not establish this snapshot custody. Snapshot validation requires Git access and a matching RIPR producer version; when either is unavailable, cleanup currentness stays unconfirmed rather than being inferred, even if the historical receipt remains readable.
 
 The trust-bound Python verify route still writes repository-global
 `python-repair-driver-verification.json` (and related execution/analysis files)
@@ -242,6 +242,16 @@ The after phase also retains the terminal static result under the attempt direct
 
 The class is never stronger than the receipt the attempt retained. `finished_current` requires a digest-bound attempt-local receipt whose reading shows the gap closed at the current `HEAD`; a moved `HEAD` downgrades the same retained result to `finished_historical`, which stays readable but is never presented as current proof. Missing, tampered, or unbound attempt-local terminal evidence reads `corrupt_or_unavailable` and never falls back to another attempt's compatibility receipt. Legacy manifests without `terminal_artifacts` read `legacy_compatibility_only`: the one-slot compatibility projection is exactly the strength they earned. A missing or malformed selected manifest is also typed `corrupt_or_unavailable` naming the refused artifact, so one bad row cannot hide or strengthen the store's other rows.
 
+An already issued gap receipt remains readable when live `HEAD` is unavailable
+or the reader uses a newer RIPR version. Its retained snapshot must still match
+the attempt's recorded producer version, root, after head, immutable base,
+verify and receipt commitments, and the same structural/completeness rules,
+including the supported v5 run-owned findings identity. Earlier findings
+identity versions remain refused; historical readability is not a migration.
+This historical reading carries no live currentness authority: promotion,
+receipt reissue and reconstruction of missing workflow projections still use
+the full current executable and Git-provenance validation.
+
 Status is read-only on both surfaces: inspecting an attempt cannot finish, restart, rewrite, or delete it, and a resumed attempt receives no stronger state than its receipt shows. Human Markdown and normalized JSON derive from one DTO, so both surfaces agree and reordered directory traversal produces byte-stable output. See `docs/OUTPUT_SCHEMA.md` ("Exact attempt selection") for the field contract.
 
 ## Compatibility outputs
@@ -268,7 +278,7 @@ By default the after phase's stdout is a short summary: the movement line (for e
 - the path is not the selected target, an authored edit surface, or a forbidden path;
 - the bound verdict did not list the path.
 
-Such a path cannot satisfy or violate the cage. Any other movement after the after phase still refuses the rerun with `after verdict binding is tampered or stale`. That includes a new or edited source, test, or root file, a changed kind for a bound path, and a bound change that disappeared. Leaving out every operational write would also hide the disappearance of a bound change, so that alternative was rejected. Recording a second digest in the manifest would change the published manifest schema and the Python binding's `patch_sha256`, so that alternative was rejected too.
+Such a path cannot satisfy or violate the cage. Any other movement after the after phase still refuses the rerun with `after verdict binding is tampered or stale`. That includes a new or edited source, test, or root file, a changed kind for a bound path, and a bound change that disappeared. Redirecting a `ripr` command's own stdout or stderr into a repository file while it runs, including a file under `target/ripr`, has been observed to cause this refusal (#11337); write that output outside the repository. The refusal names its possible causes (output redirected into a repository file during the run, or a later edit) and the route per caller: an `agent receipt` retry removes the stray file or the later edit (keeping a copy first) and reruns; the after phase has already recorded its verdict, so only a new attempt recovers it. That new attempt's `--phase before` restart refuses while the repair edit is present (the edit already reads the gap as exposed), so (1) copy the edited test file(s) outside the repository and check the copy is complete before overwriting anything; (2) restore each file's pre-edit content yourself (a newly created test file has none: move it aside or remove it; restoring bytes can leave the repair staged, so unstage it with `git restore --staged <file>` if needed); (3) run the printed restart, and if it fails put your copy back; (4) re-apply the edit and run the new `--attempt` command it prints. Leaving out every operational write would also hide the disappearance of a bound change, so that alternative was rejected. Recording a second digest in the manifest would change the published manifest schema and the Python binding's `patch_sha256`, so that alternative was rejected too.
 
 ## Failure behavior
 
@@ -370,3 +380,8 @@ Missing or modified retained evidence, user-authored bytes at the same path,
 tracked/authored/forbidden paths, and neighboring files do not gain an
 exception. The predecessor can remain historical; no currentness recursion or
 cross-store lookup occurs. No witness is added for an unowned projection.
+
+For gap-bound attempts, exact receipt replacement and absent workflow
+projections can coexist. Currentness checks both identities in the same
+reconstructed whole delta, accepts only one matching projection candidate,
+and validates declared retained gap evidence on every accepting route.

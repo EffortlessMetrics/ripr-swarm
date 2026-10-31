@@ -170,20 +170,9 @@ pub(super) fn start_here_cli_summary(
             if let Some(command) = string_path(selected, &["regeneration_command"]) {
                 push_recovery_command(&mut out, "Regeneration command", &command);
             }
-            if let Some(also_missing) = selected.get("also_missing").and_then(Value::as_array) {
-                for artifact in also_missing {
-                    let label = string_path(artifact, &["label"])
-                        .unwrap_or_else(|| "Required artifact".to_string());
-                    let path =
-                        string_path(artifact, &["path"]).unwrap_or_else(|| "unknown".to_string());
-                    out.push_str(&format!(
-                        "Also missing: {label} at `{path}`{}\n",
-                        needed_when_suffix(artifact)
-                    ));
-                    if let Some(command) = string_path(artifact, &["regeneration_command"]) {
-                        push_recovery_command(&mut out, "Then run", &command);
-                    }
-                }
+            if let Some(line) = later_steps_line(selected) {
+                out.push_str(&line);
+                out.push('\n');
             }
         }
         "empty_diff" | "no_action" => {
@@ -255,7 +244,14 @@ fn cli_safe_next_action(state: &str, selected: &Value, preflight_needs_attention
                 .unwrap_or_else(|| "the selected gap".to_string());
             let intent = string_path(selected, &["focused_proof_intent"])
                 .unwrap_or_else(|| "add one focused proof for the selected gap".to_string());
-            format!("repair one named gap `{identity}`: {intent}")
+            match string_path(selected, &["recommended_repair_command"]) {
+                // #10709: one recommended route, stated once; the by-hand
+                // proof path below is the one named alternative.
+                Some(command) => format!(
+                    "repair one named gap `{identity}`: {intent} Recommended: start the repair with `{command}` (commit any uncommitted production change first; the start refuses otherwise); alternative, by hand: add the test yourself and use the verify and receipt commands below."
+                ),
+                None => format!("repair one named gap `{identity}`: {intent}"),
+            }
         }
         "missing_artifact" => "regenerate the missing artifact before repair work".to_string(),
         "malformed_artifact" => "regenerate the malformed artifact before repair work".to_string(),
@@ -411,6 +407,16 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
         "- Safe next action: repair one named {}.\n",
         top_gap_language_label(selected)
     ));
+    // #10709: the same single recommended route the CLI Safe next action names.
+    if let Some(command) = string_path(selected, &["recommended_repair_command"]) {
+        out.push_str(&format!("- Recommended repair start: `{command}`\n"));
+        out.push_str(
+            "- Commit any uncommitted production change first; the start refuses otherwise.\n",
+        );
+        out.push_str(
+            "- Alternative, by hand: add the test yourself and use the verify and receipt commands below.\n",
+        );
+    }
     let kind = selected
         .get("kind")
         .and_then(Value::as_str)
@@ -708,6 +714,30 @@ fn needed_when_suffix(artifact: &Value) -> String {
         .unwrap_or_default()
 }
 
+/// #11298: a fresh repo gets one next command, not the whole regeneration
+/// chain. The later inputs are named without commands so the operator knows
+/// they exist; rerunning first-pr prints each command when it becomes next.
+/// The packet JSON keeps the full `also_missing` chain for machine readers.
+fn later_steps_line(selected: &Value) -> Option<String> {
+    let names: Vec<String> = selected
+        .get("also_missing")
+        .and_then(Value::as_array)?
+        .iter()
+        .map(|artifact| {
+            let label = string_path(artifact, &["label"])
+                .unwrap_or_else(|| "Required artifact".to_string());
+            format!("{label}{}", needed_when_suffix(artifact))
+        })
+        .collect();
+    if names.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "Later steps (rerun `ripr first-pr` after the command above; it prints each next command): {}",
+        names.join("; ")
+    ))
+}
+
 fn render_missing_artifact_markdown(selected: &Value, out: &mut String) {
     out.push_str("## Start Here\n\n");
     out.push_str("- State: `missing_artifact`\n");
@@ -729,21 +759,8 @@ fn render_missing_artifact_markdown(selected: &Value, out: &mut String) {
     if let Some(command) = selected.get("regeneration_command").and_then(Value::as_str) {
         push_recovery_command(out, "- Regeneration command", command);
     }
-    if let Some(also_missing) = selected.get("also_missing").and_then(Value::as_array) {
-        for artifact in also_missing {
-            let label = artifact
-                .get("label")
-                .and_then(Value::as_str)
-                .unwrap_or("required artifact");
-            let path = artifact.get("path").and_then(Value::as_str).unwrap_or("");
-            out.push_str(&format!(
-                "- Also missing: {label} at `{path}`{}\n",
-                needed_when_suffix(artifact)
-            ));
-            if let Some(command) = artifact.get("regeneration_command").and_then(Value::as_str) {
-                push_recovery_command(out, "- Then run", command);
-            }
-        }
+    if let Some(line) = later_steps_line(selected) {
+        out.push_str(&format!("- {line}\n"));
     }
 }
 

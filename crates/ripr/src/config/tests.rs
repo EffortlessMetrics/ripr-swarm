@@ -1045,7 +1045,7 @@ fn generated_init_config_banner_discloses_defaults_and_language_pin() -> Result<
     let generated = generated_init_config();
     for needle in [
         "every value below is a built-in",
-        "this file pins to [\"rust\"]",
+        "which starts at [\"rust\"] plus any Python or",
         "enables languages it detects from project markers",
         "deleting this file is not identical",
         "ripr config validate",
@@ -2962,12 +2962,46 @@ fn missing_config_ignores_nested_typescript_that_is_vendored_hidden_too_deep_or_
 
 #[cfg(feature = "lang-typescript")]
 #[test]
-fn missing_config_ignores_package_json_and_plain_javascript() -> Result<(), String> {
+fn missing_config_detects_package_source_beside_a_rust_project() -> Result<(), String> {
     let root = temp_root("ts-not-detected")?;
     write_file(&root.join("package.json"), "{}")?;
+    write_file(&root.join("Cargo.toml"), "[package]\nname = \"demo\"\n")?;
     write_file(&root.join("src/app.js"), "export {};\n")?;
     let config = load_for_root(&root)?;
+    assert_eq!(
+        config.languages().enabled_owned(),
+        vec![LanguageId::Rust, LanguageId::TypeScript]
+    );
+    let _ = fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// A manifest alone, or tooling config files, selects nothing (#10941).
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn missing_config_ignores_a_manifest_with_only_tooling_config() -> Result<(), String> {
+    let root = temp_root("ts-tooling-only")?;
+    write_file(&root.join("package.json"), "{}")?;
+    write_file(&root.join("eslint.config.js"), "export default [];\n")?;
+    let config = load_for_root(&root)?;
     assert_eq!(config.languages().enabled_owned(), vec![LanguageId::Rust]);
+    let _ = fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// #11336: a plain JavaScript package (manifest plus JavaScript, no Cargo or
+/// Python project) is analyzed without a hand-written `ripr.toml`.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn missing_config_detects_a_javascript_led_package() -> Result<(), String> {
+    let root = temp_root("js-led-detected")?;
+    write_file(&root.join("package.json"), "{}")?;
+    write_file(&root.join("index.js"), "export {};\n")?;
+    let config = load_for_root(&root)?;
+    assert_eq!(
+        config.languages().enabled_owned(),
+        vec![LanguageId::Rust, LanguageId::TypeScript]
+    );
     let _ = fs::remove_dir_all(&root);
     Ok(())
 }

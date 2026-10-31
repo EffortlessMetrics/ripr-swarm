@@ -925,6 +925,11 @@ jobs:
         run: |
           mkdir -p target; set +e; cargo test -p ripr --test cli_smoke unusable_cache_directory_is_reported_once_per_build 2>&1 | tee target/subset-cache-warning.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-cache-warning.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-cache-warning.log" >&2; exit 1; fi; exit 0
 
+      - name: "Run readonly workflow-backup regression (advisory, #11282)"
+        shell: bash
+        run: |
+          mkdir -p target; set +e; cargo test -p ripr --lib cli::commands::agent::repair_summary_tests::tracking_removes_readonly_backup_after_unchanged_phase -- --exact --format pretty --color never 2>&1 | tee target/subset-workflow-readonly.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-workflow-readonly.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-workflow-readonly.log" >&2; exit 1; fi; exit 0
+
       - name: Run clippy subset (advisory, #4337)
         shell: bash
         run: |
@@ -1450,7 +1455,7 @@ jobs:
           {
             printf '## Windows advisory subset (#4938)\n\n'
             printf 'Advisory only: not a required check and does not gate merges. Test/lint verdicts:\n\n'
-            for label in subset-gap-artifacts subset-cargo-home subset-cache-warning subset-clippy subset-process-owner subset-xtask-capture subset-lsp-initialize subset-vscode-install-lock subset-selector-literal; do
+            for label in subset-gap-artifacts subset-workflow-readonly subset-cargo-home subset-cache-warning subset-clippy subset-process-owner subset-xtask-capture subset-lsp-initialize subset-vscode-install-lock subset-selector-literal; do
             if [ "$label" = subset-selector-literal ] && [ "$SELECTOR_CONSUMER_ENABLED" != true ]; then continue; fi
               status_file="target/${label}.status"
               if [ ! -f "$status_file" ]; then
@@ -1472,11 +1477,11 @@ jobs:
       - name: Fail on missing or empty subset evidence
         shell: bash
         run: |
-          for label in subset-gap-artifacts subset-cargo-home subset-cache-warning subset-clippy subset-process-owner subset-xtask-capture subset-lsp-initialize subset-vscode-install-lock; do
+          for label in subset-gap-artifacts subset-workflow-readonly subset-cargo-home subset-cache-warning subset-clippy subset-process-owner subset-xtask-capture subset-lsp-initialize subset-vscode-install-lock; do
             test -f "target/${label}.status" || exit 1
             test -f "target/${label}.log" || exit 1
           done
-          for label in subset-gap-artifacts subset-cargo-home subset-cache-warning subset-process-owner subset-xtask-capture subset-lsp-initialize; do
+          for label in subset-gap-artifacts subset-workflow-readonly subset-cargo-home subset-cache-warning subset-process-owner subset-xtask-capture subset-lsp-initialize; do
             if [ "$(cat "target/${label}.status")" = "0" ]; then
               executed="$(awk '/^test result:/{for (i = 1; i <= NF; i++) if ($i == "passed;" || $i == "failed;" || $i == "measured;") executed += $(i - 1)} END {print executed + 0}' "target/${label}.log")"
               if [ "$executed" -eq 0 ]; then
@@ -1485,6 +1490,14 @@ jobs:
               fi
             fi
           done
+          # The exact Windows selector must execute this case, not a sibling or an ignored test.
+          if [ "$(cat target/subset-workflow-readonly.status)" = "0" ]; then
+            executed="$(awk '/^test result:/{for (i = 1; i <= NF; i++) if ($i == "passed;" || $i == "failed;" || $i == "measured;") executed += $(i - 1)} END {print executed + 0}' target/subset-workflow-readonly.log)"
+            if [ "$executed" -ne 1 ] || ! grep -Fxq 'test cli::commands::agent::repair_summary_tests::tracking_removes_readonly_backup_after_unchanged_phase ... ok' target/subset-workflow-readonly.log; then
+              echo "subset-workflow-readonly: cargo exited 0 without exactly one successful named test" >&2
+              exit 1
+            fi
+          fi
           # mocha prints `N passing`; a run that executed zero tests is not proof (#9498).
           if [ "$(cat target/subset-vscode-install-lock.status)" = "0" ]; then
             grep -Eq '^ +[1-9][0-9]* passing' target/subset-vscode-install-lock.log || { echo "subset-vscode-install-lock: mocha exited 0 but reported no passing test" >&2; exit 1; }
@@ -1546,6 +1559,8 @@ jobs:
             target/subset-cargo-home.status
             target/subset-cache-warning.log
             target/subset-cache-warning.status
+            target/subset-workflow-readonly.log
+            target/subset-workflow-readonly.status
             target/subset-clippy.log
             target/subset-clippy.status
             target/subset-process-owner.log

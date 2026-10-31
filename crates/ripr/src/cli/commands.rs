@@ -147,6 +147,7 @@ pub(super) use capabilities::capabilities;
 
 #[path = "commands/doctor.rs"]
 mod doctor;
+pub(crate) use doctor::detect_languages;
 pub(super) use doctor::doctor;
 
 #[path = "commands/gate.rs"]
@@ -274,7 +275,7 @@ pub(super) fn zero(args: &[String]) -> Result<(), String> {
 
 pub(super) fn policy(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        help::print_policy_help();
+        help::print_group_help("policy", args);
         return Ok(());
     }
     let Some((subcommand, rest)) = args.split_first() else {
@@ -326,7 +327,7 @@ pub(super) fn pr_ledger(args: &[String]) -> Result<(), String> {
 
 pub(super) fn pr_comments(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        help::print_pr_comments_help();
+        help::print_group_help("pr-comments", args);
         return Ok(());
     }
     // `plan` is implied when the command runs bare: `ripr pr-comments`
@@ -520,7 +521,7 @@ pub(super) fn first_action(args: &[String]) -> Result<(), String> {
 
 pub(super) fn reports(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        help::print_reports_help();
+        help::print_group_help("reports", args);
         return Ok(());
     }
     let Some((subcommand, rest)) = args.split_first() else {
@@ -3741,6 +3742,9 @@ mod tests {
                 // CodeQL flake must not fail a gate the analysis passed.
                 "Upload RIPR diff findings",
                 "Upload RIPR repo seams",
+                // #11145: continue-on-error hides a failed upload, so this
+                // step says why and what to change.
+                "Explain failed SARIF upload",
             ],
             forbidden_fragments: &[
                 "fail-on-new-warning",
@@ -6356,10 +6360,20 @@ language = "rust"
         );
         assert_eq!(
             parse_pr_comments_plan_options(&args(&["--mode", "post"])),
+            Err("unknown pr-comments plan mode \"post\". Accepted: off, plan, inline.".to_string())
+        );
+        assert_eq!(
+            parse_pr_comments_plan_options(&args(&["--mode", "inlin"])),
             Err(
-                "unknown pr-comments plan mode \"post\"; expected `off`, `plan`, or `inline`"
+                "unknown pr-comments plan mode \"inlin\". Did you mean `inline`? Accepted: off, plan, inline."
                     .to_string()
             )
+        );
+        // #11146: an empty mode is named as empty (not as an unknown value
+        // `""`) and says how to publish nothing.
+        assert_eq!(
+            parse_pr_comments_plan_options(&args(&["--mode", ""])),
+            Err("pr-comments plan mode is empty; expected `off`, `plan`, or `inline` (leave `--mode` out, or pass `off`, to publish no comments)".to_string())
         );
         assert_eq!(
             parse_pr_comments_plan_options(&args(&["--pr-guidance", ""])),
@@ -6387,7 +6401,7 @@ language = "rust"
         let out_md = dir.join("comment-publish-plan.md");
         std::fs::write(
             &comments,
-            r#"{"comments":[{"id":"ripr-review-a","dedupe_key":"ripr:a","placement":{"path":"src/lib.rs","line":7,"side":"RIGHT","mode":"exact_seam_line"},"reason":"add focused assertion"}],"summary_only":[],"suppressed":[]}"#,
+            r#"{"comments":[{"id":"ripr-review-a","dedupe_key":"ripr:a","gap_state":"actionable","placement":{"path":"src/lib.rs","line":7,"side":"RIGHT","mode":"exact_seam_line"},"reason":"add focused assertion"}],"summary_only":[],"suppressed":[]}"#,
         )
         .map_err(|err| format!("write comments: {err}"))?;
 
@@ -8514,8 +8528,8 @@ language = "rust"
         // The DX bar from #5409: a workflow an adopter can read in one sitting.
         let line_count = workflow.lines().count();
         assert!(
-            line_count <= 175,
-            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, and #4452 added step env bindings"
+            line_count <= 181,
+            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, #4452 added step env bindings, and #11145 added the failed-SARIF-upload explanation"
         );
 
         assert!(workflow.contains("RIPR_UPLOAD_SARIF: \"true\""));
@@ -8688,6 +8702,49 @@ language = "rust"
                 "`{step}` must stay gated by RIPR_UPLOAD_SARIF"
             );
         }
+        // #11145: `continue-on-error` turns a rejected upload (private
+        // repository without Code Security, code scanning off, read-only fork
+        // token) into a green step. The explanation fires on the upload
+        // steps' own outcome, so it names both ids, names the fix, and does
+        // not fire when no upload ran.
+        let upload_ids = [
+            ("Upload RIPR diff findings", "id: sarif_findings"),
+            ("Upload RIPR repo seams", "id: sarif_seams"),
+        ];
+        for (step, id) in upload_ids {
+            assert!(
+                workflow_step(&workflow, step).contains(id),
+                "`{step}` needs `{id}`"
+            );
+        }
+        let explain = workflow_step(&workflow, "Explain failed SARIF upload");
+        assert!(
+            explain.contains("steps.sarif_findings.outcome == 'failure'")
+                && explain.contains("steps.sarif_seams.outcome == 'failure'"),
+            "{explain}"
+        );
+        assert!(explain.contains("always()"), "{explain}");
+        assert!(explain.contains("continue-on-error: true"), "{explain}");
+        assert!(
+            explain.contains("set RIPR_UPLOAD_SARIF to false")
+                && explain.contains("GitHub Code Security"),
+            "{explain}"
+        );
+        // Failure only: the whole `if:` is exactly this condition, so no
+        // success/skipped/`!=` branch can be added without failing here. The
+        // behavior (failure runs it; success, skipped, cancelled do not) is
+        // pinned by `explain_failed_sarif_upload_condition_follows_the_upload_outcomes`.
+        assert!(
+            explain.contains(
+                "if: always() && (steps.sarif_findings.outcome == 'failure' || steps.sarif_seams.outcome == 'failure')\n"
+            ),
+            "{explain}"
+        );
+        assert!(
+            explain.contains("Usual causes include")
+                && explain.contains("log of the failed upload step"),
+            "the warning must hedge the cause and point at the failed step's log: {explain}"
+        );
         // The SARIF renders stay gated by RIPR_UPLOAD_SARIF inside the packet.
         assert!(packet.contains("--format sarif"));
         assert!(packet.contains("--format repo-sarif"));

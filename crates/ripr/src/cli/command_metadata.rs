@@ -1764,6 +1764,7 @@ const METADATA: &[CommandMetadata] = &[
         effects: ANALYSIS_RUNNER,
         primary_inputs: &[
             "an optional repair subject (seam ID, or a canonical gap ID naming one seam)",
+            "an optional --base REF naming the diff base that scopes an automatic start (not with a subject)",
         ],
         outputs: CommandOutputs {
             default: Some("target/ripr/workflow/ (before snapshot and packet)"),
@@ -1918,7 +1919,7 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:agent.stub",
-        summary: "Write a compiling Rust test stub for one gap, ready to fill and run.",
+        summary: "Write a compiling Rust test stub for one gap, ready to fill and run (Rust files only).",
         task: "Repair a selected Rust gap",
         workflows: &["repair-loop", "editor-agent"],
         operation: CommandOperation::StateChanging,
