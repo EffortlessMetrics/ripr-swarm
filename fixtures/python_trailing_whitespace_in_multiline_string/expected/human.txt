@@ -25,7 +25,7 @@ Start here:
   Suggested test file: tests/test_q.py
   Suggested test: test_build_query
   Test node: tests/test_q.py::test_build_query
-  Verify command: python -m pytest tests/test_q.py::test_build_query (high)
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_trailing_whitespace_in_multiline_string/input && python -m pytest tests/test_q.py::test_build_query) (high)
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
