@@ -413,7 +413,7 @@ async fn real_session_contains_tools_list_and_resources_read_glue_panics() -> Re
             return Err(format!("id {id}: not a typed analysis_failed: {frame}"));
         }
     }
-    // The session survived both panics: ping answers, and the next armed
+    // The session kept serving after both panics: ping answers, and the next armed
     // tools/list is again a typed error rather than a dead connection.
     let ping_ok = armed
         .iter()
