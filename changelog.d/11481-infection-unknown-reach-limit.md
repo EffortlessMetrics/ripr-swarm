@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- An `infection_unknown` finding with weak reach, whose only related tests share the owner's file or a name token or are linked by `owner_named_test`, now names the transitive or macro reach limit when a lexical entry-point witness exists, instead of reading as bare weak reach (#11481). The class, reach and related tests are unchanged; the witness is a candidate path and the finding stays advisory.
