@@ -1708,6 +1708,28 @@ fn find_related_tests_with_candidates<'a>(
     related
 }
 
+/// Restore the finder's final order after a caller replaced or appended
+/// entries (#11151): confidence tier, then diff-touched, then name, file and
+/// start line. This is the composition of the finder's two stable sorts.
+pub(super) fn order_related(
+    related: &mut [(&TestSummary, RelationReason)],
+    candidate_index: &RelatedTestCandidateIndex,
+) {
+    let touched = |test: &TestSummary| {
+        candidate_index
+            .diff_touched()
+            .touches(&test.file, test.start_line)
+    };
+    related.sort_by(|(a, a_reason), (b, b_reason)| {
+        relation_rank(*b_reason)
+            .cmp(&relation_rank(*a_reason))
+            .then_with(|| touched(b).cmp(&touched(a)))
+            .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| a.file.cmp(&b.file))
+            .then_with(|| a.start_line.cmp(&b.start_line))
+    });
+}
+
 /// Sort rank of a relation: higher confidence ranks first.
 fn relation_rank(reason: RelationReason) -> u8 {
     match reason.confidence() {
@@ -5269,7 +5291,7 @@ fn executable_call_resolves(
 
 /// Both source and synthetic assertion trees obey the same execution boundary.
 /// Constructing an unpolled future does not execute calls in its body.
-fn node_executes_in(node: &SyntaxNode, function: &SyntaxNode) -> bool {
+pub(super) fn node_executes_in(node: &SyntaxNode, function: &SyntaxNode) -> bool {
     node.ancestors()
         .skip(1)
         .take_while(|scope| scope != function)
@@ -5995,6 +6017,26 @@ fn impl_identity_is_shadowed(
         return true;
     }
     false
+}
+
+/// Whether the test's own scope rebinds the owner's impl type or trait, so a
+/// receiver of that name is not the production type (#11382). The seam-side
+/// relation applies the same refusal the finding-level relation applies to a
+/// direct owner call. Fails open: a free function, or an owner without an
+/// established impl type, is never reported as shadowed.
+pub(in crate::analysis) fn owner_impl_identity_shadowed(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    let Some(impl_type) = impl_self_type_name(&owner.id.0) else {
+        return false;
+    };
+    let test_source = index
+        .files()
+        .get(&test.file)
+        .map(|facts| facts.data().source.as_ref());
+    impl_identity_is_shadowed(test, owner, &impl_type, test_source, index)
 }
 
 fn owner_call_relation_reason(

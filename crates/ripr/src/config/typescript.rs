@@ -119,7 +119,8 @@ pub(crate) fn is_detectable_generated_typescript_path(path: &Path) -> bool {
 }
 
 /// Root project-marker files that select the TypeScript preview adapter when
-/// no `ripr.toml` exists. `package.json` is deliberately not a marker: Rust
+/// no `ripr.toml` exists. `package.json` is deliberately not a marker on its own
+/// (see `detect_javascript_led_root` for the JavaScript-led exception): Rust
 /// and Python repositories routinely carry one for docs or tooling, and it
 /// does not say the repository's own tests run under a TS/JS runner.
 ///
@@ -138,7 +139,104 @@ pub(crate) const TYPESCRIPT_SOURCE_DIR_MARKERS: &[&str] = &["src", "tests"];
 /// marker file, or detectable TypeScript source below root `src`/`tests`.
 #[cfg(any(feature = "lang-typescript", test))]
 pub(crate) fn detect_typescript_project(root: &Path) -> bool {
-    detect_typescript_package_root(root, false) || detect_nested_typescript_package(root)
+    detect_typescript_package_root(root, false)
+        || detect_nested_typescript_package(root)
+        || detect_javascript_led_root(root)
+}
+
+/// A package-led root (#11336): `package.json` at the root plus JavaScript or
+/// TypeScript source (not tooling config files) at the root or under
+/// `src`/`test`/`tests` (beside a `Cargo.toml`, only the root and `src`: Rust
+/// `tests/` hold integration tests and fixtures, #11418). A Cargo or Python
+/// project at the same root does not exclude it: a polyglot repository whose JS/TS changes were reported as
+/// "not analyzed" is the case this exists for. `package.json` alone stays a
+/// non-marker (#10941), as does JavaScript with no manifest.
+#[cfg(any(feature = "lang-typescript", test))]
+pub(crate) fn detect_javascript_led_root(root: &Path) -> bool {
+    JAVASCRIPT_LED_MANIFESTS
+        .iter()
+        .any(|manifest| root.join(manifest).is_file())
+        && (dir_has_package_source_file(root) || {
+            let has_cargo_toml = root.join("Cargo.toml").is_file();
+            JAVASCRIPT_LED_SOURCE_DIRS
+                .iter()
+                // Beside a Rust crate, `test`/`tests` hold Rust integration
+                // tests and fixtures, so JavaScript there is not the
+                // project's own source (#11418).
+                .filter(|dir| !(has_cargo_toml && **dir != "src"))
+                .any(|dir| dir_contains_package_source(&root.join(dir)))
+        })
+}
+
+/// Root manifest and source directories that `detect_javascript_led_root`
+/// reads, shared with the LSP watcher classification and the seam-cache
+/// identity so they cannot drift from the detector.
+#[cfg(any(feature = "lang-typescript", test))]
+pub(crate) const JAVASCRIPT_LED_MANIFESTS: &[&str] = &["package.json"];
+#[cfg(any(feature = "lang-typescript", test))]
+pub(crate) const JAVASCRIPT_LED_SOURCE_DIRS: &[&str] = &["src", "test", "tests"];
+
+/// Canonical root manifest name for a candidate name (host path rule).
+#[cfg(any(feature = "lang-typescript", test))]
+pub(crate) fn javascript_led_manifest_name(name: &str) -> Option<&'static str> {
+    canonical_marker_name(JAVASCRIPT_LED_MANIFESTS, name)
+}
+
+/// Canonical root source-directory marker (`src`, `test` or `tests`) for a
+/// path component, with the same host path rule as the TypeScript and Python
+/// marker names. The detector resolves these directories through the
+/// filesystem (`root.join(dir)`), so on a case-insensitive host a
+/// differently-cased spelling (`Test`, `Src`) detects the same source the
+/// watcher must classify (#11419).
+#[cfg(any(feature = "lang-typescript", test))]
+pub(crate) fn javascript_led_source_dir_marker_name(name: &str) -> Option<&'static str> {
+    canonical_marker_name(JAVASCRIPT_LED_SOURCE_DIRS, name)
+}
+
+#[cfg(any(feature = "lang-typescript", test))]
+pub(crate) fn is_detectable_package_source_name(name: &str) -> bool {
+    let is_javascript = Path::new(name)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            crate::analysis::ts_js_source_kind(extension)
+                == Some(crate::analysis::TsJsSourceKind::JavaScript)
+        });
+    (is_javascript && !is_detectable_generated_typescript_name(name)
+        || is_detectable_typescript_source_name(name))
+        && !is_javascript_tooling_config_name(name)
+}
+
+/// Tooling config files (`eslint.config.js`, `webpack.config.mjs`,
+/// `.eslintrc.cjs`) say a project uses a bundler or linter, not that its own
+/// code is JavaScript, so they never select the adapter on their own. Only
+/// dotfiles and `*.config.*` names count; `src.js` and `rc.js` are source.
+#[cfg(any(feature = "lang-typescript", test))]
+fn is_javascript_tooling_config_name(name: &str) -> bool {
+    name.starts_with('.') || name.contains(".config.")
+}
+
+/// Direct children only: root-level `index.js` / `test.js` style packages.
+#[cfg(any(feature = "lang-typescript", test))]
+fn dir_has_package_source_file(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        entry.file_type().is_ok_and(|kind| kind.is_file())
+            && entry
+                .file_name()
+                .to_str()
+                .is_some_and(is_detectable_package_source_name)
+    })
+}
+
+#[cfg(any(feature = "lang-typescript", test))]
+fn dir_contains_package_source(dir: &Path) -> bool {
+    dir_has_package_source_file(dir)
+        || child_directories(dir)
+            .iter()
+            .any(|child| dir_contains_package_source(child))
 }
 
 #[cfg(any(feature = "lang-typescript", test))]
@@ -233,7 +331,21 @@ pub(crate) fn typescript_source_dir_marker_name(name: &str) -> Option<&'static s
 
 #[cfg(any(feature = "lang-typescript", test))]
 fn canonical_marker_name(candidates: &[&'static str], name: &str) -> Option<&'static str> {
-    let case_insensitive = crate::output::path::host_paths_case_insensitive();
+    canonical_marker_name_on(
+        candidates,
+        name,
+        crate::output::path::host_paths_case_insensitive(),
+    )
+}
+
+/// Explicit-rule form of [`canonical_marker_name`] so tests discriminate the
+/// case-insensitive spelling on any host, mirroring the Python helper.
+#[cfg(any(feature = "lang-typescript", test))]
+fn canonical_marker_name_on(
+    candidates: &[&'static str],
+    name: &str,
+    case_insensitive: bool,
+) -> Option<&'static str> {
     candidates.iter().copied().find(|candidate| {
         if case_insensitive {
             candidate.eq_ignore_ascii_case(name)
@@ -404,10 +516,9 @@ mod tests {
         let root = detection_root("shape")?;
         assert!(!detect_typescript_project(&root), "empty root");
         write(&root, "package.json")?;
-        write(&root, "src/app.js")?;
         assert!(
             !detect_typescript_project(&root),
-            "package.json and plain JavaScript do not select the adapter"
+            "package.json alone does not select the adapter"
         );
         write(&root, "tsconfig.json")?;
         assert!(detect_typescript_project(&root), "tsconfig.json marker");
@@ -423,6 +534,121 @@ mod tests {
             assert!(!detect_typescript_project(&root), "removed {extension}");
         }
         std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
+    }
+
+    /// A Rust crate's `tests/` holds Rust integration tests and fixtures, so
+    /// JavaScript there beside a `package.json` (wasm, napi, docs tooling) is
+    /// not the project's own source; `src/` and the root still count (#11418).
+    #[test]
+    fn rust_crate_fixture_javascript_does_not_select_the_adapter() -> Result<(), String> {
+        let root = detection_root("js-fixture-in-rust")?;
+        write(&root, "package.json")?;
+        write(&root, "Cargo.toml")?;
+        write(&root, "tests/fixtures/app/foo.js")?;
+        write(&root, "test/fixtures/bar.ts")?;
+        assert!(
+            !detect_typescript_project(&root),
+            "fixture JavaScript under tests/ beside Cargo.toml"
+        );
+        write(&root, "src/pricing.js")?;
+        assert!(
+            detect_typescript_project(&root),
+            "JavaScript under src/ beside Cargo.toml still counts"
+        );
+        std::fs::remove_file(root.join("Cargo.toml")).map_err(|err| err.to_string())?;
+        std::fs::remove_file(root.join("src/pricing.js")).map_err(|err| err.to_string())?;
+        assert!(
+            detect_typescript_project(&root),
+            "the same tests/ JavaScript counts when there is no Cargo.toml"
+        );
+        Ok(())
+    }
+
+    /// #11336: a package-led root (manifest plus JavaScript/TypeScript source,
+    /// Cargo or Python project or not) selects the adapter; a manifest alone,
+    /// tooling config files, or excluded/generated JavaScript do not (#10941).
+    #[test]
+    fn javascript_led_roots_select_the_adapter() -> Result<(), String> {
+        let root = detection_root("js-led")?;
+        write(&root, "package.json")?;
+        assert!(!detect_typescript_project(&root), "manifest only");
+        write(&root, "node_modules/dep/index.js")?;
+        write(&root, "dist/bundle.js")?;
+        write(&root, "public/app.min.js")?;
+        assert!(
+            !detect_typescript_project(&root),
+            "excluded and generated JavaScript"
+        );
+        write(&root, "eslint.config.js")?;
+        write(&root, "webpack.config.mjs")?;
+        write(&root, ".eslintrc.cjs")?;
+        assert!(
+            !detect_typescript_project(&root),
+            "tooling config files are not source"
+        );
+        write(&root, "vite.config.ts")?;
+        write(&root, "jest.config.ts")?;
+        assert!(
+            !detect_typescript_project(&root),
+            "TypeScript tooling config is not source either"
+        );
+        write(&root, "index.js")?;
+        assert!(detect_typescript_project(&root), "root-level JavaScript");
+        write(&root, "Cargo.toml")?;
+        assert!(detect_typescript_project(&root), "polyglot Rust root");
+        std::fs::remove_file(root.join("Cargo.toml")).map_err(|err| err.to_string())?;
+        write(&root, "pyproject.toml")?;
+        assert!(detect_typescript_project(&root), "polyglot Python root");
+        std::fs::remove_file(root.join("pyproject.toml")).map_err(|err| err.to_string())?;
+        std::fs::remove_file(root.join("index.js")).map_err(|err| err.to_string())?;
+        write(&root, "src.js")?;
+        assert!(
+            detect_typescript_project(&root),
+            "`src.js` is source, not rc"
+        );
+        std::fs::remove_file(root.join("src.js")).map_err(|err| err.to_string())?;
+        write(&root, "index.ts")?;
+        assert!(detect_typescript_project(&root), "root-level TypeScript");
+        std::fs::remove_file(root.join("index.ts")).map_err(|err| err.to_string())?;
+        write(&root, "test/unit.mjs")?;
+        assert!(detect_typescript_project(&root), "JavaScript under test/");
+        std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
+    }
+
+    /// #11419: package-led source-directory markers canonicalize with the
+    /// host path rule, like the manifest and the other marker names. On a
+    /// case-insensitive host (`Test`, `Src`) canonicalizes; on a
+    /// case-sensitive host only the canonical spelling does.
+    #[test]
+    fn javascript_led_source_dir_markers_canonicalize_with_the_host_path_rule() {
+        for dir in JAVASCRIPT_LED_SOURCE_DIRS {
+            assert_eq!(javascript_led_source_dir_marker_name(dir), Some(*dir));
+        }
+        assert_eq!(javascript_led_source_dir_marker_name("lib"), None);
+        let insensitive = crate::output::path::host_paths_case_insensitive();
+        for (spelling, canonical) in [("Src", "src"), ("Test", "test"), ("TESTS", "tests")] {
+            assert_eq!(
+                javascript_led_source_dir_marker_name(spelling),
+                insensitive.then_some(canonical),
+                "{spelling} canonicalizes only on a case-insensitive host"
+            );
+        }
+        // Explicit-rule form discriminates on any host, mirroring the Python
+        // marker test: the exact pre-fix comparison rejected these outright.
+        for (spelling, canonical) in [("Src", "src"), ("Test", "test"), ("TESTS", "tests")] {
+            assert_eq!(
+                canonical_marker_name_on(JAVASCRIPT_LED_SOURCE_DIRS, spelling, true),
+                Some(canonical)
+            );
+            assert_eq!(
+                canonical_marker_name_on(JAVASCRIPT_LED_SOURCE_DIRS, spelling, false),
+                None
+            );
+        }
+        assert_eq!(
+            canonical_marker_name_on(JAVASCRIPT_LED_SOURCE_DIRS, "src", false),
+            Some("src")
+        );
     }
 
     #[test]

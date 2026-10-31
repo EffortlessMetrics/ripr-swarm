@@ -4012,7 +4012,7 @@ pub(crate) fn normalized_relative_import_module(
     let alias_map = alias_map?;
     let root = workspace_root?;
     let _ = root; // root is captured by alias_map already
-    let resolved_path = alias_map.resolve(source)?;
+    let resolved_path = run_cached_alias_resolution(alias_map, source)?;
     // Normalize the resolved workspace-relative path to a module string.
     let normalized = normalized_path(&resolved_path);
     Some(strip_typescript_module_extension(&normalized))
@@ -4096,6 +4096,8 @@ fn out_dir_map_for(root: &Path) -> Option<TsOutDirMap> {
 struct RunResolverCache {
     directory_modules: HashMap<(PathBuf, String), Option<String>>,
     out_dir_maps: HashMap<PathBuf, Option<TsOutDirMap>>,
+    /// Alias-map answers keyed by `(alias-map digest, specifier)` (#10925).
+    alias_resolutions: HashMap<((u64, u64), String), Option<PathBuf>>,
     /// The committed-snapshot reader's verdict per config directory
     /// (RIPR-SPEC-0258, #7708): `Some(mentions_vitest)` when the directory's
     /// configs are clean, `None` when one refuses. Keyed by the directory and
@@ -4111,6 +4113,34 @@ struct RunResolverCache {
 }
 
 const MAX_RUN_SHADOW_INDEXES: usize = 4096;
+
+#[cfg(test)]
+thread_local! {
+    /// Alias-map resolutions actually computed (not served from the run memo).
+    pub(crate) static ALIAS_RESOLUTIONS_COMPUTED: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
+/// `alias_map.resolve(specifier)`, memoized for one analysis run (#10925).
+///
+/// A non-relative specifier is resolved against the same immutable alias map
+/// and package table for every owner x test x import combination (about 65k
+/// calls over ~200 distinct specifiers on zod), and each uncached answer
+/// scans the package table and probes source paths. The key carries the
+/// map's content digest, so two maps in one scope never answer for each
+/// other. Outside a [`DirectoryModuleCacheScope`] nothing is stored and every
+/// call resolves afresh, like the directory-module memo beside it.
+fn run_cached_alias_resolution(alias_map: &TsAliasMap, specifier: &str) -> Option<PathBuf> {
+    run_memoized(
+        &(alias_map.cache_digest(), specifier.to_string()),
+        |cache| &mut cache.alias_resolutions,
+        || {
+            #[cfg(test)]
+            ALIAS_RESOLUTIONS_COMPUTED.with(|count| count.set(count.get() + 1));
+            alias_map.resolve(specifier)
+        },
+    )
+}
 
 /// The per-body shadow index for `body_text`, built once per analysis run
 /// (#10925). `None` outside a [`DirectoryModuleCacheScope`] or past the

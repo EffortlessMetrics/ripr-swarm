@@ -51,6 +51,8 @@ Next: drill into the top finding:
 Hidden:
   1 lower-priority finding(s) omitted from default human output (Python preview: 1).
     - src/validation.py:3 (weak); kind: error_path; reason: Related Python test reaches `require_positive` but the strongest extracted oracle is `broad_error`; add or strengthen a focused assertion for the exact exception type/message.
+  Hidden classes:
+    weak = tests reach it but check it only loosely
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 
