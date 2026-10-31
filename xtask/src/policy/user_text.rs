@@ -302,7 +302,9 @@ pub(crate) fn parse_baseline(text: &str) -> Result<Baseline, String> {
 fn render_baseline(baseline: &Baseline) -> String {
     let mut out = String::from(
         "# Ceilings for banned plain-language terms in default human output (#10697).\n\
-         # Each number is the count of output lines containing the term on `main`.\n\
+         # Each number is the count of output lines containing the term on `main`; for\n\
+         # `golden-human` it is the most lines any single golden may hold (one golden is\n\
+         # one subject, so landing goldens never races on a shared total).\n\
          # `cargo xtask check-user-text` fails when a count rises above its ceiling.\n\
          # Lower a ceiling with `cargo xtask check-user-text --ratchet`; never raise one\n\
          # without a reviewed reason in the PR. A term with no row has a ceiling of 0.\n\

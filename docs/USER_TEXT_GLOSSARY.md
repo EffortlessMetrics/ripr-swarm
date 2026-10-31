@@ -72,7 +72,9 @@ and its baseline scans the goldens only (`precommit`). Hosted CI (`ci-policy`,
 
 `main` still contains some banned terms in default output. They are held by
 `policy/user-text-baseline.toml`, one ceiling per surface and term: the number
-of output lines containing the term today.
+of output lines containing the term today (for `golden-human`, the most lines any
+single golden may hold; total growth across goldens is deliberately not bounded,
+each golden is).
 
 - A count above its ceiling fails the check.
 - A term with no row has a ceiling of 0.

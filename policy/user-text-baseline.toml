@@ -26,17 +26,17 @@ max_lines = 4
 [[ceiling]]
 surface = "golden-human"
 term = "admitted"
-max_lines = 2
+max_lines = 1
 
 [[ceiling]]
 surface = "golden-human"
 term = "delegatable"
-max_lines = 2
+max_lines = 1
 
 [[ceiling]]
 surface = "golden-human"
 term = "discriminator"
-max_lines = 12
+max_lines = 10
 
 [[ceiling]]
 surface = "golden-human"
@@ -46,12 +46,12 @@ max_lines = 1
 [[ceiling]]
 surface = "golden-human"
 term = "seam"
-max_lines = 4
+max_lines = 3
 
 [[ceiling]]
 surface = "golden-human"
 term = "state token"
-max_lines = 6
+max_lines = 5
 
 [[ceiling]]
 surface = "help-agent"
