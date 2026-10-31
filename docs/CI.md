@@ -1520,7 +1520,11 @@ command, `ripr reports ci-summary --root . >> "$GITHUB_STEP_SUMMARY"`, which
 reads the artifacts earlier steps wrote and prints a regeneration route for any
 that are missing or malformed instead of failing. When the pinned ripr did not install (even if an older one is on PATH),
 the step writes a short summary saying so and pointing at the install step's
-log instead of leaving the summary empty. The summary starts with
+log instead of leaving the summary empty. When `target/ripr/review/comments.json`
+exists, the summary opens with "What RIPR found in this pull request": the count
+of changed-behavior spots where the tests may not notice a wrong result, the first
+spot with its missing check, and the `ripr agent repair` start when it is a plain
+`ripr agent repair ...` command (an unfinished analysis is never reported as clean). The summary then continues with
 the `start-here` first-run packet when `ripr first-pr` can compose one from
 explicit artifacts, then includes the PR review front panel, first useful
 action fallback, a language preview grouping section when `[languages]` enables

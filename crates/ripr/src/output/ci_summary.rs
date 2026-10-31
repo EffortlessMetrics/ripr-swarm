@@ -13,6 +13,7 @@
 //! `markdown_inline` spelling.
 
 pub(crate) mod annotations;
+mod headline;
 mod jq;
 
 /// The inline-comment mode a raw `RIPR_COMMENT_MODE` value means: surrounding
@@ -97,6 +98,7 @@ pub(crate) fn render_ci_summary(input: &CiSummaryInput) -> Vec<u8> {
         relative: repo_relative_for(&input.root),
         out: Vec::new(),
     };
+    summary.headline();
     summary.start_here();
     summary.first_run_status(&input.base_ref);
     summary.language_preview(&input.configured_languages);
@@ -230,11 +232,28 @@ impl Summary {
         ));
     }
 
-    fn start_here(&mut self) {
+    /// The pull request's own verdict, before ripr's orientation (#11217).
+    fn headline(&mut self) {
         self.line("## RIPR advisory summary");
         self.blank();
         self.line("RIPR is advisory static evidence. It does not edit source, generate tests, or run mutation testing.");
         self.blank();
+        let report = fs::read(self.root.join(COMMENTS_JSON))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+        let lines = report
+            .as_ref()
+            .map(headline::headline_lines)
+            .unwrap_or_default();
+        for line in &lines {
+            self.line(line);
+        }
+        if !lines.is_empty() {
+            self.blank();
+        }
+    }
+
+    fn start_here(&mut self) {
         self.line("### Start here");
         self.line("- Open `target/ripr/reports/start-here.md` first when it exists.");
         self.line(
