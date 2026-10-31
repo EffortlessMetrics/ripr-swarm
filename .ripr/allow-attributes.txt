@@ -9,6 +9,9 @@
 # max_count is exact: check-allow-attributes fails when the source count is
 # above the row or the row is above the source count.
 
+crates/ripr/src/analysis/workspace/assertion_dependency/registry.rs|expect(dead_code)|1|#10864: preserve the private Option compatibility wrapper while classified-cache consumers use the typed result.
+crates/ripr/src/analysis/workspace/mod.rs|expect(unused_imports)|1|#10864: preserve the private Option wrapper re-export for compatibility while current production consumers use the typed result.
+
 crates/ripr/src/analysis/diff/load.rs|expect(clippy::expect_used)|1|Test module: `.expect_err("why")` carries the intended failure mode in the assertion message.
 crates/ripr/src/analysis/diff/mod.rs|allow(unused_imports)|1|ChangedLine is re-exported for use by probes.rs and other external modules; not used within diff module itself.
 crates/ripr/src/analysis/language/perl/mod.rs|allow(dead_code)|1|Perl strict-actionability scaffold is feature-gated and exercised by tests before public projection is enabled; reviewed suppression in place of a cfg_attr wrapper the allow-attribute gate could not inventory.

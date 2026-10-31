@@ -2476,6 +2476,7 @@ fn inventory_diff_scoped_classified_seams_inner(
         };
 
     cancellation::checkpoint()?;
+    let provider_failed = cached.index.has_proptest_metadata_failures();
     let inventory = ScopedClassifiedSeamInventory {
         classified,
         classified_seams_considered,
@@ -2491,7 +2492,7 @@ fn inventory_diff_scoped_classified_seams_inner(
         absent_changed_files,
         repo_seam_limit,
     };
-    if let Some(identity) = reuse_identity {
+    if let Some(identity) = reuse_identity.filter(|_| !provider_failed) {
         bound_inventory_reuse::store(&inventory.workspace_cache_key, identity, &inventory);
         if let Some(cache) = persisted_cache.as_ref() {
             persisted_bound_inventory::store(
@@ -8928,6 +8929,205 @@ marker = "libtest_mimic::Trial"
         std::fs::read_dir(dir)
             .map(|entries| entries.filter_map(|e| e.ok().map(|e| e.path())).collect())
             .unwrap_or_default()
+    }
+
+    /// A provider probe may fail after Cargo supplied a reusable workspace
+    /// key. That transient refusal must not survive in scoped memory or disk.
+    #[cfg(unix)]
+    #[test]
+    fn scoped_provider_failure_is_not_reused_after_recovery() -> Result<(), String> {
+        use crate::analysis::seams::SeamGripClass;
+        use std::os::unix::fs::PermissionsExt;
+        fn boundary(inventory: &ScopedClassifiedSeamInventory) -> Result<&ClassifiedSeam, String> {
+            inventory
+                .classified
+                .iter()
+                .find(|entry| {
+                    entry.seam.owner() == "src/lib.rs::discounted_total"
+                        && entry.seam.kind() == SeamKind::PredicateBoundary
+                })
+                .ok_or_else(|| "missing exact predicate boundary".to_string())
+        }
+        const CHILD: &str = "RIPR_SCOPED_PROVIDER_FAILURE_CHILD";
+        const CONTROL: &str = "RIPR_SCOPED_PROVIDER_CONTROL";
+        if let Some(root) = std::env::var_os(CHILD).map(PathBuf::from) {
+            let control = PathBuf::from(std::env::var_os(CONTROL).ok_or("missing control")?);
+            let config = RiprConfig::default();
+            let changed = [PathBuf::from("src/lib.rs")];
+            let owners = ["discounted_total".to_string()];
+            let identity = {
+                let keys = changed
+                    .iter()
+                    .map(|path| inventory_scope_key(path))
+                    .collect::<BTreeSet<_>>();
+                let names = owners.iter().map(String::as_str).collect::<BTreeSet<_>>();
+                bound_seams_reuse_identity(&keys, &names)
+            };
+            let run = || {
+                inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners)
+            };
+            evaluation_probe::reset();
+            let refused = run()?;
+            assert!(
+                refused.workspace_cache_key.is_reusable(),
+                "setup must exercise a reusable key"
+            );
+            assert!(
+                evaluation_probe::evaluated() > 0,
+                "refused run must evaluate"
+            );
+            let refused_boundary = boundary(&refused)?;
+            assert_ne!(refused_boundary.class, SeamGripClass::StronglyGripped);
+            assert!(refused_boundary.evidence.related_tests.is_empty());
+            let count: usize = std::fs::read_to_string(control.join("count"))
+                .map_err(|e| e.to_string())?
+                .trim()
+                .parse()
+                .map_err(|e: std::num::ParseIntError| e.to_string())?;
+            assert!(count >= 3, "provider failure was not reached: {count}");
+            assert_eq!(
+                std::fs::read_to_string(control.join("early-status")).map_err(|e| e.to_string())?,
+                "0\n0\n",
+                "both workspace metadata probes must succeed"
+            );
+            assert!(
+                bound_inventory_reuse::lookup(&refused.workspace_cache_key, &identity).is_none(),
+                "a transient provider failure must not seed process reuse"
+            );
+            let scoped_cache = crate::analysis::seam_cache::RepoScopedInventoryCache::at(&root);
+            assert!(
+                persisted_bound_inventory::lookup(
+                    &scoped_cache,
+                    &refused.workspace_cache_key,
+                    &identity
+                )
+                .is_none(),
+                "a transient provider failure must not seed persisted reuse"
+            );
+
+            std::fs::write(control.join("healthy"), b"healthy").map_err(|e| e.to_string())?;
+            evaluation_probe::reset();
+            let recovered = run()?;
+            assert!(
+                evaluation_probe::evaluated() > 0,
+                "transient failure was reused after recovery"
+            );
+            assert_eq!(recovered.workspace_cache_key, refused.workspace_cache_key);
+            let recovered_boundary = boundary(&recovered)?;
+            assert_eq!(recovered_boundary.class, SeamGripClass::StronglyGripped);
+            assert!(
+                recovered_boundary
+                    .evidence
+                    .related_tests
+                    .iter()
+                    .any(|test| test.test_name.ends_with("exact_boundary"))
+            );
+
+            evaluation_probe::reset();
+            let memory = run()?;
+            assert_eq!(
+                evaluation_probe::evaluated(),
+                0,
+                "healthy memory hit must reuse"
+            );
+            assert_eq!(scoped_projection(&memory)?, scoped_projection(&recovered)?);
+            bound_inventory_reuse::forget(&recovered.workspace_cache_key, &identity);
+            evaluation_probe::reset();
+            let disk = run()?;
+            assert_eq!(
+                evaluation_probe::evaluated(),
+                0,
+                "healthy disk hit must reuse"
+            );
+            assert_eq!(scoped_projection(&disk)?, scoped_projection(&recovered)?);
+
+            bound_inventory_reuse::forget(&recovered.workspace_cache_key, &identity);
+            std::fs::remove_dir_all(root.join("target/ripr/cache/repo-scoped-classified-seams"))
+                .map_err(|e| e.to_string())?;
+            evaluation_probe::reset();
+            let fresh = run()?;
+            assert!(
+                evaluation_probe::evaluated() > 0,
+                "fresh healthy control must evaluate"
+            );
+            assert_eq!(scoped_projection(&fresh)?, scoped_projection(&recovered)?);
+            return Ok(());
+        }
+
+        let root = make_tempdir("scoped-provider-recovery")?;
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/proptest_singleton/input");
+        for path in [
+            "Cargo.toml",
+            "Cargo.lock",
+            "src/lib.rs",
+            "tests/boundary.rs",
+        ] {
+            let source = std::fs::read_to_string(fixture.join(path)).map_err(|e| e.to_string())?;
+            write_file(&root.join(path), &source)?;
+        }
+        let control = root.join("target/provider-control");
+        std::fs::create_dir_all(&control).map_err(|e| e.to_string())?;
+        let wrapper = control.join("cargo");
+        std::fs::write(&wrapper, r##"#!/bin/sh
+if [ "$1" = metadata ]; then
+  n=0
+  if [ -f "$RIPR_SCOPED_PROVIDER_CONTROL/count" ]; then n=$(cat "$RIPR_SCOPED_PROVIDER_CONTROL/count"); fi
+  n=$((n + 1))
+  printf '%s\n' "$n" > "$RIPR_SCOPED_PROVIDER_CONTROL/count"
+  if [ "$n" -gt 2 ] && [ ! -f "$RIPR_SCOPED_PROVIDER_CONTROL/healthy" ]; then exit 101; fi
+  "$RIPR_SCOPED_REAL_CARGO" "$@"
+  status=$?
+  if [ "$n" -le 2 ]; then printf '%s\n' "$status" >> "$RIPR_SCOPED_PROVIDER_CONTROL/early-status"; fi
+  exit "$status"
+fi
+exec "$RIPR_SCOPED_REAL_CARGO" "$@"
+"##).map_err(|e| e.to_string())?;
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| e.to_string())?;
+        let mut paths = vec![control.clone()];
+        paths.extend(std::env::split_paths(
+            &std::env::var_os("PATH").ok_or("missing PATH")?,
+        ));
+        let path = std::env::join_paths(paths).map_err(|e| e.to_string())?;
+        let real_cargo =
+            std::env::var_os("CARGO").ok_or("CARGO must name the prepared real Cargo")?;
+        let test_name = format!(
+            "{}::scoped_provider_failure_is_not_reused_after_recovery",
+            module_path!()
+                .strip_prefix("ripr::")
+                .unwrap_or(module_path!())
+        );
+        let mut command =
+            std::process::Command::new(std::env::current_exe().map_err(|e| e.to_string())?);
+        command
+            .args(["--exact", &test_name, "--nocapture"])
+            .env(CHILD, &root)
+            .env(CONTROL, &control)
+            .env("RIPR_SCOPED_REAL_CARGO", real_cargo)
+            .env("PATH", path)
+            .env("RUSTUP_AUTO_INSTALL", "0");
+        let mut child =
+            crate::process_owner::OwnedProcess::spawn(command).map_err(|e| e.to_string())?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_mins(5);
+        let status = loop {
+            if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+                break status;
+            }
+            if std::time::Instant::now() >= deadline {
+                child.terminate_tree()?;
+                return Err("scoped provider child timed out".into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        if !status.success() {
+            return Err(format!(
+                "scoped provider child failed: {status}; retained {}",
+                root.display()
+            ));
+        }
+        std::fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     /// #9899: a new process (no in-memory reuse) on an unchanged workspace

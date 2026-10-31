@@ -29,7 +29,8 @@ use std::sync::OnceLock;
 /// On-disk shape version. Bump when [`ScopedInventoryEnvelope`] or
 /// [`PersistedScopedInventory`] changes shape; the key's own schema and
 /// analyzer identity still gate classification semantics.
-pub(crate) const SCOPED_INVENTORY_CACHE_SCHEMA_VERSION: &str = "0.1";
+// Prior entries may have stored a late provider failure under a healthy key.
+pub(crate) const SCOPED_INVENTORY_CACHE_SCHEMA_VERSION: &str = "0.2";
 
 const SCOPED_INVENTORY_DIGEST_DOMAIN: &str = "ripr-cache:ScopedInventoryEnvelope:v1";
 

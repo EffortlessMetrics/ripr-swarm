@@ -1,0 +1,1 @@
+crates/ripr/src/analysis/seam_inventory.rs|Command::new|1|scoped-provider-control|#10864: Unix test launches its own test executable via OwnedProcess to isolate a task-owned Cargo wrapper and verify scoped-cache recovery. No user repository or shared Cargo cache is modified.

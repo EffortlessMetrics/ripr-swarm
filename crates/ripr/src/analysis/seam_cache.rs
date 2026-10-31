@@ -5787,6 +5787,7 @@ mod tests {
             ("1.71", "0.77"),
             ("1.72", "0.78"),
             ("1.73", "0.79"),
+            ("1.123", "0.130"),
         ] {
             for compact in [false, true] {
                 for sharded in [false, true] {
@@ -5857,7 +5858,7 @@ mod tests {
     #[test]
     fn favorable_shard_predecessors_are_refused_with_current_outer_key() -> Result<(), String> {
         for previous in [
-            "0.33", "0.38", "0.39", "0.40", "0.41", "0.42", "0.43", "0.44",
+            "0.33", "0.38", "0.39", "0.40", "0.41", "0.42", "0.43", "0.44", "0.130",
         ] {
             for compact in [false, true] {
                 let scratch = integrity_scratch("property-shard-generation")?;
