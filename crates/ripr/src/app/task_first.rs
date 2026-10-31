@@ -329,8 +329,12 @@ fn route_not_ready_reason(
     // but `ripr agent stub` adds one, so the target facts do not keep the
     // manual routes below from applying: only the discriminator fact does.
     let routable = stub_routable_missing_evidence(entry, missing_evidence);
-    let missing_evidence = routable.as_deref().unwrap_or(missing_evidence);
     let adds_module = routable.is_some();
+    let missing_evidence = routable.as_deref().unwrap_or(missing_evidence);
+    // The skeleton's call to the owner is the missing test input when no test
+    // calls the owner at all, so that gap does not keep the stub route back.
+    let without_owner_gap = owner_call_gap_covered_by_stub(entry, missing_evidence);
+    let missing_evidence = without_owner_gap.as_deref().unwrap_or(missing_evidence);
     // #10622: a Rust predicate boundary whose only missing fact
     // is the boundary discriminator has a concrete manual route —
     // the predicate stub writes a fill-in skeleton for the changed
@@ -342,10 +346,17 @@ fn route_not_ready_reason(
     // route, so the bare label stays. The seam inventory this
     // gate reads is Rust-only, so the kind check is also the
     // language check.
-    if let [missing] = missing_evidence
-        && missing.starts_with("producer-owned missing discriminator fact: boundary_value")
-        && entry.seam.kind() == crate::analysis::seams::SeamKind::PredicateBoundary
-    {
+    // No missing fact left once the module blocker is routed means the seam
+    // already has its boundary input (#11466): only the test home is absent,
+    // and the stub adds it, so the predicate route applies there too.
+    let boundary_route = match missing_evidence {
+        [missing] => {
+            missing.starts_with("producer-owned missing discriminator fact: boundary_value")
+        }
+        [] => adds_module,
+        _ => false,
+    };
+    if boundary_route && entry.seam.kind() == crate::analysis::seams::SeamKind::PredicateBoundary {
         let file = crate::analysis::stable_path_text(entry.seam.file());
         let at = shell_arg(&format!("{file}:{}", entry.seam.display_line()));
         let root_flag = root.map_or_else(String::new, |root| {
@@ -392,7 +403,11 @@ fn route_not_ready_reason(
             ": write the test by hand, or run `ripr agent stub{root_flag} --at {at} --kind {kind}` for a fill-in skeleton{module_note}, then rerun `ripr repair`"
         ));
     }
-    if let Some(guidance) = owner_call_absent_guidance(entry, root) {
+    // A named stub route already answers "no test calls this"; a second
+    // suffix would read as competing advice.
+    if !label.contains("ripr agent stub")
+        && let Some(guidance) = owner_call_absent_guidance(entry, root)
+    {
         label.push_str(&format!(": {guidance}"));
     }
     label
@@ -430,6 +445,32 @@ fn owner_call_absent_guidance(
         crate::analysis::stable_path_text(file),
         test.line
     ))
+}
+
+/// The `activation` stage fact ("a test input that reaches the changed
+/// code") is what a stub skeleton supplies when no related test calls the
+/// owner directly: its first line is that call. Drops it from the list so the
+/// manual stub route is named; `None` when it does not apply. Route text only:
+/// the readiness list and the eligibility flip are untouched.
+fn owner_call_gap_covered_by_stub(
+    entry: &crate::analysis::ClassifiedSeam,
+    missing_evidence: &[String],
+) -> Option<Vec<String>> {
+    const ACTIVATION: &str = "incomplete evidence stage: activation";
+    if entry
+        .evidence
+        .related_tests
+        .iter()
+        .any(|test| test.relation_reason == crate::domain::RelationReason::DirectOwnerCall)
+    {
+        return None;
+    }
+    let kept = missing_evidence
+        .iter()
+        .filter(|item| item.as_str() != ACTIVATION)
+        .cloned()
+        .collect::<Vec<_>>();
+    (kept.len() < missing_evidence.len()).then_some(kept)
 }
 
 const NO_TEST_MODULE_STUB_NOTE: &str =
@@ -542,6 +583,57 @@ fn collect_no_eligible_reasons<'a>(
 /// the same actionable recovery. The cap is an environment variable, not a flag.
 pub(crate) const WIDEN_SEAM_BUDGET: &str = "rerun with a wider seam budget (set RIPR_REPO_EXPOSURE_SEAM_LIMIT to a larger count, or 0 to remove the cap)";
 
+/// Largest repository a repair start widens the built-in seam cap to cover.
+/// Past it the refusal stands, so the cap still bounds pathological monorepos.
+const REPAIR_SEAM_CEILING: usize = 2 * crate::analysis::DEFAULT_REPO_EXPOSURE_SEAM_LIMIT;
+
+/// Seam inventory for a repair resolver. A repository only just past the
+/// built-in cap (tokio: 12,754 seams) would otherwise refuse every repair, so
+/// a default-source cut within [`REPAIR_SEAM_CEILING`] reruns once with the cap
+/// raised to the exact total. The rerun is cut by nothing, and one that
+/// declined a Rust file is discarded, so the fail-closed truncation gate below
+/// is unchanged: an explicit
+/// `RIPR_REPO_EXPOSURE_SEAM_LIMIT` or a larger repository still refuses.
+///
+/// Only the one-shot CLI resolvers call this. `load_gate_state` stays on the
+/// plain inventory because MCP status reads reach it on concurrent worker
+/// threads, which must not share the process-wide cap; there a cut inventory
+/// still withholds the start with the wider-budget recovery.
+fn inventory_for_repair(
+    root: &Path,
+    config: &crate::config::RiprConfig,
+) -> Result<
+    (
+        Vec<crate::analysis::ClassifiedSeam>,
+        Option<crate::analysis::SeamLimitInfo>,
+    ),
+    String,
+> {
+    let first = crate::analysis::inventory_classified_seams_at_with_config(root, config)?;
+    if let Some(cap) = first.1.as_ref().and_then(repair_widened_cap) {
+        let _widened = crate::analysis::PilotInventoryDefault::widen_to(cap);
+        let rerun =
+            crate::analysis::inventory_classified_seams_report_at_with_config(root, config)?;
+        // The repair gates read the cap only. A file the parse budget declined
+        // has no seams in the inventory, so a rerun that declined any is not
+        // known to be complete and the original truncation refusal stands.
+        if rerun.declined_rust_files.is_empty() {
+            return Ok((rerun.classified, rerun.limit_info));
+        }
+    }
+    Ok(first)
+}
+
+/// The cap a repair resolver reruns with, or `None` when the cut stands: only
+/// a built-in default cut of a repository within [`REPAIR_SEAM_CEILING`]
+/// widens, to its exact total. An explicit limit is the operator's choice.
+fn repair_widened_cap(info: &crate::analysis::SeamLimitInfo) -> Option<usize> {
+    (info.is_truncated()
+        && info.source == crate::analysis::SeamLimitSource::Default
+        && info.total <= REPAIR_SEAM_CEILING)
+        .then_some(info.total)
+}
+
 /// Gather the live authorities and decide one repair start. A truncated seam
 /// inventory fails closed: selecting from a partial list could hide
 /// candidates and silently pick first.
@@ -553,8 +645,7 @@ pub(crate) fn resolve_repair_start(
     base: Option<&str>,
 ) -> Result<RepairStartDecision, String> {
     let config = load_for_root(root)?;
-    let (classified, limit_info) =
-        crate::analysis::inventory_classified_seams_at_with_config(root, &config)?;
+    let (classified, limit_info) = inventory_for_repair(root, &config)?;
     if let Some(info) = &limit_info
         && info.is_truncated()
     {
@@ -1198,8 +1289,7 @@ pub(crate) fn resolve_repair_subject_outcome(
     item: &str,
 ) -> Result<RepairSubjectOutcome, String> {
     let config = load_for_root(root)?;
-    let (classified, limit_info) =
-        crate::analysis::inventory_classified_seams_at_with_config(root, &config)?;
+    let (classified, limit_info) = inventory_for_repair(root, &config)?;
     if let Some(info) = &limit_info
         && info.is_truncated()
     {
@@ -1510,6 +1600,54 @@ pub(crate) fn uncommitted_start_refusal_message(root: &Path, seam_id: &str, file
     )
 }
 
+/// The one sentence for a start held by an uncommitted test target, shared by
+/// `ripr repair`, the agent card and the MCP admission so every surface names
+/// the same cause (#11397).
+pub(crate) fn held_inline_reason(file: &str) -> String {
+    format!("the inline test target `{file}` has uncommitted changes; commit or stash them first")
+}
+
+/// What the human agent card says when the shared start gate holds a seam
+/// back: the plain cause and, when the gate's remedy is a command, the one
+/// next step. Derived from [`repair_start_refusal_for_entry`] only; the card
+/// keeps no gate of its own (#11397).
+pub(crate) struct CardStartHold {
+    pub(crate) reason: String,
+    pub(crate) next: Option<String>,
+    /// The bash command `next` names, so a plain-text surface can print its
+    /// PowerShell pair beside it.
+    pub(crate) command: Option<String>,
+}
+
+pub(crate) fn card_start_hold(
+    root: &Path,
+    entry: &crate::analysis::ClassifiedSeam,
+    policy: AgentBriefPolicy<'_>,
+) -> Option<CardStartHold> {
+    let refusal = repair_start_refusal_for_entry(root, entry, policy)?;
+    let seam_id = entry.seam.id().as_str();
+    let held = held_inline_target(root, &repair_packet_eligibility(entry).readiness).map(|file| {
+        let command = format!(
+            "ripr repair {} --root {}",
+            shell_arg(seam_id),
+            shell_arg(&bound_root(&root.to_string_lossy()))
+        );
+        (
+            format!("commit or stash `{file}`, then run `{command}`"),
+            command,
+        )
+    });
+    let (next, command) = match held {
+        Some((next, command)) => (Some(next), Some(command)),
+        None => (None, None),
+    };
+    Some(CardStartHold {
+        reason: refusal.reason,
+        next,
+        command,
+    })
+}
+
 /// The gate applied to one classified seam: [`repair_refusal`], the
 /// edit-target predicate and the held inline target, plus the related test
 /// the by-hand work targets.
@@ -1530,12 +1668,7 @@ pub(crate) fn repair_start_refusal_for_entry(
         })
         .or_else(|| {
             held_inline_target(root, &repair_packet_eligibility(entry).readiness).map(|file| {
-                (
-                    RefusalKind::Other,
-                    format!(
-                        "the inline test target `{file}` has uncommitted changes; commit or stash them first"
-                    ),
-                )
+                (RefusalKind::Other, held_inline_reason(&file))
             })
         })?;
     let related = entry
@@ -1676,7 +1809,7 @@ fn gap_bound_route(
 /// The named cause of an incomplete run for the withheld repair start
 /// (#11136): the first limitation the producer disclosed, in plain words with
 /// its file and recovery, or the bare fact when the run carries none.
-fn incomplete_limitation_summary(output: &super::CheckOutput) -> String {
+pub(crate) fn incomplete_limitation_summary(output: &super::CheckOutput) -> String {
     let Some(limitation) = output
         .analysis_outcome
         .as_ref()
@@ -2545,6 +2678,51 @@ fn held_inline_target(
 pub(crate) mod tests {
     use super::*;
 
+    /// A default-cap cut within the ceiling reruns at its exact total; an
+    /// explicit limit, a repository past the ceiling and a complete inventory
+    /// are left alone, so the truncation refusal still guards them.
+    #[test]
+    fn repair_widens_only_a_default_cut_within_the_ceiling() {
+        use crate::analysis::{SeamLimitInfo, SeamLimitSource};
+        let cut = |analyzed, total, source| SeamLimitInfo {
+            analyzed,
+            total,
+            source,
+        };
+        let default_cap = crate::analysis::DEFAULT_REPO_EXPOSURE_SEAM_LIMIT;
+        assert_eq!(
+            repair_widened_cap(&cut(default_cap, 12_754, SeamLimitSource::Default)),
+            Some(12_754)
+        );
+        assert_eq!(
+            repair_widened_cap(&cut(
+                default_cap,
+                REPAIR_SEAM_CEILING,
+                SeamLimitSource::Default
+            )),
+            Some(REPAIR_SEAM_CEILING)
+        );
+        assert_eq!(
+            repair_widened_cap(&cut(
+                default_cap,
+                REPAIR_SEAM_CEILING + 1,
+                SeamLimitSource::Default
+            )),
+            None,
+            "past the ceiling the refusal stands"
+        );
+        assert_eq!(
+            repair_widened_cap(&cut(default_cap, 12_754, SeamLimitSource::Configured)),
+            None,
+            "an explicit RIPR_REPO_EXPOSURE_SEAM_LIMIT is never overridden"
+        );
+        assert_eq!(
+            repair_widened_cap(&cut(500, 500, SeamLimitSource::Default)),
+            None,
+            "a complete inventory needs no rerun"
+        );
+    }
+
     fn key<'a>(
         kind: crate::analysis::seams::SeamKind,
         file: &'a str,
@@ -3265,6 +3443,91 @@ pub(crate) mod tests {
             "{}",
             bare.reason
         );
+        Ok(())
+    }
+
+    /// #11460: a boundary seam that also misses the owner-call input names the
+    /// stub route when no related test calls the owner directly (the skeleton's
+    /// call is that input), and keeps the bare label when one does.
+    #[test]
+    fn owner_call_gap_does_not_hide_the_stub_route() {
+        use crate::analysis::seams::SeamGripClass;
+        let boundary = "producer-owned missing discriminator fact: boundary_value".to_string();
+        let activation = "incomplete evidence stage: activation".to_string();
+        let missing = vec![boundary, activation];
+        let root = Some(Path::new("/repo"));
+
+        let none = gate_entry(SeamGripClass::ActivationUnknown, Vec::new());
+        let reason = route_not_ready_reason(&none, "repair route not ready", &missing, root);
+        assert!(
+            reason.contains("--at src/pricing.rs:88 --kind predicate")
+                && reason.contains("a test input that reaches the changed code"),
+            "{reason}"
+        );
+
+        // With the guidance trigger set too, only the stub route is printed.
+        let mut both = gate_entry(SeamGripClass::ActivationUnknown, vec![weak_related_test()]);
+        both.evidence.activate.summary =
+            "No direct owner call observed for value-insensitive seam".to_string();
+        both.evidence.related_tests = Vec::new();
+        let reason = route_not_ready_reason(&both, "repair route not ready", &missing, root);
+        assert!(
+            reason.contains("--kind predicate") && !reason.contains("closest related test"),
+            "{reason}"
+        );
+
+        // Negative: a test that already calls the owner means the gap is real.
+        let direct = gate_entry(SeamGripClass::WeaklyGripped, vec![weak_related_test()]);
+        let reason = route_not_ready_reason(&direct, "repair route not ready", &missing, root);
+        assert!(!reason.contains("--kind predicate"), "{reason}");
+
+        // Negative: another missing fact still keeps the bare label.
+        let mut more = missing.clone();
+        more.push("safe test target".to_string());
+        let reason = route_not_ready_reason(&none, "repair route not ready", &more, root);
+        assert!(!reason.contains("--kind predicate"), "{reason}");
+    }
+
+    /// #11466: a predicate seam whose only blocker is the missing test module
+    /// names the stub route (it adds the module); another blocker still keeps
+    /// the bare label.
+    #[test]
+    fn module_only_blocker_names_the_predicate_stub_route() -> Result<(), String> {
+        use crate::analysis::new_test_target::{NewTestProposalBlocker, NewTestTargetAdmission};
+        use crate::analysis::seams::SeamGripClass;
+        let root = Some(Path::new("/repo"));
+        let mut entry = gate_entry(SeamGripClass::Ungripped, Vec::new());
+        entry.evidence.new_test_target = Some(NewTestTargetAdmission {
+            blocker: Some(NewTestProposalBlocker::NoTestModule),
+            ..NewTestTargetAdmission::default()
+        });
+        let blocked = entry
+            .evidence
+            .new_test_target
+            .as_ref()
+            .and_then(|admission| admission.missing_reason())
+            .ok_or("the module blocker must name a missing reason")?;
+        let only_target = vec![
+            crate::analysis::repair_route::SAFE_TEST_TARGET_EVIDENCE.to_string(),
+            blocked.clone(),
+        ];
+        let reason = route_not_ready_reason(&entry, "repair route not ready", &only_target, root);
+        assert!(
+            reason.contains("--at src/pricing.rs:88 --kind predicate")
+                && reason.contains("no test module yet"),
+            "{reason}"
+        );
+
+        // Negative: an unrelated extra fact keeps the bare label.
+        let mut more = only_target.clone();
+        more.push("incomplete evidence stage: propagation".to_string());
+        let reason = route_not_ready_reason(&entry, "repair route not ready", &more, root);
+        assert!(!reason.contains("--kind predicate"), "{reason}");
+
+        // Negative: an empty list without the module blocker names no route.
+        let plain = gate_entry(SeamGripClass::Ungripped, Vec::new());
+        let reason = route_not_ready_reason(&plain, "repair route not ready", &[], root);
+        assert!(!reason.contains("--kind predicate"), "{reason}");
         Ok(())
     }
 

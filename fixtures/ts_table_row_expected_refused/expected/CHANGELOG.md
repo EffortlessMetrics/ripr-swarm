@@ -10,7 +10,6 @@ Command:
 
 Updated:
 - `expected/check.json`
-- `expected/human.txt`
 
 ## Pending — ts_table_row_expected_refused (2)
 
@@ -22,7 +21,6 @@ Command:
 
 Updated:
 - `expected/check.json`
-- `expected/human.txt`
 
 ## Pending — ts_table_row_expected_refused (3)
 
@@ -34,16 +32,15 @@ Command:
 
 Updated:
 - `expected/check.json`
-- `expected/human.txt`
 
 ## Pending — ts_table_row_expected_refused (4)
 
 Reason:
 RIPR-SPEC-0243 #11196: add titleMutation and aliasedKeys refusals (R1, R2)
+main's observation_unconfirmed wording ("the preview adapter could not confirm ..."): formatting-only, five `why` lines; the fixture keeps check.json as its only golden
 
 Command:
 `cargo xtask goldens bless ts_table_row_expected_refused --reason "..."`
 
 Updated:
 - `expected/check.json`
-- `expected/human.txt`

@@ -10,7 +10,6 @@ Command:
 
 Updated:
 - `expected/check.json`
-- `expected/human.txt`
 
 ## Pending — ts_table_row_expected_credit (2)
 
@@ -22,4 +21,3 @@ Command:
 
 Updated:
 - `expected/check.json`
-- `expected/human.txt`

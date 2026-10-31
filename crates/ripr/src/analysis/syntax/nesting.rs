@@ -179,6 +179,9 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
     let mut estimate = NestingEstimate::default();
     let mut depth = 0usize;
     let mut unary_run = 0usize;
+    // Right-associative nesting (`a = b = c`, `for x in for y in ..`): one
+    // parser level per link, reset at statement and bracket boundaries.
+    let mut right_run = 0usize;
     // Per-depth counters, indexed by bracket depth.
     let mut else_if: Vec<usize> = vec![0];
     let mut operators: Vec<usize> = vec![0];
@@ -251,6 +254,19 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
                 estimate.else_if_chain = estimate.else_if_chain.max(*chain);
             }
             previous_word_was_else = word == "else";
+            if word == "in" {
+                right_run = right_run.saturating_add(1);
+                estimate.depth = estimate
+                    .depth
+                    .max(depth.saturating_add(unary_run).saturating_add(right_run));
+            }
+            if is_recursive_prefix_keyword(word) {
+                // `return return ..`, `if if ..` and the like recurse once per
+                // keyword in the parser exactly like a prefix operator run, but
+                // never reach the bracket arms below (#11407).
+                unary_run = unary_run.saturating_add(1);
+                estimate.depth = estimate.depth.max(depth.saturating_add(unary_run));
+            }
             after_operand = !is_expression_keyword(word);
             if after_operand {
                 unary_run = 0;
@@ -261,6 +277,7 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
         match byte {
             b'(' | b'[' | b'{' => {
                 depth = depth.saturating_add(1);
+                right_run = 0;
                 else_if.push(0);
                 operators.push(0);
                 after_operand = false;
@@ -268,6 +285,7 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
             }
             b')' | b']' | b'}' => {
                 depth = depth.saturating_sub(1);
+                right_run = 0;
                 else_if.truncate(depth + 1);
                 let closed: usize = operators.drain(depth + 1..).sum();
                 if let Some(run) = operators.get_mut(depth) {
@@ -292,6 +310,7 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
                 }
                 after_operand = false;
                 unary_run = 0;
+                right_run = 0;
             }
             b'!' | b'-' | b'*' | b'&' if !after_operand => {
                 unary_run = unary_run.saturating_add(1);
@@ -306,6 +325,12 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
                     open_operators = open_operators.saturating_add(1);
                     estimate.operator_run = estimate.operator_run.max(open_operators);
                 }
+                if byte == b'=' && is_plain_assignment(bytes, index) {
+                    right_run = right_run.saturating_add(1);
+                    estimate.depth = estimate
+                        .depth
+                        .max(depth.saturating_add(unary_run).saturating_add(right_run));
+                }
                 after_operand = byte == b'?';
             }
             _ => {
@@ -319,9 +344,32 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
 
 /// Words after which a `-`, `*`, `&` or `!` is a prefix operator.
 fn is_expression_keyword(word: &str) -> bool {
+    is_recursive_prefix_keyword(word) || matches!(word, "in" | "else" | "let" | "mut" | "move")
+}
+
+/// A bare `=` (assignment or `let` initializer), not part of `==`, `<=`, `=>`,
+/// `+=` and the like. Assignment is right-associative, so a chain nests once
+/// per link.
+fn is_plain_assignment(bytes: &[u8], index: usize) -> bool {
+    let before = index.checked_sub(1).and_then(|i| bytes.get(i)).copied();
+    let after = bytes.get(index + 1).copied();
+    let joins = |b: Option<u8>| {
+        b.is_some_and(|b| {
+            matches!(
+                b,
+                b'=' | b'<' | b'>' | b'!' | b'+' | b'-' | b'*' | b'/' | b'%' | b'^' | b'&' | b'|'
+            )
+        })
+    };
+    !joins(before) && !matches!(after, Some(b'=' | b'>'))
+}
+
+/// Keywords whose operand is parsed by recursing into the expression parser,
+/// so a run of them nests one parser level per keyword like a prefix operator.
+fn is_recursive_prefix_keyword(word: &str) -> bool {
     matches!(
         word,
-        "return" | "break" | "in" | "if" | "else" | "match" | "while" | "let" | "mut" | "move"
+        "return" | "break" | "yield" | "become" | "if" | "match" | "while"
     )
 }
 
@@ -668,6 +716,49 @@ mod tests {
     }
 
     use super::*;
+
+    /// #11407: a long run of recursive prefix keywords nests the parser once
+    /// per keyword; it must hit the same budget as a prefix-operator run.
+    #[test]
+    fn keyword_prefix_runs_are_refused_like_prefix_operator_runs() {
+        for keyword in ["return", "break", "yield", "become", "if", "match", "while"] {
+            let over = format!(
+                "fn f() {{ let _v = {}x; }}\n",
+                format!("{keyword} ").repeat(3_000)
+            );
+            assert!(
+                rust_nesting_refusal(&over)
+                    .is_some_and(|reason| reason.contains("rust_nesting_budget")),
+                "{keyword} x3000 must be refused"
+            );
+        }
+    }
+
+    /// #11410: right-associative `=` and `in` links nest the parser once each.
+    #[test]
+    fn right_nested_assignment_and_for_in_runs_are_refused() {
+        let lets = format!("fn f() {{ if {}x {{}} }}\n", "let _ = ".repeat(3_000));
+        let fors = format!("fn f() {{ {}y {{}} }}\n", "for x in ".repeat(3_000));
+        let assigns = format!("fn f() {{ {}1; }}\n", "a = ".repeat(3_000));
+        for source in [lets, fors, assigns] {
+            assert!(
+                rust_nesting_refusal(&source)
+                    .is_some_and(|reason| reason.contains("rust_nesting_budget")),
+                "{}",
+                &source[..40]
+            );
+        }
+        let ordinary = "fn f(v: Vec<u8>) { let mut a = 1; let b = a == 2; a += 1; for x in v { let _y = x <= 3; } let c = |x| x => y; }\n";
+        assert_eq!(rust_nesting_refusal(ordinary), None);
+    }
+
+    #[test]
+    fn ordinary_keyword_use_stays_within_the_nesting_budget() {
+        let source = "fn f(a: bool, b: Option<u8>) -> u8 {\n    if a { return 1; }\n    while a { break; }\n    match b { Some(x) if x > 1 => return x, _ => {} }\n    else_ok(if a { 1 } else if !a { 2 } else { 3 })\n}\n";
+        assert_eq!(rust_nesting_refusal(source), None);
+        let chained = format!("fn f() {{ {}1; }}\n", "return ".repeat(10));
+        assert_eq!(rust_nesting_refusal(&chained), None);
+    }
 
     #[test]
     fn block_comment_only_lines_lists_interior_lines_and_not_code_lines() {
