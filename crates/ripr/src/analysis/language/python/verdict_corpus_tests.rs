@@ -1088,11 +1088,20 @@ fn a_removed_term_that_every_asserted_input_makes_zero_is_not_discriminated() ->
         )?,
         ExposureClass::Exposed
     );
-    // An input the rule cannot resolve leaves the verdict to the oracle.
+    // A single-assignment local resolves like a literal (#10707), so a local
+    // that makes the term zero is discriminated no better than `6000`.
     assert_eq!(
         quote_class(
             QUOTE_OLD_SHIPPING,
             "def test_quote():\n    amount = 6000\n    assert quote(amount)[\"total_cents\"] == 6000\n"
+        )?,
+        ExposureClass::WeaklyExposed
+    );
+    // An input the rule cannot resolve leaves the verdict to the oracle.
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    amount = 6000\n    amount += 1\n    assert quote(amount)[\"total_cents\"] == 6001\n"
         )?,
         ExposureClass::Exposed
     );
