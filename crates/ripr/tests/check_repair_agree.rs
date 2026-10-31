@@ -264,7 +264,7 @@ const LOOP_NEW: &str = "pub fn sum_to(n: u32) -> u32 {\n    let mut acc = 0;\n  
 const LOOP_TEST: &str =
     "use ar::sum_to;\n\n#[test]\nfn sum_to_zero() {\n    assert_eq!(sum_to(0), 0);\n}\n";
 
-/// #11111: with no diff to scope to, bare repair's whole-seam "already grip
+/// #11111: with no diff to scope to, bare repair's whole-seam "already check
 /// it (exposed)" names the seam it is about, so it is not read as a verdict
 /// on the changed loop line that `ripr check` cannot classify.
 #[test]

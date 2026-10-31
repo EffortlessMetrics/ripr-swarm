@@ -7,7 +7,7 @@
 //! (headline-eligible class, resolved cross-language visibility, a ready
 //! repair route, brief policy). Finding-level producer facts alone cannot
 //! make that decision: the producer may classify a finding as weak while the
-//! seam's own tests already grip it, and an item can be "ready" over
+//! seam's own tests already check it, and an item can be "ready" over
 //! finding facts while the CLI refuses the very same item.
 //!
 //! This module runs the shared resolver once per committed finding while the
@@ -29,7 +29,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 /// Typed reason: the shared gate names the seam and its existing tests
-/// already grip it (`exposed`), so no static gap remains to repair.
+/// already check it (`exposed`), so no static gap remains to repair.
 pub(crate) const SEAM_ALREADY_GRIPPED: &str = "seam_already_gripped";
 /// Typed reason: the shared gate names the seam and refuses it for another
 /// reason (route not ready, cross-language limits, policy omission, ...).
