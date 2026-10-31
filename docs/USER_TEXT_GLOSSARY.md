@@ -112,21 +112,31 @@ most lines any single golden may hold).
   or `GITHUB_ACTIONS` set) it fails closed instead.
 - A golden total above its absolute ceiling is reported as a WARNING (main
   health) and does not fail a PR that did not add lines.
-- Limits to know when reviewing: the banned-term list, the matcher and the
-  baseline file are applied with the head's code on both sides, so a PR that
-  edits the gate logic, `BANNED` or the baseline is visible only in the diff and
-  needs explicit reviewer attention (tracked in #11385). A renamed or copied
-  golden that keeps banned lines counts as a new path; the reviewer's remedy is
-  to reword those lines.
+- Matcher pin (#11385). The delta compares both sides with the head's matcher,
+  so a PR could weaken the matcher and shift both sides together. The check
+  therefore reads the banned needles from `xtask/src/policy/user_text.rs` at the
+  merge-base (as text, no base build) and fails if the head's matcher no longer
+  detects any of them, alone, inside a sentence, punctuated or upper-cased.
+  Dropping a term or breaking the matching code for these shapes fails the PR.
+  An unreadable base list fails under CI and is noted locally; a base with no
+  matcher file pins nothing.
+- Limits to know when reviewing: the pin covers terms the base banned in
+  those four shapes. A PR that adds exemptions for other shapes (as
+  `--seam-id` and `probe:<id>` are exempted), edits the baseline, or changes
+  anything else about the gate is still visible only in the diff and needs
+  explicit reviewer attention. A renamed or copied golden that keeps banned
+  lines counts as a new path; the reviewer's remedy is to reword those lines.
 - To restore the delta gate after an unreadable base, run
   `git fetch --deepen=200 origin main` (or `git fetch origin main`).
 - Live-surface rows are small and keep absolute ceilings: a live count above
   its ceiling fails, and a PR that raises a live-surface ceiling needs an
   explicit, reviewed reason. A term with no row has a ceiling of 0.
-- Known gaps, tracked as follow-ups: the gate logic itself is reviewed by hand
-  (a PR that edits it is not qualified by the gate it changes), and until a
-  main-side backstop exists, golden ceilings are warnings on `main`, not
-  failures.
+- Main-health backstop. A run that is not a `pull_request` or `merge_group`
+  (for example a `push` to `main`) has no PR delta, so there the per-file golden
+  ceilings fail instead of warning. A breach there means a PR got past the
+  gate.
+- Known gap, tracked in #11385: a base-built copy of the gate that judges the PR
+  tree with the unmodified matcher (it needs a tree-root override first).
 - Ceilings only go down. After fixing wording, run
   `cargo xtask check-user-text --ratchet` to lower them; it never raises or
   adds a row, and it does not rewrite while any count is above its ceiling. A
