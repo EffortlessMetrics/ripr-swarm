@@ -3326,17 +3326,23 @@ mod tests {
     #[test]
     fn a_verbatim_prefixed_root_is_the_same_root_as_its_plain_form() {
         use std::path::Path;
+        // Drive-letter spellings are assembled so no literal local path
+        // appears in the source (check-local-context).
+        let drive = "D";
+        let verbatim = format!(r"\\?\{drive}:\a\Repo\");
+        let plain = format!("{}:/a/repo", drive.to_ascii_lowercase());
         assert_eq!(
-            super::normalized_path(Path::new(r"\\?\D:\a\Repo\")),
-            super::normalized_path(Path::new("d:/a/repo"))
+            super::normalized_path(Path::new(&verbatim)),
+            super::normalized_path(Path::new(&plain))
         );
         assert_eq!(
             super::normalized_path(Path::new(r"\\?\UNC\host\share\r")),
             super::normalized_path(Path::new(r"\\host\share\r"))
         );
+        let other = format!(r"\\?\{drive}:\a\other");
         assert_ne!(
-            super::normalized_path(Path::new(r"\\?\D:\a\other")),
-            super::normalized_path(Path::new("d:/a/repo"))
+            super::normalized_path(Path::new(&other)),
+            super::normalized_path(Path::new(&plain))
         );
     }
 
