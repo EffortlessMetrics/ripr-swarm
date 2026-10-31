@@ -181,3 +181,64 @@ fn location_change_keeps_the_twenty_row_cap_and_continuation() {
     assert!(!rendered.contains("    - ./src/f20.rs:"), "{rendered}");
     assert!(rendered.contains("    - … and 3 more omitted finding(s); every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n"), "{rendered}");
 }
+
+/// #9373 items 2 and 3: hidden rows tell the three unknown classes apart and
+/// the digest glosses each listed class once, in plain words.
+fn render_with_classes(classes: &[crate::domain::ExposureClass]) -> String {
+    let root = PathBuf::from("location-root");
+    let findings = classes
+        .iter()
+        .enumerate()
+        .map(|(index, class)| {
+            let mut finding = sample_finding();
+            finding.id = format!("finding-{index}");
+            finding.class = class.clone();
+            finding.probe.location =
+                SourceLocation::new(root.join(format!("src/f{index}.rs")), 7 + index, 1);
+            finding.source_currentness = SourceCurrentness::BaseDeleted;
+            finding
+        })
+        .collect();
+    let mut output = bounded_output_with_findings(findings);
+    output.root = root;
+    render(&output)
+}
+
+#[test]
+fn hidden_rows_distinguish_unknown_classes_and_gloss_each_once() {
+    use crate::domain::ExposureClass as C;
+    let rendered =
+        render_with_classes(&[C::InfectionUnknown, C::PropagationUnknown, C::StaticUnknown]);
+    for stage in [
+        "(unknown: infection unclear",
+        "(unknown: propagation unclear",
+        "(unknown: static analysis limited",
+    ] {
+        assert_eq!(rendered.matches(stage).count(), 1, "{rendered}");
+    }
+    assert!(rendered.contains("\n  Hidden classes:\n"), "{rendered}");
+    assert_eq!(
+        rendered
+            .matches("    unknown: infection unclear = ")
+            .count(),
+        1,
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains("tests reach it but check it only loosely"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn hidden_classes_gloss_only_listed_classes() {
+    use crate::domain::ExposureClass as C;
+    let rendered = render_with_classes(&[C::WeaklyExposed, C::WeaklyExposed]);
+    assert!(
+        rendered.contains("    weak = tests reach it but check it only loosely\n"),
+        "{rendered}"
+    );
+    assert_eq!(rendered.matches("    weak = ").count(), 1, "{rendered}");
+    assert!(!rendered.contains("unknown:"), "{rendered}");
+    assert!(!rendered.contains("no path ="), "{rendered}");
+}

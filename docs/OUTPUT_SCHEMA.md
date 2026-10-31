@@ -888,8 +888,13 @@ identity agree and the analysis-outcome validator accepts the artifact.
       "schema_version": "0.1",
       "kind": "complete_with_findings",
       "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": "fnv1a64:0123456789abcdef",
         "base_revision": "origin/main",
-        "input_identity": "sha256:<diff-bytes>"
+        "input_identity": "sha256:<diff-bytes>",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
       },
       "counts": {
         "changed_file_count": 1,
@@ -1575,7 +1580,8 @@ A finding contains:
   "oracle_strength": "strong",
   "recommended_next_step": "Add boundary tests with exact assertions.",
   "suggested_next_action": "Add boundary tests with exact assertions.",
-  "language": "rust"
+  "language": "rust",
+  "source_currentness": "candidate_current"
 }
 ```
 
@@ -3699,7 +3705,7 @@ The JSON report is repo automation output with schema version `"0.1"`:
     {
       "rule_id": "ripr.seam.weakly_gripped",
       "level": "warning",
-      "fingerprint": "ripr.seam.weakly_gripped|abc123|src/lib.rs|42",
+      "fingerprint": "ripr.seam.weakly_gripped|src/lib.rs|0123456789abcdef0123456789abcdef|0",
       "uri": "src/lib.rs",
       "line": 42,
       "message": "weakly_gripped seam grip for predicate_boundary"
@@ -3808,8 +3814,8 @@ retained-count fallback and floor as check findings: older findings without
 matched-total metadata supply their known retained row count, which cannot
 establish how many rows an older producer discarded. `related_tests` remains
 the selected bounded window. Identical eight-row windows with totals 12 and
-13 therefore remain distinguishable. `witness` is additive and is omitted
-when an exposed finding has no unresolved discriminator. It contains only
+13 therefore remain distinguishable. `witness` is additive and is always present;
+its value is `null` when an exposed finding has no unresolved discriminator. It contains only
 producer-owned facts: `fix_site` and `oracle_location` are absent when the
 producer cannot identify them, and `suggested_assertion` is omitted until
 the producer supplies a symbol-resolved assertion template. The typed witness
@@ -14361,7 +14367,16 @@ Field contract:
   `canonical_gap_id` that no other record shares; it passes the shared
   `validate_agent_gap_record_packet` validator; and the ledger's recorded
   `analysis_outcome` is complete with no `run_limitations`, judged by the
-  predicate `ripr check` applies. The command is
+  predicate `ripr check` applies. The validator's candidate-current
+  requirement reads the record's `source_currentness`, which the ledger
+  producer (`ripr reports gap-ledger --check-output`, and `first-pr
+  --check-output`) copies from the check finding for Python and TypeScript
+  alike, and `analysis_outcome` is copied from the same check document. A
+  record whose `source_currentness` is missing, `unknown` or stale (a finding
+  that is `base_deleted` or `moved_or_renamed` forms no record), or a ledger
+  whose `analysis_outcome` is missing or incomplete, recommends nothing. The
+  checked-in TypeScript `first_successful_pr` ledger carries both fields so
+  its start-here packet recommends the same route as the Python case. The command is
   `ripr agent repair --gap-id <id> --base <base> --root <root> --phase before`.
   `ripr check` may print the resolved dirty origin as `--base` where first-pr
   prints its own `--base`, and first-pr cannot see the working tree, so the
@@ -14407,7 +14422,8 @@ Field contract:
 - A root without `Cargo.toml` that `ripr doctor` detects as TypeScript or
   JavaScript (for example a `package.json` plus `.ts` files), not also as
   Python, and that has no `tsconfig.json` or `jsconfig.json` at the root and
-  no TypeScript under `src/` or `tests/` (`package.json` alone is not enough)
+  no `package.json` with JavaScript or TypeScript source at the root or under
+  `src/`, `test/` or `tests/` (`package.json` alone is not enough)
   reports `blocked_artifact` with
   `selected.reason_code = "typescript_project_marker_missing"` and no next
   command, not `wrong_root`. Its message says to add `tsconfig.json`
@@ -15627,7 +15643,9 @@ vocabulary and `final_tree_effect` is a separate closed field backed by an
 same `source`, `range` and `merged_prs` shapes plus `alive_paths_at_cut`,
 `blamed_paths` and one `commits` entry per reachable commit (`paths`,
 `final_tree_effect`, `effect_basis`, `pr_refs` from the trailing `(#N)` of a
-first-parent subject, `issue_refs` for other `#N` mentions).
+first-parent subject, `issue_refs` for other `#N` mentions). `capture` and
+`finalize` need a full clone and refuse a shallow repository; run
+`git fetch --unshallow` first.
 
 `release-ledger derive` writes the `release_ledger` DTO that `release-ledger
 --input` validates: `rule_version` `v1`, `adjudication_basis` `rule_derived`,
@@ -18980,9 +18998,13 @@ For `--check-output`, the top-level optional `input_root` retains the source
 report's root spelling separately from the ledger's selected `root`. A missing
 or relative producer root is not an absolute checkout identity. This additive
 field does not authenticate the input or imply complete corpus provenance.
-`check_output_provenance` retains that root and the original source-subject
-limitation across subsequent `--records` ledger projections; changing the
-immediate input kind cannot make a check-derived no-action conclusion current.
+`check_output_provenance` retains that root, the original root value as
+`source_root_raw` when present, the original source-subject limitation, and the
+producer's `source_subject`, `base`, `base_commit`, `head`,
+and `mode` values when present across subsequent `--records` ledger
+projections. These copied values are unvalidated provenance, including malformed
+values; they do not establish currentness or completeness. Changing the immediate
+input kind cannot make a check-derived no-action conclusion current.
 
 ### Gap artifact source subject
 
