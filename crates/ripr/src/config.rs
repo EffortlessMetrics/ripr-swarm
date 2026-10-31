@@ -425,8 +425,43 @@ fn default_config_for_root(root: &Path) -> Result<RiprConfig, String> {
     Ok(config)
 }
 
+#[cfg(test)]
 pub(crate) fn generated_init_config() -> &'static str {
     INIT_CONFIG_TEXT
+}
+
+/// Preview languages that `ripr init` enables next to Rust for `root`: the
+/// ones marker-based no-config detection would have enabled, so writing the
+/// file does not switch off analysis the user already had. Python is listed
+/// only in builds that can run it.
+pub(crate) fn init_detected_preview_languages(root: &Path) -> Vec<LanguageId> {
+    let mut detected = Vec::new();
+    if detect_python_project(root) && LanguageId::Python.is_available() {
+        detected.push(LanguageId::Python);
+    }
+    if detect_typescript_project(root) {
+        detected.push(LanguageId::TypeScript);
+    }
+    detected
+}
+
+/// [`generated_init_config`] with `[languages] enabled` extended by
+/// [`init_detected_preview_languages`]. Every other value stays the built-in
+/// default.
+pub(crate) fn generated_init_config_for_root(root: &Path) -> String {
+    let detected = init_detected_preview_languages(root);
+    if detected.is_empty() {
+        return INIT_CONFIG_TEXT.to_string();
+    }
+    let mut enabled = vec!["\"rust\"".to_string()];
+    for language in detected {
+        enabled.push(format!("\"{}\"", language.as_str()));
+    }
+    INIT_CONFIG_TEXT.replacen(
+        "enabled = [\"rust\"]",
+        &format!("enabled = [{}]", enabled.join(", ")),
+        1,
+    )
 }
 
 pub(crate) fn config_fingerprint(source_text: &str) -> String {

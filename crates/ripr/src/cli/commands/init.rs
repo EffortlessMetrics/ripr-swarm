@@ -2,7 +2,7 @@ use crate::cli::commands_options::{InitCi, InitOptions};
 use crate::cli::help;
 use crate::cli::parse::expect_value;
 use crate::cli::suggest::{unknown_argument, unknown_value};
-use crate::config::{CONFIG_FILE_NAME, generated_init_config};
+use crate::config::{CONFIG_FILE_NAME, generated_init_config_for_root};
 use crate::output;
 use std::path::{Path, PathBuf};
 
@@ -149,15 +149,12 @@ fn unanalyzed_root_warning(root: &Path) -> Option<String> {
     ))
 }
 
-/// Warn before writing the generated `ripr.toml` into a project whose markers
-/// indicate a preview language: the generated file pins
-/// `languages.enabled = ["rust"]`, so Python or TypeScript preview analysis
-/// that marker-based no-config detection would have enabled is silently
-/// disabled for this repository. Detection reuses the config module's marker
-/// probes, so a build without `lang-typescript` reports nothing there, exactly
-/// matching `default_config_for_root`'s deliberate silence; Python markers are
-/// detectable in every build, so a missing `lang-python` feature is named
-/// instead of promised away.
+/// Warn when the generated `ripr.toml` cannot carry a preview language the
+/// project's markers indicate. `init` enables detected Python and TypeScript
+/// itself, so the only remaining case is Python markers in a build without
+/// `lang-python`: the pin to `["rust"]` is then deliberate, and the warning
+/// names the missing feature instead of promising analysis the binary
+/// cannot run.
 fn detected_preview_language_warning(root: &Path, plan: &[InitTarget]) -> Option<String> {
     let writes_generated_config = plan.iter().any(|target| {
         target
@@ -166,59 +163,16 @@ fn detected_preview_language_warning(root: &Path, plan: &[InitTarget]) -> Option
             .is_some_and(|name| name == CONFIG_FILE_NAME)
             && matches!(target.action, InitAction::Create | InitAction::Overwrite)
     });
-    if !writes_generated_config {
-        return None;
-    }
-    let mut detected: Vec<(&str, &str, bool)> = Vec::new();
-    if crate::config::detect_python_project(root) {
-        detected.push((
-            "Python",
-            "python",
-            crate::domain::LanguageId::Python.is_available(),
-        ));
-    }
-    if crate::config::detect_typescript_project(root) {
-        // The probe is inert without `lang-typescript`, so reaching here
-        // means the feature is present.
-        detected.push(("TypeScript", "typescript", true));
-    }
-    if detected.is_empty() {
+    if !writes_generated_config
+        || !crate::config::detect_python_project(root)
+        || crate::domain::LanguageId::Python.is_available()
+    {
         return None;
     }
     let shown = output::path::human_path(root);
-    let names = join_words(
-        detected
-            .iter()
-            .map(|(name, _, _)| (*name).to_string())
-            .collect(),
-    );
-    let additions = join_words(
-        detected
-            .iter()
-            .map(|(_, id, _)| format!("\"{id}\""))
-            .collect(),
-    );
-    let mut message = format!(
-        "ripr: warning: the root `{shown}` looks like a {names} project, but the generated ripr.toml pins `languages.enabled` to `[\"rust\"]`, which disables {names} preview analysis for this repository. Add {additions} to `enabled`, or delete the `[languages]` section to keep marker-based detection."
-    );
-    for (name, _, available) in &detected {
-        if !available {
-            message.push_str(&format!(
-                " {name} preview additionally needs a ripr build with the `lang-python` Cargo feature."
-            ));
-        }
-    }
-    Some(message)
-}
-
-/// "Python", "Python and TypeScript", "Python, TypeScript and Perl": the
-/// detected-language list rendered as English prose.
-fn join_words(words: Vec<String>) -> String {
-    match words.as_slice() {
-        [] => String::new(),
-        [only] => only.clone(),
-        [head @ .., last] => format!("{} and {last}", head.join(", ")),
-    }
+    Some(format!(
+        "ripr: warning: the root `{shown}` looks like a Python project, but this ripr build has no `lang-python` Cargo feature, so the generated ripr.toml keeps `languages.enabled = [\"rust\"]` and Python preview analysis stays off. Use a Python-enabled ripr build to analyze it."
+    ))
 }
 
 /// Warn before configuring a directory that is not a Git work tree: the
@@ -354,7 +308,7 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
     let mut targets = vec![InitTarget {
         path: config_path,
         action: config_action,
-        body: generated_init_config().to_string(),
+        body: generated_init_config_for_root(&options.root),
     }];
     if let Some(path) = workflow_path {
         let action = if path_is_occupied(&path)? {
@@ -863,6 +817,7 @@ fn init_ci_workflow_path(root: &Path, ci: &InitCi) -> PathBuf {
 mod tests {
     use super::*;
     use crate::cli::commands_options::InitCi;
+    use crate::config::generated_init_config;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     /// #4378: on Windows `ripr init --dry-run --root <drive>:/Temp/demo`
@@ -1203,122 +1158,78 @@ mod tests {
         Ok(())
     }
 
-    /// #9604 batch F: `ripr init` into a Python-marked project wrote
-    /// `enabled = ["rust"]` with no run-time hint that Python preview analysis
-    /// was being pinned off. The warning names the project, the pin and both
-    /// recoveries.
+    /// `ripr init` into a project with Python or TypeScript markers used to
+    /// pin `enabled = ["rust"]` and turn off the preview analysis that
+    /// no-config detection would have run (#9604, then a warning instead of a
+    /// fix). The generated file now enables the detected languages itself.
+    #[cfg(feature = "lang-python")]
     #[test]
-    fn detected_preview_language_warning_names_python_projects() -> Result<(), String> {
+    fn generated_config_enables_a_detected_python_project() -> Result<(), String> {
         let root = temp_root("python-markers")?;
         write(&root.join("pyproject.toml"), "[project]\nname = \"demo\"\n")?;
+        let body = generated_init_config_for_root(&root);
+        assert!(body.contains("enabled = [\"rust\", \"python\"]"), "{body}");
+        assert!(!body.contains("enabled = [\"rust\"]\n"), "{body}");
         let plan = vec![InitTarget {
             path: root.join(CONFIG_FILE_NAME),
             action: InitAction::Create,
-            body: String::new(),
-        }];
-        let warning = detected_preview_language_warning(&root, &plan).ok_or_else(|| {
-            "a Python-marked root must warn when init writes the config".to_string()
-        })?;
-        let shown = output::path::human_path(&root);
-        assert!(warning.contains(&format!("`{shown}`")), "{warning}");
-        assert!(warning.contains("looks like a Python project"), "{warning}");
-        assert!(warning.contains("`languages.enabled`"), "{warning}");
-        assert!(warning.contains("Add \"python\" to `enabled`"), "{warning}");
-        assert!(
-            warning.contains("delete the `[languages]` section to keep marker-based detection"),
-            "{warning}"
-        );
-        if cfg!(feature = "lang-python") {
-            assert!(
-                !warning.contains("lang-python"),
-                "an available feature must not be advertised as missing: {warning}"
-            );
-        } else {
-            assert!(
-                warning.contains("`lang-python` Cargo feature"),
-                "a missing feature must be named, not promised away: {warning}"
-            );
-        }
-        std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
-        Ok(())
-    }
-
-    /// TypeScript markers select the adapter only in `lang-typescript`
-    /// builds; the inert probe elsewhere stays silent, matching
-    /// `default_config_for_root`.
-    #[cfg(feature = "lang-typescript")]
-    #[test]
-    fn detected_preview_language_warning_names_typescript_projects() -> Result<(), String> {
-        let root = temp_root("typescript-markers")?;
-        write(&root.join("tsconfig.json"), "{\"compilerOptions\": {}}\n")?;
-        let plan = vec![InitTarget {
-            path: root.join(CONFIG_FILE_NAME),
-            action: InitAction::Create,
-            body: String::new(),
-        }];
-        let warning = detected_preview_language_warning(&root, &plan).ok_or_else(|| {
-            "a tsconfig-marked root must warn when init writes the config".to_string()
-        })?;
-        assert!(
-            warning.contains("looks like a TypeScript project"),
-            "{warning}"
-        );
-        assert!(
-            warning.contains("Add \"typescript\" to `enabled`"),
-            "{warning}"
-        );
-        std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
-        Ok(())
-    }
-
-    /// Both markers in one project: one warning names both languages and
-    /// both additions.
-    #[cfg(feature = "lang-typescript")]
-    #[test]
-    fn detected_preview_language_warning_names_both_languages() -> Result<(), String> {
-        let root = temp_root("mixed-markers")?;
-        write(&root.join("pyproject.toml"), "[project]\nname = \"demo\"\n")?;
-        write(&root.join("tsconfig.json"), "{\"compilerOptions\": {}}\n")?;
-        let plan = vec![InitTarget {
-            path: root.join(CONFIG_FILE_NAME),
-            action: InitAction::Create,
-            body: String::new(),
-        }];
-        let warning = detected_preview_language_warning(&root, &plan)
-            .ok_or_else(|| "a mixed root must warn when init writes the config".to_string())?;
-        assert!(
-            warning.contains("looks like a Python and TypeScript project"),
-            "{warning}"
-        );
-        assert!(
-            warning.contains("Add \"python\" and \"typescript\" to `enabled`"),
-            "{warning}"
-        );
-        std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
-        Ok(())
-    }
-
-    /// No markers: nothing detected, nothing promised.
-    #[test]
-    fn detected_preview_language_warning_stays_quiet_without_markers() -> Result<(), String> {
-        let root = temp_root("no-markers")?;
-        let plan = vec![InitTarget {
-            path: root.join(CONFIG_FILE_NAME),
-            action: InitAction::Create,
-            body: String::new(),
+            body,
         }];
         assert_eq!(detected_preview_language_warning(&root, &plan), None);
         std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
         Ok(())
     }
 
-    /// The warning is about the generated pin, so it fires only when the plan
-    /// actually writes that file: `--ci` against an existing config keeps the
-    /// user's file (LeaveUnchanged) and must stay silent even with markers.
+    /// TypeScript markers select the adapter only in `lang-typescript`
+    /// builds; the inert probe elsewhere leaves the pin alone.
+    #[cfg(feature = "lang-typescript")]
     #[test]
-    fn detected_preview_language_warning_only_when_the_generated_config_is_written()
-    -> Result<(), String> {
-        let root = temp_root("kept-config")?;
+    fn generated_config_enables_a_detected_typescript_project() -> Result<(), String> {
+        let root = temp_root("typescript-markers")?;
+        write(&root.join("tsconfig.json"), "{}\n")?;
+        let body = generated_init_config_for_root(&root);
+        assert!(
+            body.contains("enabled = [\"rust\", \"typescript\"]"),
+            "{body}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
+        Ok(())
+    }
+
+    #[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
+    #[test]
+    fn generated_config_enables_both_detected_languages() -> Result<(), String> {
+        let root = temp_root("both-markers")?;
+        write(&root.join("pyproject.toml"), "[project]\nname = \"demo\"\n")?;
+        write(&root.join("tsconfig.json"), "{}\n")?;
+        let body = generated_init_config_for_root(&root);
+        assert!(
+            body.contains("enabled = [\"rust\", \"python\", \"typescript\"]"),
+            "{body}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
+        Ok(())
+    }
+
+    /// No markers: the generated file is exactly the built-in default text.
+    #[test]
+    fn generated_config_is_unchanged_without_markers() -> Result<(), String> {
+        let root = temp_root("no-markers")?;
+        assert_eq!(
+            generated_init_config_for_root(&root),
+            generated_init_config()
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
+        Ok(())
+    }
+
+    /// Python markers in a build without `lang-python` keep the Rust-only pin
+    /// on purpose; the warning names the missing feature, and only when the
+    /// generated config is actually written.
+    #[cfg(not(feature = "lang-python"))]
+    #[test]
+    fn detected_preview_language_warning_names_a_missing_python_feature() -> Result<(), String> {
+        let root = temp_root("python-no-feature")?;
         write(&root.join("pyproject.toml"), "[project]\nname = \"demo\"\n")?;
         let kept = vec![InitTarget {
             path: root.join(CONFIG_FILE_NAME),
@@ -1326,15 +1237,15 @@ mod tests {
             body: "[analysis]\n".to_string(),
         }];
         assert_eq!(detected_preview_language_warning(&root, &kept), None);
-        // A forced reset writes the generated pin again, so the warning returns.
-        let overwritten = vec![InitTarget {
+        let created = vec![InitTarget {
             path: root.join(CONFIG_FILE_NAME),
-            action: InitAction::Overwrite,
+            action: InitAction::Create,
             body: String::new(),
         }];
-        let warning = detected_preview_language_warning(&root, &overwritten)
-            .ok_or_else(|| "a forced reset rewrites the pin and must warn".to_string())?;
+        let warning = detected_preview_language_warning(&root, &created)
+            .ok_or_else(|| "a Python-marked root without the feature must warn".to_string())?;
         assert!(warning.contains("looks like a Python project"), "{warning}");
+        assert!(warning.contains("`lang-python` Cargo feature"), "{warning}");
         std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
         Ok(())
     }
