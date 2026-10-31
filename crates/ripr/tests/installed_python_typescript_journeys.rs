@@ -185,10 +185,17 @@ fn gap_start_tokens(text: &str) -> Option<(String, String)> {
     Some((value_after("--gap-id")?, value_after("--base")?))
 }
 
-/// The quoting `shell_arg` applies to a plain path argument: bare when every
-/// character is unambiguous, otherwise single-quoted (double-quoted on
-/// Windows consoles).
+/// The rendering `ripr` prints for a plain path argument: `/` separators on
+/// Windows, then bare when every character is unambiguous, otherwise
+/// single-quoted (double-quoted on Windows consoles).
 fn printed_shell_arg(value: &str) -> String {
+    let rendered;
+    let value = if cfg!(windows) {
+        rendered = value.replace('\\', "/");
+        rendered.as_str()
+    } else {
+        value
+    };
     if !value.is_empty()
         && value
             .chars()
