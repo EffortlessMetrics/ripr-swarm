@@ -244,7 +244,14 @@ fn cli_safe_next_action(state: &str, selected: &Value, preflight_needs_attention
                 .unwrap_or_else(|| "the selected gap".to_string());
             let intent = string_path(selected, &["focused_proof_intent"])
                 .unwrap_or_else(|| "add one focused proof for the selected gap".to_string());
-            format!("repair one named gap `{identity}`: {intent}")
+            match string_path(selected, &["recommended_repair_command"]) {
+                // #10709: one recommended route, stated once; the by-hand
+                // proof path below is the one named alternative.
+                Some(command) => format!(
+                    "repair one named gap `{identity}`: {intent} Recommended: start the repair with `{command}` (commit any uncommitted production change first; the start refuses otherwise); alternative, by hand: add the test yourself and use the verify and receipt commands below."
+                ),
+                None => format!("repair one named gap `{identity}`: {intent}"),
+            }
         }
         "missing_artifact" => "regenerate the missing artifact before repair work".to_string(),
         "malformed_artifact" => "regenerate the malformed artifact before repair work".to_string(),
@@ -400,6 +407,16 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
         "- Safe next action: repair one named {}.\n",
         top_gap_language_label(selected)
     ));
+    // #10709: the same single recommended route the CLI Safe next action names.
+    if let Some(command) = string_path(selected, &["recommended_repair_command"]) {
+        out.push_str(&format!("- Recommended repair start: `{command}`\n"));
+        out.push_str(
+            "- Commit any uncommitted production change first; the start refuses otherwise.\n",
+        );
+        out.push_str(
+            "- Alternative, by hand: add the test yourself and use the verify and receipt commands below.\n",
+        );
+    }
     let kind = selected
         .get("kind")
         .and_then(Value::as_str)
