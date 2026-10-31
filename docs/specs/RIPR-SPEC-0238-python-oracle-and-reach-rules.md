@@ -1207,6 +1207,24 @@ mutant calibrates the rule; ripr reports only the static shape.
     and `not Money(0)` do not distinguish `!= 0` from `> 0`; `Money(-1)` does
     (#9795). This does not broaden equality guards, properties or `__str__`.
 
+30. **A coarse projection of the owner's result pins no value.** An
+    assertion credits a changed owner only when it reads the result itself.
+    When every call of the owner in the assertion sits under a projection
+    that an edit commonly leaves unchanged, the assertion keeps its
+    `exact_value` kind but earns no `exposed` credit (`weakly_exposed`, the
+    same fail-closed reading as an opaque wrapper): a comparison, `is` or
+    `not` result nested in an operand (`assertEqual(f(2) > 0, True)`,
+    `assertEqual(f(2) is None, False)`), a remainder (`assert f(3) % 3 == 0`),
+    `.__class__` or `.__name__` of the result, `len(str(f(x)))` or
+    `len(repr(f(x)))`, and `len(...)` over the owner's result (through
+    `list`, `tuple`, `set`, `sorted`) when the edit replaces only the element
+    expression of a `yield` or comprehension, so the element count cannot
+    move. A direct operand beside such a read (`assert f(3) == 6 and f(3) % 3
+    == 0`), a top-level `>` boundary, other arithmetic and a `len` over an
+    edit that can change the count keep their verdict. A first `==` operand
+    that holds the owner's value at an input the edit leaves fixed is a
+    separate problem and is not read here.
+
 ### Verdict ladder
 
 No finding is produced for docstring, comment or blank changes, header-only
@@ -1712,6 +1730,12 @@ and the test is `tests/test_subject.py`, which imports each owner from
     parametrize mark keeps only the mark's cases, and the fixture stays
     unresolved: `static_unknown`, `unresolved_pytest_fixture` (today
     `exposed`, a false credit for off-boundary rows).
+
+43. Owner `def f(x): return x * 3`, changed from `x * 2`: tests
+    `self.assertEqual(f(2) > 0, True)`, `assert f(3) % 3 == 0` and
+    `assert len(str(f(3))) == 1` are each `weakly_exposed` (today `exposed`;
+    `py-coarse-sign`, `py-coarse-residue`, `py-coarse-text-length`), and
+    `assert f(3) == 6` stays `exposed` (`py-coarse-exact-control`).
 
 ## Test Mapping
 

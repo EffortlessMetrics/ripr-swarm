@@ -1,4 +1,5 @@
 use super::assertion_selection::PythonAssertionFocus;
+use super::coarse_projection::{element_only_change, owner_call_only_in_coarse_projection};
 use super::effect_alignment::{
     ChangedEffect, EffectReads, calls_owner_through_module, expected_computed_through_owner,
 };
@@ -1173,12 +1174,27 @@ pub(super) fn classify_sink_alignment_prepared(
                 || (!owner.decorators.iter().any(|name| name == "async_def")
                     && !owner.term_facts.may_yield()))
     };
+    let element_only_edit = element_only_change(old_line_text, line_text);
+    // The module-call branch names the owner by the spellings its test imports
+    // (`f`, `m.f`), which the identity tokens do not carry.
+    let coarse_owner_names = |unit: &AlignmentUnit<'_>| {
+        let mut names = owner_reference_tokens.clone();
+        if let Some(test) = unit.test {
+            names.extend(owner_module_callees(test, owner));
+        }
+        names
+    };
     let gates_ok = |unit: &AlignmentUnit<'_>| {
         helper_owner_supported(unit)
             && field_construction_credit_ok(unit)
             && fstring_credit_ok(unit)
             && !expected_computed_through_owner(&unit.text, &owner_reference_tokens)
             && !owner_call_only_inside_opaque_wrapper(&unit.text, &owner_reference_tokens)
+            && !owner_call_only_in_coarse_projection(
+                &unit.text,
+                &coarse_owner_names(unit),
+                element_only_edit,
+            )
             && !assertion_calls_stand_in(unit, owner)
     };
     // A mock assertion credits only through the effect branch, where it pins
