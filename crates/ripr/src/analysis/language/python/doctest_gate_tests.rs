@@ -323,6 +323,10 @@ fn a_tox_testenv_pytest_command_with_doctest_modules_is_collection() -> Result<(
         "[testenv]\ncommands = pytest --doctest-modules --cov=pkg {posargs}\n",
         "[testenv]\ndeps = pytest\ncommands =\n    python -m pytest --doctest-modules\n",
         "[tox]\nenvlist = py\n\n[testenv]\ncommands = py.test --doctest-modules\n",
+        // Each line is its own command: a value that starts inline and goes
+        // on below is read line by line.
+        "[testenv]\ncommands = python -c 'pass'\n    pytest --doctest-modules\n",
+        "[testenv]\ncommands = pytest --doctest-modules\n    python -c 'pass'\n",
     ] {
         assert!(tox_collects("tox-on", tox, "")?, "{tox}");
     }
@@ -336,6 +340,9 @@ fn a_tox_command_that_cannot_be_read_as_one_bare_run_is_not_collection() -> Resu
         "[testenv]\ncommands = pytest --doctest-modules src\n",
         "[testenv]\ncommands = pytest --doctest-modules --ignore=src\n",
         "[testenv]\ncommands = pytest --doctest-modules && echo done\n",
+        // A backslash joins the next line into the same command, which may
+        // name a target; the stray token refuses the read.
+        "[testenv]\ncommands = pytest --doctest-modules \\\n    src\n",
         "[testenv]\ncommands = py3: pytest --doctest-modules\n",
         "[testenv]\ncommands = {envpython} -m pytest --doctest-modules\n",
         "[testenv:docs]\ncommands = pytest --doctest-modules\n",
