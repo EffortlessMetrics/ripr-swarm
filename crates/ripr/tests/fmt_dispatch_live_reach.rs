@@ -168,6 +168,17 @@ fn clearly_run_formatting_shapes_stay_reached() -> Result<(), String> {
     }}
 
     #[test]
+    fn local_drop_impl() {{
+        struct Guard;
+        impl Drop for Guard {{
+            fn drop(&mut self) {{
+                let _ = Merge {{ n: 1 }}.to_string();
+            }}
+        }}
+        let _guard = Guard;
+    }}
+
+    #[test]
     fn called_nested_fn() {{
         fn render() -> String {{
             Merge {{ n: 1 }}.to_string()
@@ -184,6 +195,7 @@ fn clearly_run_formatting_shapes_stay_reached() -> Result<(), String> {
             "dropped_let",
             "dropped_statement",
             "else_of_a_dead_if",
+            "local_drop_impl",
             "straight",
             "unknown_condition"
         ]

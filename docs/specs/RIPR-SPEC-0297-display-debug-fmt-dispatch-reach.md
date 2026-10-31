@@ -195,8 +195,9 @@ condition (`if cond { .. }`, a `const` flag, a possibly empty `for`) still
 runs or may run, so it stays reached. The reader blanks, before any
 dispatch check, the code a syntactic reading proves never runs: the block of a
 literal `if false` / `while false` (an `else` branch stays live), the
-statement under `#[cfg(any())]` or `#[cfg(false)]`, a nested `fn` whose name
-nothing else mentions, a `let name = |..| ..;` closure whose binding is never
+statement under `#[cfg(any())]` or `#[cfg(false)]`, a free nested `fn` whose name
+nothing else mentions (methods inside a local `impl`/`trait` are called
+implicitly and stay live), a `let name = |..| ..;` closure whose binding is never
 mentioned again (or is `_`), and the statements after a top-level `return`.
 Shapes that do not match exactly stay live, so this only removes credit from
 dead code. It applies to the direct route and the helper-entry route alike

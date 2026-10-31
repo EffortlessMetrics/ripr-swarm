@@ -172,7 +172,8 @@ fn occurrences(bytes: &[u8], name: &str) -> Vec<usize> {
 
 fn dead_nested_fns(bytes: &[u8], wrapper: Option<usize>, dead: &mut Vec<(usize, usize)>) {
     for at in 0..bytes.len() {
-        if !whole_word_at(bytes, at, "fn") || wrapper == Some(at) {
+        if !whole_word_at(bytes, at, "fn") || wrapper == Some(at) || inside_impl_or_trait(bytes, at)
+        {
             continue;
         }
         let name_at = skip_ws(bytes, at + 2);
@@ -192,6 +193,67 @@ fn dead_nested_fns(bytes: &[u8], wrapper: Option<usize>, dead: &mut Vec<(usize, 
         {
             dead.push((at, end));
         }
+    }
+}
+
+/// Whether `at` sits inside the body of an item-level `impl` or `trait`
+/// block. Those methods (`Drop::drop`, `Iterator::next`, `Deref::deref`,
+/// `From::from`) are called implicitly, never by name, so an unmentioned name
+/// proves nothing about them. A `-> impl Trait` in a fn header is not an item
+/// `impl`: only a header that starts with the keyword counts.
+fn inside_impl_or_trait(bytes: &[u8], at: usize) -> bool {
+    let mut headers: Vec<usize> = Vec::new();
+    let mut header_start = 0usize;
+    for (index, byte) in bytes.iter().enumerate().take(at) {
+        match byte {
+            b'{' => {
+                headers.push(header_start);
+                header_start = index + 1;
+            }
+            b'}' => {
+                headers.pop();
+                header_start = index + 1;
+            }
+            b';' => header_start = index + 1,
+            _ => {}
+        }
+    }
+    // `headers` holds the start of the header of each still-open block; a
+    // header ends at its own `{`.
+    headers.iter().any(|&start| {
+        let end = bytes[start..]
+            .iter()
+            .position(|byte| *byte == b'{')
+            .map_or(bytes.len(), |offset| start + offset);
+        starts_with_item_keyword(&bytes[start..end])
+    })
+}
+
+fn starts_with_item_keyword(header: &[u8]) -> bool {
+    let mut at = skip_ws(header, 0);
+    loop {
+        if header.get(at..at + 2) == Some(b"#[") {
+            match close_of(header, at + 1) {
+                Some(end) => at = skip_ws(header, end),
+                None => return false,
+            }
+            continue;
+        }
+        if whole_word_at(header, at, "pub") {
+            at = skip_ws(header, at + 3);
+            if header.get(at) == Some(&b'(') {
+                match close_of(header, at) {
+                    Some(end) => at = skip_ws(header, end),
+                    None => return false,
+                }
+            }
+            continue;
+        }
+        if whole_word_at(header, at, "unsafe") {
+            at = skip_ws(header, at + 6);
+            continue;
+        }
+        return whole_word_at(header, at, "impl") || whole_word_at(header, at, "trait");
     }
 }
 
@@ -407,6 +469,27 @@ mod tests {
             !nested.contains("m.to_string") && nested.contains("a.to_string"),
             "{nested}"
         );
+    }
+
+    #[test]
+    fn methods_of_a_local_impl_or_trait_are_implicitly_called_and_stay_live() {
+        for body in [
+            "a(); impl Drop for Guard { fn drop(&mut self) { m.to_string(); } }",
+            "a(); unsafe impl Send for Guard { fn poke(&self) { m.to_string(); } }",
+            "a(); impl<T> From<T> for Guard { fn from(t: T) -> Self { m.to_string(); Guard } }",
+            "a(); trait Tr { fn go(&self) { m.to_string(); } }",
+            "a(); pub(crate) trait Tr { fn go(&self) { m.to_string(); } }",
+            "#[test]\nfn t() {\n    a();\n    impl Drop for Guard { fn drop(&mut self) { m.to_string(); } }\n}",
+        ] {
+            assert_eq!(live(body), body, "{body}");
+        }
+        // A free nested fn next to an impl is still judged, and an
+        // `-> impl Trait` return type is not an item impl.
+        let out =
+            live("a(); impl Drop for G { fn drop(&mut self) {} } fn unused() { m.to_string(); }");
+        assert!(!out.contains("m.to_string"), "{out}");
+        let out = live("a(); fn unused() -> impl Fn() { fn inner() { m.to_string(); } || {} }");
+        assert!(!out.contains("m.to_string"), "{out}");
     }
 
     #[test]
