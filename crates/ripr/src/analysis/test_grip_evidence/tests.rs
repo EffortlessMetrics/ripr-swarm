@@ -21058,3 +21058,145 @@ fn plain_exact_err_return_is_credited_by_the_matching_pin_only() -> Result<(), S
     ));
     Ok(())
 }
+
+fn related_test_names_for_boundary_seam(tests_src: &str) -> Result<Vec<String>, String> {
+    let prod_src = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\n";
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), prod_src),
+        (PathBuf::from("tests/boundary.rs"), tests_src),
+    ])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected predicate boundary seam".to_string())?;
+    let evidence = evidence_for_seam(seam, &index);
+    Ok(evidence
+        .related_tests
+        .iter()
+        .map(|test| test.test_name.clone())
+        .collect())
+}
+
+#[test]
+fn given_integration_test_when_local_module_shadows_library_crate_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    let shadow = "mod lib_proptest {\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 90 }\n}\n\n#[test]\nfn equality_boundary_discounts() {\n    assert_eq!(lib_proptest::discounted_total(100, 100), 90);\n}\n";
+    let related = related_test_names_for_boundary_seam(shadow)?;
+    assert!(
+        related.is_empty(),
+        "#10855: a test-local module rival must not relate the production owner: {related:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_no_local_module_shadows_then_owner_keeps_related_test()
+-> Result<(), String> {
+    let real = "#[test]\nfn equality_boundary_discounts() {\n    assert_eq!(lib_proptest::discounted_total(100, 100), 90);\n}\n";
+    let related = related_test_names_for_boundary_seam(real)?;
+    assert_eq!(related, vec!["equality_boundary_discounts".to_string()]);
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_keyword_path_reaches_local_module_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    for prefix in ["crate::", "self::"] {
+        let shadow = format!(
+            "mod lib_proptest {{\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 {{ 90 }}\n}}\n\n#[test]\nfn equality_boundary_discounts() {{\n    assert_eq!({prefix}lib_proptest::discounted_total(100, 100), 90);\n}}\n"
+        );
+        let related = related_test_names_for_boundary_seam(&shadow)?;
+        assert!(
+            related.is_empty(),
+            "#10855: `{prefix}` path to a local module rival must not relate the owner: {related:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_local_call_and_library_value_then_owner_keeps_related_test()
+-> Result<(), String> {
+    let mixed = "mod lib_proptest {\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 90 }\n}\n\n#[test]\nfn equality_boundary_discounts() {\n    let f = other_crate::discounted_total;\n    assert_eq!(lib_proptest::discounted_total(100, 100), f(100, 100));\n}\n";
+    let related = related_test_names_for_boundary_seam(mixed)?;
+    assert_eq!(related, vec!["equality_boundary_discounts".to_string()]);
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_nested_module_rival_reached_through_super_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    let nested = "mod lib_proptest {\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 90 }\n}\n\nmod inner {\n    #[test]\n    fn equality_boundary_discounts() {\n        assert_eq!(super::lib_proptest::discounted_total(100, 100), 90);\n    }\n}\n";
+    let related = related_test_names_for_boundary_seam(nested)?;
+    assert!(
+        related.is_empty(),
+        "#10855: a `super::` path to a local module rival must not relate the owner: {related:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_unrelated_nested_module_shares_the_name_then_external_call_keeps_related_test()
+-> Result<(), String> {
+    let sources = [
+        "mod unrelated {\n    mod lib_proptest {\n        pub fn helper() {}\n    }\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 1 }\n}\n\n#[test]\nfn equality_boundary_discounts() {\n    assert_eq!(lib_proptest::discounted_total(100, 100), 90);\n}\n",
+        "// mod lib_proptest { }\nfn discounted_total(_amount: i32, _threshold: i32) -> i32 { 1 }\n\n#[test]\nfn equality_boundary_discounts() {\n    assert_eq!(lib_proptest::discounted_total(100, 100), 90);\n}\n",
+        "mod unrelated {\n    pub mod lib_proptest {\n        pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 1 }\n    }\n}\n\n#[test]\nfn equality_boundary_discounts() {\n    assert_eq!(lib_proptest::discounted_total(100, 100), 90);\n}\n",
+    ];
+    for source in sources {
+        let related = related_test_names_for_boundary_seam(source)?;
+        assert_eq!(
+            related,
+            vec!["equality_boundary_discounts".to_string()],
+            "{source}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_local_module_alias_reaches_rival_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    for import in ["use local as alias;", "use self::local as alias;"] {
+        let aliased = format!(
+            "mod local {{\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 {{ 777 }}\n}}\n{import}\n\n#[test]\nfn alias_rival() {{\n    assert_eq!(alias::discounted_total(100, 100), 777);\n}}\n"
+        );
+        let related = related_test_names_for_boundary_seam(&aliased)?;
+        assert!(
+            related.is_empty(),
+            "#10855: `{import}` to a local module rival must not relate the owner: {related:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_rival_is_absent_then_nested_and_aliased_calls_keep_related_test()
+-> Result<(), String> {
+    // Positive controls for the emptiness assertions above: the same shapes
+    // without the local rival are extracted and related.
+    let nested = "mod inner {\n    #[test]\n    fn equality_boundary_discounts() {\n        assert_eq!(lib_proptest::discounted_total(100, 100), 90);\n    }\n}\n";
+    let aliased = "mod local {\n    pub fn other() -> i32 { 1 }\n}\nuse local as alias;\n\n#[test]\nfn equality_boundary_discounts() {\n    assert_eq!(alias::discounted_total(100, 100), 90);\n}\n";
+    for source in [nested, aliased] {
+        let related = related_test_names_for_boundary_seam(source)?;
+        assert_eq!(
+            related,
+            vec!["equality_boundary_discounts".to_string()],
+            "{source}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_single_line_nested_module_reaches_rival_through_super_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    let nested = "mod lib_proptest {\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 90 }\n}\n\nmod inner { #[test] fn equality_boundary_discounts() { assert_eq!(super::lib_proptest::discounted_total(100, 100), 90); } }\n";
+    let related = related_test_names_for_boundary_seam(nested)?;
+    assert!(
+        related.is_empty(),
+        "#10855: a single-line nested `super::` call to a local rival must not relate the owner: {related:?}"
+    );
+    Ok(())
+}
