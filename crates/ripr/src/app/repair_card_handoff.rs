@@ -1059,7 +1059,7 @@ fn workspace_identity_naming_route(
         }
     }
     Err(format!(
-        "agent card cannot name the portable workspace identity for seam `{}`: no admitted test-target evidence names it; run `{packet_route}` for the full evidence packet",
+        "agent card cannot name the portable workspace identity for gap `{}`: no admitted test-target evidence names it; run `{packet_route}` for the full evidence packet",
         entry.seam.id().as_str()
     ))
 }

@@ -154,7 +154,7 @@ fn assert_policy_guidance(message: &str, route: &str) {
         "{message}"
     );
     assert!(!message.contains("ripr pilot"), "{message}");
-    assert!(!message.contains("to list current seam IDs"), "{message}");
+    assert!(!message.contains("to list current repair IDs"), "{message}");
 }
 
 #[test]
@@ -322,7 +322,7 @@ fn genuinely_unknown_seam_keeps_pilot_guidance_under_omitting_policy()
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains("was not found"), "{stderr}");
         assert!(stderr.contains("Run `ripr pilot --root "), "{stderr}");
-        assert!(stderr.contains("to list current seam IDs"), "{stderr}");
+        assert!(stderr.contains("to list current repair IDs"), "{stderr}");
         assert!(!stderr.contains("ripr agent brief"), "{stderr}");
         if command == "card" {
             let envelope = card_envelope(&output)?;

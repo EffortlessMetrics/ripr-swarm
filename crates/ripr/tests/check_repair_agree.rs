@@ -159,7 +159,14 @@ fn exposed_change_says_nothing_to_repair_in_both_commands() -> Result<(), String
             && check.contains("already notice this change (exposed)"),
         "check must say there is nothing to repair:\n{check}"
     );
-    for leak in ["no seam in this finding's file", "missing", "found no seam"] {
+    for leak in [
+        "no spot in this finding's file",
+        "no repairable spot in this finding's file",
+        "no spot in this finding's file",
+        "missing",
+        "found no seam",
+        "found no repairable spot",
+    ] {
         let advisory: Vec<&str> = check
             .lines()
             .filter(|line| line.contains("no repair start offered"))
@@ -191,14 +198,43 @@ fn check_never_reports_no_seam_where_repair_lists_seams_in_the_file() -> Result<
     );
     let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
     assert!(
-        !check.contains("found no seam") && !check.contains("no seam in this finding's file"),
+        !check.contains("found no spot") && !check.contains("no spot in this finding's file"),
         "check must not claim there is no seam while repair lists seams:\n{check}"
     );
     assert!(
         check.contains(
-            "seams in this finding's file, but could not tie one to this finding's changed line"
+            "spots in this finding's file, but could not tie one to this finding's changed line"
         ),
         "check must name the one reason it cannot bind a seam:\n{check}"
+    );
+    Ok(())
+}
+
+#[test]
+fn untied_count_does_not_claim_gripped_sibling_is_repairable() -> Result<(), String> {
+    let sibling = "\npub fn doubled(x: i32) -> i32 {\n    x * 2\n}\n";
+    let old = format!(
+        "pub fn label(n: u32) -> &'static str {{\n    match n {{\n        0 => \"zero\",\n        1 => \"one\",\n        _ => \"many\",\n    }}\n}}\n{sibling}"
+    );
+    let new = old.replace("1 => \"one\"", "1 => \"uno\"");
+    let repo = Repo::create(
+        &old,
+        &new,
+        "use ar::{doubled, label};\n\n#[test]\nfn labels() {\n    assert!(!label(1).is_empty());\n}\n\n#[test]\nfn doubled_exact() {\n    assert_eq!(doubled(2), 4);\n}\n",
+    )?;
+    let repair = repo.ripr(&["repair", "--root", "."])?;
+    assert!(
+        repair.contains("already grip it"),
+        "gripped sibling precondition:\n{repair}"
+    );
+    let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
+    assert!(
+        check.contains("spots in this finding's file, but could not tie one"),
+        "unbound precondition:\n{check}"
+    );
+    assert!(
+        !check.contains("repairable spots in this finding's file"),
+        "count must not assert eligibility:\n{check}"
     );
     Ok(())
 }

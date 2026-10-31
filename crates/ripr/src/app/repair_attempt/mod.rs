@@ -451,7 +451,7 @@ pub(crate) fn receipt_binding_from(
                 .collect::<Vec<_>>()
                 .join(", ");
             let detail = if matches.is_empty() {
-                format!("no repair attempt exists for seam `{seam_id}`; start one with `{restart}`")
+                format!("no repair attempt exists for gap `{seam_id}`; start one with `{restart}`")
             } else {
                 format!(
                     "found {}: {ids}; pass --attempt <id> to select the attempt the receipt binds to exactly",
@@ -459,7 +459,7 @@ pub(crate) fn receipt_binding_from(
                 )
             };
             return Err(format!(
-                "receipt requires exactly one repair attempt for seam `{seam_id}`: {detail}"
+                "receipt requires exactly one repair attempt for gap `{seam_id}`: {detail}"
             ));
         }
         matches.pop().ok_or_else(|| "missing attempt".to_string())?
@@ -1121,14 +1121,14 @@ pub(crate) fn validate_issued_receipt_evidence(
         crate::output::agent_receipt::expected_receipt_verdict(&verify, &manifest.seam_id)
             .map_err(|error| {
                 format!(
-                    "repair attempt verify document names no verdict for seam `{}`: {error}",
+                    "repair attempt verify document names no verdict for gap `{}`: {error}",
                     manifest.seam_id
                 )
             })?;
     let field = |pointer: &str| receipt.pointer(pointer).and_then(serde_json::Value::as_str);
     if field("/seam/change") != Some(expected.change.as_str()) {
         return Err(format!(
-            "repair attempt receipt seam change `{}` does not match the verify verdict `{}` for seam `{}`",
+            "repair attempt receipt seam change `{}` does not match the verify verdict `{}` for gap `{}`",
             field("/seam/change").unwrap_or("<missing>"),
             expected.change,
             manifest.seam_id
@@ -1136,7 +1136,7 @@ pub(crate) fn validate_issued_receipt_evidence(
     }
     if field("/provenance/movement") != Some(expected.change.as_str()) {
         return Err(format!(
-            "repair attempt receipt movement `{}` does not match the verify verdict `{}` for seam `{}`",
+            "repair attempt receipt movement `{}` does not match the verify verdict `{}` for gap `{}`",
             field("/provenance/movement").unwrap_or("<missing>"),
             expected.change,
             manifest.seam_id
@@ -1147,7 +1147,7 @@ pub(crate) fn validate_issued_receipt_evidence(
         .unwrap_or_else(|| crate::output::receipt_lifecycle::RECEIPT_MISSING.to_string());
     if state != expected.receipt_state {
         return Err(format!(
-            "repair attempt receipt state `{}` does not match the verify verdict state `{}` for seam `{}`",
+            "repair attempt receipt state `{}` does not match the verify verdict state `{}` for gap `{}`",
             field("/summary/receipt_state").unwrap_or("<missing>"),
             expected.receipt_state,
             manifest.seam_id
@@ -1155,7 +1155,7 @@ pub(crate) fn validate_issued_receipt_evidence(
     }
     if field("/summary/next_action/kind") != Some(expected.guidance_kind.as_str()) {
         return Err(format!(
-            "repair attempt receipt next-action kind `{}` does not match the verify verdict `{}` for seam `{}`",
+            "repair attempt receipt next-action kind `{}` does not match the verify verdict `{}` for gap `{}`",
             field("/summary/next_action/kind").unwrap_or("<missing>"),
             expected.guidance_kind,
             manifest.seam_id
@@ -2756,7 +2756,7 @@ pub(crate) fn edit_cage_policy_from_packet(
         .map(|matches| {
             if matches.len() != 1 {
                 return Err(format!(
-                    "repair packet must contain exactly one packet for seam `{seam_id}`, found {}",
+                    "repair packet must contain exactly one packet for gap `{seam_id}`, found {}",
                     matches.len()
                 ));
             }

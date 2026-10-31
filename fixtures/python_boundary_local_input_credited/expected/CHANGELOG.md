@@ -11,3 +11,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_boundary_local_input_credited (2)
+
+Reason:
+RIPR-SPEC-0122: use plain wording in default human output
+
+Command:
+`cargo xtask goldens bless python_boundary_local_input_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_boundary_local_input_credited (3)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless python_boundary_local_input_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

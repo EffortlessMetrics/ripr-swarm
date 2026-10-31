@@ -23,7 +23,7 @@ use crate::cli::help;
 use crate::cli::parse::expect_value;
 use crate::cli::suggest::unknown_argument;
 
-pub(in crate::cli) const REPAIR_HELP: &str = r#"Start a repair attempt from a Rust seam, or select a seam to repair.
+pub(in crate::cli) const REPAIR_HELP: &str = r#"Start a repair attempt from a Rust gap, or select a gap to repair.
 
 Usage: ripr repair [<item>] [--root PATH] [--base REF]
 
@@ -36,25 +36,25 @@ Options:
                    the way `ripr check` does. Only for a start ripr picks;
                    not allowed with an item.
 
-Without an item, repair starts only when exactly one repair-eligible seam
-is visible under the selected root. Several eligible seams print a bounded
+Without an item, repair starts only when exactly one repair-eligible gap
+is visible under the selected root. Several eligible gaps print a bounded
 selection list with a retry command instead of selecting one implicitly;
-no eligible seam prints the honest setup or limitation action. With an
-item — a seam ID, a `ripr check` finding ID (`probe:` / `repo-probe:`), a
+no eligible gap prints the honest setup or limitation action. With an
+item — a gap ID, a `ripr check` finding ID (`probe:` / `repo-probe:`), a
 canonical gap ID, or a `file:line` location naming exactly one
-repair-eligible seam — repair starts the before phase for that exact
-subject. A cross-namespace ID the current seams no longer map refuses with
-the recovery route instead of guessing a seam. For a Python or TypeScript
+repair-eligible gap — repair starts the before phase for that exact
+subject. A cross-namespace ID the current gaps no longer map refuses with
+the recovery route instead of guessing a gap. For a Python or TypeScript
 diff gap, use the gap-bound start printed by `ripr check`, when offered;
 this command does not reuse that check's diff or base.
 
 Run from a workspace member, a `file:line` item is bound to that member and
 is refused (fail closed) when a workspace-root file with the same path suffix
-exists, even if the root has no finding there; use `--root .` or a seam or
+exists, even if the root has no finding there; use `--root .` or a gap or
 gap ID instead.
 
 A successful start prints the before-phase summary and the compact repair
-card for the seam. If the card cannot render after the start published,
+card for the gap. If the card cannot render after the start published,
 repair refuses with exit 3 and empty stdout, naming the retained attempt
 and its recovery instead of printing a partial success. Repair never edits
 source files and never runs project verification; make the focused test
@@ -389,7 +389,7 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
                     ));
                 }
                 return Err(CommandError::Decision(
-                    "repair selected no seam; rerun with an explicit item".to_string(),
+                    "repair selected no gap; rerun with an explicit item".to_string(),
                 ));
             }
         },
@@ -453,13 +453,13 @@ fn resume_awaiting_attempt(
     })
     .map_err(|error| {
         CommandError::Decision(format!(
-            "repair attempt `{}` for seam `{seam_id}` is already awaiting the focused test edit, but the handoff card is unavailable: {}; continue after editing with `{follow_up}`",
+            "repair attempt `{}` for gap `{seam_id}` is already awaiting the focused test edit, but the handoff card is unavailable: {}; continue after editing with `{follow_up}`",
             existing.attempt_id,
             error.message()
         ))
     })?;
     eprintln!(
-        "ripr: repair attempt {} for seam `{seam_id}` is already awaiting the focused test edit at this HEAD; no second attempt was started",
+        "ripr: repair attempt {} for gap `{seam_id}` is already awaiting the focused test edit at this HEAD; no second attempt was started",
         existing.attempt_id
     );
     eprintln!("ripr: attempt next command: {follow_up}");
@@ -691,10 +691,10 @@ fn start_with_repair_clause(root: &std::path::Path, root_arg: &str) -> String {
         // The auto selector needs a named seam: `ripr repair` alone would
         // not start one, so it is not printed as the start.
         Ok(RepairStartDecision::Action(..)) => format!(
-            "`ripr repair` cannot choose a start by itself right now; run `ripr pilot --root {root_arg}` to list current seam IDs and name one"
+            "`ripr repair` cannot choose a start by itself right now; run `ripr pilot --root {root_arg}` to list current repair IDs and name one"
         ),
         Err(error) => format!(
-            "could not verify a repair start ({error}); rerun `ripr check --root {root_arg}` to re-read the current seams"
+            "could not verify a repair start ({error}); rerun `ripr check --root {root_arg}` to re-read the current gaps"
         ),
     }
 }
@@ -726,7 +726,7 @@ fn no_eligible_seam_message(
             .map(|reason| format!(" ({reason})"))
             .collect::<String>();
         return format!(
-            "no seams visible under {root}{unscoped}; `ripr repair` selects repository seams and does not reuse the diff or base from an earlier `ripr check`. If that check printed a gap-bound repair start, use the start printed by that check; rerun the same check, including its original --base if supplied, if needed. To explore repository seams, run `ripr pilot --root {root}`"
+            "no gaps visible under {root}{unscoped}; `ripr repair` selects repository gaps and does not reuse the diff or base from an earlier `ripr check`. If that check printed a gap-bound repair start, use the start printed by that check; rerun the same check, including its original --base if supplied, if needed. To explore repository gaps, run `ripr pilot --root {root}`"
         );
     }
     let noun = if total_seams == 1 { "spot" } else { "spots" };
@@ -740,7 +740,7 @@ fn no_eligible_seam_message(
         // read as the whole story.
         if reasons_total > reasons.len() {
             message.push_str(&format!(
-                " (and {} more; run `ripr pilot --root {root}` for per-seam detail)",
+                " (and {} more; run `ripr pilot --root {root}` for per-gap detail)",
                 reasons_total - reasons.len()
             ));
         }
@@ -930,7 +930,7 @@ mod tests {
     }
 
     /// #8728: a bounded reason list whose total exceeds what was rendered
-    /// discloses the remainder and the per-seam detail route; a list at its
+    /// discloses the remainder and the per-gap detail route; a list at its
     /// total reads unchanged.
     #[test]
     fn no_eligible_message_discloses_truncated_reasons() -> Result<(), String> {
@@ -1246,7 +1246,7 @@ mod tests {
     fn no_eligible_seam_message_separates_setup_from_limitation() -> Result<(), String> {
         let root = Path::new("/ripr-task-first-root");
         let setup = no_eligible_seam_message(root, None, 0, &["unscoped note".to_string()], 1);
-        if !setup.starts_with("no seams visible under ")
+        if !setup.starts_with("no gaps visible under ")
             || setup.contains("automatic repair")
             || !setup.contains(" (unscoped note); ")
             || !setup.contains("`ripr pilot --root ")
