@@ -134,7 +134,9 @@ ripr baseline create \
 artifact that is not a complete outcome over the empty-tree base (a diff-scoped
 or partial run would baseline only part of the repository) or that discloses a
 findings-budget-bounded document (set `RIPR_CHECK_FINDINGS_BYTES=0` to produce
-the full set), and names the producer command in the error. It baselines only the gap classes
+the full set) or a partial-scope run, and names the producer command in the
+error. Findings removed by a `--suppression-policy` on the producing `ripr check`
+are not in the artifact, so they are not baselined. It baselines only the gap classes
 `weakly_exposed`, `reachable_unrevealed` and `no_static_path`; `exposed` and
 `*_unknown` findings are counted under `skipped.other` and never written.
 Entries use the finding's `canonical_gap_id`, the identity `baseline-check`

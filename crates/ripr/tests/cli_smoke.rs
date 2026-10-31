@@ -17099,6 +17099,60 @@ fn baseline_create_from_check_baselines_a_whole_repo_artifact_and_refuses_a_scop
 }
 
 #[test]
+fn baseline_create_from_check_accepts_a_real_whole_tree_producer_artifact() -> Result<(), String> {
+    // Issue #11206 item 3, producer-driven: the artifact is written by the real
+    // `ripr check --candidate-tree` over the committed tree (compared with the
+    // empty tree), not hand-written, so the accepted schema is the producer's.
+    let workspace = unique_temp_workspace("baseline-create-from-producer");
+    std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
+    init_producer_fixture_repo(&workspace).map_err(|e| format!("fixture repo: {e}"))?;
+    let tree = run_command("git", Some(&workspace), &["rev-parse", "HEAD^{tree}"])
+        .map_err(|e| format!("rev-parse tree: {e}"))?;
+    assert!(tree.status.success(), "rev-parse failed: {tree:?}");
+    let tree = String::from_utf8_lossy(&tree.stdout).trim().to_string();
+    let root_arg = workspace.display().to_string();
+
+    let check = run_ripr(&[
+        "check",
+        "--root",
+        &root_arg,
+        "--candidate-tree",
+        &tree,
+        "--format",
+        "json",
+        "--quiet",
+    ]);
+    assert_success(&check);
+    let artifact = workspace.join("whole-check.json");
+    std::fs::write(&artifact, &check.stdout).map_err(|e| format!("write artifact: {e}"))?;
+    let artifact_arg = artifact.display().to_string();
+    let out = workspace.join("baseline.json");
+    let out_arg = out.display().to_string();
+
+    let created = run_ripr(&[
+        "baseline",
+        "create",
+        "--from-check",
+        &artifact_arg,
+        "--out",
+        &out_arg,
+    ]);
+    assert_success(&created);
+    let baseline = std::fs::read_to_string(&out).map_err(|e| format!("read baseline: {e}"))?;
+    assert!(
+        baseline.contains("\"mode\": \"whole_repo_check\""),
+        "{baseline}"
+    );
+    assert!(
+        baseline.contains("\"canonical_gap_id\": \"gap:rust:"),
+        "the producer's boundary gap must be baselined with its canonical id: {baseline}"
+    );
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
 fn baseline_diff_writes_debt_delta_json_and_markdown() -> Result<(), String> {
     let workspace = unique_temp_workspace("baseline-diff");
     std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;

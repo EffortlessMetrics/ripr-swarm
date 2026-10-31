@@ -186,6 +186,13 @@ fn check_findings_as_decisions(check: &Value) -> Result<Vec<Value>, String> {
             crate::output::json::CHECK_FINDINGS_BYTES_ENV
         ));
     }
+    // A partial-scope run is the same incomplete denominator the gate refuses
+    // as an input in every position the run state is disclosed.
+    if crate::output::gate::discloses_limited_partial_scope(check) {
+        return Err(format!(
+            "check artifact discloses a partial-scope run (limited_partial_scope), so a baseline from it would cover only part of the repository; {WHOLE_REPO_PRODUCER_HINT}"
+        ));
+    }
     let base_tree = outcome
         .pointer("/outcome/identity/git_candidate_subject/base_tree")
         .and_then(Value::as_str);
@@ -748,7 +755,7 @@ mod tests {
     }
 
     #[test]
-    fn whole_repo_check_refuses_a_findings_budget_bounded_document() -> Result<(), String> {
+    fn whole_repo_check_refuses_bounded_and_partial_scope_documents() -> Result<(), String> {
         let gap = vec![finding("weakly_exposed", Some("gap:a"), "src/a.rs", 1)];
         let base: Value = serde_json::from_str(&check_artifact(
             "complete_with_findings",
@@ -776,6 +783,18 @@ mod tests {
                 "{name}: {error}"
             );
         }
+        let mut partial_scope = base.clone();
+        partial_scope["analysis_scope"] = json!({"run_status": "limited_partial_scope"});
+        let error = from_check(&partial_scope.to_string())
+            .err()
+            .unwrap_or_default();
+        assert!(error.contains("partial-scope run"), "{error}");
+        let mut partial_language = base.clone();
+        partial_language["language_runs"] = json!([{"language": "rust", "status": "partial"}]);
+        let error = from_check(&partial_language.to_string())
+            .err()
+            .unwrap_or_default();
+        assert!(error.contains("partial-scope run"), "{error}");
         // The same artifact without the bound is accepted.
         assert!(
             from_check(&base.to_string())
