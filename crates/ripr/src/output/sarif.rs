@@ -3227,7 +3227,7 @@ weakly_gripped = "note"
         assert_eq!(results[0]["properties"]["finding_id"], "finding:first");
         assert_eq!(
             results[0]["partialFingerprints"]["riprFingerprintV1"],
-            "ripr.finding.weakly_exposed|finding:first|probe:src/pricing.rs:88:first|src/pricing.rs|88",
+            "ripr.finding.weakly_exposed|finding:first|probe:src/pricing.rs:88:first|src/pricing.rs",
             "the kept result keeps its own fingerprint"
         );
         let folded = &results[0]["properties"]["folded_results"];
