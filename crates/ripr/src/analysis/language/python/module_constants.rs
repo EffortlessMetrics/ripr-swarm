@@ -530,6 +530,11 @@ pub(super) struct PythonTestRebinding {
     /// One import and one argument-free test with no definition-time
     /// expressions; only bounded dunder truthiness consumes this fact.
     pub(super) plain_test_module: bool,
+    /// The test module's own scalar-literal constants: bound once at module
+    /// scope, never `global`-rebound or attribute-assigned (#10707). Shared by
+    /// every test of the module.
+    #[serde(default)]
+    pub(super) module_constants: Arc<Vec<PythonModuleConstant>>,
 }
 
 impl PythonTestRebinding {
@@ -572,6 +577,7 @@ pub(super) fn python_test_rebinding(
         implicit_reach: false,
         header_reach: false,
         plain_test_module: false,
+        module_constants: Arc::default(),
     }
 }
 
@@ -579,7 +585,12 @@ pub(super) fn python_test_rebinding(
 /// more than once or any of its functions declares `global`, attributes it
 /// assigns, and constructs that bind names the walk cannot enumerate.
 /// Computed once per module.
-pub(super) fn with_module_rebinding(source: &str, statements: &[Stmt], tests: &mut [PythonTest]) {
+pub(super) fn with_module_rebinding(
+    source: &str,
+    statements: &[Stmt],
+    module_constants: &[PythonModuleConstant],
+    tests: &mut [PythonTest],
+) {
     let mut module = ScopeBindings::default();
     collect_scope_bindings(statements, &mut module);
     let dynamic = writes_namespace_dynamically(source);
@@ -610,8 +621,10 @@ pub(super) fn with_module_rebinding(source: &str, statements: &[Stmt], tests: &m
     module_bound.dedup();
     let module_bound = Arc::new(module_bound);
     let attributes = Arc::new(attributes);
+    let module_constants = Arc::new(module_constants.to_vec());
     for test in tests {
         let rebinding = &mut test.constant_rebinding;
+        rebinding.module_constants = Arc::clone(&module_constants);
         rebinding.opaque |= module.opaque || dynamic;
         rebinding.names.sort();
         rebinding.names.dedup();

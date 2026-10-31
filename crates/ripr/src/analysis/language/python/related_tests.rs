@@ -3558,6 +3558,16 @@ fn inside_triple_quoted_string(text: &str, idx: usize) -> bool {
             triple = Some((delimiter, string_prefix_is_f_string(text, cursor)));
             cursor += 3;
         } else if rest.starts_with('#') || rest.starts_with('"') || rest.starts_with('\'') {
+            // A single-line f-string whose quote pairing cannot be followed
+            // (3.12 same-quote nesting in a field, a newline in a field)
+            // hides the rest of the text: a miss, never an invented call
+            // (#9230).
+            if !rest.starts_with('#')
+                && string_prefix_is_f_string(text, cursor)
+                && super::static_limits::single_line_fstring_is_ambiguous(rest.chars())
+            {
+                return true;
+            }
             let len = if rest.starts_with('#') {
                 rest.find('\n').unwrap_or(rest.len())
             } else {
