@@ -522,10 +522,10 @@ fn catalog_list_cursors_fail_closed_over_stdio() -> Result<(), String> {
             )
         };
         for (method, field, count) in [
-            ("tools/list", "tools", 9),
+            ("tools/list", "tools", 10),
             ("prompts/list", "prompts", 0),
             ("resources/list", "resources", 1),
-            ("resources/templates/list", "resourceTemplates", 5),
+            ("resources/templates/list", "resourceTemplates", 6),
         ] {
             let baseline = call(&mut session, "plain", method, json!({}))?;
             let catalog = baseline
@@ -1966,12 +1966,13 @@ fn rejection_arms_survive_the_stdio_transport() -> Result<(), String> {
     let miss = by_id
         .get("unknown-resource")
         .ok_or("missing unknown-resource response")?;
-    let expected_message = "unknown resource; available: ripr://workspace/status; templates: ripr://snapshot/{snapshot_id}, ripr://gap/{canonical_id}, ripr://repair-attempt/{attempt_id}, ripr://receipt/{receipt_id}, ripr://repair-card/{canonical_id}";
+    let expected_message = "unknown resource; available: ripr://workspace/status; templates: ripr://snapshot/{snapshot_id}, ripr://gap/{canonical_id}, ripr://gap/{canonical_id}/limitation, ripr://repair-attempt/{attempt_id}, ripr://receipt/{receipt_id}, ripr://repair-card/{canonical_id}";
     if miss.pointer("/error/data/available") != Some(&json!(["ripr://workspace/status"]))
         || miss.pointer("/error/data/resource_templates")
             != Some(&json!([
                 "ripr://snapshot/{snapshot_id}",
                 "ripr://gap/{canonical_id}",
+                "ripr://gap/{canonical_id}/limitation",
                 "ripr://repair-attempt/{attempt_id}",
                 "ripr://receipt/{receipt_id}",
                 "ripr://repair-card/{canonical_id}"

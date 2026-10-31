@@ -2434,7 +2434,7 @@ mod tests {
     #[test]
     fn tool_descriptions_state_positive_contracts_and_bounds() -> Result<(), String> {
         let tools = tools_list_result();
-        let descriptions: [(&str, &str, &[&str]); 7] = [
+        let descriptions: [(&str, &str, &[&str]); 8] = [
             (
                 "/tools/1/description",
                 REFRESH_TOOL_NAME,
@@ -2480,6 +2480,18 @@ mod tests {
             ),
             (
                 "/tools/4/description",
+                GET_TOP_LIMITATION_TOOL_NAME,
+                &[
+                    "earliest committed producer limitation",
+                    "Producer static limits outrank readiness gates",
+                    "no_limitation_established, never null",
+                    "no analysis rerun",
+                    "item_not_found",
+                    "ripr://gap/{canonical_id}/limitation",
+                ],
+            ),
+            (
+                "/tools/5/description",
                 PREPARE_REPAIR_TOOL_NAME,
                 &[
                     "create — or replay — one bounded in-memory repair transaction",
@@ -2490,7 +2502,7 @@ mod tests {
                 ],
             ),
             (
-                "/tools/5/description",
+                "/tools/6/description",
                 GET_REPAIR_ATTEMPT_TOOL_NAME,
                 &[
                     "Read one repair transaction by its attempt identity",
@@ -2502,7 +2514,7 @@ mod tests {
                 ],
             ),
             (
-                "/tools/6/description",
+                "/tools/7/description",
                 GET_RECEIPT_STATUS_TOOL_NAME,
                 &[
                     "awaiting_edit, after_pending, verification_pending, improved, closed, unchanged, regressed, limited, stale, and invalid",
@@ -2515,7 +2527,7 @@ mod tests {
                 ],
             ),
             (
-                "/tools/7/description",
+                "/tools/8/description",
                 GET_REPAIR_CARD_TOOL_NAME,
                 &[
                     "prefer this card over ripr_get_gap when the agent intends to repair",

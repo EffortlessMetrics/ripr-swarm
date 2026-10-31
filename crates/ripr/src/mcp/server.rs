@@ -1146,6 +1146,7 @@ fn contained_tool_schema_version(name: &str) -> Option<&'static str> {
         protocol::REFRESH_TOOL_NAME => Some(workspace::REFRESH_SCHEMA_VERSION),
         protocol::LIST_GAPS_TOOL_NAME => Some(gaps::GAP_LIST_SCHEMA_VERSION),
         protocol::GET_GAP_TOOL_NAME => Some(gaps::GAP_SCHEMA_VERSION),
+        protocol::GET_TOP_LIMITATION_TOOL_NAME => Some(gaps::LIMITATION_SCHEMA_VERSION),
         protocol::PREPARE_REPAIR_TOOL_NAME => Some(repair::REPAIR_PACKET_SCHEMA_VERSION),
         protocol::GET_REPAIR_ATTEMPT_TOOL_NAME => Some(repair::REPAIR_ATTEMPT_SCHEMA_VERSION),
         protocol::GET_RECEIPT_STATUS_TOOL_NAME => Some(repair::RECEIPT_STATUS_SCHEMA_VERSION),
