@@ -645,7 +645,11 @@ fn job_guard_violations(workflow: &str, source: &str) -> Vec<String> {
                 Some("always() && contains(toJSON(inputs), '\"subject_sha\"')")
             }
             ("windows-advisory.yml", "windows-advisory-subset") => {
-                Some("github.event_name != 'pull_request'")
+                // The standalone advisory subset is unchanged from main: it runs on
+                // schedule/manual and on an explicit merge-ready labeled request.
+                Some(
+                    "${{ !inputs.runner_probe_only && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) }}",
+                )
             }
             _ => None,
         };
