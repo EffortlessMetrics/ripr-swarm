@@ -594,10 +594,9 @@ fn summarize_file_with_collectors(
     if let Some(reason) = rust_nesting_refusal(text) {
         return Err(reason);
     }
-    let parse = super::nesting::parse_source_file(text);
-    let errors = parse.errors();
-    if !errors.is_empty() {
-        return Err(format!("parser reported {} syntax errors", errors.len()));
+    let (parse, error_count) = super::nesting::parse_source_file_checked(text);
+    if error_count != 0 {
+        return Err(format!("parser reported {error_count} syntax errors"));
     }
 
     let source = parse.tree();

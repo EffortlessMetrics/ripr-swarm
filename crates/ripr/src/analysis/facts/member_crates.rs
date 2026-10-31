@@ -30,9 +30,9 @@
 //! `[replace]`, or a `.cargo/config` that mentions the name or sets `paths`,
 //! `[patch]`, `[source]` or `include`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use super::drop_in::{config_mentions, normalized, patches};
 
@@ -54,6 +54,9 @@ pub(crate) struct MemberCrates {
     /// Per (crate root, item name): whether the library may export a
     /// foreign item of that name, computed by the classifier.
     foreign_exports: Arc<Mutex<ForeignExports>>,
+    /// All possible library target roots in the selected manifest epoch.
+    /// Missing inventory authority never establishes binary-only ownership.
+    library_roots: Arc<OnceLock<Option<BTreeSet<PathBuf>>>>,
 }
 
 impl MemberCrates {
@@ -62,6 +65,7 @@ impl MemberCrates {
             root: Some(root.to_path_buf()),
             names: Arc::default(),
             foreign_exports: Arc::default(),
+            library_roots: Arc::default(),
         }
     }
 
@@ -161,6 +165,72 @@ impl MemberCrates {
             .get("lib")
             .is_some_and(|lib| lib.get("path").is_some())
             && is_library_root(&package, &crate_root)
+    }
+
+    /// An established binary root cannot export macros to another crate,
+    /// even when an opaque invocation emits `#[macro_export]`. Read the
+    /// selected source epoch, and refuse unknown or overlapping library
+    /// declarations instead of inferring a crate kind from a directory name.
+    pub(crate) fn is_binary_target_root(&self, crate_root: &Path) -> bool {
+        let Some(read_root) = &self.root else {
+            return false;
+        };
+        let root = lexical(read_root);
+        let file = lexical(&root.join(crate_root));
+        let Some((directory, manifest)) = file
+            .parent()
+            .and_then(|parent| committed_package(read_root, &root, parent))
+        else {
+            return false;
+        };
+        let Some(package) = manifest.get("package").and_then(toml::Value::as_table) else {
+            return false;
+        };
+        if package.contains_key("workspace") {
+            return false;
+        }
+        // Cargo permits a sibling package's [lib] path to name this physical
+        // source too. Nearest/ancestor manifests alone cannot certify that
+        // every interpretation is a non-importable binary.
+        if self
+            .library_roots
+            .get_or_init(|| selected_library_roots(read_root))
+            .as_ref()
+            .is_none_or(|roots| roots.contains(&file))
+        {
+            return false;
+        }
+        // Cargo accepts `./parse.rs`; a `..` or absolute path stays refused.
+        let relative_path = |text: &str| {
+            let path = Path::new(text);
+            let mut joined = directory.to_path_buf();
+            for part in path.components() {
+                match part {
+                    Component::Normal(name) => joined.push(name),
+                    Component::CurDir => {}
+                    _ => return None,
+                }
+            }
+            (joined != directory).then_some(joined)
+        };
+        let explicit = manifest
+            .get("bin")
+            .and_then(toml::Value::as_array)
+            .is_some_and(|bins| {
+                bins.iter().any(|bin| {
+                    bin.get("path")
+                        .and_then(toml::Value::as_str)
+                        .and_then(relative_path)
+                        .is_some_and(|path| path == file)
+                })
+            });
+        let automatic = package
+            .get("autobins")
+            .is_none_or(|value| value.as_bool() == Some(true))
+            && (file == directory.join("src/main.rs")
+                || (file.parent() == Some(directory.join("src/bin").as_path())
+                    && file.extension().is_some_and(|extension| extension == "rs")));
+        explicit || automatic
     }
 
     /// Unit-test identity follows the discovery flag for this root's target
@@ -428,6 +498,39 @@ impl MemberCrates {
                 })
         })
     }
+}
+
+/// A negative inventory: extra roots only retain the conservative refusal.
+/// An absent overlay entry is not a manifest in this source epoch; an unread
+/// or malformed manifest leaves the inventory unknown. Library paths may
+/// leave their declaring package, unlike the binary paths certified above.
+fn selected_library_roots(read_root: &Path) -> Option<BTreeSet<PathBuf>> {
+    let root = lexical(read_root);
+    let mut roots = BTreeSet::new();
+    for directory in crate::analysis::workspace::target_manifest_directories(read_root)? {
+        let relative = directory.strip_prefix(&root).ok()?.join("Cargo.toml");
+        let Some(bytes) =
+            crate::analysis::committed_source::read_source_bytes(read_root, &relative).ok()?
+        else {
+            continue;
+        };
+        let manifest = std::str::from_utf8(&bytes)
+            .ok()?
+            .parse::<toml::Table>()
+            .ok()?;
+        if !manifest.contains_key("package") && !manifest.contains_key("project") {
+            continue;
+        }
+        let path = match manifest.get("lib") {
+            None => "src/lib.rs",
+            Some(lib) => match lib.as_table()?.get("path") {
+                None => "src/lib.rs",
+                Some(path) => path.as_str()?,
+            },
+        };
+        roots.insert(lexical(&directory.join(path)));
+    }
+    Some(roots)
 }
 
 /// Whether every `.rs` file under `directory` is in `indexed`, the package's
@@ -1107,6 +1210,158 @@ mod tests {
 
     const ROOT: &str = "[workspace]\nmembers = [\"pricing\", \"orders\"]\n";
     const PRICING: &str = "[package]\nname = \"pricing\"\nversion = \"0.1.0\"\n";
+
+    #[test]
+    fn binary_macro_boundaries_require_manifest_authority() -> Result<(), String> {
+        let binary =
+            "[package]\nname='fuzz'\nversion='0.0.0'\n[[bin]]\nname='parse'\npath='parse.rs'\n";
+        for (manifest, file, expected) in [
+            (binary.to_string(), "parse.rs", true),
+            (
+                binary.replace("path='parse.rs'", "path='./parse.rs'"),
+                "parse.rs",
+                true,
+            ),
+            (
+                binary.replace("path='parse.rs'", "path='../parse.rs'"),
+                "parse.rs",
+                false,
+            ),
+            (
+                format!("{binary}[lib]\npath='parse.rs'\n"),
+                "parse.rs",
+                false,
+            ),
+            (format!("{binary}[lib]\npath='lib.rs'\n"), "parse.rs", true),
+            (PRICING.to_string(), "src/main.rs", true),
+            (PRICING.to_string(), "src/bin/tool.rs", true),
+            (PRICING.to_string(), "parse.rs", false),
+            (PRICING.to_string(), "src/lib.rs", false),
+            (format!("{PRICING}autobins=false\n"), "src/main.rs", false),
+            ("[workspace]\n".to_string(), "src/main.rs", false),
+            ("[package".to_string(), "src/main.rs", false),
+        ] {
+            let root = temp_workspace("binary-macro-root", &[("Cargo.toml", &manifest)])?;
+            let observed = MemberCrates::new(&root).is_binary_target_root(Path::new(file));
+            let _ = std::fs::remove_dir_all(&root);
+            assert_eq!(observed, expected, "{file}: {manifest}");
+        }
+        assert!(!MemberCrates::default().is_binary_target_root(Path::new("src/main.rs")));
+        let root = temp_workspace(
+            "nested-binary-library",
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname='parent'\nversion='0.0.0'\n[lib]\npath='fuzz/parse.rs'\n",
+                ),
+                ("fuzz/Cargo.toml", binary),
+            ],
+        )?;
+        assert!(!MemberCrates::new(&root).is_binary_target_root(Path::new("fuzz/parse.rs")));
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn binary_macro_boundaries_refuse_sibling_library_targets() -> Result<(), String> {
+        let root = temp_workspace(
+            "sibling-binary-library",
+            &[
+                ("Cargo.toml", "[workspace]\nmembers=['fuzz','bridge']\n"),
+                (
+                    "fuzz/Cargo.toml",
+                    "[package]\nname='fuzz'\nversion='0.0.0'\n[[bin]]\nname='parse'\npath='parse.rs'\n",
+                ),
+                (
+                    "bridge/Cargo.toml",
+                    "[package]\nname='bridge'\nversion='0.0.0'\n[lib]\npath='../fuzz/parse.rs'\n",
+                ),
+            ],
+        )?;
+        assert!(!MemberCrates::new(&root).is_binary_target_root(Path::new("fuzz/parse.rs")));
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn binary_macro_boundaries_refuse_library_targets_in_build_output() -> Result<(), String> {
+        let root = temp_workspace(
+            "binary-library-under-target",
+            &[
+                (
+                    "Cargo.toml",
+                    "[workspace]\nmembers=['fuzz','target/bridge']\n",
+                ),
+                (
+                    "fuzz/Cargo.toml",
+                    "[package]\nname='fuzz'\nversion='0.0.0'\n[[bin]]\nname='parse'\npath='parse.rs'\n",
+                ),
+                (
+                    "target/bridge/Cargo.toml",
+                    "[package]\nname='bridge'\nversion='0.0.0'\n[lib]\npath='../../fuzz/parse.rs'\n",
+                ),
+            ],
+        )?;
+        assert!(!MemberCrates::new(&root).is_binary_target_root(Path::new("fuzz/parse.rs")));
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn sibling_library_overlap_reads_the_selected_manifest_epoch() -> Result<(), String> {
+        use crate::analysis::committed_source::{CommittedSourceOverlay, with_overlay};
+        const SHARED: &str =
+            "[package]\nname='bridge'\nversion='0.0.0'\n[lib]\npath='../fuzz/parse.rs'\n";
+        const SEPARATE: &str =
+            "[package]\nname='bridge'\nversion='0.0.0'\n[lib]\npath='src/lib.rs'\n";
+        for (worktree, committed, expected) in [(SHARED, SEPARATE, true), (SEPARATE, SHARED, false)]
+        {
+            let root = temp_workspace(
+                "sibling-binary-epoch",
+                &[
+                    ("Cargo.toml", "[workspace]\nmembers=['fuzz','bridge']\n"),
+                    (
+                        "fuzz/Cargo.toml",
+                        "[package]\nname='fuzz'\nversion='0.0.0'\n[[bin]]\nname='parse'\npath='parse.rs'\n",
+                    ),
+                    ("bridge/Cargo.toml", worktree),
+                ],
+            )?;
+            let overlay = CommittedSourceOverlay::from_entries(
+                &root,
+                [("bridge/Cargo.toml", Some(committed.as_bytes()))],
+            );
+            let members = MemberCrates::new(&root);
+            let observed = with_overlay(Some(std::sync::Arc::new(overlay)), || {
+                members.is_binary_target_root(Path::new("fuzz/parse.rs"))
+            });
+            assert_eq!(observed, expected);
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn binary_macro_boundaries_read_the_selected_manifest_epoch() -> Result<(), String> {
+        use crate::analysis::committed_source::{CommittedSourceOverlay, with_overlay};
+        let binary =
+            "[package]\nname='pricing'\nversion='0.1.0'\n[[bin]]\nname='parse'\npath='parse.rs'\n";
+        let library = "[package]\nname='pricing'\nversion='0.1.0'\n[[bin]]\nname='parse'\npath='parse.rs'\n[lib]\npath='parse.rs'\n";
+        for (worktree, committed, expected) in [(binary, library, false), (library, binary, true)] {
+            let root = temp_workspace("binary-macro-epoch", &[("Cargo.toml", worktree)])?;
+            let overlay = CommittedSourceOverlay::from_entries(
+                &root,
+                [("Cargo.toml", Some(committed.as_bytes()))],
+            );
+            let members = MemberCrates::new(&root);
+            let observed = with_overlay(Some(std::sync::Arc::new(overlay)), || {
+                members.is_binary_target_root(Path::new("parse.rs"))
+            });
+            let _ = std::fs::remove_dir_all(&root);
+            assert_eq!(observed, expected);
+        }
+        Ok(())
+    }
 
     fn names(files: &[(&str, &str)], test: &str, owner: &str) -> Result<Vec<String>, String> {
         let root = temp_workspace("member-crates", files)?;
