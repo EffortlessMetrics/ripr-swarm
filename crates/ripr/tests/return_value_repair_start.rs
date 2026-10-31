@@ -1468,6 +1468,68 @@ fn macro_wrapped_call_or_debug_assert_is_not_a_match_arm_start() -> Result<(), S
     )
 }
 
+/// A macro call spaced around its `!` (`stringify ! (..)`) is still a macro
+/// around the owner call, so it refuses; the twin binding the call directly
+/// starts. (The comment-spaced `keep /**/ !(..)` form is covered by the
+/// reader's unit test: a file-local `macro_rules!` already withholds here.)
+#[test]
+fn spaced_macro_around_the_call_is_not_a_match_arm_start() -> Result<(), String> {
+    assert_repair_ready(
+        "arm-spaced-macro-twin",
+        ARM_OLD,
+        ARM_NEW,
+        &rate_test("    let r = rate(\"silver\");\n    assert!(r < 100);\n"),
+    )?;
+    assert_no_start_at(
+        "arm-spaced-stringify",
+        ARM_OLD,
+        ARM_NEW,
+        &rate_test("    let r = stringify ! (rate(\"silver\"));\n    assert!(r.len() < 100);\n"),
+        "src/lib.rs:4",
+    )
+}
+
+/// An `assert!` that is not the standard macro may never evaluate the call:
+/// a `use .. as assert` at file or body level, or a file-level
+/// `macro_rules! assert`, refuses; the twin with the same exported no-op
+/// macro but the standard `assert!` starts.
+#[test]
+fn rebound_assert_macro_is_not_a_match_arm_start() -> Result<(), String> {
+    let lib =
+        format!("{ARM_OLD}\n#[macro_export]\nmacro_rules! noop {{\n    ($($t:tt)*) => {{}};\n}}\n");
+    let new = lib.replace("\"silver\" => 5", "\"silver\" => 7");
+    let assertion = "    assert!(rate(\"silver\") < 100);\n";
+    assert_repair_ready(
+        "arm-standard-assert-twin",
+        &lib,
+        &new,
+        &format!("use ar::rate;\n\n#[test]\nfn runs() {{\n{assertion}}}\n"),
+    )?;
+    for (case, test) in [
+        (
+            "arm-use-as-assert",
+            format!(
+                "use ar::noop as assert;\nuse ar::rate;\n\n#[test]\nfn runs() {{\n{assertion}}}\n"
+            ),
+        ),
+        (
+            "arm-body-use-as-assert",
+            format!(
+                "use ar::rate;\n\n#[test]\nfn runs() {{\n    use ar::noop as assert;\n{assertion}}}\n"
+            ),
+        ),
+        (
+            "arm-macro-rules-assert",
+            format!(
+                "use ar::rate;\n\nmacro_rules! assert {{\n    ($($t:tt)*) => {{}};\n}}\n\n#[test]\nfn runs() {{\n{assertion}}}\n"
+            ),
+        ),
+    ] {
+        assert_no_start_at(case, &lib, &new, &test, "src/lib.rs:4")?;
+    }
+    Ok(())
+}
+
 /// An earlier arm naming the same literal, alone or in a `|` alternation,
 /// takes the input first; the twin without it starts.
 #[test]

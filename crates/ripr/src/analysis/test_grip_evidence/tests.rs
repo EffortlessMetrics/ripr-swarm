@@ -21117,6 +21117,14 @@ fn arm_call_reader_admits_only_plain_top_level_call_shapes() {
             "debug assert",
             "    debug_assert!(rate(9, \"silver\") < 100);",
         ),
+        (
+            "spaced macro",
+            "    let r = stringify ! (rate(9, \"silver\"));\n    assert!(r.len() < 100);",
+        ),
+        (
+            "comment-spaced macro",
+            "    let r = keep /**/ !(rate(9, \"silver\"));\n    assert!(r < 100);",
+        ),
     ] {
         assert_eq!(read(refused), None, "{shape}");
     }

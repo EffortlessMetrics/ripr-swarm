@@ -686,7 +686,15 @@ fn return_value_missing_discriminator(
         // on the result. Gates satisfied by different tests prove nothing
         // about the arm. (A struct-field change keeps its own producer route
         // in `activate_evidence`.)
+        // The admitted assertions are trusted by name, so a workspace that
+        // rebinds `assert!`/`assert_eq!`/`assert_ne!` (a `macro_rules!` or a
+        // `use .. as assert`) may never evaluate the call: refuse, as the
+        // check-side evidence reader does.
         impl_identity_is_unambiguous(owner_fn, index)
+            && !crate::analysis::classify::macro_names_rebound(
+                index,
+                &["assert", "assert_eq", "assert_ne"],
+            )
             && related_tests
                 .iter()
                 .zip(related_summaries.iter())
@@ -1246,7 +1254,8 @@ fn arm_owner_call_argument(
 
 /// The owner's parameter list read strictly from its first line: whether it
 /// takes a `self` receiver, and the other parameters' names in order. `None`
-/// (refuse) unless the line holds `fn <name>(..)` with no generics, and
+/// (refuse) unless the line holds `fn <name>(..)` with no generic parameters
+/// on the function itself (an enclosing `impl<T>` keeps positions), and
 /// every parameter is `name: Type` (or `mut name: Type`) whose type is plain
 /// words, paths, references and lifetimes: a `<`, bracket, tuple or pattern
 /// could hold commas that would shift the parameter positions, and a
@@ -1520,11 +1529,15 @@ fn is_plain_operand_text(text: &str) -> bool {
             .any(|word| mentions_identifier(text, word))
 }
 
-/// Whether `text` invokes a macro (`name!(`, `name![`, `name!{`): a macro
+/// Whether `text` invokes a macro (`name!(`, `name![`, `name!{`, with any
+/// whitespace around the `!`): a macro
 /// around the owner call may drop its argument or never evaluate it.
 fn invokes_macro(text: &str) -> bool {
+    // Whitespace (or a masked comment) may sit on either side of the `!`:
+    // `stringify ! (..)` and `keep /**/ !(..)` are macro calls too.
     text.match_indices('!').any(|(at, _)| {
         text[..at]
+            .trim_end()
             .chars()
             .next_back()
             .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')

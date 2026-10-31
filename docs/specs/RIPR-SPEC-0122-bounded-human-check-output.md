@@ -886,9 +886,11 @@ unchanged, and the lines claim no runtime outcome.
   `assert!`, `assert_eq!` or `assert_ne!` statement (never its
   failure-message arguments, and never `debug_assert!`), with only plain
   operand text around it (no closure, block, branch, short-circuit, `?` or
-  macro call); every argument is one simple token (a literal, a name, a field or a
+  macro call, however spaced: `name ! (..)` counts), and only while no
+  file rebinds `assert`, `assert_eq` or `assert_ne`; every argument is one simple token (a literal, a name, a field or a
   path, optionally borrowed); the owner's own parameter list is read only
-  when every parameter is `name: Type` with a plain type (no generic, tuple
+  when the function itself declares no generic parameters and every
+  parameter is `name: Type` with a plain type (no generic type, tuple
   or pattern that could hold commas); a `self` method is reached only as
   `value.method(..)` so its arguments line up with its parameters; the body
   holds no attribute; and no other top-level statement holds `?` or an
