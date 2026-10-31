@@ -96,6 +96,39 @@ pub(super) fn hover_response_without_evidence(
     markdown_hover(value)
 }
 
+/// What the server knows about why a document has no analyzed saved content
+/// (`NoAnalyzedSavedContent`). The state alone does not say which cause
+/// applies, so the paused hover must not name one the server did not observe.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum UnanalyzedCause {
+    /// No snapshot has committed and no attempt is queued or running.
+    NoAnalysisYet,
+    /// No snapshot has committed and an attempt is queued or running.
+    AnalysisRunning,
+    /// No snapshot has committed and the latest attempt failed.
+    LatestAttemptFailed,
+    /// A snapshot committed, but it did not record this file's saved content
+    /// and the file is not on disk (a new, unsaved file).
+    NotOnDisk,
+    /// A snapshot committed, but it did not record this file's saved content
+    /// although the file is on disk (for example it lies outside the analyzed
+    /// scope, or a later refresh has not covered it).
+    NotRecordedByCommittedAnalysis,
+}
+
+/// The paused-evidence hover text for a document with no analyzed saved
+/// content. Each cause names only what was observed and the recovery that
+/// cause actually honors; the wording stays static-only.
+pub(super) fn unanalyzed_paused_hover_text(cause: UnanalyzedCause) -> String {
+    match cause {
+        UnanalyzedCause::NoAnalysisYet => "**ripr** evidence for this file is paused: ripr has not analyzed this file's saved content yet; its evidence appears after the next refresh (`ripr.refresh`) completes. A new file must be saved first.".to_string(),
+        UnanalyzedCause::AnalysisRunning => "**ripr** evidence for this file is not shown yet: an analysis is in progress, and this file's evidence can appear when it completes. No action is needed.".to_string(),
+        UnanalyzedCause::LatestAttemptFailed => "**ripr** evidence for this file is paused: the latest analysis attempt did not complete, so no analyzed saved content exists for this file. Check the ripr output for the reason, then run `ripr.refresh`.".to_string(),
+        UnanalyzedCause::NotOnDisk => "**ripr** evidence for this file is paused: this file is not saved on disk, so no analysis can have read its content. Save the file, then run `ripr.refresh`.".to_string(),
+        UnanalyzedCause::NotRecordedByCommittedAnalysis => "**ripr** evidence for this file is paused: the last completed analysis did not record this file's saved content, so ripr cannot tell whether it has changed behavior to grade. Run `ripr.refresh` to re-analyze; saving an unchanged file changes nothing.".to_string(),
+    }
+}
+
 pub(super) fn markdown_hover(value: String) -> Hover {
     Hover {
         contents: HoverContents::Markup(MarkupContent {

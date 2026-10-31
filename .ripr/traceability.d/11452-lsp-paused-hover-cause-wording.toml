@@ -1,0 +1,15 @@
+# Pin the paused hover's per-cause wording for unanalyzed files (#11452).
+[[extend]]
+id = "RIPR-SPEC-0127"
+tests = [
+  "crates/ripr/src/lsp/tests.rs::paused_hover_does_not_claim_a_refresh_wait_while_analysis_is_running",
+  "crates/ripr/src/lsp/tests.rs::paused_hover_names_a_failed_attempt_only_when_the_attempt_failed",
+  "crates/ripr/src/lsp/tests.rs::paused_hover_after_a_snapshot_names_the_unrecorded_file_not_a_session_wait",
+  "crates/ripr/src/lsp/tests.rs::paused_hover_after_a_snapshot_names_an_unsaved_new_file",
+  "crates/ripr/src/lsp/tests.rs::paused_hover_texts_stay_static_and_distinct_per_cause",
+]
+code = [
+  "crates/ripr/src/lsp/hover.rs",
+  "crates/ripr/src/lsp/backend.rs",
+  "crates/ripr/src/lsp/state.rs",
+]

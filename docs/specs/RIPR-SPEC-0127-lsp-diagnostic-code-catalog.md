@@ -99,6 +99,29 @@ The `ripr-diagnostic-analysis-pending` marker, its result ids and its wire
 shape are unchanged. These are advisory hover words using static vocabulary;
 they make no runtime-outcome or test-sufficiency claim.
 
+### Paused hover for a file with no analyzed saved content
+
+A document quarantined as `no_analyzed_saved_content` has several real causes,
+and its paused hover names only the one the server observed (#11452). It does
+not claim a session-wide wait, a failure, or a missing save that was not seen:
+
+- No committed snapshot, no queued or running attempt: "has not analyzed this
+  file's saved content yet" with the `ripr.refresh` route (unchanged).
+- No committed snapshot, attempt `queued` or `running`: "an analysis is in
+  progress" and no action is requested.
+- No committed snapshot, latest attempt `failed`: "the latest analysis attempt
+  did not complete" and a pointer to the ripr output, then `ripr.refresh`.
+- Committed snapshot and the file is not on disk: "not saved on disk"; save it.
+- Committed snapshot and the file is on disk: "the last completed analysis did
+  not record this file's saved content" with the `ripr.refresh` route; saving
+  an unchanged file is said to change nothing.
+
+`DocumentStalenessReason::NoAnalyzedSavedContent` describes itself neutrally
+("no analysis has recorded the document's saved content"), which also reaches
+the withdrawal diagnostic and log. Divergent-buffer and invalid-incremental
+wording is unchanged. The words are advisory and static; they make no
+runtime-outcome or test-sufficiency claim.
+
 ## Required Evidence
 
 - Every finding, seam, and gap code the emission path can produce resolves to
@@ -146,6 +169,10 @@ they make no runtime-outcome or test-sufficiency claim.
   the two `backend.rs::pull_disclosure_dedup_tests::no_evidence_hover_*` tests pin the in-progress
   and clean-workspace hover states against their discriminating negatives
   (idle session, snapshot without `no_changed_lines`).
+- `lsp/tests.rs::paused_hover_*` pin one positive hover per unanalyzed cause
+  (running, failed, snapshot-unrecorded, not-on-disk) against negative
+  controls (idle session must not claim a failure, other causes' phrases are
+  absent) and a static-vocabulary check across every cause text.
 - The existing LSP diagnostic unit tests continue to pass unchanged, pinning
   the byte-identical emitted code strings for known kinds.
 

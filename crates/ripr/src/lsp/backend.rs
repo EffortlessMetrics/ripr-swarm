@@ -22,9 +22,10 @@ use super::diagnostics::{
 };
 use super::hover::NoEvidenceState;
 use super::hover::{
-    classified_seam_hover_response, diagnostic_at_position, diagnostic_covers_position,
-    diagnostic_hover_response, finding_hover_response, hover_response_without_evidence,
-    hover_with_analysis_health, is_gap_diagnostic, markdown_hover,
+    UnanalyzedCause, classified_seam_hover_response, diagnostic_at_position,
+    diagnostic_covers_position, diagnostic_hover_response, finding_hover_response,
+    hover_response_without_evidence, hover_with_analysis_health, is_gap_diagnostic, markdown_hover,
+    unanalyzed_paused_hover_text,
 };
 use super::lens::{LensViewIdentity, code_lens_response, lens_view_identity};
 use super::payload_bounds::{
@@ -3688,17 +3689,20 @@ impl Backend {
             ));
         }
         if let Some((_, reason)) = self.document_quarantine(uri) {
-            // Only a divergent buffer is fixed by saving; a file with no
-            // analyzed saved content needs an analysis run.
+            // A file with no analyzed saved content names the cause the
+            // server observed; saving an unchanged file fixes none of them.
+            if reason == DocumentStalenessReason::NoAnalyzedSavedContent {
+                return markdown_hover(unanalyzed_paused_hover_text(self.unanalyzed_cause(uri)));
+            }
+            // Only a divergent buffer is fixed by saving; the invalid
+            // incremental change needs the full document again.
             let route = match reason {
-                DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent => {
+                DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent
+                | DocumentStalenessReason::NoAnalyzedSavedContent => {
                     "ripr analyzes saved files; save the file to refresh its evidence."
                 }
                 DocumentStalenessReason::InvalidIncrementalChange => {
                     "ripr could not apply one incremental edit and stopped trusting the retained text; saving cannot fix this. Undo the edit or revert the file so ripr receives the full document again."
-                }
-                DocumentStalenessReason::NoAnalyzedSavedContent => {
-                    "ripr has not analyzed this file's saved content yet; its evidence appears after the next refresh (`ripr.refresh`) completes. A new file must be saved first."
                 }
             };
             return markdown_hover(format!(
@@ -3714,6 +3718,31 @@ impl Backend {
             self.no_evidence_state(),
             &self.configured_language_labels(),
         )
+    }
+
+    /// Which observed state explains a document with no analyzed saved
+    /// content, so the paused hover names only a cause the server saw.
+    fn unanalyzed_cause(&self, uri: &Uri) -> UnanalyzedCause {
+        let committed = self
+            .latest_analysis
+            .lock()
+            .ok()
+            .is_some_and(|value| value.is_some());
+        if committed {
+            let on_disk = path_from_file_uri(uri).is_some_and(|path| path.is_file());
+            return if on_disk {
+                UnanalyzedCause::NotRecordedByCommittedAnalysis
+            } else {
+                UnanalyzedCause::NotOnDisk
+            };
+        }
+        match self.analysis_health_snapshot().state {
+            AnalysisAttemptState::Queued | AnalysisAttemptState::Running => {
+                UnanalyzedCause::AnalysisRunning
+            }
+            AnalysisAttemptState::Failed => UnanalyzedCause::LatestAttemptFailed,
+            _ => UnanalyzedCause::NoAnalysisYet,
+        }
     }
 
     /// What the no-evidence hover may say (#11253): a committed snapshot whose

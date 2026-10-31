@@ -23287,13 +23287,211 @@ async fn hover_without_evidence_routes_an_unanalyzed_file_to_refresh() -> Result
         Some(HoverContents::Markup(markup)) => markup.value,
         other => return Err(format!("expected a markdown hover, got {other:?}")),
     };
-    if !text.contains("has not analyzed this file's saved content")
+    // `initialize` committed a first snapshot, which cannot have read a file
+    // that is not on disk: the hover names that cause and the save route.
+    if !text.contains("not saved on disk")
         || !text.contains("ripr.refresh")
         || text.contains("save the file to refresh")
     {
         return Err(format!(
             "unanalyzed file hover must route to refresh, not the divergent-buffer text: {text}"
         ));
+    }
+    Ok(())
+}
+
+/// #11393: the paused hover for a file with no analyzed saved content names
+/// only the cause the server observed. Opens an unanalyzed file (optionally
+/// written to disk) after the given setup and returns its hover text.
+async fn unanalyzed_file_hover(
+    name: &str,
+    on_disk: bool,
+    commit_snapshot: bool,
+    attempt: Option<AnalysisAttemptState>,
+) -> Result<String, String> {
+    let fixture = quarantine_fixture(name)?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .initialize(initialize_params(
+            None,
+            Some(
+                file_uri_for_path(&fixture.root)
+                    .map_err(|err| format!("root URI failed: {err}"))?,
+            ),
+        ))
+        .await
+        .map_err(|err| format!("initialize failed: {err}"))?;
+    let path = fixture.root.join("src").join("late_file.rs");
+    if on_disk {
+        std::fs::write(&path, QUARANTINE_TEXT_A)
+            .map_err(|err| format!("write late_file.rs failed: {err}"))?;
+    }
+    let late = file_uri_for_path(&path).map_err(|err| format!("late file URI failed: {err}"))?;
+    if commit_snapshot {
+        backend
+            .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
+            .await;
+        commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
+    }
+    backend
+        .did_open(quarantine_open_params(&late, QUARANTINE_TEXT_A))
+        .await;
+    if !commit_snapshot {
+        // `initialize` starts a real first refresh that commits a snapshot;
+        // drop it (no await before the hover) so the no-snapshot causes are
+        // the state under test.
+        backend.clear_all_diagnostic_uris();
+    }
+    if let Some(state) = attempt {
+        backend.set_analysis_attempt_state_for_test(state);
+    }
+    if backend.latest_analysis_snapshot().is_some() != commit_snapshot {
+        return Err(format!(
+            "SETUP: committed snapshot presence must be {commit_snapshot}"
+        ));
+    }
+    match backend.document_quarantine(&late) {
+        Some((_, DocumentStalenessReason::NoAnalyzedSavedContent)) => {}
+        other => {
+            return Err(format!(
+                "SETUP: fixture must be quarantined as no_analyzed_saved_content, got {other:?}"
+            ));
+        }
+    }
+    let hover = backend
+        .hover(hover_params(late.clone(), 0, 4))
+        .await
+        .map_err(|err| format!("hover failed: {err}"))?;
+    match hover.map(|hover| hover.contents) {
+        Some(HoverContents::Markup(markup)) => Ok(markup.value),
+        other => Err(format!("expected a markdown hover, got {other:?}")),
+    }
+}
+
+fn require_hover_text(text: &str, present: &[&str], absent: &[&str]) -> Result<(), String> {
+    for needle in present {
+        if !text.contains(needle) {
+            return Err(format!("hover must contain `{needle}`: {text}"));
+        }
+    }
+    for needle in absent {
+        if text.contains(needle) {
+            return Err(format!("hover must not contain `{needle}`: {text}"));
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn paused_hover_does_not_claim_a_refresh_wait_while_analysis_is_running() -> Result<(), String>
+{
+    let text = unanalyzed_file_hover(
+        "paused-running",
+        false,
+        false,
+        Some(AnalysisAttemptState::Running),
+    )
+    .await?;
+    require_hover_text(
+        &text,
+        &["analysis is in progress", "No action is needed"],
+        &[
+            "has not analyzed",
+            "failed",
+            "Save the file",
+            "last completed analysis",
+        ],
+    )
+}
+
+#[tokio::test]
+async fn paused_hover_names_a_failed_attempt_only_when_the_attempt_failed() -> Result<(), String> {
+    let text = unanalyzed_file_hover(
+        "paused-failed",
+        false,
+        false,
+        Some(AnalysisAttemptState::Failed),
+    )
+    .await?;
+    require_hover_text(
+        &text,
+        &["latest analysis attempt did not complete", "ripr.refresh"],
+        &["in progress", "has not analyzed", "last completed analysis"],
+    )?;
+    // Negative control: a never-attempted session must not claim a failure.
+    let idle = unanalyzed_file_hover("paused-idle", false, false, None).await?;
+    require_hover_text(
+        &idle,
+        &["has not analyzed this file's saved content", "ripr.refresh"],
+        &["did not complete", "in progress", "last completed analysis"],
+    )
+}
+
+#[tokio::test]
+async fn paused_hover_after_a_snapshot_names_the_unrecorded_file_not_a_session_wait()
+-> Result<(), String> {
+    let text = unanalyzed_file_hover("paused-unrecorded", true, true, None).await?;
+    require_hover_text(
+        &text,
+        &[
+            "last completed analysis did not record this file's saved content",
+            "ripr.refresh",
+            "saving an unchanged file changes nothing",
+        ],
+        &[
+            "has not analyzed",
+            "in progress",
+            "did not complete",
+            "not saved on disk",
+        ],
+    )
+}
+
+#[tokio::test]
+async fn paused_hover_after_a_snapshot_names_an_unsaved_new_file() -> Result<(), String> {
+    let text = unanalyzed_file_hover("paused-not-on-disk", false, true, None).await?;
+    require_hover_text(
+        &text,
+        &["not saved on disk", "Save the file"],
+        &["last completed analysis", "in progress", "did not complete"],
+    )
+}
+
+#[test]
+fn paused_hover_texts_stay_static_and_distinct_per_cause() -> Result<(), String> {
+    use crate::lsp::hover::{UnanalyzedCause, unanalyzed_paused_hover_text};
+    let causes = [
+        UnanalyzedCause::NoAnalysisYet,
+        UnanalyzedCause::AnalysisRunning,
+        UnanalyzedCause::LatestAttemptFailed,
+        UnanalyzedCause::NotOnDisk,
+        UnanalyzedCause::NotRecordedByCommittedAnalysis,
+    ];
+    let texts: Vec<String> = causes
+        .iter()
+        .map(|c| unanalyzed_paused_hover_text(*c))
+        .collect();
+    for (index, text) in texts.iter().enumerate() {
+        for other in &texts[index + 1..] {
+            if text == other {
+                return Err(format!("two causes share one hover text: {text}"));
+            }
+        }
+        for forbidden in [
+            "killed",   // ripr-allow: static-language: negative-control term list
+            "survived", // ripr-allow: static-language: negative-control term list
+            "proven",   // ripr-allow: static-language: negative-control term list
+            "mutation outcome",
+            "sufficient",
+        ] {
+            if text.contains(forbidden) {
+                return Err(format!(
+                    "runtime/sufficiency claim `{forbidden}` in: {text}"
+                ));
+            }
+        }
     }
     Ok(())
 }

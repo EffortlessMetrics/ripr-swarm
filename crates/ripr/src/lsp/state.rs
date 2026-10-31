@@ -1248,9 +1248,7 @@ impl DocumentStalenessReason {
             Self::InvalidIncrementalChange => {
                 "an incremental document change could not be applied under the negotiated position encoding"
             }
-            Self::NoAnalyzedSavedContent => {
-                "the document's saved content has not been analyzed in this session"
-            }
+            Self::NoAnalyzedSavedContent => "no analysis has recorded the document's saved content",
         }
     }
 }
