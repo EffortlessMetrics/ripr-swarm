@@ -740,6 +740,47 @@ fn scratch_dir(name: &str) -> Result<std::path::PathBuf, String> {
 }
 
 #[test]
+fn workflow_tokenizer_rejects_embedded_and_alternate_npm_invocations() {
+    let cases = [
+        (
+            "      - run: bash -c \"cd pkg && npm publish\"\n",
+            "explicit non-`latest`",
+        ),
+        (
+            "      - run: \"FOO=1 npm publish\"\n",
+            "explicit non-`latest`",
+        ),
+        (
+            "      - run: echo \"$(npm publish)\"\n",
+            "explicit non-`latest`",
+        ),
+        ("      - run: `npm publish`\n", "explicit non-`latest`"),
+        (
+            "      - run: npm exec -- npm publish\n",
+            "explicit non-`latest`",
+        ),
+        ("      - run: npm x npm publish\n", "explicit non-`latest`"),
+        ("      - run: npm.cmd publish\n", "explicit non-`latest`"),
+        (
+            "      - run: /usr/bin/npm publish\n",
+            "explicit non-`latest`",
+        ),
+        ("      - run: npx npm@10 publish\n", "explicit non-`latest`"),
+        (
+            "      - run: npm dist-tag add pkg@1 --prefix x latest\n",
+            "forbidden",
+        ),
+    ];
+    for (text, needle) in cases {
+        assert!(
+            has_violation(&workflow_violations(text), needle),
+            "expected {needle:?} for {text:?}, got {:?}",
+            workflow_violations(text)
+        );
+    }
+}
+
+#[test]
 fn workflow_directory_scan_reports_multiline_publish_and_read_failures() -> Result<(), String> {
     let dir = scratch_dir("scan")?;
     fs::write(
