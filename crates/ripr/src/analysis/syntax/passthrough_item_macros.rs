@@ -162,7 +162,7 @@ fn identity_invocations(
         else {
             continue;
         };
-        if shadowed_by_local_fn(&call, &identity_names, &text, foreign_macro) {
+        if shadowed_by_local_fn(&call, &identity_names, &text, foreign_macro, &[]) {
             continue;
         }
         accepted.push((call, name, text));
@@ -284,6 +284,69 @@ fn use_tree_names(tree: &ast::UseTree, names: &mut BTreeSet<String>) {
     }
 }
 
+/// Identity-macro names the pass-through proof admits in `root`.
+pub(super) fn passthrough_identity_names(root: &SyntaxNode) -> BTreeSet<String> {
+    let (counts, _) = local_macro_names(root);
+    passthrough_definitions(root, &counts).into_keys().collect()
+}
+
+/// Bindings declared by already-emitted source (an identity invocation's
+/// tokens, or a generator expansion). `true` refuses the proof.
+fn collect_emitted_source_bindings(
+    source: &str,
+    bound: &mut BTreeSet<String>,
+    idents: &mut Vec<String>,
+    test_names: &mut Vec<String>,
+) -> bool {
+    let Some(parse) = parse_clean_source_file(source) else {
+        return true;
+    };
+    let inner = parse.syntax_node();
+    if inner
+        .descendants()
+        .filter_map(ast::MacroCall::cast)
+        .any(|nested| is_item_position(nested.syntax()))
+    {
+        return true;
+    }
+    // An attribute outside the inert allowlist may rewrite the emitted item
+    // into a different binding than the one it appears to declare.
+    if inner
+        .descendants()
+        .filter_map(ast::Attr::cast)
+        .filter(|attr| {
+            !attr
+                .syntax()
+                .ancestors()
+                .skip(2)
+                .any(|ancestor| ast::Fn::can_cast(ancestor.kind()))
+        })
+        .any(|attr| !inert_item_attribute(&attr))
+    {
+        return true;
+    }
+    // Test-named siblings are exempt from binding collection only while
+    // no emitted token mentions their name beyond the declaration: a
+    // `#[test] fn gate` beside a call to `gate` is a rebinding.
+    for token in inner
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| token.kind() == SyntaxKind::IDENT)
+    {
+        idents.push(plain(token.text()));
+    }
+    test_names.extend(
+        inner
+            .descendants()
+            .filter_map(ast::Fn::cast)
+            .filter(is_test_fn)
+            .filter_map(|function| function.name())
+            .map(|name| plain(name.text())),
+    );
+    collect_bindings(&inner, false, bound);
+    false
+}
+
 /// Whether anything in the file could bind an identifier the wrapped tests
 /// mention to something other than the glob-imported file-root item: any
 /// non-root `fn`, `const`, `static`, type, module or import of that name
@@ -291,11 +354,17 @@ fn use_tree_names(tree: &ast::UseTree, names: &mut BTreeSet<String>) {
 /// `super::*`, or any unexpanded item-position macro call, whose expansion is
 /// unseen. The expansion is summarised alone, so this file-level refusal is
 /// the only shadow authority for pass-through tests.
-fn shadowed_by_local_fn(
+///
+/// `extra_expansions` are already-substituted generator bodies in the same
+/// file. Pass-through callers pass an empty slice so their admission is
+/// unchanged; the generator path supplies every expansion so a sibling
+/// `fn` the isolated body cannot see still refuses.
+pub(super) fn shadowed_by_local_fn(
     call: &ast::MacroCall,
     identity_names: &BTreeSet<String>,
     text: &str,
     foreign_macro: bool,
+    extra_expansions: &[&str],
 ) -> bool {
     if foreign_macro {
         return true;
@@ -321,55 +390,17 @@ fn shadowed_by_local_fn(
             return true;
         };
         let full = tree.syntax().text().to_string();
-        let Some(parse) = full
-            .get(1..full.len().saturating_sub(1))
-            .and_then(parse_clean_source_file)
-        else {
+        let Some(inner_text) = full.get(1..full.len().saturating_sub(1)) else {
             return true;
         };
-        let inner = parse.syntax_node();
-        if inner
-            .descendants()
-            .filter_map(ast::MacroCall::cast)
-            .any(|nested| is_item_position(nested.syntax()))
-        {
+        if collect_emitted_source_bindings(inner_text, &mut bound, &mut idents, &mut test_names) {
             return true;
         }
-        // An attribute outside the inert allowlist may rewrite the emitted item
-        // into a different binding than the one it appears to declare.
-        if inner
-            .descendants()
-            .filter_map(ast::Attr::cast)
-            .filter(|attr| {
-                !attr
-                    .syntax()
-                    .ancestors()
-                    .skip(2)
-                    .any(|ancestor| ast::Fn::can_cast(ancestor.kind()))
-            })
-            .any(|attr| !inert_item_attribute(&attr))
-        {
+    }
+    for extra in extra_expansions {
+        if collect_emitted_source_bindings(extra, &mut bound, &mut idents, &mut test_names) {
             return true;
         }
-        // Test-named siblings are exempt from binding collection only while
-        // no emitted token mentions their name beyond the declaration: a
-        // `#[test] fn gate` beside a call to `gate` is a rebinding.
-        for token in inner
-            .descendants_with_tokens()
-            .filter_map(|element| element.into_token())
-            .filter(|token| token.kind() == SyntaxKind::IDENT)
-        {
-            idents.push(plain(token.text()));
-        }
-        test_names.extend(
-            inner
-                .descendants()
-                .filter_map(ast::Fn::cast)
-                .filter(is_test_fn)
-                .filter_map(|function| function.name())
-                .map(|name| plain(name.text())),
-        );
-        collect_bindings(&inner, false, &mut bound);
     }
     if test_names.iter().any(|name| {
         idents.iter().filter(|ident| *ident == name).count()

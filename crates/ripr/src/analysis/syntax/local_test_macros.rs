@@ -125,6 +125,7 @@ fn expand_local_test_macros_uncached(source: &str) -> Vec<ExpandedLocalTestMacro
         &lines,
         &local_macros,
     );
+    let mut generated = Vec::new();
     for call in root.syntax().descendants().filter_map(ast::MacroCall::cast) {
         if !is_item_position(call.syntax()) {
             continue;
@@ -155,12 +156,51 @@ fn expand_local_test_macros_uncached(source: &str) -> Vec<ExpandedLocalTestMacro
             continue;
         };
         let range = call.syntax().text_range();
-        expanded.push(ExpandedLocalTestMacro {
-            macro_name: name,
-            start_line: lines.line(range.start()),
-            end_line: lines.line_for_range_end(range.end()),
-            text,
+        generated.push((
+            call,
+            ExpandedLocalTestMacro {
+                macro_name: name,
+                start_line: lines.line(range.start()),
+                end_line: lines.line_for_range_end(range.end()),
+                text,
+            },
+        ));
+    }
+    // The isolated expansion never sees a sibling or module-level `fn` that
+    // shadows a glob-imported callee (#9967). Reuse the pass-through
+    // shadow helper, treating generator names as known so the generator
+    // calls themselves are not "foreign", and scanning every generator
+    // expansion for a sibling non-test `fn`.
+    let extra: Vec<String> = generated
+        .iter()
+        .map(|(_, expansion)| expansion.text.clone())
+        .collect();
+    let extra_refs: Vec<&str> = extra.iter().map(String::as_str).collect();
+    let identity_names = super::passthrough_item_macros::passthrough_identity_names(root.syntax());
+    let mut known = identity_names.clone();
+    known.extend(definitions.keys().cloned());
+    let foreign_macro = root
+        .syntax()
+        .descendants()
+        .filter_map(ast::MacroCall::cast)
+        .filter(|other| is_item_position(other.syntax()))
+        .any(|other| {
+            other
+                .path()
+                .map(|path| path.syntax().text().to_string())
+                .is_none_or(|path| !known.contains(&path))
         });
+    for (call, expansion) in generated {
+        if super::passthrough_item_macros::shadowed_by_local_fn(
+            &call,
+            &identity_names,
+            &expansion.text,
+            foreign_macro,
+            &extra_refs,
+        ) {
+            continue;
+        }
+        expanded.push(expansion);
     }
     expanded.sort_by_key(|expansion| (expansion.start_line, expansion.end_line));
     expanded
@@ -1216,6 +1256,28 @@ mod tests {
         );
         assert_eq!(expanded[1].start_line, 11);
         assert!(expanded[1].text.contains("is_adult((18 + 0))"));
+    }
+
+    #[test]
+    fn a_local_fn_named_like_the_callee_refuses_the_generator() {
+        let generator = "macro_rules! gc {\n    ($n:ident) => {\n        #[test]\n        fn $n() { assert_eq!(gate(10), true); }\n    };\n}\n";
+        let shadow = "fn gate(_x: u32) -> bool { true }\n";
+        let identity = "macro_rules! suite {\n    ($($t:tt)*) => { $($t)* };\n}\n";
+        // Sibling items in the same expansion.
+        let sibling = "macro_rules! gc {\n    ($n:ident) => {\n        fn gate(_x: u32) -> bool { true }\n        #[test]\n        fn $n() { assert_eq!(gate(10), true); }\n    };\n}\ngc!(boundary);\n";
+        assert!(expand_local_test_macros(sibling).is_empty(), "{sibling}");
+        // Module-level fn beside the invocation (not the file-root owner).
+        let module_level = format!("{generator}mod tests {{\n    {shadow}    gc!(boundary);\n}}\n");
+        assert!(
+            expand_local_test_macros(&module_level).is_empty(),
+            "{module_level}"
+        );
+        // Second identity invocation emits the binding.
+        let second = format!("{generator}{identity}gc!(boundary);\nsuite! {{\n{shadow}}}\n");
+        assert!(expand_local_test_macros(&second).is_empty(), "{second}");
+        // Healthy control: no local fn, the generated test is indexed.
+        let healthy = format!("{generator}gc!(boundary);\n");
+        assert_eq!(expand_local_test_macros(&healthy).len(), 1, "{healthy}");
     }
 
     #[test]
