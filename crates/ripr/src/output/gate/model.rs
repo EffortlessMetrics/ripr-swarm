@@ -12,6 +12,13 @@ pub(crate) enum GateMode {
 }
 
 impl GateMode {
+    pub(crate) const ACCEPTED: &'static [&'static str] = &[
+        "visible-only",
+        "acknowledgeable",
+        "baseline-check",
+        "calibrated-gate",
+    ];
+
     pub(crate) fn parse(value: &str) -> Result<Self, String> {
         match value {
             "visible-only" => Ok(Self::VisibleOnly),

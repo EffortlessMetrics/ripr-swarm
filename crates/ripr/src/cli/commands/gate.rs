@@ -195,7 +195,10 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
             "--mode" => {
                 i += 1;
                 mode_explicit = true;
-                mode = output::gate::GateMode::parse(expect_value(args, i, "--mode")?)?;
+                let value = expect_value(args, i, "--mode")?;
+                mode = output::gate::GateMode::parse(value).map_err(|_| {
+                    unknown_value("gate mode", value, output::gate::GateMode::ACCEPTED)
+                })?;
             }
             "--acknowledgement-label" => {
                 i += 1;
@@ -490,7 +493,7 @@ mod tests {
         );
         assert_eq!(
             parse_gate_options(&args(&["--mode", "strict"])),
-            Err("unknown gate mode `strict`; expected `visible-only`, `acknowledgeable`, `baseline-check`, or `calibrated-gate`".to_string())
+            Err("unknown gate mode \"strict\". Accepted: visible-only, acknowledgeable, baseline-check, calibrated-gate.".to_string())
         );
         assert_eq!(
             parse_gate_options(&args(&["--out", ""])),

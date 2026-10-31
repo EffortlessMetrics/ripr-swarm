@@ -96,10 +96,73 @@ fn doctor_profile_help_agrees_with_accepted_values() {
     }
     assert_usage_error(
         run_ripr(&["doctor", "--profile", "foo"]),
-        "unknown doctor profile `foo`; expected `analysis` or `source-build`",
+        "unknown doctor profile \"foo\". Accepted: analysis, source-build.",
     );
     assert_usage_error(
         run_ripr(&["doctor", "--profile"]),
         "missing value for --profile",
     );
+}
+
+#[test]
+fn doctor_and_gate_value_errors_suggest_without_writes() {
+    let root = super::unique_temp_workspace("value-errors");
+    std::fs::create_dir_all(&root).unwrap();
+    for (args, diagnostic) in [
+        (
+            vec!["doctor", "--profile", "analysi"],
+            "unknown doctor profile \"analysi\". Did you mean `analysis`? Accepted: analysis, source-build.",
+        ),
+        (
+            vec!["doctor", "--profile", "Analysis"],
+            "unknown doctor profile \"Analysis\". Did you mean `analysis`? Accepted: analysis, source-build.",
+        ),
+        (
+            vec!["doctor", "--profile", "xyz"],
+            "unknown doctor profile \"xyz\". Accepted: analysis, source-build.",
+        ),
+        (
+            vec!["doctor", "--profile", ""],
+            "unknown doctor profile \"\". Accepted: analysis, source-build.",
+        ),
+        (
+            vec!["gate", "evaluate", "--mode", "visible-onli"],
+            "unknown gate mode \"visible-onli\". Did you mean `visible-only`? Accepted: visible-only, acknowledgeable, baseline-check, calibrated-gate.",
+        ),
+        (
+            vec!["gate", "evaluate", "--mode", "Visible-only"],
+            "unknown gate mode \"Visible-only\". Did you mean `visible-only`? Accepted: visible-only, acknowledgeable, baseline-check, calibrated-gate.",
+        ),
+        (
+            vec!["gate", "evaluate", "--mode", "xyz"],
+            "unknown gate mode \"xyz\". Accepted: visible-only, acknowledgeable, baseline-check, calibrated-gate.",
+        ),
+        (
+            vec!["gate", "evaluate", "--mode", ""],
+            "unknown gate mode \"\". Accepted: visible-only, acknowledgeable, baseline-check, calibrated-gate.",
+        ),
+    ] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_ripr"))
+            .current_dir(&root)
+            .args(args)
+            .output()
+            .unwrap();
+        assert_usage_error(output, diagnostic);
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+    }
+    for value in [
+        "visible-only",
+        "acknowledgeable",
+        "baseline-check",
+        "calibrated-gate",
+    ] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_ripr"))
+            .current_dir(&root)
+            .args(["gate", "evaluate", "--mode", value, "--out"])
+            .output()
+            .unwrap();
+        assert_usage_error(output, "missing value for --out");
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+    }
+    std::fs::remove_dir(root).unwrap();
 }
