@@ -515,7 +515,23 @@ pub(crate) fn receipt_binding_from(
     }
     let (verdict, binding_holds) = recompute_after_verdict_binding(&root, &manifest, after)?;
     if !binding_holds {
-        return Err("repair attempt after verdict binding is tampered or stale".to_string());
+        // The cause is a file that moved after the after phase bound its
+        // verdict. The commonest one is this command's own output redirected
+        // into a file inside the repository (`> target/ripr/continue.txt`):
+        // name that and both routes out instead of the bare refusal.
+        let store_flag = quoted_store_flag_from_identity(manifest.store.as_ref());
+        let restart = crate::app::gap_bound_repair::repair_start_command(
+            &root_display,
+            &store_flag,
+            &manifest.seam_id,
+            manifest
+                .gap_binding
+                .as_ref()
+                .map(|binding| binding.base.as_str()),
+        );
+        return Err(format!(
+            "repair attempt after verdict binding is tampered or stale: a file inside the repository changed after the after phase bound its verdict, so no receipt is issued. The usual cause is this or an earlier ripr command's output redirected into a file inside the repository (for example `> target/ripr/continue.txt`). Next: remove that file or write command output outside the repository, then rerun this command; if the binding still fails, start a new attempt with `{restart}`"
+        ));
     }
     validate_trusted_head_surface(
         &root,

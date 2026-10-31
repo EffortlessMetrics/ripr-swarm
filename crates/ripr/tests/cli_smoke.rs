@@ -9568,6 +9568,14 @@ fn agent_repair_admits_a_cargo_lock_first_generated_between_the_phases()
         "{}",
         String::from_utf8_lossy(&moved.stderr)
     );
+    // The refusal names the redirect cause and both routes out.
+    let moved_stderr = String::from_utf8_lossy(&moved.stderr);
+    assert!(
+        moved_stderr.contains("redirected into a file inside the repository")
+            && moved_stderr.contains("write command output outside the repository")
+            && moved_stderr.contains("--phase before"),
+        "{moved_stderr}"
+    );
     std::fs::remove_file(root.join("notes.txt"))?;
     assert_success(&rerun_repair_receipt(&root, true)?);
 
