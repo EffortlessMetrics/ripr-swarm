@@ -19,6 +19,7 @@ mod dependent_scope;
 pub(crate) mod oracles;
 mod probe_shape;
 pub(crate) mod probes;
+mod proof_harness;
 
 pub(crate) use probe_shape::producer_gap_names_seam_shape;
 pub(crate) use probes::{
@@ -1446,7 +1447,8 @@ fn needs_no_static_path_limit(finding: &Finding) -> bool {
         && finding.static_limit_kind.is_none()
 }
 
-/// Whether a `weakly_exposed` or `reachable_unrevealed` finding's only reach is proximity: every
+/// Whether a `weakly_exposed`, `reachable_unrevealed` or `infection_unknown`
+/// (#11481) finding's only reach is proximity: every
 /// related test shares the owner's file, module or a name token. With reach
 /// `weak`, the reach stage has already found no test calling the owner, so
 /// the weak reach rests on ripr not tracing a path, the same unresolved
@@ -1455,7 +1457,9 @@ fn needs_no_static_path_limit(finding: &Finding) -> bool {
 fn needs_proximity_reach_limit(finding: &Finding) -> bool {
     matches!(
         finding.class,
-        ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+        ExposureClass::WeaklyExposed
+            | ExposureClass::ReachableUnrevealed
+            | ExposureClass::InfectionUnknown
     )
         && finding.static_limit_kind.is_none()
         && finding.ripr.reach.state == crate::domain::StageState::Weak
@@ -1463,8 +1467,15 @@ fn needs_proximity_reach_limit(finding: &Finding) -> bool {
         // The list is capped; reach `weak` was computed from the full
         // relation set, so no dropped row calls the owner.
         && finding.related_tests.iter().all(|test| {
-            test.relation_reason
-                .is_some_and(classify::is_proximity_only)
+            test.relation_reason.is_some_and(|reason| {
+                classify::is_proximity_only(reason)
+                    // #11481: a test related to an `infection_unknown`
+                    // finding only by naming the owner never has to call it
+                    // (RelationReason::establishes_reach is false), so it is
+                    // as unresolved as a shared file or token.
+                    || (finding.class == ExposureClass::InfectionUnknown
+                        && reason == crate::domain::RelationReason::OwnerNamedTest)
+            })
         })
 }
 
@@ -1553,6 +1564,12 @@ fn apply_rust_no_static_path_limit(
         // displaced by this broader structural one.
         replace_witnessed_no_path_infection_summary(finding);
         apply_rust_facade_reach_limit(finding, &owner_name, &witness);
+    } else if let Some(harness) = proof_harness::harness_calling_owner(index, &owner_name) {
+        // RIPR-SPEC-0367: last, so any traced test path wins. A proof
+        // harness is not a test; the finding stays `no_static_path` and says
+        // a harness exists that ripr does not evaluate.
+        replace_witnessed_no_path_infection_summary(finding);
+        proof_harness::apply_limit(finding, &owner_name, &harness);
     }
 }
 
@@ -2548,6 +2565,12 @@ impl RustAdapter {
             if absent_changed_set.contains(&workspace::normalize_path(&changed.path)) {
                 continue;
             }
+            // RIPR-SPEC-0367: lines changed inside a proof harness seed no
+            // production probe; the run names them instead of reading clean.
+            limitations.extend(proof_harness::edit_limitations(
+                std::iter::once(changed),
+                &index,
+            )?);
             // Cooperative cancellation (#1972): check once per changed file
             // and once per probe so a superseded or deadline-expired refresh
             // exits the classify loop promptly.
