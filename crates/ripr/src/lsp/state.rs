@@ -1250,9 +1250,7 @@ impl DocumentStalenessReason {
             Self::InvalidIncrementalChange => {
                 "an incremental document change could not be applied under the negotiated position encoding"
             }
-            Self::NoAnalyzedSavedContent => {
-                "the document's saved content has no analyzed baseline"
-            }
+            Self::NoAnalyzedSavedContent => "the document's saved content has no analyzed baseline",
         }
     }
 }
