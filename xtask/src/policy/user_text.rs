@@ -357,6 +357,17 @@ pub(crate) fn ratcheted(counts: &Counts, baseline: &Baseline) -> Baseline {
         .collect()
 }
 
+/// The baseline `--ratchet` would write, or `None` when any count is above its
+/// ceiling: a failing run must not half-update the file, and the command's
+/// result must describe the same tree the file is written for.
+pub(crate) fn ratchet_outcome(counts: &Counts, baseline: &Baseline) -> Option<Baseline> {
+    if evaluate(counts, baseline).violations.is_empty() {
+        Some(ratcheted(counts, baseline))
+    } else {
+        None
+    }
+}
+
 // ------------------------------------------------------------- live surface
 
 struct LiveRun {
@@ -832,10 +843,13 @@ pub(crate) fn check_user_text_with_args(args: &[String]) -> Result<(), String> {
     write_report(&root, &report);
     print!("{report}");
     if ratchet {
-        let lowered = ratcheted(&counts, &baseline);
-        fs::write(root.join(BASELINE_PATH), render_baseline(&lowered))
-            .map_err(|err| format!("write {BASELINE_PATH}: {err}"))?;
-        println!("\nceilings lowered where counts dropped; none raised.");
+        if let Some(lowered) = ratchet_outcome(&counts, &baseline) {
+            fs::write(root.join(BASELINE_PATH), render_baseline(&lowered))
+                .map_err(|err| format!("write {BASELINE_PATH}: {err}"))?;
+            println!("\nceilings lowered where counts dropped; none raised.");
+        } else {
+            println!("\n--ratchet did not rewrite {BASELINE_PATH}: a count is above its ceiling.");
+        }
     }
     if !evaluation.lowerable.is_empty() {
         eprintln!(
@@ -995,6 +1009,37 @@ mod tests {
             Some(&1)
         );
         assert_eq!(lowered.len(), 2, "ratchet must not add `edit cage`");
+    }
+
+    /// A live ceiling for a term the surface no longer prints (absent from the
+    /// counts) is lowered to zero, which removes the row. Reintroducing the term
+    /// later is then a violation against the implicit ceiling of 0.
+    #[test]
+    fn ratchet_removes_a_row_whose_term_is_gone_and_regrowth_then_fails() {
+        let mut baseline = Baseline::new();
+        baseline.insert(("help-repair".into(), "seam".into()), 10);
+        baseline.insert(("help-repair".into(), "probe".into()), 2);
+        let counts = scan("help-repair", "a probe\nb probe\n");
+        let lowered = ratchet_outcome(&counts, &baseline).unwrap_or_default();
+        assert_eq!(lowered.len(), 1, "{lowered:?}");
+        assert_eq!(
+            lowered.get(&("help-repair".into(), "probe".into())),
+            Some(&2)
+        );
+        let regrown = scan("help-repair", "a seam\n");
+        assert_eq!(evaluate(&regrown, &lowered).violations.len(), 1);
+    }
+
+    /// `--ratchet` must not rewrite the baseline while a count is above its
+    /// ceiling; the run fails and the file stays as reviewed.
+    #[test]
+    fn ratchet_refuses_to_rewrite_while_a_count_is_above_its_ceiling() {
+        let mut baseline = Baseline::new();
+        baseline.insert((GOLDEN_SURFACE.into(), "seam".into()), 1);
+        baseline.insert((GOLDEN_SURFACE.into(), "probe".into()), 5);
+        let mut counts = scan(GOLDEN_SURFACE, "a seam\nb seam\n");
+        counts.extend(scan(GOLDEN_SURFACE, "c probe\n"));
+        assert_eq!(ratchet_outcome(&counts, &baseline), None);
     }
 
     #[test]
