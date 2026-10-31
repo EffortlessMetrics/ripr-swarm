@@ -139,6 +139,7 @@ mod freshness;
 mod options;
 mod preflight;
 mod rendering;
+mod run_chain;
 mod validation;
 
 use freshness::{producing_ripr_version, start_here_packet_version_freshness};
@@ -200,7 +201,37 @@ pub(crate) fn first_pr(args: &[String]) -> Result<(), String> {
     if options.check {
         check_first_pr(&repo, &options)
     } else {
+        if options.run_chain {
+            run_missing_artifact_chain(&repo, &options)?;
+        }
         write_first_pr(&repo, &options)
+    }
+}
+
+/// `--run-chain` (#11720): execute the missing-artifact chain before the
+/// ordinary composition. A root or Git preflight that already blocks gets no
+/// analysis run for it; the recovery packet below records that state.
+fn run_missing_artifact_chain(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
+    let root = resolve_path(repo, &options.root);
+    if let Some(selection) =
+        root_preflight_recovery(&root, options).or_else(|| git_preflight_recovery(&root, options))
+    {
+        println!(
+            "run-chain: not run; the root or Git preflight is blocked ({}). The start-here packet records the recovery.",
+            selection.to_json()["state"].as_str().unwrap_or("blocked")
+        );
+        return Ok(());
+    }
+    match run_chain::plan_chain(&root, options)? {
+        run_chain::ChainPlan::NotApplicable(reason) => {
+            println!("run-chain: not run; {reason}.");
+            Ok(())
+        }
+        run_chain::ChainPlan::Steps(steps) if steps.is_empty() => {
+            println!("run-chain: nothing to run; the chain artifacts already exist.");
+            Ok(())
+        }
+        run_chain::ChainPlan::Steps(steps) => run_chain::run_steps(&steps),
     }
 }
 
@@ -236,6 +267,10 @@ fn omitted_base_resolution(
 /// `parse_options` and before any filesystem write.
 fn print_side_effect_disclosure(options: &FirstPrOptions) {
     println!("ripr first-pr - side effects and cost disclosure");
+    if options.run_chain {
+        print_run_chain_disclosure(options);
+        return;
+    }
     // first-pr composes existing artifacts; it runs no analysis, so it has
     // no analysis cache or diff-sized runtime to disclose.
     println!("  cost class:      artifact composition only; runs no analysis");
@@ -251,6 +286,27 @@ fn print_side_effect_disclosure(options: &FirstPrOptions) {
     println!("  git reads:       yes (base and head preflight)");
     println!("  network:         none");
     println!("  runtime hint:    seconds\n");
+}
+
+/// The `--run-chain` disclosure (#11720). Unlike the default, this
+/// invocation runs analysis, so it says so and names what it writes.
+fn print_run_chain_disclosure(options: &FirstPrOptions) {
+    println!(
+        "  cost class:      runs analysis for each missing artifact (repo-exposure scan, gap ledger, review cards); scales with repository size"
+    );
+    println!(
+        "  writes to:       each missing artifact ({}, {}, {}) and {}/",
+        DEFAULT_REPO_EXPOSURE,
+        options.gap_ledger,
+        options.review_comments,
+        options.out_dir.trim_end_matches('/')
+    );
+    println!("  cache location:  analysis caches as `ripr check`, under target/ripr/");
+    println!("  git reads:       yes (base and head preflight, diff for the review cards)");
+    println!("  network:         none");
+    println!(
+        "  runtime hint:    minutes on a large repository; steps whose artifact already exists are skipped\n"
+    );
 }
 
 fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
@@ -2696,6 +2752,20 @@ fn why_for_gap(kind: &str, language: Option<&str>) -> String {
 /// unbalanced quotes, a trailing escape, another program, or an unquoted
 /// shell operator (a redirect or a chained command writes elsewhere).
 fn ripr_command_words(command: &str) -> Option<Vec<(String, bool)>> {
+    let words = tokenize_command_words(command)?;
+    if words.first().map(|(word, _)| word.as_str()) != Some("ripr") {
+        return None;
+    }
+    let operator = words.iter().any(|(word, quoted)| {
+        !quoted && matches!(word.as_str(), ">" | ">>" | "|" | "&&" | "||" | ";")
+    });
+    (!operator).then_some(words)
+}
+
+/// Split a printed command into words, each with whether any part of it was
+/// quoted. `None` for unbalanced quotes or a trailing escape. Shell operators
+/// stay ordinary unquoted words: the caller decides what they mean.
+fn tokenize_command_words(command: &str) -> Option<Vec<(String, bool)>> {
     let mut words: Vec<(String, bool)> = Vec::new();
     let mut current = String::new();
     let mut quoted_word = false;
@@ -2735,13 +2805,7 @@ fn ripr_command_words(command: &str) -> Option<Vec<(String, bool)>> {
     if in_word {
         words.push((current, quoted_word));
     }
-    if words.first().map(|(word, _)| word.as_str()) != Some("ripr") {
-        return None;
-    }
-    let operator = words.iter().any(|(word, quoted)| {
-        !quoted && matches!(word.as_str(), ">" | ">>" | "|" | "&&" | "||" | ";")
-    });
-    (!operator).then_some(words)
+    Some(words)
 }
 
 /// Value of the last unquoted `flag` in a ripr command's words.
