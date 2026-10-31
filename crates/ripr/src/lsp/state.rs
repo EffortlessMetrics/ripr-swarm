@@ -10,6 +10,8 @@ use crate::config::LspDiagnosticProfile;
 use crate::domain::{Finding, LanguageId};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 use tower_lsp_server::ls_types::{
     Diagnostic, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
@@ -481,6 +483,105 @@ pub(super) enum ConfigPullState {
     /// failed validation (`config_pull_invalid`); the retained pulled layer
     /// is last-known-good and stale.
     Failed(AnalysisFailure),
+}
+
+/// Single owner of the config-pull session state (#2942): the epoch guarding
+/// pull responses, the disclosed pull lifecycle state, the in-flight/queued
+/// coalescing flags and the root the retained pulled layer was scoped to.
+/// Each field keeps its own lock exactly as `Backend` held them.
+pub(super) struct ConfigPullCoordinator {
+    epoch: AtomicU64,
+    state: Mutex<ConfigPullState>,
+    coalescer: Mutex<ConfigPullCoalescer>,
+    scope_root: Mutex<Option<PathBuf>>,
+}
+
+/// Coalesces pull scheduling to one in-flight request plus at most one
+/// queued re-pull for the latest epoch.
+#[derive(Default)]
+struct ConfigPullCoalescer {
+    in_flight: bool,
+    queued: bool,
+}
+
+impl Default for ConfigPullCoordinator {
+    fn default() -> Self {
+        Self {
+            epoch: AtomicU64::new(0),
+            state: Mutex::new(ConfigPullState::NotApplicable),
+            coalescer: Mutex::new(ConfigPullCoalescer::default()),
+            scope_root: Mutex::new(None),
+        }
+    }
+}
+
+impl ConfigPullCoordinator {
+    pub(super) fn epoch(&self) -> u64 {
+        self.epoch.load(Ordering::SeqCst)
+    }
+
+    pub(super) fn bump_epoch(&self) {
+        self.epoch.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub(super) fn state(&self) -> ConfigPullState {
+        self.state
+            .lock()
+            .map(|state| state.clone())
+            .unwrap_or(ConfigPullState::NotApplicable)
+    }
+
+    pub(super) fn set_state(&self, state: ConfigPullState) {
+        if let Ok(mut current) = self.state.lock() {
+            *current = state;
+        }
+    }
+
+    /// Claim the single in-flight slot. `false` means a pull is already in
+    /// flight (a re-pull is queued) or the lock is poisoned.
+    pub(super) fn begin_or_queue(&self) -> bool {
+        let Ok(mut coalescer) = self.coalescer.lock() else {
+            return false;
+        };
+        if coalescer.in_flight {
+            coalescer.queued = true;
+            return false;
+        }
+        coalescer.in_flight = true;
+        true
+    }
+
+    /// Finish one pull cycle. `true` means a queued re-pull must run now;
+    /// `false` releases the in-flight slot (also on a poisoned lock).
+    pub(super) fn finish_cycle(&self) -> bool {
+        let Ok(mut coalescer) = self.coalescer.lock() else {
+            return false;
+        };
+        if coalescer.queued {
+            coalescer.queued = false;
+            true
+        } else {
+            coalescer.in_flight = false;
+            false
+        }
+    }
+
+    pub(super) fn in_flight(&self) -> bool {
+        self.coalescer
+            .lock()
+            .map(|coalescer| coalescer.in_flight)
+            .unwrap_or(false)
+    }
+
+    pub(super) fn scope_root(&self) -> Option<PathBuf> {
+        self.scope_root.lock().ok().and_then(|root| root.clone())
+    }
+
+    pub(super) fn set_scope_root(&self, root: PathBuf) {
+        if let Ok(mut scope_root) = self.scope_root.lock() {
+            *scope_root = Some(root);
+        }
+    }
 }
 
 impl ConfigPullState {
@@ -2009,6 +2110,29 @@ mod tests {
             buffer_authority_unknown: false,
             quarantine: None,
         }
+    }
+
+    #[test]
+    fn config_pull_coordinator_coalesces_and_guards_epoch() {
+        let pull = ConfigPullCoordinator::default();
+        assert_eq!(pull.state(), ConfigPullState::NotApplicable);
+        assert!(pull.begin_or_queue(), "first schedule claims the slot");
+        assert!(pull.in_flight());
+        assert!(!pull.begin_or_queue(), "second schedule only queues");
+        assert!(pull.finish_cycle(), "queued re-pull runs once");
+        assert!(!pull.finish_cycle(), "then the slot is released");
+        assert!(!pull.in_flight());
+        assert!(pull.begin_or_queue(), "slot is reusable after release");
+
+        let epoch = pull.epoch();
+        pull.bump_epoch();
+        assert_ne!(pull.epoch(), epoch, "a bump invalidates in-flight epochs");
+
+        assert_eq!(pull.scope_root(), None);
+        pull.set_scope_root(PathBuf::from("/workspace"));
+        assert_eq!(pull.scope_root(), Some(PathBuf::from("/workspace")));
+        pull.set_state(ConfigPullState::Applied);
+        assert_eq!(pull.state(), ConfigPullState::Applied);
     }
 
     #[test]
