@@ -41,7 +41,10 @@ use std::path::PathBuf;
 use std::sync::{Mutex, PoisonError};
 
 use super::nesting::parse_clean_source_file;
-use super::ra::{include_literal_path, parse_rust_string_literal, path_target_from_attributes};
+use super::ra::{
+    include_literal_path_from_macro_call, include_macro_callee_is_include,
+    parse_rust_string_literal, path_target_from_attributes,
+};
 use crate::analysis::facts::ModulePathTarget;
 use crate::analysis::facts::cfg_predicates::rust_ident_name;
 
@@ -294,7 +297,7 @@ fn scan_module_tree(text: &str) -> RustModuleTreeScan {
             .or_else(|| callee.strip_prefix("core::"))
             .or_else(|| callee.strip_prefix("alloc::"))
             .unwrap_or(callee);
-        if callee != "include" {
+        if !include_macro_callee_is_include(&path) {
             // A macro from any crate can expand to `mod x;` without
             // spelling `mod` here, so its expansion is unknown. Std macros
             // that cannot declare modules are the only exception.
@@ -326,12 +329,7 @@ fn scan_module_tree(text: &str) -> RustModuleTreeScan {
             }
             continue;
         }
-        // The node spans the call's attributes too; the expression starts at
-        // the macro path.
-        let start: usize = path.syntax().text_range().start().into();
-        let end: usize = macro_call.syntax().text_range().end().into();
-        let expression = text.get(start..end).unwrap_or_default();
-        match include_literal_path(expression) {
+        match include_literal_path_from_macro_call(&macro_call) {
             Some(target) => scan.edges.push(RustModuleTreeEdge::Include(target)),
             // Includes build output (`OUT_DIR`) or a computed path. Generated
             // code can declare `#[path]` modules, so either is unknown.
@@ -766,7 +764,9 @@ mod tests {
              thread_local! { static COUNT: u8 = 0; }\n\
              mod r#type;\n\
              mod r#async { mod r#match; }\n\
-             std::include!(\"frag.rs\");\n",
+             std::include!(\"frag.rs\");\n\
+             r#include!(\"raw_frag.rs\");\n\
+             include!(/* note */ \"trivia_frag.rs\");\n",
         );
         assert!(scan.complete, "{scan:?}");
         assert_eq!(
@@ -775,6 +775,8 @@ mod tests {
                 default(&[], "type"),
                 default(&["async"], "match"),
                 RustModuleTreeEdge::Include(PathBuf::from("frag.rs")),
+                RustModuleTreeEdge::Include(PathBuf::from("raw_frag.rs")),
+                RustModuleTreeEdge::Include(PathBuf::from("trivia_frag.rs")),
             ]
         );
     }
