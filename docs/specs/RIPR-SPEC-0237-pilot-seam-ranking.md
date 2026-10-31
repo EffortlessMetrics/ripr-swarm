@@ -24,6 +24,8 @@ Linked issues:
 - #5411 (pilot ranked unresolved reach as the top gap; closed)
 - #5497 (rank canonical actionability, withhold unresolved-reach
   limitations; open)
+- #11292 (pilot headlines a gap the repair loop cannot start from on
+  `src/tests.rs`-layout crates)
 
 Linked PRs:
 
@@ -36,8 +38,9 @@ Linked PRs:
 Support-tier impact:
 
 - No tier change. No seam changes class and no seam gains credit. Only
-  the order of `top_actionable_seams[]` changes (the #6294 owner spread),
-  and the Markdown "Also in this function" line counts the same ranked
+  the order of `top_actionable_seams[]` changes (the #6294 owner spread and
+  the #11292 route bucket; `next.repair_command` can therefore name a
+  different seam), and the Markdown "Also in this function" line counts the same ranked
   population as the list beside it, as #6294 does. Claim boundaries remain
   governed by [support tiers](../status/SUPPORT_TIERS.md).
 
@@ -46,7 +49,8 @@ Policy impact:
 - Register this spec in `policy/doc-artifacts.toml` and
   `.ripr/traceability.toml`.
 - No schema version bump. `pilot-summary.json` fields are unchanged; only
-  the array order changes. The Markdown line is prose.
+  the array order changes (and with it which seam `next.repair_command`
+  names). The Markdown line is prose.
 - Class membership of the ranked set is RIPR-SPEC-0236's. This spec owns
   only the order among admitted seams and the "Also in this function"
   count.
@@ -116,13 +120,19 @@ ranked.
 5. Rank 4: `opaque`, after every other ranked class (RIPR-SPEC-0236
    keeps it ranked).
 
-Class order always leads. No evidence key, location or owner round moves
-a seam above a seam of a lower rank.
+Within a (current change, repair route) bucket, class order always leads:
+no evidence key, location or owner round moves a seam above a seam of a
+lower rank in the same bucket. The two buckets that precede it are the
+change-first bucket (#5480) and the repair-route bucket (#11292, below), so
+a routable `ungripped` seam deliberately outranks an unroutable
+`weakly_gripped` one.
 
 ### Rank key
 
-Seams are first sorted ascending by this key. Every field after the class
-is a tie-break for the field before it.
+Seams are first sorted ascending by (in current change, has no repair route,
+then this key). Every field after the class is a tie-break for the field
+before it. The two bucket fields precede the class; see Repair-route
+preference.
 
 1. Class rank.
 2. Has a missing discriminator: any `missing_discriminators` entry sorts
@@ -150,10 +160,10 @@ matching.
 
 After the rank-key sort, each seam gets an owner round:
 
-1. Walk the seams in rank-key order.
+1. Walk the seams in (change, route, rank-key) order.
 2. A seam's round is the number of seams of the same owner that came
    before it in that walk, in any class.
-3. The final order is a stable sort by (class rank, round).
+3. The final order is a stable sort by ((change, route), class rank, round).
 
 So within each class, round 0 of every owner comes before round 1 of any
 owner, and seams that share a class and round keep rank-key order.
@@ -194,9 +204,12 @@ One seam per owner per round (cap 1).
    "tests only loosely check this") where the Markdown and JSON keep
    the seam and grip-class vocabulary (#10694).
 5. The first seam of the final order is always the first seam of the
-   rank-key order: it has the lowest class rank and round 0. The owner
-   spread therefore never changes the Top Recommendation, the terminal
-   pick or `next.repair_command`, which all read the first seam.
+   (change, route, rank-key) order: it has the lowest bucket and class rank
+   and round 0. The owner spread therefore never changes the Top
+   Recommendation, the terminal pick or `next.repair_command`, which all read
+   the first seam. The route bucket can change which seam that is
+   (`top_actionable_seams[]` order and `next.repair_command` change; the
+   fields do not).
 
 ### "Also in this function" line
 
@@ -224,15 +237,39 @@ gains no line.
 
 Given distinct seam ids, the final order depends only on the set of
 ranked seams, not on their input order: the rank key is total, the round
-walk follows the rank key, and the second sort is stable. Paths are
+walk follows the (change, route, rank-key) order, and the second sort is stable. Paths are
 compared after `/` normalization, so the order is the same on Windows and
 Unix.
+
+### Repair-route preference
+
+Within a current-change bucket, a seam that has a repair route leads a seam
+that does not, ahead of the class order (#11292). The route is the
+repair-packet flip plus an edit target the cage can route. The preference
+only reorders; it cannot make a seam repairable. The sort key becomes
+((in change, no route), class rank, round), with the rank key breaking ties
+inside it. Owner rounds walk in that route-then-rank-key order, and a
+routable lower-class seam can outrank an unroutable weaker-grip seam on
+purpose. The route is decided by pilot's one local predicate
+(`output/pilot/commands.rs::has_repair_route`), which the offered repair
+start also uses. It mirrors the two conjuncts of `repair_start_command_for`
+(the repair-packet flip and `recommended_test_is_repair_edit_target`), and
+a unit test pins `has_repair_route(e) == repair_start_command_for(e, ".").is_some()`.
+
+The reason is a user-facing one: on crates whose tests live in `mod tests;`
+files (`src/tests.rs`) or doctests, the top-ranked gap had no route while a
+routable gap ranked lower, so the headline promised a loop that could not
+start. When no actionable seam has a route and the top seam has no repair start,
+the terminal's Top recommendation block adds one line, `  repair route: none
+of the gaps pilot found has a route to a repair attempt, ...`, that names
+the by-hand remedy. The Markdown ranked list already says "None of these
+seams can start a repair attempt". JSON gains no field.
 
 ### Composition with other rankings
 
 A later ranking bucket that must lead the class (for example #5480's
-change-first bucket) goes in front of the spread key:
-(bucket, class rank, round). Rounds still count per owner across the whole
+change-first bucket and #11292's repair-route bucket) goes in front of the
+spread key: ((change bucket, route bucket), class rank, round). Rounds still count per owner across the whole
 walk. Putting the bucket after the round would lose the bucket order.
 
 ### What the mutant measurements establish
@@ -334,7 +371,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 - A permutation test: shuffling the input of example 13 does not change
   the output.
 - No change to any seam's class, `actionable_seams_total`, the JSON field
-  set or `next.repair_command` from this spec.
+  set from this spec; `next.repair_command` can name a different seam when
+  the route bucket reorders the list (#11292).
 - A class set to `off` under `[severity.seams]` is still ranked. Order
   reads neither severity config nor headline eligibility.
 
@@ -378,7 +416,11 @@ unless stated. Output lists `file:line` in final order. "today" is main
    `src/b.rs:5` (unchanged).
 7. Evidence precedence. `W src/a.rs f 1 [a]`, `W src/b.rs g 1 [r]`,
    `W src/c.rs h 1 [m]`, `W src/d.rs k 1 [r,a]`; N = 4: `c`, `d`, `b`, `a`
-   (unchanged).
+   by class and evidence alone. Since #11292 a seam with a repair route
+   leads the seams without one, so the buildable test variant uses six
+   seams (`a [a]`, `b [m,r]`, `c [m]`, `d [r,a]`, `e [r]`, `f`) and pins
+   `d`, `a`, `b`, `c`, `e`, `f`: `d` (related test plus a route) and `a`
+   (producer-owned target) lead the unroutable rest.
 8. Path and line order. `W src/z.rs f 1`, `W src/ab.rs g 1`,
    `W src/a/b.rs h 1`, `W src/a.rs p 10`, `W src/a.rs q 9`; N = 5:
    `src/a.rs:9`, `src/a.rs:10`, `src/a/b.rs:1`, `src/ab.rs:1`,
@@ -411,9 +453,10 @@ unless stated. Output lists `file:line` in final order. "today" is main
     `W src/lib.rs A::fmt 2`, `W src/lib.rs B::fmt 10`; N = 3:
     `src/lib.rs:1`, `src/lib.rs:10`, `src/lib.rs:2` (today `1`, `2`,
     `10`).
-17. Top pick never moves. Any input above with N = 1 gives the first seam
-    of the rank-key order: example 14 gives `src/a.rs:1`, example 12
-    gives `src/a.rs:1` (unchanged). The terminal shows that seam whatever
+17. Top pick is the first of the order. Any input above with N = 1 gives the first seam
+    of the (change, route, rank-key) order: example 14 gives `src/a.rs:1`,
+    example 12 gives `src/a.rs:1` (unchanged; none of these inputs has a
+    repair route). The terminal shows that seam whatever
     `--max-seams` is.
 18. Fewer ranked than N. `W src/a.rs f 1`, `SG src/a.rs f 2`,
     `U src/b.rs g 1`; N = 10: `src/a.rs:1`, `src/b.rs:1` (unchanged).
@@ -449,6 +492,16 @@ unless stated. Output lists `file:line` in final order. "today" is main
     owner-count field.
 26. Input order does not matter. Every permutation of example 13's input
     gives example 13's output.
+27. Route beats class. `W src/pricing.rs g 88` route-ready but with no repair
+    edit target (its recommended test is an inline module in a production
+    file), `U src/zeta.rs h 5` with a `tests/` target; N = 2:
+    `src/zeta.rs:5`, `src/pricing.rs:88` (today `pricing:88`, `zeta:5`).
+    Route-less input gives the examples above unchanged.
+28. No route anywhere. `W src/a.rs f 10 [m,r]`, `U src/b.rs g 20 [m]`,
+    neither routable: the terminal's Top recommendation block ends with
+    `  repair route: none of the gaps pilot found has a route to a repair
+    attempt, ...`; the order is unchanged. If a routable seam exists but the
+    current change puts an unroutable one on top, no note is printed.
 
 ## Test Mapping
 
@@ -478,6 +531,12 @@ unless stated. Output lists `file:line` in final order. "today" is main
   for example 24).
 - Existing: `crates/ripr/src/cli/commands/pilot.rs`
   `pilot_rejects_non_positive_max_seams`.
+- Added by #11292, `crates/ripr/src/output/pilot/tests.rs`:
+  `pilot_headline_prefers_a_gap_that_has_a_repair_route` (example 27) and
+  `pilot_says_plainly_when_no_gap_has_a_repair_route` (example 28) and
+  `pilot_route_note_is_absent_when_a_routable_gap_exists_elsewhere` and
+  `pilot_route_preference_does_not_cross_current_change_buckets`, and
+  `pilot_route_note_names_no_cause_when_the_crate_has_no_tests`.
 - Planned: one unit test per remaining example (4 to 9, 13 to 16, 18, 21
   to 26). Example 13 fails under per-class rounds.
 
