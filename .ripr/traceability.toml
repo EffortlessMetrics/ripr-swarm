@@ -15592,7 +15592,7 @@ tests = [
   "crates/ripr/tests/mcp_stdio.rs::refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation",
   "crates/ripr/tests/mcp_stdio.rs::refresh_source_worktree_analyzes_saved_tracked_edits_without_cross_kind_reuse",
   "crates/ripr/tests/mcp_stdio.rs::refresh_source_worktree_discloses_untracked_input_and_the_intent_to_add_remedy",
-  "crates/ripr/tests/mcp_stdio.rs::refresh_source_worktree_withholds_repair_card_and_readiness_for_a_ready_item",
+  "crates/ripr/tests/mcp_stdio.rs::refresh_source_worktree_serves_repair_card_and_readiness_with_established_custody",
   "crates/ripr/src/mcp/workspace.rs::tests::worktree_source_tags_identity_and_withholds_repair_claims",
   "crates/ripr/tests/mcp_stdio.rs::empty_gap_pages_keep_structured_outcomes_at_the_response_bound",
   "crates/ripr/tests/mcp_stdio.rs::list_gaps_rejects_unknown_class_tokens_with_the_vocabulary",
