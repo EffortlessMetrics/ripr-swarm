@@ -171,7 +171,7 @@ pub(crate) fn render_typescript_limitation_leaderboard_json(
         warnings: &report.warnings,
         limits: &report.limits,
     })
-    .map_err(|err| format!("serialize TypeScript limitation leaderboard JSON failed: {err}"))
+    .map_err(|err| format!("serialize TypeScript limitation leaderboard JSON failed: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn render_typescript_limitation_leaderboard_markdown(
@@ -253,12 +253,15 @@ fn collect_limitations_from_check_output(
     contents: &str,
     aggregates: &mut BTreeMap<String, LimitationAggregate>,
 ) -> Result<ParsedCheckOutputSummary, String> {
-    let value: Value =
-        serde_json::from_str(contents).map_err(|err| format!("invalid JSON: {err}"))?;
+    let value: Value = serde_json::from_str(contents).map_err(|err| {
+        format!(
+            "invalid JSON: {err}; regenerate the input with the command that wrote it, then rerun"
+        )
+    })?;
     let findings = value
         .get("findings")
         .and_then(Value::as_array)
-        .ok_or_else(|| "expected check output object with findings array".to_string())?;
+        .ok_or_else(|| "expected check output object with findings array; regenerate the input with the command that wrote it, then rerun".to_string())?;
 
     let mut summary = ParsedCheckOutputSummary {
         findings_total: findings.len(),

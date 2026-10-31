@@ -1,8 +1,1 @@
-crates/ripr/src/output/review_comments_receipt.rs|create receipt parent {} failed: {err}
-crates/ripr/src/output/review_comments_receipt.rs|create review-comments receipt output temp failed: {err}
-crates/ripr/src/output/review_comments_receipt.rs|publish review-comments receipt failed: {err}
-crates/ripr/src/output/review_comments_receipt.rs|render review-comments JSON with receipt failed: {err} /
-crates/ripr/src/output/review_comments_receipt.rs|review-comments JSON must be an object
-crates/ripr/src/output/review_comments_receipt.rs|review-comments receipt output refused: {err}
 crates/ripr/src/output/review_comments_receipt.rs|serialize review-comments receipt failed: {err}
-crates/ripr/src/output/review_comments_receipt.rs|write review-comments receipt output temp failed: {err}

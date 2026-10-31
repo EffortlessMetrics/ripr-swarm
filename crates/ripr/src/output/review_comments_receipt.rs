@@ -212,30 +212,32 @@ impl ReviewCommentsRunReceipt {
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
         fs::create_dir_all(parent)
-            .map_err(|err| format!("create receipt parent {} failed: {err}", parent.display()))?;
+            .map_err(|err| format!("create receipt parent {} failed: {err}; check that the path exists and is writable, then rerun", parent.display()))?;
         super::file_write::validate_destination(path)
-            .map_err(|err| format!("review-comments receipt output refused: {err}"))?;
+            .map_err(|err| format!("review-comments receipt output refused: {err}; check that the path exists and is writable, then rerun"))?;
 
         let temp_path = atomic_temp_path(path);
         let mut committed = self.clone();
         committed.atomic_write_status = "committed";
         let json = serde_json::to_vec_pretty(&committed)
-            .map_err(|err| format!("serialize review-comments receipt failed: {err}"))?;
+            .map_err(|err| format!("serialize review-comments receipt failed: {err}; this is a ripr bug, report it with the command you ran"))?;
         // Acquisition failure never removes a path we did not create.
         let mut temp = super::file_write::create_exclusive(&temp_path)
-            .map_err(|err| format!("create review-comments receipt output temp failed: {err}"))?;
+            .map_err(|err| format!("create review-comments receipt output temp failed: {err}; check that the path exists and is writable, then rerun"))?;
         if let Err(err) = temp.write_all(&json) {
             drop(temp);
             let _ = fs::remove_file(&temp_path);
             return Err(format!(
-                "write review-comments receipt output temp failed: {err}"
+                "write review-comments receipt output temp failed: {err}; check that the path exists and is writable, then rerun"
             ));
         }
         drop(temp);
         if let Err(err) = fs::rename(&temp_path, path) {
             if err.kind() != std::io::ErrorKind::AlreadyExists {
                 let _ = fs::remove_file(&temp_path);
-                return Err(format!("publish review-comments receipt failed: {err}"));
+                return Err(format!(
+                    "publish review-comments receipt failed: {err}; check that the path exists and is writable, then rerun"
+                ));
             }
             super::file_write::validate_destination(path).map_err(|error| {
                 let _ = fs::remove_file(&temp_path);
@@ -268,14 +270,14 @@ pub(crate) fn attach_to_json(
     })?;
     let object = value
         .as_object_mut()
-        .ok_or_else(|| "review-comments JSON must be an object".to_string())?;
+        .ok_or_else(|| "review-comments JSON must be an object; regenerate the input with the command that wrote it, then rerun".to_string())?;
     object.insert(
         "run_receipt".to_string(),
         serde_json::to_value(receipt)
             .map_err(|err| format!("serialize review-comments receipt failed: {err}"))?,
     );
     serde_json::to_string_pretty(&value)
-        .map_err(|err| format!("render review-comments JSON with receipt failed: {err}"))
+        .map_err(|err| format!("render review-comments JSON with receipt failed: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 fn canonical_root_identity(root: &Path) -> String {

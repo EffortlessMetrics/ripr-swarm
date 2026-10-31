@@ -337,7 +337,7 @@ pub(crate) fn render_pr_evidence_ledger_json(
     report: &PrEvidenceLedgerReport,
 ) -> Result<String, String> {
     serde_json::to_string_pretty(&pr_evidence_ledger_json_value(report))
-        .map_err(|err| format!("failed to render PR evidence ledger JSON: {err}"))
+        .map_err(|err| format!("failed to render PR evidence ledger JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 /// Compact one-line JSON for `--out-jsonl`. Same object as `--out`, not pretty-printed.

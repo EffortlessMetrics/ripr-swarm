@@ -339,7 +339,7 @@ pub(crate) fn render_report_packet_index_json(
         warnings: &report.warnings,
         limits: LIMITS.to_vec(),
     })
-    .map_err(|err| format!("render report-packet index JSON failed: {err}"))
+    .map_err(|err| format!("render report-packet index JSON failed: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 /// The group key that holds the artifacts a reviewer opens first. It is the
