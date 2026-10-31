@@ -18434,6 +18434,20 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_isolate_mutation_provenance_and_dormant_values",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_retain_thrown_runner_mutation",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_retain_evaluated_constructor_body",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_retain_opaque_runner_escapes",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_treat_ambient_global_writes_precisely",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_treat_x_spelled_suites_as_dormant",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_keep_invocation_shadows_and_dormant_values_separate",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_keep_loop_catch_and_switch_rebindings_local",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_keep_control_flow_function_values_dormant",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_keep_deep_mutation_and_nested_evaluation_notices",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_follow_imports_and_immutable_aliases",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_keep_unrelated_and_shadowed_notices",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_preserve_evaluated_argument_and_sibling_notices",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_cover_alias_options_and_block_locals",
   "crates/ripr/src/analysis/language/typescript/assertion_form_tests.rs::rejects_substring_regex_credits_a_forwarded_throw_replaced_by_another_error",
   "crates/ripr/src/analysis/language/typescript/assertion_form_tests.rs::rejects_substring_regex_the_new_error_satisfies_stays_weak",
   "crates/ripr/src/analysis/language/typescript/assertion_form_tests.rs::rejects_substring_regex_sole_throw_scans_nested_callback_calls",
@@ -18805,6 +18819,7 @@ fixtures = [
   "fixtures/ts_class_getter_factory_rebound",
 ]
 code = [
+  "crates/ripr/src/analysis/language/typescript/declaration_bindings.rs",
   "crates/ripr/src/analysis/language/typescript/tests_extract_hook_identity.rs",
   "crates/ripr/src/analysis/language/typescript/call_removal_guard.rs",
   "crates/ripr/src/analysis/language/typescript/mod.rs",
