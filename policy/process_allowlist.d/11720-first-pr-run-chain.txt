@@ -1,0 +1,4 @@
+crates/ripr/src/output/first_pr/run_chain.rs|Command::new|1|first-pr-run-chain|#11720: opt-in `ripr first-pr --run-chain` re-executes the current ripr binary once per missing chain artifact with the argv tokenized from the command first-pr already prints; direct argv spawn, no shell, no network, stdin closed, stdout published atomically only after exit 0.
+crates/ripr/src/output/first_pr/run_chain.rs|use std::process::Command|1|first-pr-run-chain|#11720: import for the spawn above.
+crates/ripr/tests/first_pr_run_chain.rs|Command::new|1|cli-tests|#11720: runs git (fixture repository setup) and the built ripr binary against isolated temp repositories. No shell, network, or user-repository mutation.
+crates/ripr/tests/first_pr_run_chain.rs|use std::process::Command|1|cli-tests|#11720: imports the spawner for the invocations above.

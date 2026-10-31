@@ -257,8 +257,10 @@ movement is not automatic invalidation.
 
 `finish-pr` publishes coherent `REVIEW_INCOMPLETE` candidates to obtain hosted
 evidence. It arms merge only with current published-head `REVIEW_READY`, actual
-required proof and addressed material findings. Diagnose branch protection and
-active rulesets read-only; never weaken them or use admin bypass to clear a PR.
+required proof and addressed material findings. For routine progression inspect
+PR-visible checks and reviews, not branch-protection or ruleset settings. Unknown
+checks are not passed; a forbidden settings read is not a blanket blocker. Use
+the normal merge endpoint for server enforcement; never weaken rules or bypass it.
 
 After merge/closure, verify the actual repository object, reconcile delivered
 and remaining issue acceptance, update the parent, preserve residual work,

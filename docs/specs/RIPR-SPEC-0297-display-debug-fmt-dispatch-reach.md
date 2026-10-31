@@ -203,6 +203,14 @@ Shapes that do not match exactly stay live, so this only removes credit from
 dead code. It applies to the direct route and the helper-entry route alike
 because both go through `test_dispatches_to_fmt`.
 
+Package scope (#8999). The helper-entry route is in-package only, with the same
+rule as the plain inherent method entry: a member-package owner admits only a
+test under its package prefix, and a root-package owner admits only a test
+outside every member package (a dependent member's test that formats the
+re-exported type is not credited). A same-named type with the same `Display`
+impl in another package makes the formatted type declared twice, so no test
+relates in either package.
+
 ## Required Evidence
 
 - Positive: Debug and Display via `format!`, `write!`, `println!`,
@@ -218,6 +226,11 @@ because both go through `test_dispatches_to_fmt`.
   or `while false` block, `#[cfg(any())]`, code after `return`, a never-called
   closure and a never-called nested fn, on the direct route and on the
   helper-entry route (`crates/ripr/tests/fmt_dispatch_live_reach.rs`).
+- Package scope (#8999): positive for the owner's own package test (root
+  unit and integration tests, member tests); negative for a dependent member
+  package's test of a root owner, the root package's test of a member owner,
+  and a same-named twin type in an unrelated package
+  (`crates/ripr/tests/fmt_helper_entry_package_scope.rs`).
 - Helper entry (#8999): positive for `to_string()` in a multi-line
   `assert_eq!` on an annotated or struct-literal receiver; negative for an
   unproven factory receiver (positive for an indexed `Self`-returning inherent constructor), another type, the other trait, a doubly declared
@@ -248,6 +261,8 @@ because both go through `test_dispatches_to_fmt`.
   dropped, conditional and provably dead formatting calls.
 - `crates/ripr/src/analysis/classify/related_tests/fmt_live.rs`: the `tests`
   module, one test per dead-code shape and its live counterpart.
+- `crates/ripr/tests/fmt_helper_entry_package_scope.rs`: multi-package
+  workspaces for the in-package rule.
 - `crates/ripr/tests/fmt_helper_entry_dispatch.rs`: public-API controls for
   the helper-entry route, asserting the rendered `propagation_unknown` class.
 - `crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs`: the
