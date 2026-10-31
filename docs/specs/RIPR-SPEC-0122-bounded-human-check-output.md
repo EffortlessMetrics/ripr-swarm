@@ -735,7 +735,15 @@ the changed operand, the Next step text states a concrete action: open the
 related test, check whether it reaches the changed code and inspect other
 existing tests. Trace their inputs through the local or computed operand
 (including default and empty cases) to see which side of the changed condition
-they exercise, then name an input that would exercise the other side. It does not
+they exercise, then name an input that would exercise the other side. That
+condition wording applies only to a predicate probe: a match-arm probe asks which
+arm each input selects and to name an input that selects the changed arm, and
+a call-deletion or side-effect probe asks whether the call runs and what it does
+or changes that a test could observe (the call may return nothing) and to name an
+input for which that observable effect would differ, and every other family (a
+scalar return value, an error variant, a field) asks what the changed expression
+produces for each input and to name an input for which the original and changed
+code would differ, never the "other side" of a condition that is not there. It does not
 restate that the classification is unknown as the instruction, and it keeps the
 existing statement that `ripr.toml` has no fixture/builder value mappings and
 the instruction to add or strengthen a test only when the inspection finds a
@@ -877,6 +885,7 @@ unchanged, and the lines claim no runtime outcome.
 - `crates/ripr/src/output/human.rs::tests::render_finding_arm_note_preserves_literal_body_presence`
 - `crates/ripr/tests/cli_smoke.rs::check_human_full_keeps_a_final_literal_arm_body_note_without_a_comma`
 - `crates/ripr/src/analysis/classify/decision.rs::tests::infection_unknown_next_step_names_a_concrete_action`
+- `crates/ripr/src/analysis/classify/decision.rs::tests::infection_unknown_next_step_only_names_condition_sides_for_predicates`
 - `crates/ripr/src/output/human.rs::tests::human_evidence_spells_the_unconfirmed_observation_in_words`
 - `crates/ripr/src/output/human.rs::tests::plain_observation_wording_handles_each_producer_form`
 - `crates/ripr/src/output/human.rs::tests::shared_evidence_rows_spell_the_unconfirmed_observation_in_words`
