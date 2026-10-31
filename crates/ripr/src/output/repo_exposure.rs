@@ -226,26 +226,37 @@ const MAX_TOP_FILES_SUMMARY_JSON: usize = 25;
 pub(crate) enum RepoExposureLimit<'a> {
     Inventory(&'a SeamLimitInfo),
     PilotBudget(&'a SeamLimitInfo),
+    Both(&'a SeamLimitInfo, &'a SeamLimitInfo),
 }
 
 impl<'a> RepoExposureLimit<'a> {
     pub(crate) fn info(self) -> &'a SeamLimitInfo {
         match self {
-            Self::Inventory(info) | Self::PilotBudget(info) => info,
+            Self::Inventory(info) | Self::PilotBudget(info) | Self::Both(info, _) => info,
+        }
+    }
+
+    pub(crate) fn parts(self) -> [Option<Self>; 2] {
+        match self {
+            Self::Both(budget, inventory) => [
+                Some(Self::PilotBudget(budget)),
+                Some(Self::Inventory(inventory)),
+            ],
+            one => [Some(one), None],
         }
     }
 
     pub(crate) fn category(self) -> &'static str {
         match self {
             Self::Inventory(_) => "repo_seam_limit_applied",
-            Self::PilotBudget(_) => "pilot_seam_budget_applied",
+            Self::PilotBudget(_) | Self::Both(_, _) => "pilot_seam_budget_applied",
         }
     }
 
     pub(crate) fn control(self) -> &'static str {
         match self {
             Self::Inventory(_) => "RIPR_REPO_EXPOSURE_SEAM_LIMIT",
-            Self::PilotBudget(_) => "RIPR_PILOT_SEAM_BUDGET",
+            Self::PilotBudget(_) | Self::Both(_, _) => "RIPR_PILOT_SEAM_BUDGET",
         }
     }
 
@@ -257,10 +268,10 @@ impl<'a> RepoExposureLimit<'a> {
             (Self::Inventory(_), SeamLimitSource::Configured) => {
                 "Remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
             }
-            (Self::PilotBudget(_), SeamLimitSource::Default) => {
+            (Self::PilotBudget(_) | Self::Both(_, _), SeamLimitSource::Default) => {
                 "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget."
             }
-            (Self::PilotBudget(_), SeamLimitSource::Configured) => {
+            (Self::PilotBudget(_) | Self::Both(_, _), SeamLimitSource::Configured) => {
                 "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts."
             }
         }
@@ -274,10 +285,10 @@ impl<'a> RepoExposureLimit<'a> {
             (Self::Inventory(_), SeamLimitSource::Configured) => {
                 "remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)"
             }
-            (Self::PilotBudget(_), SeamLimitSource::Default) => {
+            (Self::PilotBudget(_) | Self::Both(_, _), SeamLimitSource::Default) => {
                 "set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget"
             }
-            (Self::PilotBudget(_), SeamLimitSource::Configured) => {
+            (Self::PilotBudget(_) | Self::Both(_, _), SeamLimitSource::Configured) => {
                 "set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts"
             }
         }
@@ -657,7 +668,14 @@ fn write_repo_exposure_json_document<W: io::Write>(
     if has_limitations {
         writeln!(out, "  \"limitations\": [")?;
         let mut first = true;
-        if let Some(limit) = limit_info {
+        for limit in limit_info
+            .into_iter()
+            .flat_map(RepoExposureLimit::parts)
+            .flatten()
+        {
+            if !first {
+                writeln!(out, "    ,")?;
+            }
             let info = limit.info();
             let repair_route = limit.repair_route();
             writeln!(out, "    {{")?;
@@ -1343,7 +1361,11 @@ pub(crate) fn render_repo_exposure_md_with_limit(
     if has_limitations {
         out.push_str("\n## Limitations\n\n");
         // Seam-limit disclosure: emit only when a real cap fired.
-        if let Some(limit) = limit_info {
+        for limit in limit_info
+            .into_iter()
+            .flat_map(RepoExposureLimit::parts)
+            .flatten()
+        {
             let info = limit.info();
             let control = limit.markdown_repair_route();
             out.push_str(&format!(

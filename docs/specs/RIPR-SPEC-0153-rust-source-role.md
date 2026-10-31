@@ -71,7 +71,11 @@ Role is derived from authoritative context in priority order:
    a cargo-fuzz harness (`fuzz/fuzz_targets/**`, consecutive `fuzz` then
    `fuzz_targets` components) is `test_evidence` even when its package
    declares it as a `[[bin]]` root, so it seeds no production findings
-   (#11293);
+   (#11293). The pair must precede any `src` component: an ordinary
+   library module at `<pkg>/src/fuzz/fuzz_targets/**` is a production
+   subject and keeps its findings. Harness layouts outside
+   `fuzz/fuzz_targets/` are not guessed from the name; register them as
+   test harnesses in configuration;
 4. everything else is a production subject. A filename convention alone
    (`*_test.rs`, `test_*.rs`) never classifies.
 

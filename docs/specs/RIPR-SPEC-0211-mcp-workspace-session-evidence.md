@@ -315,6 +315,23 @@ official SDK transport:
     to commit the uncommitted Rust source or test files (untracked ones
     included) and refresh again, or refresh with source `worktree`. No
     commitment is bound into a committed identity.
+  - Card currentness at request time (#7357). The refresh-time git-status
+    probe and custody are not re-run per read, and the server does not watch
+    the worktree, so `ripr_get_repair_card` re-verifies, on every read, the
+    captured SHA-256 of only the files the card's evidence is bound to (the
+    seam file, its related tests and the recommended test file) through the one
+    shared `ConsumedRustSources::first_drift` owner. A captured file whose
+    bytes now differ, or that can no longer be read, refuses with the existing
+    `stale_snapshot` code (carrying `current_snapshot_id`), names the path, and
+    says to run `ripr_refresh` again; this covers an uncommitted edit, a commit
+    made after the refresh, and a deletion, for committed and worktree
+    snapshots alike. Files with no captured commitment (non-Rust, outside the
+    inventory corpus) make no claim, edits to unrelated files keep the card,
+    and restored bytes keep it. The clean path costs one read-and-hash of those
+    few files and runs no git child. Residual: only the evidence-bound Rust
+    files are re-verified; a `HEAD` move that changes no bound file is not
+    detected per read, and the card's `currentness.basis` remains the
+    refresh-time statement.
   - Residuals under #7357 / #1765 / #1602, worktree mode: a Rust file
     that only the inventory read and the findings producer did not (a new file
     or one the findings scope did not select) is bound into the commitment but

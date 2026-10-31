@@ -430,6 +430,58 @@ fn run_command_with_env(
     spawn_command(program, Some(current_dir), args, env, None, None)
 }
 
+/// Place the built `ripr` at `destination` without ever opening a writable
+/// descriptor on it (#11449). `std::fs::copy` holds a write handle on the new
+/// file, and a sibling test thread that forks in that window leaks the handle
+/// into its child until the child reaches `exec`; executing the copy then
+/// fails with `ETXTBSY`. A hard link shares the already-sealed built inode, so
+/// no writer exists to leak. Only when the filesystem refuses the link
+/// (for example across devices) does this fall back to a byte copy.
+fn install_ripr_binary(source: &Path, destination: &Path) -> std::io::Result<()> {
+    match std::fs::hard_link(source, destination) {
+        Ok(()) => Ok(()),
+        Err(_) => std::fs::copy(source, destination).map(|_| ()),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn install_ripr_binary_links_the_built_inode_without_a_writer() -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+    let dir = unique_temp_workspace("install-ripr-link");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
+    let built = Path::new(env!("CARGO_BIN_EXE_ripr"));
+    let installed = dir.join("ripr");
+    let result = (|| -> Result<(), String> {
+        install_ripr_binary(built, &installed).map_err(|e| format!("install: {e}"))?;
+        let built_meta = std::fs::metadata(built).map_err(|e| format!("stat built: {e}"))?;
+        let installed_meta =
+            std::fs::metadata(&installed).map_err(|e| format!("stat installed: {e}"))?;
+        // On one filesystem the install must be a link (same inode), so no
+        // writable descriptor was ever opened. A cross-device temp dir takes
+        // the documented copy fallback, where the link claim does not apply.
+        if built_meta.dev() == installed_meta.dev()
+            && built_meta.ino() != installed_meta.ino()
+            && std::fs::metadata(&dir)
+                .map(|m| m.dev() == built_meta.dev())
+                .unwrap_or(false)
+        {
+            return Err("installed ripr is a separate file, not a link to the built inode".into());
+        }
+        let output = run_command(&installed.display().to_string(), None, &["--version"])
+            .map_err(|e| format!("spawn installed: {e}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "installed ripr --version failed: {:?}",
+                output.status
+            ));
+        }
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&dir);
+    result
+}
+
 /// Retry only `ETXTBSY` (`ExecutableFileBusy`). Copying `ripr` and executing
 /// the copy can fail while another test still holds a writable descriptor
 /// from a `fork` that has not reached `exec` (#4296). Three attempts and a
@@ -1776,7 +1828,7 @@ fn isolated_installed_binary_version_contract_is_side_effect_free() -> Result<()
         std::fs::create_dir_all(&bin_dir)?;
         let source_binary = std::path::Path::new(env!("CARGO_BIN_EXE_ripr"));
         let installed_binary = bin_dir.join(if cfg!(windows) { "ripr.exe" } else { "ripr" });
-        std::fs::copy(source_binary, &installed_binary)?;
+        install_ripr_binary(source_binary, &installed_binary)?;
 
         let config_path = root.join("ripr.toml");
         std::fs::write(&config_path, "this is not valid TOML\n")?;
@@ -11580,6 +11632,9 @@ fn agent_verify_and_receipt_disclose_historical_before_current_after_pair()
         json_pointer_str(&verify, "/artifact_currentness")?,
         "historical_before_current_after"
     );
+    // #3056: a clean-produced historical side carries no dirty disclosure.
+    assert!(verify.get("before_produced_from_dirty").is_none());
+    assert!(verify.get("after_produced_from_dirty").is_none());
 
     let verify_path = root.join("agent-verify.json");
     std::fs::write(&verify_path, &output.stdout)?;
@@ -11705,6 +11760,30 @@ fn agent_verify_historical_before_token_ignores_declared_dirty_production()
         json_pointer_str(&verify, "/artifact_currentness")?,
         "historical_before_current_after"
     );
+    // #3056: the pair token is unchanged, but the production-time dirty fact
+    // is preserved for the historical before side only.
+    assert_eq!(verify["before_produced_from_dirty"], true);
+    assert!(verify.get("after_produced_from_dirty").is_none());
+
+    // The receipt recomputes the same additive field; its canonical byte
+    // comparison must accept the verify output.
+    let verify_path = root.join("agent-verify.json");
+    std::fs::write(&verify_path, &output.stdout)?;
+    let receipt = root.join("agent-receipt.json");
+    let receipt_output = run_ripr(&[
+        "agent",
+        "receipt",
+        "--root",
+        &root.display().to_string(),
+        "--verify-json",
+        &verify_path.display().to_string(),
+        "--seam-id",
+        "seam-a",
+        "--json",
+        "--out",
+        &receipt.display().to_string(),
+    ]);
+    assert_success(&receipt_output);
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
@@ -13493,7 +13572,7 @@ fn doctor_names_workspace_build_first_on_path() -> Result<(), String> {
         let built = Path::new(env!("CARGO_BIN_EXE_ripr"));
         let built_dir = built.parent().ok_or("built ripr has no parent")?;
         let installed = installed_dir.join(built.file_name().ok_or("built ripr has no name")?);
-        std::fs::copy(built, &installed).map_err(|error| format!("install copy: {error}"))?;
+        install_ripr_binary(built, &installed).map_err(|error| format!("install copy: {error}"))?;
 
         let (installed_ok, report) =
             doctor_json_with_path_prefix(&installed, &workspace, &[&installed_dir])?;
@@ -17916,19 +17995,33 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
         root.join("target/ripr/pilot/agent-seam-packets.json"),
     )?)?;
     assert_eq!(both_packets["run_status"], "seam_limit_applied");
-    assert_eq!(
-        both_packets["limitations"],
-        serde_json::json!([{
-            "category": "pilot_seam_budget_applied",
-            "seams_analyzed": 1,
-            "seams_total": 2,
-            "limit_source": "configured",
-            "control": "RIPR_PILOT_SEAM_BUDGET",
-            "repair_route": "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts.",
-        }]),
-        "{both_packets}"
-    );
+    for artifact in [&both, &both_packets] {
+        let limits = artifact["limitations"]
+            .as_array()
+            .ok_or("missing limitations")?;
+        assert_eq!(limits.len(), 2, "{artifact}");
+        assert_eq!(limits[0]["category"], "pilot_seam_budget_applied");
+        assert_eq!(limits[0]["seams_analyzed"], 1);
+        assert_eq!(limits[0]["seams_total"], full_total);
+        assert_eq!(limits[0]["control"], "RIPR_PILOT_SEAM_BUDGET");
+        assert_eq!(limits[1]["category"], "repo_seam_limit_applied");
+        assert_eq!(limits[1]["seams_analyzed"], 2);
+        assert_eq!(limits[1]["seams_total"], full_total);
+        assert_eq!(limits[1]["control"], "RIPR_REPO_EXPOSURE_SEAM_LIMIT");
+        assert!(
+            limits[1]["repair_route"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("RIPR_REPO_EXPOSURE_SEAM_LIMIT")
+        );
+    }
     assert_eq!(packet_count(&both_packets)?, packet_count(&packets)?);
+    let both_md = std::fs::read_to_string(root.join("target/ripr/pilot/repo-exposure.md"))?;
+    assert!(both_md.contains("RIPR_PILOT_SEAM_BUDGET"), "{both_md}");
+    assert!(
+        both_md.contains("RIPR_REPO_EXPOSURE_SEAM_LIMIT"),
+        "{both_md}"
+    );
 
     // A configured pilot budget that did not fire must not relabel an inventory cut.
     assert!(
@@ -18194,6 +18287,71 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     Ok(())
 }
 
+#[test]
+fn pilot_dual_caps_with_no_actionable_seams_are_not_clean() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = unique_temp_workspace("pilot-dual-cap-no-actionable");
+    std::fs::create_dir_all(&root)?;
+    init_producer_fixture_repo(&root)?;
+    let source = r#"pub fn a(x: i32) -> i32 { if x > 10 { 1 } else { 0 } }
+pub fn b(x: i32) -> i32 { if x > 10 { 1 } else { 0 } }
+pub fn c(x: i32) -> i32 { if x > 10 { 1 } else { 0 } }
+#[cfg(test)] mod tests {
+use super::*;
+#[test] fn test_a() { assert_eq!(a(9),0);
+assert_eq!(a(10),0);
+assert_eq!(a(11),1); }
+#[test] fn test_b() { assert_eq!(b(9),0);
+assert_eq!(b(10),0);
+assert_eq!(b(11),1); }
+#[test] fn test_c() { assert_eq!(c(9),0);
+assert_eq!(c(10),0);
+assert_eq!(c(11),1); }
+}
+"#;
+    std::fs::write(root.join("src/lib.rs"), source)?;
+    run_git(&root, &["rm", "tests/pricing.rs"])?;
+    commit_repair_fixture(&root, &["-qam", "strongly gripped fixture"])?;
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &["pilot", "--root", ".", "--mode", "draft"],
+        &[
+            ("RIPR_PILOT_SEAM_BUDGET", "1"),
+            ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "2"),
+        ],
+    )?;
+    assert_success(&output);
+    let summary: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/pilot/pilot-summary.json"),
+    )?)?;
+    assert_eq!(summary["actionable_seams_total"], 0, "{summary}");
+    assert_eq!(
+        summary["actionable_seams_total_is_lower_bound"], true,
+        "{summary}"
+    );
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains("2 of 3 were not checked"), "{stdout}");
+    for name in ["repo-exposure.json", "agent-seam-packets.json"] {
+        let artifact: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+            root.join("target/ripr/pilot").join(name),
+        )?)?;
+        assert_eq!(artifact["run_status"], "seam_limit_applied", "{artifact}");
+        assert_eq!(
+            artifact["limitations"].as_array().map(Vec::len),
+            Some(2),
+            "{artifact}"
+        );
+        assert_eq!(artifact["limitations"][0]["seams_total"], 3, "{artifact}");
+        assert_eq!(
+            artifact["limitations"][1]["control"], "RIPR_REPO_EXPOSURE_SEAM_LIMIT",
+            "{artifact}"
+        );
+    }
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
 /// #10726: the built-in inventory cap follows the pilot artifact budget, so
 /// pilot stops classifying seams it would only discard. The ranking and the
 /// disclosure must not move: with the inventory env var unset (bounded by the
@@ -18210,7 +18368,7 @@ fn pilot_default_inventory_cap_follows_the_budget_without_moving_the_ranking()
     init_producer_fixture_repo(&root)?;
     let mut lib = std::fs::read_to_string(root.join("src/lib.rs"))?;
     lib.push_str(
-        "\npub fn shipping_fee(weight: i32, free_limit: i32) -> i32 {\n    if weight > free_limit { 5 } else { 0 }\n}\n\npub fn handling_fee(items: i32) -> i32 {\n    if items > 3 { 2 } else { 0 }\n}\n",
+        "\npub fn shipping_fee(weight: i32, free_limit: i32) -> i32 {\n    if weight > free_limit { 5 } else { 0 }\n}\n\npub fn packing_fee(items: i32) -> i32 {\n    if items > 8 { 3 } else { 0 }\n}\n\npub fn handling_fee(items: i32) -> i32 {\n    if items > 3 { 2 } else { 0 }\n}\n",
     );
     std::fs::write(root.join("src/lib.rs"), lib)?;
     commit_repair_fixture(&root, &["-qam", "expanded pilot fixture"])?;
@@ -18322,6 +18480,22 @@ fn pilot_default_inventory_cap_follows_the_budget_without_moving_the_ranking()
     // not the pilot-scoped default of 1), so the run still discloses the
     // whole inventory as its total.
     let explicit = run(Some("2"))?;
+    assert_eq!(seam_ids(&explicit.0), seam_ids(&full.0));
+    assert!(
+        explicit.0["seams"]
+            .as_array()
+            .is_some_and(|seams| seams.iter().any(|seam| seam["owner"]
+                .as_str()
+                .is_some_and(|owner| owner.contains("handling_fee"))))
+    );
+    let limits = explicit.0["limitations"]
+        .as_array()
+        .ok_or("missing dual limitations")?;
+    assert_eq!(limits.len(), 2, "{}", explicit.0);
+    assert_eq!(limits[0]["seams_total"], total);
+    assert_eq!(limits[0]["control"], "RIPR_PILOT_SEAM_BUDGET");
+    assert_eq!(limits[1]["seams_total"], total);
+    assert_eq!(limits[1]["control"], "RIPR_REPO_EXPOSURE_SEAM_LIMIT");
     assert_eq!(
         explicit.1["seam_limit"]["total"], default.1["seam_limit"]["total"],
         "{}",
@@ -20048,6 +20222,281 @@ fn pilot_language_fixture_repo(
     run_git(&root, &["add", "."])?;
     run_git(&root, &["commit", "-m", "change"])?;
     Ok(root)
+}
+
+#[test]
+#[cfg(feature = "lang-python")]
+fn python_mixed_boundary_calls_do_not_invent_a_missing_discriminator() -> Result<(), String> {
+    let root = pilot_language_fixture_repo(
+        "python-mixed-boundary-10990",
+        &[
+            (
+                "pyproject.toml",
+                "[project]\nname = \"boundary\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "pricing/__init__.py",
+                "def eligible(x):\n    if x > 3:\n        return True\n    return False\n",
+            ),
+            (
+                "tests/test_pricing.py",
+                "from pricing import eligible\n\ndef test_off():\n    assert eligible(5) == True\n\ndef test_unknown():\n    value = int(\"3\")\n    assert eligible(value) == True\n",
+            ),
+        ],
+        (
+            "pricing/__init__.py",
+            "def eligible(x):\n    if x >= 3:\n        return True\n    return False\n",
+        ),
+    )?;
+    let root_arg = root.display().to_string();
+    let check = || -> Result<serde_json::Value, String> {
+        let output = run_ripr(&[
+            "check",
+            "--root",
+            &root_arg,
+            "--base",
+            "origin/main",
+            "--format",
+            "json",
+        ]);
+        assert_success(&output);
+        serde_json::from_slice(&output.stdout).map_err(|err| err.to_string())
+    };
+    let report = check()?;
+    let findings = report["findings"].as_array().ok_or("missing findings")?;
+    assert_eq!(findings.len(), 1, "{report}");
+    let finding = &findings[0];
+    assert_eq!(finding["classification"], "weakly_exposed", "{finding}");
+    assert_eq!(
+        finding["missing_discriminators"].as_array().map(Vec::len),
+        Some(0),
+        "{finding}"
+    );
+    assert!(finding["python_repair_card"].is_null(), "{finding}");
+    assert!(
+        !finding["ripr"]["infect"]["summary"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("no strong related test call places"),
+        "{finding}"
+    );
+    assert!(
+        finding["missing"].to_string().contains("unresolved inputs"),
+        "{finding}"
+    );
+    assert!(
+        finding["observed_values"].to_string().contains("x = 5"),
+        "{finding}"
+    );
+    assert!(
+        !finding["recommended_next_step"]
+            .to_string()
+            .contains("x == 3"),
+        "{finding}"
+    );
+
+    std::fs::write(root.join("tests/test_pricing.py"), "from pricing import eligible\n\ndef test_off():\n    assert eligible(5) == True\n\ndef test_unknown():\n    values = (3,)\n    assert eligible(*values) == True\n").map_err(|err| err.to_string())?;
+    let unpack = check()?;
+    assert_eq!(
+        unpack["findings"][0]["classification"], "weakly_exposed",
+        "{unpack}"
+    );
+    assert_eq!(
+        unpack["findings"][0]["missing_discriminators"]
+            .as_array()
+            .map(Vec::len),
+        Some(0),
+        "{unpack}"
+    );
+    assert!(
+        unpack["findings"][0]["python_repair_card"].is_null(),
+        "{unpack}"
+    );
+
+    std::fs::write(
+        root.join("tests/test_pricing.py"),
+        "from pricing import eligible\n\ndef test_off():\n    assert eligible(5) == True\n",
+    )
+    .map_err(|err| err.to_string())?;
+    let off = check()?;
+    assert_eq!(
+        off["findings"][0]["missing_discriminators"][0]["value"], "x == 3",
+        "{off}"
+    );
+    assert!(
+        off["findings"][0]["python_repair_card"].is_object(),
+        "{off}"
+    );
+
+    std::fs::write(root.join("tests/test_pricing.py"), "from pricing import eligible\n\ndef test_on():\n    assert eligible(3) == True\n\ndef test_unknown():\n    value = int(\"3\")\n    assert eligible(value) == True\n").map_err(|err| err.to_string())?;
+    let on = check()?;
+    assert_eq!(on["findings"][0]["classification"], "exposed", "{on}");
+    assert_eq!(
+        on["findings"][0]["missing_discriminators"]
+            .as_array()
+            .map(Vec::len),
+        Some(0),
+        "{on}"
+    );
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "lang-python")]
+fn python_mixed_calls_do_not_invent_a_shifted_boundary_gap() -> Result<(), String> {
+    let root = pilot_language_fixture_repo(
+        "python-mixed-shift-10990",
+        &[
+            (
+                "pyproject.toml",
+                "[project]\nname = \"boundary\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "pricing/__init__.py",
+                "def eligible(x):\n    if x >= 3:\n        return True\n    return False\n",
+            ),
+            (
+                "tests/test_pricing.py",
+                "from pricing import eligible\n\ndef test_equal():\n    assert eligible(2) == False\n\ndef test_unknown():\n    value = int(\"3\")\n    assert eligible(value) == True\n",
+            ),
+        ],
+        (
+            "pricing/__init__.py",
+            "def eligible(x):\n    if x > 2:\n        return True\n    return False\n",
+        ),
+    )?;
+    let root_arg = root.display().to_string();
+    let check = || -> Result<serde_json::Value, String> {
+        let output = run_ripr(&[
+            "check",
+            "--root",
+            &root_arg,
+            "--base",
+            "origin/main",
+            "--format",
+            "json",
+        ]);
+        assert_success(&output);
+        serde_json::from_slice(&output.stdout).map_err(|err| err.to_string())
+    };
+    let mixed = check()?;
+    assert_eq!(
+        mixed["findings"][0]["classification"], "weakly_exposed",
+        "{mixed}"
+    );
+    assert_eq!(
+        mixed["findings"][0]["missing_discriminators"]
+            .as_array()
+            .map(Vec::len),
+        Some(0),
+        "{mixed}"
+    );
+    assert!(
+        mixed["findings"][0]["python_repair_card"].is_null(),
+        "{mixed}"
+    );
+    std::fs::write(
+        root.join("tests/test_pricing.py"),
+        "from pricing import eligible\n\ndef test_equal():\n    assert eligible(2) == False\n",
+    )
+    .map_err(|err| err.to_string())?;
+    let resolved = check()?;
+    assert_eq!(
+        resolved["findings"][0]["missing_discriminators"][0]["value"], "x == 3",
+        "{resolved}"
+    );
+    std::fs::write(root.join("tests/test_pricing.py"), "from pricing import eligible\n\ndef test_equal():\n    assert eligible(2) == False\n\ndef test_shift():\n    assert eligible(3) == True\n\ndef test_unknown():\n    value = int(\"3\")\n    assert eligible(value) == True\n").map_err(|err| err.to_string())?;
+    let witnessed = check()?;
+    assert_eq!(
+        witnessed["findings"][0]["classification"], "exposed",
+        "{witnessed}"
+    );
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "lang-python")]
+fn python_empty_comprehension_input_is_resolved_for_shifted_boundary() -> Result<(), String> {
+    let root = pilot_language_fixture_repo(
+        "python-empty-shift-10990",
+        &[
+            (
+                "pyproject.toml",
+                "[project]\nname = \"boundary\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "pricing/__init__.py",
+                "def eligible(items):\n    return [x for x in items if x >= 3]\n",
+            ),
+            (
+                "tests/test_pricing.py",
+                "from pricing import eligible\n\ndef test_equal():\n    assert eligible([2]) == []\n\ndef test_empty():\n    assert eligible([]) == []\n",
+            ),
+        ],
+        (
+            "pricing/__init__.py",
+            "def eligible(items):\n    return [x for x in items if x > 2]\n",
+        ),
+    )?;
+    let root_arg = root.display().to_string();
+    let check = || -> Result<serde_json::Value, String> {
+        let output = run_ripr(&[
+            "check",
+            "--root",
+            &root_arg,
+            "--base",
+            "origin/main",
+            "--format",
+            "json",
+        ]);
+        assert_success(&output);
+        serde_json::from_slice(&output.stdout).map_err(|err| err.to_string())
+    };
+    let empty = check()?;
+    assert_eq!(
+        empty["findings"][0]["classification"], "weakly_exposed",
+        "{empty}"
+    );
+    assert_eq!(
+        empty["findings"][0]["missing_discriminators"][0]["value"], "x == 3",
+        "{empty}"
+    );
+    assert!(
+        empty["findings"][0]["python_repair_card"].is_object(),
+        "{empty}"
+    );
+
+    std::fs::write(root.join("tests/test_pricing.py"), "from pricing import eligible\n\ndef test_equal():\n    assert eligible([2]) == []\n\ndef test_unknown():\n    values = [3]\n    assert eligible(values) == [3]\n").map_err(|err| err.to_string())?;
+    let unknown = check()?;
+    assert_eq!(
+        unknown["findings"][0]["missing_discriminators"]
+            .as_array()
+            .map(Vec::len),
+        Some(0),
+        "{unknown}"
+    );
+    assert!(
+        unknown["findings"][0]["python_repair_card"].is_null(),
+        "{unknown}"
+    );
+
+    std::fs::write(root.join("tests/test_pricing.py"), "from pricing import eligible\n\ndef test_equal():\n    assert eligible([2]) == []\n\ndef test_empty():\n    assert eligible([]) == []\n\ndef test_shift():\n    assert eligible([3]) == [3]\n").map_err(|err| err.to_string())?;
+    let witnessed = check()?;
+    assert_eq!(
+        witnessed["findings"][0]["classification"], "exposed",
+        "{witnessed}"
+    );
+    assert_eq!(
+        witnessed["findings"][0]["missing_discriminators"]
+            .as_array()
+            .map(Vec::len),
+        Some(0),
+        "{witnessed}"
+    );
+    ignore_remove_dir_all(&root);
+    Ok(())
 }
 
 /// #4216 row 1: the onboarding re-walk's `pyapp` shape. A named module
@@ -23052,7 +23501,7 @@ fn context_reuse_matches_fresh(fresh: &[u8], reused: &[u8]) -> Result<(), String
 /// is not weakened.
 fn stable_ripr_copy(workspace: &Path) -> Result<PathBuf, String> {
     let copy = workspace.join(format!("ripr{}", std::env::consts::EXE_SUFFIX));
-    std::fs::copy(env!("CARGO_BIN_EXE_ripr"), &copy)
+    install_ripr_binary(Path::new(env!("CARGO_BIN_EXE_ripr")), &copy)
         .map_err(|err| format!("copy suite binary to {}: {err}", copy.display()))?;
     Ok(copy)
 }
@@ -34040,4 +34489,94 @@ fn declined_rust_file_is_a_limitation_in_check_and_pilot_json() -> Result<(), St
     }
     ignore_remove_dir_all(&root);
     Ok(())
+}
+
+/// #11477 item 3: `RIPR_CACHE_DIR` redirects only the cache, so `feedback`
+/// must still refuse a committed `target` link that escapes the workspace.
+#[cfg(unix)]
+#[test]
+fn feedback_export_refuses_target_link_even_with_cache_dir_override() -> Result<(), String> {
+    let base = unique_temp_workspace("feedback-link-cache-env");
+    let ws = base.join("ws");
+    let outside = base.join("outside");
+    std::fs::create_dir_all(&ws).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&outside).map_err(|e| e.to_string())?;
+    std::os::unix::fs::symlink(&outside, ws.join("target")).map_err(|e| e.to_string())?;
+    let cache = base.join("cache");
+    let output = run_ripr_with_env(
+        &["feedback", "export", "--root", &ws.to_string_lossy()],
+        &[("RIPR_CACHE_DIR", &cache.to_string_lossy())],
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let leaked = tree_entries(&outside)?;
+    let _ = std::fs::remove_dir_all(&base);
+    assert!(!output.status.success(), "link must be refused: {stderr}");
+    assert!(
+        stderr.contains("resolves outside the workspace"),
+        "{stderr}"
+    );
+    assert!(leaked.is_empty(), "written through the link: {leaked:?}");
+    Ok(())
+}
+
+/// #11477 item 3: `feedback record` writes under `target/ripr/feedback`, so it
+/// gets the same refusal under a `RIPR_CACHE_DIR` override.
+#[cfg(unix)]
+#[test]
+fn feedback_record_refuses_target_link_even_with_cache_dir_override() -> Result<(), String> {
+    let base = unique_temp_workspace("feedback-record-link-cache-env");
+    let ws = base.join("ws");
+    let outside = base.join("outside");
+    std::fs::create_dir_all(&ws).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&outside).map_err(|e| e.to_string())?;
+    std::os::unix::fs::symlink(&outside, ws.join("target")).map_err(|e| e.to_string())?;
+    let cache = base.join("cache");
+    let output = run_ripr_with_env(
+        &[
+            "feedback",
+            "record",
+            "--root",
+            &ws.to_string_lossy(),
+            "--snapshot",
+            "snap-1",
+            "--reason",
+            "useful_limitation",
+            "--idempotency-key",
+            "k",
+            "--actor",
+            "human",
+        ],
+        &[("RIPR_CACHE_DIR", &cache.to_string_lossy())],
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let leaked = tree_entries(&outside)?;
+    let _ = std::fs::remove_dir_all(&base);
+    assert!(!output.status.success(), "link must be refused: {stderr}");
+    assert!(
+        stderr.contains("resolves outside the workspace"),
+        "{stderr}"
+    );
+    assert!(leaked.is_empty(), "written through the link: {leaked:?}");
+    Ok(())
+}
+
+/// Every path below `dir`, recursively (links are listed, not followed), so a
+/// write that created nested entries through a link is named in the failure.
+#[cfg(unix)]
+fn tree_entries(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut found = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(next) = pending.pop() {
+        for entry in std::fs::read_dir(&next).map_err(|e| e.to_string())? {
+            let path = entry.map_err(|e| e.to_string())?.path();
+            let is_real_dir = std::fs::symlink_metadata(&path)
+                .map_err(|e| e.to_string())?
+                .is_dir();
+            if is_real_dir {
+                pending.push(path.clone());
+            }
+            found.push(path);
+        }
+    }
+    Ok(found)
 }
