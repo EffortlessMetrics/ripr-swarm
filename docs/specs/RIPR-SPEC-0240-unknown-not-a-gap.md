@@ -420,8 +420,55 @@ non-ignored related test matches one of these shapes:
   `x.owner(..)` for a `let [mut] x = helper();` earlier in the test. `helper`
   is a function of the test's file other than the owner. An inline struct
   literal receiver, a non-literal expectation and `assert_ne!` keep the
-  finding. The closure runs over data the helper builds, which ripr does not
-  read; the exact pin may still miss the change, so nothing is credited.
+  finding. The withholding rule does not read arbitrary helper data.
+  The bounded #9766 exception in `owner_pin/fixture_receiver.rs` credits
+  `assert_eq!(fixture().total(), 42)` (either operand order, or one preceding
+  immutable receiver binding) only when the owner's whole body is
+  `self.field.iter().map(|(.., price, ..)| price).sum()`, returning `u32`.
+  The actual tuple pattern has exactly one identifier and otherwise wildcards;
+  rest patterns are not read. The receiver is an ordinary single-field record
+  whose field is a standard `Vec` of tuples of `String` and `u32`, and the
+  projected component is `u32`. A unique, unattributed zero-argument helper
+  in the test's own file and module returns only that record literal, with a
+  nonempty `vec!` of literal tuples (strings use literal `.to_string()`).
+  Each numeric component must be literal. Attributes anywhere inside the
+  vector data withhold credit: a cfg-pruned tuple cannot supply a live row or
+  separate projected sums. The paired old expression must also
+  be the same-field, same-arity `iter().map(tuple projection).sum()` pipeline,
+  with a projected `u32` column. Unknown or other old pipelines (including
+  product-to-sum changes) supply no new credit. Equal projected positions are
+  equivalent binding rewrites and keep their existing reading, including
+  single-row or zero-valued data; no all-mutants adequacy rule is inferred.
+  Different projected columns are different functions: a row with 0 and 1
+  separates them. Their checked `u32` sums over the actual literal fixture
+  must differ. Equal aggregate totals (including cross-row cancellation) or
+  overflow withhold the pin. This is an edit-specific activation check, not
+  evaluation of arbitrary helpers or hypothetical alternative reductions.
+  The indexed receiver method matching the owner must be unique after raw-name
+  normalization; a competing by-value trait method can win dispatch over the
+  inherent borrowed owner even when spelled with `r#`. Pipeline dispatch also fails closed
+  for indexed receiver methods named `iter`, `map`, `sum` or `to_string`, an indexed
+  `no_implicit_prelude` declaration, or imports, extern crates and item macro
+  invocations (including trait/impl associated items) in the owner module
+  or its same-file ancestors. Module and method raw identifiers use the same
+  normalized identity. Helper construction also requires a closed scope in
+  the owner's file; only exact `use super::*` from a helper directly inside
+  the already-closed owner module is accepted. Other helper imports and
+  item/associated macros remain unread. This can withhold
+  unrelated imports or methods; general method resolution is not claimed.
+  Declaration attributes come from the indexed declaration facts, not the
+  function-body substring. The test has no parameters and contains only the eager
+  assertion and its optional immutable fixture binding. Existing assertion
+  execution, macro binding, receiver/type/import identity and plain-drop gates
+  still apply. Only a pin credited through these gates can supply the
+  corresponding returned-sum propagation fact and remove the resolved
+  `fixture_opaque` stop reason. Computed or unresolved data,
+  empty collections, extra helper statements, alternate exits, mutable or
+  aliased receivers, rebound `vec!`, duplicate helpers, unrelated fields and
+  nonliteral projected tuple components receive no new credit. General helper
+  interpretation, other collection pipelines and recording doubles stay
+  outside this exception. The corpus fixture-total row can read `credited`;
+  its historical labeling observation remains unchanged.
 - **recording double** (#9610): a `call_deletion` or `side_effect` probe
   whose changed line calls a method on a parameter typed `&mut dyn Trait`,
   and a `direct_owner_call` test that declares `let mut rec = Type { .. }`
@@ -1085,8 +1132,15 @@ Tests in `crates/ripr/src/analysis/classify/framework_oracle.rs` and
 - `an_arm_chosen_by_the_environment_is_withheld` and its keeps-the-gap control
 - `an_expect_debug_literal_is_withheld` and its keeps-the-gap control
 - `an_unredacted_insta_field_is_withheld` and its keeps-the-gap control
-- `a_helper_built_receiver_pinned_to_a_literal_is_withheld` and
-  `a_fixture_receiver_shape_that_differs_keeps_the_finding`
+- `fixtures/fixture_receiver_coincident_data` and its independent honesty case
+  retain equal-column, single-row product/sum and all-zero product/sum refusals.
+- `fixture_receiver_literal_pin_reads_helper_data` and
+  `a_fixture_receiver_shape_that_differs_keeps_the_finding` and
+  `fixture_receiver_credit_requires_readable_carried_data`,
+  `fixture_receiver_projection_edit_needs_distinct_literal_totals`,
+  `fixture_receiver_unread_old_pipeline_supplies_no_pin`,
+  `fixture_receiver_equivalent_binding_edits_keep_degenerate_literals` and
+  `fixture_receiver_gate_does_not_lend_propagation_to_a_forwarding_entry_pin`
 - `a_hand_written_recorder_compared_by_field_is_withheld`,
   `a_recorder_shape_that_differs_keeps_the_finding` and
   `a_vec_pushed_into_by_the_changed_call_keeps_the_gap`

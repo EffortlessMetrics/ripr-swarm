@@ -48,6 +48,8 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     pub(in crate::analysis) reach: StageEvidence,
     pub(in crate::analysis) infect: StageEvidence,
     pub(in crate::analysis) propagate: StageEvidence,
+    /// The credited fixture-specific pin has read its actual receiver data.
+    pub(in crate::analysis) literal_fixture_receiver_pinned: bool,
     pub(in crate::analysis) observe: StageEvidence,
     pub(in crate::analysis) discriminate: StageEvidence,
     /// Reach is `No` for a resolved owner that nothing in the workspace
@@ -979,6 +981,17 @@ impl ClassifiedProbeEvidence {
                 })
                 || direct_owner_pin_admits(test, assertion)
         };
+        // #9766: the per-assertion fact that the fixture-receiver owner gate
+        // itself admitted this assertion. Another owner-pin route (chain
+        // entry, display, projection or fallible-check receipt) credits the
+        // pin without reading any literal fixture data.
+        let fixture_receiver_pin_admits = |test: &TestSummary, assertion: &OracleFact| {
+            owner_return_pin
+                .as_ref()
+                .is_some_and(OwnerReturnPin::reads_literal_fixture_receiver)
+                && owner_pin_admits(test, assertion)
+                && direct_owner_pin_admits(test, assertion)
+        };
         let recording_double = context.owner_fn.and_then(|owner| {
             EffectStateCarrier::recording_double(
                 context.probe,
@@ -1030,6 +1043,7 @@ impl ClassifiedProbeEvidence {
                         )
                     }),
                 owner_return_pin: &owner_pin_admits,
+                fixture_receiver_pin: &fixture_receiver_pin_admits,
                 owner_return_pin_required: map_callback_pin_required,
                 wrapper_return_pin: &|test, assertion| {
                     wrapper_boundary_probe.is_some()
@@ -1223,6 +1237,23 @@ impl ClassifiedProbeEvidence {
             reveal.related,
             reveal.related_total,
         );
+        // #9766: only the fixture-specific owner gate reads the nonempty
+        // literal tuples and their numeric projection through the returned
+        // sum. Reveal's credited bit retains all assertion/relation/name
+        // defeats; an unreadable or empty fixture cannot supply this flow.
+        let literal_fixture_receiver_pinned = reveal.fixture_receiver_credited
+            && owner_return_pin
+                .as_ref()
+                .is_some_and(OwnerReturnPin::reads_literal_fixture_receiver);
+        let propagate = if propagate.state == StageState::Weak && literal_fixture_receiver_pinned {
+            StageEvidence::new(
+                StageState::Yes,
+                Confidence::Medium,
+                "Literal fixture receiver data reaches the changed tuple projection and returned sum through a credited exact pin",
+            )
+        } else {
+            propagate
+        };
         let direct_rows = reveal.direct_rows;
         // #6692: a clone-field pin (`assert_eq!(recv.clone(), recv)` through
         // a derived `PartialEq`) observes the constructed field, so the
@@ -1757,6 +1788,7 @@ impl ClassifiedProbeEvidence {
             reach,
             infect,
             propagate,
+            literal_fixture_receiver_pinned,
             observe,
             discriminate,
             reach_ruled_out,
