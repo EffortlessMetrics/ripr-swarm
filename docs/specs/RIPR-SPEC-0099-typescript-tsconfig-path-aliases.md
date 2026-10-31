@@ -74,7 +74,7 @@ OFF preserved the existing conservative behavior; the amendment above flips it t
 every ambiguity:
 
 - Missing file, JSONC parse error, or missing `compilerOptions.baseUrl` â†’ `None`.
-- `references` present fails closed. `extends` chains are followed up to 8 hops only when every target is a relative path in the same directory as the extending config (#11204): bases merge first, the extending config wins per `paths` key (replace, never merge), and `baseUrl` is the nearest declaration. Package-name or cross-directory bases, cycles, and missing targets fail closed.
+- `references` present fails closed. `extends` chains are followed up to 8 hops only when every target is a relative path in the same directory as the extending config (#11204): bases merge first, a declared `paths` object replaces the inherited one whole (as `tsc` treats it, even when empty), and `baseUrl` is the nearest declaration. Package-name or cross-directory bases, cycles, and missing targets fail closed.
 - Empty or multi-entry `paths` value array, or a template with more than one
   `*` â†’ retain the literal/single-wildcard key as an unresolved blocker. A
   broader alias must not take over the blocked key's imports.

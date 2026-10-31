@@ -566,11 +566,13 @@ enum TsAliasMapBlocker {
 }
 
 /// `compilerOptions` after merging an `extends` chain (#11204): the
-/// extending config wins per key, `paths` entries replace (never merge)
-/// per key, and `baseUrl` is the nearest declaration.
+/// extending config wins per key, a declared `paths` object replaces the
+/// inherited one whole (as `tsc` treats it, even when empty), and
+/// `baseUrl` is the nearest declaration. `paths` is `None` until some
+/// config in the chain declares it.
 struct MergedCompilerOptions {
     base_url: Option<String>,
-    paths: HashMap<String, Vec<String>>,
+    paths: Option<HashMap<String, Vec<String>>>,
 }
 
 /// Maximum `extends` hops followed from the workspace-root config.
@@ -619,7 +621,7 @@ fn merge_compiler_options(
         .ok_or(TsAliasMapBlocker::ExtendsUnsupported)?;
     let mut merged = MergedCompilerOptions {
         base_url: None,
-        paths: HashMap::new(),
+        paths: None,
     };
     if let Some(extends) = &raw.extends {
         let targets: Vec<&str> = match extends {
@@ -649,8 +651,8 @@ fn merge_compiler_options(
             if base.base_url.is_some() {
                 merged.base_url = base.base_url;
             }
-            for (key, values) in base.paths {
-                merged.paths.insert(key, values);
+            if base.paths.is_some() {
+                merged.paths = base.paths;
             }
         }
     }
@@ -658,8 +660,8 @@ fn merge_compiler_options(
         if options.base_url.is_some() {
             merged.base_url = options.base_url;
         }
-        for (key, values) in options.paths.unwrap_or_default() {
-            merged.paths.insert(key, values);
+        if options.paths.is_some() {
+            merged.paths = options.paths;
         }
     }
     visited.pop();
@@ -673,7 +675,7 @@ fn parse_alias_map(
 ) -> Result<TsAliasMap, TsAliasMapBlocker> {
     let merged = merge_compiler_options(config_path, text, &mut Vec::new(), 0)?;
     let base_url = merged.base_url.ok_or(TsAliasMapBlocker::IncompleteConfig)?;
-    let paths = merged.paths;
+    let paths = merged.paths.unwrap_or_default();
 
     // An absolute baseUrl (POSIX `/…`, drive-letter, or UNC) cannot be
     // anchored to `root` by single-hop resolution. Keep the map so the
@@ -1147,6 +1149,28 @@ mod tests {
             resolved.to_string_lossy().replace('\\', "/"),
             "src/child-owner.ts"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn extends_child_empty_paths_replaces_base_paths() -> Result<(), String> {
+        // `tsc` replaces the inherited `paths` object whole when the
+        // extending config declares `paths`, even when it declares it
+        // empty: base aliases the child does not redeclare are gone.
+        let root = temp_dir("extends-empty-paths");
+        write(
+            &root,
+            "tsconfig.base.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/owner":["src/base-owner"]}}}"#,
+        );
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"extends":"./tsconfig.base.json","compilerOptions":{"paths":{}}}"#,
+        );
+        write(&root, "src/base-owner.ts", "export const v = 1;");
+        let map = load_alias_map(&root).ok_or("extends chain should load")?;
+        assert!(map.resolve("@/owner").is_none());
         Ok(())
     }
 
