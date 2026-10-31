@@ -242,14 +242,17 @@ fn owner_call_literal_args(expression: &str, owner_id: &str) -> Vec<String> {
     literals
 }
 
-/// Whether the expression holds a pattern or heredoc this read does not
-/// mask: a `=~` or `!~` binding, a `<<` heredoc introducer (`<<EOT`, `<<"EOT"`,
-/// `<<~EOT`), or a `qr`, `m`, `s`, `tr` or `y` word that opens a delimited
-/// pattern. A word after a sigil, `->`, `::` or `{`, one before a fat comma,
-/// and a longer name (`tier_label`) are not operators. It errs toward true:
-/// the only effect of a false positive is that no owner call is read.
+/// Whether the expression holds anything this read does not parse: any `/`
+/// (a bare pattern such as `grep /x/, @l`, a `m//`, `s///`, `tr///` or
+/// division), a `=~` or `!~` binding, a `<<` heredoc introducer (`<<EOT`,
+/// `<< "EOT"`, `<<~EOT`), or a `q`, `qq`, `qw`, `qr`, `m`, `s`, `tr` or `y` word
+/// followed by any delimiter. The only exceptions are a word after a sigil or
+/// `->` (a variable or method name), a hash key (`{s}`, `s =>`), and a longer
+/// name (`tier_label`). It is a denylist-free fail-closed scan, not a Perl
+/// parser: it over-withholds (a `/` in a message, a bare `s,`), which only
+/// costs a missed credit, never grants `exposed`.
 fn has_regex_or_heredoc(text: &str) -> bool {
-    if text.contains("=~") || text.contains("!~") {
+    if text.contains('/') || text.contains("=~") || text.contains("!~") {
         return true;
     }
     let chars: Vec<char> = text.chars().collect();
@@ -257,9 +260,12 @@ fn has_regex_or_heredoc(text: &str) -> bool {
     while i < chars.len() {
         let c = chars[i];
         if c == '<' && chars.get(i + 1) == Some(&'<') {
-            let next = chars.get(i + 2).copied();
-            if next.is_some_and(|n| {
-                (is_word(n) && !n.is_ascii_digit()) || matches!(n, '"' | '\'' | '~')
+            let mut next = i + 2;
+            while next < chars.len() && chars[next].is_whitespace() {
+                next += 1;
+            }
+            if chars.get(next).is_some_and(|n| {
+                (is_word(*n) && !n.is_ascii_digit()) || matches!(n, '"' | '\'' | '~')
             }) {
                 return true;
             }
@@ -270,21 +276,25 @@ fn has_regex_or_heredoc(text: &str) -> bool {
                 i += 1;
             }
             let word: String = chars[start..i].iter().collect();
-            let named =
-                start > 0 && matches!(chars[start - 1], '$' | '@' | '%' | '&' | '>' | ':' | '{');
-            if !named && matches!(word.as_str(), "qr" | "m" | "s" | "tr" | "y") {
+            let named = start > 0
+                && (matches!(chars[start - 1], '$' | '@' | '%' | '&')
+                    || (start > 1 && chars[start - 2] == '-' && chars[start - 1] == '>'));
+            if !named
+                && matches!(
+                    word.as_str(),
+                    "q" | "qq" | "qw" | "qr" | "m" | "s" | "tr" | "y"
+                )
+            {
                 let mut open = i;
                 while open < chars.len() && chars[open].is_whitespace() {
                     open += 1;
                 }
-                let fat_comma = chars.get(open) == Some(&'=') && chars.get(open + 1) == Some(&'>');
-                let delimiter = chars.get(open).is_some_and(|d| {
-                    matches!(
-                        d,
-                        '/' | '{' | '(' | '[' | '<' | '|' | '!' | '#' | '^' | '~' | '\'' | '"'
-                    )
-                });
-                if delimiter && !fat_comma {
+                let Some(&delimiter) = chars.get(open) else {
+                    continue;
+                };
+                let fat_comma = delimiter == '=' && chars.get(open + 1) == Some(&'>');
+                let hash_key = delimiter == '}' && start > 0 && chars[start - 1] == '{';
+                if !is_word(delimiter) && !fat_comma && !hash_key {
                     return true;
                 }
             }
@@ -710,6 +720,65 @@ mod tests {
                 input(observable, "is(tier_label(100), 1)"),
                 BoundaryInput::Unestablished,
                 "{observable}"
+            );
+        }
+    }
+
+    #[test]
+    fn each_unparsed_construct_withholds_the_owner_call_on_its_own() {
+        // A real far call plus 1000 only inside a non-call span; none of
+        // these has `=~`, so each branch of the guard stands alone.
+        for expression in [
+            "is(tier_label(2000), 1); grep /tier_label(1000)/, @x",
+            "is(tier_label(2000), 1); split /tier_label(1000)/, $x",
+            "is(tier_label(2000), 1); my @l = map { m/tier_label(1000)/ } @x",
+            "is(tier_label(2000), 1); $v ? 1 :s/a/tier_label(1000)/",
+            "is(tier_label(2000), 1); {m,tier_label(1000),}",
+            "is(tier_label(2000), 1); $v ? 1 :s,a,tier_label(1000),",
+            "is(tier_label(2000), 1); s=a=tier_label(1000)=",
+            "is(tier_label(2000), 1); y;a;tier_label(1000);",
+            "is(tier_label(2000), 1); qq^tier_label(1000)^",
+            "is(tier_label(2000), 1); q,tier_label(1000),",
+            "is(tier_label(2000), <<EOT)\ntier_label(1000)\nEOT",
+            "is(tier_label(2000), << \"EOT\")\ntier_label(1000)\nEOT",
+            "is(tier_label(2000), <<'EOT')\ntier_label(1000)\nEOT",
+            "is(tier_label(2000), <<~EOT)\ntier_label(1000)\nEOT",
+            "is(tier_label(2000), 1) =~ tier_label(1000)",
+            "is(tier_label(2000), 1) !~ tier_label(1000)",
+        ] {
+            assert_eq!(
+                input("$points >= 1000", expression),
+                BoundaryInput::Unestablished,
+                "{expression}"
+            );
+        }
+        // Each quote-like word on its own, with a delimiter the quote mask
+        // does not know, so only the word list can withhold it.
+        for word in ["q", "qq", "qw", "qr", "m", "s", "tr", "y"] {
+            let expression = format!("is(tier_label(2000), 1); {word};tier_label(1000);");
+            assert_eq!(
+                input("$points >= 1000", &expression),
+                BoundaryInput::Unestablished,
+                "{expression}"
+            );
+            let spaced = format!("is(tier_label(2000), 1); {word} ,tier_label(1000),");
+            assert_eq!(
+                input("$points >= 1000", &spaced),
+                BoundaryInput::Unestablished,
+                "{spaced}"
+            );
+        }
+        // Controls: names that merely look like the words keep the read.
+        for expression in [
+            "is(tier_label(1000), $s, $y, $m, $q, $tr)",
+            "is(tier_label(1000), $h{s}, $obj->y, $obj->s(1), $obj ->m)",
+            "is(tier_label(1000), { s => 1, y => 2, m => 3 }, {s})",
+            "is(tier_label(1000), tests(1), ms(1), sy(1), $x <=> $y, 1 << 2)",
+        ] {
+            assert_eq!(
+                input("$points >= 1000", expression),
+                BoundaryInput::OnThreshold,
+                "{expression}"
             );
         }
     }
