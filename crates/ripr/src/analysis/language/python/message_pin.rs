@@ -422,6 +422,16 @@ mod tests {
             "def f(arg):\n    if arg:\n        msg = \"a\"\n        raise KeyError(msg=msg)\n",
             "def f(arg):\n    if arg:\n        msg = \"a\"\n        vars()\n        raise KeyError(msg)\n",
             "def f(arg):\n    if arg:\n        msg = \"a\"\n    return msg\n",
+            // A walrus, for-target, with-target, except-target or augmented
+            // rebind adds a mention, so the name stays unresolved.
+            "def f(arg):\n    if arg:\n        msg = \"a\"\n        (msg := other())\n        raise KeyError(msg)\n",
+            "def f(arg):\n    if arg:\n        msg = \"a\"\n        for msg in items():\n            pass\n        raise KeyError(msg)\n",
+            "def f(arg):\n    if arg:\n        msg = \"a\"\n        with ctx() as msg:\n            pass\n        raise KeyError(msg)\n",
+            "def f(arg):\n    if arg:\n        msg = \"a\"\n        try:\n            go()\n        except Oops as msg:\n            pass\n        raise KeyError(msg)\n",
+            "def f(arg):\n    if arg:\n        msg = \"a\"\n        msg += \"b\"\n        raise KeyError(msg)\n",
+            // A comment or string mention is counted too (fail closed).
+            "def f(arg):\n    if arg:\n        msg = \"a\"\n        # msg is shown to the user\n        raise KeyError(msg)\n",
+            "def f(arg):\n    if arg:\n        msg = \"a\"\n        note = \"see msg\"\n        raise KeyError(msg)\n",
         ] {
             assert_eq!(resolve(source), None, "{source}");
         }
