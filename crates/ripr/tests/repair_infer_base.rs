@@ -188,8 +188,8 @@ impl Repo {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        // `ripr` prints a Windows root with `/` separators, so mask that
-        // spelling as well as the native one.
+        // The product prints a Windows root with `/` separators, so mask both
+        // spellings of this repository's own root.
         let native = self.0.to_string_lossy().into_owned();
         Ok(text
             .replace(&native, "<root>")

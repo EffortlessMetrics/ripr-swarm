@@ -933,17 +933,25 @@ mod tests {
     /// root prints only the Bash line.
     #[test]
     fn retry_template_translates_root_around_its_placeholder() {
-        // The Bash single-quote form is the stimulus: the host form on Windows is a
-        // double-quoted root that PowerShell reads the same way, so it prints no
-        // second line.
-        let root = crate::agent::loop_commands::shell_arg_for("/home/o'neil/proj", false);
-        assert_eq!(
-            retry_lines(&format!("ripr continue --attempt <attempt-id> --root {root}")),
-            vec![
-                format!("retry: ripr continue --attempt <attempt-id> --root {root}"),
+        let root = crate::agent::loop_commands::shell_arg("/home/o'neil/proj");
+        let mut expected = vec![format!(
+            "retry: ripr continue --attempt <attempt-id> --root {root}"
+        )];
+        if cfg!(windows) {
+            // The Windows console form is double-quoted, which PowerShell
+            // reads unchanged, so no second line is printed.
+            assert_eq!(root, "\"/home/o'neil/proj\"");
+        } else {
+            expected.push(
                 "retry (PowerShell): ripr continue --attempt <attempt-id> --root '/home/o''neil/proj'"
                     .to_string(),
-            ]
+            );
+        }
+        assert_eq!(
+            retry_lines(&format!(
+                "ripr continue --attempt <attempt-id> --root {root}"
+            )),
+            expected
         );
         assert_eq!(
             retry_lines("ripr repair <seam-id> --root /work/proj"),
