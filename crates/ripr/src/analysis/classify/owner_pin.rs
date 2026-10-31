@@ -14296,6 +14296,106 @@ pub(super) fn unit_struct_value(
     declared_in_test_file == 1
 }
 
+/// Whether bare `name` in `test_file` is a variant of the one workspace enum
+/// `enum_name`, brought in by exactly one non-aliased `use` of that enum's
+/// glob or of the variant itself (#9676). Fail-closed: a prelude spelling,
+/// another import of `name`, a same-named local item or a `macro_rules!` in
+/// the file, or an enum that is not the single declaration all refuse.
+pub(super) fn imported_enum_variant_value(
+    name: &str,
+    enum_name: &str,
+    test_file: &Path,
+    index: &RustIndex,
+) -> bool {
+    if name.is_empty() || enum_name.is_empty() || PRELUDE_VALUES.contains(&name) {
+        return false;
+    }
+    let declaring: Vec<_> = index
+        .files()
+        .values()
+        .filter(|facts| {
+            facts.source.contains(enum_name)
+                && declares_type(&mask_comments_and_strings(&facts.source), enum_name)
+        })
+        .collect();
+    let [declaring] = declaring.as_slice() else {
+        return false;
+    };
+    // Equality facts are not needed (and can be unavailable for an enum with
+    // exotic derives): only the single non-test `enum` declaration's variants.
+    let Some(parse) = parse_clean_source_file(&declaring.source) else {
+        return false;
+    };
+    let mut enums = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Enum::cast)
+        .filter(|item| item.name().is_some_and(|ident| ident.text() == enum_name));
+    let (Some(item), None) = (enums.next(), enums.next()) else {
+        return false;
+    };
+    if !item.variant_list().is_some_and(|list| {
+        list.variants().any(|variant| {
+            variant.name().is_some_and(|ident| ident.text() == name)
+                && variant.field_list().is_none()
+        })
+    }) {
+        return false;
+    }
+    let Some(file) = index.files().get(test_file) else {
+        return false;
+    };
+    let masked = mask_comments_and_strings(&file.source);
+    if masked.contains("macro_rules") {
+        return false;
+    }
+    let enum_glob = format!("{enum_name}::*");
+    let enum_variant = format!("{enum_name}::{name}");
+    let rooted = |path: &str, tail: &str| {
+        path.strip_suffix(tail).is_some_and(|prefix| {
+            prefix.is_empty()
+                || prefix.strip_suffix("::").is_some_and(|prefix| {
+                    prefix
+                        .split("::")
+                        .all(|segment| matches!(segment, "self" | "super" | "crate"))
+                })
+        })
+    };
+    let mut admitted = 0usize;
+    for import in flattened_use_paths(&file.source) {
+        let last = import.path.rsplit("::").next().unwrap_or("");
+        let binds_name = last == name || import.alias.as_deref() == Some(name);
+        if import.alias.is_none()
+            && (rooted(&import.path, &enum_glob) || rooted(&import.path, &enum_variant))
+        {
+            admitted += 1;
+        } else if binds_name {
+            return false;
+        }
+    }
+    if admitted != 1 {
+        return false;
+    }
+    // A same-named item (other than the enum's own variant list) would shadow
+    // the glob; refuse any item keyword directly before the spelling.
+    !whole_word_offsets(&masked, name).into_iter().any(|offset| {
+        let before = masked[..offset].trim_end();
+        [
+            "const", "static", "fn", "struct", "union", "type", "mod", "trait", "enum", "let",
+            "mut",
+        ]
+        .iter()
+        .any(|keyword| {
+            before.ends_with(keyword)
+                && before[..before.len() - keyword.len()]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        })
+    })
+}
+
 /// The prelude's value-namespace names a unit struct could share.
 const PRELUDE_VALUES: &[&str] = &["None", "Some", "Ok", "Err"];
 

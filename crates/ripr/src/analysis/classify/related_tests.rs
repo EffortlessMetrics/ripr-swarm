@@ -5181,6 +5181,11 @@ fn inherent_receiver_call_resolves_with(
             super::owner_pin::unit_struct_value(name, &test.file, index, pin_syntax)
         })
     };
+    let unit_variant = |name: &str| {
+        index.is_some_and(|index| {
+            super::owner_pin::imported_enum_variant_value(name, impl_type, &test.file, index)
+        })
+    };
     // The file-local claims below speak of the test file's own root `ty`, so
     // they bind the probed owner only when its `impl` is a root item of that
     // same file (a sibling module's same-named type is another owner).
@@ -5224,6 +5229,7 @@ fn inherent_receiver_call_resolves_with(
                 method,
                 impl_type,
                 &unit_struct,
+                &unit_variant,
                 &factory,
                 &owner_unrebound,
             )
@@ -5355,6 +5361,7 @@ fn inherent_call_node_resolves(
     method: &str,
     impl_type: &str,
     unit_struct: &dyn Fn(&str) -> bool,
+    unit_variant: &dyn Fn(&str) -> bool,
     factory: &dyn Fn(&str, &str) -> bool,
     owner_unrebound: &dyn Fn() -> bool,
 ) -> bool {
@@ -5381,6 +5388,7 @@ fn inherent_call_node_resolves(
                     original_scope.unwrap_or_else(|| call.syntax()),
                     impl_type,
                     unit_struct,
+                    unit_variant,
                     factory,
                     owner_unrebound,
                 )
@@ -5405,6 +5413,7 @@ fn inherent_call_node_resolves(
                     original_scope.unwrap_or_else(|| call.syntax()),
                     impl_type,
                     unit_struct,
+                    unit_variant,
                     factory,
                     owner_unrebound,
                 )
@@ -5498,6 +5507,7 @@ fn scoped_receiver_names_type(
     call: &SyntaxNode,
     impl_type: &str,
     unit_struct: &dyn Fn(&str) -> bool,
+    unit_variant: &dyn Fn(&str) -> bool,
     factory: &dyn Fn(&str, &str) -> bool,
     owner_unrebound: &dyn Fn() -> bool,
 ) -> bool {
@@ -5520,7 +5530,9 @@ fn scoped_receiver_names_type(
             if !name.is_empty() && name.bytes().all(is_ident_byte) {
                 // A bare type name is a value only for a verified unit struct
                 // (`Formatter.format(..)`), not a same-spelled constant/import.
-                if name == impl_type && unit_struct(impl_type) {
+                // A bare variant is the owner's value only when exactly one
+                // `use` brings that variant of the one workspace enum in (#8782).
+                if (name == impl_type && unit_struct(impl_type)) || unit_variant(name) {
                     return true;
                 }
                 return visible_receiver_binding_names_type(
