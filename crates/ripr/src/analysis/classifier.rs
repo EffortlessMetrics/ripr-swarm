@@ -63,28 +63,6 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
     )
 }
 
-/// An inherent-method owner reached through an `async fn` hop is not executed
-/// by a test that only calls that hop: the call constructs a future and
-/// nothing here establishes polling (#7415, the same refusal
-/// `inherent_helper_path_reaches_owner` applies to the compact path). Hops
-/// run owner-upward, so the chain keeps the synchronous hops below the first
-/// `async` caller and a test that calls one of those still relates.
-/// Unknown or ambiguous declarations fail closed like an `async` one.
-fn without_async_hops_for_inherent_owner(
-    owner: Option<&crate::analysis::facts::FunctionSummary>,
-    mut chain: super::classify::HelperChain,
-    index: &RustIndex,
-) -> super::classify::HelperChain {
-    if owner.is_some_and(super::classify::requires_inherent_receiver_identity)
-        && let Some(first_async) = chain.hops.iter().position(|hop| {
-            super::classify::function_declaration_is_async(&hop.caller, index) != Some(false)
-        })
-    {
-        chain.hops.truncate(first_async);
-    }
-    chain
-}
-
 #[allow(
     clippy::too_many_arguments,
     reason = "classification inputs plus explicit run-local origin context"
@@ -107,16 +85,18 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
     // but the uniqueness stop is kept so #7080 can abstain as unknown.
     let resolved_chain = owner_fn
         .map(|owner| super::classify::resolve_chain(&owner.name, index, workspace_complete, &[]));
-    let helper_chain = resolved_chain
-        .clone()
-        .map(|chain| without_async_hops_for_inherent_owner(owner_fn, chain, index))
-        .filter(|chain| !chain.hops.is_empty());
-    let mut related_tests = find_related_tests_with_candidate_index(
+    // An `async fn` hop is not executed by a test that only constructs its
+    // future (#7415, #11151): the chain is cut at the first non-synchronous
+    // hop unless the test provably polls it (`hop_polling`).
+    let super::classify::PolledHops {
+        related: mut related_tests,
+        chain: helper_chain,
+    } = super::classify::related_through_polled_hops(
         probe,
         owner_fn,
         index,
         workspace_complete,
-        helper_chain.as_ref(),
+        resolved_chain.clone(),
         dependency_edges,
         candidate_index,
     );
