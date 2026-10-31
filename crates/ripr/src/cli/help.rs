@@ -905,7 +905,7 @@ mod tests {
         assert!(short.contains("--json --quiet"));
         assert!(short.contains("--json on a pipe is already quiet"));
         let full = CHECK_HELP.split_whitespace().collect::<Vec<_>>().join(" ");
-        assert!(full.contains("RIPR_PROGRESS=1 restores it"));
+        assert!(full.contains("`RIPR_PROGRESS=1` restores it"));
         assert!(
             !short.contains("--json alone silences"),
             "short help must not claim --json disables progress"

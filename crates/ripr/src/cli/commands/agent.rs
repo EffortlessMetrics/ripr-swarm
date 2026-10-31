@@ -2801,11 +2801,13 @@ fn run_agent_repair_phase(
                         edit_cage_verdict: cage_after.verdict.status.as_label(),
                     });
                 }
-                eprintln!(
-                    "ripr: edit-cage verdict for attempt `{}`: {:?}",
-                    cage_after.attempt_id.as_str(),
-                    cage_after.verdict.status
-                );
+                if !quiet {
+                    eprintln!(
+                        "ripr: edit-cage verdict for attempt `{}`: {:?}",
+                        cage_after.attempt_id.as_str(),
+                        cage_after.verdict.status
+                    );
+                }
                 for line in repair_after_cage_recovery_lines(
                     &caller_root,
                     store_ref,
@@ -2931,10 +2933,12 @@ fn run_agent_repair_phase(
                         );
                         match record_outcome {
                             Ok(apply_record_path) => {
-                                eprintln!(
-                                    "ripr: python repair-trust apply record: {}",
-                                    crate::output::path::human_path(&apply_record_path)
-                                );
+                                if !quiet {
+                                    eprintln!(
+                                        "ripr: python repair-trust apply record: {}",
+                                        crate::output::path::human_path(&apply_record_path)
+                                    );
+                                }
                             }
                             Err(error) => {
                                 // Finish already advanced the durable state, so a
@@ -3074,10 +3078,12 @@ fn run_agent_repair_phase(
             let attempt_id = attempt_id.as_deref().ok_or_else(|| {
                 "agent repair --phase verify lost its parsed attempt identity".to_string()
             })?;
-            eprintln!(
-                "ripr: agent repair --phase verify for attempt `{attempt_id}` at {}",
-                crate::output::path::human_path(&root)
-            );
+            if !quiet {
+                eprintln!(
+                    "ripr: agent repair --phase verify for attempt `{attempt_id}` at {}",
+                    crate::output::path::human_path(&root)
+                );
+            }
             let receipt_path = app::python_repair_verification::run_verification_phase(
                 app::python_repair_verification::VerificationOptions {
                     root: &root,
@@ -3104,10 +3110,12 @@ fn run_agent_repair_phase(
                     crate::agent::loop_commands::display_path(&receipt_path)
                 );
             }
-            eprintln!(
-                "ripr: verification receipt: {} (immutable; execution and static movement are separate observations)",
-                crate::output::path::human_path(&receipt_path)
-            );
+            if !quiet {
+                eprintln!(
+                    "ripr: verification receipt: {} (immutable; execution and static movement are separate observations)",
+                    crate::output::path::human_path(&receipt_path)
+                );
+            }
             Ok(())
         }
     }
@@ -3790,13 +3798,15 @@ fn run_gap_bound_before_phase(
     };
 
     ensure_command_root(root, "agent repair --phase before")?;
-    eprintln!(
-        "{}",
-        terminal_safe(format!(
-            "ripr: agent repair --phase before for gap `{gap_id}` (base `{base}`) at {}",
-            root.display()
-        ))
-    );
+    if !quiet {
+        eprintln!(
+            "{}",
+            terminal_safe(format!(
+                "ripr: agent repair --phase before for gap `{gap_id}` (base `{base}`) at {}",
+                root.display()
+            ))
+        );
+    }
     let root_display = bound_root(&root.to_string_lossy());
     let store_flag = crate::app::repair_attempt::quoted_store_flag(store_ref);
     let restart = gap_bound_start_command(&root_display, &store_flag, gap_id, base);
