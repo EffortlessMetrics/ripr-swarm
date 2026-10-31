@@ -1474,7 +1474,7 @@ fn b6_dirty_production_premise_refuses_before_the_inventory_in_both_arms() -> Re
         "--root",
         root_arg.as_str(),
         "--gap-id",
-        "gap:does-not-exist",
+        "gap:typescript:typescript_preview:does-not-exist",
         "--base",
         "HEAD",
         "--phase",
