@@ -764,7 +764,8 @@ mod tests {
         };
         assert_eq!(
             err,
-            "impacted-evidence --label requires a non-empty value; pass `--label <value>`".to_string()
+            "impacted-evidence --label requires a non-empty value; pass `--label <value>`"
+                .to_string()
         );
         Ok(())
     }

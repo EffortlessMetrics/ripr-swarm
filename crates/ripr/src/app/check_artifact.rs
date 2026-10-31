@@ -589,9 +589,12 @@ fn resolved_enabled_languages(config: &RiprConfig, perl_facts_present: bool) -> 
 /// be resolved.
 fn canonical_optional_path(path: Option<&Path>) -> Result<Option<PathBuf>, String> {
     match path {
-        Some(path) => std::fs::canonicalize(path)
-            .map(Some)
-            .map_err(|err| format!("failed to canonicalize {}: {err}; check the path exists", path.display())),
+        Some(path) => std::fs::canonicalize(path).map(Some).map_err(|err| {
+            format!(
+                "failed to canonicalize {}: {err}; check the path exists",
+                path.display()
+            )
+        }),
         None => Ok(None),
     }
 }
@@ -600,7 +603,12 @@ fn canonical_optional_path(path: Option<&Path>) -> Result<Option<PathBuf>, Strin
 fn canonical_root(root: &Path) -> Result<String, String> {
     std::fs::canonicalize(root)
         .map(|path| path.to_string_lossy().to_string())
-        .map_err(|err| format!("failed to canonicalize root {}: {err}; pass `--root` with an existing directory", root.display()))
+        .map_err(|err| {
+            format!(
+                "failed to canonicalize root {}: {err}; pass `--root` with an existing directory",
+                root.display()
+            )
+        })
 }
 
 #[cfg(test)]

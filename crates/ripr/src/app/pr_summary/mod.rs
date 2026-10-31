@@ -145,7 +145,9 @@ fn parse_options(args: &[String]) -> Result<SummaryOptions, String> {
                 index += 1;
                 let path = expect_value(args, index, arg)?;
                 if path.trim().is_empty() || path.starts_with('-') {
-                    return Err(format!("pr-summary {arg} requires a non-empty path value; pass `{arg} <path>`"));
+                    return Err(format!(
+                        "pr-summary {arg} requires a non-empty path value; pass `{arg} <path>`"
+                    ));
                 }
                 #[cfg(windows)]
                 {
@@ -209,8 +211,9 @@ Outputs:
 ";
 
 fn check_summary(path: &Path, expected: &str) -> Result<(), String> {
-    let actual = fs::read_to_string(path)
-        .map_err(|err| format!("missing or unreadable {PR_SUMMARY_MD}: {err}; run `ripr pr-summary` to write it"))?;
+    let actual = fs::read_to_string(path).map_err(|err| {
+        format!("missing or unreadable {PR_SUMMARY_MD}: {err}; run `ripr pr-summary` to write it")
+    })?;
     if actual == expected {
         println!("PR evidence summary contract ok: {PR_SUMMARY_MD}");
         Ok(())

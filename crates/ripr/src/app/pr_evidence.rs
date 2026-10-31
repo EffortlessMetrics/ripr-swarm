@@ -113,7 +113,9 @@ fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a
         return Err(format!("missing value for {flag}; pass a value after it"));
     };
     if value.trim().is_empty() {
-        return Err(format!("pr-evidence {flag} requires a non-empty value; pass `{flag} <value>`"));
+        return Err(format!(
+            "pr-evidence {flag} requires a non-empty value; pass `{flag} <value>`"
+        ));
     }
     Ok(value)
 }

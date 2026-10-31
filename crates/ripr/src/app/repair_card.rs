@@ -761,7 +761,9 @@ mod tests {
         input.next_command = Some(&command);
         assert_eq!(
             build_repair_card(&input).err().as_deref(),
-            Some("repair card route gate is closed, so no runnable route can be shown; report this as a ripr bug with the command you ran")
+            Some(
+                "repair card route gate is closed, so no runnable route can be shown; report this as a ripr bug with the command you ran"
+            )
         );
         Ok(())
     }

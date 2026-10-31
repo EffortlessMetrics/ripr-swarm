@@ -43,7 +43,11 @@ impl CausalDeltaArtifact {
         let text = match fs::read_to_string(&path) {
             Ok(text) => text,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(format!("read canonical delta failed: {error}; check the file is readable or delete it")),
+            Err(error) => {
+                return Err(format!(
+                    "read canonical delta failed: {error}; check the file is readable or delete it"
+                ));
+            }
         };
         let value: Value = serde_json::from_str(&text)
             .map_err(|error| format!("parse canonical delta failed: {error}; regenerate target/ripr/pr/canonical-delta.json (`cargo xtask ripr-pr` writes it) or delete it"))?;

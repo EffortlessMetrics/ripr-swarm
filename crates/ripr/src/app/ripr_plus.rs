@@ -309,7 +309,9 @@ fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a
         return Err(format!("plus {flag} requires a path; pass `{flag} <path>`"));
     };
     if value.trim().is_empty() {
-        return Err(format!("plus {flag} requires a non-empty path; pass `{flag} <path>`"));
+        return Err(format!(
+            "plus {flag} requires a non-empty path; pass `{flag} <path>`"
+        ));
     }
     Ok(value)
 }
@@ -430,7 +432,10 @@ fn ripr_plus_receipt_from_options(options: &RiprPlusOptions, head: &str) -> Resu
     }
 
     // Unreachable: parse_options rejects the no-input case. Kept for clarity.
-    Err("plus requires either --repo-exposure-summary or --gap-ledger; pass one of them".to_string())
+    Err(
+        "plus requires either --repo-exposure-summary or --gap-ledger; pass one of them"
+            .to_string(),
+    )
 }
 
 /// Composes a `repo-badge-json` string from a gap decision ledger using the
@@ -462,8 +467,12 @@ fn render_gap_ledger_repo_badge_json(gap_ledger: &Path) -> Result<String, String
 }
 
 fn read_repo_exposure_summary_artifact(path: &Path) -> Result<String, String> {
-    let json = fs::read_to_string(path)
-        .map_err(|err| format!("failed to read {}: {err}; check the file exists and is readable", normalize_path(path)))?;
+    let json = fs::read_to_string(path).map_err(|err| {
+        format!(
+            "failed to read {}: {err}; check the file exists and is readable",
+            normalize_path(path)
+        )
+    })?;
     let value: Value = serde_json::from_str(&json).map_err(|err| {
         format!(
             "failed to parse repo exposure summary artifact {}: {err}",
@@ -890,8 +899,12 @@ fn json_path_usize_optional(value: &Value, path: &[&str]) -> Option<usize> {
 }
 
 fn json_path_usize_required(value: &Value, path: &[&str]) -> Result<usize, String> {
-    json_path_usize_optional(value, path)
-        .ok_or_else(|| format!("JSON is missing numerical field {}; regenerate the input artifact", path.join(".")))
+    json_path_usize_optional(value, path).ok_or_else(|| {
+        format!(
+            "JSON is missing numerical field {}; regenerate the input artifact",
+            path.join(".")
+        )
+    })
 }
 
 fn json_array_string_values(value: &Value, key: &str) -> Vec<String> {
@@ -968,7 +981,9 @@ fn git_head_within(repo: &Path, deadline: std::time::Duration) -> String {
 }
 
 fn repo_root() -> Result<PathBuf, String> {
-    std::env::current_dir().map_err(|err| format!("failed to determine working directory: {err}; run ripr from an existing directory"))
+    std::env::current_dir().map_err(|err| {
+        format!("failed to determine working directory: {err}; run ripr from an existing directory")
+    })
 }
 
 fn write_parented_file(path: &Path, label: &str, contents: impl AsRef<[u8]>) -> Result<(), String> {

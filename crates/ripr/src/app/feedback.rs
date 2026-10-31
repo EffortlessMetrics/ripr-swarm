@@ -135,11 +135,18 @@ pub(crate) fn load_feedback_receipts(root: &Path) -> Result<Vec<FeedbackReceipt>
         return Ok(Vec::new());
     }
     let mut receipts = Vec::new();
-    for entry in fs::read_dir(&directory)
-        .map_err(|error| format!("read {} failed: {error}; check the directory is readable", directory.display()))?
-    {
-        let entry =
-            entry.map_err(|error| format!("read {} failed: {error}; check the directory is readable", directory.display()))?;
+    for entry in fs::read_dir(&directory).map_err(|error| {
+        format!(
+            "read {} failed: {error}; check the directory is readable",
+            directory.display()
+        )
+    })? {
+        let entry = entry.map_err(|error| {
+            format!(
+                "read {} failed: {error}; check the directory is readable",
+                directory.display()
+            )
+        })?;
         let path = entry.path();
         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
             continue;
@@ -190,13 +197,18 @@ pub(crate) fn feedback_directory(root: &Path) -> Result<PathBuf, String> {
 
 fn confine_root(root: &Path) -> Result<PathBuf, String> {
     if root.as_os_str().is_empty() {
-        return Err("feedback --root must be a non-empty directory; pass `--root <dir>`".to_string());
+        return Err(
+            "feedback --root must be a non-empty directory; pass `--root <dir>`".to_string(),
+        );
     }
     if root
         .components()
         .any(|component| matches!(component, Component::ParentDir))
     {
-        return Err("feedback --root must not contain `..`; pass the directory without `..` components".to_string());
+        return Err(
+            "feedback --root must not contain `..`; pass the directory without `..` components"
+                .to_string(),
+        );
     }
     if !root.exists() {
         fs::create_dir_all(root)
@@ -293,10 +305,18 @@ fn load_receipt_file(path: &Path) -> Result<Option<FeedbackReceipt>, String> {
     if !path.exists() {
         return Ok(None);
     }
-    let text = fs::read_to_string(path)
-        .map_err(|error| format!("read {} failed: {error}; check the file is readable", path.display()))?;
-    let value: serde_json::Value = serde_json::from_str(&text)
-        .map_err(|error| format!("parse {} failed: {error}; fix the JSON or delete the file", path.display()))?;
+    let text = fs::read_to_string(path).map_err(|error| {
+        format!(
+            "read {} failed: {error}; check the file is readable",
+            path.display()
+        )
+    })?;
+    let value: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
+        format!(
+            "parse {} failed: {error}; fix the JSON or delete the file",
+            path.display()
+        )
+    })?;
     Ok(Some(rendered_receipt_from_value(&value)?))
 }
 
@@ -326,10 +346,18 @@ fn load_optional_json(path: &Path) -> Result<Option<serde_json::Value>, String> 
     if !path.exists() {
         return Ok(None);
     }
-    let text = fs::read_to_string(path)
-        .map_err(|error| format!("read {} failed: {error}; check the file is readable", path.display()))?;
-    let value = serde_json::from_str(&text)
-        .map_err(|error| format!("parse {} failed: {error}; fix the JSON or delete the file", path.display()))?;
+    let text = fs::read_to_string(path).map_err(|error| {
+        format!(
+            "read {} failed: {error}; check the file is readable",
+            path.display()
+        )
+    })?;
+    let value = serde_json::from_str(&text).map_err(|error| {
+        format!(
+            "parse {} failed: {error}; fix the JSON or delete the file",
+            path.display()
+        )
+    })?;
     Ok(Some(value))
 }
 

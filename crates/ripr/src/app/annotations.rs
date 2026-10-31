@@ -77,7 +77,9 @@ fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a
         return Err(format!("missing value for {flag}; pass a value after it"));
     };
     if value.trim().is_empty() {
-        return Err(format!("annotations {flag} requires a non-empty value; pass `{flag} <path>`"));
+        return Err(format!(
+            "annotations {flag} requires a non-empty value; pass `{flag} <path>`"
+        ));
     }
     Ok(value)
 }
@@ -119,7 +121,10 @@ fn render_annotations(
             });
         }
         Err(err) => {
-            return Err(format!("failed to read {}: {err}; check the file is readable or pass another path with `--comments`", options.comments));
+            return Err(format!(
+                "failed to read {}: {err}; check the file is readable or pass another path with `--comments`",
+                options.comments
+            ));
         }
     };
     let packet: Value = serde_json::from_str(&text)
@@ -228,8 +233,12 @@ fn check_annotations(
         println!("RIPR annotations skipped: {} is missing", options.comments);
         return Ok(());
     }
-    let actual = fs::read_to_string(path)
-        .map_err(|err| format!("missing or unreadable {}: {err}; run `ripr annotations` to write it", options.out))?;
+    let actual = fs::read_to_string(path).map_err(|err| {
+        format!(
+            "missing or unreadable {}: {err}; run `ripr annotations` to write it",
+            options.out
+        )
+    })?;
     if actual == generated.text {
         println!("RIPR annotations contract ok: {}", options.out);
         Ok(())
@@ -244,7 +253,10 @@ fn write_annotations(
     options: &AnnotationOptions,
 ) -> Result<(), String> {
     let Some(parent) = path.parent() else {
-        return Err(format!("{} has no parent directory; pass `--out` with a file path inside a directory", options.out));
+        return Err(format!(
+            "{} has no parent directory; pass `--out` with a file path inside a directory",
+            options.out
+        ));
     };
     fs::create_dir_all(parent)
         .map_err(|err| format!("failed to create {}: {err}; check that the directory is writable or pass `--out` in a writable location", parent.display()))?;
@@ -265,7 +277,9 @@ fn write_annotations(
 }
 
 fn repo_root() -> Result<PathBuf, String> {
-    std::env::current_dir().map_err(|err| format!("failed to determine working directory: {err}; run ripr from an existing directory"))
+    std::env::current_dir().map_err(|err| {
+        format!("failed to determine working directory: {err}; run ripr from an existing directory")
+    })
 }
 
 #[cfg(test)]
