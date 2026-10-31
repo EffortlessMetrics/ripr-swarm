@@ -278,7 +278,7 @@ async fn panicking_tool_handler_without_containment_unwinds() -> Result<(), Stri
 }
 
 #[test]
-fn every_tool_except_refresh_is_panic_contained() -> Result<(), String> {
+fn every_tool_is_panic_contained() -> Result<(), String> {
     let (status, root) = WorkspaceStatus::resolve_with_root(None);
     let server = McpServer::new(status, root).map_err(|error| error.to_string())?;
     if server.tools.tools.is_empty() {
@@ -287,10 +287,88 @@ fn every_tool_except_refresh_is_panic_contained() -> Result<(), String> {
     for tool in &server.tools.tools {
         let name = tool.name.as_ref();
         let contained = contained_tool_schema_version(name).is_some();
-        if contained == (name == protocol::REFRESH_TOOL_NAME) {
-            return Err(format!(
-                "{name}: contained={contained}; only ripr_refresh is excluded (adapter panics are contained at the analysis boundary)"
-            ));
+        if !contained {
+            return Err(format!("{name}: glue panics are not contained"));
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn refresh_glue_panic_is_typed_and_clears_in_flight() -> Result<(), String> {
+    let guard = fixture_root("refresh")?;
+    let server = server_at(&guard.0)?;
+    let armed = injected_tool_panic::arm(&guard.0, protocol::REFRESH_TOOL_NAME);
+    let panicked = call_value(&server, protocol::REFRESH_TOOL_NAME, serde_json::json!({})).await?;
+    if failure_code(&panicked) != Some(workspace::CODE_ANALYSIS_FAILED)
+        || panicked
+            .to_string()
+            .contains("injected MCP tool handler panic")
+    {
+        return Err(format!("refresh panic not contained: {panicked}"));
+    }
+    if server.session.lock().await.in_flight {
+        return Err("a contained refresh panic left in_flight set".to_string());
+    }
+    drop(armed);
+    let after = call_value(&server, protocol::REFRESH_TOOL_NAME, serde_json::json!({})).await?;
+    if failure_code(&after) == Some(workspace::CODE_ANALYSIS_IN_FLIGHT) {
+        return Err(format!("later refresh refused as in flight: {after}"));
+    }
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn refresh_glue_panic_without_containment_unwinds() -> Result<(), String> {
+    let guard = fixture_root("refresh-control")?;
+    let server = std::sync::Arc::new(server_at(&guard.0)?);
+    let _armed = injected_tool_panic::arm(&guard.0, protocol::REFRESH_TOOL_NAME);
+    let joined = tokio::spawn(async move {
+        server
+            .dispatch_tool(
+                rmcp::model::CallToolRequestParams::new(protocol::REFRESH_TOOL_NAME),
+                super::super::MAX_RESPONSE_BYTES,
+            )
+            .await
+            .is_ok()
+    })
+    .await;
+    match joined {
+        Err(error) if error.is_panic() => Ok(()),
+        other => Err(format!("armed refresh must unwind uncontained: {other:?}")),
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn request_glue_panic_is_a_typed_error_and_control_unwinds() -> Result<(), String> {
+    let guard = fixture_root("request")?;
+    let root = guard.0.clone();
+    for method in ["initialize", "tools/list", "resources/read"] {
+        let _armed = injected_tool_panic::arm(&root, method);
+        let panicking = || async {
+            injected_tool_panic::fire(Some(&root), method);
+            Ok(ServerResult::empty(()))
+        };
+        let Err(error) = contain_request(panicking()).await else {
+            return Err(format!("{method}: contained panic must be an error"));
+        };
+        let data = error.data.clone().unwrap_or_default();
+        if error.code != ErrorCode::INTERNAL_ERROR
+            || data.get("code") != Some(&serde_json::json!(workspace::CODE_ANALYSIS_FAILED))
+            || format!("{error:?}").contains("injected MCP tool handler panic")
+        {
+            return Err(format!("{method}: not a typed analysis_failed: {error:?}"));
+        }
+        // Control: without the adapter the same future unwinds.
+        let joined = tokio::spawn({
+            let root = root.clone();
+            async move {
+                injected_tool_panic::fire(Some(&root), method);
+            }
+        })
+        .await;
+        if !joined.is_err_and(|error| error.is_panic()) {
+            return Err(format!("{method}: control did not unwind"));
         }
     }
     Ok(())

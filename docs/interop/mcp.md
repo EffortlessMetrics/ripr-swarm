@@ -670,10 +670,11 @@ only it is the mapping, not an observed `resources/read` response.
 | `cancelled` | `-32603` | reserved | reserved for a later slice |
 
 `analysis_failed` is also the code for a contained internal handler panic in
-any tool except `ripr_refresh` (#11116). It names the tool and is retryable:
+any tool, including a glue panic in `ripr_refresh` (#11116). It names the tool and is retryable:
 retry the tool, then `ripr_refresh`; if it repeats, restart `ripr mcp` and
-report the stderr panic message. Glue panics in `ripr_refresh` itself,
-`resources/read`, `tools/list` and `initialize` are not contained.
+report the stderr panic message. A glue panic in `resources/read`,
+`tools/list` or `initialize` answers a `-32603` JSON-RPC error with
+`error.data.code` `analysis_failed` and the session keeps serving.
 
 Genuine invariant failures are different: the server could not build or
 serialize a result it should always be able to build (`serialize workspace
