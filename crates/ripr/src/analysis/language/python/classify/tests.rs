@@ -1011,7 +1011,7 @@ fn predicate_boundary_off_boundary_exact_oracle_is_weakly_exposed() -> Result<()
     );
     assert!(
         finding.missing.iter().any(|line| line.contains(
-            "No strong related test call places qty equal to item.on_hand; observed qty values: 3; observed item.on_hand values: unresolved"
+            "Some strong related calls have unresolved inputs, so static evidence cannot determine whether they reach the changed boundary"
         )),
         "{:?}",
         finding.missing

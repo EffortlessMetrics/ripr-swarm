@@ -2002,6 +2002,10 @@ impl SharedWorkflowArtifacts {
         for (_, backup, _, _, _) in &plans {
             if let Some(backup) = backup {
                 #[cfg(windows)]
+                #[allow(
+                    clippy::permissions_set_readonly_false,
+                    reason = "Windows-only: clearing the readonly flag is the platform way to make a backup removable; the Unix world-writable concern does not apply"
+                )]
                 {
                     let mut permissions = std::fs::metadata(backup)
                         .map_err(|error| {
@@ -3543,7 +3547,7 @@ fn repair_after_no_movement_lines(
         ));
     }
     lines.extend([
-        format!("to recover: {edit}, then rerun this after-phase command."),
+        format!("to recover: {edit}, then rerun the after phase."),
         format!(
             "inspect the selected attempt with `ripr agent status --root {root_arg}{store_flag} --attempt {attempt_arg}`."
         ),
