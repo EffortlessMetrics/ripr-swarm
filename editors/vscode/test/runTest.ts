@@ -204,6 +204,7 @@ async function main() {
   const userDataPath = resolveUserDataDir(artifactRoot);
   let matrixDiagnostics: { userDataDir: string; receiptPath: string } | undefined;
   let error: unknown;
+  let multiRoot: { userDataDir: string; receiptPath: string } | undefined;
   try {
     resetHostLogDir(userDataPath);
     const extensionDevelopmentPath = path.resolve(
@@ -227,7 +228,8 @@ async function main() {
     const clipboardCapturePath = path.join(userDataPath, 'ripr-test-clipboard.txt');
     fs.rmSync(clipboardCapturePath, { force: true });
     process.env.RIPR_TEST_CLIPBOARD_CAPTURE_PATH = clipboardCapturePath;
-    if (workspaceTrustMode === 'trusted' && !process.env.RIPR_TEST_ACTIONABLE_QUEUE_ROOT) {
+    if (workspaceTrustMode === 'trusted' && process.env.RIPR_TEST_MULTIROOT_ONLY !== '1'
+      && !process.env.RIPR_TEST_ACTIONABLE_QUEUE_ROOT) {
       process.env.RIPR_TEST_ACTIONABLE_QUEUE_ROOT = stageGenuineActionableQueue(
         path.resolve(__dirname, '../../../../'), path.join(artifactRoot, `actionable-queue-${runId}`)
       );

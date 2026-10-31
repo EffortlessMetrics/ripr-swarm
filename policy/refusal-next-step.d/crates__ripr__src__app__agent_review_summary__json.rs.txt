@@ -1,0 +1,1 @@
+crates/ripr/src/app/agent_review_summary/json.rs|failed to render agent review summary JSON: {err} seam_id source file line seam_kind state before_class after_

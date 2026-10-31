@@ -1,0 +1,9 @@
+crates/ripr/src/domain/feedback.rs|feedback --judgment must match the closed reason class unless --reason is `other`
+crates/ripr/src/domain/feedback.rs|feedback --note exceeds {FEEDBACK_NOTE_MAX_BYTES} bytes
+crates/ripr/src/domain/feedback.rs|feedback --note must not contain NUL
+crates/ripr/src/domain/feedback.rs|feedback --snapshot must not contain control characters
+crates/ripr/src/domain/feedback.rs|feedback reason `other` requires --judgment useful|incorrect|unclear|expensive|intentional_no_action
+crates/ripr/src/domain/feedback.rs|feedback reason `other` requires a bounded --note
+crates/ripr/src/domain/feedback.rs|feedback requires --snapshot; file and line are not a result identity
+crates/ripr/src/domain/feedback.rs|feedback {label} must be a non-empty identity without control characters
+crates/ripr/src/domain/feedback.rs|unreviewed feedback cannot carry --review-actor; omit it or set --review

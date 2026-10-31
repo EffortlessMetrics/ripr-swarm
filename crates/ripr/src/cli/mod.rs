@@ -1207,7 +1207,7 @@ mod tests {
         assert_eq!(
             run(args(&["ripr", "agent", "brief", "--diff", "change.diff"])),
             Err(CommandError::Failure(
-                "agent brief requires --json (the supported output for this subcommand)"
+                "agent brief requires --json (the supported output for this subcommand); add --json to the command"
                     .to_string()
             ))
         );
