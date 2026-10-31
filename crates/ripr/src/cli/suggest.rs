@@ -112,7 +112,7 @@ fn implements_local_version(command: &str) -> bool {
 /// Enumerates the accepted values and, when one is close enough, proposes it
 /// as a near-miss suggestion, so the same mistake names the fix on every
 /// command instead of only where a parser happens to inline the list.
-pub(in crate::cli) fn unknown_value(label: &str, value: &str, accepted: &[&str]) -> String {
+pub(crate) fn unknown_value(label: &str, value: &str, accepted: &[&str]) -> String {
     let message = unknown_value_message(label, value, accepted);
     record_usage_refusal("unknown_value", None, message)
 }

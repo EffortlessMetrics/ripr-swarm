@@ -660,6 +660,13 @@ mod tests {
                 "analysis_timeout",
                 "analysis/timeout",
             ),
+            (
+                CoreError::analysis_worker_stopped(
+                    "analysis_worker_stopped: the ripr check analysis worker stopped",
+                ),
+                "analysis_worker_stopped",
+                "analysis/worker-stopped",
+            ),
         ];
         for (error, identity, route) in cases {
             let rendered = render_check_failure_json(&input(), &error)?;

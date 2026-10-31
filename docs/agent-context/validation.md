@@ -136,6 +136,63 @@ pass in one plane must not become another plane's pass in a summary. Historical
 local receipts remain evidence for their original object, not current release
 authority.
 
+## Golden fixtures and the blessing platform
+
+Golden fixtures are the arbiter of output contracts: `goldens check` decides
+whether rendered output matches the committed contract, and its drift reports
+(`target/ripr/reports/golden-drift.md` and `.json`) are what a reviewer reads
+before any blessing. Linux is the arbiter of goldens: this repository is
+developed on Windows and Linux but continuously validated on Linux only, and
+the advisory Windows lane deliberately runs no golden gate and no blessing —
+a Windows lane that blessed or checked goldens would institutionalize the
+#2337 drift it exists to catch (`docs/CI.md`, "Advisory Windows Lane").
+Never bless or hand-edit golden expected-files from a Windows host.
+
+A Windows-rendered bless fails on the arbiter platform in recorded shapes:
+the same tree produced 43 local Windows drift entries and 35 hosted Linux
+entries, and the eight Windows-only entries must not be blessed from a
+Windows run (#8437); Windows renders a base-side evidence suffix the
+committed Linux goldens do not carry (#8525); and a bless from a CRLF working
+tree embedded `input_identity` hashes that no `eol=lf` checkout reproduces,
+failing hosted qualification on PR #8559 (run 39072364336) until the fixtures
+were re-blessed from an LF tree (#8614; that shape is now refused at bless
+time, `xtask/src/reports/fixtures.rs`). The guard cannot catch every platform
+difference; the route below is the discipline.
+
+The sanctioned local route on a Windows host:
+
+1. Read the pin from `rust-toolchain.toml` (channel `1.95.0` as of this
+   writing; cargo follows the channel).
+2. Run the failing `cargo xtask goldens check` under WSL Ubuntu with the
+   pinned toolchain, so the arbiter platform — not the host platform —
+   observes the drift.
+3. Verify the drift is `formatting_only`, or semantically justified under the
+   fixture's output contract.
+4. Apply the re-bless from the WSL checkout
+   (`cargo xtask goldens bless <fixture> --reason "RIPR-SPEC-NNNN: ..."`,
+   per [PR automation](../PR_AUTOMATION.md)), so the expected-file bytes come
+   from the Linux renderer.
+5. Diff the classification content (`expected/check.json`) of every blessed
+   fixture: a renderer-wording re-bless records classifications unchanged.
+
+When WSL is unavailable, the hosted route decides instead: publish the
+candidate and let the hosted Linux golden gate qualify it; do not substitute
+a Windows bless. This plane stays separate from native-Windows evidence —
+WSL cannot prove Windows behavior (see [Environment and
+shell](#environment-and-shell)); it exists here to produce Linux bytes from a
+Windows machine.
+
+Formatting-only versus semantic drift. After a renderer merge (for example
+#9657, #10886), prose lines drift across many fixtures at once; the re-bless
+keeps `check.json` unchanged and cites the landed renderer change as the
+blessing reason (#11301 records "formatting-only, check.json unchanged").
+A `check.json` change is semantic drift and needs the landed change's own
+justification — for example, #10919 taught TypeScript preview findings the
+`canonical_gap_id` field and #10927 re-blessed the affected fixtures to it —
+and the honesty invariant
+(`cargo xtask check-evidence-promotion-honesty`, RIPR-SPEC-0108) still
+rejects a re-bless that promotes evidence without that discriminator.
+
 ## Rust
 
 Broad reference commands, not a per-edit checklist:

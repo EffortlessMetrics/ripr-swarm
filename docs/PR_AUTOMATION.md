@@ -636,7 +636,9 @@ outputs without mutating checked-in files. It also writes
 before any blessing. `goldens bless <fixture> --reason <reason>` requires the
 reason to cite an existing `RIPR-SPEC-NNNN` under `docs/specs/`, then records
 the explicit blessing reason, updates expected JSON and human outputs, and
-appends the fixture expected-output changelog.
+appends the fixture expected-output changelog. Bless from the Linux arbiter
+platform, never from a Windows host; the sanctioned route is documented in
+[Validation commands](agent-context/validation.md#golden-fixtures-and-the-blessing-platform).
 
 Human goldens (`human.txt`, `human-full.txt`) mask only the explanatory prose
 of the line `no repair start offered: <reason>`. Pinned: the line's presence and
