@@ -362,7 +362,15 @@ fn dead_let_bound_comparison(probe: &Probe, owner_fn: Option<&FunctionSummary>) 
         return None;
     }
     let comparison = code(&initializer.syntax().text().to_string());
-    if expression.is_empty() || !expression.contains(&comparison) {
+    // The probe is the comparison itself or the whole `let` statement; a larger
+    // expression that merely encloses the `let` (a block condition) is that
+    // expression's own sink, not this binding's.
+    let statement_text = code(&statement.syntax().text().to_string());
+    let probe_text = expression.trim_end_matches(';').trim_end();
+    if probe_text.is_empty()
+        || (probe_text != comparison.trim_end_matches(';').trim_end()
+            && probe_text != statement_text.trim_end_matches(';').trim_end())
+    {
         return None;
     }
     // The same comparison text elsewhere on the line (an `if` condition ahead
@@ -3073,6 +3081,27 @@ mod tests {
                 .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
             "{sinks:?}"
         );
+    }
+
+    /// An enclosing block condition that holds a dead `let` keeps its own value
+    /// flow: the nested statement's dead binding is not the outer probe's sink.
+    #[test]
+    fn outer_condition_with_a_nested_dead_let_keeps_its_own_flow() {
+        let owner = tail_owner(
+            "pub fn score(n: u32) -> u32 {\n    if { let unused = n == 5; n > 0 } { 7 } else { 8 }\n}",
+        );
+        let probe = probe(ProbeFamily::Predicate, "{ let unused = n == 5; n > 0 }", 2);
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+        assert!(
+            sinks.iter().all(|sink| !sink.text.contains("never read")),
+            "{sinks:?}"
+        );
+        // Control: the nested statement's own comparison is still dead.
+        let inner = super::dead_let_bound_comparison(
+            &self::probe(ProbeFamily::Predicate, "n == 5", 2),
+            Some(&owner),
+        );
+        assert_eq!(inner.as_deref(), Some("unused"));
     }
 
     fn tail_owner(body: &str) -> FunctionSummary {
