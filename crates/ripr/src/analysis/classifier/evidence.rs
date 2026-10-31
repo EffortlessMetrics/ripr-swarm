@@ -1528,7 +1528,7 @@ impl ClassifiedProbeEvidence {
         // A value guard is a limit only when the call it reads is the owner's.
         let is_limit = |refusal: &AssertionRefusal, test: &TestSummary| {
             (refusal.is_analyzer_limit()
-                || (refusal.is_gated_item() && test_shares_owner_cfg_gates(&context, test)))
+                || (refusal.is_gated_item() && test_shares_owner_cfg_gates(context, test)))
                 && refusal
                     .value_guard_subject()
                     .is_none_or(|subject| direct_call_name(subject) == Some(owner_name))
