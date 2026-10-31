@@ -62,6 +62,10 @@ fn first_check_names_the_gitignore_line_until_the_rule_exists() -> TestResult {
         "{first}"
     );
 
+    // `human-full` is a separate gate arm and carries the same single note.
+    let full = stderr_of(&project, &["--format", "human-full"])?;
+    assert_eq!(full.matches(NOTE).count(), 1, "{full}");
+
     // Discriminating controls: machine formats and `--quiet` stay silent.
     let json = stderr_of(&project, &["--format", "json"])?;
     assert!(!json.contains(NOTE), "{json}");
