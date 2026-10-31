@@ -1035,8 +1035,8 @@ fn pagination_cursor_error(method: &str) -> ErrorData {
 }
 
 /// A paging limit with a typed row cap: a JSON integer `>= 1` and `<= max`.
-/// A request above the cap stays invalid params at the dispatch edge instead
-/// of being silently clamped, so the typed `page.limit` echo always names a
+/// A request above the cap is refused (an `invalid_argument` tool failure at
+/// the call boundary, #11621) instead of being silently clamped, so the typed `page.limit` echo always names a
 /// limit the server actually honors (#8735).
 fn optional_capped_page_limit(
     arguments: &Option<serde_json::Map<String, Value>>,
@@ -1124,9 +1124,6 @@ fn required_string_argument(
     })
 }
 
-/// Failure schema version of each tool whose handler panics are contained at
-/// the call boundary, `ripr_refresh` included: its `InFlightAttempt` guard
-/// clears `in_flight` on unwind, so a glue panic leaves the session usable.
 /// The typed failure for a rejected argument. `message` becomes `detail`;
 /// the machine-readable `data` (`argument`, `expected`, `allowed`, ...) rides
 /// through unchanged, and `data.recovery` (when the validator named one)
@@ -1153,6 +1150,9 @@ fn invalid_argument_failure(error: &ErrorData) -> workspace::AttemptFailure {
     .with_data(data)
 }
 
+/// Failure schema version of each tool whose handler panics are contained at
+/// the call boundary, `ripr_refresh` included: its `InFlightAttempt` guard
+/// clears `in_flight` on unwind, so a glue panic leaves the session usable.
 fn contained_tool_schema_version(name: &str) -> Option<&'static str> {
     match name {
         protocol::STATUS_TOOL_NAME => Some(workspace::SESSION_SCHEMA_VERSION),
