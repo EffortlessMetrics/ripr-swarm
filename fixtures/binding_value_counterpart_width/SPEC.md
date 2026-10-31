@@ -6,9 +6,9 @@ Spec: RIPR-SPEC-0158
 
 The compared parameter constrains the local's unsuffixed arithmetic to u8
 or i8 even though its initializer reads only a boolean parameter. Native
-Rust1.95.0 compiles these shapes. With overflow checks enabled they panic
-before the predicate. With checks disabled the unsigned local wraps to0
-and the signed local to-64: both the old `<` and current `<=` assertions
+Rust 1.95.0 compiles these shapes. With overflow checks enabled they panic
+before the predicate. With checks disabled the unsigned local wraps to 0
+and the signed local to -64: both the old `<` and current `<=` assertions
 pass, so neither test discriminates the changed equality boundary.
 
 ## When
