@@ -1,7 +1,7 @@
 //! Live producer replay for the exact-cut schema sweep (#3920).
 //!
 //! `schema-producer-sweep` validates committed producer bytes on its own, but
-//! six published-schema rows have no committed bytes: `doctor`, `pr-evidence`,
+//! five published-schema rows have no committed bytes: `doctor`, `pr-evidence`,
 //! `review-comments`, `repair-attempt` and `execution_result` need a real
 //! producer run. The required gate feeds three of them from its own run; this
 //! module runs all five against one scratch repository so a qualification run
@@ -241,25 +241,39 @@ pub(crate) fn produce(root: &Path, rev: &str, ripr: &Path) -> Result<Vec<String>
     fs::copy(&committed, &result)
         .map_err(|e| format!("verify-execute committed no result: {e}"))?;
 
-    Ok(vec![
-        format!("schemas/ripr/doctor.schema.json={}", rel(root, &doctor)),
+    Ok(artifact_specs(
+        root, &doctor, &evidence, &review, &attempt, &result,
+    ))
+}
+
+/// The `--artifact` values, one per row with no committed producer bytes.
+fn artifact_specs(
+    root: &Path,
+    doctor: &Path,
+    evidence: &Path,
+    review: &Path,
+    attempt: &Path,
+    result: &Path,
+) -> Vec<String> {
+    vec![
+        format!("schemas/ripr/doctor.schema.json={}", rel(root, doctor)),
         format!(
             "schemas/ripr/pr-evidence.schema.json={}",
-            rel(root, &evidence)
+            rel(root, evidence)
         ),
         format!(
             "schemas/ripr/review-comments.schema.json={}",
-            rel(root, &review)
+            rel(root, review)
         ),
         format!(
             "schemas/ripr/repair-attempt.schema.json={}",
-            rel(root, &attempt)
+            rel(root, attempt)
         ),
         format!(
             "schemas/ripr/repair-assurance.schema.json#/$defs/execution_result={}#/result",
-            rel(root, &result)
+            rel(root, result)
         ),
-    ])
+    ]
 }
 
 /// The binary's `--version` line is `ripr X (<sha>[-dirty])`. Only an exact,
@@ -415,5 +429,25 @@ mod tests {
         assert!(check("ripr 0.11.0").is_err());
         let error = check("echo").err().unwrap_or_default();
         assert!(error.contains("clean build"), "{error}");
+    }
+
+    #[test]
+    fn the_five_specs_name_distinct_rows_the_sweep_binds() -> Result<(), String> {
+        let p = Path::new("x.json");
+        let specs = artifact_specs(Path::new("."), p, p, p, p, p);
+        assert_eq!(specs.len(), 5);
+        let sweep = include_str!("schema_producer_sweep.rs");
+        let mut seen = std::collections::BTreeSet::new();
+        for spec in &specs {
+            let (schema, file) = spec.split_once('=').ok_or("spec has no `=`")?;
+            assert!(file.starts_with("x.json"), "{spec}");
+            let (path, _) = schema.split_once('#').unwrap_or((schema, ""));
+            assert!(
+                sweep.contains(&format!("\"{path}\"")),
+                "{path} is not bound"
+            );
+            assert!(seen.insert(schema.to_string()), "{schema} repeated");
+        }
+        Ok(())
     }
 }

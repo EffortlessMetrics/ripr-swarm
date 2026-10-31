@@ -192,7 +192,7 @@ inputs, so the replay needs no hand-assembled recipe:
 | `pr-evidence` | `ripr pr-evidence --base B --head H` | `target/ripr/pr/repo-exposure.json` |
 | `review-comments` | `ripr review-comments --base B --head H --out F` | `F` |
 | `repair-attempt` | `ripr agent repair --phase before`, one boundary test, then `--phase after` | `target/ripr/repair-attempts/<id>/attempt.json` |
-| `execution_result` | `ripr agent packet` over a gap ledger, then `ripr agent verify-execute --result-json` | the `result` object |
+| `execution_result` | `ripr reports gap-ledger`, `ripr agent packet`, then `ripr agent verify-execute --result-json` | the `result` object |
 
 The scratch repository and outputs live under `target/ripr/cut-replay/`. Its
 fixture files and `diff.patch` come from `fixtures/boundary_gap/` at the
@@ -205,8 +205,9 @@ outside the scratch checkout because a repair attempt counts an untracked file
 inside it as an edit, and the gap ledger and `verify-execute` packet stay inside
 the checkout because a source outside the root makes them stale.
 
-A passing replay reports `artifact_validated` for every runtime-only and
-authority row and leaves only the exempt rows outside the producer count. The
+The default binary is `target/debug/ripr`. A passing replay records
+`artifact_validated` in the packet for every runtime-only and authority row
+(the console shows the runtime-only ones as `1 live artifact(s) validated`) and leaves only the exempt rows outside the producer count. The
 manual form remains valid for a single row: run the producer and pass
 `--artifact SCHEMA[#POINTER]=FILE[#POINTER]`, with `execution_result` passed as
 `schemas/ripr/repair-assurance.schema.json#/$defs/execution_result=FILE#/result`.
