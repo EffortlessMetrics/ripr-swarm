@@ -5599,7 +5599,11 @@ mod tests {
         // #10707: `python_boundary_local_rebound_not_credited` keeps a rebound
         // test local unresolved at the boundary, so its weak finding adds one
         // direct-aligned card; `python_boundary_local_input_credited` is exposed.
-        if (direct, no_strong, orthogonal, family_selection) != (20, 27, 30, 1) {
+        // #9733: `python_while_counter_past_bound` keeps a generator loop whose
+        // counter steps by one past the changed bound `weakly_exposed` when its
+        // only test starts below it; the weak finding names the missing
+        // `start == 0` boundary and carries one direct-aligned card.
+        if (direct, no_strong, orthogonal, family_selection) != (21, 27, 30, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));
