@@ -31,8 +31,8 @@ status = "fixed"
 first_seen = "2026-10-31"
 evidence = ["run 41185970332", "run 41188018645", "run 41189346010", "run 41190783031", "run 41191736434"]
 symptom = "spawn .../ripr: Text file busy (os error 26), about one PR in four on the Rust-only lane."
-root_cause = "stable_ripr_copy (#11197) wrote a copy of the multi-megabyte suite binary with fs::copy and then exec'd it. A peer test forking during the copy inherits the write descriptor until its own exec, and execve of a file open for writing fails with ETXTBSY."
-guard = "stable_ripr_copy_links_the_suite_binary_instead_of_writing_a_copy"
+root_cause = "(Fixed independently on main by #11463 while this ledger was in review.) stable_ripr_copy (#11197) wrote a copy of the multi-megabyte suite binary with fs::copy and then exec'd it. A peer test forking during the copy inherits the write descriptor until its own exec, and execve of a file open for writing fails with ETXTBSY."
+guard = "install_ripr_binary_links_the_built_inode_without_a_writer"
 
 [[flake]]
 id = "perl-variant-shared-binary-stamp"
