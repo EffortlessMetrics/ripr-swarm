@@ -55,6 +55,20 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
         )],
     ),
     (
+        // The analysis_timeout refusal of `ripr check` renders at refusal
+        // generation 0.3 when a stashed input-context projection exists
+        // (RIPR-SPEC-0241 amendment #10796). The 0.2 check envelope keeps its
+        // own authority above; this second published schema pins the amended
+        // generation so the emitted documents have a schema that accepts
+        // them (#3883/#3912: never emit bytes no published schema admits).
+        "check-timeout-refusal",
+        &[producer(
+            "crates/ripr/src/app.rs",
+            "pub(crate) const CHECK_REFUSAL_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
         "doctor",
         &[producer(
             "crates/ripr/src/output/doctor.rs",
@@ -369,6 +383,27 @@ const CONTRACTS: &[VerificationContract] = &[
         subject: ContractSubject::Document,
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &[],
+    },
+    // The analysis_timeout refusal of `ripr check` renders at refusal
+    // generation 0.3 with `input_context` (RIPR-SPEC-0241 amendment
+    // #10796). Before this row the product emitted 0.3 documents no
+    // published schema admitted while the gate stayed green — the exact
+    // #3883/#3912 shape. The emission bytes are pinned by
+    // `limited_check.rs::timeout_refusal_with_stashed_context_renders_input_context_at_generation_0_3`
+    // and the forced-deadline e2e in `cli_smoke.rs`; this row pins the
+    // document shape against the published 0.3 schema.
+    VerificationContract {
+        schema_path: "schemas/ripr/check-timeout-refusal.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/check-timeout-refusal.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &[
+            "input_context",
+            "retry_with_larger_budget",
+            "save_stdin_diff_to_named_file",
+            "published_after_deadline",
+        ],
     },
     // The `test_harnesses` projection is checked against a producer golden
     // rather than a hand-written copy, for the reason stated below about the
@@ -3768,6 +3803,68 @@ mod tests {
                 .iter()
                 .any(|violation| violation.contains("number below minimum")),
             "expected fractional minimum rejection, got {violations:#?}"
+        );
+        Ok(())
+    }
+
+    /// Negative control for the generation-0.3 timeout-refusal schema
+    /// (#10796). The amendment splits the refusal vocabulary by
+    /// `schema_version`, so the 0.3 schema must refuse a 0.2-spelled
+    /// document, refuse a 0.3 document without `input_context` (the whole
+    /// point of the amendment), and keep the top-level key set closed.
+    #[test]
+    fn check_timeout_refusal_schema_rejects_drift() -> Result<(), String> {
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/check-timeout-refusal.schema.json"))?;
+        let fixture_path = "tests/fixtures/verification/ripr/check-timeout-refusal.valid.json";
+
+        let reject = |label: &str, drift: &Value| {
+            let mut violations = Vec::new();
+            validate_value_against_schema(
+                drift,
+                &schema,
+                &schema,
+                label.to_string(),
+                &mut violations,
+            );
+            violations
+        };
+
+        // A 0.2-spelled refusal is check.schema.json's subject, never this
+        // schema's: the const pins the generation.
+        let mut stale = read_json(root.join(fixture_path))?;
+        stale["schema_version"] = Value::String("0.2".to_string());
+        let violations = reject("0.2-spelled timeout refusal", &stale);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("schema_version")),
+            "a 0.2-spelled document must not validate at generation 0.3: {violations:#?}"
+        );
+
+        // Dropping `input_context` re-blesses the pre-amendment key set.
+        let mut missing = read_json(root.join(fixture_path))?;
+        missing
+            .as_object_mut()
+            .ok_or("fixture must be an object")?
+            .remove("input_context");
+        let violations = reject("timeout refusal without input context", &missing);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("input_context")),
+            "a 0.3 refusal without input_context must be rejected: {violations:#?}"
+        );
+
+        // The top-level key set stays closed at 0.3 as at 0.2.
+        let mut drifted = read_json(root.join(fixture_path))?;
+        drifted["unexpected_recovery_field"] = Value::Bool(true);
+        let violations = reject("drifted timeout refusal", &drifted);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("unexpected field `unexpected_recovery_field`")),
+            "unknown top-level fields must stay rejected: {violations:#?}"
         );
         Ok(())
     }

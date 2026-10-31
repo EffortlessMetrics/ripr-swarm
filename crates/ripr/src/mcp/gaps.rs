@@ -1500,6 +1500,7 @@ mod tests {
                 &crate::config::RiprConfig::default(),
             ),
             &crate::mcp::repair_admission::InventoryCompleteness::Complete,
+            Path::new("."),
         );
         match evaluated.verdict("probe:uncovered") {
             Some(SeamVerdict::Refused { code, .. })
@@ -1522,8 +1523,13 @@ mod tests {
         let policy = crate::app::agent_brief::AgentBriefPolicy::from_config(&config);
         let findings = [finding()?];
         let id = findings[0].id.as_str();
-        let complete =
-            SeamAdmission::evaluate(&findings, &[], policy, &InventoryCompleteness::Complete);
+        let complete = SeamAdmission::evaluate(
+            &findings,
+            &[],
+            policy,
+            &InventoryCompleteness::Complete,
+            Path::new("."),
+        );
         match complete.verdict(id) {
             Some(SeamVerdict::Refused { code, .. }) if code != SEAM_INVENTORY_TRUNCATED => {}
             other => return Err(format!("complete inventory must not truncate: {other:?}")),
@@ -1535,7 +1541,8 @@ mod tests {
             },
             InventoryCompleteness::Unverified("inventory failed".to_string()),
         ] {
-            let evaluated = SeamAdmission::evaluate(&findings, &[], policy, &completeness);
+            let evaluated =
+                SeamAdmission::evaluate(&findings, &[], policy, &completeness, Path::new("."));
             match evaluated.verdict(id) {
                 Some(SeamVerdict::Refused { code, detail }) if code == SEAM_INVENTORY_TRUNCATED => {
                     if matches!(completeness, InventoryCompleteness::Truncated { .. })

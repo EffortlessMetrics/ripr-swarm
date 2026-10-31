@@ -838,7 +838,7 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
 
     if !json {
         return Err(
-            "agent brief requires --json (the supported output for this subcommand)".to_string(),
+            "agent brief requires --json (the supported output for this subcommand); add --json to the command".to_string(),
         );
     }
 
@@ -924,7 +924,7 @@ pub(super) fn parse_agent_packet_options(args: &[String]) -> Result<AgentPacketO
 
     if !json {
         return Err(
-            "agent packet requires --json (the supported output for this subcommand)".to_string(),
+            "agent packet requires --json (the supported output for this subcommand); add --json to the command".to_string(),
         );
     }
 
@@ -1089,11 +1089,11 @@ pub(super) fn parse_agent_verify_options(args: &[String]) -> Result<AgentVerifyO
         i += 1;
     }
 
-    let before = before.ok_or_else(|| "agent verify requires --before <path>".to_string())?;
-    let after = after.ok_or_else(|| "agent verify requires --after <path>".to_string())?;
+    let before = before.ok_or_else(|| "agent verify requires --before <path>; pass the snapshot saved before the edit (`ripr agent verify --help` shows the loop)".to_string())?;
+    let after = after.ok_or_else(|| "agent verify requires --after <path>; pass the snapshot saved after the edit (`ripr agent verify --help` shows the loop)".to_string())?;
     if !json {
         return Err(
-            "agent verify requires --json (the supported output for this subcommand)".to_string(),
+            "agent verify requires --json (the supported output for this subcommand); add --json to the command".to_string(),
         );
     }
 
@@ -1160,7 +1160,7 @@ pub(super) fn parse_agent_verify_execute_options(
     }
     if !json {
         return Err(
-            "agent verify-execute requires --json (the supported output for this subcommand)"
+            "agent verify-execute requires --json (the supported output for this subcommand); add --json to the command"
                 .to_string(),
         );
     }
@@ -1256,7 +1256,7 @@ pub(super) fn parse_agent_receipt_options(args: &[String]) -> Result<AgentReceip
     let seam_id = seam_id.ok_or_else(|| "agent receipt requires --seam-id".to_string())?;
     if !json {
         return Err(
-            "agent receipt requires --json (the supported output for this subcommand)".to_string(),
+            "agent receipt requires --json (the supported output for this subcommand); add --json to the command".to_string(),
         );
     }
 
@@ -1700,7 +1700,7 @@ mod tests {
         assert_eq!(
             parse_agent_args(&args(&["packet", "--seam-id", "abc"])),
             Err(
-                "agent packet requires --json (the supported output for this subcommand)"
+                "agent packet requires --json (the supported output for this subcommand); add --json to the command"
                     .to_string()
             )
         );
@@ -2405,7 +2405,7 @@ mod tests {
         assert_eq!(
             parse_agent_brief_options(&args(&["--diff", "change.diff"])),
             Err(
-                "agent brief requires --json (the supported output for this subcommand)"
+                "agent brief requires --json (the supported output for this subcommand); add --json to the command"
                     .to_string()
             )
         );
@@ -2538,7 +2538,7 @@ mod tests {
         assert_eq!(
             parse_agent_packet_options(&args(&["--seam-id", "abc"])),
             Err(
-                "agent packet requires --json (the supported output for this subcommand)"
+                "agent packet requires --json (the supported output for this subcommand); add --json to the command"
                     .to_string()
             )
         );
@@ -2742,17 +2742,17 @@ mod tests {
                 "after.json",
             ])),
             Err(
-                "agent verify requires --json (the supported output for this subcommand)"
+                "agent verify requires --json (the supported output for this subcommand); add --json to the command"
                     .to_string()
             )
         );
         assert_eq!(
             parse_agent_verify_options(&args(&["--after", "after.json", "--json"])),
-            Err("agent verify requires --before <path>".to_string())
+            Err("agent verify requires --before <path>; pass the snapshot saved before the edit (`ripr agent verify --help` shows the loop)".to_string())
         );
         assert_eq!(
             parse_agent_verify_options(&args(&["--before", "before.json", "--json"])),
-            Err("agent verify requires --after <path>".to_string())
+            Err("agent verify requires --after <path>; pass the snapshot saved after the edit (`ripr agent verify --help` shows the loop)".to_string())
         );
     }
 
@@ -2864,7 +2864,7 @@ mod tests {
                 "abc",
             ])),
             Err(
-                "agent receipt requires --json (the supported output for this subcommand)"
+                "agent receipt requires --json (the supported output for this subcommand); add --json to the command"
                     .to_string()
             )
         );
@@ -3082,6 +3082,182 @@ mod tests {
         assert_eq!(
             parse_agent_review_summary_options(&args(&["--xml"])),
             Err("unknown agent review-summary argument \"--xml\". Run `ripr agent review-summary --help`.".to_string())
+        );
+    }
+
+    fn stub_options(
+        selector: crate::app::test_stub::TestStubSelector,
+        root: &str,
+        root_explicit: bool,
+        write: bool,
+        json: bool,
+    ) -> AgentStubOptions {
+        AgentStubOptions {
+            root: PathBuf::from(root),
+            root_explicit,
+            selector,
+            write,
+            json,
+        }
+    }
+
+    #[test]
+    fn agent_stub_parses_seam_id_and_at_selectors_with_flags() {
+        use crate::app::test_stub::TestStubSelector;
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--seam-id", "abc123def456"])),
+            Ok(stub_options(
+                TestStubSelector::SeamId("abc123def456".to_string()),
+                ".",
+                false,
+                false,
+                false,
+            ))
+        );
+        assert_eq!(
+            parse_agent_args(&args(&[
+                "stub",
+                "--root",
+                "repo",
+                "--at",
+                "src/lib.rs:42",
+                "--write",
+                "--json",
+            ])),
+            Ok(AgentCommand::Stub(stub_options(
+                TestStubSelector::At {
+                    file: "src/lib.rs".to_string(),
+                    line: 42,
+                    kind: None,
+                },
+                "repo",
+                true,
+                true,
+                true,
+            )))
+        );
+    }
+
+    #[test]
+    fn agent_stub_requires_a_selector_and_exactly_one() {
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--json"])),
+            Err("agent stub requires --seam-id ID or --at FILE:LINE (the location `ripr check` prints)".to_string())
+        );
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--seam-id", "a", "--at", "src/lib.rs:3"])),
+            Err("agent stub takes one of --seam-id or --at".to_string())
+        );
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--at", "src/lib.rs:3", "--at", "src/lib.rs:4"])),
+            Err("agent stub takes one of --seam-id or --at".to_string())
+        );
+    }
+
+    #[test]
+    fn agent_stub_rejects_blank_missing_and_malformed_selector_values() {
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--seam-id", "  "])),
+            Err("agent stub --seam-id requires a non-empty value".to_string())
+        );
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--at", ""])),
+            Err("agent stub --at requires a non-empty value".to_string())
+        );
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--at"])),
+            Err("missing value for --at".to_string())
+        );
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--kind"])),
+            Err("missing value for --kind".to_string())
+        );
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--at", "src/lib.rs"])),
+            Err("--at expects FILE:LINE, got \"src/lib.rs\"".to_string())
+        );
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--at", "src/lib.rs:abc"])),
+            Err("--at expects FILE:LINE with a line number, got \"src/lib.rs:abc\"".to_string())
+        );
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--at", "src/lib.rs:0"])),
+            Err("--at expects FILE:LINE, got \"src/lib.rs:0\"".to_string())
+        );
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--at", " :7"])),
+            Err("--at expects FILE:LINE, got \" :7\"".to_string())
+        );
+    }
+
+    #[test]
+    fn agent_stub_kind_applies_to_at_only_and_must_be_a_probe_family() {
+        use crate::app::test_stub::TestStubSelector;
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--at", "src/lib.rs:9", "--kind", "predicate"])),
+            Ok(stub_options(
+                TestStubSelector::At {
+                    file: "src/lib.rs".to_string(),
+                    line: 9,
+                    kind: Some("predicate".to_string()),
+                },
+                ".",
+                false,
+                false,
+                false,
+            ))
+        );
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--kind", "match_arm", "--at", "a.rs:1"])),
+            Ok(stub_options(
+                TestStubSelector::At {
+                    file: "a.rs".to_string(),
+                    line: 1,
+                    kind: Some("match_arm".to_string()),
+                },
+                ".",
+                false,
+                false,
+                false,
+            ))
+        );
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--seam-id", "abc", "--kind", "predicate"])),
+            Err("agent stub --kind applies to --at only".to_string())
+        );
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--at", "src/lib.rs:9", "--kind", "bogus"])),
+            Err("--kind expects a probe family such as predicate, return_value, error_path, match_arm, call_deletion, field_construction, or side_effect, got \"bogus\"".to_string())
+        );
+        assert_eq!(
+            parse_agent_stub_options(&args(&[
+                "--at",
+                "src/lib.rs:9",
+                "--kind",
+                "predicate",
+                "--kind",
+                "predicate",
+            ])),
+            Err("agent stub takes --kind once".to_string())
+        );
+    }
+
+    #[test]
+    fn agent_stub_help_and_unknown_arguments() {
+        assert_eq!(
+            parse_agent_args(&args(&["stub", "--seam-id", "x", "-h"])),
+            Ok(AgentCommand::StubHelp)
+        );
+        assert_eq!(
+            parse_agent_args(&args(&["stub", "--help"])),
+            Ok(AgentCommand::StubHelp)
+        );
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--seam-id", "x", "--force"])),
+            Err(
+                "unknown agent stub argument \"--force\". Run `ripr agent stub --help`."
+                    .to_string()
+            )
         );
     }
 }

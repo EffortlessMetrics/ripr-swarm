@@ -184,10 +184,12 @@ impl LocalUses<'_> {
 /// neither the test nor its module may run code that could replace it
 /// (#10707): an autouse fixture, `pytestmark` or setup hook, or a
 /// `monkeypatch`, `patch`, `setattr`, `globals`, `vars`, `exec` or `eval` in the
-/// body. The parsed body must also never bind the name in any scope (store,
-/// comprehension or loop target, lambda or nested parameter, import, match).
-/// A test file that is also changed in the diff gets no credit, since its
-/// constant may carry the edit.
+/// body. A workspace file that writes the test module's constant
+/// (`conftest.py` doing `module.TH = 49`, `setattr`, or `monkeypatch.setattr`)
+/// also refuses credit (#11424). The parsed body must also never bind the
+/// name in any scope (store, comprehension or loop target, lambda or nested
+/// parameter, import, match). A test file that is also changed in the diff
+/// gets no credit, since its constant may carry the edit.
 pub(super) fn test_module_constant(test: &PythonTest, name: &str) -> Option<String> {
     const REPLACERS: [&str; 7] = [
         "monkeypatch",
