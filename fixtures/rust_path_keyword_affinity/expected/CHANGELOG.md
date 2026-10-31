@@ -94,3 +94,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_path_keyword_affinity (8)
+
+Reason:
+RIPR-SPEC-0122: plain wording for seam and state token in the check digest
+
+Command:
+`cargo xtask goldens bless rust_path_keyword_affinity --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

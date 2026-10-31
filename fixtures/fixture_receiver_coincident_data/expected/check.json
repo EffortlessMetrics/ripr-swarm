@@ -1,0 +1,253 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/fixture_receiver_coincident_data/input",
+  "summary": {"changed_rust_files":3,"probes":3,"findings":3,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":3,"changed_files_by_language":[{"language":"rust","files":3}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:11b90025906b1def1416981c91d120b07a68a1c68038eaa119f56bf864f13370","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":3,"changed_line_count":6,"candidate_line_count":3,"probe_count":3,"finding_count":3},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_equal_components.rs:return_value:a3735aac",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_equal_components.rs:return_value:a3735aac",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/equal_components.rs",
+        "line": 4,
+        "expression": "self.items.iter().map(|(_, value)| value).sum()"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach columns_total: exact_columns_total"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"weak","confidence":"low","summary":"No complete owner-bound propagation witness found for returned value: self.items.iter().map(|(_, value)| value).sum()"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach columns_total: exact_columns_total", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: No complete owner-bound propagation witness found for returned value: self.items.iter().map(|(_, value)| value).sum()", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: self.items.iter().map(|(_, value)| value).sum() (line 4)", "related test src/equal_components.rs:14 exact_columns_total uses strong exact value oracle: assert_eq!(columns_fixture().columns_total(), 7);", "source assertion argument value 7 at line 14"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"self.items.iter().map(|(_, value)| value).sum()","line":4}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No complete owner-bound propagation witness found for returned value: self.items.iter().map(|(_, value)| value).sum()", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach columns_total: exact_columns_total", "gap_withheld: weakly_exposed is not claimed; whether the framework oracle the related test checks notices the changed code (rust_framework_oracle_unresolved)", "limitation_last_established_edge: related tests `exact_columns_total` (src/equal_components.rs:14)", "limitation_first_unresolved_edge: whether the framework oracle the related test checks notices the changed code", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "missing": ["A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim."],
+      "assertion_texts": {
+        "14": "assert_eq!(columns_fixture().columns_total(), 7);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 14,
+            "value": "7",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 14,
+          "value": "7",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "exact_columns_total",
+          "file": "src/equal_components.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(columns_fixture().columns_total(), 7);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": ["fixture_opaque", "gap_evidence_unresolved"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "`exact_columns_total` (src/equal_components.rs:14) pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "suggested_next_action": "`exact_columns_total` (src/equal_components.rs:14) pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "language": "rust",
+      "static_limit_kind": "rust_framework_oracle_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/classify/gap-admission",
+        "first_unresolved_edge": "whether the framework oracle the related test checks notices the changed code",
+        "kind": "rust_framework_oracle_unresolved",
+        "last_established_edge": "related tests `exact_columns_total` (src/equal_components.rs:14)",
+        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_single_product_sum.rs:return_value:5eeeabdd",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_single_product_sum.rs:return_value:5eeeabdd",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/single_product_sum.rs",
+        "line": 4,
+        "expression": "self.items.iter().map(|(_, value)| value).sum()"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach single_total: exact_single_total"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"weak","confidence":"low","summary":"No complete owner-bound propagation witness found for returned value: self.items.iter().map(|(_, value)| value).sum()"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach single_total: exact_single_total", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: No complete owner-bound propagation witness found for returned value: self.items.iter().map(|(_, value)| value).sum()", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: self.items.iter().map(|(_, value)| value).sum() (line 4)", "related test src/single_product_sum.rs:14 exact_single_total uses strong exact value oracle: assert_eq!(single_fixture().single_total(), 7);", "source assertion argument value 7 at line 14"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"self.items.iter().map(|(_, value)| value).sum()","line":4}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No complete owner-bound propagation witness found for returned value: self.items.iter().map(|(_, value)| value).sum()", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach single_total: exact_single_total", "gap_withheld: weakly_exposed is not claimed; whether the framework oracle the related test checks notices the changed code (rust_framework_oracle_unresolved)", "limitation_last_established_edge: related tests `exact_single_total` (src/single_product_sum.rs:14)", "limitation_first_unresolved_edge: whether the framework oracle the related test checks notices the changed code", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "missing": ["A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim."],
+      "assertion_texts": {
+        "14": "assert_eq!(single_fixture().single_total(), 7);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 14,
+            "value": "7",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 14,
+          "value": "7",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "exact_single_total",
+          "file": "src/single_product_sum.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(single_fixture().single_total(), 7);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": ["fixture_opaque", "gap_evidence_unresolved"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "`exact_single_total` (src/single_product_sum.rs:14) pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "suggested_next_action": "`exact_single_total` (src/single_product_sum.rs:14) pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "language": "rust",
+      "static_limit_kind": "rust_framework_oracle_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/classify/gap-admission",
+        "first_unresolved_edge": "whether the framework oracle the related test checks notices the changed code",
+        "kind": "rust_framework_oracle_unresolved",
+        "last_established_edge": "related tests `exact_single_total` (src/single_product_sum.rs:14)",
+        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_zero_product_sum.rs:return_value:e0eed6a5",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_zero_product_sum.rs:return_value:e0eed6a5",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/zero_product_sum.rs",
+        "line": 4,
+        "expression": "self.items.iter().map(|(_, value)| value).sum()"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach zero_total: exact_zero_total"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"weak","confidence":"low","summary":"No complete owner-bound propagation witness found for returned value: self.items.iter().map(|(_, value)| value).sum()"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach zero_total: exact_zero_total", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: No complete owner-bound propagation witness found for returned value: self.items.iter().map(|(_, value)| value).sum()", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: self.items.iter().map(|(_, value)| value).sum() (line 4)", "related test src/zero_product_sum.rs:14 exact_zero_total uses strong exact value oracle: assert_eq!(zero_fixture().zero_total(), 0);", "source assertion argument value 0 at line 14"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"self.items.iter().map(|(_, value)| value).sum()","line":4}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No complete owner-bound propagation witness found for returned value: self.items.iter().map(|(_, value)| value).sum()", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach zero_total: exact_zero_total", "gap_withheld: weakly_exposed is not claimed; whether the framework oracle the related test checks notices the changed code (rust_framework_oracle_unresolved)", "limitation_last_established_edge: related tests `exact_zero_total` (src/zero_product_sum.rs:14)", "limitation_first_unresolved_edge: whether the framework oracle the related test checks notices the changed code", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "missing": ["A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim."],
+      "assertion_texts": {
+        "14": "assert_eq!(zero_fixture().zero_total(), 0);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 14,
+            "value": "0",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 14,
+          "value": "0",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "exact_zero_total",
+          "file": "src/zero_product_sum.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(zero_fixture().zero_total(), 0);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": ["fixture_opaque", "gap_evidence_unresolved"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "`exact_zero_total` (src/zero_product_sum.rs:14) pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "suggested_next_action": "`exact_zero_total` (src/zero_product_sum.rs:14) pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "language": "rust",
+      "static_limit_kind": "rust_framework_oracle_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/classify/gap-admission",
+        "first_unresolved_edge": "whether the framework oracle the related test checks notices the changed code",
+        "kind": "rust_framework_oracle_unresolved",
+        "last_established_edge": "related tests `exact_zero_total` (src/zero_product_sum.rs:14)",
+        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
+      },
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

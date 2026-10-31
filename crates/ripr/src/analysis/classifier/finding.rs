@@ -66,6 +66,9 @@ pub(in crate::analysis) fn build_finding_with_origins(
         reaching_summaries
     };
     let mut stop_reasons = stop_reasons(context.probe, context.owner_fn, &test_summaries);
+    if evidence.literal_fixture_receiver_pinned {
+        stop_reasons.retain(|reason| *reason != StopReason::FixtureOpaque);
+    }
     if context.probe.family == ProbeFamily::ReturnValue
         && context
             .owner_fn
@@ -1221,6 +1224,7 @@ mod tests {
             reach: yes.clone(),
             infect: yes.clone(),
             propagate: StageEvidence::new(StageState::Weak, Confidence::Low, "propagation weak"),
+            literal_fixture_receiver_pinned: false,
             observe: yes.clone(),
             discriminate: yes,
             reach_ruled_out: true,

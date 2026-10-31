@@ -593,7 +593,7 @@ pub(crate) fn render_human_triage(
                 finding.probe.location.line,
                 finding.class.plain_label_with_stage(),
                 currentness,
-                finding.probe.family.as_str(),
+                plain_hidden_kind(&finding.probe.family),
                 hidden_finding_reason(finding)
             ));
             if offers_test_stub(finding)
@@ -660,6 +660,18 @@ pub(crate) fn render_human_triage(
 /// this window the list discloses the remainder instead of printing every
 /// identity.
 const HIDDEN_FINDINGS_LISTED: usize = 20;
+
+/// Plain word for a `Hidden:` row's change kind (#10697). A display mapping
+/// over the producer-owned family; it decides nothing. Only the banned
+/// state-token family renders differently, with the glossary's plain word for
+/// analysis-limited output; every other family keeps its stable token so
+/// JSON, docs and `--format human-full` still grep.
+fn plain_hidden_kind(family: &ProbeFamily) -> &str {
+    match family {
+        ProbeFamily::StaticUnknown => "unclear",
+        _ => family.as_str(),
+    }
+}
 
 /// Share display eligibility across the selected row and hidden routing.
 fn offers_test_stub(finding: &Finding) -> bool {
@@ -1766,6 +1778,13 @@ mod tests {
             partial_scope: None,
             analyzed_revisions: None,
         }
+    }
+
+    #[test]
+    fn hidden_rows_render_state_token_kind_as_plain_word() {
+        assert_eq!(plain_hidden_kind(&ProbeFamily::StaticUnknown), "unclear");
+        assert_eq!(plain_hidden_kind(&ProbeFamily::Predicate), "predicate");
+        assert_eq!(plain_hidden_kind(&ProbeFamily::ReturnValue), "return_value");
     }
 
     #[test]

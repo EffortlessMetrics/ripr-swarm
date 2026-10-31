@@ -1,0 +1,14 @@
+{
+  "id": "rust_fixture_receiver_unread_data",
+  "language": "rust",
+  "tier": "pure",
+  "source_fixture": "fixtures/fixture_receiver_unread_data",
+  "vector": "cfg_pruned_tuple_and_raw_by_value_owner_supply_no_fixture_pin",
+  "probe_family": "return_value",
+  "assertions": [
+    { "type": "must_not_report_clean" },
+    { "type": "expected_finding_count", "count": 2 },
+    { "type": "must_not_promote" },
+    { "type": "expected_class", "class": "static_unknown" }
+  ]
+}

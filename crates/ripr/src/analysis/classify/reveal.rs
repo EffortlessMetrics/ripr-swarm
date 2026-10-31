@@ -44,6 +44,11 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// admitted owner pin; token coincidence cannot confirm discrimination.
     pub(in crate::analysis) returned_closure_pin_required: bool,
     pub(in crate::analysis) owner_return_pin: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+    /// #9766: this exact assertion passed the fixture-receiver owner gate
+    /// itself, not merely some other owner-pin route (chain entry, display,
+    /// field projection, fallible check). Only this per-assertion fact may
+    /// back the literal-fixture propagation claim.
+    pub(in crate::analysis) fixture_receiver_pin: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// #9870: a Result.map callback runs only on Ok. Token coincidence in
     /// an unrelated assertion cannot establish that callback's observation.
     pub(in crate::analysis) owner_return_pin_required: bool,
@@ -159,6 +164,7 @@ fn reveal_evidence(
             owner_return_pin_required: false,
             returned_closure_pin_required: false,
             owner_return_pin: &|_, _| false,
+            fixture_receiver_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             assertion_has_known_implicit_observer: &|_, _| None,
@@ -206,6 +212,7 @@ fn reveal_evidence_with_exit(
             owner_return_pin_required: false,
             returned_closure_pin_required: false,
             owner_return_pin: &|_, _| false,
+            fixture_receiver_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             sibling_exclusion_admitted: &|_, _| true,
@@ -254,6 +261,7 @@ fn reveal_evidence_proximity_reach(
             owner_return_pin_required: false,
             returned_closure_pin_required: false,
             owner_return_pin: &|_, _| false,
+            fixture_receiver_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             assertion_has_known_implicit_observer: &|_, _| None,
@@ -330,6 +338,9 @@ pub(in crate::analysis) struct RevealOutcome {
     /// reach-bearing test, foreign same-name imports, cross-package
     /// same-name definitions, the exact error variant).
     pub(in crate::analysis) owner_pin_credited: bool,
+    /// #9766: a credited assertion passed the fixture-receiver owner gate
+    /// itself (see `ReturnOracleAdmission::fixture_receiver_pin`).
+    pub(in crate::analysis) fixture_receiver_credited: bool,
 }
 
 /// Summaries of the `no` observe/discriminate stages when no related test
@@ -372,6 +383,7 @@ pub(in crate::analysis) fn reveal_outcome(
             complete_proximity_oracles_only: false,
             direct_rows: Vec::new(),
             owner_pin_credited: false,
+            fixture_receiver_credited: false,
         };
     }
 
@@ -442,6 +454,7 @@ pub(in crate::analysis) fn reveal_outcome(
         complete_proximity_oracles_only,
         direct_rows,
         owner_pin_credited: analysis.owner_pin_credited,
+        fixture_receiver_credited: analysis.fixture_receiver_credited,
     }
 }
 
@@ -470,6 +483,8 @@ struct RevealAssertionAnalysis {
     matched_any: bool,
     /// #6692: some credited assertion pinned the owner's return value.
     owner_pin_credited: bool,
+    /// #9766: some credited assertion passed the fixture-receiver gate itself.
+    fixture_receiver_credited: bool,
     refused_context: bool,
     /// True when a test related only by file or module matched an assertion
     /// but could not confirm a match arm, because another related test reaches
@@ -2266,6 +2281,7 @@ fn analyze_related_assertions(
     let mut strongest_observation_confirmed = false;
     let mut matched_any = false;
     let mut owner_pin_credited = false;
+    let mut fixture_receiver_credited = false;
     let mut refused_context = false;
     // For families that need token confirmation: start pessimistic and clear
     // once a token_match fires.
@@ -2752,6 +2768,16 @@ fn analyze_related_assertions(
                     import_defeats_owner,
                     cross_package_defeats_owner,
                 );
+            fixture_receiver_credited |= matched
+                && credits_oracle
+                && !self_computed
+                && owner_return_pin_holds(
+                    &match_context,
+                    assertion,
+                    owner_pinned && (return_admission.fixture_receiver_pin)(test, assertion),
+                    import_defeats_owner,
+                    cross_package_defeats_owner,
+                );
             if matched && !credits_oracle {
                 related.push(RelatedTest {
                     name: test.name.clone(),
@@ -2925,6 +2951,7 @@ fn analyze_related_assertions(
         strongest_observation_confirmed,
         matched_any,
         owner_pin_credited,
+        fixture_receiver_credited,
         refused_context,
         observation_unverified,
         proximity_confirmation_withheld,
@@ -6230,6 +6257,7 @@ mod tests {
             owner_return_pin_required: false,
             returned_closure_pin_required: false,
             owner_return_pin: &|_, _| false,
+            fixture_receiver_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             sibling_exclusion_admitted: &|_, _| true,
@@ -7704,6 +7732,7 @@ mod tests {
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &pin,
+                fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -7801,6 +7830,7 @@ mod tests {
                     owner_return_pin_required: false,
                     returned_closure_pin_required: false,
                     owner_return_pin: &pin,
+                    fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     sibling_exclusion_admitted: &|_, _| true,
@@ -7984,6 +8014,7 @@ mod tests {
                     owner_return_pin_required: false,
                     returned_closure_pin_required: false,
                     owner_return_pin: &|_, _| false,
+                    fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
@@ -8095,6 +8126,7 @@ mod tests {
                     owner_return_pin_required: false,
                     returned_closure_pin_required: false,
                     owner_return_pin: &pin,
+                    fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
@@ -8519,6 +8551,7 @@ mod tests {
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -8612,6 +8645,7 @@ mod tests {
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -10417,6 +10451,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -10489,6 +10524,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -10532,6 +10568,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -10594,6 +10631,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -10658,6 +10696,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -10866,6 +10905,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -10912,6 +10952,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -11386,6 +11427,7 @@ return Err(\"typed pin\".into());
                         owner_return_pin_required: false,
                         returned_closure_pin_required: false,
                         owner_return_pin: &|_, _| false,
+                        fixture_receiver_pin: &|_, _| false,
                         wrapper_return_pin: &|_, _| false,
                         assertion_admitted: &|_, _| true,
                         sibling_exclusion_admitted: &|_, _| true,
@@ -11466,6 +11508,7 @@ return Err(\"typed pin\".into());
                     out_parameter_read: &|_, _| None,
                     owner_return_pin_required: false,
                     owner_return_pin: &|_, _| false,
+                    fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|test, _| {
@@ -11556,6 +11599,7 @@ return Err(\"typed pin\".into());
                     owner_return_pin_required: false,
                     returned_closure_pin_required: false,
                     owner_return_pin: &|_, _| false,
+                    fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
@@ -11848,6 +11892,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -11955,6 +12000,7 @@ return Err(\"typed pin\".into());
                     owner_return_pin_required: false,
                     returned_closure_pin_required: false,
                     owner_return_pin: &|_, _| false,
+                    fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
@@ -12005,6 +12051,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -12506,6 +12553,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -13055,6 +13103,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,

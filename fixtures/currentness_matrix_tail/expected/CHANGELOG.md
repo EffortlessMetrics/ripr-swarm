@@ -263,3 +263,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — currentness_matrix_tail (20)
+
+Reason:
+RIPR-SPEC-0122: plain wording for seam and state token in the check digest
+
+Command:
+`cargo xtask goldens bless currentness_matrix_tail --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

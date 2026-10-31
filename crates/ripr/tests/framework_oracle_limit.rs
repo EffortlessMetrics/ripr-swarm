@@ -1040,16 +1040,187 @@ fn cart_edit() -> String {
 }
 
 #[test]
-fn a_helper_built_receiver_pinned_to_a_literal_is_withheld() -> Result<(), String> {
+fn fixture_receiver_literal_pin_reads_helper_data() -> Result<(), String> {
     for (label, body) in [
         ("direct", "        assert_eq!(fixture().total(), 42);"),
         ("reversed", "        assert_eq!(42, fixture().total());"),
+        ("raw module", "        assert_eq!(fixture().total(), 42);"),
+        (
+            "attribute text",
+            "        assert_eq!(fixture().total(), 42);",
+        ),
         (
             "bound",
             "        let cart = fixture();\n        assert_eq!(cart.total(), 42);",
         ),
     ] {
-        withheld(&cart_source(body), &cart_edit(), 6, label)?;
+        let source = if label == "raw module" {
+            format!("mod r#owner {{\n{}\n}}", cart_source(body))
+        } else if label == "attribute text" {
+            cart_source(body).replace("\"a\"", "\"#[cfg(any())]\"")
+        } else {
+            cart_source(body)
+        };
+        let line = source
+            .lines()
+            .position(|line| line.contains("self.items.iter()"))
+            .ok_or_else(|| "missing fixture tail".to_string())?
+            + 1;
+        let edit = diff(
+            line,
+            "        self.items.iter().map(|(_, p)| p).sum()",
+            "        self.items.iter().map(|(_, price)| price).sum()",
+        );
+        let findings = findings_on(&source, &edit, line)?;
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.class == ExposureClass::Exposed),
+            "{label}: literal fixture pin was not credited: {findings:?}"
+        );
+        assert!(findings.iter().all(|finding| !limited(finding)));
+        assert!(findings.iter().all(|finding| {
+            finding
+                .stop_reasons
+                .iter()
+                .all(|reason| reason.as_str() != "fixture_opaque")
+        }));
+    }
+    Ok(())
+}
+
+#[test]
+fn fixture_receiver_projection_edit_needs_distinct_literal_totals() -> Result<(), String> {
+    let data = "vec![(\"a\".to_string(), 30), (\"b\".to_string(), 12)]";
+    let edit = diff(
+        6,
+        "        self.items.iter().map(|(price, _)| price).sum()",
+        "        self.items.iter().map(|(_, price)| price).sum()",
+    );
+    for (label, values, expected, credited) in [
+        ("equal columns", "vec![(7, 7)]", 7, false),
+        ("cross-row cancellation", "vec![(1, 2), (2, 1)]", 3, false),
+        ("zero columns", "vec![(0, 0), (0, 0)]", 0, false),
+        ("separating totals", "vec![(1, 3), (2, 4)]", 7, true),
+        ("unread overflow", "vec![(4294967295, 1), (1, 2)]", 3, false),
+    ] {
+        let source = cart_source(&format!(
+            "        assert_eq!(fixture().total(), {expected});"
+        ))
+        .replace("Vec<(String, u32)>", "Vec<(u32, u32)>")
+        .replace(data, values);
+        if credited {
+            let findings = findings_on(&source, &edit, 6)?;
+            assert!(
+                findings
+                    .iter()
+                    .any(|finding| finding.class == ExposureClass::Exposed)
+            );
+            assert!(findings.iter().all(|finding| !limited(finding)));
+        } else {
+            withheld(&source, &edit, 6, label)?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn fixture_receiver_unread_old_pipeline_supplies_no_pin() -> Result<(), String> {
+    let data = "vec![(\"a\".to_string(), 30), (\"b\".to_string(), 12)]";
+    let after = "        self.items.iter().map(|(_, price)| price).sum()";
+    for (label, values, expected, before) in [
+        (
+            "single product and sum coincide",
+            "vec![(\"a\".to_string(), 7)]",
+            7,
+            "        self.items.iter().map(|(_, price)| price).product()",
+        ),
+        (
+            "zero product and sum coincide",
+            "vec![(\"a\".to_string(), 0), (\"b\".to_string(), 0)]",
+            0,
+            "        self.items.iter().map(|(_, price)| price).product()",
+        ),
+        (
+            "a separating product is still outside the old-pipeline reader",
+            data,
+            42,
+            "        self.items.iter().map(|(_, price)| price).product()",
+        ),
+        (
+            "an unread old filter",
+            data,
+            42,
+            "        self.items.iter().map(|(_, price)| price).filter(|&&price| price != 0).sum()",
+        ),
+    ] {
+        let source = cart_source(&format!(
+            "        assert_eq!(fixture().total(), {expected});"
+        ))
+        .replace(data, values);
+        withheld(&source, &diff(6, before, after), 6, label)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn fixture_receiver_cfg_rows_do_not_supply_literal_data() -> Result<(), String> {
+    let source =
+        include_str!("../../../fixtures/fixture_receiver_unread_data/input/src/cfg_rows.rs");
+    let edit = diff(
+        4,
+        "        self.items.iter().map(|(value, _)| value).sum()",
+        "        self.items.iter().map(|(_, value)| value).sum()",
+    );
+    withheld(source, &edit, 4, "cfg removes the separating row")?;
+    withheld(
+        &source.replace("#[cfg(any())]", "#[cfg_attr(all(), cfg(any()))]"),
+        &edit,
+        4,
+        "cfg_attr removes the separating row",
+    )?;
+    let empty = source
+        .replace(", (7, 7)", "")
+        .replace("cfg_total(), 7", "cfg_total(), 0");
+    withheld(&empty, &edit, 4, "cfg removes every row")
+}
+
+#[test]
+fn fixture_receiver_raw_rival_method_does_not_pin_the_owner() -> Result<(), String> {
+    let source =
+        include_str!("../../../fixtures/fixture_receiver_unread_data/input/src/raw_owner.rs");
+    let edit = diff(
+        4,
+        "        self.items.iter().map(|(value, _)| value).sum()",
+        "        self.items.iter().map(|(_, value)| value).sum()",
+    );
+    withheld(
+        source,
+        &edit,
+        4,
+        "raw by-value method wins receiver dispatch",
+    )
+}
+
+#[test]
+fn fixture_receiver_equivalent_binding_edits_keep_degenerate_literals() -> Result<(), String> {
+    let data = "vec![(\"a\".to_string(), 30), (\"b\".to_string(), 12)]";
+    for (values, expected) in [
+        ("vec![(\"a\".to_string(), 7)]", 7),
+        ("vec![(\"a\".to_string(), 0), (\"b\".to_string(), 0)]", 0),
+        ("vec![(\"a\".to_string(), 2), (\"b\".to_string(), 2)]", 4),
+    ] {
+        let source = cart_source(&format!(
+            "        assert_eq!(fixture().total(), {expected});"
+        ))
+        .replace(data, values);
+        let findings = findings_on(&source, &cart_edit(), 6)?;
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.class == ExposureClass::Exposed)
+        );
+        assert!(findings.iter().all(|finding| !limited(finding)));
     }
     Ok(())
 }
@@ -1080,6 +1251,42 @@ fn a_fixture_receiver_shape_that_differs_keeps_the_finding() -> Result<(), Strin
     ] {
         keeps_gap(&cart_source(body), &cart_edit(), 6, label)?;
     }
+    Ok(())
+}
+
+/// #9766: the literal-fixture propagation claim rides only on an assertion
+/// that passed the fixture-receiver gate. An exact assertion on a forwarding
+/// entry that builds the literal receiver itself is credited by the
+/// chain-entry route (the test never calls the owner), and must not borrow
+/// the fixture gate's literal-data propagation fact or exposure.
+#[test]
+fn fixture_receiver_gate_does_not_lend_propagation_to_a_forwarding_entry_pin() -> Result<(), String>
+{
+    let source = cart_source("        assert_eq!(report(), 42);").replace(
+        "#[cfg(test)]",
+        "pub fn report() -> u32 {\n    Cart { items: vec![(\"a\".to_string(), 30), (\"b\".to_string(), 12)] }.total()\n}\n#[cfg(test)]",
+    );
+    assert!(
+        source.contains("pub fn report() -> u32"),
+        "fixture construction: {source}"
+    );
+    assert!(
+        source.contains("assert_eq!(report(), 42)"),
+        "fixture construction: {source}"
+    );
+    let findings = findings_on(&source, &cart_edit(), 6)?;
+    assert!(!findings.is_empty(), "the edited line yields a finding");
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.class != ExposureClass::Exposed
+                && !finding
+                    .ripr
+                    .propagate
+                    .summary
+                    .contains("Literal fixture receiver data")),
+        "{findings:?}"
+    );
     Ok(())
 }
 
@@ -1285,6 +1492,133 @@ fn an_executor_shape_that_differs_keeps_the_gap() -> Result<(), String> {
             2,
             label,
         )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn fixture_receiver_credit_requires_readable_carried_data() -> Result<(), String> {
+    let direct = cart_source("        assert_eq!(fixture().total(), 42);");
+    let data = "vec![(\"a\".to_string(), 30), (\"b\".to_string(), 12)]";
+    for (label, source) in [
+        ("empty field", direct.replace(data, "vec![]")),
+        ("raw module associated iter macros", format!("mod r#owner {{\n{direct}\nmacro_rules! declare_iter {{ () => {{ fn iter(&self) -> std::slice::Iter<'_, (String, u32)>; }} }}\nmacro_rules! implement_iter {{ () => {{ fn iter(&self) -> std::slice::Iter<'_, (String, u32)> {{ self.as_slice()[0..0].iter() }} }} }}\ntrait EmptyIter {{ declare_iter!(); }}\nimpl EmptyIter for Vec<(String, u32)> {{ implement_iter!(); }}\n}}")),
+        ("raw receiver iter name", format!("{direct}\ntrait EmptyIter {{ fn r#iter(&self) -> std::slice::Iter<'_, (String, u32)>; }}\nimpl EmptyIter for Vec<(String, u32)> {{ fn r#iter(&self) -> std::slice::Iter<'_, (String, u32)> {{ self.as_slice()[0..0].iter() }} }}")),
+        ("custom String conversion", format!("{direct}\ntrait ToString {{ fn to_string(&self) -> String; }}\nimpl ToString for str {{ fn to_string(&self) -> String {{ std::process::exit(0) }} }}")),
+        ("raw String conversion", format!("{direct}\ntrait ToString {{ fn r#to_string(&self) -> String; }}\nimpl ToString for str {{ fn r#to_string(&self) -> String {{ std::process::exit(0) }} }}")),
+        ("helper-local conversion macros", direct.replace("    use super::*;", "    use super::*;\n    macro_rules! declare_string { () => { fn to_string(&self) -> String; } }\n    macro_rules! implement_string { () => { fn to_string(&self) -> String { std::process::exit(0) } } }\n    trait ToString { declare_string!(); }\n    impl ToString for str { implement_string!(); }")),
+        ("helper-local foreign trait", direct.replace("    use super::*;", "    use super::*;\n    use external::StringTools;")),
+        ("callable fixture parameter", direct.replace("fn total_is_pinned()", "fn total_is_pinned(fixture: fn() -> Cart)")),
+        (
+            "associated macros can replace iter",
+            format!(
+                "{direct}\nmacro_rules! declare_iter {{ () => {{ fn iter(&self) -> std::slice::Iter<'_, (String, u32)>; }} }}\nmacro_rules! implement_iter {{ () => {{ fn iter(&self) -> std::slice::Iter<'_, (String, u32)> {{ self.as_slice()[0..0].iter() }} }} }}\ntrait EmptyIter {{ declare_iter!(); }}\nimpl EmptyIter for Vec<(String, u32)> {{ implement_iter!(); }}"
+            ),
+        ),
+        (
+            "extension iter discards literal data",
+            format!(
+                "{direct}\ntrait EmptyIter {{ fn iter(&self) -> std::slice::Iter<'_, (String, u32)>; }}\nimpl EmptyIter for Vec<(String, u32)> {{ fn iter(&self) -> std::slice::Iter<'_, (String, u32)> {{ self.as_slice()[0..0].iter() }} }}"
+            ),
+        ),
+        (
+            "foreign extension trait is unread",
+            format!("use external::VectorTools;\n{direct}"),
+        ),
+        (
+            "implicit iterator prelude disabled",
+            format!("#![no_implicit_prelude]\n{direct}"),
+        ),
+        ("computed field", direct.replace(data, "unknown_items()")),
+        (
+            "computed element",
+            direct.replace(", 30)", ", unknown_price())"),
+        ),
+        (
+            "helper has an unresolved prefix",
+            direct.replace("        Cart {", "        setup();\n        Cart {"),
+        ),
+        (
+            "helper has alternate exit",
+            direct.replace(
+                "        Cart {",
+                "        if skip() { return Cart { items: vec![] }; }\n        Cart {",
+            ),
+        ),
+        (
+            "duplicate helper",
+            format!("{direct}\nmod other {{ fn fixture() {{}} }}"),
+        ),
+        (
+            "helper declaration gated",
+            direct.replace(
+                "    fn fixture()",
+                "    #[cfg(feature = \"other\")]\n    fn fixture()",
+            ),
+        ),
+        (
+            "macro vec rebound",
+            format!("macro_rules! vec {{ ($($t:tt)*) => {{ Vec::new() }}; }}\n{direct}"),
+        ),
+        (
+            "numeric source is not literal",
+            direct.replace(", 12)", ", 3 * 4)"),
+        ),
+        (
+            "wrong tuple component",
+            direct
+                .replace("(String, u32)", "(u32, u32)")
+                .replace(data, "vec![(30, unknown_price()), (12, unknown_price())]"),
+        ),
+        (
+            "unrelated nonempty field",
+            direct
+                .replace(
+                    "pub items: Vec<(String, u32)>,",
+                    "pub items: Vec<(String, u32)>,\n    pub spare: Vec<(String, u32)>,",
+                )
+                .replace(data, &format!("vec![], spare: {data}")),
+        ),
+        (
+            "helper locally rebound",
+            cart_source(
+                "        let fixture = || Cart { items: vec![] };\n        assert_eq!(fixture().total(), 0);",
+            ),
+        ),
+        (
+            "receiver changed after fixture",
+            cart_source(
+                "        let mut cart = fixture();\n        cart.items.clear();\n        assert_eq!(cart.total(), 0);",
+            ),
+        ),
+        (
+            "receiver alias",
+            cart_source(
+                "        let original = fixture();\n        let cart = original;\n        assert_eq!(cart.total(), 42);",
+            ),
+        ),
+        (
+            "deferred assertion",
+            cart_source("        let _deferred = || assert_eq!(fixture().total(), 42);"),
+        ),
+    ] {
+        let line = source
+            .lines()
+            .position(|line| line.contains("self.items.iter()"))
+            .ok_or_else(|| format!("{label}: missing changed tail"))?
+            + 1;
+        let edit = diff(
+            line,
+            "        self.items.iter().map(|(_, p)| p).sum()",
+            "        self.items.iter().map(|(_, price)| price).sum()",
+        );
+        let findings = findings_on(&source, &edit, line)?;
+        assert!(
+            findings
+                .iter()
+                .all(|finding| finding.class != ExposureClass::Exposed),
+            "{label}: unresolved fixture received credit: {findings:?}"
+        );
     }
     Ok(())
 }

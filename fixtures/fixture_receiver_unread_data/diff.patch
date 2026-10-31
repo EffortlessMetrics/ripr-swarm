@@ -1,0 +1,12 @@
+diff --git a/src/cfg_rows.rs b/src/cfg_rows.rs
+--- a/src/cfg_rows.rs
++++ b/src/cfg_rows.rs
+@@ -4 +4 @@
+-        self.items.iter().map(|(value, _)| value).sum()
++        self.items.iter().map(|(_, value)| value).sum()
+diff --git a/src/raw_owner.rs b/src/raw_owner.rs
+--- a/src/raw_owner.rs
++++ b/src/raw_owner.rs
+@@ -4 +4 @@
+-        self.items.iter().map(|(value, _)| value).sum()
++        self.items.iter().map(|(_, value)| value).sum()
