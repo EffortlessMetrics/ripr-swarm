@@ -1230,16 +1230,16 @@ mutant calibrates the rule; ripr reports only the static shape.
     and `not Money(0)` do not distinguish `!= 0` from `> 0`; `Money(-1)` does
     (#9795). This does not broaden equality guards, properties or `__str__`.
 
-    Known missed credit (#9814): `f(g(x)) == g(x)` can discriminate a
-    change to identity `f` when `g` is independent, although the current
-    extraction-time rule demotes it. With owner `g`, the same assertion
-    still admits constant returns, so checking only whether the outer and
-    repeated callees have the same name is unsafe. The
-    `py-nested-independent-outer-owner` corpus case records this missed
-    credit; `py-nested-repeated-inner-owner` and
-    `py-nested-idempotent-owner` retain the negative controls. Owner-aware
-    credit remains pending a per-finding assertion model shared by all
-    strength consumers.
+    Owner-resolved credit (#9814): `f(g(x)) == g(x)` discriminates a change
+    to the bare function `f` when `g(x)` is independent, although rule 25
+    demotes the assertion at extraction. Extraction records the outer callee
+    when `f` takes the shared call as its sole argument and does not appear
+    inside it; a finding whose owner is exactly that module-level function
+    reads the assertion as an exact value check. Every other owner, including
+    `g`, keeps the demotion, so a constant edit of `g` still reads
+    `weakly_exposed`. The `py-nested-independent-outer-owner` corpus case
+    retains the credit; `py-nested-repeated-inner-owner` and
+    `py-nested-idempotent-owner` retain the negative controls.
 
 ### Verdict ladder
 
