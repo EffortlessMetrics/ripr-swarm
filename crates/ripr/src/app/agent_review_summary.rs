@@ -956,7 +956,7 @@ mod tests {
         let rendered = render_agent_review_summary_markdown(&report);
         let receipt = rendered
             .find(&format!(
-                "Movement: missing_artifact\nReceipt: {NO_RECEIPT_BEFORE_REPAIR}\n"
+                "Movement: Agent receipt is missing; static movement is not available.\nReceipt: {NO_RECEIPT_BEFORE_REPAIR}\n"
             ))
             .ok_or_else(|| format!("no-receipt line missing:\n{rendered}"))?;
         let next = check_repo_exposure_command(
@@ -975,6 +975,34 @@ mod tests {
             .ok_or_else(|| format!("after-snapshot command missing:\n{rendered}"))?;
         assert!(
             receipt < heading && heading < note && note < fence,
+            "{rendered}"
+        );
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn agent_review_summary_markdown_fresh_repo_uses_plain_early_state_copy() -> Result<(), String>
+    {
+        let root = unique_agent_review_summary_test_dir("markdown-fresh-repo")?;
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+
+        let report = build_agent_review_summary_report(&root, Path::new("."));
+        let rendered = render_agent_review_summary_markdown(&report);
+
+        for forbidden in [
+            "missing_artifact",
+            "unavailable (incomplete)",
+            "producer analysis outcome",
+        ] {
+            assert!(
+                !rendered.contains(forbidden),
+                "markdown must not expose `{forbidden}`:\n{rendered}"
+            );
+        }
+        assert!(
+            rendered.contains("No analysis yet. Run `ripr check` first."),
             "{rendered}"
         );
 
