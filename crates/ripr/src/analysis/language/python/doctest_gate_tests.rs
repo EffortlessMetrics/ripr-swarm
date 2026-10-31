@@ -307,3 +307,63 @@ fn a_trailing_comment_on_the_example_line_does_not_hide_the_comparison() -> Resu
     assert_eq!(count("comment-same", ENABLED, &old, &new)?, 0);
     Ok(())
 }
+
+/// Whether `file` is collected with `tox.ini` and `pyproject.toml` as given.
+fn tox_collects(label: &str, tox: &str, pyproject: &str) -> Result<bool, String> {
+    let root = root(label, pyproject)?;
+    std::fs::write(root.join("tox.ini"), tox).map_err(|err| format!("write: {err}"))?;
+    let collected = collects_doctests(&root, Path::new("src/texts.py"));
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(collected)
+}
+
+#[test]
+fn a_tox_testenv_pytest_command_with_doctest_modules_is_collection() -> Result<(), String> {
+    for tox in [
+        "[testenv]\ncommands = pytest --doctest-modules --cov=pkg {posargs}\n",
+        "[testenv]\ndeps = pytest\ncommands =\n    python -m pytest --doctest-modules\n",
+        "[tox]\nenvlist = py\n\n[testenv]\ncommands = py.test --doctest-modules\n",
+        // Each line is its own command: a value that starts inline and goes
+        // on below is read line by line.
+        "[testenv]\ncommands = python -c 'pass'\n    pytest --doctest-modules\n",
+        "[testenv]\ncommands = pytest --doctest-modules\n    python -c 'pass'\n",
+    ] {
+        assert!(tox_collects("tox-on", tox, "")?, "{tox}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_tox_command_that_cannot_be_read_as_one_bare_run_is_not_collection() -> Result<(), String> {
+    for tox in [
+        "[testenv]\ncommands = pytest\n",
+        "[testenv]\ncommands = pytest --doctest-modules src\n",
+        "[testenv]\ncommands = pytest --doctest-modules --ignore=src\n",
+        "[testenv]\ncommands = pytest --doctest-modules && echo done\n",
+        // A backslash joins the next line into the same command, which may
+        // name a target; the stray token refuses the read.
+        "[testenv]\ncommands = pytest --doctest-modules \\\n    src\n",
+        "[testenv]\ncommands = py3: pytest --doctest-modules\n",
+        "[testenv]\ncommands = {envpython} -m pytest --doctest-modules\n",
+        "[testenv:docs]\ncommands = pytest --doctest-modules\n",
+        "[testenv]\ndescription = pytest --doctest-modules\n",
+    ] {
+        assert!(!tox_collects("tox-off", tox, "")?, "{tox}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_pyproject_pytest_table_overrides_the_tox_command() -> Result<(), String> {
+    let tox = "[testenv]\ncommands = pytest --doctest-modules\n";
+    for pyproject in [
+        "[tool.pytest]\ntestpaths = [\"tests\"]\n",
+        "[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n",
+    ] {
+        assert!(
+            !tox_collects("tox-pyproject", tox, pyproject)?,
+            "{pyproject}"
+        );
+    }
+    Ok(())
+}
