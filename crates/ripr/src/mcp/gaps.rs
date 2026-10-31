@@ -374,10 +374,9 @@ impl GapItem {
             evidence_sha256,
             repair_readiness,
             static_limit: finding.static_limit_kind,
-            static_limit_reason: finding.static_limit_kind.map(|kind| {
-                kind.describe_for_family(&finding.probe.family)
-                    .into_owned()
-            }),
+            static_limit_reason: finding
+                .static_limit_kind
+                .map(|kind| kind.describe_for_family(&finding.probe.family).into_owned()),
         })
     }
 
