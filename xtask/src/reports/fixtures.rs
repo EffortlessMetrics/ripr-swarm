@@ -1820,23 +1820,17 @@ fn is_path_bearing_json_key(key: &str) -> bool {
             .any(|needle| key.contains(needle))
 }
 
+/// Human fixture text is never separator-folded: the Windows-facing human
+/// producers already print paths with `/` (`human_path`, `display_path`,
+/// `root_path_display`), and everything else in it is quoted SOURCE text
+/// (`read \"error\"`, `\u{7b}`, `root: \u{7b}`) that must stay byte-identical
+/// on every host so the checked-in goldens hold the real source (#11178).
 pub(crate) fn normalize_fixture_human_output(value: &str) -> String {
-    let normalized = project_renderer_cwd(&normalize_separators(value));
+    let normalized = project_renderer_cwd(value);
     let trimmed = normalized.trim_end_matches(['\r', '\n']);
     let mut output = trimmed.to_string();
     output.push('\n');
     output
-}
-
-/// Turn Windows separators into `/` while keeping the shell's `'\''`
-/// escape intact, so a checkout path containing an apostrophe still reaches
-/// `project_cwd_prefix` as one quoted token (#6762).
-fn normalize_separators(value: &str) -> String {
-    value
-        .split(r"'\''")
-        .map(|part| part.replace('\\', "/"))
-        .collect::<Vec<_>>()
-        .join(r"'\''")
 }
 
 /// The `check` drill-in commands bind `--root` to the resolved repository
@@ -3300,15 +3294,30 @@ mod tests {
             ),
             "--root <cwd>/fixtures/x/input --diff d"
         );
-        // The full human-output path keeps that escape through separator
-        // normalization; replacing every backslash first left it unprojected.
-        assert_eq!(
-            project_cwd_prefix(
-                &normalize_separators(r"--root '/tmp/dev'\''s repo/fixtures\x\input' --diff d"),
-                "/tmp/dev's repo/"
-            ),
-            "--root <cwd>/fixtures/x/input --diff d"
-        );
+    }
+
+    #[test]
+    fn human_normalizer_never_rewrites_source_text_backslashes() {
+        let human = [
+            "root: \\u{7b}",
+            "  root: \\u{7b}",
+            "owner: \\u{7d}",
+            "owner: \\n",
+            "WARNING .\\src\\lib.rs:5",
+            "  - src\\foo.rs:3 (weak)",
+            "  before: write!(f, \"\\u{7b}\\u{7d}\", self.0)",
+            "  - source assertion argument value \"read \\\"error\\\"\" at line 18",
+            "  before: write!(f, r#\"prefix src\\foo.rs suffix\"#)",
+            "ripr does not infer `\\u{7b}` here",
+        ]
+        .join("\n");
+        assert_eq!(normalize_fixture_human_output(&human), format!("{human}\n"));
+    }
+
+    #[test]
+    fn human_normalizer_projects_cwd_and_ends_with_one_newline() {
+        let out = normalize_fixture_human_output("root: \\u{7b}\r\n\n");
+        assert_eq!(out, "root: \\u{7b}\n");
     }
 
     /// Unique per process and per call. Fixed names under the shared temp
