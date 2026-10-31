@@ -1903,7 +1903,7 @@ fn read_saved_digest(uri: &Uri) -> Option<String> {
 /// A client names this path in `didOpen`, so it may be a device, FIFO or
 /// huge file (`/dev/zero`, `/dev/stdin`). Read only a regular file, and no
 /// more than one LSP message can carry: an open document never exceeds that.
-fn read_saved_bytes(path: &Path) -> Option<Vec<u8>> {
+pub(super) fn read_saved_bytes(path: &Path) -> Option<Vec<u8>> {
     use std::io::Read as _;
     let limit = crate::lsp::transport_bounds::MAX_MESSAGE_BYTES as u64;
     let metadata = std::fs::metadata(path).ok()?;

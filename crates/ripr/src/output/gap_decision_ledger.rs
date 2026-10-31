@@ -843,9 +843,25 @@ pub(crate) fn build_gap_decision_ledger_report(
     .to_string();
 
     let check_output_provenance = match input.source_kind {
-        GapDecisionLedgerSourceKind::CheckOutput => Some(serde_json::json!({
-            "root": input_root.clone(),
-        })),
+        GapDecisionLedgerSourceKind::CheckOutput => {
+            let mut origin = serde_json::Map::new();
+            origin.insert("root".to_string(), serde_json::json!(input_root));
+            // Retain the producer's own values verbatim, including malformed
+            // values. This is provenance, not a currentness decision: the
+            // derived source_subject and its limitation remain authoritative
+            // for existing consumers, and absent fields stay absent.
+            if let Some(source) = source_value_snapshot.as_ref().and_then(Value::as_object) {
+                if let Some(raw_root) = source.get("root") {
+                    origin.insert("source_root_raw".to_string(), raw_root.clone());
+                }
+                for key in ["source_subject", "base", "base_commit", "head", "mode"] {
+                    if let Some(value) = source.get(key) {
+                        origin.insert(key.to_string(), value.clone());
+                    }
+                }
+            }
+            Some(Value::Object(origin))
+        }
         GapDecisionLedgerSourceKind::Records => source_value_snapshot.as_ref().and_then(|value| {
             value.get("check_output_provenance").cloned().or_else(|| {
                 (value.pointer("/inputs/source_kind").and_then(Value::as_str)

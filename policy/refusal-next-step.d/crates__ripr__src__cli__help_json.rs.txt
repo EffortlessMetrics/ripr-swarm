@@ -1,0 +1,3 @@
+crates/ripr/src/cli/help_json.rs|help --json catalog integrity failed: {violations:?}
+crates/ripr/src/cli/help_json.rs|help --json digest serialization failed: {error}
+crates/ripr/src/cli/help_json.rs|help --json serialization failed: {error}

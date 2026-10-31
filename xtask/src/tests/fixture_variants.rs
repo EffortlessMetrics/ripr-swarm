@@ -1,67 +1,82 @@
-//! Guards for the in-suite fixture variant builds (#11197).
-//!
-//! The fixture machinery owns the one `cargo build -p ripr` each xtask
-//! process owes the corpus (#3054). Variant builds must never rewrite the
-//! shared `target/debug/ripr` the running suite executes: a mid-suite swap
-//! lets cross-process artifact tests observe two different analyzer
-//! identities in one run.
-
+//! Structural production-entry routing guard (#11197). The simulated writes
+//! do not establish what a real Cargo build or filesystem does.
 use super::*;
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::rc::Rc;
+use std::sync::OnceLock;
 
 #[test]
-fn perl_variant_build_never_rewrites_shared_debug_binary() -> Result<(), String> {
-    // The contract is structural: the variant is built under a target
-    // directory that is not the shared one, and is published under its own
-    // name, so no step of the variant build names the shared binary. This used
-    // to stamp `target/debug/ripr` around a real variant build; that check
-    // observed every unrelated in-suite Cargo run too, so it failed on main
-    // whenever one overlapped (Test Analytics), and it held the suite for
-    // minutes on Cargo's build lock.
-    with_repo_cwd(|| {
-        use crate::reports::{fixture_variant_target_dir, perl_variant_build_plan};
-        let shared = crate::ripr_debug_binary();
-        let shared_target = std::path::absolute(
-            shared
-                .parent()
-                .and_then(std::path::Path::parent)
-                .ok_or("shared binary has no target root")?,
-        )
-        .map_err(|error| format!("resolve shared target root: {error}"))?;
-        let plan = perl_variant_build_plan(shared.clone(), fixture_variant_target_dir()?);
-        assert_eq!(
-            plan.cargo_args,
-            ["build", "-p", "ripr", "--features", "lang-perl"],
-            "the argv stays a plain feature build so native-lock observers match it"
-        );
-        assert_ne!(
-            plan.target_dir, shared_target,
-            "the variant must not build into the shared target (#11197)"
-        );
-        assert!(
-            plan.target_dir.starts_with(&shared_target),
-            "the variant overlay stays under the shared root so CI caches and \
-             `cargo clean` cover it: {} vs {}",
-            plan.target_dir.display(),
-            shared_target.display()
-        );
-        let shared_abs = std::path::absolute(&shared)
-            .map_err(|error| format!("resolve shared binary: {error}"))?;
-        assert!(
-            !plan.built.starts_with(shared_target.join("debug")),
-            "Cargo must write the variant outside the shared debug dir: {}",
-            plan.built.display()
-        );
-        assert_ne!(std::path::absolute(&plan.published).ok(), Some(shared_abs));
-        assert_ne!(
-            plan.published.file_name(),
-            shared.file_name(),
-            "the published copy carries its own name, never the shared one (#11197)"
-        );
-        assert_eq!(
-            plan.published.parent(),
-            shared.parent(),
-            "the published copy sits beside the shared binary"
-        );
-        Ok(())
-    })
+fn perl_variant_routing_simulation_records_no_shared_write() -> Result<(), String> {
+    use crate::reports::{ripr_perl_fixture_binary, variant_test};
+    // Identity only: nothing is created under this path, and it must not depend
+    // on the process working directory, which other tests change.
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("guard-target");
+    let shared = crate::ripr_debug_binary_in(Some(root.clone()));
+    let variant_root =
+        std::path::absolute(root.join("fixture-variants")).map_err(|e| e.to_string())?;
+    let perl = shared.with_file_name(format!("ripr-lang-perl{}", std::env::consts::EXE_SUFFIX));
+    let context = Rc::new(variant_test::Context {
+        shared: shared.clone(),
+        once: OnceLock::new(),
+        files: RefCell::new(BTreeMap::from([(shared.clone(), b"default".to_vec())])),
+        commands: RefCell::new(Vec::new()),
+        writes: RefCell::new(Vec::new()),
+    });
+    let initial_generation = context.shared_generation();
+    let result = variant_test::with_context(context.clone(), || {
+        std::thread::spawn(|| assert!(variant_test::active().is_none()))
+            .join()
+            .map_err(|_panic| "thread isolation check panicked")?;
+        ripr_perl_fixture_binary()
+    })?;
+    assert!(
+        variant_test::active().is_none(),
+        "override must be restored"
+    );
+    assert!(result.ends_with(&perl.to_string_lossy().to_string()));
+    let commands = context.commands.borrow();
+    assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0].0, "cargo");
+    assert_eq!(
+        commands[0].1,
+        ["build", "-p", "ripr", "--features", "lang-perl"]
+    );
+    assert_eq!(commands[0].2.as_ref(), Some(&variant_root));
+    assert_eq!(context.shared_generation(), initial_generation);
+    let files = context.files.borrow();
+    assert_eq!(
+        files.get(&shared).map(Vec::as_slice),
+        Some(b"default".as_slice())
+    );
+    assert_eq!(
+        files.get(&perl).map(Vec::as_slice),
+        Some(b"perl".as_slice())
+    );
+    drop(files);
+    // The write oracle must detect even a rewrite that leaves identical bytes.
+    context.write(shared.clone(), b"default".to_vec());
+    assert_eq!(
+        context.files.borrow().get(&shared),
+        Some(&b"default".to_vec())
+    );
+    assert_ne!(context.shared_generation(), initial_generation);
+    Ok(())
+}
+
+#[test]
+fn variant_override_is_restored_after_unwind() {
+    use crate::reports::variant_test;
+    let context = Rc::new(variant_test::Context {
+        shared: PathBuf::from("unused"),
+        once: OnceLock::new(),
+        files: RefCell::new(BTreeMap::new()),
+        commands: RefCell::new(Vec::new()),
+        writes: RefCell::new(Vec::new()),
+    });
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        variant_test::with_context(context, || std::panic::resume_unwind(Box::new("cleanup")));
+    }));
+    assert!(result.is_err());
+    assert!(variant_test::active().is_none());
 }

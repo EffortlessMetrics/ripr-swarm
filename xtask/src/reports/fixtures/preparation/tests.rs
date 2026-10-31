@@ -459,18 +459,19 @@ fn installed_pin_missing_locked_dependency_refuses_then_seeded_cache_succeeds() 
 }
 
 #[test]
-fn target_dir_overlay_is_the_only_target_the_child_can_write() {
-    let environment = vec![
-        ("CARGO_HOME", "/cargo-home".to_string()),
-        ("CARGO_TARGET_DIR", "/shared/target".to_string()),
-    ];
-    let envs = with_target_dir_overlay(&environment, "/shared/target/fixture-variants");
-    assert_eq!(
-        envs,
-        [
-            ("CARGO_HOME", "/cargo-home"),
-            ("CARGO_TARGET_DIR", "/shared/target/fixture-variants"),
-        ],
-        "an inherited target entry must be replaced, not duplicated"
-    );
+fn perl_variant_command_uses_dedicated_target_overlay() -> Result<(), String> {
+    let target = std::path::Path::new("owned-target");
+    build_perl_variant_with(
+        target,
+        &[("CARGO_HOME", "home".into())],
+        &|program, args, envs| {
+            assert_eq!(program, "cargo");
+            assert_eq!(args, ["build", "-p", "ripr", "--features", "lang-perl"]);
+            assert_eq!(
+                envs,
+                [("CARGO_HOME", "home"), ("CARGO_TARGET_DIR", "owned-target")]
+            );
+            Ok(())
+        },
+    )
 }

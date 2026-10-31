@@ -43,5 +43,5 @@ status = "fixed"
 first_seen = "2026-10-31"
 evidence = ["run 41196607949 (main b3023dc7)", "run 41190928102 (main 049bd0a6)", "run 41188789260 (main 404a80d0)"]
 symptom = "in-suite variant build rewrote target/debug/ripr mid-suite; the test also ran 200+ seconds."
-root_cause = "The guard stamped the shared target/debug/ripr around a real variant build, so any unrelated Cargo run in the suite that relinked the shared binary during that window failed it, and the build waited on Cargo's lock behind other builds. The contract is now asserted on the variant build plan (target dir, argv, published name), which cannot be disturbed by a peer."
-guard = "perl_variant_build_never_rewrites_shared_debug_binary"
+root_cause = "The guard stamped the shared target/debug/ripr around a real variant build, so any unrelated Cargo run in the suite that relinked the shared binary during that window failed it, and the build waited on Cargo's lock behind other builds. Fixed independently on main by #11346, which asserts the routing (command, variant target dir, no shared write) in a simulation that a peer Cargo run cannot disturb."
+guard = "perl_variant_routing_simulation_records_no_shared_write"
