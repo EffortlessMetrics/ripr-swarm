@@ -300,6 +300,10 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     if let Some(chain) = resolved_chain.as_ref() {
         withhold_helper_uniqueness_as_unknown(&mut finding, chain, index, &reveal_misses);
     }
+    // RIPR-SPEC-0352: record a receiver blocked only by an unverifiable macro
+    // while the run-shared syntax memo is in scope; the language post-pass
+    // decides.
+    super::classify::mark_receiver_unestablished(&mut finding, owner_fn, index);
     let pre_cap_syntax_only = super::classify::pre_cap_syntax_only(&finding, index, &direct_rows);
     if complete_proximity_oracles_only
         && let Some(owner) = context
