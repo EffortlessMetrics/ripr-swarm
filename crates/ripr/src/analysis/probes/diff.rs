@@ -6792,7 +6792,8 @@ mod source_currentness_tests {
 
     /// RIPR-SPEC-0369: changed lines inside `verus! { .. }` are Verus syntax.
     /// Exec text, `ensures`, `spec fn` and `proof` lines seed one
-    /// `static_unknown` probe per region and diff side, never an expression family; an
+    /// `static_unknown` probe per region and diff side (a replaced line pairs its
+    /// old text into the added-side probe), never an expression family; an
     /// ordinary fn beside the block keeps its normal probe.
     #[test]
     fn verus_region_lines_seed_one_static_unknown_not_expression_probes() {
@@ -6827,12 +6828,17 @@ mod source_currentness_tests {
                 .all(|probe| probe.family == ProbeFamily::StaticUnknown),
             "{inside:?}"
         );
-        let added_side = inside.iter().filter(|probe| probe.after.is_some()).count();
-        let removed_side = inside.iter().filter(|probe| probe.after.is_none()).count();
+        // A removed line replaced by an added one is paired into the added-side
+        // probe (`before` carries the old text); only a removed line with no
+        // added counterpart gets a removed-side probe (see the removed-only test).
         assert_eq!(
-            (added_side, removed_side),
-            (1, 1),
-            "one probe per region per side: {inside:?}"
+            inside.len(),
+            1,
+            "one paired probe for the region: {inside:?}"
+        );
+        assert!(
+            inside[0].before.is_some() && inside[0].after.is_some(),
+            "removed text is paired into the added-side probe: {inside:?}"
         );
         assert!(
             probes

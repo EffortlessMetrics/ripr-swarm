@@ -67,6 +67,8 @@ token tree of a `verus!` invocation (`()`, `[]` or `{}` delimiters, comments
 and strings masked, an unclosed tree running to the end of the file) is Verus
 syntax, not Rust. The probe seeder emits one `static_unknown` probe per region
 and diff side, keyed by region start line, and no expression-family probe; a
+removed line replaced by an added one is paired into the added-side probe as
+its `before` text, and only an unpaired removed line seeds a removed-side probe; a
 removed-side probe resolves its region in the reconstructed old source at the
 deleted line's old-side number, never at its new-file coordinate. A
 line that also holds code outside the region keeps normal seeding. The
