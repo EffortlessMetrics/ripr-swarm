@@ -12,6 +12,10 @@ on:
   pull_request:
     types: [opened, edited]
 
+# Job-level permissions below grant the writes; nothing is inherited.
+permissions:
+  contents: read
+
 jobs:
   droid:
     if: |

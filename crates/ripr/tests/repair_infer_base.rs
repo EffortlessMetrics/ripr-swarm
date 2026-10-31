@@ -188,7 +188,12 @@ impl Repo {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        Ok(text.replace(&self.0.to_string_lossy().into_owned(), "<root>"))
+        // The product prints a Windows root with `/` separators, so mask both
+        // spellings of this repository's own root.
+        let native = self.0.to_string_lossy().into_owned();
+        Ok(text
+            .replace(&native, "<root>")
+            .replace(&native.replace('\\', "/"), "<root>"))
     }
 
     /// Assert the fixture holds the intended change before any downstream
@@ -408,7 +413,7 @@ fn an_explicit_base_wins_over_inference() -> Result<(), String> {
         "an explicit base scopes the refusal:\n{explicit}"
     );
     assert!(
-        explicit.contains("already grip it"),
+        explicit.contains("already check it"),
         "the gripped change is named:\n{explicit}"
     );
     assert!(offered_starts(&explicit).is_empty(), "{explicit}");
@@ -482,7 +487,7 @@ fn an_explicit_base_reads_the_dirty_working_tree_too() -> Result<(), String> {
     let dirty = repo.ripr(&["repair", "--root", ".", "--base", "HEAD~1"])?;
     assert!(
         !dirty.contains("could not tell which lines you changed")
-            && dirty.contains("already grip it"),
+            && dirty.contains("already check it"),
         "the working-tree diff against the explicit base scopes the refusal:\n{dirty}"
     );
     let unscoped = repo.ripr(&["repair", "--root", "."])?;

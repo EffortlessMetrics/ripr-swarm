@@ -3040,3 +3040,62 @@ fn explicit_config_wins_when_markers_and_source_both_detect() -> Result<(), Stri
     let _ = fs::remove_dir_all(&root);
     Ok(())
 }
+
+/// #11560: a hostile `ripr.toml` may list tens of thousands of entries. The
+/// duplicate check must stay linear, and still name the first duplicate.
+#[test]
+fn large_path_lists_parse_in_linear_time_and_still_reject_duplicates() -> Result<(), String> {
+    let render = |key: &str, table: &str, entries: &[String]| {
+        let items = entries
+            .iter()
+            .map(|entry| format!("\"{entry}\""))
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("[{table}]\n{key} = [{items}]\n")
+    };
+    let patterns: Vec<String> = (0..60_000).map(|i| format!("gen{i}/**/*.rs")).collect();
+    let files: Vec<String> = (0..60_000).map(|i| format!("src/f{i}.rs")).collect();
+    let roots: Vec<String> = (0..60_000).map(|i| format!("tests/t{i}")).collect();
+    let started = std::time::Instant::now();
+    let config = parse_config(&render(
+        "generated_file_patterns",
+        "languages.rust",
+        &patterns,
+    ))?;
+    assert_eq!(
+        config.languages().rust.generated_file_patterns.len(),
+        60_000
+    );
+    let config = parse_config(&render("handwritten_files", "languages.rust", &files))?;
+    assert_eq!(config.languages().rust.handwritten_files.len(), 60_000);
+    let bun = format!(
+        "{}bridge_hints = \"hints.json\"\n",
+        render("test_roots", "profiles.bun_ub", &roots)
+    );
+    let config = parse_config(&bun)?;
+    assert_eq!(
+        config
+            .profiles()
+            .bun_ub
+            .as_ref()
+            .map(|p| p.test_roots.len()),
+        Some(60_000)
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "60k-entry path lists must parse in linear time, took {:?}",
+        started.elapsed()
+    );
+
+    let mut duplicated = patterns.clone();
+    duplicated.push("gen17/**/*.rs".to_string());
+    let error = parse_config(&render(
+        "generated_file_patterns",
+        "languages.rust",
+        &duplicated,
+    ))
+    .err()
+    .ok_or("duplicate pattern must be rejected")?;
+    assert!(error.contains("`gen17/**/*.rs` more than once"), "{error}");
+    Ok(())
+}
