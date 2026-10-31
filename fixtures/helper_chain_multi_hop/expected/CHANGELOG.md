@@ -361,3 +361,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — helper_chain_multi_hop (28)
+
+Reason:
+RIPR-SPEC-0122: describe classified spots without implying repair eligibility
+
+Command:
+`cargo xtask goldens bless helper_chain_multi_hop --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

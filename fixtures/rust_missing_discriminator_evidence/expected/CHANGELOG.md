@@ -406,3 +406,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_missing_discriminator_evidence (34)
+
+Reason:
+RIPR-SPEC-0122: describe classified spots without implying repair eligibility
+
+Command:
+`cargo xtask goldens bless rust_missing_discriminator_evidence --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

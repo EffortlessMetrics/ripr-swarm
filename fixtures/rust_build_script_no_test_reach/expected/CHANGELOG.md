@@ -97,3 +97,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_build_script_no_test_reach (8)
+
+Reason:
+RIPR-SPEC-0122: describe classified spots without implying repair eligibility
+
+Command:
+`cargo xtask goldens bless rust_build_script_no_test_reach --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -36,7 +36,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/struct_literal_untouched_field_builder/input --diff <cwd>/fixtures/struct_literal_untouched_field_builder/diff.patch --mode fast probe:src_lib.rs:call_deletion:5af80bde
   ripr context --root <cwd>/fixtures/struct_literal_untouched_field_builder/input --diff <cwd>/fixtures/struct_literal_untouched_field_builder/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:5af80bde
-  no repair start offered: ripr found 8 repairable spots in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
+  no repair start offered: ripr found 8 spots in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
