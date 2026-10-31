@@ -1,0 +1,12 @@
+# Pin the no-evidence hover's in-progress and clean-workspace wording (#11253).
+[[extend]]
+id = "RIPR-SPEC-0127"
+tests = [
+  "crates/ripr/src/lsp/tests.rs::hover_without_evidence_states_are_distinct_and_static",
+  "crates/ripr/src/lsp/backend.rs::pull_disclosure_dedup_tests::no_evidence_hover_says_analysis_is_in_progress_only_while_an_attempt_runs",
+  "crates/ripr/src/lsp/backend.rs::pull_disclosure_dedup_tests::no_evidence_hover_reports_a_clean_workspace_only_for_no_changed_lines",
+]
+code = [
+  "crates/ripr/src/lsp/hover.rs",
+  "crates/ripr/src/lsp/backend.rs",
+]
