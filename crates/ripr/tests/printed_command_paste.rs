@@ -722,7 +722,7 @@ fn collect(fixture: &Fixture, subcommands: &BTreeSet<String>) -> Result<Collecte
             ),
             (
                 "first-pr",
-                2,
+                1,
                 args(&[
                     "first-pr", "--root", root, "--base", "HEAD~1", "--head", "HEAD",
                 ]),
@@ -869,8 +869,9 @@ fn collect(fixture: &Fixture, subcommands: &BTreeSet<String>) -> Result<Collecte
             .filter(|(label, _, _)| only.is_none_or(|labels: &[&str]| labels.contains(label)))
             .collect();
         for (label, _, args) in &flows {
-            // The cold `first-pr` flow prints both the repo-exposure and the
-            // gap-ledger recovery commands only without the pilot's report;
+            // The cold `first-pr` flow prints the repo-exposure recovery
+            // command (#11298: one next command, later steps unprinted) only
+            // without the pilot's report;
             // `first-pr-after-pilot` covers the warm route.
             if *label == "first-pr" {
                 let pilot_report = fixture.root.join("target/ripr/pilot/repo-exposure.json");
