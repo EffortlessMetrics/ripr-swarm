@@ -515,10 +515,10 @@ pub(crate) fn receipt_binding_from(
     }
     let (verdict, binding_holds) = recompute_after_verdict_binding(&root, &manifest, after)?;
     if !binding_holds {
-        // The cause is a file that moved after the after phase bound its
-        // verdict. The commonest one is this command's own output redirected
-        // into a file inside the repository (`> target/ripr/continue.txt`):
-        // name that and both routes out instead of the bare refusal.
+        // Name what is known and both routes out: the recorded binding no
+        // longer matches the attempt. A path outside `target/ripr` may have
+        // changed after the after phase bound it (for example command output
+        // redirected into a repository file), or the attempt already finished.
         let store_flag = quoted_store_flag_from_identity(manifest.store.as_ref());
         let restart = crate::app::gap_bound_repair::repair_start_command(
             &root_display,
@@ -530,7 +530,7 @@ pub(crate) fn receipt_binding_from(
                 .map(|binding| binding.base.as_str()),
         );
         return Err(format!(
-            "repair attempt after verdict binding is tampered or stale: a file inside the repository changed after the after phase bound its verdict, so no receipt is issued. The usual cause is this or an earlier ripr command's output redirected into a file inside the repository (for example `> target/ripr/continue.txt`). Next: remove that file or write command output outside the repository, then rerun this command; if the binding still fails, start a new attempt with `{restart}`"
+            "repair attempt after verdict binding is tampered or stale: the recorded binding no longer matches the attempt. A path outside `target/ripr` changed after the after phase bound it (for example command output redirected into a file in the repository), or the attempt already finished. Next: read `ripr agent status` for the attempt's state; write command output outside the repository and remove any such file, then rerun; or start a new attempt with `{restart}`"
         ));
     }
     validate_trusted_head_surface(
