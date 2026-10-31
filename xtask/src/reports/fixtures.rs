@@ -1196,6 +1196,22 @@ pub(crate) mod variant_test {
         pub(crate) once: OnceLock<Result<(), String>>,
         pub(crate) files: RefCell<BTreeMap<PathBuf, Vec<u8>>>,
         pub(crate) commands: RefCell<Vec<RecordedCommand>>,
+        pub(crate) writes: RefCell<Vec<PathBuf>>,
+    }
+
+    impl Context {
+        pub(crate) fn write(&self, path: PathBuf, bytes: Vec<u8>) {
+            self.writes.borrow_mut().push(path.clone());
+            self.files.borrow_mut().insert(path, bytes);
+        }
+
+        pub(crate) fn shared_generation(&self) -> usize {
+            self.writes
+                .borrow()
+                .iter()
+                .filter(|p| **p == self.shared)
+                .count()
+        }
     }
 
     thread_local! { static ACTIVE: RefCell<Option<Rc<Context>>> = const { RefCell::new(None) }; }
@@ -1235,17 +1251,16 @@ pub(crate) mod variant_test {
         let output = target
             .map(|dir| crate::ripr_debug_binary_in(Some(dir)))
             .unwrap_or_else(|| context.shared.clone());
-        context.files.borrow_mut().insert(output, b"perl".to_vec());
+        context.write(output, b"perl".to_vec());
         Some(Ok(()))
     }
 
     pub(super) fn copy(source: &Path, destination: &Path) -> Option<Result<(), String>> {
         let context = active()?;
-        let mut files = context.files.borrow_mut();
-        let Some(bytes) = files.get(source).cloned() else {
+        let Some(bytes) = context.files.borrow().get(source).cloned() else {
             return Some(Err(format!("missing source {}", source.display())));
         };
-        files.insert(destination.to_path_buf(), bytes);
+        context.write(destination.to_path_buf(), bytes);
         Some(Ok(()))
     }
 }
