@@ -250,6 +250,18 @@ fn empty_scope_note(output: &CheckOutput) -> Option<String> {
     ))
 }
 
+/// The empty-findings headline. An incomplete analysis checked less than it
+/// was asked to, so claiming it "checked no changed behavior" would contradict
+/// the `Analysis outcome` disclosure printed just above it.
+fn no_findings_line(output: &CheckOutput) -> &'static str {
+    match &output.analysis_outcome {
+        Some(outcome) if !outcome.kind.is_complete() => {
+            "No findings reported: the analysis was incomplete, so this is not a clean result.\n"
+        }
+        _ => "No findings: ripr checked no changed behavior.\n",
+    }
+}
+
 pub(crate) fn render_bounded_with_config_and_navigation(
     output: &CheckOutput,
     config: &RiprConfig,
@@ -262,7 +274,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
     render_partial_scope_disclosure(&mut out, output);
 
     if output.findings.is_empty() {
-        out.push_str("No findings: ripr checked no changed behavior.\n");
+        out.push_str(no_findings_line(output));
         if output.no_scope_provided {
             let triage = triage::select_human_triage(output, config);
             triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
@@ -318,7 +330,7 @@ pub(crate) fn render_full_with_config_and_navigation(
     render_partial_scope_disclosure(&mut out, output);
 
     if output.findings.is_empty() {
-        out.push_str("No findings: ripr checked no changed behavior.\n");
+        out.push_str(no_findings_line(output));
         // RIPR-SPEC-0083: disclose when no analysis scope was provided
         // (#4012: or when the established range is empty — the note then
         // names the compared base instead of claiming no scope).
@@ -1452,6 +1464,41 @@ mod tests {
         })
     }
 
+    /// An incomplete analysis must not headline "checked no changed behavior":
+    /// that contradicts the `Analysis outcome` line above it, so both human
+    /// forms say the result is not clean instead.
+    #[test]
+    fn incomplete_analysis_does_not_claim_no_changed_behavior() -> Result<(), String> {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+            AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+            AnalysisStage,
+        };
+        let mut output = empty_range_output(None, AnalysisOutcomeKind::NoScope, 0)?;
+        output.analysis_outcome = Some(AnalysisOutcome::new(
+            AnalysisOutcomeKind::UnsupportedInput,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts::default(),
+            vec![AnalysisLimitation::new(
+                AnalysisLimitationKind::MalformedDiff,
+                AnalysisStage::DiffParse,
+                AnalysisRecovery::new(
+                    AnalysisRecoveryKind::Retry,
+                    "Provide a valid unified diff and re-run the analysis.",
+                )?,
+            )],
+        )?);
+        for rendered in [
+            render(&output),
+            render_full_with_config(&output, &RiprConfig::default()),
+        ] {
+            assert!(rendered.contains("analysis incomplete"));
+            assert!(rendered.contains("this is not a clean result"));
+            assert!(!rendered.contains("ripr checked no changed behavior"));
+        }
+        Ok(())
+    }
+
     /// #9033: an explicit `--base` whose range holds no analyzable changed
     /// files (for example `--base HEAD`) must say so, not end on the bare "No
     /// diff-derived static exposure probes found." line, and must not claim
@@ -2522,9 +2569,93 @@ mod tests {
             "{dirty}"
         );
 
+        // #10709: this Rust finding is not a Python/TypeScript preview gap, so
+        // its Safe next action does not name the start and nothing is labelled
+        // recommended; the start keeps its plain "Then start the repair:".
+        assert!(dirty.contains("Then start the repair:"), "{dirty}");
+        assert!(!dirty.contains("Recommended"), "{dirty}");
+
         let clean = render_with(Vec::new());
         assert!(clean.contains(start), "{clean}");
         assert!(!clean.contains("git commit"), "{clean}");
+        assert!(!clean.contains("Recommended"), "{clean}");
+    }
+
+    /// #10709: when `Next` prints a gap-bound start, the Safe next action
+    /// names that same start as the recommended route and the by-hand edit as
+    /// the single alternative; with no route (the validator or the run refused
+    /// it) the line keeps the by-hand route alone and recommends nothing.
+    #[test]
+    fn safe_next_action_and_next_block_name_one_recommended_route() {
+        let finding = typescript_preview_finding(true);
+        let finding_id = finding.id.clone();
+        let output = single_finding_output(finding);
+        let config = crate::config::RiprConfig::default();
+        let with_route = {
+            let navigation = crate::app::FindingDrillIn::Commands(
+                crate::app::FindingNavigation::legacy().with_repair_route_outcome(
+                    crate::app::CheckRepairRoute::GapRoute(crate::app::GapRepairRoute {
+                        finding_id,
+                        gap_id: "gap:typescript:typescript_preview:abcd1234".to_string(),
+                        base: "HEAD~1".to_string(),
+                        uncommitted_files: Vec::new(),
+                    }),
+                ),
+            );
+            super::render_bounded_with_config_and_navigation(
+                &output,
+                &config,
+                Some(&navigation),
+                crate::app::CheckDiffProvenance::CommittedHistory,
+            )
+        };
+        assert!(
+            with_route.contains(
+                "the repair packet is complete. Recommended: start the repair with the `ripr agent repair` command under Next; alternative, by hand: in `tests/discount.test.ts`,"
+            ),
+            "{with_route}"
+        );
+        assert!(
+            with_route.contains(
+                "Recommended follow-through (start the repair):\n  ripr agent repair --gap-id gap:typescript:typescript_preview:abcd1234 --base 'HEAD~1' --phase before"
+            ),
+            "{with_route}"
+        );
+        assert_eq!(with_route.matches("Recommended").count(), 2, "{with_route}");
+
+        // Negative: a route beside a packet the validator did not complete
+        // recommends nothing, in either place.
+        let blocked = typescript_preview_finding(false);
+        let blocked_id = blocked.id.clone();
+        let blocked_output = single_finding_output(blocked);
+        let navigation = crate::app::FindingDrillIn::Commands(
+            crate::app::FindingNavigation::legacy().with_repair_route_outcome(
+                crate::app::CheckRepairRoute::GapRoute(crate::app::GapRepairRoute {
+                    finding_id: blocked_id,
+                    gap_id: "gap:typescript:typescript_preview:abcd1234".to_string(),
+                    base: "HEAD~1".to_string(),
+                    uncommitted_files: Vec::new(),
+                }),
+            ),
+        );
+        let blocked_rendered = super::render_bounded_with_config_and_navigation(
+            &blocked_output,
+            &config,
+            Some(&navigation),
+            crate::app::CheckDiffProvenance::CommittedHistory,
+        );
+        assert!(
+            !blocked_rendered.contains("Recommended"),
+            "{blocked_rendered}"
+        );
+
+        // Negative: no gap route means no recommendation anywhere.
+        let without_route = render(&output);
+        assert!(!without_route.contains("Recommended"), "{without_route}");
+        assert!(
+            without_route.contains("the repair packet is complete: in `tests/discount.test.ts`"),
+            "{without_route}"
+        );
     }
 
     #[test]
