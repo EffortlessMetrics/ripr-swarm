@@ -1,4 +1,5 @@
 mod json_construction;
+mod module_local_glob;
 mod retention_parity;
 #[test]
 fn module_shadow_exempts_only_the_owners_nearest_module() -> Result<(), String> {
@@ -8012,6 +8013,7 @@ fn binding_refusal(kind: Option<MacroBindingKind>) -> AssertionRefusal {
                     kind,
                     scope: None,
                     crate_local: false,
+                    module_local: false,
                 },
             )
         }),

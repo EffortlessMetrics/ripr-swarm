@@ -138,7 +138,10 @@ The MCP tool envelopes carry the schema-versioned document as
 double-carry envelope cannot fit the id-aware response bound refuses typed
 with `result_too_large` instead of shipping a success without
 `structuredContent` (#7768; details in
-[MCP workspace status server](interop/mcp.md)).
+[MCP workspace status server](interop/mcp.md)). `content[0].text` is the
+compact JSON copy by default; `RIPR_MCP_TEXT_CONTENT=summary` opts a server
+process into a digest instead while `structuredContent` stays the one
+complete result (#9360).
 
 The published JSON Schemas have these current versions. Each row is checked
 against the schema's pinned `const` and every named producer source by
@@ -2224,7 +2227,8 @@ JSON fields:
     source text, emitted ONLY when the argument is a concrete resolvable literal
     (string, number, boolean, null, a safe all-literal object, or, for the
     deep-equality matchers AVA `deepEqual` and Jest `toEqual` / `toStrictEqual`,
-    an all-literal array). NOT emitted
+    an all-literal array; for Jest `toEqual` / `toStrictEqual` / `toMatchObject`
+    also an all-literal object or array nested to any depth). NOT emitted
     for dynamic/non-literal arguments; those trigger
     `typescript_dynamic_assertion_unresolved` instead.
   - `typescript_oracle_confidence: <level>` — additive; confidence derived from

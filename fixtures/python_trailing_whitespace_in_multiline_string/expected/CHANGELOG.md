@@ -11,3 +11,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_trailing_whitespace_in_multiline_string (2)
+
+Reason:
+#11210 follow-up: the human verify-command line uses the shell-labelled Bash form every other Python fixture already carries; formatting-only drift, one human.txt line, check.json unchanged
+
+Command:
+`cargo xtask goldens bless python_trailing_whitespace_in_multiline_string --reason "..."`
+
+Updated:
+- `expected/human.txt`
