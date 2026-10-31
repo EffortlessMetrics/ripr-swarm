@@ -1566,6 +1566,29 @@ first-screen summary that composes PR guidance, first useful action, assistant
 proof, assistant-loop health, ledger, baseline, gate, calibration,
 coverage/grip, and receipt artifacts.
 
+### Composite Action (`ripr-check`)
+
+For a one-step advisory check without the generated workflow, use the
+composite Action in `.github/actions/ripr-check`:
+
+```yaml
+- uses: actions/checkout@v6
+  with:
+    fetch-depth: 0
+- uses: <owner>/<repo>/.github/actions/ripr-check@<ref>
+```
+
+Inputs: `version` (default: the latest published release; installs that
+release's prebuilt archive after checking its published SHA-256, and falls
+back to `cargo install ripr --version <version> --locked` where no archive
+exists), `mode` (`draft`, `deep`, `ready`), `format` (`human`, `json`, `sarif`)
+and `base`. An empty `base` uses the pull request base branch on
+`pull_request` events (fetching just that branch when the checkout lacks it)
+and ripr's own default-branch detection elsewhere. A checkout without
+`fetch-depth: 0` can still lack history; `ripr check` then names the repair.
+The Action prints the report to the job log. For the summary comment, inline
+comments, SARIF upload and artifacts, use the generated workflow above.
+
 ### PR Test Guidance Annotations
 
 RIPR-SPEC-0012 defines the pinned planning contract for the PR-facing
