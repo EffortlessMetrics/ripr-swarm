@@ -309,7 +309,7 @@ pub(in crate::analysis) fn oracle_owner_call_is_shadowed(
         let shadowed =
             items.declaration_at(at) || (!before.ends_with("::") && items.shadows_at(at));
         if !shadowed {
-            // A mention that is neither a proven declaration nor a proven
+            // A mention that is neither an established declaration nor an established
             // shadow grounds the fold's owner-call premise.
             return Some(false);
         }
