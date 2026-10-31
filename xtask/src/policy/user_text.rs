@@ -250,7 +250,16 @@ pub(crate) fn scan_goldens(root: &Path, counts: &mut Counts) -> Result<usize, St
             .unwrap_or(path)
             .to_string_lossy()
             .replace('\\', "/");
-        scan_text(GOLDEN_SURFACE, &label, &text, counts);
+        // One golden is one subject: the ceiling bounds the worst single file,
+        // not a repository total that every landing golden would race to raise.
+        let mut file_counts = Counts::new();
+        scan_text(GOLDEN_SURFACE, &label, &text, &mut file_counts);
+        for (key, found) in file_counts {
+            let entry = counts.entry(key).or_default();
+            if found.lines > entry.lines {
+                *entry = found;
+            }
+        }
     }
     Ok(files.len())
 }
@@ -301,13 +310,14 @@ pub(crate) fn parse_baseline(text: &str) -> Result<Baseline, String> {
 fn render_baseline(baseline: &Baseline) -> String {
     let mut out = String::from(
         "# Ceilings for banned plain-language terms in default human output (#10697).\n\
-         # Each number is a ceiling on output lines containing the term; `main` may sit\n\
-         # above it after parallel merges, which is reported as a warning.\n\
-         # Golden rows (`golden-human`) gate each PR on its own delta against the\n\
-         # merge-base, so a PR never edits this file to pass; a golden count above\n\
-         # its ceiling is only a warning. Live-surface rows fail above their ceiling\n\
-         # (raising one needs an explicit reviewed reason), as do golden rows when\n\
-         # the merge-base is unreadable (shallow clone).\n\
+         # Each number is a ceiling on output lines containing the term; for `golden-human`\n\
+         # it is the most lines any single golden may hold. `main` above a ceiling is\n\
+         # reported as a warning.\n\
+         # Golden rows gate each PR on its own per-file delta against the merge-base, so\n\
+         # a PR never edits this file to pass; a golden over its ceiling is only a\n\
+         # warning. Live-surface rows fail above their ceiling (raising one needs an\n\
+         # explicit reviewed reason), as do golden rows when the merge-base is\n\
+         # unreadable (shallow clone).\n\
          # Lower ceilings with `cargo xtask check-user-text --ratchet` (lowering only);\n\
          # never raise one. A term with no row has a ceiling of 0.\n\
          # See docs/USER_TEXT_GLOSSARY.md.\n\
@@ -2282,6 +2292,37 @@ mod tests {
         assert_eq!(scanned, 1);
         let keys: Vec<_> = counts.keys().map(|(_, term)| term.as_str()).collect();
         assert_eq!(keys, vec!["discriminator"]);
+        Ok(())
+    }
+
+    /// One golden is one subject: the ceiling bounds the worst single file, so
+    /// adding goldens never raises a shared total, and a golden that grows past
+    /// the per-file ceiling fails on its own.
+    #[test]
+    fn golden_ceiling_bounds_the_worst_single_file_not_the_sum() -> Result<(), String> {
+        let root = temp_root("goldens-per-file")?;
+        for name in ["a", "b", "c"] {
+            let expected = root.join(format!("fixtures/{name}/expected"));
+            write_file(
+                &expected.join("human.txt"),
+                "a discriminator\nanother discriminator\n",
+            )?;
+        }
+        let mut counts = Counts::new();
+        scan_goldens(&root, &mut counts)?;
+        let key = (GOLDEN_SURFACE.to_string(), "discriminator".to_string());
+        assert_eq!(counts.get(&key).map(|c| c.lines), Some(2));
+        let two: Baseline = [(key.clone(), 2)].into_iter().collect();
+        assert!(evaluate(&counts, &two).violations.is_empty());
+        write_file(
+            &root.join("fixtures/d/expected/human.txt"),
+            "discriminator\ndiscriminator\ndiscriminator\n",
+        )?;
+        let mut grown = Counts::new();
+        scan_goldens(&root, &mut grown)?;
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(grown.get(&key).map(|c| c.lines), Some(3));
+        assert!(!evaluate(&grown, &two).violations.is_empty());
         Ok(())
     }
 

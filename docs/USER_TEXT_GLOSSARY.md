@@ -40,7 +40,9 @@ changed behavior, related test, Next step, base/head, doctor, pilot.
 
 `cargo xtask check-user-text` reads real output, not source strings:
 
-- every committed default-format golden, `fixtures/**/expected/human.txt`;
+- every committed default-format golden, `fixtures/**/expected/human.txt`
+  (each golden is judged on its own: the `golden-human` ceiling bounds the
+  worst single file, so landing a new golden never raises a shared total);
 - live output of the built `ripr` binary in a scratch Git repository:
   `check` (also outside Git), `pilot`, `doctor`, `status`, `continue`,
   `repair` refusals (missing `.gitignore` entry, uncommitted source change),
@@ -70,7 +72,8 @@ and its baseline scans the goldens only (`precommit`). Hosted CI (`ci-policy`,
 
 `main` still contains some banned terms in default output. They are recorded by
 `policy/user-text-baseline.toml`, one ceiling per surface and term: the number
-of output lines containing the term when last lowered.
+of output lines containing the term when last lowered (for `golden-human`, the
+most lines any single golden may hold).
 
 - Golden rows (`golden-human`) gate each PR on its own delta (#11374), per
   file. The check scans the `expected/human.txt` goldens at the merge-base with
