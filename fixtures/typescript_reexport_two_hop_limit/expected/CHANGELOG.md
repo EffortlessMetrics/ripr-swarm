@@ -553,3 +553,15 @@ Updated:
 - `expected/human.txt`
 
 Note (#10700): `expected/human.txt` also moves its repair-refusal opening from the no-gap-id wording to `nothing to repair here`; that move is #10702/#10885 behavior, not caused by confidence_basis, and its transitional entry was removed in this bless.
+
+## Pending - typescript_reexport_two_hop_limit (31)
+
+Reason:
+#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to observed/safe checks
+
+Command:
+`cargo xtask goldens bless typescript_reexport_two_hop_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

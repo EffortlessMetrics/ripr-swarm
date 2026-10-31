@@ -37,3 +37,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending - python_truthiness_swap_no_exposed_credit (4)
+
+Reason:
+#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to observed/safe checks
+
+Command:
+`cargo xtask goldens bless python_truthiness_swap_no_exposed_credit --reason "..."`
+
+Updated:
+- `expected/human.txt`

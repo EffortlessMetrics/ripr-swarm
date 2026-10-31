@@ -348,3 +348,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending - python_named_constant_boundary_repair_gap (30)
+
+Reason:
+#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to observed/safe checks
+
+Command:
+`cargo xtask goldens bless python_named_constant_boundary_repair_gap --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -114,3 +114,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending - shared_target_assertion_effect (9)
+
+Reason:
+#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to observed/safe checks
+
+Command:
+`cargo xtask goldens bless shared_target_assertion_effect --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -261,3 +261,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending - match_arm_proximity_wrapper_confirms (21)
+
+Reason:
+#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to observed/safe checks
+
+Command:
+`cargo xtask goldens bless match_arm_proximity_wrapper_confirms --reason "..."`
+
+Updated:
+- `expected/human.txt`

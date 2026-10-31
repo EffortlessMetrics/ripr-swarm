@@ -192,3 +192,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending - owner_return_pin_json_uncalled_closure (16)
+
+Reason:
+#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to observed/safe checks
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_uncalled_closure --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -286,3 +286,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending - rust_same_method_owner_type_positive (23)
+
+Reason:
+#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to observed/safe checks
+
+Command:
+`cargo xtask goldens bless rust_same_method_owner_type_positive --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -230,3 +230,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending - match_arm_expected_side_trap (20)
+
+Reason:
+#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to observed/safe checks
+
+Command:
+`cargo xtask goldens bless match_arm_expected_side_trap --reason "..."`
+
+Updated:
+- `expected/human.txt`

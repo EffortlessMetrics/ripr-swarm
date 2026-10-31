@@ -685,3 +685,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending - python_decorator_indirection_limit (28)
+
+Reason:
+#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to observed/safe checks
+
+Command:
+`cargo xtask goldens bless python_decorator_indirection_limit --reason "..."`
+
+Updated:
+- `expected/human.txt`

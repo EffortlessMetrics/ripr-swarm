@@ -301,3 +301,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending - ts_node_ordinary_test_control (24)
+
+Reason:
+#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to observed/safe checks
+
+Command:
+`cargo xtask goldens bless ts_node_ordinary_test_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human-full.txt`
+- `expected/human.txt`

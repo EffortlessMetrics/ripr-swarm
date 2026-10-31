@@ -87,3 +87,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending - macro_passthrough_sibling_item_macro_binding (7)
+
+Reason:
+#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to observed/safe checks
+
+Command:
+`cargo xtask goldens bless macro_passthrough_sibling_item_macro_binding --reason "..."`
+
+Updated:
+- `expected/human.txt`

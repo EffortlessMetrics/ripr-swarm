@@ -89,3 +89,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending - python_guarded_write_escaped_literal (8)
+
+Reason:
+#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to observed/safe checks
+
+Command:
+`cargo xtask goldens bless python_guarded_write_escaped_literal --reason "..."`
+
+Updated:
+- `expected/human.txt`

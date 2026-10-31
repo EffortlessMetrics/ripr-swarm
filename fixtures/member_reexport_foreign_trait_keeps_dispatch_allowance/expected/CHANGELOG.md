@@ -116,3 +116,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending - member_reexport_foreign_trait_keeps_dispatch_allowance (10)
+
+Reason:
+#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to observed/safe checks
+
+Command:
+`cargo xtask goldens bless member_reexport_foreign_trait_keeps_dispatch_allowance --reason "..."`
+
+Updated:
+- `expected/human.txt`
