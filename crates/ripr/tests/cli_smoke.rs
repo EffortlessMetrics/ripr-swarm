@@ -171,6 +171,7 @@ mod typescript_finally_completion;
 #[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/typescript_partial_star.rs"]
 mod typescript_partial_star;
+#[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/typescript_private_methods.rs"]
 mod typescript_private_methods;
 #[cfg(feature = "lang-rust")]
