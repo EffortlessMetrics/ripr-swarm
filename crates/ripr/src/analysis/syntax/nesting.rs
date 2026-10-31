@@ -218,7 +218,26 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
             continue;
         }
         if byte == b'\'' {
-            index = skip_char_or_lifetime(text, index);
+            let end = skip_char_or_lifetime(text, index);
+            if end == index + 1
+                && text
+                    .get(end..)
+                    .and_then(|tail| tail.chars().next())
+                    .is_some_and(|c| {
+                        c == '_' || c.is_ascii_digit() || unicode_ident::is_xid_start(c)
+                    })
+            {
+                // A label or lifetime is transparent: `break 'a break 'a ..`
+                // still recurses once per `break`, so keep the prefix run.
+                index = end;
+                while let Some(c) = text.get(index..).and_then(|tail| tail.chars().next())
+                    && (c == '_' || unicode_ident::is_xid_continue(c))
+                {
+                    index += c.len_utf8();
+                }
+                continue;
+            }
+            index = end;
             after_operand = true;
             unary_run = 0;
             previous_word_was_else = false;
@@ -333,7 +352,7 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
                 after_operand = false;
             }
             b'.' | b'?' | b'+' | b'-' | b'*' | b'/' | b'%' | b'^' | b'|' | b'&' | b'<' | b'>'
-            | b'=' => {
+            | b'=' | b'@' => {
                 if let Some(run) = operators.get_mut(depth) {
                     *run = run.saturating_add(1);
                     open_operators = open_operators.saturating_add(1);
@@ -801,6 +820,29 @@ mod tests {
             );
         }
         let ordinary = "use std::collections::BTreeMap;\nfn f(v: Vec<Vec<u8>>, m: BTreeMap<u8, u8>) -> u8 { let a = v[0][1] as u8; let b = std::cmp::max(a, m.get(&1).copied().unwrap_or(0)); g(b)(a) }\n";
+        assert_eq!(rust_nesting_refusal(ordinary), None);
+    }
+
+    /// #11572: left-nested `@` binding chains and `break 'a` label chains
+    /// must hit the budget; ordinary short uses stay accepted.
+    #[test]
+    fn binding_and_label_chains_are_refused() {
+        let cases = [
+            format!("fn f() {{ let x{} = 1; }}\n", " @ y".repeat(5_000)),
+            format!(
+                "fn f() {{ 'a: loop {{ {}0; }} }}\n",
+                "break 'a ".repeat(3_000)
+            ),
+        ];
+        for source in cases {
+            assert!(
+                rust_nesting_refusal(&source)
+                    .is_some_and(|reason| reason.contains("rust_nesting_budget")),
+                "{}",
+                &source[..40]
+            );
+        }
+        let ordinary = "fn f<'a>(v: &'a [u8]) -> u8 { match v.len() { n @ 1..=3 => n as u8, m @ Some(_) | m @ None => 0, _ => 'a: loop { break 'a 1; } } }\n";
         assert_eq!(rust_nesting_refusal(ordinary), None);
     }
 
