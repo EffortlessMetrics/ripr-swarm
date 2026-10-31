@@ -855,7 +855,8 @@ it with the source. Timestamp and checked-hash pycs are trusted the way
 CPython trusts them; the residual risk is a stale timestamp pyc after a
 same-size edit whose mtime lands in the compile second or is restored
 (`rsync -t`, `tar`, CI caches), which CPython itself would load. A pytest or
-tox configuration beside any workspace source, or above one, whose
+tox configuration (including `pytest.toml` and `.pytest.toml`) beside any
+workspace source, or above one, whose
 `pythonpath`, `python_paths` or `PYTHONPATH` setting names anything but its
 own directory refuses the credit: any other entry (an archive, a directory
 the workspace walk excludes, a root holding only compiled extensions, a path
