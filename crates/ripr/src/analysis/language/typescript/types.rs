@@ -27,7 +27,7 @@ pub(crate) struct TypeScriptOwner {
     /// export imported under a different local name was previously
     /// unreachable from every relation arm).
     pub(crate) exported_as_default: bool,
-    pub(crate) imports: Vec<TypeScriptImport>,
+    pub(crate) imports: Shared<TypeScriptImport>,
     /// Positional parameter names of the owner function, in signature order
     /// (issue #4102). The single parameter-name list shared by the boundary
     /// witness, shadow guards, and relation guards. Empty means the adapter
@@ -297,13 +297,147 @@ pub(crate) struct Shared<T>(std::sync::Arc<Vec<T>>);
 
 impl<T: serde::Serialize> serde::Serialize for Shared<T> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_seq(self.iter())
+        use serde::ser::SerializeMap;
+        // Inside a wire scope (the persisted envelope) a list that several
+        // entries hold is written once and referenced by id afterwards, so the
+        // file stays linear in its size instead of carrying one copy per test
+        // or owner. Outside a scope, and for an empty list, it is a plain
+        // sequence.
+        let placement = if self.0.is_empty() {
+            None
+        } else {
+            SHARED_WIRE.with(|wire| {
+                let mut wire = wire.borrow_mut();
+                let wire = wire.as_mut()?;
+                let key = std::sync::Arc::as_ptr(&self.0) as usize;
+                if let Some(id) = wire.ids.get(&key) {
+                    return Some((*id, false));
+                }
+                let id = wire.ids.len();
+                wire.ids.insert(key, id);
+                Some((id, true))
+            })
+        };
+        match placement {
+            None => serializer.collect_seq(self.iter()),
+            Some((id, first)) => {
+                let mut map = serializer.serialize_map(Some(if first { 2 } else { 1 }))?;
+                map.serialize_entry("shared", &id)?;
+                if first {
+                    map.serialize_entry("items", &SharedItems(&self.0))?;
+                }
+                map.end()
+            }
+        }
     }
 }
 
-impl<'de, T: serde::Deserialize<'de>> serde::Deserialize<'de> for Shared<T> {
+struct SharedItems<'a, T>(&'a [T]);
+
+impl<T: serde::Serialize> serde::Serialize for SharedItems<'_, T> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(self.0.iter())
+    }
+}
+
+impl<'de, T: serde::Deserialize<'de> + 'static> serde::Deserialize<'de> for Shared<T> {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Ok(Self(std::sync::Arc::new(Vec::deserialize(deserializer)?)))
+        struct ListVisitor<T>(std::marker::PhantomData<T>);
+
+        impl<'de, T: serde::Deserialize<'de> + 'static> serde::de::Visitor<'de> for ListVisitor<T> {
+            type Value = Shared<T>;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a list or a shared-list reference")
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut items = Vec::with_capacity(seq.size_hint().unwrap_or(0).min(4096));
+                while let Some(item) = seq.next_element()? {
+                    items.push(item);
+                }
+                Ok(Shared(std::sync::Arc::new(items)))
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<Self::Value, A::Error> {
+                use serde::de::Error;
+                match map.next_key::<String>()?.as_deref() {
+                    Some("shared") => {}
+                    _ => return Err(A::Error::custom("expected a `shared` list id")),
+                }
+                let id: usize = map.next_value()?;
+                let list = match map.next_key::<String>()?.as_deref() {
+                    Some("items") => {
+                        let items: Vec<T> = map.next_value()?;
+                        let list = std::sync::Arc::new(items);
+                        SHARED_WIRE.with(|wire| {
+                            let mut wire = wire.borrow_mut();
+                            let wire = wire.as_mut().ok_or_else(|| {
+                                A::Error::custom("shared list outside a wire scope")
+                            })?;
+                            wire.lists
+                                .insert(id, Box::new(std::sync::Arc::clone(&list)));
+                            Ok(list)
+                        })?
+                    }
+                    None => SHARED_WIRE.with(|wire| {
+                        let wire = wire.borrow();
+                        let wire = wire
+                            .as_ref()
+                            .ok_or_else(|| A::Error::custom("shared list outside a wire scope"))?;
+                        wire.lists
+                            .get(&id)
+                            .and_then(|list| list.downcast_ref::<std::sync::Arc<Vec<T>>>())
+                            .cloned()
+                            .ok_or_else(|| A::Error::custom("unknown shared list id"))
+                    })?,
+                    Some(_) => return Err(A::Error::custom("unexpected shared-list field")),
+                };
+                Ok(Shared(list))
+            }
+        }
+
+        deserializer.deserialize_any(ListVisitor(std::marker::PhantomData))
+    }
+}
+
+/// Per-thread identity table of the shared lists one persisted envelope
+/// writes or reads. Opened around exactly one encode, decode, or digest pass:
+/// the first sight of a list gets the next id, so the same graph always
+/// produces the same bytes.
+#[derive(Default)]
+struct SharedWire {
+    ids: std::collections::HashMap<usize, usize>,
+    lists: std::collections::HashMap<usize, Box<dyn std::any::Any>>,
+}
+
+thread_local! {
+    static SHARED_WIRE: std::cell::RefCell<Option<SharedWire>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Guard for one wire pass; restores the previous table on drop.
+pub(crate) struct SharedWireScope {
+    previous: Option<SharedWire>,
+}
+
+impl SharedWireScope {
+    pub(crate) fn open() -> Self {
+        let previous = SHARED_WIRE.with(|wire| wire.replace(Some(SharedWire::default())));
+        Self { previous }
+    }
+}
+
+impl Drop for SharedWireScope {
+    fn drop(&mut self) {
+        let previous = self.previous.take();
+        SHARED_WIRE.with(|wire| *wire.borrow_mut() = previous);
     }
 }
 
@@ -350,6 +484,19 @@ pub(crate) fn reshare_file_lists(tests: &mut [TypeScriptTest]) {
         test.mock_spread_sources_in_file
             .share_with(&previous.mock_spread_sources_in_file);
         previous = test;
+    }
+}
+
+/// Point every owner of one file at a single import list. Owners are built
+/// one at a time from the file's imports, so each would otherwise hold its own
+/// copy: quadratic in the file's size in memory and on disk.
+pub(crate) fn reshare_owner_imports(owners: &mut [TypeScriptOwner]) {
+    let mut previous: Option<Shared<TypeScriptImport>> = None;
+    for owner in owners {
+        if let Some(previous) = &previous {
+            owner.imports.share_with(previous);
+        }
+        previous = Some(owner.imports.clone());
     }
 }
 
