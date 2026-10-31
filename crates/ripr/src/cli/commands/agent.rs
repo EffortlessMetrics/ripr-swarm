@@ -3547,7 +3547,7 @@ fn repair_after_no_movement_lines(
         ));
     }
     lines.extend([
-        format!("to recover: {edit}, then rerun this after-phase command."),
+        format!("to recover: {edit}, then rerun the after phase."),
         format!(
             "inspect the selected attempt with `ripr agent status --root {root_arg}{store_flag} --attempt {attempt_arg}`."
         ),
