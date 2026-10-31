@@ -11,7 +11,7 @@
   },
   "findings": [
     {
-      "id": "probe:src_check.py:python_preview:43fca8f4",
+      "id": "probe:src_check.py:python_preview:v1-b9c384c2",
       "canonical_gap_id": "gap:python:src/check.py:check:exception_path:error_path:valueerror_negative_value_must_be_at_most_zero",
       "canonical_gap_group_size": 1,
       "canonical_gap": {
@@ -28,7 +28,7 @@
       "severity": "warning",
       "confidence": 0.40,
       "probe": {
-        "id": "probe:src_check.py:python_preview:43fca8f4",
+        "id": "probe:src_check.py:python_preview:v1-b9c384c2",
         "family": "error_path",
         "delta": "control",
         "file": "src/check.py",
