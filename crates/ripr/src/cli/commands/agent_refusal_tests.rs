@@ -344,22 +344,23 @@ fn before_phase_refuses_dirty_production_premise_before_the_seam_inventory() -> 
 #[test]
 fn gap_before_phase_refuses_dirty_production_premise_before_the_snapshot() -> Result<(), String> {
     let root = dirty_production_fixture("gap-before-preflight-dirty-premise")?;
-    let result = (|| -> Result<(), String> {
-        let mut refusal = AfterPhaseRefusalContext::default();
-        match run_gap_bound_before_phase(&root, "gap:0123456789abcdef", "HEAD", None, &mut refusal)
-        {
-            Err(error) => require_contains(
-                &error,
-                &[
-                    "differ from HEAD: src/lib.rs",
-                    "No workflow was prepared and no repair attempt was started.",
-                ],
-            ),
-            Ok(()) => Err("a dirty production premise must refuse the gap start".to_string()),
-        }
-    })();
+    let result = gap_premise_exercise(&root);
     let _ = std::fs::remove_dir_all(&root);
     result
+}
+
+fn gap_premise_exercise(root: &Path) -> Result<(), String> {
+    let mut refusal = AfterPhaseRefusalContext::default();
+    match run_gap_bound_before_phase(root, "gap:0123456789abcdef", "HEAD", None, &mut refusal) {
+        Err(error) => require_contains(
+            &error,
+            &[
+                "differ from HEAD: src/lib.rs",
+                "No workflow was prepared and no repair attempt was started.",
+            ],
+        ),
+        Ok(()) => Err("a dirty production premise must refuse the gap start".to_string()),
+    }
 }
 
 #[test]

@@ -3891,10 +3891,10 @@ fn operational_write_rules(
     // Mirrors `edit_cage_policy_from_packet`: command-declared generated or
     // receipt writes that may occur alongside the authored test edit.
     let mut rules = vec![crate::edit_cage::CagePathRule::subtree("target/ripr")?];
-    if let Some(locator) = explicit_store_locator(root, store)? {
-        if !rules.iter().any(|rule| rule.matches(locator.path())) {
-            rules.push(locator);
-        }
+    if let Some(locator) = explicit_store_locator(root, store)?
+        && !rules.iter().any(|rule| rule.matches(locator.path()))
+    {
+        rules.push(locator);
     }
     Ok(rules)
 }
