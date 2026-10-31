@@ -500,6 +500,9 @@ pub(crate) fn max_expression_nesting_estimate_with(source: &str, jsx: bool) -> u
     // `Array<Array<..`), which oxc parses recursively. `>` closes one; the run
     // resets at statement, list and block boundaries.
     let mut angle_run: usize = 0;
+    // Right-nested chains `() => () => ..` and `a ? b : a ? b : ..` balance
+    // their brackets and ternary markers, yet the parser recurses once per link.
+    let mut right_run: usize = 0;
     let mut max_estimate: usize = 0;
     let mut last_word = LastWord::None;
     // Last significant byte inside code, for the position heuristics.
@@ -673,7 +676,9 @@ pub(crate) fn max_expression_nesting_estimate_with(source: &str, jsx: bool) -> u
                         prev = Some(byte);
                     }
                     b'>' => {
-                        if prev != Some(b'=') {
+                        if prev == Some(b'=') {
+                            right_run = right_run.saturating_add(1);
+                        } else {
                             angle_run = angle_run.saturating_sub(1);
                         }
                         unary_run = 0;
@@ -682,6 +687,7 @@ pub(crate) fn max_expression_nesting_estimate_with(source: &str, jsx: bool) -> u
                     }
                     b';' | b',' => {
                         angle_run = 0;
+                        right_run = 0;
                         unary_run = 0;
                         last_word = LastWord::None;
                         prev = Some(byte);
@@ -708,6 +714,7 @@ pub(crate) fn max_expression_nesting_estimate_with(source: &str, jsx: bool) -> u
                         depth = depth.saturating_add(1);
                         if byte == b'{' {
                             angle_run = 0;
+                            right_run = 0;
                         }
                         last_word = LastWord::None;
                         prev = Some(byte);
@@ -728,6 +735,7 @@ pub(crate) fn max_expression_nesting_estimate_with(source: &str, jsx: bool) -> u
                         } else {
                             depth = depth.saturating_sub(1);
                             angle_run = 0;
+                            right_run = 0;
                             unary_run = 0;
                             prev = Some(byte);
                         }
@@ -747,6 +755,9 @@ pub(crate) fn max_expression_nesting_estimate_with(source: &str, jsx: bool) -> u
                         }
                     },
                     b':' => {
+                        if ternary_open > 0 {
+                            right_run = right_run.saturating_add(1);
+                        }
                         ternary_open = ternary_open.saturating_sub(1);
                         unary_run = 0;
                         last_word = LastWord::None;
@@ -777,7 +788,8 @@ pub(crate) fn max_expression_nesting_estimate_with(source: &str, jsx: bool) -> u
                         .saturating_add(ternary_open)
                         .saturating_add(unary_run)
                         .saturating_add(jsx_open)
-                        .saturating_add(angle_run),
+                        .saturating_add(angle_run)
+                        .saturating_add(right_run),
                 );
             }
         }
@@ -890,7 +902,10 @@ mod parse_depth_tests {
             "Array<".repeat(5_000),
             ">".repeat(5_000)
         );
-        for source in [comparisons, generics] {
+        let arrows = format!("const f = {}1;", "() => ".repeat(5_000));
+        let ternaries = format!("const v = {}2;", "a ? 1 : ".repeat(5_000));
+        let function_types = format!("let y: {}number;", "() => ".repeat(5_000));
+        for source in [comparisons, generics, arrows, ternaries, function_types] {
             assert!(
                 max_expression_nesting_estimate_with(&source, false) > PARSE_NESTING_BUDGET,
                 "{}",
