@@ -1,0 +1,10 @@
+diff --git a/src/unicode_child.rs b/src/unicode_child.rs
+--- a/src/unicode_child.rs
++++ b/src/unicode_child.rs
+@@ -1,5 +1,5 @@
+ fn unicode_base() -> u32 {
+-    18
++    9 + 9
+ }
+ 
+ #[test]

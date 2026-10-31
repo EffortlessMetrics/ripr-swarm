@@ -9020,4 +9020,174 @@ mod tests {
         }
         Ok(())
     }
+
+    fn refusal_fixture(reason: &str, recorded_unix_ms: u64) -> RepairAttemptAfterRefusal {
+        RepairAttemptAfterRefusal {
+            reason: reason.to_string(),
+            repository_head: None,
+            recorded_unix_ms,
+        }
+    }
+
+    /// The retry budget and the capped history are separate bounds: the
+    /// budget trips at exactly the fifth refusal, while the history keeps only
+    /// the newest entries without letting the count fall behind.
+    #[test]
+    fn refusal_budget_trips_at_the_fifth_refusal_and_history_drops_the_oldest() -> Result<(), String>
+    {
+        let root = test_root("refusal-budget-cap")?;
+        let mut manifest = sample_manifest(&root)?;
+        let budget = REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET;
+        for n in 1..budget {
+            push_after_refusal(
+                &mut manifest,
+                refusal_fixture(&format!("r{n}"), u64::from(n)),
+            );
+        }
+        if after_refusal_budget_exhausted(&manifest) {
+            return Err(format!("budget exhausted early at {}", budget - 1));
+        }
+        push_after_refusal(&mut manifest, refusal_fixture("r5", 5));
+        if !after_refusal_budget_exhausted(&manifest) {
+            return Err("budget did not trip at the budgeted refusal".to_string());
+        }
+        for n in (budget + 1)..=10 {
+            push_after_refusal(
+                &mut manifest,
+                refusal_fixture(&format!("r{n}"), u64::from(n)),
+            );
+        }
+        let reasons = manifest
+            .after_refusal_history
+            .iter()
+            .map(|refusal| refusal.reason.as_str())
+            .collect::<Vec<_>>();
+        let last = manifest
+            .last_after_refusal
+            .as_ref()
+            .map(|refusal| refusal.reason.as_str());
+        let expected = ["r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"];
+        if manifest.after_refusal_count != 10
+            || reasons != expected
+            || reasons.len() != REPAIR_ATTEMPT_REFUSAL_HISTORY_MAX
+            || last != Some("r10")
+        {
+            return Err(format!(
+                "capped history wrong: count {} {reasons:?} last {last:?}",
+                manifest.after_refusal_count
+            ));
+        }
+        validate_manifest(&manifest)?;
+        // Single-change negative control: a history longer than the cap is
+        // rejected by the same validator that accepted the capped one.
+        manifest
+            .after_refusal_history
+            .insert(0, refusal_fixture("overflow", 0));
+        if validate_manifest(&manifest).is_ok() {
+            return Err("an over-cap refusal history was accepted".to_string());
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// A refusal reason is trimmed, left alone at the byte bound, and cut on a
+    /// character boundary one byte past it.
+    #[test]
+    fn bounded_refusal_reason_cuts_on_a_character_boundary_only_past_the_bound()
+    -> Result<(), String> {
+        if bounded_refusal_reason("  spaced out \n") != "spaced out" {
+            return Err("reason was not trimmed".to_string());
+        }
+        // The 4096-byte bound is pinned literally, not through the constant.
+        let exact = "a".repeat(4096);
+        if bounded_refusal_reason(&exact) != exact {
+            return Err("a reason at the bound was altered".to_string());
+        }
+        let over = "a".repeat(4097);
+        let cut = bounded_refusal_reason(&over);
+        if cut != format!("{} [truncated]", "a".repeat(4096)) {
+            return Err(format!("over-bound reason cut wrong: {} bytes", cut.len()));
+        }
+        // 'é' is two bytes; the bound lands inside the last one.
+        let multibyte = format!("{}é", "a".repeat(4095));
+        let cut = bounded_refusal_reason(&multibyte);
+        let expected = format!("{} [truncated]", "a".repeat(4095));
+        if cut != expected {
+            return Err(format!(
+                "multibyte cut was not on a boundary: {} bytes",
+                cut.len()
+            ));
+        }
+        Ok(())
+    }
+
+    /// Each verdict status maps to its own durable state, and a non-current
+    /// after phase is always stale whatever the verdict says.
+    #[test]
+    fn finish_state_follows_verdict_status_and_currentness() -> Result<(), String> {
+        use crate::edit_cage::EditCageVerdictStatus as Status;
+        let root = test_root("finish-state")?;
+        let manifest = sample_manifest(&root)?;
+        let after_with = |current: bool, status: Status| RepairAttemptAfter {
+            attempt_id: manifest.repair_attempt_id.clone(),
+            repository_head: manifest.repository_head.clone(),
+            delta_sha256: String::new(),
+            delta_binding: None,
+            receipt_projection_predecessor: None,
+            packet_sha256: String::new(),
+            current,
+            verdict: crate::edit_cage::EditCageVerdict {
+                status,
+                changed_paths: Vec::new(),
+                violations: Vec::new(),
+            },
+        };
+        let cases = [
+            (true, Status::Compliant, RepairAttemptState::ReadyToFinish),
+            (true, Status::Violated, RepairAttemptState::Failed),
+            (true, Status::Incomparable, RepairAttemptState::Incomparable),
+            (false, Status::Compliant, RepairAttemptState::Stale),
+            (false, Status::Violated, RepairAttemptState::Stale),
+            (false, Status::Incomparable, RepairAttemptState::Stale),
+        ];
+        for (current, status, expected) in cases {
+            let got = repair_attempt_state_for_finish(&after_with(current, status));
+            if got != expected {
+                return Err(format!(
+                    "current {current} {status:?}: expected {expected:?}, got {got:?}"
+                ));
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// Only Cargo manifests, the workspace lockfile and the root config feed
+    /// the analysis input identity; near-miss names do not.
+    #[test]
+    fn analysis_input_paths_are_exact_file_names() -> Result<(), String> {
+        for path in [
+            crate::config::CONFIG_FILE_NAME,
+            "Cargo.toml",
+            "crates/a/Cargo.toml",
+            CARGO_WORKSPACE_LOCKFILE,
+            "nested/Cargo.lock",
+        ] {
+            if !is_analysis_input_path(path) {
+                return Err(format!("{path} should be an input"));
+            }
+        }
+        for path in [
+            "Cargo.toml.bak",
+            "crates/a/MyCargo.toml",
+            "crates/a/src/lib.rs",
+            "docs/ripr.toml",
+            "Cargo.toml/readme.md",
+        ] {
+            if is_analysis_input_path(path) {
+                return Err(format!("{path} should not be an input"));
+            }
+        }
+        Ok(())
+    }
 }
