@@ -115,11 +115,20 @@ where
     let stdin = initialize_repair::InitializeRepairReader::new(stdin);
     let (service, socket) = build_service(root.clone(), bounds.client_request_timeout);
     let order = ShutdownExitOrder::default();
+    // The session can end without a completed `shutdown` (stdin EOF, or `exit`
+    // that did not wait for the response). The server then drains in-flight
+    // handlers before it returns, and an analysis pass can run for many
+    // seconds on a large buffer, so a restarting editor would hang on the old
+    // sidecar. End the pass as `shutdown` does (#11439).
+    let stop = service.inner().scheduler_stop_handle();
+    let stdin = StopOnEof::new(stdin, stop.clone());
 
     Server::new(stdin, stdout, socket)
         .concurrency_level(bounds.request_concurrency)
         .serve(panic_containment::ContainPanics(
-            dollar_requests::AnswerDollarRequests(RecordShutdownExit::new(service, order.clone())),
+            dollar_requests::AnswerDollarRequests(
+                RecordShutdownExit::new(service, order.clone()).stop_on_exit(stop),
+            ),
         ))
         .await;
     if order.exit_without_shutdown() {
@@ -172,11 +181,54 @@ impl ShutdownExitOrder {
 struct RecordShutdownExit<S> {
     inner: S,
     order: ShutdownExitOrder,
+    stop_on_exit: Option<refresh_scheduler::SchedulerStopHandle>,
 }
 
 impl<S> RecordShutdownExit<S> {
     fn new(inner: S, order: ShutdownExitOrder) -> Self {
-        Self { inner, order }
+        Self {
+            inner,
+            order,
+            stop_on_exit: None,
+        }
+    }
+
+    /// Cancels in-flight analysis when `exit` arrives (#11439).
+    fn stop_on_exit(mut self, stop: refresh_scheduler::SchedulerStopHandle) -> Self {
+        self.stop_on_exit = Some(stop);
+        self
+    }
+}
+
+/// Stops analysis when the client's input ends (EOF or a read error), so the
+/// server's drain of in-flight handlers does not wait out a long pass (#11439).
+struct StopOnEof<R> {
+    inner: R,
+    stop: refresh_scheduler::SchedulerStopHandle,
+}
+
+impl<R> StopOnEof<R> {
+    fn new(inner: R, stop: refresh_scheduler::SchedulerStopHandle) -> Self {
+        Self { inner, stop }
+    }
+}
+
+impl<R: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for StopOnEof<R> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let before = buf.filled().len();
+        let wants_bytes = buf.remaining() > 0;
+        let poll = Pin::new(&mut self.inner).poll_read(cx, buf);
+        if let Poll::Ready(result) = &poll
+            && wants_bytes
+            && (result.is_err() || buf.filled().len() == before)
+        {
+            self.stop.stop();
+        }
+        poll
     }
 }
 
@@ -200,6 +252,9 @@ where
         // message arrived. `shutdown` records on the response path below.
         if method == "exit" {
             self.order.record("exit");
+            if let Some(stop) = &self.stop_on_exit {
+                stop.stop();
+            }
         }
         let future = self.inner.call(request);
         let order = self.order.clone();

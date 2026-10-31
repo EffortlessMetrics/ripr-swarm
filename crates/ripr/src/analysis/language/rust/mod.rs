@@ -2557,6 +2557,9 @@ impl RustAdapter {
                 &index,
                 &options.test_harnesses,
             );
+            // A cancelled pass stops its per-line loops early with partial
+            // probes; discard them here (#11439).
+            cancellation::checkpoint()?;
             if !probes.is_empty() {
                 files_with_findings.insert(changed.path.clone());
             }

@@ -31,6 +31,13 @@ use crate::analysis::language::changed_let_binding;
 use crate::domain::{Probe, ProbeFamily, SourceLocation};
 use std::path::Path;
 
+/// A cancelled attempt discards this pass's probes (the caller checkpoints
+/// after the call), so the per-line loops stop early instead of finishing a
+/// pass that can run for many seconds on a large buffer (#11439).
+fn analysis_aborted() -> bool {
+    crate::analysis::cancellation::current_abort_kind().is_some()
+}
+
 /// Test surface: the probe vec without the #3294 relations. Production
 /// callers use [`probes_for_file_with_relations`].
 #[cfg(test)]
@@ -212,6 +219,9 @@ pub(crate) fn probes_for_file_with_relations(
     // lazily, only when a line sits in a wrapped signature (#8999).
     let signature_cx = SignatureContext::default();
     for (added_index, added) in changed.added_lines.iter().enumerate() {
+        if analysis_aborted() {
+            break;
+        }
         let text = added.text.trim();
         // Blank and comment-only lines are never probed. The other
         // `should_ignore_changed_line` exclusions (`#`, `use`, `mod`) apply
@@ -552,6 +562,9 @@ pub(crate) fn probes_for_file_with_relations(
 
     let represented_short_lines = represented_short_replacements(changed, &probes);
     for (removed_index, removed) in changed.removed_lines.iter().enumerate() {
+        if analysis_aborted() {
+            break;
+        }
         let text = removed.text.trim();
         if text.is_empty()
             || text.starts_with("//")

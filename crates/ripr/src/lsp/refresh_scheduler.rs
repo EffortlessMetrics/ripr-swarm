@@ -204,8 +204,35 @@ struct SchedulerState {
     episode_git_inputs: Option<(u64, super::git_inputs::ResolvedGitInputs)>,
 }
 
+/// Cancels in-flight and pending analysis, exactly as `RefreshScheduler::stop`.
+#[derive(Clone)]
+pub(super) struct SchedulerStopHandle(Arc<Mutex<SchedulerState>>);
+
+impl SchedulerStopHandle {
+    #[cfg(test)]
+    pub(super) fn is_stopped(&self) -> bool {
+        self.0.lock().map(|state| state.stopping).unwrap_or(true)
+    }
+
+    pub(super) fn stop(&self) {
+        let Ok(mut state) = self.0.lock() else {
+            return;
+        };
+        state.stopping = true;
+        state.next_generation = state.next_generation.saturating_add(1);
+        if let Some(active) = state.active.as_ref() {
+            active.cancellation.cancel(AnalysisAbortKind::Cancelled);
+        }
+        if let Some(pending) = state.pending_latest.as_ref() {
+            pending.cancellation.cancel(AnalysisAbortKind::Cancelled);
+        }
+        state.pending_latest = None;
+        state.episode_git_inputs = None;
+    }
+}
+
 pub(super) struct RefreshScheduler {
-    state: Mutex<SchedulerState>,
+    state: Arc<Mutex<SchedulerState>>,
     execution_gate: Arc<Mutex<()>>,
     analysis_thread: Arc<super::analysis_thread::AnalysisThread>,
 }
@@ -213,7 +240,7 @@ pub(super) struct RefreshScheduler {
 impl Default for RefreshScheduler {
     fn default() -> Self {
         Self {
-            state: Mutex::new(SchedulerState::default()),
+            state: Arc::new(Mutex::new(SchedulerState::default())),
             execution_gate: Arc::new(Mutex::new(())),
             analysis_thread: Arc::default(),
         }
@@ -443,19 +470,14 @@ impl RefreshScheduler {
     }
 
     pub(super) fn stop(&self) {
-        let Ok(mut state) = self.state.lock() else {
-            return;
-        };
-        state.stopping = true;
-        state.next_generation = state.next_generation.saturating_add(1);
-        if let Some(active) = state.active.as_ref() {
-            active.cancellation.cancel(AnalysisAbortKind::Cancelled);
-        }
-        if let Some(pending) = state.pending_latest.as_ref() {
-            pending.cancellation.cancel(AnalysisAbortKind::Cancelled);
-        }
-        state.pending_latest = None;
-        state.episode_git_inputs = None;
+        self.stop_handle().stop();
+    }
+
+    /// A handle that stops this scheduler from outside the backend, for the
+    /// transport to end in-flight analysis when the session ends without a
+    /// `shutdown` request (stdin EOF, or `exit` that did not wait for it).
+    pub(super) fn stop_handle(&self) -> SchedulerStopHandle {
+        SchedulerStopHandle(Arc::clone(&self.state))
     }
 
     /// Invalidate all work and completed-input identity without stopping the

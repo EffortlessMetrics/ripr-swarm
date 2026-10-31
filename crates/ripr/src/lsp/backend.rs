@@ -35,7 +35,7 @@ use super::progress::{AnalysisProgressEnd, AnalysisProgressPhase, AnalysisProgre
 use super::progress_stages::{STAGE_DRAIN_BUDGET, StageReportBridge, drain_stage_reports};
 use super::refresh_scheduler::{
     RefreshAttemptOutcome, RefreshDecision, RefreshReason, RefreshRequest, RefreshScheduler,
-    RefreshScope,
+    RefreshScope, SchedulerStopHandle,
 };
 use super::state::{
     AnalysisAttemptState, AnalysisFailure, AnalysisFailureKind, AnalysisHealth, AnalysisSnapshot,
@@ -417,6 +417,10 @@ impl Backend {
     /// Overrides the server→client request liveness bound (#5278). The
     /// in-process composition tests shorten it so the uniform mid-session
     /// exit contract stays fast.
+    pub(super) fn scheduler_stop_handle(&self) -> SchedulerStopHandle {
+        self.refresh_scheduler.stop_handle()
+    }
+
     pub(super) fn with_client_request_timeout(mut self, timeout: Duration) -> Self {
         self.client_request_timeout = timeout;
         self

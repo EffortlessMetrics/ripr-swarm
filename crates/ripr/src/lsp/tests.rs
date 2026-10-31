@@ -30316,3 +30316,39 @@ fn show_related_test_refusal_maps_to_invalid_params_over_the_wire() -> Result<()
         Ok(())
     })
 }
+
+/// #11439: a session that ends without a completed `shutdown` must cancel
+/// in-flight analysis, or the server's drain waits out a long pass.
+#[tokio::test]
+async fn shutdown_cancel_eof_stops_the_scheduler_only_when_input_ends() {
+    use tokio::io::AsyncReadExt;
+
+    let scheduler = super::refresh_scheduler::RefreshScheduler::default();
+    let mut input = super::StopOnEof::new(&b"x"[..], scheduler.stop_handle());
+    let mut byte = [0_u8; 1];
+
+    assert_eq!(input.read(&mut byte).await.unwrap_or(0), 1);
+    assert!(!scheduler.is_stopping(), "data must not stop analysis");
+    assert_eq!(input.read(&mut byte).await.unwrap_or(1), 0);
+    assert!(scheduler.is_stopping(), "EOF must stop analysis");
+}
+
+#[tokio::test]
+async fn shutdown_cancel_exit_notification_stops_the_scheduler() {
+    use tower::Service;
+
+    let (service, _socket) = build_service(
+        PathBuf::from("."),
+        super::transport_bounds::CLIENT_REQUEST_TIMEOUT,
+    );
+    let stop = service.inner().scheduler_stop_handle();
+    assert!(!stop.is_stopped());
+    let mut wrapped = super::RecordShutdownExit::new(service, super::ShutdownExitOrder::default())
+        .stop_on_exit(stop.clone());
+    let exit = tower_lsp_server::jsonrpc::Request::build("exit").finish();
+    let _ = wrapped.call(exit).await;
+    assert!(
+        wrapped.inner.inner().scheduler_stop_handle().is_stopped(),
+        "exit must stop analysis"
+    );
+}
