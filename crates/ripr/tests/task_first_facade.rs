@@ -3732,11 +3732,11 @@ fn help_surfaces_stay_task_first() -> Result<(), String> {
             row["exit"]["kind"], "decision_or_refusal",
             "{id} must advertise its decision exits"
         );
-        assert_eq!(row["json_support"], false, "{id} has no --json flag");
+        assert!(row["accepts_json_flag"].is_null(), "{id} has no JSON flag");
     }
     let status = find("cmd:status")?;
     assert_eq!(status["exit"]["kind"], "completed_or_failed");
-    assert_eq!(status["json_support"], true);
+    assert_eq!(status["accepts_json_flag"], "--json");
     for id in ["cmd:agent.repair", "cmd:agent.status"] {
         let row = find(id)?;
         assert_eq!(row["class"], "advanced", "{id} must be advanced");
