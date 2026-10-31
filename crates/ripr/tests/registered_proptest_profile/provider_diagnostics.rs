@@ -57,7 +57,8 @@ fn offline_metadata_diagnosis_is_scoped_and_recovers_without_purging_diff_cache(
         refused
     );
 
-    // Native CLI human output must contain the exact action generated for JSON.
+    // The full Next step field must preserve the JSON action, apart from
+    // #7756's existing single-terminal-period display rule for human fields.
     fixture.1.human = true;
     let executable = std::env::current_exe().map_err(|error| error.to_string())?;
     let rendered = run(
@@ -77,11 +78,16 @@ fn offline_metadata_diagnosis_is_scoped_and_recovers_without_purging_diff_cache(
     let human = String::from_utf8(rendered.stdout).map_err(|error| error.to_string())?;
     assert_eq!(human.matches(REPORT).count(), 1, "{human}");
     assert_eq!(human.matches(REPORT_END).count(), 1, "{human}");
-    let normalized_human = human.split_whitespace().collect::<Vec<_>>().join(" ");
-    let normalized_next = next.split_whitespace().collect::<Vec<_>>().join(" ");
-    assert!(
-        normalized_human.contains(&normalized_next),
-        "JSON action absent from human-full output: {human}"
+    let rendered_next = human
+        .split_once("\nNext step\n")
+        .and_then(|(_, rest)| rest.split_once("\nDrill in:"))
+        .map(|(step, _)| step)
+        .ok_or_else(|| format!("missing complete Next step section: {human}"))?;
+    let expected_next = next.strip_suffix('.').unwrap_or(&next);
+    assert_eq!(
+        rendered_next.split_whitespace().collect::<Vec<_>>().join(" "),
+        expected_next.split_whitespace().collect::<Vec<_>>().join(" "),
+        "JSON action differs from the complete human Next step field: {human}"
     );
     fixture.1.human = false;
 
