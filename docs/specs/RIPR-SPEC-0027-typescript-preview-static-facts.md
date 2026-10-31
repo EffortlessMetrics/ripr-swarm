@@ -502,6 +502,27 @@ boundary without changing the guards (#4104 E):
   initializers, repeated declarations, off-value constants, and constants
   imported from a module the adapter cannot resolve to the owner stay
   fail-closed.
+- **Test-side constants** (#10707, #10706): an owner-call argument that is
+  a bare identifier of any spelling (`edge`, `EDGE`) resolves to its integer
+  value only when the name provably has one binding, decided on the oxc
+  token stream. In the test callback: exactly one
+  `const NAME [: number] = <plain decimal integer>` declarator directly in
+  the callback block (never a nested block, loop header, or parameter list),
+  and every other occurrence in the callback a plain read after the
+  declaration. At the test file's module level: exactly one top-level such
+  `const`, every other occurrence in the file a plain read (the owner-module
+  constant rule), and no non-file-level enclosing scope binding the name.
+  The callback's own declaration decides first; a binding it refuses is
+  never rescued by an outer scope. Fail-closed: `let`/`var`, a reassigned or
+  updated name, a shadowing parameter, catch, function, inner declaration or
+  destructuring, an object key or shorthand spelling, a second declaration,
+  a computed, signed, non-decimal, fractional or non-safe-integer
+  initializer, an import that does not resolve to the owner, `eval`/`with`,
+  a read before the declaration, and member reads (`config.edge`, whose
+  property a test can rewrite). The credit only substitutes the value for
+  the name; the position, arity, off-value and expected-side rules are the
+  literal path's, unchanged. Fixtures: `ts_boundary_local_constant_credit`,
+  `ts_boundary_local_constant_refused`.
 - **Boundary input evidence**: for a changed predicate with a named missing
   discriminator `<param> == <operand>`, the adapter emits
   `typescript_boundary_input: parameter=<param>;index=<i>;operand=<operand>;value=<v>`

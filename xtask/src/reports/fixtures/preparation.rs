@@ -98,6 +98,23 @@ pub(super) fn build(args: &[&str]) -> Result<(), String> {
     crate::run::run_with_envs("cargo", args, &envs).map(|_| ())
 }
 
+/// Build with a dedicated `CARGO_TARGET_DIR` overlay (#11197): the argv
+/// stays a plain `cargo build -p ripr ...` so native-lock observers keep
+/// matching the child's command line, while the artifacts land outside the
+/// shared target the running suite executes from.
+pub(super) fn build_in_target_dir(args: &[&str], target_dir: &Path) -> Result<(), String> {
+    let dir = target_dir.to_str().ok_or_else(|| {
+        format!(
+            "fixture variant target dir must be UTF-8: {}",
+            target_dir.display()
+        )
+    })?;
+    let environment = proxy_environment(environment()?, offline_mode(args.contains(&"--offline")));
+    let mut envs: Vec<(&str, &str)> = environment.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    envs.push(("CARGO_TARGET_DIR", dir));
+    crate::run::run_with_envs("cargo", args, &envs).map(|_| ())
+}
+
 fn binding(environment: &[(&str, String)]) -> String {
     environment
         .iter()

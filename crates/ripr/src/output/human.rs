@@ -1321,6 +1321,7 @@ mod shared;
 mod triage;
 
 pub(crate) use evidence_lines::{JsonPointerWording, plain_observation_wording};
+pub(crate) use sections::HUMAN_EVIDENCE_LEGEND;
 pub(crate) use sections::render_finding_with_config;
 pub(crate) use triage::unresolved_boundary_operand;
 
@@ -2734,6 +2735,102 @@ mod tests {
             finding.activation.missing_discriminators.clear();
         }
         finding
+    }
+
+    #[test]
+    fn conflicting_python_verify_metadata_is_not_rendered_as_a_command() {
+        let mut finding = python_preview_finding(1, true);
+        finding
+            .evidence
+            .retain(|entry| !entry.starts_with("suggested_verify_command: "));
+        finding.evidence.push(
+            "suggested_test_node_id: tests/test_pricing.py::test_small_order_pays_shipping"
+                .to_string(),
+        );
+        finding.evidence.push(
+            "suggested_verify_command: python -m pytest tests/test_pricing.py::test_other"
+                .to_string(),
+        );
+        let text = super::sections::render_finding_digest_with_config(
+            &finding,
+            &RiprConfig::default(),
+            Path::new("/tmp/selected"),
+        );
+        assert!(text.contains("no verified command"), "{text}");
+        assert!(!text.contains("python -m pytest"), "{text}");
+    }
+
+    #[test]
+    fn coherent_class_and_unittest_suggestions_remain_manual() {
+        let mut finding = python_preview_finding(1, true);
+        finding
+            .evidence
+            .retain(|entry| !entry.starts_with("suggested_verify_command: "));
+        finding.evidence.push("suggested_test_line: 7".to_string());
+        finding.evidence.push(
+            "suggested_test_qualified_name: TestPricing.test_small_order_pays_shipping".to_string(),
+        );
+        finding.evidence.push("suggested_test_node_id: tests/test_pricing.py::TestPricing::test_small_order_pays_shipping".to_string());
+        finding.evidence.push("suggested_verify_command: python -m pytest tests/test_pricing.py::TestPricing::test_small_order_pays_shipping".to_string());
+        let render = |f: &Finding| {
+            super::sections::render_finding_digest_with_config(
+                f,
+                &RiprConfig::default(),
+                Path::new("/tmp/selected"),
+            )
+        };
+        let text = render(&finding);
+        assert!(
+            text.contains("Suggested command (unverified; inspect and run from the selected root)"),
+            "{text}"
+        );
+        let mut wrong_class = finding.clone();
+        for entry in &mut wrong_class.evidence {
+            if entry.starts_with("suggested_test_node_id: ")
+                || entry.starts_with("suggested_verify_command: ")
+            {
+                *entry = entry.replace("TestPricing", "TestOther");
+            }
+        }
+        let text = render(&wrong_class);
+        assert!(
+            text.contains("no verified command") && !text.contains("python -m pytest"),
+            "{text}"
+        );
+        let mut injected = finding.clone();
+        for entry in &mut injected.evidence {
+            *entry = entry.replace("TestPricing", "$(touch /tmp/injected)");
+        }
+        let text = render(&injected);
+        assert!(
+            text.contains("no verified command") && !text.contains("python -m pytest"),
+            "{text}"
+        );
+        finding.evidence.retain(|entry| {
+            !entry.starts_with("suggested_test_node_id: ")
+                && !entry.starts_with("suggested_verify_command: ")
+        });
+        finding.evidence.push("suggested_verify_command: python -m unittest tests.test_pricing.TestPricing.test_small_order_pays_shipping".to_string());
+        let text = render(&finding);
+        assert!(text.contains("Suggested command (unverified; inspect and run from the selected root): python -m unittest"), "{text}");
+        finding
+            .evidence
+            .retain(|entry| !entry.starts_with("suggested_verify_command: "));
+        finding.evidence.push("suggested_verify_command: python -m unittest wrong.module.test_small_order_pays_shipping".to_string());
+        let text = render(&finding);
+        assert!(
+            text.contains("no verified command") && !text.contains("python -m unittest"),
+            "{text}"
+        );
+        finding
+            .evidence
+            .retain(|entry| !entry.starts_with("suggested_verify_command: "));
+        finding.evidence.push("suggested_verify_command: python -m unittest wrong; touch /tmp/injected #.test_small_order_pays_shipping".to_string());
+        let text = render(&finding);
+        assert!(
+            text.contains("no verified command") && !text.contains("python -m unittest"),
+            "{text}"
+        );
     }
 
     /// #5531: the same carded finding stamped as repo-scoped gets no repair
@@ -7415,6 +7512,38 @@ mod tests {
             digest.lines().all(|line| line.chars().count() <= 180),
             "the compact stage line stays within the display budget; got:\n{digest}"
         );
+    }
+
+    /// #10481: after the first run the legend collapses to one pointer line;
+    /// every other digest line, including the Evidence stage line, is kept.
+    #[test]
+    fn bounded_evidence_legend_collapses_to_one_pointer_line() {
+        let output = bounded_output_with_findings(vec![sample_finding()]);
+        let full = super::render_bounded_with_config(&output, &RiprConfig::default());
+        let mut config = RiprConfig::default();
+        config.reports.human_legend = crate::config::HumanLegend::Pointer;
+        let pointer = super::render_bounded_with_config(&output, &config);
+
+        assert!(full.contains("    Stages (static evidence):"), "{full}");
+        assert!(!pointer.contains("Stages (static evidence)"), "{pointer}");
+        assert!(!pointer.contains("Summary terms:"), "{pointer}");
+        assert_eq!(
+            pointer.matches("    Terms: rerun with `--legend`").count(),
+            1,
+            "{pointer}"
+        );
+        let evidence = full
+            .lines()
+            .find(|line| line.starts_with("  Evidence: reach "))
+            .map(str::to_string);
+        assert!(evidence.is_some(), "{full}");
+        assert!(
+            pointer
+                .lines()
+                .any(|line| Some(line) == evidence.as_deref()),
+            "{pointer}"
+        );
+        assert_eq!(full.lines().count() - 9, pointer.lines().count());
     }
 
     /// #9373 item 1: stage names and conservative state words are explained

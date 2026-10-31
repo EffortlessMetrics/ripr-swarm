@@ -137,7 +137,18 @@ receipt strength, and currentness as separate facts:
   reported (a changed constant has no seam, so `check` offers no start and
   neither does repair). A diff with no Rust production change, or no readable
   diff, leaves the whole-repository selection unscoped, and an explicit
-  `ripr repair <seam-id>` is never scoped.
+  `ripr repair <seam-id>` is never scoped. In the same scope, a seam outside
+  the changed lines that cannot start a repair either (route not ready, a
+  named static limitation) is counted, not listed, so its reason never reads as
+  a second verdict on the change (#11111). Every listed refusal reason names
+  the seam it is about, with or without a diff; identical reasons on several
+  seams are listed once with the first seam and a count.
+  When the diff touches seams and every spot on the changed lines is already
+  gripped (a `return Err(V)` wrapper of a gripped error variant counts as the
+  same behavior), the refusal says only that; it intentionally omits the
+  blocked-outside and eligible-outside hints, which would argue with
+  `ripr check`'s "nothing to repair". A gripped spot beside an open finding on
+  the change is counted as a different check, never cited as its verdict.
 
 - A restart or fresh-start route is named only when the shared repair
   eligibility gate admits the seam (#8766): `repair_refusal` (the gate

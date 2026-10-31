@@ -200,6 +200,15 @@ Suppressed identity: visible as suppressed or not applicable when present
 Missing or invalid baseline: config_error
 ```
 
+The `config_error` for a missing or invalid baseline names its own next step
+(#11206): run `--mode visible-only` (`RIPR_GATE_MODE=visible-only`) to start
+without blocking, then `ripr baseline create --from
+target/ripr/reports/gate-decision.json`, commit the result, and pass it with
+`--baseline` (`RIPR_GATE_BASELINE`). Likewise, a `--gap-ledger` input that is
+not a gap decision ledger (for example a repo-exposure report) is a
+`config_error` that points at `ripr reports gap-ledger --check-output` and
+`--pr-guidance`.
+
 Use `baseline-check` only after reviewers understand the job summary and can
 find the repair path: missing discriminator, suggested test shape, related test
 when available, acknowledgement label, and verification command.
