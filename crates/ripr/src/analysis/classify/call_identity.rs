@@ -2790,7 +2790,7 @@ pub(in crate::analysis) fn test_calls_only_through_local_rival_module(
     };
     let source = &facts.data().source;
     let integration_crate = under_tests_dir(&test.file);
-    let modules = LocalModules::scan(source, &owner.name, test.start_line);
+    let modules = LocalModules::scan(source, &owner.name, &test.name, test.start_line);
     let through_local_module = |qualifier: &Option<Vec<String>>| {
         qualifier
             .as_deref()
@@ -2829,7 +2829,7 @@ enum LexToken {
 }
 
 impl LocalModules {
-    fn scan(source: &str, owner: &str, test_start_line: usize) -> Self {
+    fn scan(source: &str, owner: &str, test_name: &str, test_start_line: usize) -> Self {
         let masked = mask_comments_and_strings(source);
         let test_offset = match test_start_line.checked_sub(2) {
             Some(newlines) => masked
@@ -2870,7 +2870,13 @@ impl LocalModules {
         // Open modules: (name, brace depth of its body).
         let mut stack: Vec<(String, usize)> = Vec::new();
         for (index, (offset, token)) in tokens.iter().enumerate() {
-            if !scope_set && *offset >= test_offset {
+            // The test's own `fn` token, not the start of its line: a one-line
+            // `mod inner { #[test] fn t() { .. } }` opens its module on the
+            // same line.
+            let at_test_fn = *offset >= test_offset
+                && matches!(token, LexToken::Word(word) if word == "fn")
+                && word_at(index + 1) == Some(test_name);
+            if !scope_set && at_test_fn {
                 found.scope = stack.iter().map(|(name, _)| name.clone()).collect();
                 scope_set = true;
             }

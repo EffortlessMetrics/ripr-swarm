@@ -21188,3 +21188,15 @@ fn given_integration_test_when_rival_is_absent_then_nested_and_aliased_calls_kee
     }
     Ok(())
 }
+
+#[test]
+fn given_integration_test_when_single_line_nested_module_reaches_rival_through_super_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    let nested = "mod lib_proptest {\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 90 }\n}\n\nmod inner { #[test] fn equality_boundary_discounts() { assert_eq!(super::lib_proptest::discounted_total(100, 100), 90); } }\n";
+    let related = related_test_names_for_boundary_seam(nested)?;
+    assert!(
+        related.is_empty(),
+        "#10855: a single-line nested `super::` call to a local rival must not relate the owner: {related:?}"
+    );
+    Ok(())
+}
