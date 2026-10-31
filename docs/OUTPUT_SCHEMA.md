@@ -2005,6 +2005,9 @@ The evidence-first fields are additive in schema `0.2`:
   `[]`, and `authority_boundary` stays `"preview_advisory_only"` (TypeScript
   remains preview). Only `incomplete_repair_packet` is eligible to flip; all
   other categories stay non-actionable. `schema_version` is unchanged.
+  `private_member_reach_unknown` names unmodeled reach through public callers
+  into a TypeScript private method. It infers neither a related test nor a
+  missing assertion; its preview card retains the reach investigation route.
   When flipped, the actionability fields are rewritten to read as actionable
   (RIPR-SPEC-0088 §PR8) so they do not contradict the complete packet:
   `repair_route` names the actual repair action (the suggested assertion shape

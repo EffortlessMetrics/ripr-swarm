@@ -49,7 +49,18 @@ pub(crate) fn typescript_actionability_for(
     has_owner_call_evidence: bool,
     missing_discriminators: &[MissingDiscriminatorFact],
     observed_evidence_label: &'static str,
+    private_member_unknown: bool,
 ) -> TypeScriptActionability {
+    if private_member_unknown {
+        return TypeScriptActionability {
+            gap_state: "advisory",
+            category: "private_member_reach_unknown",
+            why_not_actionable: "reach into the private member through public callers is not established; no related-test path or missing assertion is inferred".to_string(),
+            repair_route: "establish reach through a public caller before selecting an assertion shape; a private member cannot be called directly from a test".to_string(),
+            missing_fields: vec!["related_test_or_observer"],
+            evidence_needed: "modeled public-to-private reach and an observer of the changed behavior",
+        };
+    }
     if let Some(limit) = static_limit {
         return TypeScriptActionability {
             gap_state: EvidenceState::StaticLimitation.as_str(),
