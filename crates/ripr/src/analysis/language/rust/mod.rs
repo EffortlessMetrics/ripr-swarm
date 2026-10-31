@@ -2602,9 +2602,9 @@ impl RustAdapter {
                                 }
                                 // #11116: one probe's internal failure must not
                                 // unwind the pool and abort every other file's
-                                // result. The payload is not kept: it can quote
-                                // repository text and the panic hook has
-                                // already reported it.
+                                // result. The payload is not kept in findings: it can
+                                // quote repository text. A panic hook may
+                                // still report it separately.
                                 let contained =
                                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                                         #[cfg(test)]
@@ -2649,17 +2649,31 @@ impl RustAdapter {
                     // scan would run it in line on one worker while the rest
                     // sleep on the memo lock. Pay it here, before any probe
                     // is queued, so it fans out over this pool.
-                    cancellation::with_optional_token(token.as_ref(), || {
-                        committed_source::with_overlay(overlay.clone(), || {
-                            related_test_candidate_index.prime_workspace_macro_scan(&index);
+                    let primed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        cancellation::with_optional_token(token.as_ref(), || {
+                            committed_source::with_overlay(overlay.clone(), || {
+                                #[cfg(test)]
+                                injected_classify_panic::fire(&options.root, &options.root);
+                                related_test_candidate_index.prime_workspace_macro_scan(&index);
+                            });
                         });
-                    });
-                    seeded_probes
-                        .par_iter()
-                        .map_init(crate::analysis::syntax::run_memo::enter, |_, probe| {
-                            classify_one(probe)
-                        })
-                        .collect()
+                    }));
+                    if primed.is_err() {
+                        // The shared scan may have left its memo incomplete or
+                        // poisoned. Do not classify against it: every queued
+                        // probe depends on the same workspace scan.
+                        seeded_probes
+                            .iter()
+                            .map(|_| ClassifiedProbe::Panicked)
+                            .collect()
+                    } else {
+                        seeded_probes
+                            .par_iter()
+                            .map_init(crate::analysis::syntax::run_memo::enter, |_, probe| {
+                                classify_one(probe)
+                            })
+                            .collect()
+                    }
                 }),
                 Err(_) => {
                     let _run_memo = crate::analysis::syntax::run_memo::enter();
