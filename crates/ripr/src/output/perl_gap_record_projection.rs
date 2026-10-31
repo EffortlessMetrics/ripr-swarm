@@ -42,7 +42,7 @@
 //! findings. PR 16 lands the real Perl evidence path.
 
 use crate::domain::{
-    ExposureClass, Finding, LanguageId, LanguageStatus, perl_suggested_related_test,
+    EvidenceState, ExposureClass, Finding, LanguageId, LanguageStatus, perl_suggested_related_test,
 };
 use crate::output::gap_decision_ledger::{
     GapAnchor, GapRecord, GapRepairRoute, ProjectionEligibility,
@@ -214,7 +214,7 @@ pub(crate) fn perl_gap_record_for(finding: &Finding) -> Option<GapRecord> {
         language_status: "preview".to_string(),
         scope: "diff".to_string(),
         evidence_class: "weakly_exposed".to_string(),
-        gap_state: "advisory".to_string(),
+        gap_state: EvidenceState::Unknown.as_str().to_string(),
         policy_state: "preview".to_string(),
         repairability: "repairable".to_string(),
         repair_route: Some(repair_route),
@@ -319,10 +319,10 @@ fn evidence_values(finding: &Finding, prefix: &str) -> Vec<String> {
 mod tests {
     use super::*;
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap,
-        LanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, Probe,
-        ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation,
-        StageEvidence, StageState,
+        ActivationEvidence, Confidence, DeltaKind, EvidenceState, ExposureClass, Finding,
+        FindingCanonicalGap, LanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind,
+        OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
+        SourceLocation, StageEvidence, StageState,
     };
     use crate::output::agent_seam_packets::{
         gap_record_packet_do_not_do, validate_agent_gap_record_packet,
@@ -641,6 +641,23 @@ mod tests {
         assert_eq!(
             record.authority_boundary, PERL_AUTHORITY_BOUNDARY,
             "Perl GapRecord authority_boundary must stay preview_advisory_only"
+        );
+    }
+
+    /// Preview Perl packets use an EvidenceState word for gap_state, not the
+    /// legacy `"advisory"` drift (#11880, mirror #11828 / TypeScript).
+    #[test]
+    fn complete_perl_gap_record_uses_an_evidence_state_word() {
+        let maybe_record = perl_gap_record_for(&complete_perl_finding());
+        assert!(maybe_record.is_some(), "complete Perl finding must project");
+        let record = match maybe_record {
+            Some(r) => r,
+            None => return,
+        };
+        assert_eq!(record.gap_state, "unknown");
+        assert_eq!(
+            EvidenceState::parse(&record.gap_state),
+            Some(EvidenceState::Unknown)
         );
     }
 }
