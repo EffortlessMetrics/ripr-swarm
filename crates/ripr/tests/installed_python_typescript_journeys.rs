@@ -1478,7 +1478,7 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
     )?;
     need(
         &repair,
-        "may make that receipt stale",
+        "do not make the receipt stale",
         "currentness limitation",
     )?;
     if repair.contains("--seam-id") {
@@ -2363,7 +2363,7 @@ fn gap_before_stdout_discloses_test_runner_cache_limit_in_both_modes() -> Result
         )?;
         need(
             &guidance,
-            "may make that receipt stale",
+            "do not make the receipt stale",
             "stdout currentness limitation",
         )?;
     }
@@ -3861,38 +3861,57 @@ fn gap_bound_after_phase_still_refuses_ignored_vitest_module_cache() -> Result<(
     Ok(())
 }
 
-/// The alternative ordering avoids a terminal refusal but does not keep the
-/// receipt current after a test runner changes the observed cache.
+/// The documented ordering (run the focused test after `continue`) keeps the
+/// receipt current: Vitest cache files written after the verdict cannot change
+/// the static evidence it describes (#11534). Any other ignored path under
+/// `node_modules` still stales the attempt.
 #[cfg(feature = "lang-typescript")]
 #[test]
-fn gap_bound_status_reports_cache_drift_after_receipt() -> Result<(), String> {
+fn gap_bound_status_stays_current_after_vitest_cache_written_post_receipt() -> Result<(), String> {
     let attempt = GapAttempt::start("ts-status-vitest-cache")?;
     std::fs::write(attempt.root.join(".git/info/exclude"), "node_modules/\n")
         .map_err(|error| format!("exclude cache: {error}"))?;
     attempt.commit_closing_test()?;
     let after = attempt.after(false)?;
     expect_exit(after.status.success(), true, "after before cache write")?;
-    let cache = attempt.root.join("node_modules/.vitest-cache");
-    std::fs::create_dir_all(&cache).map_err(|error| format!("cache directory: {error}"))?;
-    std::fs::write(cache.join("transformed"), "transformed test code")
-        .map_err(|error| format!("cache file: {error}"))?;
-    let output = ripr_output(
-        &attempt.decoy,
-        &["agent", "status", "--root", &attempt.root_arg, "--json"],
-    )?;
-    expect_exit(output.status.success(), true, "status after cache write")?;
-    let (stdout, _) = text_of(&output);
-    let status: serde_json::Value =
-        serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
-    let attempts = status["repair_attempts"]
-        .as_array()
-        .ok_or("missing attempts")?;
-    let recorded = attempts
-        .iter()
-        .find(|entry| entry["attempt_id"] == attempt.attempt_id)
-        .ok_or("missing recorded attempt")?;
-    if recorded["head_current"] != false {
-        return Err(format!("cache drift did not stale the attempt: {stdout}"));
+    let status_current = || -> Result<Option<bool>, String> {
+        let output = ripr_output(
+            &attempt.decoy,
+            &["agent", "status", "--root", &attempt.root_arg, "--json"],
+        )?;
+        expect_exit(output.status.success(), true, "status")?;
+        let (stdout, _) = text_of(&output);
+        let status: serde_json::Value =
+            serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
+        status["repair_attempts"]
+            .as_array()
+            .ok_or("missing attempts")?
+            .iter()
+            .find(|entry| entry["attempt_id"] == attempt.attempt_id)
+            .ok_or("missing recorded attempt")?["head_current"]
+            .as_bool()
+            .map_or(Ok(None), |value| Ok(Some(value)))
+    };
+    for (dir, file) in [
+        ("node_modules/.vitest-cache", "transformed"),
+        ("node_modules/.vite/vitest/abc", "results.json"),
+        ("packages/app/node_modules/.vitest-cache", "transformed"),
+    ] {
+        let cache = attempt.root.join(dir);
+        std::fs::create_dir_all(&cache).map_err(|error| format!("cache directory: {error}"))?;
+        std::fs::write(cache.join(file), "cache")
+            .map_err(|error| format!("cache file: {error}"))?;
+    }
+    if status_current()? != Some(true) {
+        return Err("Vitest cache written after the receipt staled the attempt".to_string());
+    }
+    // Control: a non-cache ignored path still moves the bound delta.
+    let other = attempt.root.join("node_modules/pkg");
+    std::fs::create_dir_all(&other).map_err(|error| format!("control directory: {error}"))?;
+    std::fs::write(other.join("index.js"), "module.exports = 1")
+        .map_err(|error| format!("control file: {error}"))?;
+    if status_current()? != Some(false) {
+        return Err("a non-cache node_modules write did not stale the attempt".to_string());
     }
     Ok(())
 }

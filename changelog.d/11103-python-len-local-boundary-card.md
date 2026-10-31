@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- `ripr check` now gives a weakly exposed Python boundary finding a gap-bound repair card naming the equality input shape when one side is a once-bound `visible = len(text)` local over an unrebound parameter that the related tests call with plain string literals (for example click's `_truncate_visible`), instead of the generic no-repair-card Safe next action. A local that is bound twice, loop-carried, bound after the predicate, computed from anything but a parameter, or fed a non-literal or escaped argument stays unresolved with no card (#11103).

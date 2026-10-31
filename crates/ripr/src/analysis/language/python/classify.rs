@@ -7,6 +7,7 @@ use super::assertion_selection::{
 use super::boundary::{BoundaryActivation, python_boundary_evidence};
 use super::call_chain::call_chain_credits;
 use super::caplog_text::{PythonLogVerdict, python_log_evidence};
+use super::conditional_expression;
 use super::dataclass_default::dataclass_default_credits;
 use super::discriminators::python_missing_discriminators;
 use super::dunder_truthiness;
@@ -389,6 +390,21 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         helper_owner_call_candidates(owner, owners, all_tests)
     };
     related_candidates.extend(helper_callers.iter().map(|helper| helper.candidate));
+    // `f(g(x)) == g(x)` pins `f` but not `g` (#9814): the exact reading is
+    // per finding, so a test with such an assertion is replaced by its
+    // owner-resolved copy for this finding only.
+    let owner_exact: Vec<Option<PythonTest>> = related_candidates
+        .iter()
+        .map(|candidate| super::owner_exact::owner_exact_test(candidate.test, owner))
+        .collect();
+    let mut related_candidates: Vec<PythonRelatedCandidate<'_>> = related_candidates
+        .into_iter()
+        .zip(&owner_exact)
+        .map(|(candidate, resolved)| PythonRelatedCandidate {
+            test: resolved.as_ref().unwrap_or(candidate.test),
+            relation: candidate.relation,
+        })
+        .collect();
     // A module-level constant edit has no callable owner. A test whose
     // assertion provably holds under the old value and fails under the new one
     // (`module_value.rs`, #9423) is related through that value, and its
@@ -740,7 +756,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     // arguments, `exposed` requires one of those calls to bind both operands
     // to equal values (or, for `==` -> `==`, either compared literal).
     // Unresolved operands never count as observed, so this fails closed to
-    // `weakly_exposed` and names the missing `left == right` boundary. With no
+    // `weakly_exposed` without naming a boundary they may already reach. With no
     // literal owner inputs at all the gate cannot see the activation either
     // way; that case keeps the oracle verdict and carries a named
     // `boundary_activation_unresolved` limitation instead.
@@ -789,12 +805,26 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     // equality side. Unreadable guards, unbound operands, and rows without
     // literal inputs fail open and keep the existing oracle verdict.
     let guarded_arm_gap = (static_limit.is_none()
-        && matches!(family, ProbeFamily::ReturnValue)
+        && matches!(family, ProbeFamily::ReturnValue | ProbeFamily::Predicate)
         && boundary_gap.is_none()
         && inactive_term.is_none()
         && !no_behavior.multi_line_def_header_line)
         .then(|| {
             owner_source.and_then(|source| {
+                if matches!(family, ProbeFamily::Predicate) {
+                    // #9184: a conditional expression (`a if c else b`) reads
+                    // as a predicate probe; only its unreached-arm reading
+                    // applies, never the return-value guard walk.
+                    return conditional_expression::python_conditional_expression_gap(
+                        owner,
+                        source,
+                        line,
+                        line_text,
+                        old_line_text,
+                        &related_candidates,
+                        &focus,
+                    );
+                }
                 guard_activation::python_guarded_arm_gap(
                     owner,
                     source,
@@ -1064,8 +1094,8 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         && let Some(gap) = boundary_gap
     {
         // A strong oracle observes the owner's output, but no strong related
-        // call places the comparison operands on the changed boundary, so the
-        // changed predicate is never activated where old and new disagree.
+        // call is statically placed on the changed boundary. Unresolved calls
+        // may still reach it at runtime.
         boundary_downgraded = true;
         (
             ExposureClass::WeaklyExposed,
@@ -1312,7 +1342,11 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                 limit.kind.as_str()
             )
         } else if boundary_downgraded {
-            "Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary.".to_string()
+            if boundary_gap.is_some_and(|gap| gap.discriminator.is_none()) {
+                "Related tests reach the changed predicate, but static evidence does not place a strong related test input at the changed boundary.".to_string()
+            } else {
+                "Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary.".to_string()
+            }
         } else if guarded_arm_downgraded
             && guarded_arm_gap
                 .as_ref()
