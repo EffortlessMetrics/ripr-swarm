@@ -236,3 +236,35 @@ fn request_guidance_preserves_inflight_runs_and_denied_source_boundaries() -> Re
     }
     Ok(())
 }
+
+#[test]
+fn tool_discovery_guidance_keeps_absence_and_denial_distinct() -> Result<(), String> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("missing repository root")?;
+    let validation = fs::read_to_string(root.join("docs/agent-context/validation.md"))
+        .map_err(|e| e.to_string())?;
+    for phrase in [
+        "PATH lookup miss alone",
+        "permitted configured and local toolchain locations",
+        "process-local Cargo and rustup homes",
+        "present but unusable",
+        "access denied",
+        "Do not read a denied",
+        "native-platform proof",
+    ] {
+        assert!(validation.contains(phrase), "missing {phrase}");
+    }
+    let scenarios =
+        fs::read_to_string(root.join("docs/agent-context/delivery-continuation-scenarios.md"))
+            .map_err(|e| e.to_string())?;
+    for phrase in [
+        "PATH miss, usable tool",
+        "Genuine absence",
+        "Unusable tool",
+        "Denied tool read",
+    ] {
+        assert!(scenarios.contains(phrase), "missing {phrase}");
+    }
+    Ok(())
+}

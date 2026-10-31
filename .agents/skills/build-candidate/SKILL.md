@@ -21,7 +21,7 @@ One candidate implements the selected claim, extends its semantic owner, has dis
 
 # Environment and ownership
 
-Identify the actual shell, host/target platform, repository remote, root, worktree, branch, HEAD and available toolchain. Shell grammar is not inferred from OS: PowerShell can run on Linux; Bash/WSL can run on a Windows host. Read `docs/agent-context/validation.md` for native exit-status handling and proof ownership.
+Identify the actual shell, host/target platform, repository remote, root, worktree, branch, HEAD and available toolchain. Shell grammar is not inferred from OS: PowerShell can run on Linux; Bash/WSL can run on a Windows host. Read `docs/agent-context/validation.md` for the tool-discovery checkpoint, native exit-status handling and proof ownership.
 
 One writer owns the candidate worktree at a time. A delegated writer receives the claim, input identity, write boundary, non-goals, proof and handback; the root does not edit concurrently. Reviewers read committed objects or create their own detached inspection worktree. Preserve pre-existing changes and never move another writer's HEAD.
 

@@ -338,7 +338,9 @@ are broken.
 
 ## Validation and environment
 
-Detect the actual shell and installed tools, not just the OS. PowerShell may run
+Detect the actual shell and installed tools, not just the OS. A PATH miss alone
+does not establish tool unavailability; follow the permitted tool-discovery
+checkpoint in `docs/agent-context/validation.md`. PowerShell may run
 on Linux; Windows may host PowerShell, Bash or WSL. Use that shell's grammar.
 Native Windows evidence is distinct from WSL. Cargo progress on stderr is
 normal. Read the native exit status and terminal report together; neither a red
