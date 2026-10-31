@@ -185,6 +185,19 @@ pub(super) enum RefreshDecision {
     Stopped,
 }
 
+/// Advance the scheduler generation counter. Saturates instead of wrapping so
+/// a wrapped counter can never re-issue an old generation; proved in
+/// `kani_proofs`.
+fn bump_generation(generation: u64) -> u64 {
+    generation.saturating_add(1)
+}
+
+/// Whether work stamped with `generation` may still publish: only the most
+/// recently issued generation, and only while the scheduler is not stopping.
+fn generation_is_current(stopping: bool, newest: u64, generation: u64) -> bool {
+    !stopping && newest == generation
+}
+
 #[derive(Default)]
 struct SchedulerState {
     next_generation: u64,
@@ -342,7 +355,7 @@ impl RefreshScheduler {
             }
         }
 
-        state.next_generation = state.next_generation.saturating_add(1);
+        state.next_generation = bump_generation(state.next_generation);
         let request = RefreshRequest {
             generation: state.next_generation,
             authority_epoch,
@@ -447,7 +460,7 @@ impl RefreshScheduler {
             return;
         };
         state.stopping = true;
-        state.next_generation = state.next_generation.saturating_add(1);
+        state.next_generation = bump_generation(state.next_generation);
         if let Some(active) = state.active.as_ref() {
             active.cancellation.cancel(AnalysisAbortKind::Cancelled);
         }
@@ -466,7 +479,7 @@ impl RefreshScheduler {
         let Ok(mut state) = self.state.lock() else {
             return;
         };
-        state.next_generation = state.next_generation.saturating_add(1);
+        state.next_generation = bump_generation(state.next_generation);
         if let Some(active) = state.active.as_ref() {
             active.cancellation.cancel(AnalysisAbortKind::Superseded);
         }
@@ -485,7 +498,7 @@ impl RefreshScheduler {
         let Ok(state) = self.state.lock() else {
             return false;
         };
-        !state.stopping && state.next_generation == generation
+        generation_is_current(state.stopping, state.next_generation, generation)
     }
 
     /// Test-only observation for the #8733 acceptance contract: production
@@ -593,10 +606,13 @@ impl RefreshScheduler {
         let Ok(mut state) = self.state.lock() else {
             return None;
         };
-        state.next_generation = state.next_generation.saturating_add(1);
+        state.next_generation = bump_generation(state.next_generation);
         Some(state.next_generation)
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs;
 
 #[cfg(test)]
 mod tests {
