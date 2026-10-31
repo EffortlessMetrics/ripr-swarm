@@ -197,7 +197,13 @@ pub(crate) fn render_human_triage(
     // The canonical decision (#6304) selects the line family; the prose
     // below is unchanged, so the decision has one authority while rendered
     // bytes stay put.
-    match check_case_or_fallback(triage, output, drill_in, provenance) {
+    let check_case = check_case_or_fallback(triage, output, drill_in, provenance);
+    // #10709: the one recommended route is stated only when the Safe next
+    // action line and the `Next` block can both name it, so they cannot
+    // disagree about which command is recommended.
+    let recommend_start = check_case == NextActionCheckCase::PreviewAdvisory
+        && recommends_gap_repair_start(triage.selected, drill_in);
+    match check_case {
         NextActionCheckCase::TopGap => out.push_str(
             "  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only\n",
         ),
@@ -245,6 +251,7 @@ pub(crate) fn render_human_triage(
                     out.push_str(&complete_packet_preview_safe_action(
                         triage.selected,
                         &actionability.repair_route,
+                        recommend_start,
                     ));
                 }
                 Some(actionability)
@@ -259,7 +266,10 @@ pub(crate) fn render_human_triage(
                 }
                 not_ready => match triage.selected {
                     Some(finding) if finding.language == Some(LanguageId::Python) => {
-                        out.push_str(&python_preview_safe_action(finding));
+                        out.push_str(&python_preview_safe_action(
+                            finding,
+                            recommend_start,
+                        ));
                     }
                     Some(finding) if finding.class == ExposureClass::Exposed => {
                         out.push_str(EXPOSED_PREVIEW_SAFE_ACTION);
@@ -407,9 +417,16 @@ pub(crate) fn render_human_triage(
                     // #10698: the start refuses while tracked production
                     // files differ from HEAD, so name the commit first.
                     if let Some(commit) = navigation.gap_repair_prerequisite(route) {
+                        let then = if recommend_start {
+                            "Then start the recommended repair:"
+                        } else {
+                            "Then start the repair:"
+                        };
                         out.push_str(&format!(
-                            "  Commit your production change first (the repair start refuses to begin while it is uncommitted):\n  {commit}\n  Then start the repair:\n"
+                            "  Commit your production change first (the repair start refuses to begin while it is uncommitted):\n  {commit}\n  {then}\n"
                         ));
+                    } else if recommend_start {
+                        out.push_str("  Recommended follow-through (start the repair):\n");
                     }
                     out.push_str(&format!("  {command}\n"));
                     super::push_powershell_variant(out, "  ", &command);
@@ -1188,10 +1205,23 @@ fn omitted_language_identity(omitted: &[&Finding]) -> Option<String> {
 /// the generic advisory line when the projected record lacks a test file or
 /// verify command (for example a synthetic Perl packet). Readiness is only
 /// read here, never decided.
-fn complete_packet_preview_safe_action(finding: Option<&Finding>, repair_route: &str) -> String {
+fn complete_packet_preview_safe_action(
+    finding: Option<&Finding>,
+    repair_route: &str,
+    recommend_repair_start: bool,
+) -> String {
     const GENERIC: &str = "  Safe next action: preview-language evidence is advisory; the repair packet is complete but remains advisory, so verify independently before acting\n";
+    let generic = || {
+        if recommend_repair_start {
+            format!(
+                "  Safe next action: preview-language evidence is advisory; the repair packet is complete. Recommended: {GAP_REPAIR_START_RECOMMENDATION}; verify independently before acting\n"
+            )
+        } else {
+            GENERIC.to_string()
+        }
+    };
     let Some(record) = finding.and_then(typescript_gap_record_for) else {
-        return GENERIC.to_string();
+        return generic();
     };
     let target_file = record
         .repair_route
@@ -1204,7 +1234,7 @@ fn complete_packet_preview_safe_action(finding: Option<&Finding>, repair_route: 
         .map(String::as_str)
         .filter(|command| !command.trim().is_empty());
     let (Some(target_file), Some(verify)) = (target_file, verify) else {
-        return GENERIC.to_string();
+        return generic();
     };
     // The action is the packet's own instruction and carries the concrete
     // assertion shape, so it is collapsed to one line but not truncated.
@@ -1213,9 +1243,50 @@ fn complete_packet_preview_safe_action(finding: Option<&Finding>, repair_route: 
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
+    if recommend_repair_start {
+        // #10709: one recommended route. The gap-bound start printed under
+        // `Next` is the route; the by-hand edit is the one named alternative.
+        return format!(
+            "  Safe next action: preview-language evidence is advisory; the repair packet is complete. Recommended: {GAP_REPAIR_START_RECOMMENDATION}; alternative, by hand: in `{target_file}`, {action}; run `{verify}`, then rerun `ripr check`\n"
+        );
+    }
     format!(
         "  Safe next action: preview-language evidence is advisory; the repair packet is complete: in `{target_file}`, {action}; run `{verify}`, then rerun `ripr check`\n"
     )
+}
+
+/// The recommended-route clause shared by the Safe next action line and the
+/// `Next` block (#10709), so both name the same single route.
+const GAP_REPAIR_START_RECOMMENDATION: &str =
+    "start the repair with the `ripr agent repair` command under Next";
+
+/// Whether `Next` prints a gap-bound `ripr agent repair` start for the
+/// selected finding. The route exists only when the shared gap-bound
+/// validators accepted the packet and the run is complete
+/// (`app::task_first::gap_bound_route`), and a static-limited finding never
+/// prints one, so this reads that decision and forks nothing.
+fn recommends_gap_repair_start(
+    finding: Option<&Finding>,
+    drill_in: Option<&FindingDrillIn>,
+) -> bool {
+    let (Some(finding), Some(FindingDrillIn::Commands(navigation))) = (finding, drill_in) else {
+        return false;
+    };
+    if is_static_limited(finding) || navigation.gap_repair_route_for(&finding.id).is_none() {
+        return false;
+    }
+    // Only the findings whose Safe next action line names the start: a ready
+    // TypeScript/JavaScript preview packet (the shared validator's verdict) or
+    // a Python finding with a repair card.
+    match finding.language {
+        Some(LanguageId::Python) => {
+            finding.class != ExposureClass::Exposed && python_repair_card(finding).is_some()
+        }
+        Some(LanguageId::TypeScript | LanguageId::JavaScript) => {
+            preview_actionability_for(finding).is_some_and(|a| a.repair_packet_ready)
+        }
+        _ => false,
+    }
 }
 
 /// An exposed preview finding has nothing to repair, in any preview language.
@@ -1295,11 +1366,17 @@ fn typescript_named_limitation_why(finding: &Finding) -> Option<String> {
 /// its suggested test and verify command are the route; without one, no ripr
 /// command will route the finding, so the line says why and names the only
 /// step left, a manual test or check. An exposed finding has nothing to repair.
-fn python_preview_safe_action(finding: &Finding) -> String {
+fn python_preview_safe_action(finding: &Finding, recommend_repair_start: bool) -> String {
     if finding.class == ExposureClass::Exposed {
         return EXPOSED_PREVIEW_SAFE_ACTION.to_string();
     }
     if python_repair_card(finding).is_some() {
+        if recommend_repair_start {
+            // #10709: one recommended route, the by-hand edit named once.
+            return format!(
+                "  Safe next action: preview-language evidence is advisory. Recommended: {GAP_REPAIR_START_RECOMMENDATION}; alternative, by hand: apply the next step below to the suggested test and run its verify command before relying on it\n"
+            );
+        }
         return "  Safe next action: preview-language evidence is advisory; apply the next step below to the suggested test and run its verify command before relying on it\n".to_string();
     }
     if let Some(kind) = finding.static_limit_kind.as_ref() {
@@ -3188,7 +3265,7 @@ mod tests {
         finding.language = Some(LanguageId::Python);
         finding.language_status = Some(LanguageStatus::Preview);
         finding.missing = vec!["A strong Python oracle reaches `discounted_total`, but static evidence does not place a related test input at the changed predicate boundary. No strong related test call places amount equal to DISCOUNT_THRESHOLD; observed amount values: 20000; observed DISCOUNT_THRESHOLD values: unresolved.".to_string()];
-        let action = python_preview_safe_action(&finding);
+        let action = python_preview_safe_action(&finding, false);
         assert!(
             action.contains("static evidence cannot bind `DISCOUNT_THRESHOLD` to a test input, so the boundary equality cannot become a repair target"),
             "{action}"
@@ -3203,7 +3280,7 @@ mod tests {
         generic.class = ExposureClass::WeaklyExposed;
         generic.language = Some(LanguageId::Python);
         generic.language_status = Some(LanguageStatus::Preview);
-        let generic_action = python_preview_safe_action(&generic);
+        let generic_action = python_preview_safe_action(&generic, false);
         assert!(
             generic_action.contains("static evidence names no concrete missing discriminator"),
             "{generic_action}"

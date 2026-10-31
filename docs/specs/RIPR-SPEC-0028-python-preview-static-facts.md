@@ -404,14 +404,19 @@ delimiter nested in a field (3.12), a single-line f-string with a field of its
 own inside a field (3.12 same-quote nesting), a field or nested literal that is
 not closed, and nesting deeper than four levels. A colon that may or may not be
 the spec colon hides. The triple-quoted scanning here gives up and hides
-rather than inventing a call for the cases above. Known limits: inside
+rather than inventing a call for the cases above. A top-level single-line
+f-string (any `f`/`rf`/`fr` prefix, either quote) whose quote pairing cannot be
+followed also hides the rest of the text: its own quote nested inside a
+replacement field (Python 3.12: `f"{ "helper(1)" }"`, `f"{y["helper(1)"]}"`) or
+a newline inside a field (`f"{\n y\n}  helper(1)"`). Pairing that does follow
+(`f"{x}"`, `f"{d['k']}"`, `f"{{"`, a nested spec field) typically keeps a real call after
+it visible; a brace or quote inside a nested string literal in a field
+(`f"{'{'}"`) or a quote in format-spec text can over-hide, which is a miss and
+fails closed (#9230). Known limits: inside
 triple-quoted f-strings a replacement field on the same line as the opening
-quote is hidden by the line-prefix quote check, and a real call after a field the
-scanner gave up on is hidden too (misses). Separately, and not changed by this
-change, top-level single-line f-strings that use Python 3.12 same-quote nesting
-(`f"{ "helper(1)" }"`, `f"{y["helper(1)"]}"`) or a newline inside a
-replacement field (`f"{\n y\n}  helper(1)"`) can expose text that is not a
-call (#9230).
+quote is hidden by the line-prefix quote check, a real call after a field the
+scanner gave up on is hidden too, and a real call after a single-line f-string
+the pairing cannot follow is hidden (misses).
 
 A pytest test that names a module-level `@pytest.fixture` function (in its own
 module or a `conftest.py` up its directory chain, nearest wins) as a parameter
@@ -627,6 +632,30 @@ source assertion, independently of the boolean oracle's normalized gate text.
 A workspace assignment to a function's `__code__`, `__defaults__`, `__kwdefaults__` or
 `__closure__` can replace a reader without rebinding its name, so it withholds the module
 constant's credit for scalar and table constants alike (#10626).
+
+A boundary input that a test passes as a plain name resolves like a literal
+when the name is bound once in the test body, by a top-level single-target
+assignment of a literal before the call (#10707). The test is parsed; the name
+is refused if it is a parameter, is stored, deleted, imported, declared
+`global`/`nonlocal`, bound by a `for`, `with`, `except`, walrus, comprehension,
+nested `def`/`class`/`lambda`, tuple unpack or augmented assignment, or if the
+body contains a `match`. A refused name stays unresolved, so the verdict is
+the weak one.
+
+The same input also resolves when the name is a scalar-literal constant of the
+test's own module (`THRESHOLD = 50` above the tests, #10707). The module must
+bind it exactly once at top level, with no `global` rebind, no attribute
+assignment of it, no dynamic namespace write and no opaque construct; the
+test must not bind the name in any scope (parameter, store, loop or
+comprehension target, lambda or nested parameter, import, `match`); the body
+must not mention `monkeypatch`, `patch`, `setattr`, `globals`, `vars`, `exec`
+or `eval`; the module must hold no code that runs outside the tests (autouse
+fixture, `pytestmark`, setup or teardown hook, module-level call, or a
+`conftest.py` on the directory chain that declares a fixture or hook); and a
+test file that the diff also changes gets no credit. Anything else keeps the
+input unresolved. A plain write to the constant from another file that runs
+before the test (a sibling test module assigning `module.THRESHOLD` at
+import) is not seen; no extra fact is read for it.
 
 A changed line whose old and new text differ only in a trailing `#` comment or
 in whitespace between tokens emits no probe (#10706). Both lines are lexed and
