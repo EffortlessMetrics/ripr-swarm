@@ -1440,27 +1440,23 @@ fn quote_in_a_comment_does_not_hide_an_earlier_guard_arm() -> Result<(), String>
     )
 }
 
-/// A macro around the owner call may drop it, and `debug_assert!` is compiled
-/// out of release test builds: each refuses, while the twin reading the call
-/// result outside the macro, or through `assert!`, starts.
+/// A macro around the owner call may drop or rewrite it (any `name!(..)`
+/// refuses; `dbg!` stands in so no file-local macro changes how assertions
+/// are read), and `debug_assert!` is compiled out of release test builds:
+/// each refuses, while the twin binding the call directly starts.
 #[test]
 fn macro_wrapped_call_or_debug_assert_is_not_a_match_arm_start() -> Result<(), String> {
-    let with_macro = |body: &str| {
-        format!(
-            "use ar::rate;\n\nmacro_rules! keep {{\n    ($e:expr) => {{\n        $e\n    }};\n}}\n\n#[test]\nfn runs() {{\n{body}}}\n"
-        )
-    };
     assert_repair_ready(
         "arm-macro-twin",
         ARM_OLD,
         ARM_NEW,
-        &with_macro("    let r = rate(\"silver\");\n    assert!(keep!(r) < 100);\n"),
+        &rate_test("    let r = rate(\"silver\");\n    assert!(r < 100);\n"),
     )?;
     assert_no_start_at(
         "arm-macro-wrapper",
         ARM_OLD,
         ARM_NEW,
-        &with_macro("    let r = keep!(rate(\"silver\"));\n    assert!(r < 100);\n"),
+        &rate_test("    let r = dbg!(rate(\"silver\"));\n    assert!(r < 100);\n"),
         "src/lib.rs:4",
     )?;
     assert_no_start_at(
