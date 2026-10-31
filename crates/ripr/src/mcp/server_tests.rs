@@ -325,6 +325,7 @@ async fn oversized_gap_item_leaves_mcp_through_the_real_routes() -> Result<(), S
         suppression: None,
         partial_scope: None,
         analyzed_revisions: None,
+        language_completeness: None,
     };
     let snapshot = workspace::Snapshot::from_output(&output, Some("root:sha256:test"))
         .map_err(|failure| failure.detail)?;
@@ -440,6 +441,7 @@ async fn window_sized_gap_item_refuses_typed_instead_of_dropping_structured_cont
         suppression: None,
         partial_scope: None,
         analyzed_revisions: None,
+        language_completeness: None,
     };
     let snapshot = workspace::Snapshot::from_output(&output, Some("root:sha256:test"))
         .map_err(|failure| failure.detail)?;

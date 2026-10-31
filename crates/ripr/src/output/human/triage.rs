@@ -1754,6 +1754,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         }
     }
 

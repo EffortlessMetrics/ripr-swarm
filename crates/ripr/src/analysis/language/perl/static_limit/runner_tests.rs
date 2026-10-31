@@ -137,6 +137,7 @@ fn perl_static_limit_missing_runner_keeps_observation() -> Result<(), String> {
         suppression: None,
         partial_scope: None,
         analyzed_revisions: None,
+        language_completeness: None,
     };
     let json: serde_json::Value = serde_json::from_str(&crate::output::json::render(&output))
         .map_err(|error| format!("parse rendered Perl finding: {error}"))?;

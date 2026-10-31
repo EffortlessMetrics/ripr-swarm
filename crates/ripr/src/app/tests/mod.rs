@@ -116,6 +116,7 @@ pub(crate) fn check_output_with(findings: Vec<Finding>) -> CheckOutput {
         analysis_outcome: None,
         partial_scope: None,
         analyzed_revisions: None,
+        language_completeness: None,
     }
 }
 

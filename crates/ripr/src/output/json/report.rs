@@ -70,6 +70,31 @@ pub(crate) enum FindingsBudgetSource {
     Configured,
 }
 
+/// Compact one-line JSON for the `language_completeness` member (#11272).
+fn language_completeness_json(
+    completeness: &crate::analysis::language_outcome::LanguageCompletenessProjection,
+) -> String {
+    let languages: Vec<Value> = completeness
+        .languages
+        .iter()
+        .map(|row| {
+            json!({
+                "language": row.language,
+                "status": row.status,
+                "findings": row.findings,
+            })
+        })
+        .collect();
+    json!({
+        "mode": completeness.mode,
+        "scope": completeness.scope,
+        "completeness": completeness.completeness,
+        "total_findings": completeness.total_findings,
+        "languages": languages,
+    })
+    .to_string()
+}
+
 /// Additive base/head identity for a live-repository diff (RIPR-SPEC-0116
 /// amendment): `base_commit` (and `merge_base_commit` when the diff started
 /// from a different commit) beside the existing `base` ref, and `head` naming
@@ -392,6 +417,16 @@ pub(crate) fn render_with_config(
             out.push('\n');
         }
         out.push_str("  ]");
+    }
+    // Additive per-language completeness (#11272), projected from the shared
+    // `LanguageCompletenessView`. Unlike `language_runs`, which omits
+    // successful rows by design, this names every dispatched language with its
+    // canonical status, so a `complete_zero` run is distinguishable from a
+    // skipped or missing dispatch (no row). One compact line so golden
+    // normalization can strip it without a corpus-wide refresh.
+    if let Some(completeness) = &output.language_completeness {
+        out.push_str(",\n  \"language_completeness\": ");
+        out.push_str(&language_completeness_json(completeness));
     }
     // Additive run-state block — emitted only when the diff exceeded the
     // partial-selection budget and the run analyzed a deterministic bounded
@@ -1944,6 +1979,7 @@ mod harness_projection_tests {
             suppression: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         }
     }
 

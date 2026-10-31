@@ -7669,11 +7669,17 @@ tests = [
   "crates/ripr/src/app/tests/preview_analyzed_outcome.rs::unrelated_python_refusal_does_not_degrade_a_rust_only_diff",
   "crates/ripr/src/analysis/pipeline.rs::tests::typescript_advisory_counts_javascript_family_files",
   "crates/ripr/src/analysis/pipeline.rs::tests::repo_typescript_advisory_counts_javascript_after_exclusion",
-  "crates/ripr/src/output/human.rs::tests::typescript_advisory_names_javascript_and_mixed_files"
+  "crates/ripr/src/output/human.rs::tests::typescript_advisory_names_javascript_and_mixed_files",
+  "crates/ripr/tests/cli_smoke/language_completeness_json.rs::a_findings_run_names_the_completed_language_and_its_count",
+  "crates/ripr/tests/cli_smoke/language_completeness_json.rs::a_complete_zero_run_is_distinct_from_nothing_in_scope",
+  "crates/ripr/src/analysis/language_outcome/view.rs::projection_tests::projection_restates_every_row_with_canonical_status_and_count",
+  "crates/ripr/src/analysis/language_outcome/view.rs::projection_tests::projection_keeps_silent_rows_that_the_public_run_projection_drops"
 ]
 fixtures = []
 code = [
   "crates/ripr/src/analysis/mod.rs",
+  "crates/ripr/src/analysis/language_outcome/view.rs",
+  "crates/ripr/src/app/progress.rs",
   "crates/ripr/src/analysis/pipeline.rs",
   "crates/ripr/src/analysis/workspace/discover.rs",
   ".github/workflows/rust-gates.yml",

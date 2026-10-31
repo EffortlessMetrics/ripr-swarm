@@ -345,6 +345,12 @@ pub struct CheckOutput {
     /// every diff-scoped check header. `None` when the input was a diff file,
     /// stdin, a candidate tree, or a repo-scope run.
     pub(crate) analyzed_revisions: Option<crate::analysis::AnalyzedRevisions>,
+    /// Per-language completeness projected from the shared
+    /// `LanguageCompletenessView` (#11272), serialized as the additive
+    /// `language_completeness` member. `None` when no aggregate was produced
+    /// (for example the seam-inventory stub); absence is not completion.
+    pub(crate) language_completeness:
+        Option<crate::analysis::language_outcome::LanguageCompletenessProjection>,
 }
 
 /// Renders a previously computed [`CheckOutput`] in the requested format.

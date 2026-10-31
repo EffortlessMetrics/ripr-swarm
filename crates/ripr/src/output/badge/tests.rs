@@ -118,6 +118,7 @@ fn check_output(findings: Vec<Finding>) -> CheckOutput {
         analysis_outcome: None,
         partial_scope: None,
         analyzed_revisions: None,
+        language_completeness: None,
     }
 }
 
@@ -2083,6 +2084,7 @@ fn check_output_with_preview_advisory(
         analysis_outcome: None,
         partial_scope: None,
         analyzed_revisions: None,
+        language_completeness: None,
     }
 }
 

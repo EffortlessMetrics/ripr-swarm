@@ -33,6 +33,7 @@ pub(crate) use diff_aggregate::DiffLanguageAggregate;
 pub(crate) use diff_aggregate::LanguageAggregate;
 use diff_aggregate::repo_static_facts_limit;
 pub(crate) use reconcile::reconcile;
+pub(crate) use view::LanguageCompletenessProjection;
 pub(crate) use view::LanguageCompletenessView;
 pub(crate) use view::LanguageDisclosure;
 // Fixture inputs for the cross-surface agreement tests in `output`.
@@ -52,7 +53,7 @@ pub(crate) enum OutcomeMode {
 }
 
 impl OutcomeMode {
-    const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Repo => "repo",
             Self::Diff => "diff",

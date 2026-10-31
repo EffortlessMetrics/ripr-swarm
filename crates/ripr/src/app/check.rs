@@ -510,6 +510,11 @@ fn check_with_progress_and_origins_run(
     let language_view = analysis.language_view.take();
     let human_output = matches!(input.format, OutputFormat::Human | OutputFormat::HumanFull);
     let mut output = output_builder::check_output_from_analysis(input, analysis);
+    // #11272: project the shared completeness view into the check output
+    // rather than re-deriving per-language state from `language_runs`.
+    output.language_completeness = language_view
+        .as_ref()
+        .map(|view| view.project(scope.as_str()));
     // #6340: only a human-rendered run pays for the Python test walk; JSON, LSP
     // refreshes and other machine consumers never read the note.
     if human_output && python_test_note_possible(&output.findings) {

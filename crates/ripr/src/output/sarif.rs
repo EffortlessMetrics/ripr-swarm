@@ -2758,6 +2758,7 @@ weakly_gripped = "note"
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         }
     }
 

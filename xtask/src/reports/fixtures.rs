@@ -1510,6 +1510,31 @@ fn strip_canonical_next_action_member(value: &str) -> String {
     stripped
 }
 
+/// Classification goldens pin analyzer findings, not the additive per-language
+/// `language_completeness` projection (#11272). It is emitted on every
+/// diff/worktree/repo run as one compact line, so strip it here rather than
+/// force a corpus-wide golden refresh. Dedicated CLI/schema tests own the field.
+fn strip_language_completeness_member(value: &str) -> String {
+    const MARKER: &str = ",\n  \"language_completeness\": ";
+    let Some(start) = value.find(MARKER) else {
+        return value.to_string();
+    };
+    let rest = &value[start + MARKER.len()..];
+    let Some(end) = rest.find('\n') else {
+        return value.to_string();
+    };
+    // The CLI adapter appends `canonical_next_action` after this member and
+    // moves the separating comma onto this member's line. Keep exactly one
+    // separator between the previous member and whatever follows.
+    let followed_by_member = rest[..end].ends_with(',');
+    let mut stripped = value[..start].to_string();
+    if followed_by_member {
+        stripped.push(',');
+    }
+    stripped.push_str(&rest[end..]);
+    stripped
+}
+
 /// Last-member append reconstitutes a pretty root closer (`]\n}`). One
 /// classification golden still stores compact `]}`. Normalize both so
 /// embedding `canonical_next_action` does not look like findings drift.
@@ -1727,7 +1752,9 @@ fn mask_refusal_body(body: &str) -> String {
 }
 
 fn normalize_check_json_golden_document(value: &str) -> String {
-    split_compact_root_object_closer(&strip_canonical_next_action_member(value))
+    split_compact_root_object_closer(&strip_canonical_next_action_member(
+        &strip_language_completeness_member(value),
+    ))
 }
 
 /// Project the checkout's absolute path prefix to the machine-independent
@@ -3449,6 +3476,30 @@ mod tests {
             "{\"config_path\":\"<cwd>/fixtures/x/input/ripr.toml\"}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn normalize_json_strips_language_completeness_in_every_adapter_layout() {
+        let member = "{\"completeness\":\"complete\",\"languages\":[{\"findings\":0,\"language\":\"rust\",\"status\":\"complete_zero\"}],\"mode\":\"diff\",\"scope\":\"diff\",\"total_findings\":0}";
+        let bare = "{\n  \"findings\": []\n}\n";
+        // Last member of the generic renderer.
+        let last = format!("{{\n  \"findings\": [],\n  \"language_completeness\": {member}\n}}\n");
+        // Followed by the CLI adapter's canonical next action.
+        let with_action = format!(
+            "{{\n  \"findings\": [],\n  \"language_completeness\": {member},\n  \"canonical_next_action\": {{\"schema_version\":\"canonical_next_action.v1\"}}\n}}\n"
+        );
+        // Followed by an ordinary later member.
+        let middle = format!(
+            "{{\n  \"findings\": [],\n  \"language_completeness\": {member},\n  \"unanalyzed_working_tree\": false\n}}\n"
+        );
+        assert_eq!(normalize_check_json_golden_document(&last), bare);
+        assert_eq!(normalize_check_json_golden_document(&with_action), bare);
+        assert_eq!(
+            normalize_check_json_golden_document(&middle),
+            "{\n  \"findings\": [],\n  \"unanalyzed_working_tree\": false\n}\n"
+        );
+        // A document without the member is untouched.
+        assert_eq!(normalize_check_json_golden_document(bare), bare);
     }
 
     #[test]

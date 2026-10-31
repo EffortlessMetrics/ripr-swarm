@@ -1,0 +1,2 @@
+<!-- section: Added -->
+- `ripr check --json` emits an additive top-level `language_completeness` object projected from the shared language completeness view: `mode`, `scope`, `completeness`, `total_findings` and one `languages[]` row per dispatched language with its canonical `status` and `findings` count. A `complete_zero` run is now distinguishable from `no_current_scope` or a language with no row, which `language_runs` (successful rows omitted by design) and an empty `findings` array could not separate. No existing field changes and `schema_version` stays `0.2` (#11272).

@@ -1129,6 +1129,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -1262,6 +1263,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -1441,6 +1443,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -2331,6 +2334,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         }
     }
 
@@ -2471,6 +2475,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -2588,6 +2593,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         }
     }
 
@@ -2618,6 +2624,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -2684,6 +2691,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -2726,6 +2734,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);

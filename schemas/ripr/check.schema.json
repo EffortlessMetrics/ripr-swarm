@@ -43,6 +43,7 @@
       "type": "array",
       "items": { "$ref": "#/$defs/language_run" }
     },
+    "language_completeness": { "$ref": "#/$defs/language_completeness" },
     "analysis_scope": { "type": "object" },
     "run_limitations": {
       "type": "array",
@@ -534,6 +535,44 @@
         "value": { "type": "string", "minLength": 1 },
         "reason": { "type": "string", "minLength": 1 },
         "flow_sink": { "type": ["object", "null"] }
+      }
+    },
+    "language_completeness": {
+      "description": "Per-language completeness projected from the shared LanguageCompletenessView (#11272). Names every dispatched language with its canonical status, so a complete_zero run is distinguishable from a no_current_scope row or a language with no row (skipped, not selected or never dispatched). Absent when the producer built no aggregate; absence is not completion. Static analysis state only; no correctness or merge-readiness claim.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "scope", "completeness", "total_findings", "languages"],
+      "properties": {
+        "mode": { "enum": ["diff", "repo"] },
+        "scope": { "enum": ["diff", "worktree", "repo"] },
+        "completeness": { "enum": ["complete", "incomplete"] },
+        "total_findings": { "type": "integer", "minimum": 0 },
+        "languages": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/language_completeness_row" }
+        }
+      }
+    },
+    "language_completeness_row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["language", "status", "findings"],
+      "properties": {
+        "language": { "type": "string", "minLength": 1 },
+        "status": {
+          "enum": [
+            "complete",
+            "complete_zero",
+            "partial",
+            "unavailable",
+            "invalid",
+            "failed",
+            "unsupported",
+            "not_selected",
+            "no_current_scope"
+          ]
+        },
+        "findings": { "type": "integer", "minimum": 0 }
       }
     },
     "language_run": {

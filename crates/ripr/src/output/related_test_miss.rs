@@ -750,6 +750,7 @@ mod tests {
                 partial_scope: None,
                 unlinked_python_tests: None,
                 analyzed_revisions: None,
+                language_completeness: None,
             }
         }
 

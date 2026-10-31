@@ -1872,6 +1872,7 @@ fn happy_path_passes() {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         }
     }
 

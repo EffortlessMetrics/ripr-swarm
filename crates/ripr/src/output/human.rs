@@ -1400,6 +1400,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -1461,6 +1462,7 @@ mod tests {
                 head_commit: Some("1a2b3c4d5e6f".to_string()),
                 working_tree: false,
             }),
+            language_completeness: None,
         })
     }
 
@@ -1651,6 +1653,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
         let loaded = RiprConfig {
             source_path: Some(PathBuf::from("repo/ripr.toml")),
@@ -1697,6 +1700,7 @@ mod tests {
                 analysis_outcome: None,
                 partial_scope: None,
                 analyzed_revisions: None,
+                language_completeness: None,
             };
 
             let rendered = render_header_summary(&output, &RiprConfig::default(), false);
@@ -1729,6 +1733,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: true,
             analyzed_revisions: None,
+            language_completeness: None,
             untracked_working_tree_source_paths: vec![
                 "src/new.rs".to_string(),
                 "tests/new.rs".to_string(),
@@ -1783,6 +1788,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: true,
             analyzed_revisions: None,
+            language_completeness: None,
             untracked_working_tree_source_paths: vec!["src/\u{1b}[31mevil.rs".to_string()],
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
@@ -1822,6 +1828,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: true,
             analyzed_revisions: None,
+            language_completeness: None,
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
@@ -1862,6 +1869,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             analyzed_revisions: None,
+            language_completeness: None,
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: vec![
                 "crates/alpha/src/ignored_gen.rs".to_string(),
@@ -1911,6 +1919,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: true,
             analyzed_revisions: None,
+            language_completeness: None,
             untracked_working_tree_source_paths: vec!["src/new.rs".to_string()],
             ignored_working_tree_source_paths: vec!["src/ignored_gen.rs".to_string()],
             unlinked_python_tests: None,
@@ -1969,6 +1978,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -2036,6 +2046,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -2086,6 +2097,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -2185,6 +2197,7 @@ mod tests {
             analysis_outcome: Some(outcome),
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         })
     }
 
@@ -2457,6 +2470,7 @@ mod tests {
             analysis_outcome: Some(outcome),
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         })
     }
 
@@ -2533,6 +2547,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
         let config = crate::config::RiprConfig::default();
         let render_with = |uncommitted: Vec<String>| {
@@ -2688,6 +2703,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -2735,6 +2751,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
         let config = crate::config::RiprConfig::default();
         let routed = crate::app::FindingDrillIn::Commands(
@@ -3133,6 +3150,7 @@ mod tests {
                 analysis_outcome: None,
                 partial_scope: None,
                 analyzed_revisions: None,
+                language_completeness: None,
             };
             let rendered = render(&output);
             assert!(
@@ -3181,6 +3199,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -3229,6 +3248,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -3901,6 +3921,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -3949,6 +3970,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -4022,6 +4044,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -4077,6 +4100,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -4110,6 +4134,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -4283,6 +4308,7 @@ mod tests {
                 head_commit: Some("1a2b3c4d5e6f".to_string()),
                 working_tree: true,
             }),
+            language_completeness: None,
         }
     }
 
@@ -4470,6 +4496,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -5383,6 +5410,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         }
     }
 
@@ -5488,6 +5516,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -5537,6 +5566,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered =
@@ -5657,6 +5687,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered =
@@ -5730,6 +5761,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = unbound_repo_root(super::render_bounded_with_config_and_navigation(
@@ -5787,6 +5819,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = unbound_repo_root(super::render_full_with_config_and_navigation(
@@ -5862,6 +5895,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
         unbound_repo_root(super::render_full_with_config_and_navigation(
             &output,
@@ -5974,6 +6008,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -6025,6 +6060,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -6073,6 +6109,7 @@ mod tests {
                 partition_identity: "c".repeat(64),
             }),
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         for rendered in [
@@ -6164,6 +6201,7 @@ mod tests {
                 partition_identity: "c".repeat(64),
             }),
             analyzed_revisions: None,
+            language_completeness: None,
         }
     }
 
@@ -6276,6 +6314,7 @@ mod tests {
                 partition_identity: "c".repeat(64),
             }),
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered =
@@ -8395,6 +8434,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         }
     }
 
@@ -8563,6 +8603,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -8610,6 +8651,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -8661,6 +8703,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -8705,6 +8748,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -8747,6 +8791,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -8842,6 +8887,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -8919,6 +8965,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
         let rendered = render(&output);
         let _ = std::fs::remove_dir_all(&root);
@@ -8994,6 +9041,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -9050,6 +9098,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -9091,6 +9140,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -9134,6 +9184,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -9180,6 +9231,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -9231,6 +9283,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         }
     }
 
@@ -9385,6 +9438,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
         let flat = |output: &CheckOutput| {
             render(output)
@@ -9451,6 +9505,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -9509,6 +9564,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -9571,6 +9627,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         // The note wraps at the terminal width; compare its words.
@@ -9665,6 +9722,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -9712,6 +9770,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -9753,6 +9812,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -9791,6 +9851,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -9826,6 +9887,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -9866,6 +9928,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -9905,6 +9968,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -9955,6 +10019,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            language_completeness: None,
         };
 
         let rendered = render(&output);
@@ -10022,6 +10087,7 @@ mod tests {
                 analysis_outcome: None,
                 partial_scope: None,
                 analyzed_revisions: None,
+                language_completeness: None,
             })
         };
 

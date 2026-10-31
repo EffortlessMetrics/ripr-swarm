@@ -75,7 +75,54 @@ pub(crate) struct LanguageCompletenessView {
     pub(crate) public_runs: Vec<LanguageRun>,
 }
 
+/// One language row of the `check --json` `language_completeness` member.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LanguageCompletenessProjectionRow {
+    pub(crate) language: String,
+    pub(crate) status: &'static str,
+    pub(crate) findings: usize,
+}
+
+/// The additive `check --json` projection of [`LanguageCompletenessView`]
+/// (#11272). Derived from the view alone: a consumer can tell a language that
+/// ran to `complete_zero` from one that was skipped, not selected or never
+/// dispatched (no row), without inferring from absent `language_runs` rows.
+/// It restates canonical status strings and counts; it never decides gate
+/// policy and cannot strengthen a row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LanguageCompletenessProjection {
+    /// Analysis mode the aggregate binds: `diff` or `repo`.
+    pub(crate) mode: &'static str,
+    /// Run scope that produced the aggregate: `diff`, `worktree` or `repo`.
+    pub(crate) scope: &'static str,
+    /// Aggregate completeness: `complete` or `incomplete`.
+    pub(crate) completeness: &'static str,
+    pub(crate) total_findings: usize,
+    /// One row per canonical language label, in label order.
+    pub(crate) languages: Vec<LanguageCompletenessProjectionRow>,
+}
+
 impl LanguageCompletenessView {
+    /// Projects the view for the `check --json` envelope; `scope` is the run
+    /// scope label the caller executed (`diff`, `worktree` or `repo`).
+    pub(crate) fn project(&self, scope: &'static str) -> LanguageCompletenessProjection {
+        LanguageCompletenessProjection {
+            mode: self.mode.as_str(),
+            scope,
+            completeness: self.completeness.as_str(),
+            total_findings: self.total_findings,
+            languages: self
+                .rows
+                .iter()
+                .map(|row| LanguageCompletenessProjectionRow {
+                    language: row.label.clone(),
+                    status: row.status.as_str(),
+                    findings: row.findings,
+                })
+                .collect(),
+        }
+    }
+
     pub(crate) fn from_aggregate(aggregate: &LanguageAggregate) -> Self {
         let rows: Vec<LanguageCompletenessRow> = aggregate
             .outcomes
@@ -143,5 +190,64 @@ impl LanguageCompletenessView {
             ));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod projection_tests {
+    use super::*;
+
+    fn row(label: &str, status: LanguageOutcomeStatus, findings: usize) -> LanguageCompletenessRow {
+        LanguageCompletenessRow {
+            label: label.to_string(),
+            status,
+            findings,
+            limitations: Vec::new(),
+            disclosure: LanguageDisclosure::of(OutcomeMode::Diff, status),
+        }
+    }
+
+    fn view(rows: Vec<LanguageCompletenessRow>) -> LanguageCompletenessView {
+        LanguageCompletenessView {
+            mode: OutcomeMode::Diff,
+            completeness: DiffCompleteness::Complete,
+            total_findings: rows.iter().map(|row| row.findings).sum(),
+            rows,
+            public_runs: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn projection_restates_every_row_with_canonical_status_and_count() {
+        let projection = view(vec![
+            row("python", LanguageOutcomeStatus::NoCurrentScope, 0),
+            row("rust", LanguageOutcomeStatus::CompleteZero, 0),
+            row("typescript", LanguageOutcomeStatus::Complete, 2),
+        ])
+        .project("worktree");
+        assert_eq!(projection.mode, "diff");
+        assert_eq!(projection.scope, "worktree");
+        assert_eq!(projection.completeness, "complete");
+        assert_eq!(projection.total_findings, 2);
+        let rows: Vec<(&str, &str, usize)> = projection
+            .languages
+            .iter()
+            .map(|row| (row.language.as_str(), row.status, row.findings))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("python", "no_current_scope", 0),
+                ("rust", "complete_zero", 0),
+                ("typescript", "complete", 2),
+            ]
+        );
+    }
+
+    #[test]
+    fn projection_keeps_silent_rows_that_the_public_run_projection_drops() {
+        let view = view(vec![row("rust", LanguageOutcomeStatus::CompleteZero, 0)]);
+        assert!(view.public_runs.is_empty());
+        assert_eq!(view.project("diff").languages.len(), 1);
     }
 }

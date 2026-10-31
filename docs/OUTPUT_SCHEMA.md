@@ -2536,6 +2536,39 @@ JSON fields:
   wrapper binding while omitting both optional fields; its primary guidance
   remains the missing assertion.
 
+### `language_completeness` (top-level additive object, #11272)
+
+Added in schema `0.2` as an additive optional top-level object; it does not
+bump `schema_version` and changes no existing field. It is the `check --json`
+projection of the shared `LanguageCompletenessView` (#6475), derived from the
+canonical per-language outcomes (#6396, #6473) rather than inferred from
+absent rows. `language_runs` omits successful rows by design, so a
+`{"findings":[]}` document alone cannot separate a completed zero-result run
+from a skipped or never-dispatched language. This object can:
+
+```json
+"language_completeness": {"completeness":"complete","languages":[{"findings":0,"language":"rust","status":"complete_zero"}],"mode":"diff","scope":"diff","total_findings":0}
+```
+
+- `mode` — analysis mode the aggregate binds: `diff` or `repo`
+- `scope` — run scope that produced it: `diff`, `worktree` or `repo`
+- `completeness` — aggregate state: `complete` or `incomplete`
+- `total_findings` — sum of the per-language finding counts
+- `languages[]` — one row per canonical language label, in label order:
+  `language`, `status` (`complete`, `complete_zero`, `partial`,
+  `unavailable`, `invalid`, `failed`, `unsupported`, `not_selected` or
+  `no_current_scope`, the canonical `LanguageOutcomeStatus` spelling) and
+  `findings`
+
+A language with no row was not part of the aggregate for this run. The object
+is emitted as one compact line. It is absent when the producer built no
+aggregate (for example a seam-inventory stub); absence is never a completion
+claim. `no_current_scope` means the adapter ran but the diff held none of its
+language; it is not a `complete_zero` boundary result. The object states
+static analysis state only and carries no correctness, sufficiency or
+merge-readiness claim. It is not source or snapshot identity: it does not bind
+the run to a materialized source, diff or packet.
+
 ### `preview_languages` (top-level additive advisory, RIPR-SPEC-0082)
 
 Added in schema `0.2` as an additive optional top-level array. Emitted whenever
