@@ -666,22 +666,6 @@ pub(crate) fn export_facts_cached(
 /// the #10051 phase-two cache). Worker refusal or failure degrades to
 /// `None` (uncached, degrading every consumer to "no facts" exactly as
 /// before).
-/// AST probe shape for one line of `(path, source)`, served from the
-/// combined facts cache (#11250). Parse-error or unavailable facts return
-/// `None`, so the classifier keeps its line-text fallback.
-pub(crate) fn probe_shape_cached(
-    relative: &Path,
-    source: &str,
-    workspace_root: &Path,
-    alias_map: Option<&TsAliasMap>,
-    line: usize,
-) -> Option<super::probe_shape::TypeScriptProbeShape> {
-    file_facts_cached(relative, source, workspace_root, alias_map)
-        .ok()
-        .filter(|facts| facts.parse_error.is_none())
-        .and_then(|facts| facts.phase_two.probe_shape_for_line(line).cloned())
-}
-
 pub(crate) fn phase_two_facts_cached(
     relative: &Path,
     source: &str,
