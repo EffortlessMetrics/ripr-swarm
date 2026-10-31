@@ -17988,6 +17988,54 @@ fn analyze_diff_contains_a_parse_worker_panic_on_a_changed_file() -> Result<(), 
     Ok(())
 }
 
+/// An armed analysis must not affect another concurrent analysis using the
+/// same relative file path under a different workspace root.
+#[test]
+fn parse_worker_injection_is_scoped_to_the_arming_analysis() -> Result<(), String> {
+    let armed_root = ts_unique_tempdir("workerpanic-isolation-armed")?;
+    let other_root = ts_unique_tempdir("workerpanic-isolation-other")?;
+    for root in [&armed_root, &other_root] {
+        ts_write_file(
+            &root.join("src/isolation.ts"),
+            "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
+        )?;
+    }
+    let run = |root: PathBuf| {
+        TypeScriptAdapter.analyze_diff(
+            &ts_analysis_options(root),
+            &OraclePolicy::default(),
+            &[changed_with_lines(
+                "src/isolation.ts",
+                &[(2, "  return a + b;")],
+            )],
+        )
+    };
+    let armed = super::parse::injected_worker_panic::arm(Path::new("src/isolation.ts"), 0);
+    // The other analysis completes while the first analysis's injection remains armed.
+    let other = std::thread::spawn(move || run(other_root))
+        .join()
+        .map_err(|_panic| "other analysis panicked".to_string())??;
+    assert!(
+        other.limitations.is_empty(),
+        "unrelated analysis: {:?}",
+        other.limitations
+    );
+    let failed = run(armed_root)?;
+    assert!(
+        failed.limitations.iter().any(|limit| {
+            limit.path.as_deref() == Some("src/isolation.ts")
+                && limit
+                    .bounded_detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("parse_worker_failed"))
+        }),
+        "armed analysis must disclose worker failure: {:?}",
+        failed.limitations
+    );
+    drop(armed);
+    Ok(())
+}
+
 /// #11132: a worker failure while extracting an UNCHANGED test file used to
 /// serve an empty extraction with no disclosure, so the file's tests vanished
 /// from the index and an owner they cover read as a confident false
@@ -19965,6 +20013,7 @@ mod guard_entry_tests;
 mod infection_tests;
 mod instance_class_tests;
 mod instance_factory_tests;
+mod issue10925_alias_resolution_tests;
 mod issue10925_shadow_index_tests;
 mod issue10925_shadow_scan_tests;
 mod issue7507_shadow_tests;

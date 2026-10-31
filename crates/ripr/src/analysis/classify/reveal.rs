@@ -323,6 +323,7 @@ pub(in crate::analysis) struct RevealOutcome {
     /// Complete admitted assertion rows, before the display window drops any.
     /// This licenses only a named macro limitation, never oracle credit.
     pub(in crate::analysis) complete_proximity_oracles_only: bool,
+    pub(in crate::analysis) direct_rows: Vec<RelatedTest>,
     /// #6692: an assertion credited to this probe pinned the owner's
     /// return value through `ReturnOracleAdmission::owner_return_pin`
     /// after every reveal gate (name-only relations next to a
@@ -369,6 +370,7 @@ pub(in crate::analysis) fn reveal_outcome(
             related: Vec::new(),
             related_total: 0,
             complete_proximity_oracles_only: false,
+            direct_rows: Vec::new(),
             owner_pin_credited: false,
         };
     }
@@ -385,8 +387,8 @@ pub(in crate::analysis) fn reveal_outcome(
     );
     let complete_proximity_oracles_only = only_proximity_oracles(&analysis.related);
     let owner_calls = owner_call_demoted_rows(probe, related_tests);
-    let (related, related_tests_total) =
-        finalize_related_tests_with_owner_calls(analysis.related, diff_touched, &owner_calls);
+    let (related, related_tests_total, direct_rows) =
+        finalize_related_tests_with_direct_rows(analysis.related, diff_touched, &owner_calls);
     let observe = build_observe_evidence(analysis.matched_any, analysis.refused_context);
     let discriminate = if analysis.refused_context && !analysis.matched_any {
         StageEvidence::new(
@@ -438,6 +440,7 @@ pub(in crate::analysis) fn reveal_outcome(
         related,
         related_total: related_tests_total,
         complete_proximity_oracles_only,
+        direct_rows,
         owner_pin_credited: analysis.owner_pin_credited,
     }
 }
@@ -5235,11 +5238,22 @@ fn retain_owner_calling_rows(
     window.splice(at..at, lifted.into_iter().take(take));
 }
 
+#[cfg(test)]
 fn finalize_related_tests_with_owner_calls(
-    mut related: Vec<RelatedTest>,
+    related: Vec<RelatedTest>,
     diff_touched: Option<&super::DiffTouchedTests>,
     owner_calls: &std::collections::BTreeSet<OwnerCallKey>,
 ) -> (Vec<RelatedTest>, usize) {
+    let (rows, total, _) =
+        finalize_related_tests_with_direct_rows(related, diff_touched, owner_calls);
+    (rows, total)
+}
+
+fn finalize_related_tests_with_direct_rows(
+    mut related: Vec<RelatedTest>,
+    diff_touched: Option<&super::DiffTouchedTests>,
+    owner_calls: &std::collections::BTreeSet<OwnerCallKey>,
+) -> (Vec<RelatedTest>, usize, Vec<RelatedTest>) {
     related.sort_by(|a, b| {
         a.name
             .cmp(&b.name)
@@ -5280,6 +5294,14 @@ fn finalize_related_tests_with_owner_calls(
     // Same post-dedup row unit as before; retain the total separately without
     // exposing discarded rows to downstream evidence/target selection.
     let matched_total = oracle_rows.len() + unmatched.len();
+    let mut seen_direct = std::collections::BTreeSet::new();
+    let direct_rows = oracle_rows
+        .iter()
+        .chain(&unmatched)
+        .filter(|row| row.relation_reason == Some(RelationReason::DirectOwnerCall))
+        .filter(|row| seen_direct.insert((row.name.clone(), row.file.clone(), row.line)))
+        .cloned()
+        .collect();
     // JSON/human renderers cap at eight rows. When one test's assertions would
     // fill that window, unique tests go first (#4760). Under the cap, keep
     // per-assertion rows so existing goldens and #1728 witnesses stay intact.
@@ -5292,7 +5314,7 @@ fn finalize_related_tests_with_owner_calls(
     }
     let free = RELATED_TESTS_RENDER_CAP.saturating_sub(oracle_rows.len());
     oracle_rows.extend(unmatched.into_iter().take(free));
-    (oracle_rows, matched_total)
+    (oracle_rows, matched_total, direct_rows)
 }
 
 const RELATED_TESTS_RENDER_CAP: usize = 8;
