@@ -3,6 +3,15 @@
 ## Pending
 
 Reason:
+verify command renders in rooted Bash form on Linux CI for this fixture input root
+
+Updated:
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending
+
+Reason:
 pin Cluster A attribute changed-sink false-exposed: different receiver and value must not credit changed_sink_token
 
 Command:
