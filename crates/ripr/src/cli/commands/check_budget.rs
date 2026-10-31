@@ -121,10 +121,26 @@ where
             }
             Err(CoreError::analysis_timeout(timeout_detail(budget)))
         }
-        Err(mpsc::RecvTimeoutError::Disconnected) => Err(CoreError::message(
-            "check analysis stopped before producing a result",
+        // The worker dropped its sender without sending: it panicked (the
+        // panic hook already printed the message on stderr). No result exists,
+        // so this is a typed refusal, never a clean or partial result.
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(CoreError::analysis_worker_stopped(
+            worker_stopped_detail("ripr check", "narrow the diff or base range"),
         )),
     }
+}
+
+/// The refusal diagnostic for an analysis worker that stopped without a
+/// result, shared by `check` and `pilot`. `narrow` names the command's own
+/// way to reduce scope.
+pub(super) fn worker_stopped_detail(command: &str, narrow: &str) -> String {
+    format!(
+        "analysis_worker_stopped: the {command} analysis worker stopped before producing a \
+         result, most likely because it panicked (the panic message is printed above on stderr). \
+         No findings were produced, so this is not a clean result. \
+         Repair route: re-run; if it repeats, report it with the panic hook output \
+         (RUST_BACKTRACE=1 adds a backtrace) and {narrow} to isolate the input."
+    )
 }
 
 // Production calls the standard receiver directly. This test-only observer
@@ -319,6 +335,37 @@ mod tests {
         assert_eq!(refusal.identity, "analysis_timeout");
         assert_eq!(refusal.repair_route, "analysis/timeout");
         assert!(error.to_string().contains("not a clean result"));
+        Ok(())
+    }
+
+    #[test]
+    fn panicking_worker_refuses_with_the_typed_worker_stopped_failure() -> Result<(), String> {
+        // The worker unwinds before sending, so the channel disconnects (the
+        // production hook would print the panic message on stderr); the
+        // refusal must be typed and carry no result.
+        let result: Result<u32, _> = run_with_budget(
+            Some(Duration::from_secs(30)),
+            None,
+            || {},
+            || -> Result<u32, CoreError> {
+                std::panic::resume_unwind(Box::new("injected check worker fault (#11116)"))
+            },
+        );
+        let Err(error) = result else {
+            return Err("a dead worker must not yield a result".to_string());
+        };
+        assert_eq!(
+            error.check_failure_kind(),
+            Some(CheckFailureKind::AnalysisWorkerStopped)
+        );
+        let refusal = error.check_refusal();
+        assert_eq!(refusal.identity, "analysis_worker_stopped");
+        assert_eq!(refusal.repair_route, "analysis/worker-stopped");
+        let text = error.to_string();
+        for needle in ["panicked", "not a clean result", "re-run", "panic hook"] {
+            assert!(text.contains(needle), "missing {needle:?}: {text}");
+        }
+        assert!(!text.contains("injected check worker fault"));
         Ok(())
     }
 

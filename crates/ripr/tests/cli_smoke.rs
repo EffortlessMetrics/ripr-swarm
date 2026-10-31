@@ -3830,8 +3830,13 @@ fn assert_check_json_refusal(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let value: serde_json::Value = serde_json::from_str(&stdout)
         .map_err(|err| format!("refusal stdout should parse as JSON: {err}\n{stdout}"))?;
+    let expected_generation = if identity == "analysis_timeout" {
+        "0.3"
+    } else {
+        "0.2"
+    };
     for (pointer, expected) in [
-        ("/schema_version", "0.2"),
+        ("/schema_version", expected_generation),
         ("/tool", "ripr"),
         ("/analysis_scope/scope", "diff"),
         ("/analysis_scope/run_status", identity),
@@ -9653,6 +9658,140 @@ fn rerun_repair_receipt(root: &Path, out: bool) -> Result<Output, std::io::Error
     run_command(env!("CARGO_BIN_EXE_ripr"), Some(root), &args)
 }
 
+/// #11337: the after phase's stderr redirected into a file inside the repo
+/// (even under `target/ripr`) breaks the verdict binding it just recorded. The
+/// refusal names the after-phase route (the verdict is recorded, so a rerun
+/// reports `already finished` and only a new attempt recovers), and the rerun
+/// points at the restart command. The printed status and restart commands are
+/// run; the restart works once the test restores the pre-edit test content.
+#[test]
+fn agent_repair_after_phase_stderr_redirected_into_repo_names_new_attempt_route()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unbuilt_repair_fixture("agent-repair-after-redirect")?;
+    let outside = root.with_file_name(format!(
+        "{}-outside",
+        root.file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("fixture root has no name")?
+    ));
+    std::fs::create_dir_all(&outside)?;
+    // Drop-based cleanup runs when an assertion panics too.
+    let _cleanup = RemoveDirsOnDrop(vec![outside.clone(), root.clone()]);
+    after_phase_redirect_scenario(&root, &outside)
+}
+
+struct RemoveDirsOnDrop(Vec<PathBuf>);
+
+impl Drop for RemoveDirsOnDrop {
+    fn drop(&mut self) {
+        for dir in &self.0 {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+}
+
+fn after_phase_redirect_scenario(
+    root: &Path,
+    outside: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let root = root.to_path_buf();
+    assert_success(&run_repair_phase(
+        &root,
+        &["--seam-id", BOUNDARY_GAP_SEAM_ID],
+        "before",
+    )?);
+    let (attempt_id, _) = sole_repair_attempt(&root)?;
+    let test_file = root.join("tests/pricing.rs");
+    let pre_edit = std::fs::read_to_string(&test_file)?;
+    add_boundary_test(&root)?;
+    let edited = std::fs::read_to_string(&test_file)?;
+
+    let in_repo_err = root.join("target/ripr/cont.txt");
+    let after = run_repair_phase_redirected(
+        &root,
+        &["--attempt", &attempt_id],
+        "after",
+        &outside.join("out.json"),
+        &in_repo_err,
+    )?;
+    let refusal = std::fs::read_to_string(&in_repo_err)?;
+    assert_failure(&after);
+    assert!(
+        refusal.contains("repair attempt after verdict binding is tampered or stale")
+            && refusal.contains("the verdict is already recorded")
+            && refusal.contains("only a new attempt recovers it")
+            && refusal.contains("your repair edit is present")
+            && refusal.contains("check the copy is complete")
+            && refusal.contains("put your copy back")
+            && !refusal.contains("git stash"),
+        "{refusal}"
+    );
+    // Run the printed commands: the status command is bound to this root, and
+    // the restart refuses while the repair edit is present but works once the
+    // test restores the pre-edit test content (as the message tells the user).
+    // Build the argument vectors from the known root and seam instead of
+    // splitting the printed text (a quoted root may contain spaces), and
+    // check the message prints those commands with the rendered root.
+    let root_arg = root.display().to_string();
+    assert!(
+        refusal.contains(&format!("`ripr agent status --root {root_arg}"))
+            && refusal.contains(&format!("`ripr agent repair --root {root_arg}"))
+            && refusal.contains(&format!("--seam-id {BOUNDARY_GAP_SEAM_ID} --phase before`")),
+        "{refusal}"
+    );
+    let status_refs = ["agent", "status", "--root", root_arg.as_str()];
+    let status = run_command(env!("CARGO_BIN_EXE_ripr"), Some(outside), &status_refs)?;
+    assert_success(&status);
+    let status_text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&status.stdout),
+        String::from_utf8_lossy(&status.stderr)
+    );
+    assert!(
+        status_text.contains(&attempt_id) && status_text.contains("ready_to_finish"),
+        "status must report this attempt's state: {status_text}"
+    );
+    let restart_refs = [
+        "agent",
+        "repair",
+        "--root",
+        root_arg.as_str(),
+        "--seam-id",
+        BOUNDARY_GAP_SEAM_ID,
+        "--phase",
+        "before",
+    ];
+    let blocked = run_command(env!("CARGO_BIN_EXE_ripr"), Some(outside), &restart_refs)?;
+    assert_failure(&blocked);
+    let blocked_err = String::from_utf8_lossy(&blocked.stderr);
+    assert!(
+        blocked_err.contains("is configured off for strongly_gripped seams"),
+        "the blocked restart must say why: {blocked_err}"
+    );
+    // The printed guidance: restore the pre-edit test content, restart, then
+    // re-apply the edit. The test does this by writing the saved contents.
+    std::fs::write(&test_file, &pre_edit)?;
+    assert_success(&run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(outside),
+        &restart_refs,
+    )?);
+    std::fs::write(&test_file, &edited)?;
+
+    // Removing the file does not revive the attempt: the rerun reports it
+    // finished and names the restart command.
+    std::fs::remove_file(&in_repo_err)?;
+    let rerun = run_repair_phase(&root, &["--attempt", &attempt_id], "after")?;
+    assert_failure(&rerun);
+    let rerun_err = String::from_utf8_lossy(&rerun.stderr);
+    assert!(
+        rerun_err.contains("already finished") && rerun_err.contains(" --phase before`"),
+        "{rerun_err}"
+    );
+
+    Ok(())
+}
+
 const INCLUDE_RECEIPT_LINE: &str = "ripr: next: Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review.";
 
 /// F15-1/F15-3: the printed loop on a library crate that does not commit
@@ -9757,6 +9896,26 @@ fn agent_repair_admits_a_cargo_lock_first_generated_between_the_phases()
             .contains("repair attempt after verdict binding is tampered or stale"),
         "{}",
         String::from_utf8_lossy(&moved.stderr)
+    );
+    // The refusal names what is known and both routes out, including the
+    // full restart command.
+    let moved_stderr = String::from_utf8_lossy(&moved.stderr);
+    assert!(
+        moved_stderr.contains("the recorded binding no longer matches the attempt")
+            && moved_stderr.contains("`ripr agent status --root ")
+            && moved_stderr.contains("remove the stray file or the later edit (keep a copy first")
+            && moved_stderr.contains("Write command output outside the repository.")
+            && moved_stderr.contains("Restore each file's pre-edit content yourself")
+            && moved_stderr.contains("git restore --staged <file>")
+            && !moved_stderr.contains("git stash")
+            && moved_stderr.contains("`ripr agent repair --root ")
+            && moved_stderr.contains(" --seam-id ")
+            && moved_stderr.contains(" --phase before`"),
+        "{moved_stderr}"
+    );
+    assert!(
+        !moved_stderr.contains("usual cause"),
+        "no unsupported cause claim: {moved_stderr}"
     );
     std::fs::remove_file(root.join("notes.txt"))?;
     assert_success(&rerun_repair_receipt(&root, true)?);
@@ -19960,7 +20119,7 @@ fn check_python_finding_with_repair_card_points_at_the_card() -> Result<(), Stri
     )?;
     assert_eq!(
         line,
-        "  Safe next action: preview-language evidence is advisory; apply the next step below to the suggested test and run its verify command before relying on it"
+        "  Safe next action: preview-language evidence is advisory. Recommended: start the repair with the `ripr agent repair` command under Next; alternative, by hand: apply the next step below to the suggested test and run its verify command before relying on it"
     );
     Ok(())
 }
