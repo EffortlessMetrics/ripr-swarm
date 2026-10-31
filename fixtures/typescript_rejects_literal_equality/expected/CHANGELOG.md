@@ -335,3 +335,16 @@ Updated:
 - `expected/check.json`
 - `expected/human-full.txt`
 - `expected/human.txt`
+
+## Pending — typescript_rejects_literal_equality (26)
+
+Reason:
+RIPR-SPEC-0108 re-bless human.txt to current main human-renderer wording after merging main into #10221; formatting only, no verdict change
+
+Command:
+`cargo xtask goldens bless typescript_rejects_literal_equality --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

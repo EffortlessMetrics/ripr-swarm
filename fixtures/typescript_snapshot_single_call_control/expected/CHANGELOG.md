@@ -183,3 +183,16 @@ Updated:
 - `expected/check.json`
 - `expected/human-full.txt`
 - `expected/human.txt`
+
+## Pending — typescript_snapshot_single_call_control (15)
+
+Reason:
+RIPR-SPEC-0108 re-bless human.txt to current main human-renderer wording after merging main into #10221; formatting only, no verdict change
+
+Command:
+`cargo xtask goldens bless typescript_snapshot_single_call_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

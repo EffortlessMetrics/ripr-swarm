@@ -35,3 +35,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_boundary_local_constant_credit (4)
+
+Reason:
+RIPR-SPEC-0108 re-bless human.txt to current main human-renderer wording after merging main into #10221; formatting only, no verdict change
+
+Command:
+`cargo xtask goldens bless ts_boundary_local_constant_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

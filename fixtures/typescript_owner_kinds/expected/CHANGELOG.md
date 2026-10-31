@@ -817,3 +817,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_owner_kinds (36)
+
+Reason:
+RIPR-SPEC-0108 re-bless human.txt to current main human-renderer wording after merging main into #10221; formatting only, no verdict change
+
+Command:
+`cargo xtask goldens bless typescript_owner_kinds --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

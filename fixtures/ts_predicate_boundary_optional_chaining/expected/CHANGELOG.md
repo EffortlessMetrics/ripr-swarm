@@ -425,3 +425,16 @@ Updated:
 - `expected/check.json`
 - `expected/human-full.txt`
 - `expected/human.txt`
+
+## Pending — ts_predicate_boundary_optional_chaining (31)
+
+Reason:
+RIPR-SPEC-0108 re-bless human.txt to current main human-renderer wording after merging main into #10221; formatting only, no verdict change
+
+Command:
+`cargo xtask goldens bless ts_predicate_boundary_optional_chaining --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
