@@ -488,22 +488,30 @@ pub(crate) fn eligible_json_root(root: &Path) -> bool {
     eligible_root(root, "serde_json")
 }
 
+/// Pure manifest parse behind [`eligible_json_root`]; callers own the read.
+pub(super) fn eligible_json_manifest_bytes(bytes: &[u8]) -> bool {
+    eligible_manifest_bytes(bytes, "serde_json")
+}
+
 fn eligible_root(root: &Path, crate_name: &str) -> bool {
     read_optional(&root.join("Cargo.toml"))
         .flatten()
-        .and_then(|b| parse(&b))
-        .is_some_and(|manifest| {
-            ["dependencies", "dev-dependencies", "workspace"]
-                .iter()
-                .any(|key| {
-                    let table = if *key == "workspace" {
-                        manifest.get(key).and_then(|w| w.get("dependencies"))
-                    } else {
-                        manifest.get(key)
-                    };
-                    table.and_then(|t| t.get(crate_name)).is_some()
-                })
-        })
+        .is_some_and(|b| eligible_manifest_bytes(&b, crate_name))
+}
+
+fn eligible_manifest_bytes(bytes: &[u8], crate_name: &str) -> bool {
+    parse(bytes).is_some_and(|manifest| {
+        ["dependencies", "dev-dependencies", "workspace"]
+            .iter()
+            .any(|key| {
+                let table = if *key == "workspace" {
+                    manifest.get(key).and_then(|w| w.get("dependencies"))
+                } else {
+                    manifest.get(key)
+                };
+                table.and_then(|t| t.get(crate_name)).is_some()
+            })
+    })
 }
 
 pub(super) fn json_manifest_digests(
