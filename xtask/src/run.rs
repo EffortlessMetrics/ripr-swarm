@@ -1302,7 +1302,7 @@ pub(crate) fn poll_interval(sample_rss: bool) -> Duration {
 
 /// Peak resident set size of a live process from `/proc/<pid>/status`
 /// (`VmHWM`, reported in kB). `None` off Linux or once the process is gone.
-fn proc_peak_rss_bytes(pid: u32) -> Option<u64> {
+pub(crate) fn proc_peak_rss_bytes(pid: u32) -> Option<u64> {
     if !cfg!(target_os = "linux") {
         return None;
     }
