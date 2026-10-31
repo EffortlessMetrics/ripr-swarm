@@ -510,3 +510,43 @@ fn a_hop_local_binding_named_like_the_callee_is_not_the_hop() -> Result<(), Stri
     assert_both("shadowing closure binding", got, "same_test_file");
     Ok(())
 }
+
+const FUTURE_INHERENT_OWNER: &str = "pub struct Meter {\n    limit: u32,\n}\nimpl Meter {\n    fn over(&self, qty: u32) -> impl std::future::Future<Output = bool> {\n        async move { qty >= self.limit }\n    }\n}\n";
+const FUTURE_FREE_OWNER: &str = "pub struct Meter {\n    limit: u32,\n}\nimpl Meter {}\nfn over(qty: u32) -> impl std::future::Future<Output = bool> {\n    async move { qty >= 10 }\n}\n// free owner above\n";
+
+#[test]
+fn a_plain_fn_owner_returning_a_future_must_be_driven_by_the_lowest_hop() -> Result<(), String> {
+    let test = "        assert_eq!(load(10).await, true);";
+    let relations = |inherent_hop: &str, free_hop: &str| -> Result<_, String> {
+        let inherent = predicate_finding_of(
+            &source_in(
+                FUTURE_INHERENT_OWNER,
+                inherent_hop,
+                test,
+                Harness::AsyncTest,
+            ),
+            DIFF,
+        )?;
+        let free = predicate_finding_of(
+            &source_in(FUTURE_FREE_OWNER, free_hop, test, Harness::AsyncTest),
+            FREE_DIFF,
+        )?;
+        Ok((
+            relation_of(&inherent, "subject").map(str::to_string),
+            relation_of(&free, "subject").map(str::to_string),
+        ))
+    };
+    // Awaited: the owner's `async move` block runs.
+    let got = relations(
+        "async fn load(qty: u32) -> bool {\n    Meter { limit: 10 }.over(qty).await\n}\n",
+        "async fn load(qty: u32) -> bool {\n    over(qty).await\n}\n",
+    )?;
+    assert_both("plain fn future awaited", got, "helper_owner_call");
+    // Dropped: `over` is a plain `fn`, but its changed line only runs when polled.
+    let got = relations(
+        "async fn load(qty: u32) -> bool {\n    let _ = Meter { limit: 10 }.over(qty);\n    true\n}\n",
+        "async fn load(qty: u32) -> bool {\n    let _ = over(qty);\n    true\n}\n",
+    )?;
+    assert_both("plain fn future dropped", got, "same_test_file");
+    Ok(())
+}

@@ -21,6 +21,14 @@
 //! `.await` its callee. A declaration that cannot be read as either `async` or
 //! synchronous, a call that is held in a binding, spawned, joined or passed on,
 //! and any same-named call the test leaves unpolled all fail closed.
+//!
+//! An owner that may return a future is driven like an `async fn` owner: the
+//! lowest hop must `.await` its call. That is an `async fn`, an unreadable
+//! declaration, and a plain `fn` whose return type names `Future` or `Pin` or
+//! whose body holds an `async` block or closure (`fn f() -> impl Future { async
+//! move { .. } }` runs its changed line only when polled). A return type behind
+//! a type alias is not seen. The hop-side shadow guard is name-based: it sees
+//! local bindings and nested `fn`s, not `use` imports.
 
 use super::helper_transfer::HelperChain;
 use super::owner_pin::{OwnerPinSyntax, function_declaration_is_async};
@@ -196,16 +204,39 @@ fn polled_entry(
     entry
 }
 
-/// An `async fn` owner is a future too: the lowest hop must drive its call
-/// into the owner, or the owner body never runs. A declaration that cannot be
-/// read fails closed like an `async` one. A synchronous owner needs nothing.
+/// An owner whose call yields a future runs its body only when polled: the
+/// lowest hop must drive its call into the owner. That covers an `async fn`,
+/// an unreadable declaration (fail closed), and a plain `fn` that may return a
+/// future: a return type naming `Future`/`Pin`, or a body holding an `async`
+/// block or a closure. Only a plain `fn` that is clearly not future-shaped
+/// needs nothing. A return type hidden behind a type alias is not seen.
 fn owner_call_is_driven(chain: &HelperChain, owner: &FunctionSummary, index: &RustIndex) -> bool {
-    match function_declaration_is_async(owner, index) {
-        Some(false) => true,
-        Some(true) | None => chain.hops.first().is_some_and(|lowest| {
-            hop_call_sites(&lowest.caller, &owner.name, index) == Sites::Polled
-        }),
+    if function_declaration_is_async(owner, index) == Some(false)
+        && !owner_may_return_future(owner, index)
+    {
+        return true;
     }
+    chain
+        .hops
+        .first()
+        .is_some_and(|lowest| hop_call_sites(&lowest.caller, &owner.name, index) == Sites::Polled)
+}
+
+fn owner_may_return_future(owner: &FunctionSummary, index: &RustIndex) -> bool {
+    let Some(declaration) = index
+        .source_syntax
+        .get(index, &owner.file)
+        .and_then(|snapshot| snapshot.declaration(owner))
+    else {
+        return true;
+    };
+    declaration.ret_type().is_some_and(|ret| {
+        let text = ret.syntax().text().to_string();
+        text.contains("Future") || text.contains("Pin")
+    }) || declaration.syntax().descendants().any(|node| {
+        ast::ClosureExpr::can_cast(node.kind())
+            || ast::BlockExpr::cast(node).is_some_and(|block| block.async_token().is_some())
+    })
 }
 
 /// Every async hop from the first non-synchronous one up to the entry has its
