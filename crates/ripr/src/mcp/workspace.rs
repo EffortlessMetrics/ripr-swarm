@@ -1794,7 +1794,7 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
         "claim_boundary": "One bounded static analysis attempt over the workspace diff. The server never edits source, executes verification or mutation commands, or loads project-local provider configuration.",
         "limitations": [
             "an attempt runs to a terminal state; MCP cancellation of the request does not roll back a running attempt and never manufactures a snapshot",
-            "a cancelled refresh attempt still commits as a completed snapshot when it finishes; only transport teardown abandons an attempt before it commits (#5254 item 2)",
+            "a cancelled refresh attempt still commits as a completed snapshot when it finishes; only transport teardown abandons an attempt before it commits",
         ],
     });
     // Top-level currentness so an agent need not parse `scope`: `true` only
@@ -4546,6 +4546,19 @@ mod tests {
             return Err(format!("false never-committed claim remained: {text}"));
         }
         Ok(())
+    }
+
+    #[test]
+    fn refresh_limitations_contain_no_internal_issue_references() -> Result<(), String> {
+        use crate::mcp::agent_facing_text_tests::assert_agent_text_has_no_internal_issue_or_adr_references;
+        let session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+        let document = refresh_document(&session);
+        let limitations = document
+            .pointer("/limitations")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "refresh document lost its limitations".to_string())?;
+        let text = serde_json::to_string(limitations).map_err(|error| error.to_string())?;
+        assert_agent_text_has_no_internal_issue_or_adr_references(&text)
     }
 
     #[test]
