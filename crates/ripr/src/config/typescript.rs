@@ -119,9 +119,9 @@ pub(crate) fn is_detectable_generated_typescript_path(path: &Path) -> bool {
 }
 
 /// Root project-marker files that select the TypeScript preview adapter when
-/// no `ripr.toml` exists. `package.json` is deliberately not a marker: Rust
-/// and Python repositories routinely carry one for docs or tooling, and it
-/// does not say the repository's own tests run under a TS/JS runner.
+/// no `ripr.toml` exists. A `package.json` alone is not a marker: it
+/// can describe tooling in another language's repository. A package combined
+/// with an adapter-recognized test path is handled separately below.
 ///
 /// The detection surface (this constant through
 /// `dir_contains_typescript_source` below) compiles only with the adapter or
@@ -135,10 +135,68 @@ pub(crate) const TYPESCRIPT_PROJECT_MARKERS: &[&str] = &["tsconfig.json", "jscon
 pub(crate) const TYPESCRIPT_SOURCE_DIR_MARKERS: &[&str] = &["src", "tests"];
 
 /// No-config project detection, mirroring `detect_python_project`: a root
-/// marker file, or detectable TypeScript source below root `src`/`tests`.
+/// marker file, detectable TypeScript source, or a package with a test path.
 #[cfg(any(feature = "lang-typescript", test))]
 pub(crate) fn detect_typescript_project(root: &Path) -> bool {
-    detect_typescript_package_root(root, false) || detect_nested_typescript_package(root)
+    detect_typescript_package_root(root, false)
+        || detect_nested_typescript_package(root)
+        || detect_package_test_files(root)
+}
+
+/// A package alone can describe tooling; require an analyzable test path too.
+#[cfg(feature = "lang-typescript")]
+pub(crate) fn detect_package_test_files(root: &Path) -> bool {
+    root.join("package.json").is_file() && contains_package_test_file(root, root)
+}
+
+#[cfg(all(test, not(feature = "lang-typescript")))]
+fn detect_package_test_files(_root: &Path) -> bool {
+    false
+}
+
+#[cfg(feature = "lang-typescript")]
+fn contains_package_test_file(root: &Path, dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if kind.is_dir() && !name.starts_with('.') && !is_typescript_excluded_dir_everywhere(name) {
+            if contains_package_test_file(root, &path) {
+                return true;
+            }
+        } else if kind.is_file()
+            && path
+                .strip_prefix(root)
+                .is_ok_and(is_detectable_package_test_path)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Classify created and deleted paths alike for filesystem notifications.
+#[cfg(feature = "lang-typescript")]
+pub(crate) fn is_detectable_package_test_path(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    path.parent().is_some_and(|parent| {
+        parent.components().all(|component| {
+            component.as_os_str().to_str().is_some_and(|name| {
+                !name.starts_with('.') && !is_typescript_excluded_dir_everywhere(name)
+            })
+        })
+    }) && !is_detectable_generated_typescript_name(name)
+        && !is_typescript_declaration_name(name)
+        && crate::analysis::language::is_test_file(path)
 }
 
 #[cfg(any(feature = "lang-typescript", test))]
@@ -422,6 +480,29 @@ mod tests {
             std::fs::remove_file(root.join(&file)).map_err(|err| err.to_string())?;
             assert!(!detect_typescript_project(&root), "removed {extension}");
         }
+        std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
+    }
+
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn package_requires_a_real_test_file_and_tracks_removal() -> Result<(), String> {
+        let root = detection_root("package-test")?;
+        write(&root, "test.js")?;
+        assert!(!detect_typescript_project(&root), "no package marker");
+        write(&root, "package.json")?;
+        assert!(detect_typescript_project(&root), "root test.js");
+        std::fs::remove_file(root.join("test.js")).map_err(|err| err.to_string())?;
+        write(&root, "node_modules/pkg/test.js")?;
+        write(&root, ".hidden/test.js")?;
+        write(&root, "bundle.test.min.js")?;
+        assert!(
+            !detect_typescript_project(&root),
+            "excluded files and package alone"
+        );
+        write(&root, "test/cart.spec.mjs")?;
+        assert!(detect_typescript_project(&root), "nested test");
+        std::fs::remove_file(root.join("package.json")).map_err(|err| err.to_string())?;
+        assert!(!detect_typescript_project(&root), "removed package marker");
         std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
     }
 

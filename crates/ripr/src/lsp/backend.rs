@@ -4322,6 +4322,18 @@ fn workspace_input_kind(root: &Path, path: &Path) -> Option<WorkspaceInputKind> 
     {
         return Some(WorkspaceInputKind::PythonProjectMarker);
     }
+    if cfg!(feature = "lang-typescript")
+        && name == "package.json"
+        && path_matches_root_file(root, path, "package.json")
+    {
+        return Some(WorkspaceInputKind::TypescriptProjectMarker);
+    }
+    if path
+        .strip_prefix(root)
+        .is_ok_and(crate::config::is_detectable_package_test_path)
+    {
+        return Some(WorkspaceInputKind::TypescriptSourcePresence);
+    }
     if let Some(marker) = typescript_project_marker_name(name)
         && path_matches_root_file(root, path, marker)
     {
@@ -4464,6 +4476,7 @@ pub(super) fn workspace_input_path_is_relevant(root: &Path, path: &Path) -> bool
 fn workspace_input_watchers() -> Vec<LSPAny> {
     std::iter::once(CONFIG_FILE_NAME)
         .chain(["Cargo.toml", "Cargo.lock"])
+        .chain(cfg!(feature = "lang-typescript").then_some("package.json"))
         .chain(PYTHON_PROJECT_MARKERS.iter().copied())
         .chain(TYPESCRIPT_PROJECT_MARKERS.iter().copied())
         .map(|name| serde_json::json!({"globPattern": format!("**/{name}")}))
@@ -4480,6 +4493,11 @@ fn workspace_input_watchers() -> Vec<LSPAny> {
             // Same root-scoped shape for the TypeScript detection extensions.
             serde_json::json!({"globPattern": format!("{dir}/**/*.{{ts,tsx,mts,cts}}")})
         }))
+        .chain(
+            cfg!(feature = "lang-typescript").then_some(
+                serde_json::json!({"globPattern": "**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"}),
+            ),
+        )
         .collect()
 }
 
@@ -4663,7 +4681,8 @@ mod workspace_input_tests {
         assert!(WorkspaceInputKind::CargoGraph.invalidates_workspace_graph());
         assert_eq!(
             workspace_input_kind(&root, &root.join("package.json")),
-            None
+            cfg!(feature = "lang-typescript")
+                .then_some(WorkspaceInputKind::TypescriptProjectMarker)
         );
         Ok(())
     }
@@ -4751,6 +4770,30 @@ mod workspace_input_tests {
         Ok(())
     }
 
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn package_test_file_events_invalidate_config() {
+        let root = std::env::temp_dir().join("ripr-package-input-root");
+        for path in ["test.js", "test/unit.spec.mjs"] {
+            assert_eq!(
+                workspace_input_kind(&root, &root.join(path)),
+                Some(WorkspaceInputKind::TypescriptSourcePresence)
+            );
+        }
+        for path in [
+            "src/app.js",
+            "node_modules/pkg/test.js",
+            ".hidden/test.js",
+            "bundle.test.min.js",
+        ] {
+            assert_eq!(
+                workspace_input_kind(&root, &root.join(path)),
+                None,
+                "{path}"
+            );
+        }
+    }
+
     #[test]
     fn root_relative_components_follow_explicit_host_case_rule() {
         let root = Path::new("/Work/Repo");
@@ -4779,6 +4822,7 @@ mod workspace_input_tests {
             .collect::<BTreeSet<_>>();
         let expected = std::iter::once(CONFIG_FILE_NAME)
             .chain(["Cargo.toml", "Cargo.lock"])
+            .chain(cfg!(feature = "lang-typescript").then_some("package.json"))
             .chain(PYTHON_PROJECT_MARKERS.iter().copied())
             .chain(TYPESCRIPT_PROJECT_MARKERS.iter().copied())
             .map(|name| format!("**/{name}"))
@@ -4791,6 +4835,10 @@ mod workspace_input_tests {
                 TYPESCRIPT_SOURCE_DIR_MARKERS
                     .iter()
                     .map(|dir| format!("{dir}/**/*.{{ts,tsx,mts,cts}}")),
+            )
+            .chain(
+                cfg!(feature = "lang-typescript")
+                    .then_some("**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}".to_string()),
             )
             .collect::<BTreeSet<_>>();
 

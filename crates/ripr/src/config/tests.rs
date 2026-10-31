@@ -2886,6 +2886,29 @@ fn missing_config_detects_typescript_markers_and_source() -> Result<(), String> 
 
 #[cfg(feature = "lang-typescript")]
 #[test]
+fn missing_config_selects_javascript_package_tests() -> Result<(), String> {
+    let root = temp_root("js-package-test")?;
+    write_file(&root.join("package.json"), "{}")?;
+    assert_eq!(
+        load_for_root(&root)?.languages().enabled_owned(),
+        vec![LanguageId::Rust]
+    );
+    write_file(&root.join("test.js"), "test('example', () => {});\n")?;
+    assert_eq!(
+        load_for_root(&root)?.languages().enabled_owned(),
+        vec![LanguageId::Rust, LanguageId::TypeScript]
+    );
+    fs::remove_file(root.join("test.js")).map_err(|err| err.to_string())?;
+    assert_eq!(
+        load_for_root(&root)?.languages().enabled_owned(),
+        vec![LanguageId::Rust]
+    );
+    let _ = fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
 fn missing_config_detects_typescript_one_level_below_root_and_under_workspace_containers()
 -> Result<(), String> {
     // (label, file that makes the package) per layout.

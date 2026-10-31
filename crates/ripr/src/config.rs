@@ -56,10 +56,10 @@ pub(crate) use toolchain_file::{repository_toolchain_path_pin, toolchain_path_pi
 #[cfg(feature = "lang-typescript")]
 pub(crate) use typescript::{
     TYPESCRIPT_PROJECT_MARKERS, TYPESCRIPT_SOURCE_DIR_MARKERS,
-    declared_typescript_handwritten_under, detect_typescript_project,
-    is_detectable_typescript_source_name, is_typescript_dir_pruned_from_discovery,
-    source_dir_contains_detectable_typescript, typescript_project_marker_name,
-    typescript_source_dir_marker_name,
+    declared_typescript_handwritten_under, detect_package_test_files, detect_typescript_project,
+    is_detectable_package_test_path, is_detectable_typescript_source_name,
+    is_typescript_dir_pruned_from_discovery, source_dir_contains_detectable_typescript,
+    typescript_project_marker_name, typescript_source_dir_marker_name,
 };
 // Admission/exclusion predicates for the diff-scope guard and the adapters:
 // real in every lane, like the Python authorities above, so an adapter's
@@ -79,6 +79,13 @@ mod typescript_absent {
 
     pub(crate) const TYPESCRIPT_PROJECT_MARKERS: &[&str] = &[];
     pub(crate) const TYPESCRIPT_SOURCE_DIR_MARKERS: &[&str] = &[];
+
+    pub(crate) fn detect_package_test_files(_root: &Path) -> bool {
+        false
+    }
+    pub(crate) fn is_detectable_package_test_path(_path: &Path) -> bool {
+        false
+    }
 
     pub(crate) fn detect_typescript_project(_root: &Path) -> bool {
         false
@@ -102,7 +109,8 @@ mod typescript_absent {
 }
 #[cfg(not(feature = "lang-typescript"))]
 pub(crate) use typescript_absent::{
-    TYPESCRIPT_PROJECT_MARKERS, TYPESCRIPT_SOURCE_DIR_MARKERS, detect_typescript_project,
+    TYPESCRIPT_PROJECT_MARKERS, TYPESCRIPT_SOURCE_DIR_MARKERS, detect_package_test_files,
+    detect_typescript_project, is_detectable_package_test_path,
     is_detectable_typescript_source_name, source_dir_contains_detectable_typescript,
     typescript_project_marker_name, typescript_source_dir_marker_name,
 };

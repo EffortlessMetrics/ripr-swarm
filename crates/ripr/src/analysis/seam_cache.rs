@@ -4669,6 +4669,7 @@ fn hash_workspace_manifests(root: &Path) -> String {
         .copied()
         .filter(|dir| source_dir_contains_detectable_python(root, dir))
         .collect();
+    let package_tests = crate::config::detect_package_test_files(root);
     let present_typescript_markers: Vec<&str> = TYPESCRIPT_PROJECT_MARKERS
         .iter()
         .copied()
@@ -4681,6 +4682,7 @@ fn hash_workspace_manifests(root: &Path) -> String {
         .collect();
     if present_python_markers.is_empty()
         && detectable_source_dirs.is_empty()
+        && !package_tests
         && present_typescript_markers.is_empty()
         && detectable_typescript_dirs.is_empty()
     {
@@ -4697,6 +4699,9 @@ fn hash_workspace_manifests(root: &Path) -> String {
         identity.push_str("python_source_dir=");
         identity.push_str(dir);
         identity.push('\n');
+    }
+    if package_tests {
+        identity.push_str("typescript_package_tests=true\n");
     }
     for marker in present_typescript_markers {
         identity.push_str("typescript_marker=");
@@ -7537,6 +7542,30 @@ mod tests {
             cache_key().workspace_manifests_hash
         );
 
+        ignore_remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn package_test_presence_changes_cache_identity() -> Result<(), String> {
+        let root = isolated_dir("package-test-inputs");
+        ignore_remove_dir_all(&root);
+        std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+        let identity = || hash_workspace_manifests(&root);
+        let baseline = identity();
+        std::fs::write(root.join("test.js"), "test").map_err(|err| err.to_string())?;
+        assert_eq!(identity(), baseline);
+        std::fs::write(root.join("package.json"), "{}").map_err(|err| err.to_string())?;
+        let present = identity();
+        assert_ne!(present, baseline);
+        std::fs::write(root.join("test.js"), "changed").map_err(|err| err.to_string())?;
+        assert_eq!(identity(), present);
+        std::fs::remove_file(root.join("test.js")).map_err(|err| err.to_string())?;
+        assert_eq!(identity(), baseline);
+        std::fs::write(root.join("test.js"), "test").map_err(|err| err.to_string())?;
+        std::fs::remove_file(root.join("package.json")).map_err(|err| err.to_string())?;
+        assert_eq!(identity(), baseline);
         ignore_remove_dir_all(&root);
         Ok(())
     }
