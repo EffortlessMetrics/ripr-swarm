@@ -195,6 +195,11 @@ impl McpServer {
         arguments: Option<serde_json::Map<String, Value>>,
         max_envelope_bytes: usize,
     ) -> Result<CallToolResponse, ErrorData> {
+        #[cfg(test)]
+        super::panic_containment::injected_tool_panic::fire(
+            self.analysis_root.as_deref(),
+            protocol::LIST_GAPS_TOOL_NAME,
+        );
         reject_unknown_arguments(
             &arguments,
             &[
@@ -502,6 +507,114 @@ impl McpServer {
                 max_envelope_bytes,
             ),
             Err(failure) => self.typed_failure(failure, repair_card::REPAIR_CARD_SCHEMA_VERSION),
+        }
+    }
+
+    /// Runs one tool call with panic containment (#11116). A panic in a
+    /// non-refresh handler becomes a typed `analysis_failed` tool failure that
+    /// names the tool and the next step; the session keeps serving.
+    /// `ripr_refresh` contains adapter panics at the analysis boundary
+    /// (#11132) and an unknown tool never reaches a handler.
+    async fn call_tool_contained(
+        &self,
+        request: CallToolRequestParams,
+        max_envelope_bytes: usize,
+    ) -> Result<CallToolResponse, ErrorData> {
+        let name = request.name.to_string();
+        let Some(schema_version) = contained_tool_schema_version(&name) else {
+            return self.dispatch_tool(request, max_envelope_bytes).await;
+        };
+        match super::panic_containment::ContainPanic::new(
+            self.dispatch_tool(request, max_envelope_bytes),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(super::panic_containment::Panicked) => {
+                let failure = workspace::AttemptFailure::new(
+                    workspace::CODE_ANALYSIS_FAILED,
+                    format!(
+                        "ripr hit an internal error while running `{name}` and contained it; the server is still running"
+                    ),
+                    format!(
+                        "retry `{name}`; if it repeats, call ripr_refresh and retry, or restart `ripr mcp` and report the stderr panic message as a bug"
+                    ),
+                );
+                self.typed_failure(failure, schema_version)
+            }
+        }
+    }
+
+    async fn dispatch_tool(
+        &self,
+        request: CallToolRequestParams,
+        max_envelope_bytes: usize,
+    ) -> Result<CallToolResponse, ErrorData> {
+        match request.name.as_ref() {
+            protocol::STATUS_TOOL_NAME => {
+                if request
+                    .arguments
+                    .as_ref()
+                    .is_some_and(|arguments| !arguments.is_empty())
+                {
+                    return Err(ErrorData::invalid_params(
+                        "ripr_workspace_status does not accept arguments",
+                        Some(serde_json::json!({ "allowed": [] })),
+                    ));
+                }
+                self.status_tool(max_envelope_bytes).await
+            }
+            protocol::REFRESH_TOOL_NAME => {
+                self.refresh_tool(request.arguments, max_envelope_bytes)
+                    .await
+            }
+            protocol::LIST_GAPS_TOOL_NAME => {
+                self.list_gaps_tool(request.arguments, max_envelope_bytes)
+                    .await
+            }
+            protocol::GET_GAP_TOOL_NAME => {
+                self.get_gap_tool(request.arguments, max_envelope_bytes)
+                    .await
+            }
+            protocol::PREPARE_REPAIR_TOOL_NAME => {
+                self.prepare_repair_tool(request.arguments, max_envelope_bytes)
+                    .await
+            }
+            protocol::GET_REPAIR_ATTEMPT_TOOL_NAME => {
+                self.get_repair_attempt_tool(request.arguments, max_envelope_bytes)
+                    .await
+            }
+            protocol::GET_RECEIPT_STATUS_TOOL_NAME => {
+                self.get_receipt_status_tool(request.arguments, max_envelope_bytes)
+                    .await
+            }
+            repair_card::GET_REPAIR_CARD_TOOL_NAME => {
+                self.get_repair_card_tool(request.arguments, max_envelope_bytes)
+                    .await
+            }
+            super::attempt_inventory::TOOL_NAME => {
+                self.list_repair_attempts_tool(request.arguments, max_envelope_bytes)
+                    .await
+            }
+            // MCP: an unknown tool is a protocol error with Invalid Params
+            // (-32602), not Method Not Found; the method `tools/call` exists.
+            _other => Err(ErrorData::new(
+                ErrorCode::INVALID_PARAMS,
+                "unknown tool; available: ripr_workspace_status, ripr_refresh, ripr_list_gaps, ripr_get_gap, ripr_prepare_repair, ripr_get_repair_attempt, ripr_get_receipt_status, ripr_get_repair_card, ripr_list_repair_attempts",
+                Some(serde_json::json!({
+                    "available": [
+                        protocol::STATUS_TOOL_NAME,
+                        protocol::REFRESH_TOOL_NAME,
+                        protocol::LIST_GAPS_TOOL_NAME,
+                        protocol::GET_GAP_TOOL_NAME,
+                        protocol::PREPARE_REPAIR_TOOL_NAME,
+                        protocol::GET_REPAIR_ATTEMPT_TOOL_NAME,
+                        protocol::GET_RECEIPT_STATUS_TOOL_NAME,
+                        repair_card::GET_REPAIR_CARD_TOOL_NAME,
+                        super::attempt_inventory::TOOL_NAME,
+                    ]
+                })),
+            )),
         }
     }
 
@@ -931,6 +1044,23 @@ fn required_string_argument(
     })
 }
 
+/// Failure schema version of each tool whose handler panics are contained at
+/// the call boundary. `ripr_refresh` is absent by design (see
+/// `call_tool_contained`).
+fn contained_tool_schema_version(name: &str) -> Option<&'static str> {
+    match name {
+        protocol::STATUS_TOOL_NAME => Some(workspace::SESSION_SCHEMA_VERSION),
+        protocol::LIST_GAPS_TOOL_NAME => Some(gaps::GAP_LIST_SCHEMA_VERSION),
+        protocol::GET_GAP_TOOL_NAME => Some(gaps::GAP_SCHEMA_VERSION),
+        protocol::PREPARE_REPAIR_TOOL_NAME => Some(repair::REPAIR_PACKET_SCHEMA_VERSION),
+        protocol::GET_REPAIR_ATTEMPT_TOOL_NAME => Some(repair::REPAIR_ATTEMPT_SCHEMA_VERSION),
+        protocol::GET_RECEIPT_STATUS_TOOL_NAME => Some(repair::RECEIPT_STATUS_SCHEMA_VERSION),
+        repair_card::GET_REPAIR_CARD_TOOL_NAME => Some(repair_card::REPAIR_CARD_SCHEMA_VERSION),
+        super::attempt_inventory::TOOL_NAME => Some(super::attempt_inventory::SCHEMA_VERSION),
+        _ => None,
+    }
+}
+
 fn typed<T: DeserializeOwned>(value: serde_json::Value) -> Result<T, ErrorData> {
     serde_json::from_value(value)
         .map_err(|_error| ErrorData::internal_error("invalid status projection", None))
@@ -1076,72 +1206,7 @@ impl ServerHandler for McpServer {
         // the response bound minus the JSON-escaped request id of the call
         // being answered minus the fixed outer reserve.
         let max_envelope_bytes = super::outer_envelope_budget(&context.id);
-        match request.name.as_ref() {
-            protocol::STATUS_TOOL_NAME => {
-                if request
-                    .arguments
-                    .as_ref()
-                    .is_some_and(|arguments| !arguments.is_empty())
-                {
-                    return Err(ErrorData::invalid_params(
-                        "ripr_workspace_status does not accept arguments",
-                        Some(serde_json::json!({ "allowed": [] })),
-                    ));
-                }
-                self.status_tool(max_envelope_bytes).await
-            }
-            protocol::REFRESH_TOOL_NAME => {
-                self.refresh_tool(request.arguments, max_envelope_bytes)
-                    .await
-            }
-            protocol::LIST_GAPS_TOOL_NAME => {
-                self.list_gaps_tool(request.arguments, max_envelope_bytes)
-                    .await
-            }
-            protocol::GET_GAP_TOOL_NAME => {
-                self.get_gap_tool(request.arguments, max_envelope_bytes)
-                    .await
-            }
-            protocol::PREPARE_REPAIR_TOOL_NAME => {
-                self.prepare_repair_tool(request.arguments, max_envelope_bytes)
-                    .await
-            }
-            protocol::GET_REPAIR_ATTEMPT_TOOL_NAME => {
-                self.get_repair_attempt_tool(request.arguments, max_envelope_bytes)
-                    .await
-            }
-            protocol::GET_RECEIPT_STATUS_TOOL_NAME => {
-                self.get_receipt_status_tool(request.arguments, max_envelope_bytes)
-                    .await
-            }
-            repair_card::GET_REPAIR_CARD_TOOL_NAME => {
-                self.get_repair_card_tool(request.arguments, max_envelope_bytes)
-                    .await
-            }
-            super::attempt_inventory::TOOL_NAME => {
-                self.list_repair_attempts_tool(request.arguments, max_envelope_bytes)
-                    .await
-            }
-            // MCP: an unknown tool is a protocol error with Invalid Params
-            // (-32602), not Method Not Found; the method `tools/call` exists.
-            _other => Err(ErrorData::new(
-                ErrorCode::INVALID_PARAMS,
-                "unknown tool; available: ripr_workspace_status, ripr_refresh, ripr_list_gaps, ripr_get_gap, ripr_prepare_repair, ripr_get_repair_attempt, ripr_get_receipt_status, ripr_get_repair_card, ripr_list_repair_attempts",
-                Some(serde_json::json!({
-                    "available": [
-                        protocol::STATUS_TOOL_NAME,
-                        protocol::REFRESH_TOOL_NAME,
-                        protocol::LIST_GAPS_TOOL_NAME,
-                        protocol::GET_GAP_TOOL_NAME,
-                        protocol::PREPARE_REPAIR_TOOL_NAME,
-                        protocol::GET_REPAIR_ATTEMPT_TOOL_NAME,
-                        protocol::GET_RECEIPT_STATUS_TOOL_NAME,
-                        repair_card::GET_REPAIR_CARD_TOOL_NAME,
-                        super::attempt_inventory::TOOL_NAME,
-                    ]
-                })),
-            )),
-        }
+        self.call_tool_contained(request, max_envelope_bytes).await
     }
     async fn read_resource(
         &self,
@@ -1454,6 +1519,10 @@ const ALREADY_INITIALIZED_MESSAGE: &str = "session already initialized: `initial
 #[cfg(test)]
 #[path = "server_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tool_panic_tests.rs"]
+mod tool_panic_tests;
 
 #[cfg(test)]
 #[path = "source_recovery_tests.rs"]
