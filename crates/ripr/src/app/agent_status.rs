@@ -6990,9 +6990,17 @@ mod tests {
     fn finished_gap_attempt_is_not_incomplete_for_absent_legacy_artifacts() {
         let improved = || AgentReceiptReading {
             movement: Some("improved".to_string()),
-            receipt_state: "improved".to_string(),
+            receipt_state: crate::output::receipt_lifecycle::RECEIPT_MOVEMENT_IMPROVED.to_string(),
             ..open_gap_reading()
         };
+        assert!(
+            improved().shows_gap_closed(),
+            "positive reading must close the gap"
+        );
+        assert!(
+            !open_gap_reading().shows_gap_closed(),
+            "unchanged reading must not close the gap"
+        );
         let finished = || {
             let mut attempt = canonical_test_view();
             attempt.gap_base = Some("0d2028aa".to_string());
@@ -7045,6 +7053,16 @@ mod tests {
             reason: "retained terminal evidence is missing".to_string(),
         };
         assert_eq!(report(unavailable).status(), "incomplete");
+
+        let mut not_advisory = finished();
+        not_advisory.receipt = AgentStatusAttemptReceipt::Issued {
+            path: "receipt.json".to_string(),
+            reading: AgentReceiptReading {
+                status: Some("invalid".to_string()),
+                ..improved()
+            },
+        };
+        assert_eq!(report(not_advisory).status(), "incomplete");
 
         let mut open_gap = finished();
         open_gap.receipt = AgentStatusAttemptReceipt::Issued {
