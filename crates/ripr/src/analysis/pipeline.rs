@@ -4702,7 +4702,7 @@ mod tests {
     #[test]
     fn truncated_diff_disclosure_names_truncated_sections_and_truncation() -> Result<(), String> {
         // #4375: the stderr disclosure names the exact evidence and never
-        // claims the Nothing was analyzed. Per-section counts, so the
+        // claims that nothing was analyzed. Per-section counts, so the
         // message stays truthful for mixed diffs.
         let message = truncated_diff_disclosure_message(2).ok_or_else(|| {
             "a positive truncated-section count must produce the disclosure".to_string()
@@ -4716,8 +4716,8 @@ mod tests {
             "the disclosure must name the truncation, got: {message}"
         );
         assert!(
-            !message.contains("The Nothing was analyzed"),
-            "a truncated stream must never claim the Nothing was analyzed, got: {message}"
+            !message.contains("Nothing was analyzed"),
+            "a truncated stream must never claim that nothing was analyzed, got: {message}"
         );
         assert!(
             truncated_diff_disclosure_message(0).is_none(),

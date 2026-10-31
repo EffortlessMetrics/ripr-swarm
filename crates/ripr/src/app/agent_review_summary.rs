@@ -31,7 +31,7 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn unique_agent_review_summary_test_dir(label: &str) -> PathBuf {
+    fn unique_agent_review_summary_test_dir(label: &str) -> Result<PathBuf, String> {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|duration| duration.as_nanos())
@@ -42,10 +42,10 @@ mod tests {
         ));
         // #11395: status withholds the pilot route for a root with no
         // manifest and no source, so these roots are minimal workspaces.
-        if std::fs::create_dir_all(&dir).is_ok() {
-            let _ = std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n");
-        }
-        dir
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create test root: {err}"))?;
+        std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n")
+            .map_err(|err| format!("write test manifest: {err}"))?;
+        Ok(dir)
     }
 
     fn workspace_root() -> PathBuf {
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn agent_review_summary_joins_status_receipt_cockpit_repo_and_lsp() -> Result<(), String> {
-        let root = unique_agent_review_summary_test_dir("joined");
+        let root = unique_agent_review_summary_test_dir("joined")?;
         write_complete_artifacts(&root)?;
 
         let report = build_agent_review_summary_report(&root, Path::new("."));
@@ -315,7 +315,7 @@ mod tests {
 
     #[test]
     fn agent_review_summary_reports_missing_receipt_with_next_command() -> Result<(), String> {
-        let root = unique_agent_review_summary_test_dir("missing-receipt");
+        let root = unique_agent_review_summary_test_dir("missing-receipt")?;
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
 
         let report = build_agent_review_summary_report(&root, Path::new("."));
@@ -337,7 +337,7 @@ mod tests {
 
     #[test]
     fn agent_review_summary_fails_closed_on_incomplete_analysis_outcome() -> Result<(), String> {
-        let root = unique_agent_review_summary_test_dir("incomplete-outcome");
+        let root = unique_agent_review_summary_test_dir("incomplete-outcome")?;
         write_complete_artifacts(&root)?;
         write_file(
             &root.join(WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT),
@@ -435,7 +435,7 @@ mod tests {
             Ok(document.to_string())
         };
         let render = |text: String, name: &str| -> Result<(Value, String), String> {
-            let root = unique_agent_review_summary_test_dir(name);
+            let root = unique_agent_review_summary_test_dir(name)?;
             write_complete_artifacts(&root)?;
             write_file(&root.join(WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT), &text)?;
             let report = build_agent_review_summary_report(&root, Path::new("."));
@@ -499,7 +499,7 @@ mod tests {
 
     #[test]
     fn agent_review_summary_rejects_malformed_analysis_outcome() -> Result<(), String> {
-        let root = unique_agent_review_summary_test_dir("malformed-outcome");
+        let root = unique_agent_review_summary_test_dir("malformed-outcome")?;
         write_complete_artifacts(&root)?;
         write_file(&root.join(WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT), "{")?;
 
@@ -564,7 +564,7 @@ mod tests {
         ];
 
         for case in cases {
-            let root = unique_agent_review_summary_test_dir(case.name);
+            let root = unique_agent_review_summary_test_dir(case.name)?;
             write_review_summary_case_artifacts(&root, &case)?;
             assert_review_summary_matches_fixture(&root, Path::new("."), case.name)?;
             std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
@@ -574,7 +574,7 @@ mod tests {
 
     #[test]
     fn agent_llm_work_loop_review_summary_fixture_pins_missing_artifact() -> Result<(), String> {
-        let root = unique_agent_review_summary_test_dir("missing-artifact");
+        let root = unique_agent_review_summary_test_dir("missing-artifact")?;
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
         assert_review_summary_matches_fixture(&root, Path::new("."), "missing-artifact")?;
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
@@ -583,7 +583,7 @@ mod tests {
 
     #[test]
     fn agent_llm_work_loop_review_summary_fixture_pins_stale_artifact() -> Result<(), String> {
-        let root = unique_agent_review_summary_test_dir("stale-artifact");
+        let root = unique_agent_review_summary_test_dir("stale-artifact")?;
         let case = ReviewFixtureCase {
             name: "stale-artifact",
             seam_id: "seam-stale",
@@ -655,7 +655,7 @@ mod tests {
 
     #[test]
     fn agent_llm_work_loop_review_summary_fixtures_pin_path_arguments() -> Result<(), String> {
-        let root = unique_agent_review_summary_test_dir("path-arguments");
+        let root = unique_agent_review_summary_test_dir("path-arguments")?;
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
 
         // Host-specific fixtures: recovery commands are quoted for the
@@ -685,7 +685,7 @@ mod tests {
 
     #[test]
     fn agent_review_summary_markdown_names_review_focus_and_limits() -> Result<(), String> {
-        let root = unique_agent_review_summary_test_dir("markdown");
+        let root = unique_agent_review_summary_test_dir("markdown")?;
         write_complete_artifacts(&root)?;
 
         let report = build_agent_review_summary_report(&root, Path::new("."));
@@ -705,7 +705,7 @@ mod tests {
 
     #[test]
     fn agent_review_summary_warns_for_invalid_optional_surface() -> Result<(), String> {
-        let root = unique_agent_review_summary_test_dir("invalid-surface");
+        let root = unique_agent_review_summary_test_dir("invalid-surface")?;
         write_complete_artifacts(&root)?;
         write_file(&root.join(OPERATOR_COCKPIT_ARTIFACT), "{")?;
 
@@ -734,7 +734,7 @@ mod tests {
 
     #[test]
     fn agent_review_summary_recovers_target_from_workflow() -> Result<(), String> {
-        let root = unique_agent_review_summary_test_dir("workflow-target");
+        let root = unique_agent_review_summary_test_dir("workflow-target")?;
         write_file(
             &root.join(WORKFLOW_MANIFEST_ARTIFACT),
             r#"{"status":"ready","seam":{"seam_id":"workflow-seam","file":"src/workflow.rs","line":7,"seam_kind":"branch"}}"#,
@@ -759,7 +759,7 @@ mod tests {
 
     #[test]
     fn agent_review_summary_recovers_target_from_status_verify() -> Result<(), String> {
-        let root = unique_agent_review_summary_test_dir("status-target");
+        let root = unique_agent_review_summary_test_dir("status-target")?;
         write_file(
             &root.join(WORKFLOW_AGENT_VERIFY_ARTIFACT),
             r#"{"changed_seams":[],"unchanged_seams":[],"new_gaps":[{"seam_id":"verify-seam"}],"resolved_gaps":[]}"#,
@@ -786,7 +786,7 @@ mod tests {
 
     #[test]
     fn agent_review_summary_treats_lsp_cockpit_as_optional() -> Result<(), String> {
-        let root = unique_agent_review_summary_test_dir("optional-lsp");
+        let root = unique_agent_review_summary_test_dir("optional-lsp")?;
         write_complete_artifacts(&root)?;
         std::fs::remove_file(root.join(LSP_COCKPIT_ARTIFACT))
             .map_err(|err| format!("remove lsp cockpit: {err}"))?;
@@ -825,7 +825,7 @@ mod tests {
 
     #[test]
     fn agent_review_summary_handles_receipt_without_next_action() -> Result<(), String> {
-        let root = unique_agent_review_summary_test_dir("no-next-action");
+        let root = unique_agent_review_summary_test_dir("no-next-action")?;
         write_complete_artifacts(&root)?;
         write_file(
             &root.join(WORKFLOW_AGENT_RECEIPT_ARTIFACT),
@@ -853,7 +853,7 @@ mod tests {
 
     #[test]
     fn agent_review_summary_markdown_includes_next_command_when_incomplete() -> Result<(), String> {
-        let root = unique_agent_review_summary_test_dir("markdown-next-command");
+        let root = unique_agent_review_summary_test_dir("markdown-next-command")?;
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
 
         let report = build_agent_review_summary_report(&root, Path::new("."));
@@ -878,7 +878,7 @@ mod tests {
     /// labelling contract holds whichever step status routes to (#3931).
     #[test]
     fn agent_review_summary_markdown_labels_constructed_next_commands() -> Result<(), String> {
-        let root = unique_agent_review_summary_test_dir("markdown-constructed-next");
+        let root = unique_agent_review_summary_test_dir("markdown-constructed-next")?;
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
         let mut report = build_agent_review_summary_report(&root, Path::new("."));
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
@@ -934,7 +934,7 @@ mod tests {
     /// post-edit; an empty root's pre-edit command carries no note.
     #[test]
     fn agent_review_summary_markdown_labels_post_edit_next_command() -> Result<(), String> {
-        let empty = unique_agent_review_summary_test_dir("markdown-next-command-before-side");
+        let empty = unique_agent_review_summary_test_dir("markdown-next-command-before-side")?;
         std::fs::create_dir_all(&empty).map_err(|err| format!("create root: {err}"))?;
         let report = build_agent_review_summary_report(&empty, Path::new("."));
         let rendered = render_agent_review_summary_markdown(&report);
@@ -945,7 +945,7 @@ mod tests {
         );
         std::fs::remove_dir_all(&empty).map_err(|err| format!("remove root: {err}"))?;
 
-        let root = unique_agent_review_summary_test_dir("markdown-next-command-after-side");
+        let root = unique_agent_review_summary_test_dir("markdown-next-command-after-side")?;
         write_file(&root.join(WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT), "{}")?;
         write_file(&root.join(WORKFLOW_AGENT_BRIEF_ARTIFACT), "{}")?;
         write_file(
@@ -989,7 +989,7 @@ mod tests {
     #[test]
     fn agent_review_summary_markdown_next_command_offers_powershell_variant() -> Result<(), String>
     {
-        let root = unique_agent_review_summary_test_dir("markdown-next-command-powershell");
+        let root = unique_agent_review_summary_test_dir("markdown-next-command-powershell")?;
         // A known seam and an existing workflow directory keep the legacy
         // redirect route selected, which is the translation this pins.
         write_file(

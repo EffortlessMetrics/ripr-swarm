@@ -259,7 +259,8 @@ fn no_source_examined(output: &CheckOutput) -> bool {
         NoBehavioralCandidates, NoChangedLines, NoScope,
     };
     let Some(outcome) = &output.analysis_outcome else {
-        return false;
+        // No producer outcome: a run with no scope examined nothing.
+        return output.no_scope_provided;
     };
     match outcome.kind {
         NoScope => true,
@@ -286,8 +287,8 @@ fn no_findings_line(output: &CheckOutput) -> &'static str {
         }
         // #11396: nothing in scope, or only non-source files changed, examined
         // no behavior; say what was not checked instead of "No findings".
-        Some(_) if no_source_examined(output) => {
-            "Nothing to check: no changed Rust, Python or TypeScript source was found, so ripr examined no behavior.\n"
+        _ if no_source_examined(output) => {
+            "Nothing to check: no changed Rust, Python or TypeScript source was available to analyze, so ripr examined no behavior.\n"
         }
         _ => "No findings: ripr checked no changed behavior.\n",
     }
@@ -1573,7 +1574,7 @@ mod tests {
                 // not open with an all-clear style "No findings".
                 assert!(
                     rendered.contains(
-                        "Nothing to check: no changed Rust, Python or TypeScript source was found"
+                        "Nothing to check: no changed Rust, Python or TypeScript source was available to analyze"
                     ),
                     "{rendered}"
                 );
@@ -1599,7 +1600,7 @@ mod tests {
     /// headline. A range that held changed lines but no behavior keeps the
     /// established wording, so the new text is not applied to every empty result.
     #[test]
-    fn nothing_to_check_headline_is_only_for_no_scope() -> Result<(), String> {
+    fn nothing_to_check_headline_needs_no_source_examined() -> Result<(), String> {
         use crate::analysis_outcome::AnalysisOutcomeKind;
         let config = RiprConfig::default();
         let mut other = empty_range_output(Some("main"), AnalysisOutcomeKind::NoChangedLines, 1)?;
@@ -4114,7 +4115,8 @@ mod tests {
         // a concrete diff scope or whole-repository pilot exploration.
         assert!(rendered.contains("`ripr check --base BASE`"));
         assert!(rendered.contains("`ripr pilot --root .`"));
-        assert!(rendered.contains("No findings: ripr checked no changed behavior."));
+        assert!(rendered.contains("Nothing to check:"));
+        assert!(!rendered.contains("No findings:"));
     }
 
     /// #8165: the bounded (default) render leaks no schema token, while
