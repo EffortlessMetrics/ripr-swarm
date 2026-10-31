@@ -1402,7 +1402,7 @@ mod tests {
         {
             return Err(format!("one seam must be singular:\n{one}"));
         }
-        if one.contains("automatic repair (") {
+        if one.contains("Why:") || one.contains('\n') {
             return Err(format!("no reasons must print no reason list:\n{one}"));
         }
         let several = no_eligible_seam_message(
@@ -1426,6 +1426,17 @@ mod tests {
                 return Err(format!("limitation must carry {expected:?}:\n{several}"));
             }
         }
+        // #11883: next step on the first line, then `Why:` and one indented
+        // bullet per reason.
+        let lines: Vec<&str> = several.lines().collect();
+        if lines.len() != 4
+            || !lines[0].contains("Next:")
+            || lines[1] != "Why:"
+            || lines[2] != "  - repair route not ready"
+            || lines[3] != "  - configured off"
+        {
+            return Err(format!("layout must be next step then bullets:\n{several}"));
+        }
         // A bounded reason list discloses the omitted remainder (#8728).
         let bounded = no_eligible_seam_message(
             root,
@@ -1435,7 +1446,12 @@ mod tests {
             &["repair route not ready".to_string()],
             4,
         );
-        if !bounded.contains("\n  (and 3 more; run `ripr pilot --root ") {
+        if !bounded
+            .lines()
+            .last()
+            .is_some_and(|l| l.starts_with("  (and 3 more; run `ripr pilot --root "))
+            || !bounded.contains("\n  (and 3 more; run `ripr pilot --root ")
+        {
             return Err(format!(
                 "bounded reasons must disclose the rest:\n{bounded}"
             ));
