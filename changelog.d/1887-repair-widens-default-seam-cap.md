@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- `ripr repair` and `ripr agent repair` no longer refuse every start on a repository just past the built-in 10,000-seam cap, such as tokio at 12,754 seams: a default-cap cut of a repository up to 20,000 seams reruns once with the cap raised to the exact total. A rerun that declined a Rust file at the parse budget is not used, so the refusal stands. An explicit `RIPR_REPO_EXPOSURE_SEAM_LIMIT` and larger repositories still refuse with the same wider-budget recovery (#1887)

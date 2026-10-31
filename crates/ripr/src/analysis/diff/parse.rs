@@ -7,9 +7,10 @@ use crate::analysis_outcome::{
 
 use super::model::{ChangedFile, ChangedLine};
 use super::path::{
-    MAX_DIFF_PATH_COMPONENTS, is_dev_null_new_path_marker, is_new_path_marker, parse_git_old_path,
-    parse_new_path_marker, parse_old_path_for_confinement, parse_old_path_marker,
-    parse_rename_from_path, parse_rename_to_path, path_marker_exceeds_depth_bound,
+    MAX_DIFF_PATH_COMPONENTS, git_header_matches_rename, is_dev_null_new_path_marker,
+    is_new_path_marker, parse_git_old_path, parse_new_path_marker, parse_old_path_for_confinement,
+    parse_old_path_marker, parse_rename_from_path, parse_rename_to_path,
+    path_marker_exceeds_depth_bound,
 };
 
 mod stream;
@@ -167,10 +168,10 @@ fn parse_hunk_number(raw: &str) -> Option<usize> {
 mod parser_state {
     use super::{
         AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
-        AnalysisStage, ChangedFile, ChangedLine, is_dev_null_new_path_marker, is_new_path_marker,
-        parse_git_old_path, parse_hunk_header, parse_new_path_marker,
-        parse_old_path_for_confinement, parse_old_path_marker, parse_rename_from_path,
-        parse_rename_to_path, source_line_text,
+        AnalysisStage, ChangedFile, ChangedLine, git_header_matches_rename,
+        is_dev_null_new_path_marker, is_new_path_marker, parse_git_old_path, parse_hunk_header,
+        parse_new_path_marker, parse_old_path_for_confinement, parse_old_path_marker,
+        parse_rename_from_path, parse_rename_to_path, source_line_text,
     };
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
@@ -216,6 +217,7 @@ mod parser_state {
         remaining_hunk_lines: Option<(usize, usize)>,
         saw_old_path_marker: bool,
         section_old_path: Option<PathBuf>,
+        section_git_header: Option<String>,
         deletion_section: bool,
         deletion_counted: bool,
         deleted_file_count: usize,
@@ -465,9 +467,14 @@ mod parser_state {
                 return true;
             }
             if let Some(path) = parse_rename_to_path(raw) {
-                let valid_rename_pair = self.section_old_path.is_some()
-                    && self.rename_from_path.is_some()
-                    && self.section_old_path.as_ref() == self.rename_from_path.as_ref();
+                let valid_rename_pair = self
+                    .section_git_header
+                    .as_deref()
+                    .zip(self.rename_from_path.as_deref())
+                    .is_some_and(|(header, old)| git_header_matches_rename(header, old, &path));
+                if self.rename_section && valid_rename_pair {
+                    self.section_old_path = self.rename_from_path.clone();
+                }
                 if self.rename_section && !self.rename_counted && valid_rename_pair {
                     self.renamed_file_count = self.renamed_file_count.saturating_add(1);
                     self.rename_counted = true;
@@ -773,6 +780,7 @@ mod parser_state {
             self.in_hunk = false;
             self.saw_old_path_marker = false;
             self.section_old_path = parse_git_old_path(raw);
+            self.section_git_header = raw.starts_with("diff --git ").then(|| raw.to_owned());
             self.deletion_section = false;
             self.deletion_counted = false;
             self.submodule_section = false;
@@ -999,7 +1007,11 @@ mod parser_state {
                 }
                 file.removed_lines.push(ChangedLine {
                     line: self.old_line,
-                    new_side_line: self.new_line,
+                    // A hunk that deletes from the top of a file is headed
+                    // `+0,0`: git's "after line 0". No file has a line 0, and
+                    // it would surface as `file:0` in findings, so anchor
+                    // at the first line (#11486).
+                    new_side_line: self.new_line.max(1),
                     text,
                 });
                 self.old_line = next;
@@ -2313,6 +2325,23 @@ deleted file mode 100644
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1442695040888963407);
         *seed
+    }
+
+    #[test]
+    fn removing_the_first_line_anchors_the_new_side_at_line_one() -> Result<(), String> {
+        // #11486: git heads a top-of-file deletion `+0,0`; no finding may be
+        // located at `file:0`.
+        let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +0,0 @@\n-pub fn gone() {}\n";
+        let parsed = parse_unified_diff_bounded_with_metadata(diff)
+            .map_err(|e| format!("diff should parse: {e}"))?;
+        let removed = parsed
+            .changed_files
+            .first()
+            .and_then(|file| file.removed_lines.first())
+            .ok_or("expected one removed line")?;
+        assert_eq!(removed.line, 1, "old-side coordinate is unchanged");
+        assert_eq!(removed.new_side_line, 1);
+        Ok(())
     }
 
     #[test]

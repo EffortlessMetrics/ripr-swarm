@@ -2948,9 +2948,15 @@ mod tests {
         );
         assert!(message.contains("most likely a shallow clone"), "{message}");
         assert!(message.contains("`fetch-depth: 0`"), "{message}");
+        // The refspec is quoted for the host shell (single quotes on Unix,
+        // double quotes on the Windows console).
+        let refspec = shell_arg(&base_fetch_refspec("main"));
         assert!(
-            message
-                .contains("fetch --unshallow origin '+refs/heads/main:refs/remotes/origin/main'"),
+            refspec.contains("+refs/heads/main:refs/remotes/origin/main"),
+            "{refspec}"
+        );
+        assert!(
+            message.contains(&format!("fetch --unshallow origin {refspec}")),
             "{message}"
         );
         assert!(
@@ -2987,11 +2993,14 @@ mod tests {
             message.contains("`origin/no-such-branch` is not in this checkout"),
             "{message}"
         );
+        let refspec = shell_arg(&base_fetch_refspec("no-such-branch"));
         assert!(
-            message.contains(
-                "git fetch origin '+refs/heads/no-such-branch:refs/remotes/origin/no-such-branch'"
-            ),
+            message.contains(&format!("git fetch origin {refspec}")),
             "{message}"
+        );
+        assert!(
+            refspec.contains("+refs/heads/no-such-branch:refs/remotes/origin/no-such-branch"),
+            "{refspec}"
         );
         assert!(!message.contains("shallow clone"), "{message}");
         Ok(())
