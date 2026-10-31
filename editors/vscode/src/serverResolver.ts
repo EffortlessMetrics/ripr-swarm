@@ -404,7 +404,7 @@ export function probeServerVersion(
           // so it cannot count as a passed version check (#5891).
           finish({
             message: `${detail} could not start.`,
-            detail: `The ${command} --version probe wrapper exited with code 0 without reporting a probe exit code; the probe process never ran to completion.`,
+            detail: `The ${command} --version check exited with code 0 but never reported a result, so it did not finish running.`,
             kind: 'other'
           });
           return;

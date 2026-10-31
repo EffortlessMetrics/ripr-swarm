@@ -2,13 +2,5 @@ id = "RIPR-SPEC-0169"
 scope = "in"
 
 [[waived]]
-example = 3
-reason = "the example asserts which file a nested mod child resolves to; both resolutions compile only with extra files and the outcome is a role on a file the diff never edits, so the role_composition fixture families pin it"
-
-[[waived]]
-example = 5
-reason = "the unreadable cfg_attr condition fails closed to a typed unknown, and the example's outcome is the absence of a resolved child, which a runtime mutant case cannot label"
-
-[[waived]]
 example = 6
-reason = "the example is about resolution order across sibling files under tests/, which are evidence by layout either way; the role_composition tests pin the order independence"
+reason = "resolution-order/crate-root identity and composed provenance are not projected into a verdict row. Files under tests/ remain silent by layout even if composition is lost, so helper edits cannot distinguish that order property. role_composition::sibling_files_share_the_resolved_manifest_answer directly asserts both root identities and the child CfgTestModule role"

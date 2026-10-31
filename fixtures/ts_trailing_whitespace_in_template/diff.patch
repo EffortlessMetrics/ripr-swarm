@@ -1,0 +1,8 @@
+--- a/src/pricing.ts
++++ b/src/pricing.ts
+@@ -1,4 +1,4 @@
+ export function banner(name: string): string {
+-  return `hello ${name}
++  return `hello ${name}   
+ bye`;
+ }

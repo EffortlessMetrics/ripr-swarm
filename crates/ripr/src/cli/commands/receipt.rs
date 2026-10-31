@@ -353,7 +353,8 @@ Usage: ripr receipt check [--path <receipt_path>] [--gap <canonical_gap_id>]
        ripr receipt check <receipt_path>
 
 Options:
-  --path PATH       Path to the receipt JSON file to validate.
+  --path PATH       Path to the receipt JSON file to validate. Give --path or --gap
+                    (or a positional path); with neither, check exits 2.
   --gap ID          Resolve path from canonical location
                     target/ripr/receipts/<canonical_gap_id>.json with
                     filename-unsafe characters (`:`, etc.) percent-encoded. The
