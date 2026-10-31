@@ -24,7 +24,7 @@
 //!   workspace trait or impl providing the method), no `include!` of code ripr
 //!   did not index, and no item or `use ... as` renaming the primitive.
 //!
-//! The changed condition is not proven pure: it may index, overflow, panic or
+//! The changed condition is not established as pure: it may index, overflow, panic or
 //! have side effects a test could observe. The result only demotes the finding
 //! to a propagation limit (`propagation_unknown`); it never credits or flags a
 //! gap. An untyped `let r = ..; r.min(0)` does not compile (E0689), so the
