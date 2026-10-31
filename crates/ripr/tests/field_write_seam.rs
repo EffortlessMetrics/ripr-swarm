@@ -173,7 +173,7 @@ fn exact_read_of_the_written_field_is_checked_not_a_start() -> Result<(), String
     let (ok, repair) = repo.repair_text()?;
     assert!(!ok, "{repair}");
     assert!(
-        repair.contains("`self.count += 1`: existing tests already grip it")
+        repair.contains("`self.count += 1`: existing tests already check it")
             && !repair.contains("Ready to repair.")
             && !repair.contains(FIELD_CHECK),
         "an exact read of the written field is already checked:\n{repair}"
@@ -205,7 +205,7 @@ fn ignored_test_does_not_check_the_written_field() -> Result<(), String> {
     );
     let (ok, repair) = repo.repair_text()?;
     assert!(
-        !ok && repair.contains("`self.count += 1`") && !repair.contains("already grip it"),
+        !ok && repair.contains("`self.count += 1`") && !repair.contains("existing tests already"),
         "an ignored test must leave the write unchecked, with a seam:\n{repair}"
     );
     Ok(())
