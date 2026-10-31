@@ -818,6 +818,7 @@ mod tests {
     use super::*;
     use crate::cli::commands_options::InitCi;
     use crate::config::generated_init_config;
+    use crate::domain::LanguageId;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     /// #4378: on Windows `ripr init --dry-run --root <drive>:/Temp/demo`
@@ -1170,6 +1171,12 @@ mod tests {
         let body = generated_init_config_for_root(&root);
         assert!(body.contains("enabled = [\"rust\", \"python\"]"), "{body}");
         assert!(!body.contains("enabled = [\"rust\"]\n"), "{body}");
+        let parsed = crate::config::parse_config_diagnostic(&body)
+            .map_err(|err| format!("generated config must parse: {err:?}"))?;
+        assert_eq!(
+            parsed.languages().enabled(),
+            [LanguageId::Rust, LanguageId::Python]
+        );
         let plan = vec![InitTarget {
             path: root.join(CONFIG_FILE_NAME),
             action: InitAction::Create,
@@ -1191,6 +1198,12 @@ mod tests {
         assert!(
             body.contains("enabled = [\"rust\", \"typescript\"]"),
             "{body}"
+        );
+        let parsed = crate::config::parse_config_diagnostic(&body)
+            .map_err(|err| format!("generated config must parse: {err:?}"))?;
+        assert_eq!(
+            parsed.languages().enabled(),
+            [LanguageId::Rust, LanguageId::TypeScript]
         );
         std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
         Ok(())
