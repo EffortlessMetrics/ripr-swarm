@@ -66,7 +66,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Mark unavailable lexical context. This exact text is not a proven stable
+/// Mark unavailable lexical context. This exact text is not an established stable
 /// equivalence; consumers still need to refuse identity-based reuse for v1u.
 fn normalize_python_expression(expression: &str) -> String {
     format!("\0python-uncertain-v1\0{expression}")
@@ -1863,7 +1863,7 @@ impl PythonAdapter {
                 .sources
                 .get(&changed.path)
                 .and_then(|source| reconstruct_old_source(source, changed));
-            // Never mint an ID from a fragment without source-proven string
+            // Never mint an ID from a fragment without source-verified string
             // boundaries. Paired deletions do not become deleted findings.
             let paired_old: BTreeSet<usize> = changed
                 .aligned_counterparts()
