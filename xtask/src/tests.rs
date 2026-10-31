@@ -31107,13 +31107,17 @@ fn gh_pr_status_rejects_missing_rollup_and_waits_on_unknown_check_states() -> Re
     let mut fixture = gh_pr_status_subject_fixture("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
     for value in [Value::Null, serde_json::json!({})] {
         fixture["statusCheckRollup"] = value;
-        assert!(parse_gh_pr_status_pull_request(&fixture.to_string()).is_err());
+        parse_gh_pr_status_pull_request(&fixture.to_string())
+            .err()
+            .ok_or("invalid rollup was accepted")?;
     }
     fixture
         .as_object_mut()
         .ok_or("fixture object")?
         .remove("statusCheckRollup");
-    assert!(parse_gh_pr_status_pull_request(&fixture.to_string()).is_err());
+    parse_gh_pr_status_pull_request(&fixture.to_string())
+        .err()
+        .ok_or("missing rollup was accepted")?;
     fixture["statusCheckRollup"] = serde_json::json!([]);
     let empty = parse_gh_pr_status_pull_request(&fixture.to_string())?;
     let empty_readiness = gh_pr_status_readiness(&empty, &[], false, Vec::new());
