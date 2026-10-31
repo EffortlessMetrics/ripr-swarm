@@ -14399,7 +14399,10 @@ mod disk_bytes_equal_text_tests {
         // `/dev/zero` stats as length 0, so an empty buffer passes the length
         // check; the unbounded read that followed grew RSS past 5 GB.
         #[cfg(target_os = "linux")]
-        assert!(!disk_bytes_equal_text(std::path::Path::new("/dev/zero"), ""));
+        assert!(!disk_bytes_equal_text(
+            std::path::Path::new("/dev/zero"),
+            ""
+        ));
         assert!(!disk_bytes_equal_text(&std::env::temp_dir(), ""));
     }
 
