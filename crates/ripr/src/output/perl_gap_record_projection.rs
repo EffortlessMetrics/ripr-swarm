@@ -649,10 +649,7 @@ mod tests {
     #[test]
     fn complete_perl_gap_record_uses_an_evidence_state_word() {
         let maybe_record = perl_gap_record_for(&complete_perl_finding());
-        assert!(
-            maybe_record.is_some(),
-            "complete Perl finding must project"
-        );
+        assert!(maybe_record.is_some(), "complete Perl finding must project");
         let record = match maybe_record {
             Some(r) => r,
             None => return,
