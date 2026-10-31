@@ -640,7 +640,22 @@ is refused if it is a parameter, is stored, deleted, imported, declared
 `global`/`nonlocal`, bound by a `for`, `with`, `except`, walrus, comprehension,
 nested `def`/`class`/`lambda`, tuple unpack or augmented assignment, or if the
 body contains a `match`. A refused name stays unresolved, so the verdict is
-the weak one. Module-level constants are not resolved by this rule.
+the weak one.
+
+The same input also resolves when the name is a scalar-literal constant of the
+test's own module (`THRESHOLD = 50` above the tests, #10707). The module must
+bind it exactly once at top level, with no `global` rebind, no attribute
+assignment of it, no dynamic namespace write and no opaque construct; the
+test must not bind the name in any scope (parameter, store, loop or
+comprehension target, lambda or nested parameter, import, `match`); the body
+must not mention `monkeypatch`, `patch`, `setattr`, `globals`, `vars`, `exec`
+or `eval`; the module must hold no code that runs outside the tests (autouse
+fixture, `pytestmark`, setup or teardown hook, module-level call, or a
+`conftest.py` on the directory chain that declares a fixture or hook); and a
+test file that the diff also changes gets no credit. Anything else keeps the
+input unresolved. A plain write to the constant from another file that runs
+before the test (a sibling test module assigning `module.THRESHOLD` at
+import) is not seen; no extra fact is read for it.
 
 A changed line whose old and new text differ only in a trailing `#` comment or
 in whitespace between tokens emits no probe (#10706). Both lines are lexed and

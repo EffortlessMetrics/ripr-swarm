@@ -1,0 +1,12 @@
+diff --git a/src/custom_runner.rs b/src/custom_runner.rs
+--- a/src/custom_runner.rs
++++ b/src/custom_runner.rs
+@@ -1,7 +1,7 @@
+ use libtest_mimic::{Arguments, Failed, Trial};
+ 
+ fn registered_base() -> u32 {
+-    10
++    5 + 5
+ }
+ 
+ fn check_registered() -> Result<(), Failed> {
