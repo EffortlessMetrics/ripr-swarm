@@ -1169,7 +1169,7 @@ mod tests {
 
     #[test]
     fn init_plan_preserves_detected_languages_and_feature_controls() -> Result<(), String> {
-        let root = temp_root("init-detected-languages")?;
+        let root = temp_root("init-detected-feature-controls")?;
         let empty = init_plan(&options(&root))?;
         assert_eq!(
             empty.first().ok_or("missing config")?.body,
