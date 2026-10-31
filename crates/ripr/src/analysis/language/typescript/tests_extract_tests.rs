@@ -1743,7 +1743,6 @@ fn call_mediated_hook_rebinding_keeps_documented_trust() {
     }
 }
 
-
 #[test]
 fn skipped_suite_bindings_retain_thrown_runner_mutation() {
     let file = Path::new("test/binding.test.ts");
