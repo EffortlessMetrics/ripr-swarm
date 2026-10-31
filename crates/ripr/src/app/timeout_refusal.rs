@@ -224,8 +224,8 @@ impl TimeoutRefusalProjection {
     /// authority that actually ran. Explicit source/base/scope/format choices
     /// are preserved, and the effective analysis settings ride the retry so
     /// it reproduces the requested analysis instead of silently falling back
-    /// to the default profile (#10796 review): `--mode` when the effective
-    /// mode is not the CLI default, `--no-unchanged-tests` when unchanged
+    /// to the default profile (#10796 review): the effective `--mode`,
+    /// `--no-unchanged-tests` when unchanged
     /// tests were excluded, and the explicit `--perl-facts` /
     /// `--suppression-policy` paths. Auto-selected sources keep their
     /// auto-selection instead of fabricating flags that would silently
@@ -307,9 +307,9 @@ impl TimeoutRefusalProjection {
         // The analysis settings that change the finding set ride the retry;
         // without them a `--mode deep`/`--no-unchanged-tests` run would be
         // "retried" as a materially different analysis (#10796 review).
-        if self.analysis_mode != crate::app::Mode::Draft.as_str() {
-            argv.push(format!("--mode {}", self.analysis_mode));
-        }
+        // Draft must be explicit too: the original argv may have overridden
+        // a different mode selected by repository configuration.
+        argv.push(format!("--mode {}", self.analysis_mode));
         if !self.include_unchanged_tests {
             argv.push("--no-unchanged-tests".to_string());
         }
@@ -659,7 +659,7 @@ mod tests {
         assert_eq!(value["recovery"]["budget_seconds"], json!(120));
         assert_eq!(
             value["recovery"]["command"],
-            json!("ripr check --root repo --base origin/main --json --timeout 120")
+            json!("ripr check --root repo --base origin/main --mode draft --json --timeout 120")
         );
     }
 
@@ -1007,11 +1007,53 @@ mod tests {
     }
 
     #[test]
+    fn retry_preserves_explicit_draft_over_configured_deep() -> Result<(), String> {
+        let config = crate::config::parse_config_diagnostic("[analysis]\nmode = \"deep\"\n")
+            .map_err(|error| error.message.clone())?;
+        let mut original = input("repo", None, None);
+        crate::config::apply_to_check_input(
+            &mut original,
+            &config,
+            crate::config::CheckInputExplicit {
+                mode: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(original.mode, Mode::Draft);
+        let command = bare(
+            &original,
+            requested(InputSource::Committed),
+            Duration::from_secs(45),
+            false,
+        )
+        .recovery_command();
+        assert!(
+            command.contains("--mode draft"),
+            "retry must preserve explicit draft: {command}"
+        );
+        let mut configured = input("repo", None, None);
+        crate::config::apply_to_check_input(&mut configured, &config, Default::default());
+        assert_eq!(configured.mode, Mode::Deep);
+        let command = bare(
+            &configured,
+            requested(InputSource::Committed),
+            Duration::from_secs(45),
+            false,
+        )
+        .recovery_command();
+        assert!(
+            command.contains("--mode deep"),
+            "configured deep must also survive: {command}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn retry_repeats_analysis_settings_that_change_the_finding_set() {
         // #10796 review: a timed-out `--mode deep --no-unchanged-tests`
         // (plus explicit facts/suppression paths) must not be "retried" as a
         // materially different analysis. The effective settings ride the
-        // retry; the default profile adds no flag.
+        // retry; the default profile is explicit too so config cannot change it.
         let mut deep = input("repo", None, Some("change.diff"));
         deep.mode = Mode::Deep;
         deep.include_unchanged_tests = false;
@@ -1047,7 +1089,7 @@ mod tests {
             )),
             "the suppression policy must ride the retry: {command}"
         );
-        // Default-profile controls: no fabricated flags on a plain run.
+        // Default-profile controls: only the effective mode is added.
         let draft = bare(
             &input("repo", None, None),
             requested(InputSource::Committed),
@@ -1056,8 +1098,8 @@ mod tests {
         );
         let command = draft.recovery_command();
         assert!(
-            !command.contains("--mode"),
-            "default mode adds no flag: {command}"
+            command.contains("--mode draft"),
+            "default mode must be preserved: {command}"
         );
         assert!(
             !command.contains("--no-unchanged-tests"),

@@ -5209,6 +5209,8 @@ fn check_json_bound_subject_config_timeout_names_timeout_identity() -> Result<()
 fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery() -> Result<(), String> {
     let root = init_check_refusal_repo("check-json-analysis-timeout", 1)?;
     let root_arg = root.display().to_string();
+    std::fs::write(root.join("ripr.toml"), "[analysis]\nmode = \"deep\"\n")
+        .map_err(|err| format!("write configured deep mode: {err}"))?;
     // Every git call takes 3 s; the 1 s check budget fires inside the first
     // loader call, before any producer published (the early-timeout case).
     let shim_dir = unique_temp_workspace("check-json-analysis-timeout-shim");
@@ -5222,6 +5224,12 @@ fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery() -> 
             .map_err(|err| format!("make git shim executable: {err}"))?;
     }
     let mut paths = vec![shim_dir.clone()];
+    paths.push(
+        std::path::Path::new(env!("CARGO_BIN_EXE_ripr"))
+            .parent()
+            .ok_or("ripr binary must have a parent directory")?
+            .to_path_buf(),
+    );
     paths.extend(std::env::split_paths(
         &std::env::var_os("PATH").unwrap_or_default(),
     ));
@@ -5242,8 +5250,21 @@ fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery() -> 
         .map_err(|err| format!("run check under slow git: {err}"))
     };
 
+    let configured = run(&["--json"])?;
+    let configured_stdout = assert_machine_refusal_basics(&configured)?;
+    let configured_value: serde_json::Value = serde_json::from_str(&configured_stdout)
+        .map_err(|err| format!("configured control must parse: {err}\n{configured_stdout}"))?;
+    if configured_value
+        .pointer("/input_context/requested/analysis_mode")
+        .and_then(serde_json::Value::as_str)
+        != Some("deep")
+    {
+        return Err(format!(
+            "configuration must select deep without override: {configured_value}"
+        ));
+    }
     let started = std::time::Instant::now();
-    let output = run(&["--json"])?;
+    let output = run(&["--json", "--mode", "draft"])?;
     let elapsed = started.elapsed();
     assert!(
         elapsed < std::time::Duration::from_secs(45),
@@ -5305,6 +5326,7 @@ fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery() -> 
         root_flag.as_str(),
         "--base HEAD",
         "--committed",
+        "--mode draft",
         "--json",
         "--timeout 2",
     ] {
@@ -5313,6 +5335,28 @@ fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery() -> 
                 "recovery command must contain `{needle}`: {command}"
             ));
         }
+    }
+    if command.contains("--timeout 0") {
+        return Err(format!("the retry must stay bounded: {command}"));
+    }
+    let retry = run_command_with_env(
+        "/bin/sh",
+        &root,
+        &["-c", command],
+        &[("PATH", search_path.as_str())],
+    )
+    .map_err(|err| format!("run generated retry: {err}"))?;
+    let retry_stdout = assert_machine_refusal_basics(&retry)?;
+    let retry_value: serde_json::Value = serde_json::from_str(&retry_stdout)
+        .map_err(|err| format!("retry refusal must parse: {err}\n{retry_stdout}"))?;
+    if retry_value
+        .pointer("/input_context/requested/analysis_mode")
+        .and_then(serde_json::Value::as_str)
+        != Some("draft")
+    {
+        return Err(format!(
+            "generated retry must still select draft: {retry_value}"
+        ));
     }
     if value["input_context"]["recovery"]["rereads"]
         .as_array()
@@ -5323,13 +5367,14 @@ fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery() -> 
 
     // Native human consumers get the same recovery on stderr, with empty
     // stdout and exit 2 preserved.
-    let human = run(&[])?;
+    let human = run(&["--mode", "draft"])?;
     let stderr = String::from_utf8_lossy(&human.stderr);
     if human.status.code() != Some(2)
         || !human.stdout.is_empty()
         || !stderr.contains("analysis_timeout")
         || !stderr.contains("bounded retry: ripr check")
         || !stderr.contains("--timeout 2")
+        || !stderr.contains("--mode draft")
         || !stderr.contains("not pinned")
     {
         return Err(format!(
