@@ -53,6 +53,14 @@ impl LensViewIdentity {
     }
 }
 
+#[cfg(test)]
+impl LensViewIdentity {
+    /// The zero-based rows of the visible lens set, for row-owner tests.
+    pub(super) fn rows(&self) -> Vec<u32> {
+        self.items.iter().map(|item| item.line).collect()
+    }
+}
+
 /// One finding's contribution to the visible lens set.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct LensViewItem {
@@ -89,7 +97,7 @@ pub(super) fn lens_view_identity(snapshot: &AnalysisSnapshot) -> LensViewIdentit
             LensViewItem {
                 finding_id: finding.id.clone(),
                 document_uri,
-                line: finding.probe.location.line.saturating_sub(1) as u32,
+                line: lens_line(snapshot, finding),
                 related_test_count: finding.related_tests.len(),
                 class: finding.class.as_str().to_string(),
                 preview: finding
@@ -123,7 +131,9 @@ pub(super) fn code_lens_response(uri: &Uri, snapshot: Option<&AnalysisSnapshot>)
     };
     let age = snapshot.refresh.age();
     let mut lenses: Vec<CodeLens> = Vec::new();
-    for lens in lens_findings(uri, snapshot).map(|finding| finding_to_code_lens(finding, age)) {
+    for lens in
+        lens_findings(uri, snapshot).map(|finding| finding_to_code_lens(snapshot, finding, age))
+    {
         // Several probes on one line (a predicate and its returned value) often
         // read identically; one lens per distinct line and title keeps the
         // editor from stacking repeated text. Hover still lists every finding.
@@ -162,12 +172,25 @@ pub(super) fn lens_findings_at_line<'a>(
     line: u32,
 ) -> Vec<&'a Finding> {
     lens_findings(uri, snapshot)
-        .filter(|finding| lens_line(finding) == line)
+        .filter(|finding| lens_line(snapshot, finding) == line)
         .collect()
 }
 
-fn lens_line(finding: &Finding) -> u32 {
-    finding.probe.location.line.saturating_sub(1) as u32
+/// The single row owner for code-lens placement, the semantic lens-view
+/// identity and unpublished line-hover lookup (#10609, RIPR-SPEC-0100).
+///
+/// A finding with a captured Rust diagnostic origin uses that origin's editor
+/// row, the same numeric row published diagnostics use, so standalone-CR files
+/// agree across surfaces. The row is read from the snapshot, never from disk,
+/// so a later save cannot move it, and it does not depend on whether a
+/// diagnostic was published. Without an origin (non-Rust finding or a producer
+/// that captured none) the fallback is the analyzer row; no text search is
+/// performed and no exact span is claimed. A lens is always zero-width.
+fn lens_line(snapshot: &AnalysisSnapshot, finding: &Finding) -> u32 {
+    match snapshot.rust_diagnostic_origins.for_finding(finding) {
+        Some(origin) => origin.line,
+        None => finding.probe.location.line.saturating_sub(1) as u32,
+    }
 }
 
 /// Build one `CodeLens` for a single finding.
@@ -175,8 +198,12 @@ fn lens_line(finding: &Finding) -> u32 {
 /// The resolved command refreshes saved-workspace analysis through the existing
 /// registered server command. Its title keeps the cached advisory distinct from
 /// the explicit action. No arguments or resolve round-trip are needed.
-fn finding_to_code_lens(finding: &Finding, age: Option<Duration>) -> CodeLens {
-    let line = lens_line(finding);
+fn finding_to_code_lens(
+    snapshot: &AnalysisSnapshot,
+    finding: &Finding,
+    age: Option<Duration>,
+) -> CodeLens {
+    let line = lens_line(snapshot, finding);
     let range = Range {
         start: Position { line, character: 0 },
         end: Position { line, character: 0 },
@@ -444,6 +471,7 @@ mod tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: super::super::state::UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         }
     }
 
