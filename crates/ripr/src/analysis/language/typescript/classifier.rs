@@ -6737,7 +6737,16 @@ pub(crate) fn classify_resolved_owner(
     // #11250: the AST-derived shape for this line wins when the single
     // parse produced one; absent facts (old-side lines, parse errors,
     // test-only paths) keep the line-text classification.
-    let probe_shape = ast_shape.unwrap_or_else(|| classify_probe_shape_detail(line_text));
+    // #11487: a function opened and closed on the changed line carries several
+    // statements on it, so the AST fact keeps only the last one (a trailing
+    // `return`). Read such a line by its first statement, as the same code
+    // formatted over several lines would be read.
+    let one_line_function = one_line_function_body(line_text).len() != line_text.len();
+    let probe_shape = if one_line_function {
+        classify_probe_shape_detail(line_text)
+    } else {
+        ast_shape.unwrap_or_else(|| classify_probe_shape_detail(line_text))
+    };
     // A one-line guard whose condition is unchanged was edited in its
     // statement (`if (n > 100) return n - 20;`), so the guard's boundary is not
     // the changed behavior; the shape stays unrecognised rather than crediting
