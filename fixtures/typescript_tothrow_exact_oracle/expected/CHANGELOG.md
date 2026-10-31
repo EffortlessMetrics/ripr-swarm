@@ -637,3 +637,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_tothrow_exact_oracle (40)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording states the adapter could not confirm observation without a causal claim
+
+Command:
+`cargo xtask goldens bless typescript_tothrow_exact_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

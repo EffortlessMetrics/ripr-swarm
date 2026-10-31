@@ -663,3 +663,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_dynamic_oracle (38)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording states the adapter could not confirm observation without a causal claim
+
+Command:
+`cargo xtask goldens bless ts_dynamic_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

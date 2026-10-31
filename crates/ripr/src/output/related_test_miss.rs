@@ -7,7 +7,7 @@
 use crate::domain::{ProbeFamily, RelatedTest, RelatedTestMiss, RelationReason};
 
 /// Why a TypeScript or JavaScript assertion's observation stays unconfirmed.
-const SCRIPT_OBSERVATION_UNCONFIRMED: &str = "the preview adapter does not run the code, so it cannot confirm that this assertion observes the changed behavior";
+const SCRIPT_OBSERVATION_UNCONFIRMED: &str = "the preview adapter could not confirm that this assertion observes the changed behavior";
 
 /// Short reason the test misses the changed behavior, or `None` when the
 /// analyzer did not establish one.
