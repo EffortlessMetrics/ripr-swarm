@@ -3004,30 +3004,44 @@ fn preemptive_artifact_ignore(
 
 /// The one-line stderr note `check` prints in a non-Cargo project (ripr keeps
 /// its reports and caches under `target/ripr`) whose git ignore rules do not
-/// cover it (#11879, #9858). `None` for Cargo projects (the `target/`
-/// convention applies), covered rules, or a probe that cannot establish
-/// coverage: the note never claims a fact ripr did not check.
+/// cover it (#11879, #9858). The probed roots are the ones ripr's writers
+/// actually use — the default `target/ripr` plus a `RIPR_CACHE_DIR` base
+/// relocated inside the repository — exactly as `doctor` probes them, and the
+/// note names the uncovered roots it probed with their `.gitignore` entries.
+/// `None` for Cargo projects (the `target/` convention applies), covered
+/// rules, or a probe that cannot establish coverage: the note never claims a
+/// fact ripr did not check.
 pub(crate) fn first_run_ignore_note(root: &Path) -> Option<String> {
     if root.join("Cargo.toml").is_file() {
         return None;
     }
-    let uncovered = uncovered_artifact_roots(root, &[PathBuf::from("target/ripr")])?;
+    let roots =
+        analysis::ripr_artifact_roots(root, &analysis::seam_cache::cache_base_dir(root), None);
+    let uncovered = uncovered_artifact_roots(root, &roots)?;
     if uncovered.is_empty() {
         return None;
     }
-    // Not "this run wrote": a human `check` writes under `target/ripr` only
+    // Not "this run wrote": a human `check` writes under these roots only
     // when it records the legend marker or fact caches, so the claim is the
     // standing one: ripr keeps its reports and caches there.
     Some(format!(
         "ripr note: ripr keeps its reports and caches under {}; that path is not covered \
-         by git ignore rules — add `/target/ripr/` to .gitignore so a future `git add -A` \
+         by git ignore rules — add {} to .gitignore so a future `git add -A` \
          does not commit them.",
-        uncovered.join(", ")
+        uncovered.join(", "),
+        uncovered
+            .iter()
+            .map(|root| format!(
+                "`{}`",
+                analysis::artifact_root_gitignore_entry(Path::new(root))
+            ))
+            .collect::<Vec<_>>()
+            .join(", "),
     ))
 }
 
-/// The wording shared by every first-run ignore note; `None` when nothing is
-/// uncovered.
+/// The wording for the pilot first-run ignore note (default `target/ripr`
+/// entry); `None` when nothing is uncovered.
 pub(crate) fn artifact_root_ignore_message(uncovered: &[String]) -> Option<String> {
     if uncovered.is_empty() {
         return None;

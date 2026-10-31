@@ -1,22 +1,13 @@
-//! #11879: a first human `check` in a non-Cargo project tells the user once,
-//! on stderr, which `.gitignore` line covers the `target/ripr` ripr keeps its reports in.
-use super::{run_command, run_command_with_env, unique_external_workspace};
+//! #11879: a human `check` in a non-Cargo project tells the user, on stderr and
+//! until the rule exists, which `.gitignore` line covers the roots ripr keeps its
+//! reports in (`target/ripr`, or a relocated `RIPR_CACHE_DIR` base).
+use super::{run_command, run_command_with_env, run_git, unique_external_workspace};
 use std::fs;
 use std::path::Path;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 const NOTE: &str = "ripr note: ripr keeps its reports and caches under target/ripr";
-
-fn git(project: &Path, args: &[&str]) -> TestResult {
-    let output = run_command("git", Some(project), args)?;
-    assert!(
-        output.status.success(),
-        "git {args:?}: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Ok(())
-}
 
 /// A bare source tree with no `Cargo.toml`, so the Cargo `target/` convention
 /// does not apply, inside a git repository whose ignore rules are empty.
@@ -34,8 +25,8 @@ fn project(label: &str) -> TestResult<std::path::PathBuf> {
         "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-pub fn price() -> u32 { 1 }\n+pub fn price() -> u32 { 2 }\n",
     )?;
     fs::write(project.join("empty-excludes"), "")?;
-    git(&project, &["init", "-q"])?;
-    git(&project, &["config", "core.excludesFile", "empty-excludes"])?;
+    run_git(&project, &["init", "-q"])?;
+    run_git(&project, &["config", "core.excludesFile", "empty-excludes"])?;
     Ok(project)
 }
 
@@ -102,5 +93,33 @@ fn a_cargo_project_gets_no_gitignore_note() -> TestResult {
     )?;
     let stderr = stderr_of(&project, &[])?;
     assert!(!stderr.contains(NOTE), "{stderr}");
+    Ok(())
+}
+
+#[test]
+fn a_relocated_cache_base_is_probed_and_named() -> TestResult {
+    let project = project("check-gitignore-relocated")?;
+    fs::write(project.join(".gitignore"), "/target/ripr/\n")?;
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &project,
+        &["check", "--diff", "change.diff"],
+        &[("RIPR_CACHE_DIR", ".ripr-cache")],
+    )?;
+    let stderr = String::from_utf8(output.stderr)?;
+    assert_eq!(stderr.matches("ripr note:").count(), 1, "{stderr}");
+    assert!(stderr.contains(".ripr-cache"), "{stderr}");
+    assert!(!stderr.contains("target/ripr"), "{stderr}");
+
+    // Covering the relocated base silences the note.
+    fs::write(project.join(".gitignore"), "/target/ripr/\n/.ripr-cache/\n")?;
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &project,
+        &["check", "--diff", "change.diff"],
+        &[("RIPR_CACHE_DIR", ".ripr-cache")],
+    )?;
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(!stderr.contains("ripr note:"), "{stderr}");
     Ok(())
 }
