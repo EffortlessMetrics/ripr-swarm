@@ -45,9 +45,13 @@ No test stub here: the owner is a trait default method or nested function, sits 
 Hidden:
   5 finding(s) omitted: 3 lower-priority, 2 base-side evidence (not candidate edit targets).
     - ./src/lib.rs:7 (unrevealed, lower-priority candidate); kind: return_value; reason: No detected assertion observes the changed value, error, field, or effect
-    - ./src/lib.rs:7 (unknown, base-side); kind: static_unknown; reason: No relevant oracle was detected
+    - ./src/lib.rs:7 (unknown: static analysis limited, base-side); kind: static_unknown; reason: No relevant oracle was detected
     - ./src/lib.rs:50 (weak, lower-priority candidate); kind: return_value; reason: No strong discriminator was detected
     - ./src/lib.rs:55 (weak, lower-priority candidate); kind: return_value; reason: No strong discriminator was detected
-    - ./src/lib.rs:55 (unknown, base-side); kind: static_unknown; reason: No strong discriminator was detected
+    - ./src/lib.rs:55 (unknown: static analysis limited, base-side); kind: static_unknown; reason: No strong discriminator was detected
+  Hidden classes:
+    weak = tests reach it but check it only loosely
+    unrevealed = tests reach it but nothing appears to notice a change
+    unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
