@@ -1654,6 +1654,15 @@ fn check_help_chooses_one_format_per_task() -> Result<(), String> {
     if readme_span.contains("badge-shields (diff)") {
         return Err("the README mapping must not include the diff format".to_string());
     }
+    // #6180: the diff-scoped badge group must not claim README status.
+    if check.contains("diff-scoped, for README") {
+        return Err("the diff-scoped badge group must not be labeled for README".to_string());
+    }
+    assert_contains(
+        "check help (`ripr check --help`)",
+        &check,
+        "Badge (diff-scoped, for PR/CI status):",
+    )?;
     Ok(())
 }
 
