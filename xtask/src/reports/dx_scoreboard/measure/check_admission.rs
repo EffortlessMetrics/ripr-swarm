@@ -48,9 +48,9 @@ const INCOMPLETE_KINDS: [&str; 3] = [
     "unsupported_input",
     "analysis_failed",
 ];
-/// The only typed outcome limitation a complete kind may carry
+/// The only typed outcome limitations a complete kind may carry
 /// (`validate_outcome` in `crates/ripr/src/analysis_outcome.rs`).
-const COMPLETE_KIND_ALLOWED_LIMITATION: &str = "eol_only_churn";
+const COMPLETE_KIND_ALLOWED_LIMITATIONS: [&str; 2] = ["eol_only_churn", "verification_only_change"];
 
 /// Identity the measured child was asked to analyze.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -383,7 +383,8 @@ fn encode_expected_root(value: &str) -> String {
     unify_root_separators(value).replace('%', "%25")
 }
 
-/// Complete kinds may disclose only `eol_only_churn`. A missing, non-array,
+/// Complete kinds may disclose only `eol_only_churn` and
+/// `verification_only_change`. A missing, non-array,
 /// or kind-less `limitations` value is not an empty allowlist (#7276).
 fn complete_kind_has_incomplete_limitation(
     outcome: &serde_json::Map<String, Value>,
@@ -393,7 +394,7 @@ fn complete_kind_has_incomplete_limitation(
     };
     for limitation in items {
         match limitation.get("kind").and_then(Value::as_str) {
-            Some(kind) if kind == COMPLETE_KIND_ALLOWED_LIMITATION => {}
+            Some(kind) if COMPLETE_KIND_ALLOWED_LIMITATIONS.contains(&kind) => {}
             Some(_) => {
                 return Some("complete analysis cannot carry incomplete-analysis limitations");
             }
@@ -805,7 +806,7 @@ mod tests {
             .any(|limitation| {
                 matches!(
                     limitation.get("kind").and_then(Value::as_str),
-                    Some(kind) if kind != COMPLETE_KIND_ALLOWED_LIMITATION
+                    Some(kind) if !COMPLETE_KIND_ALLOWED_LIMITATIONS.contains(&kind)
                 )
             })
     }

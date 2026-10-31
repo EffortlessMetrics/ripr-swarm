@@ -68,6 +68,14 @@ impl AnalysisOutcomeKind {
 }
 
 impl AnalysisLimitationKind {
+    /// A disclosure about the shape of the change that leaves the analysis
+    /// complete: the full changed scope was read (`EolOnlyChurn`,
+    /// `VerificationOnlyChange`). Every other kind marks the outcome
+    /// incomplete.
+    pub(crate) const fn is_advisory_disclosure(self) -> bool {
+        matches!(self, Self::EolOnlyChurn | Self::VerificationOnlyChange)
+    }
+
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::CombinedHunkUnsupported => "combined_hunk_unsupported",
@@ -80,6 +88,7 @@ impl AnalysisLimitationKind {
             Self::ProducerTimeout => "producer_timeout",
             Self::ProducerFailure => "producer_failure",
             Self::EolOnlyChurn => "eol_only_churn",
+            Self::VerificationOnlyChange => "verification_only_change",
             Self::UnevaluatedCondition => "unevaluated_condition",
         }
     }
@@ -97,6 +106,9 @@ impl AnalysisLimitationKind {
             Self::ProducerTimeout => "the analysis ran out of time",
             Self::ProducerFailure => "part of the analysis failed",
             Self::EolOnlyChurn => "some files changed only in line endings",
+            Self::VerificationOnlyChange => {
+                "verifier-only contract or proof text changed; ripr does not evaluate it"
+            }
             Self::UnevaluatedCondition => {
                 "a test or credited assertion sits under a condition static analysis cannot evaluate"
             }
@@ -122,7 +134,7 @@ impl AnalysisStage {
             Self::DiffLoad => "reading the diff",
             Self::DiffParse => "parsing the diff",
             Self::LanguageAdapter => "language analysis",
-            Self::ProbeGeneration => "probe generation",
+            Self::ProbeGeneration => "change point detection",
             Self::FindingClassification => "finding classification",
             Self::AnalysisPipeline => "the analysis pipeline",
         }
@@ -189,6 +201,13 @@ pub(crate) enum AnalysisLimitationKind {
     /// full changed scope was read and probed — so unlike the kinds above it
     /// may ride on a complete outcome.
     EolOnlyChurn,
+    /// RIPR-SPEC-0368: changed lines are verification-erased text (contract
+    /// attributes such as `#[requires]`/`#[ensures]`, Creusot/Prusti ghost
+    /// items and proof macros). No test can reach or observe them, so they
+    /// seed no probe and no repair start. Like `EolOnlyChurn` this is a
+    /// disclosure about what the changed lines are, not an incomplete
+    /// analysis, so it may ride on a complete outcome.
+    VerificationOnlyChange,
     /// #8714: a credited assertion sits under a branch condition static
     /// analysis cannot evaluate, so the credited oracle may never execute.
     /// The limitation content discloses conditional credit rather than
@@ -531,14 +550,15 @@ fn validate_outcome(
             | AnalysisOutcomeKind::CompleteNoFindings
             | AnalysisOutcomeKind::CompleteWithFindings
     );
-    // #4952: EolOnlyChurn is a churn-shape disclosure, not an
-    // incomplete-analysis limitation — the changed scope was fully analyzed
-    // — so a complete outcome may carry it, and only it. Every other kind
+    // #4952: EolOnlyChurn (and RIPR-SPEC-0368 VerificationOnlyChange) is a
+    // change-shape disclosure, not an incomplete-analysis limitation — the
+    // changed scope was fully analyzed — so a complete outcome may carry
+    // those, and only those. Every other kind
     // still marks the outcome incomplete.
     if complete_or_subject_absent
         && limitations
             .iter()
-            .any(|limitation| limitation.kind != AnalysisLimitationKind::EolOnlyChurn)
+            .any(|limitation| !limitation.kind.is_advisory_disclosure())
     {
         return Err(format!(
             "analysis outcome {kind:?} cannot carry incomplete-analysis limitations"
@@ -794,6 +814,10 @@ mod tests {
             (AnalysisLimitationKind::ProducerTimeout, "producer_timeout"),
             (AnalysisLimitationKind::ProducerFailure, "producer_failure"),
             (AnalysisLimitationKind::EolOnlyChurn, "eol_only_churn"),
+            (
+                AnalysisLimitationKind::VerificationOnlyChange,
+                "verification_only_change",
+            ),
             (
                 AnalysisLimitationKind::UnevaluatedCondition,
                 "unevaluated_condition",
