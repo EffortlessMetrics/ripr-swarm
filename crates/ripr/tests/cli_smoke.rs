@@ -11632,6 +11632,9 @@ fn agent_verify_and_receipt_disclose_historical_before_current_after_pair()
         json_pointer_str(&verify, "/artifact_currentness")?,
         "historical_before_current_after"
     );
+    // #3056: a clean-produced historical side carries no dirty disclosure.
+    assert!(verify.get("before_produced_from_dirty").is_none());
+    assert!(verify.get("after_produced_from_dirty").is_none());
 
     let verify_path = root.join("agent-verify.json");
     std::fs::write(&verify_path, &output.stdout)?;
@@ -11757,6 +11760,30 @@ fn agent_verify_historical_before_token_ignores_declared_dirty_production()
         json_pointer_str(&verify, "/artifact_currentness")?,
         "historical_before_current_after"
     );
+    // #3056: the pair token is unchanged, but the production-time dirty fact
+    // is preserved for the historical before side only.
+    assert_eq!(verify["before_produced_from_dirty"], true);
+    assert!(verify.get("after_produced_from_dirty").is_none());
+
+    // The receipt recomputes the same additive field; its canonical byte
+    // comparison must accept the verify output.
+    let verify_path = root.join("agent-verify.json");
+    std::fs::write(&verify_path, &output.stdout)?;
+    let receipt = root.join("agent-receipt.json");
+    let receipt_output = run_ripr(&[
+        "agent",
+        "receipt",
+        "--root",
+        &root.display().to_string(),
+        "--verify-json",
+        &verify_path.display().to_string(),
+        "--seam-id",
+        "seam-a",
+        "--json",
+        "--out",
+        &receipt.display().to_string(),
+    ]);
+    assert_success(&receipt_output);
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
