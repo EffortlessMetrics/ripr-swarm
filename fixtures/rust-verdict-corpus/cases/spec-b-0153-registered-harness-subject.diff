@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,7 +1,7 @@
+ pub mod unregistered;
+ 
+ pub fn shipped_value(base: u32) -> u32 {
+-    base + 16
++    16 + base
+ }
+ 
+ #[cfg(test)]
