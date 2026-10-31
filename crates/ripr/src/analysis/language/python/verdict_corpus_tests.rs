@@ -915,6 +915,8 @@ fn assert_almost_equal_at_its_default_tolerance_pins_the_value() -> Result<(), S
         "self.assertAlmostEqual(fee(10), 30.0)",
         "self.assertAlmostEqual(fee(10), 30.0, places=None)",
         "self.assertAlmostEqual(fee(10), 30.0, None, \"msg\", None)",
+        "cls.assertAlmostEqual(fee(10), 30.0)",
+        "super().assertAlmostEqual(fee(10), 30.0)",
     ] {
         assert_eq!(unittest_fee_class(body)?, ExposureClass::Exposed, "{body}");
     }
@@ -923,7 +925,11 @@ fn assert_almost_equal_at_its_default_tolerance_pins_the_value() -> Result<(), S
         "self.assertAlmostEqual(fee(10), 30.0, delta=100)",
         "self.assertAlmostEqual(fee(10), 30.0, 0)",
         "self.assertAlmostEqual(fee(10), 30.0, None, \"msg\", 100)",
+        "cls.assertAlmostEqual(fee(10), 30.0, places=0)",
+        "super().assertAlmostEqual(fee(10), 30.0, delta=100)",
         "checks.assertAlmostEqual(fee(10), 30.0)",
+        "self.checks.assertAlmostEqual(fee(10), 30.0)",
+        "obj.assertAlmostEqual(fee(10), 30.0)",
         "self.assertNotAlmostEqual(fee(10), 20.0)",
         "self.assertAlmostEqual(fee(10), fee(10))",
     ] {
@@ -1016,6 +1022,8 @@ fn a_bound_exception_compared_by_value_pins_the_error() -> Result<(), String> {
         "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    assert exc.value.args[0] == \"blank\"\n",
         "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        with self.assertRaises(KeyError) as cm:\n            parse(\"\")\n        self.assertEqual(str(cm.exception), \"'empty'\")\n",
         "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        with self.assertRaisesRegex(KeyError, \"e\") as cm:\n            parse(\"\")\n        self.assertEqual(repr(cm.exception), \"KeyError('empty')\")\n",
+        "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        with cls.assertRaises(KeyError) as cm:\n            parse(\"\")\n        self.assertEqual(str(cm.exception), \"'empty'\")\n",
+        "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        with super().assertRaisesRegex(KeyError, \"e\") as cm:\n            parse(\"\")\n        self.assertEqual(repr(cm.exception), \"KeyError('empty')\")\n",
     ] {
         assert_eq!(message_class(body)?, ExposureClass::Exposed, "{body}");
     }
@@ -1040,8 +1048,11 @@ fn a_bound_exception_compared_by_value_pins_the_error() -> Result<(), String> {
         // The other operand reads the error too, so the comparison can hold
         // for any message.
         "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    assert str(exc.value) == repr(exc.value)\n",
-        // unittest's field is `exception`, and the receiver must be `self`.
+        // unittest's field is `exception`, and the receiver must be unittest.
         "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        with self.assertRaises(KeyError) as cm:\n            parse(\"\")\n        self.assertEqual(str(cm.value), \"'empty'\")\n",
+        "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        with checks.assertRaises(KeyError) as cm:\n            parse(\"\")\n        self.assertEqual(str(cm.exception), \"'empty'\")\n",
+        "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        with self.checks.assertRaises(KeyError) as cm:\n            parse(\"\")\n        self.assertEqual(str(cm.exception), \"'empty'\")\n",
+        "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        with obj.assertRaises(KeyError) as cm:\n            parse(\"\")\n        self.assertEqual(str(cm.exception), \"'empty'\")\n",
         // `is not None` is not a value comparison.
         "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    assert exc.value is not None\n",
         // A tautology does not promote.
@@ -1088,11 +1099,20 @@ fn a_removed_term_that_every_asserted_input_makes_zero_is_not_discriminated() ->
         )?,
         ExposureClass::Exposed
     );
-    // An input the rule cannot resolve leaves the verdict to the oracle.
+    // A single-assignment local resolves like a literal (#10707), so a local
+    // that makes the term zero is discriminated no better than `6000`.
     assert_eq!(
         quote_class(
             QUOTE_OLD_SHIPPING,
             "def test_quote():\n    amount = 6000\n    assert quote(amount)[\"total_cents\"] == 6000\n"
+        )?,
+        ExposureClass::WeaklyExposed
+    );
+    // An input the rule cannot resolve leaves the verdict to the oracle.
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    amount = 6000\n    amount += 1\n    assert quote(amount)[\"total_cents\"] == 6001\n"
         )?,
         ExposureClass::Exposed
     );
