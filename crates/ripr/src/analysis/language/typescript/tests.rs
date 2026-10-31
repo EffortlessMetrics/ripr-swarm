@@ -6681,6 +6681,77 @@ fn analyze_diff_keeps_single_occurrence_probe_ids_stable() -> Result<(), String>
 }
 
 #[test]
+fn a_one_line_function_body_classifies_like_the_same_statement_on_its_own_line() {
+    // #11487: formatting must not change the shape or the boundary.
+    let one_line =
+        "export function disc(a: number, t: number) { if (a >= t) { return 10 } return 0 }";
+    let (family, delta) = classify_probe_shape(one_line);
+    assert_eq!(family, ProbeFamily::Predicate);
+    assert_eq!(delta, DeltaKind::Control);
+    assert_eq!(
+        typescript_boundary_discriminator(one_line),
+        typescript_boundary_discriminator("  if (a >= t) {"),
+    );
+    assert!(typescript_boundary_discriminator(one_line).is_some());
+    // Braces inside the parameter annotation are not the body.
+    let annotated = "function f(o: { a: number }, t: number): boolean { return o.a > t }";
+    assert_eq!(
+        typescript_boundary_discriminator(annotated),
+        typescript_boundary_discriminator("return o.a > t"),
+    );
+    // A signature whose body continues on later lines has nothing to read
+    // after the brace, so it yields no boundary of its own.
+    assert_eq!(
+        typescript_boundary_discriminator("export function disc(a: number, t: number) {"),
+        None
+    );
+}
+
+#[test]
+fn one_line_function_reading_does_not_claim_lookalikes_or_unchanged_guards() {
+    use super::probe_shape::{inline_guard_condition, one_line_function_body};
+    // `function` must be a whole keyword (reviewer finding on #11564).
+    for line in [
+        "functionality(a) { if (a > 1) { return 2 } }",
+        "functionHandler = (a) => { if (a > 1) { return 2 } }",
+    ] {
+        assert_eq!(one_line_function_body(line), line, "{line}");
+    }
+    // A generator is a function.
+    assert_ne!(
+        one_line_function_body("function* g(a) { if (a > 1) { yield 2 } }"),
+        "function* g(a) { if (a > 1) { yield 2 } }"
+    );
+    // The unchanged-guard check sees through the function head, so an edit
+    // to the statement after the guard is not credited at the guard's
+    // threshold.
+    let old = "function f(n: number) { if (n > 100) return n - 20; return 0 }";
+    let new = "function f(n: number) { if (n > 100) return n - 21; return 0 }";
+    assert!(inline_guard_condition(new).is_some());
+    assert_eq!(inline_guard_condition(old), inline_guard_condition(new));
+}
+
+#[test]
+fn one_line_function_first_statement_is_parseable_on_its_own() {
+    use super::probe_shape::one_line_function_first_statement as first;
+    assert_eq!(
+        first("export function d(a: number, t: number) { if (a >= t) { return 10 } return 0 }"),
+        "if (a >= t) { return 10 }"
+    );
+    assert_eq!(
+        first("function f(o: { a: number }, t: number): boolean { return o.a > t }"),
+        "return o.a > t"
+    );
+    // A brace inside a string does not close the consequent early.
+    assert_eq!(
+        first("function f(a) { if (a > 1) { return \"}\" } return 0 }"),
+        "if (a > 1) { return \"}\" }"
+    );
+    // Not a one-line function: unchanged.
+    assert_eq!(first("  if (a >= t) {"), "  if (a >= t) {");
+}
+
+#[test]
 fn classify_probe_shape_recognises_if_predicate() {
     let (family, delta) = classify_probe_shape("    if (amount >= threshold) {");
     assert_eq!(family, ProbeFamily::Predicate);
@@ -18440,6 +18511,21 @@ fn detect_partial_none_when_every_test_extracted() {
     assert!(
         detect_partial_test_extraction(file, source, &extracted).is_none(),
         "fully extracted file must not report a partial-extraction gap"
+    );
+}
+
+/// Review on #10224: type-only parameter lists (`type F = (test: T) => void`,
+/// interface method signatures, `declare function`) never create runtime
+/// bindings, so their identifiers must not shadow the runner in the enclosing
+/// scope. A skipped suite still resolves dormant and reports no gap.
+#[test]
+fn detect_partial_none_when_type_only_parameters_name_the_runner() {
+    let file = Path::new("tests/shadow.test.ts");
+    let source = "type Handler = (test: unknown) => void;\ninterface Suite {\n  run(describe: string): void;\n}\ndeclare function setup(test: unknown): void;\ndescribe.skip('legacy', () => {\n  test('works', () => {\n    expect(1).toBe(1);\n  });\n});\n";
+    let extracted = extract_tests(file, source);
+    assert!(
+        detect_partial_test_extraction(file, source, &extracted).is_none(),
+        "a skipped suite shadowed only by type-only parameters must stay silent, got {extracted:?}"
     );
 }
 
