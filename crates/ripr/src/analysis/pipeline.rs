@@ -212,8 +212,11 @@ fn uncompiled_preview_file_counts(
 
 /// Typed limitation kinds as stable wire labels, in adapter order.
 fn limitation_kind_labels(limitations: &[AnalysisLimitation]) -> Vec<String> {
+    // An advisory disclosure does not scope the language run down, so it must
+    // not read as a partial language outcome.
     limitations
         .iter()
+        .filter(|limitation| !limitation.kind.is_advisory_disclosure())
         .map(|limitation| limitation.kind.as_str().to_string())
         .collect()
 }
@@ -2234,7 +2237,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         AnalysisOutcomeKind::UnsupportedInput
     } else if limitations
         .iter()
-        .any(|limitation| limitation.kind != AnalysisLimitationKind::EolOnlyChurn)
+        .any(|limitation| !limitation.kind.is_advisory_disclosure())
     {
         // #4952: the EOL-only disclosure alone does not make the analysis
         // partial; see the limitation push above.
@@ -2943,7 +2946,7 @@ fn file_is_eol_only_churn(file: &diff::ChangedFile, raw_line1_bom_paths: &[PathB
             .all(|(added, removed)| added.text == removed.text && added.line == removed.line)
 }
 
-fn bounded_path_listing(paths: &[String]) -> String {
+pub(crate) fn bounded_path_listing(paths: &[String]) -> String {
     let shown = paths.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
     let more = paths.len().saturating_sub(3);
     let listed = if more > 0 {

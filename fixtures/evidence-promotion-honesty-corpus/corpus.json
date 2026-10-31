@@ -1436,6 +1436,60 @@
       ]
     },
     {
+      "id": "typescript_private_method_unknown",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_private_method_unknown",
+      "vector": "private_member_without_tests_retains_unknown_reach",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        }
+      ]
+    },
+    {
+      "id": "typescript_nested_private_method_partial",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_nested_private_method_partial",
+      "vector": "private_member_cannot_borrow_public_reach",
+      "assertions": [
+        {
+          "type": "expected_partial_analysis",
+          "limitation_kind": "language_scope_unsupported",
+          "producer_stage": "language_adapter",
+          "path": "src/counter.ts",
+          "affected_items": 1,
+          "detail_contains": "typescript_owner_extraction_partial: unextracted private class member"
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 0
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
       "id": "typescript_call_removal_multiple_calls",
       "language": "typescript",
       "tier": "pure",

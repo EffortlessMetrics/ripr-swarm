@@ -402,11 +402,112 @@ enum ShellToken {
     Separator,
 }
 
+/// True when a token names the npm CLI, including platform spellings and
+/// `npx npm@<version>` package selectors.
+fn is_npm_executable(token: &str) -> bool {
+    let token = token.trim();
+    if token == "npm" || token.eq_ignore_ascii_case("npm.cmd") {
+        return true;
+    }
+    if token.starts_with("npm@")
+        && token
+            .chars()
+            .skip(4)
+            .all(|c| c.is_ascii_digit() || c == '.')
+    {
+        return true;
+    }
+    token.ends_with("/npm")
+        || token.ends_with("\\npm")
+        || token.ends_with("/npm.cmd")
+        || token.ends_with("\\npm.cmd")
+}
+
+fn word_embeds_npm_command(text: &str) -> bool {
+    if text.trim_start().starts_with("npm ") || is_npm_executable(text.trim()) {
+        return true;
+    }
+    if text.contains("$(") || text.contains('`') {
+        return true;
+    }
+    for marker in [
+        "&& npm",
+        "; npm",
+        "| npm",
+        "|| npm",
+        "(npm",
+        " npm publish",
+        " npm dist-tag",
+    ] {
+        if text.contains(marker) {
+            return true;
+        }
+    }
+    text.contains('=')
+        && text.contains("npm")
+        && (text.contains(" publish") || text.contains(" dist-tag"))
+}
+
+fn find_balanced_paren_end(text: &str) -> Option<usize> {
+    let mut depth = 1usize;
+    for (index, ch) in text.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Re-tokenizes nested shell text inside quotes, `$()` and backticks so
+/// `bash -c "cd && npm publish"` and `$(npm publish)` are not skipped.
+fn expand_embedded_shell_content(text: &str) -> Vec<ShellToken> {
+    let mut out = Vec::new();
+    let mut cursor = 0usize;
+    while cursor < text.len() {
+        let rest = &text[cursor..];
+        if let Some(dollar) = rest.find("$(") {
+            let before = &rest[..dollar];
+            if !before.is_empty() {
+                out.extend(shell_tokens(before));
+            }
+            let inner_start = cursor + dollar + 2;
+            let inner_text = &text[inner_start..];
+            if let Some(end) = find_balanced_paren_end(inner_text) {
+                out.push(ShellToken::Separator);
+                out.extend(shell_tokens(&inner_text[..end]));
+                out.push(ShellToken::Separator);
+                cursor = inner_start + end + 1;
+                continue;
+            }
+        }
+        out.extend(shell_tokens(rest));
+        break;
+    }
+    out
+}
+
+fn push_word_tokens(tokens: &mut Vec<ShellToken>, text: String, quoted: bool) {
+    if (quoted && word_embeds_npm_command(&text)) || text.contains("$(") {
+        tokens.push(ShellToken::Separator);
+        tokens.extend(expand_embedded_shell_content(&text));
+        tokens.push(ShellToken::Separator);
+    } else {
+        tokens.push(ShellToken::Word(text));
+    }
+}
+
 /// Small shell-aware tokenizer: quotes group words (and are stripped), `#` at
 /// the start of a word outside quotes begins a comment, and `;`, `&`, `|`, `(`
-/// and `)` outside quotes end a command even when glued to a word. A quoted
-/// word that itself begins with `npm ` is re-tokenized so `run: 'npm publish'`
-/// is still seen.
+/// and `)` outside quotes end a command even when glued to a word. Quoted words,
+/// `$()` bodies and backticks that embed an npm command are re-tokenized so
+/// `bash -c 'npm publish'` and `$(npm publish)` are still seen.
 fn shell_tokens(line: &str) -> Vec<ShellToken> {
     shell_scan(line).0
 }
@@ -424,13 +525,7 @@ fn shell_scan(line: &str) -> (Vec<ShellToken>, bool) {
         |tokens: &mut Vec<ShellToken>, word: &mut String, in_word: &mut bool, quoted: &mut bool| {
             if *in_word {
                 let text = std::mem::take(word);
-                if *quoted && text.trim_start().starts_with("npm ") {
-                    tokens.push(ShellToken::Separator);
-                    tokens.extend(shell_tokens(&text));
-                    tokens.push(ShellToken::Separator);
-                } else {
-                    tokens.push(ShellToken::Word(text));
-                }
+                push_word_tokens(tokens, text, *quoted);
             }
             *in_word = false;
             *quoted = false;
@@ -445,7 +540,7 @@ fn shell_scan(line: &str) -> (Vec<ShellToken>, bool) {
             continue;
         }
         match ch {
-            '"' | '\'' => {
+            '"' | '\'' | '`' => {
                 quote = Some(ch);
                 in_word = true;
                 quoted_word = true;
@@ -481,6 +576,10 @@ const VALUE_FLAGS: &[&str] = &[
     "--userconfig",
     "--access",
     "--provenance-file",
+    "--prefix",
+    "-C",
+    "--cache",
+    "--scope",
 ];
 
 /// Fails when a workflow publishes or tags npm without exactly one literal
@@ -500,24 +599,67 @@ pub(super) fn validate_workflow_npm_tags(path: &str, text: &str, violations: &mu
         }
         commands.push(command);
         for command in commands {
-            let Some(npm) = command.iter().position(|t| t == "npm") else {
-                continue;
-            };
-            let args = command[npm + 1..]
+            inspect_command_for_npm_tags(path, number, &command, violations);
+        }
+    }
+}
+
+fn inspect_command_for_npm_tags(
+    path: &str,
+    number: usize,
+    command: &[String],
+    violations: &mut Vec<String>,
+) {
+    for (index, token) in command.iter().enumerate() {
+        if is_npm_executable(token) {
+            let args = command[index + 1..]
                 .iter()
                 .map(String::as_str)
                 .collect::<Vec<_>>();
-            let Some(sub) = subcommand_index(&args) else {
+            handle_npm_args(path, number, &args, violations);
+            continue;
+        }
+        if token == "npx" {
+            let Some(next) = command.get(index + 1) else {
                 continue;
             };
-            match args[sub] {
-                "publish" => check_publish_args(path, number, &args, violations),
-                "dist-tag" | "dist-tags" => {
-                    check_dist_tag_args(path, number, &args[sub + 1..], violations)
-                }
-                _ => {}
+            if is_npm_executable(next) {
+                let args = command[index + 2..]
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>();
+                handle_npm_args(path, number, &args, violations);
             }
         }
+    }
+}
+
+fn handle_npm_args(path: &str, number: usize, args: &[&str], violations: &mut Vec<String>) {
+    let Some(sub) = subcommand_index(args) else {
+        return;
+    };
+    match args[sub] {
+        "publish" => check_publish_args(path, number, args, violations),
+        "dist-tag" | "dist-tags" => check_dist_tag_args(path, number, &args[sub + 1..], violations),
+        "exec" | "x" => {
+            let nested_args = exec_payload(&args[sub + 1..]);
+            let nested = nested_args
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>();
+            if !nested.is_empty() {
+                inspect_command_for_npm_tags(path, number, &nested, violations);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn exec_payload<'a>(args: &'a [&'a str]) -> &'a [&'a str] {
+    if let Some(dashdash) = args.iter().position(|arg| *arg == "--") {
+        &args[dashdash + 1..]
+    } else {
+        args
     }
 }
 
