@@ -41,10 +41,10 @@ use super::refresh_scheduler::{
 };
 use super::state::{
     AnalysisAttemptState, AnalysisFailure, AnalysisFailureKind, AnalysisHealth, AnalysisSnapshot,
-    ConfigPullState, DocumentStalenessReason, DocumentState, DocumentStore, QuarantineTransition,
-    WorkspaceFolderEntry, WorkspaceFolderEventRejection, WorkspaceFolderSelection,
-    WorkspaceFolderSet, WorkspaceRootAuthority, WorkspaceRootState, content_digest,
-    format_duration,
+    ConfigPullCoordinator, ConfigPullState, DocumentStalenessReason, DocumentState,
+    QuarantineLedger, QuarantineTransition, WorkspaceFolderEntry, WorkspaceFolderEventRejection,
+    WorkspaceFolderSelection, WorkspaceFolderSet, WorkspaceRootAuthority, WorkspaceRootState,
+    content_digest, format_duration,
 };
 use super::uri::{
     CappedArtifactRead, absolute_join, display_path, file_uri_for_path, file_uri_is_within_root,
@@ -167,11 +167,9 @@ pub(super) struct Backend {
     /// optional full-list reconciliation query is a separately versioned
     /// confirmation step bound to the folder-set epoch.
     workspace_folders: Mutex<WorkspaceFolderSet>,
-    documents: Mutex<DocumentStore>,
-    /// Per-document save digest plus the workspace revision that save
-    /// produced; the revision lets a failed refresh drop only the digests no
-    /// successful snapshot has covered yet.
-    saved_content_digests: Mutex<BTreeMap<tower_lsp_server::ls_types::Uri, (String, u64)>>,
+    /// Owns open documents, save digests and the last published
+    /// diagnostics (#2941).
+    quarantine: QuarantineLedger,
     /// Highest workspace revision a published snapshot analyzed.
     last_published_workspace_revision: AtomicU64,
     analysis_config: Mutex<LspAnalysisConfig>,
@@ -183,28 +181,14 @@ pub(super) struct Backend {
     /// the client advertised. The negotiated session fields below are
     /// populated from it; the bounded status projection is rendered from it.
     client_features: Mutex<ClientFeatureProfile>,
-    /// Epoch guarding pull responses: `workspace/didChangeConfiguration` in
-    /// pull mode bumps it, and a response arriving for an older epoch is
-    /// dropped. Mirrors `workspace_root_epoch`.
-    config_pull_epoch: AtomicU64,
-    config_pull_state: Mutex<ConfigPullState>,
-    /// Coalesces pull scheduling to one in-flight request plus at most one
-    /// queued re-pull for the latest epoch.
-    config_pull_coordinator: Mutex<ConfigPullCoordinator>,
-    /// The root the currently retained pulled layer was scoped to. Pulled
-    /// settings are valid only for that root; any transition landing on a
-    /// different analysis-capable root must re-pull. Compared rather than
-    /// derived from transition deltas so a direct A -> B switch (which
-    /// rewrites to a non-analyzable `RootChanged` state and is re-selected
-    /// later with `root_changed == false`) is still caught.
-    config_pull_scope_root: Mutex<Option<PathBuf>>,
+    /// Config-pull epoch, lifecycle state, coalescing and scope root (#2942).
+    config_pull: ConfigPullCoordinator,
     last_diagnostic_uris: Mutex<BTreeSet<Uri>>,
     /// URIs whose latest push publication is the analysis-pending marker
     /// rather than committed diagnostics (#8732): the first snapshot commit
     /// (or a root/shutdown clear) must retract the marker with the
     /// established empty-clear so the pending state never outlives it.
     pending_push_marker_uris: Mutex<BTreeMap<Uri, String>>,
-    last_diagnostics: Mutex<BTreeMap<Uri, Vec<Diagnostic>>>,
     latest_analysis: Mutex<Option<Arc<AnalysisSnapshot>>>,
     diagnostic_result_ids: Mutex<Option<Arc<DiagnosticResultIdCache>>>,
     analysis_health: Mutex<AnalysisHealth>,
@@ -322,12 +306,6 @@ struct DiagnosticsInputWatch {
     registered: bool,
 }
 
-#[derive(Default)]
-struct ConfigPullCoordinator {
-    in_flight: bool,
-    queued: bool,
-}
-
 pub(super) struct RefreshTransaction {
     pub(super) plan: DiagnosticRefreshPlan,
     pub(super) snapshot: AnalysisSnapshot,
@@ -371,20 +349,15 @@ impl Backend {
             workspace_root_epoch: AtomicU64::new(0),
             workspace_root_transition: AsyncMutex::new(()),
             workspace_folders: Mutex::new(WorkspaceFolderSet::default()),
-            documents: Mutex::new(DocumentStore::default()),
-            saved_content_digests: Mutex::new(BTreeMap::new()),
+            quarantine: QuarantineLedger::default(),
             last_published_workspace_revision: AtomicU64::new(0),
             analysis_config: Mutex::new(LspAnalysisConfig::default()),
             configuration_failure: Mutex::new(None),
             configuration_mode: Mutex::new(ConfigurationMode::InitializationOnly),
             client_features: Mutex::new(ClientFeatureProfile::unsupported()),
-            config_pull_epoch: AtomicU64::new(0),
-            config_pull_state: Mutex::new(ConfigPullState::NotApplicable),
-            config_pull_coordinator: Mutex::new(ConfigPullCoordinator::default()),
-            config_pull_scope_root: Mutex::new(None),
+            config_pull: ConfigPullCoordinator::default(),
             last_diagnostic_uris: Mutex::new(BTreeSet::new()),
             pending_push_marker_uris: Mutex::new(BTreeMap::new()),
-            last_diagnostics: Mutex::new(BTreeMap::new()),
             latest_analysis: Mutex::new(None),
             diagnostic_result_ids: Mutex::new(None),
             analysis_health: Mutex::new(AnalysisHealth::default()),
@@ -1132,7 +1105,7 @@ impl Backend {
     }
 
     fn open_rust_index_paths_for_root(&self, root: &Path) -> std::collections::BTreeSet<PathBuf> {
-        let Ok(documents) = self.documents.lock() else {
+        let Ok(documents) = self.quarantine.documents.lock() else {
             return Default::default();
         };
         documents
@@ -1282,7 +1255,7 @@ impl Backend {
         }
         bind_seam_evidence_identity(&mut snapshot, &mut batches);
         snapshot.prepare_diagnostic_uri_index();
-        let Ok(last_diagnostics) = self.last_diagnostics.lock() else {
+        let Ok(last_diagnostics) = self.quarantine.last_diagnostics.lock() else {
             return None;
         };
         if snapshot.diagnostics_by_uri != diagnostics_by_uri_from_batches(&batches) {
@@ -1298,7 +1271,7 @@ impl Backend {
         // Rust uses the raw-byte commitments carried by the completed producer,
         // never a reread after analysis. Other languages retain their existing
         // saved-content identity behavior. State advances only at commit.
-        let Ok(documents) = self.documents.lock() else {
+        let Ok(documents) = self.quarantine.documents.lock() else {
             return None;
         };
         let (pending_analyzed, pending_entered) =
@@ -1347,7 +1320,7 @@ impl Backend {
         let Ok(mut last_diagnostic_uris) = self.last_diagnostic_uris.lock() else {
             return None;
         };
-        let Ok(mut last_diagnostics) = self.last_diagnostics.lock() else {
+        let Ok(mut last_diagnostics) = self.quarantine.last_diagnostics.lock() else {
             return None;
         };
         let Ok(mut latest_analysis) = self.latest_analysis.lock() else {
@@ -1356,7 +1329,7 @@ impl Backend {
         let Ok(mut stored_result_ids) = self.diagnostic_result_ids.lock() else {
             return None;
         };
-        let Ok(mut documents) = self.documents.lock() else {
+        let Ok(mut documents) = self.quarantine.documents.lock() else {
             return None;
         };
         // Advance document identities atomically with the snapshot commit.
@@ -1454,7 +1427,7 @@ impl Backend {
         let Ok(mut last_diagnostic_uris) = self.last_diagnostic_uris.lock() else {
             return Vec::new();
         };
-        if let Ok(mut last_diagnostics) = self.last_diagnostics.lock() {
+        if let Ok(mut last_diagnostics) = self.quarantine.last_diagnostics.lock() {
             last_diagnostics.clear();
         }
         if let Ok(mut latest_analysis) = self.latest_analysis.lock() {
@@ -1511,6 +1484,7 @@ impl Backend {
         };
         let signature = Self::pending_push_marker_signature(&recovery, withdrawn);
         let uris = self
+            .quarantine
             .documents
             .lock()
             .map(|documents| documents.documents.keys().cloned().collect::<Vec<_>>())
@@ -1797,7 +1771,12 @@ impl Backend {
         uri: &Uri,
         project: impl FnOnce(&DocumentState) -> R,
     ) -> Option<R> {
-        self.documents.lock().ok()?.state_for_uri(uri).map(project)
+        self.quarantine
+            .documents
+            .lock()
+            .ok()?
+            .state_for_uri(uri)
+            .map(project)
     }
 
     /// Clears intentionally bind no version (#1747): a clear must apply
@@ -1911,12 +1890,22 @@ impl Backend {
 
     #[cfg(test)]
     pub(super) fn document_state_for_test(&self, uri: &Uri) -> Option<super::state::DocumentState> {
-        self.documents.lock().ok()?.state_for_uri(uri).cloned()
+        self.quarantine
+            .documents
+            .lock()
+            .ok()?
+            .state_for_uri(uri)
+            .cloned()
     }
 
     #[cfg(test)]
     pub(super) fn last_diagnostics_for_uri_for_test(&self, uri: &Uri) -> Option<Vec<Diagnostic>> {
-        self.last_diagnostics.lock().ok()?.get(uri).cloned()
+        self.quarantine
+            .last_diagnostics
+            .lock()
+            .ok()?
+            .get(uri)
+            .cloned()
     }
 
     fn analysis_health_snapshot(&self) -> AnalysisHealth {
@@ -2653,7 +2642,7 @@ impl Backend {
                 // interleave a state change into a torn payload (e.g. a
                 // failure from a newer state beside an older state string).
                 "state": pull_state.as_str(),
-                "epoch": self.config_pull_epoch.load(Ordering::Relaxed),
+                "epoch": self.config_pull.epoch(),
                 "failure": pull_state.failure().map(|failure| serde_json::json!({
                     "kind": failure.kind.as_str(),
                     "message": failure.message,
@@ -2792,47 +2781,8 @@ impl Backend {
     }
 
     async fn apply_workspace_root_resolution(&self, resolution: WorkspaceRootResolution) {
-        self.apply_workspace_root_authority(Self::workspace_root_authority_for_resolution(
-            resolution,
-        ))
-        .await;
-    }
-
-    fn workspace_root_authority_for_resolution(
-        resolution: WorkspaceRootResolution,
-    ) -> WorkspaceRootAuthority {
-        match resolution {
-            WorkspaceRootResolution::Selected(root) => {
-                if !root.is_absolute() {
-                    WorkspaceRootAuthority::unavailable(format!(
-                        "workspace root is not absolute: {}",
-                        root.display()
-                    ))
-                } else if !root.is_dir() {
-                    WorkspaceRootAuthority::unavailable(format!(
-                        "workspace root is inaccessible or not a directory: {}",
-                        root.display()
-                    ))
-                } else {
-                    WorkspaceRootAuthority::selected(root)
-                }
-            }
-            WorkspaceRootResolution::Ambiguous(candidates) => {
-                if candidates
-                    .iter()
-                    .any(|root| !root.is_absolute() || !root.is_dir())
-                {
-                    WorkspaceRootAuthority::unavailable(
-                        "one or more workspace folders are inaccessible or not directories",
-                    )
-                } else {
-                    WorkspaceRootAuthority::ambiguous(candidates)
-                }
-            }
-            WorkspaceRootResolution::Unavailable(detail) => {
-                WorkspaceRootAuthority::unavailable(detail)
-            }
-        }
+        self.apply_workspace_root_authority(WorkspaceRootAuthority::from_resolution(resolution))
+            .await;
     }
 
     async fn apply_workspace_root_authority(&self, authority: WorkspaceRootAuthority) {
@@ -2933,7 +2883,7 @@ impl Backend {
             && root_changed
             && self.configuration_mode() == ConfigurationMode::Pull
         {
-            self.config_pull_epoch.fetch_add(1, Ordering::SeqCst);
+            self.config_pull.bump_epoch();
         }
         if changed {
             self.refresh_scheduler.invalidate_input();
@@ -2989,11 +2939,7 @@ impl Backend {
         // schedules after the transition guard is released.
         let pull_scope_stale = {
             let restartable = {
-                let in_flight = self
-                    .config_pull_coordinator
-                    .lock()
-                    .map(|coordinator| coordinator.in_flight)
-                    .unwrap_or(false);
+                let in_flight = self.config_pull.in_flight();
                 in_flight
                     || matches!(
                         self.config_pull_state(),
@@ -3001,12 +2947,7 @@ impl Backend {
                     )
             };
             restartable
-                && self
-                    .config_pull_scope_root
-                    .lock()
-                    .ok()
-                    .and_then(|scope_root| scope_root.clone())
-                    != self.workspace_root_authority().effective_root
+                && self.config_pull.scope_root() != self.workspace_root_authority().effective_root
         };
         let schedule_deferred_pull = self.configuration_mode() == ConfigurationMode::Pull
             && (matches!(self.config_pull_state(), ConfigPullState::Deferred) || pull_scope_stale)
@@ -3327,16 +3268,11 @@ impl Backend {
     }
 
     fn config_pull_state(&self) -> ConfigPullState {
-        self.config_pull_state
-            .lock()
-            .map(|state| state.clone())
-            .unwrap_or(ConfigPullState::NotApplicable)
+        self.config_pull.state()
     }
 
     fn set_config_pull_state(&self, state: ConfigPullState) {
-        if let Ok(mut current) = self.config_pull_state.lock() {
-            *current = state;
-        }
+        self.config_pull.set_state(state);
     }
 
     /// Schedule one coalesced `workspace/configuration` pull (#2031). At most
@@ -3345,34 +3281,15 @@ impl Backend {
     /// The pull is a pure LSP round-trip: it never launches analysis, git,
     /// network beyond the LSP connection, or edits.
     async fn schedule_configuration_pull(&self) {
-        {
-            let Ok(mut coordinator) = self.config_pull_coordinator.lock() else {
-                return;
-            };
-            if coordinator.in_flight {
-                coordinator.queued = true;
-                return;
-            }
-            coordinator.in_flight = true;
+        if !self.config_pull.begin_or_queue() {
+            return;
         }
         loop {
-            let epoch = self.config_pull_epoch.load(Ordering::SeqCst);
+            let epoch = self.config_pull.epoch();
             self.set_config_pull_state(ConfigPullState::Pending);
             self.publish_analysis_status().await;
             self.pull_and_apply_configuration(epoch).await;
-            let queued = {
-                let Ok(mut coordinator) = self.config_pull_coordinator.lock() else {
-                    return;
-                };
-                if coordinator.queued {
-                    coordinator.queued = false;
-                    true
-                } else {
-                    coordinator.in_flight = false;
-                    false
-                }
-            };
-            if !queued {
+            if !self.config_pull.finish_cycle() {
                 return;
             }
         }
@@ -3407,7 +3324,7 @@ impl Backend {
             .await;
         // Epoch guard: a response for an older epoch is dropped; the queued
         // re-pull for the current epoch owns the disclosed state.
-        if self.config_pull_epoch.load(Ordering::SeqCst) != epoch {
+        if self.config_pull.epoch() != epoch {
             return;
         }
         match result {
@@ -3417,9 +3334,7 @@ impl Backend {
                     // The retained layer is scoped to the root it was pulled
                     // for; root transitions compare against this to decide
                     // whether a re-pull is needed.
-                    if let Ok(mut scope_root) = self.config_pull_scope_root.lock() {
-                        *scope_root = Some(root);
-                    }
+                    self.config_pull.set_scope_root(root);
                 }
                 Err(message) => {
                     self.set_config_pull_state(ConfigPullState::Failed(AnalysisFailure {
@@ -3483,7 +3398,7 @@ impl Backend {
     /// are dropped) and schedule one coalesced re-pull. The retained pulled
     /// layer stays in effect as last-known-good until the re-pull resolves.
     async fn handle_pull_mode_configuration_change(&self) {
-        self.config_pull_epoch.fetch_add(1, Ordering::SeqCst);
+        self.config_pull.bump_epoch();
         self.schedule_configuration_pull().await;
     }
 
@@ -3554,7 +3469,8 @@ impl Backend {
         params: DidOpenTextDocumentParams,
     ) -> Option<(Uri, QuarantineTransition)> {
         let uri = params.text_document.uri.clone();
-        self.documents
+        self.quarantine
+            .documents
             .lock()
             .ok()
             .map(|mut documents| (uri, documents.open(params)))
@@ -3565,7 +3481,8 @@ impl Backend {
     /// store lock is treated as a changed input: the conservative route is
     /// the interactive refresh, never silently skipping it.
     fn open_document_matches_saved_content(&self, uri: &Uri) -> bool {
-        self.documents
+        self.quarantine
+            .documents
             .lock()
             .ok()
             .map(|documents| documents.open_matches_persisted_saved_content(uri))
@@ -3586,9 +3503,13 @@ impl Backend {
         let Some((digest, input_identity)) = committed else {
             return false;
         };
-        self.documents.lock().ok().is_some_and(|mut documents| {
-            documents.adopt_committed_identity(uri, &digest, input_identity)
-        })
+        self.quarantine
+            .documents
+            .lock()
+            .ok()
+            .is_some_and(|mut documents| {
+                documents.adopt_committed_identity(uri, &digest, input_identity)
+            })
     }
 
     /// Whether a clean open still carries an input the committed snapshot
@@ -3611,6 +3532,7 @@ impl Backend {
             return false;
         };
         let saved_digest_matches = self
+            .quarantine
             .documents
             .lock()
             .ok()
@@ -3637,7 +3559,7 @@ impl Backend {
         let uri = params.text_document.uri.clone();
         let version = params.text_document.version;
         let position_encoding = self.selected_position_encoding();
-        let mut documents = self.documents.lock().ok()?;
+        let mut documents = self.quarantine.documents.lock().ok()?;
         let transition = match position_encoding {
             Some(position_encoding) => documents.change(params, &position_encoding),
             None => documents.invalidate_change(&uri, version),
@@ -3656,7 +3578,7 @@ impl Backend {
         saved_digest: Option<String>,
         text: Option<String>,
     ) -> Option<(QuarantineTransition, Option<i32>)> {
-        self.documents.lock().ok().map(|mut documents| {
+        self.quarantine.documents.lock().ok().map(|mut documents| {
             let transition = documents.save(uri, saved_digest, text);
             let version = documents.state_for_uri(uri).and_then(|state| state.version);
             (transition, version)
@@ -3664,14 +3586,15 @@ impl Backend {
     }
 
     fn close_document(&self, params: DidCloseTextDocumentParams) {
-        let Ok(mut documents) = self.documents.lock() else {
+        let Ok(mut documents) = self.quarantine.documents.lock() else {
             return;
         };
         documents.close(params);
     }
 
     fn document_text(&self, uri: &tower_lsp_server::ls_types::Uri) -> Option<String> {
-        self.documents
+        self.quarantine
+            .documents
             .lock()
             .ok()?
             .documents
@@ -3683,7 +3606,8 @@ impl Backend {
     /// (#1746): after a rejected incremental change the retained text is not
     /// the client's document and must never supply a save identity.
     fn document_buffer_authority_unknown(&self, uri: &tower_lsp_server::ls_types::Uri) -> bool {
-        self.documents
+        self.quarantine
+            .documents
             .lock()
             .ok()
             .and_then(|documents| {
@@ -3833,31 +3757,18 @@ impl Backend {
         &self,
         uri: &Uri,
     ) -> Option<(PathBuf, DocumentStalenessReason)> {
-        let documents = self.documents.lock().ok()?;
-        let state = documents.state_for_uri(uri)?;
-        quarantine_from_state(state)
+        self.quarantine.document_quarantine(uri)
     }
 
     fn document_path_for_uri(&self, uri: &Uri) -> Option<PathBuf> {
-        self.documents
-            .lock()
-            .ok()?
-            .state_for_uri(uri)
-            .map(|state| state.path.clone())
+        self.quarantine.document_path_for_uri(uri)
     }
 
     /// Mark the document's withdrawal as disclosed, returning `(path,
     /// reason)` only on the first disclosure of the episode so one episode
     /// emits exactly one disclosure.
     fn mark_withdrawal_disclosed(&self, uri: &Uri) -> Option<(PathBuf, DocumentStalenessReason)> {
-        let mut documents = self.documents.lock().ok()?;
-        let state = documents.state_for_uri_mut(uri)?;
-        let quarantine = state.quarantine.as_mut()?;
-        if quarantine.withdrawal_disclosed {
-            return None;
-        }
-        quarantine.withdrawal_disclosed = true;
-        Some((state.path.clone(), quarantine.reason))
+        self.quarantine.mark_withdrawal_disclosed(uri)
     }
 
     /// Mark the pull-side partial-delivery disclosures for one snapshot input
@@ -3906,7 +3817,8 @@ impl Backend {
     }
 
     fn last_diagnostics_has_any(&self, uri: &Uri) -> bool {
-        self.last_diagnostics
+        self.quarantine
+            .last_diagnostics
             .lock()
             .ok()
             .and_then(|last| last.get(uri).map(|diagnostics| !diagnostics.is_empty()))
@@ -3914,7 +3826,7 @@ impl Backend {
     }
 
     fn set_last_diagnostics_for_uri(&self, uri: &Uri, diagnostics: Vec<Diagnostic>) {
-        if let Ok(mut last) = self.last_diagnostics.lock() {
+        if let Ok(mut last) = self.quarantine.last_diagnostics.lock() {
             last.insert(uri.clone(), diagnostics);
         }
     }
@@ -4109,11 +4021,7 @@ impl Backend {
         uri: &tower_lsp_server::ls_types::Uri,
         digest: &str,
     ) -> bool {
-        self.saved_content_digests
-            .lock()
-            .ok()
-            .and_then(|digests| digests.get(uri).map(|(recorded, _)| recorded.clone()))
-            .is_some_and(|recorded| recorded == digest)
+        self.quarantine.saved_content_digest_matches(uri, digest)
     }
 
     /// Record a save digest and advance the workspace revision as one step,
@@ -4130,9 +4038,8 @@ impl Backend {
             return;
         };
         let next = revision.saturating_add(1);
-        if let Ok(mut digests) = self.saved_content_digests.lock() {
-            digests.insert(uri.clone(), (digest, next));
-        }
+        self.quarantine
+            .record_saved_content_digest(uri, digest, next);
         *revision = next;
     }
 
@@ -4145,9 +4052,7 @@ impl Backend {
         let covered = self
             .last_published_workspace_revision
             .load(Ordering::Acquire);
-        if let Ok(mut digests) = self.saved_content_digests.lock() {
-            digests.retain(|_, (_, revision)| *revision <= covered);
-        }
+        self.quarantine.retain_covered_digests(covered);
     }
 
     pub(super) fn hover_for_position(&self, params: &HoverParams) -> Option<Hover> {
@@ -4261,7 +4166,7 @@ impl Backend {
             }
         }
 
-        let Ok(last_diagnostics) = self.last_diagnostics.lock() else {
+        let Ok(last_diagnostics) = self.quarantine.last_diagnostics.lock() else {
             return None;
         };
         let diagnostics = last_diagnostics.get(uri)?;
@@ -6571,7 +6476,7 @@ impl LanguageServer for Backend {
         }
         let authority = match derived.0 {
             None => WorkspaceRootAuthority::removed(self.effective_root()),
-            Some(resolution) => Self::workspace_root_authority_for_resolution(resolution),
+            Some(resolution) => WorkspaceRootAuthority::from_resolution(resolution),
         };
         let previous = self.workspace_root_authority();
         self.apply_workspace_folder_set_authority(authority, folder_set_epoch)
@@ -6750,9 +6655,8 @@ impl LanguageServer for Backend {
             self.verbose_params_bytes(&params),
         )
         .await;
-        if let Ok(mut digests) = self.saved_content_digests.lock() {
-            digests.remove(&params.text_document.uri);
-        }
+        self.quarantine
+            .forget_saved_content_digest(&params.text_document.uri);
         // #8732: the closing client clears its own view; drop the URI from
         // the pending-marker set so a later commit or shutdown does not
         // publish a retraction for a document nobody tracks. Push clients
@@ -7759,7 +7663,7 @@ impl Backend {
         &self,
         snapshot: Option<&AnalysisSnapshot>,
     ) -> serde_json::Value {
-        let Ok(documents) = self.documents.lock() else {
+        let Ok(documents) = self.quarantine.documents.lock() else {
             return serde_json::json!([]);
         };
         let statuses = documents
@@ -13130,13 +13034,8 @@ mod work_done_progress_guard_tests {
             backend.record_health_outcome(&first, RefreshAttemptOutcome::Published);
             // `uncovered` is saved afterwards; the still-active refresh is aborted.
             backend.record_saved_content_digest_and_advance(&uncovered_uri, "u".to_string());
-            let held = |backend: &Backend| -> Vec<Uri> {
-                backend
-                    .saved_content_digests
-                    .lock()
-                    .map(|digests| digests.keys().cloned().collect())
-                    .unwrap_or_default()
-            };
+            let held =
+                |backend: &Backend| -> Vec<Uri> { backend.quarantine.saved_content_digest_uris() };
             if held(backend).len() != 2 {
                 return Err("precondition: both digests recorded".to_string());
             }
@@ -14398,14 +14297,16 @@ fn disk_bytes_equal_text(path: &Path, text: &str) -> bool {
 #[cfg(test)]
 mod disk_bytes_equal_text_tests {
     use super::disk_bytes_equal_text;
-    use std::path::Path;
 
     #[test]
     fn device_and_directory_paths_never_equal_empty_text() {
         // `/dev/zero` stats as length 0, so an empty buffer passes the length
         // check; the unbounded read that followed grew RSS past 5 GB.
         #[cfg(target_os = "linux")]
-        assert!(!disk_bytes_equal_text(Path::new("/dev/zero"), ""));
+        assert!(!disk_bytes_equal_text(
+            std::path::Path::new("/dev/zero"),
+            ""
+        ));
         assert!(!disk_bytes_equal_text(&std::env::temp_dir(), ""));
     }
 

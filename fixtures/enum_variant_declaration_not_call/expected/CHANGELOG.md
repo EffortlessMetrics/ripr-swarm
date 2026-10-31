@@ -429,6 +429,18 @@ Updated:
 ## Pending — enum_variant_declaration_not_call (35)
 
 Reason:
+RIPR-SPEC-0122: #10691 plain wording for the default digest's missing-assertion entry and the catch-all change type
+
+Command:
+`cargo xtask goldens bless enum_variant_declaration_not_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — enum_variant_declaration_not_call (36)
+
+Reason:
 RIPR-SPEC-0122: plain wording for seam and state token in the check digest
 
 Command:
