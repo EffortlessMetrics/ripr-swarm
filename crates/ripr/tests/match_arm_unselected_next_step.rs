@@ -94,6 +94,10 @@ fn a_selected_arm_never_gets_the_selecting_input_advice() -> Result<(), String> 
     for finding in arm_findings(test)? {
         let step = finding.recommended_next_step.as_deref().unwrap_or_default();
         assert!(!step.starts_with(SELECTING_STEP), "{step}");
+        assert!(
+            step.contains("Strengthen the related assertion"),
+            "{step}"
+        );
     }
     Ok(())
 }
