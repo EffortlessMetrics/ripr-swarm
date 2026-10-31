@@ -522,10 +522,10 @@ fn catalog_list_cursors_fail_closed_over_stdio() -> Result<(), String> {
             )
         };
         for (method, field, count) in [
-            ("tools/list", "tools", 9),
+            ("tools/list", "tools", 10),
             ("prompts/list", "prompts", 0),
             ("resources/list", "resources", 1),
-            ("resources/templates/list", "resourceTemplates", 5),
+            ("resources/templates/list", "resourceTemplates", 6),
         ] {
             let baseline = call(&mut session, "plain", method, json!({}))?;
             let catalog = baseline
@@ -728,7 +728,7 @@ fn malformed_catalog_cursors_preserve_protocol_validation_and_recover() -> Resul
         || recovered
             .pointer("/result/tools")
             .and_then(Value::as_array)
-            .is_none_or(|tools| tools.len() != 9)
+            .is_none_or(|tools| tools.len() != 10)
     {
         return Err(format!(
             "protocol controls lost same-session recovery: {recovered}"
@@ -1966,12 +1966,13 @@ fn rejection_arms_survive_the_stdio_transport() -> Result<(), String> {
     let miss = by_id
         .get("unknown-resource")
         .ok_or("missing unknown-resource response")?;
-    let expected_message = "unknown resource; available: ripr://workspace/status; templates: ripr://snapshot/{snapshot_id}, ripr://gap/{canonical_id}, ripr://repair-attempt/{attempt_id}, ripr://receipt/{receipt_id}, ripr://repair-card/{canonical_id}";
+    let expected_message = "unknown resource; available: ripr://workspace/status; templates: ripr://snapshot/{snapshot_id}, ripr://gap/{canonical_id}, ripr://gap/{canonical_id}/limitation, ripr://repair-attempt/{attempt_id}, ripr://receipt/{receipt_id}, ripr://repair-card/{canonical_id}";
     if miss.pointer("/error/data/available") != Some(&json!(["ripr://workspace/status"]))
         || miss.pointer("/error/data/resource_templates")
             != Some(&json!([
                 "ripr://snapshot/{snapshot_id}",
                 "ripr://gap/{canonical_id}",
+                "ripr://gap/{canonical_id}/limitation",
                 "ripr://repair-attempt/{attempt_id}",
                 "ripr://receipt/{receipt_id}",
                 "ripr://repair-card/{canonical_id}"
@@ -2162,9 +2163,9 @@ fn unsupported_inline_version_is_rejected_and_next_request_recovers() -> Result<
         || recovered
             .pointer("/result/tools")
             .and_then(Value::as_array)
-            .is_none_or(|tools| tools.len() != 9)
+            .is_none_or(|tools| tools.len() != 10)
     {
-        return Err("valid inline request did not recover the nine-tool slice surface".into());
+        return Err("valid inline request did not recover the ten-tool slice surface".into());
     }
     Ok(())
 }
@@ -3334,19 +3335,57 @@ fn structured_tool_success(reply: &Value, context: &str) -> Result<Value, String
     let result = reply
         .get("result")
         .ok_or_else(|| format!("{context} lost its result: {reply}"))?;
-    if result
+    // A refresh document whose attempt failed is data (the typed failure and
+    // the last-known-good snapshot) AND an error on the wire: `isError` must
+    // be true exactly then (#11571). Every other success must be isError:false.
+    let failed_refresh = result.pointer("/structuredContent/attempt/state")
+        == Some(&json!("failed"))
+        && result.pointer("/structuredContent/verify").is_some();
+    let is_error = result
         .pointer("/isError")
         .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
+        .unwrap_or(false);
+    if is_error != failed_refresh {
         return Err(format!(
-            "{context} returned an error instead of a card: {result}"
+            "{context} returned an error instead of a card (or a failed refresh was not isError): {result}"
         ));
     }
     result
         .get("structuredContent")
         .cloned()
         .ok_or_else(|| format!("{context} omitted structuredContent: {result}"))
+}
+
+/// The `ripr_prepare_repair` contract: a result is an error exactly when it
+/// created no transaction. Returns the structured document either way, after
+/// pinning that `isError` agrees with `repair_packet_ready` and `attempt`.
+fn structured_prepare_document(reply: &Value, context: &str) -> Result<Value, String> {
+    let result = reply
+        .get("result")
+        .ok_or_else(|| format!("{context} lost its result: {reply}"))?;
+    let document = result
+        .get("structuredContent")
+        .cloned()
+        .ok_or_else(|| format!("{context} omitted structuredContent: {result}"))?;
+    let is_error = result
+        .pointer("/isError")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| format!("{context} omitted isError: {result}"))?;
+    if document.pointer("/failure").is_some() {
+        return Err(format!("{context} returned a typed failure: {document}"));
+    }
+    let ready = document["repair_packet_ready"] == true;
+    if is_error == ready || ready == document["attempt"].is_null() {
+        return Err(format!(
+            "{context}: isError={is_error} must be the opposite of repair_packet_ready={ready} and attempt must exist exactly when ready: {document}"
+        ));
+    }
+    if !ready && document["next"]["kind"].as_str().is_none() {
+        return Err(format!(
+            "{context}: a refusal must carry a machine-readable next.kind: {document}"
+        ));
+    }
+    Ok(document)
 }
 
 /// Keep the wording tied to actual input selection: the same dirty fixture
@@ -4243,6 +4282,48 @@ fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
         ));
     }
 
+    // Limitation pair (#1898): the tool and the `/limitation` resource return
+    // one document, the `/limitation` suffix does not shadow the plain gap
+    // route (the gap resource above still returned the gap document), and the
+    // typed limitation block is present rather than `null`.
+    let limitation_tool = session.call_tool(
+        "limitation-tool",
+        "ripr_get_top_limitation",
+        json!({ "canonical_id": canonical_id }),
+        REPLY_TIMEOUT,
+    )?;
+    let limitation_tool = structured_tool_success(&limitation_tool, "ripr_get_top_limitation")?;
+    let limitation_resource = read_resource_document(
+        &mut session,
+        "limitation-resource",
+        &format!("ripr://gap/{canonical_id}/limitation"),
+        REPLY_TIMEOUT,
+    )?;
+    if limitation_tool != limitation_resource {
+        return Err(format!(
+            "limitation tool and resource diverged:\ntool={limitation_tool}\nresource={limitation_resource}"
+        ));
+    }
+    if limitation_tool
+        .pointer("/schema_version")
+        .and_then(Value::as_str)
+        != Some("ripr-mcp-gap-limitation-v1")
+        || limitation_tool
+            .pointer("/canonical_id")
+            .and_then(Value::as_str)
+            != Some(canonical_id.as_str())
+        || limitation_tool
+            .pointer("/limitation/kind")
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)
+        || limitation_tool.pointer("/limitation/stage").is_none()
+        || limitation_tool == gap_tool
+    {
+        return Err(format!(
+            "limitation document lost its typed contract: {limitation_tool}"
+        ));
+    }
+
     // Card pair.
     let card_tool = session.call_tool(
         "card-tool",
@@ -4356,7 +4437,7 @@ fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
         json!({ "canonical_id": canonical_id }),
         REPLY_TIMEOUT,
     )?;
-    let prepared = structured_tool_success(&prepared, "ripr_prepare_repair")?;
+    let prepared = structured_prepare_document(&prepared, "ripr_prepare_repair")?;
     let attempt_id = prepared
         .pointer("/attempt/attempt_id")
         .and_then(Value::as_str)
@@ -4911,7 +4992,7 @@ fn mcp_readiness_never_exceeds_the_cli_repair_gate() -> Result<(), String> {
             json!({ "canonical_id": id }),
             REPLY_TIMEOUT,
         )?;
-        let prepare = structured_tool_success(&prepare, "ripr_prepare_repair")?;
+        let prepare = structured_prepare_document(&prepare, "ripr_prepare_repair")?;
         let list_ready = item["repair_packet_ready"] == true;
         // One readiness fact across the three MCP surfaces.
         if gap["item"]["readiness"]["repair_packet_ready"] != item["repair_packet_ready"]
@@ -4944,9 +5025,19 @@ fn mcp_readiness_never_exceeds_the_cli_repair_gate() -> Result<(), String> {
         if id == ARM {
             let refusal = refusal.ok_or("`ripr repair` must refuse the gripped arm")?;
             if !refusal.contains("not ready for an automatic repair")
-                || !refusal.contains("already grip")
+                || !refusal.contains("already check it")
             {
                 return Err(format!("CLI refusal changed shape: {refusal}"));
+            }
+            // The gripped arm is a weak finding over a gripped seam: the gate
+            // refuses it, so the typed next step is a by-hand test with the
+            // worktree re-check, as data rather than a prose retry hint.
+            if prepare["next"]["kind"] != "write_test_by_hand"
+                || prepare["next"]["reason"] != "seam_already_gripped"
+                || prepare["next"]["after_editing_tests"]["mcp"]["arguments"]["source"]
+                    != "worktree"
+            {
+                return Err(format!("gripped arm refusal lost its next step: {prepare}"));
             }
             if item["repair_ineligibility"] != "seam_already_gripped"
                 || prepare["ineligibility"]["reason"] != "seam_already_gripped"
@@ -4958,7 +5049,7 @@ fn mcp_readiness_never_exceeds_the_cli_repair_gate() -> Result<(), String> {
                 ));
             }
             let reason = gap["item"]["readiness"]["reason"].as_str().unwrap_or("");
-            if !reason.contains("already grip") {
+            if !reason.contains("already check it") {
                 return Err(format!(
                     "get_gap readiness must carry the shared validator's reason: {reason}"
                 ));
@@ -5009,7 +5100,7 @@ fn mcp_ready_item_is_the_item_the_cli_repair_gate_admits() -> Result<(), String>
             json!({ "canonical_id": id }),
             REPLY_TIMEOUT,
         )?;
-        let prepare = structured_tool_success(&prepare, "ripr_prepare_repair")?;
+        let prepare = structured_prepare_document(&prepare, "ripr_prepare_repair")?;
         let finding_id = prepare["attempt"]["finding_id"]
             .as_str()
             .ok_or_else(|| format!("ready prepare lost its finding id: {prepare}"))?;
@@ -5038,6 +5129,63 @@ fn install_inline_test_fixture(second_module: bool) -> Result<PathBuf, String> {
     std::fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
     commit_fixture(&root, "inline tests")?;
     Ok(root)
+}
+
+/// Agent-experience MCP audit findings 2, 4a: a failed refresh is an error on
+/// the wire (not `isError:false` with the failure buried in `attempt`), keeps
+/// the last-known-good pointer, and every refresh states top-level whether it
+/// is fresh for the working tree and how to re-check after editing tests.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn failed_refresh_is_an_error_and_refresh_states_freshness_and_verify_route() -> Result<(), String>
+{
+    const REFRESH_TIMEOUT: Duration = Duration::from_mins(3);
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let root = install_exposed_match_arm_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+
+    let good = session.call_tool("good", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    if good.pointer("/result/isError") != Some(&json!(false)) {
+        return Err(format!(
+            "a completed refresh must stay isError:false: {good}"
+        ));
+    }
+    let good = structured_tool_success(&good, "ripr_refresh")?;
+    if good["fresh_for_working_tree"] != json!(true)
+        || good["verify"]["mcp"]["tool"] != "ripr_refresh"
+        || good["verify"]["mcp"]["arguments"]["source"] != "worktree"
+    {
+        return Err(format!(
+            "a clean committed refresh must state freshness and the verify route: {good}"
+        ));
+    }
+    let snapshot_id = good["snapshot"]["snapshot_id"].clone();
+
+    let failed = session.call_tool(
+        "failed",
+        "ripr_refresh",
+        json!({ "base": "no-such-ref-for-the-audit" }),
+        REFRESH_TIMEOUT,
+    )?;
+    if failed.pointer("/result/isError") != Some(&json!(true)) {
+        return Err(format!("a failed refresh must be isError:true: {failed}"));
+    }
+    let failed = failed
+        .pointer("/result/structuredContent")
+        .cloned()
+        .ok_or("failed refresh omitted structuredContent")?;
+    if failed["attempt"]["state"] != "failed"
+        || failed["attempt"]["failure"]["code"].as_str().is_none()
+        || failed["last_known_good"]["snapshot_id"] != snapshot_id
+        || failed["fresh_for_working_tree"] != json!(false)
+    {
+        return Err(format!(
+            "a failed refresh keeps the typed failure and last-known-good and is not fresh: {failed}"
+        ));
+    }
+    Ok(())
 }
 
 /// #5516: `ripr_prepare_repair` accepts the inline-only seam the CLI before
@@ -5071,7 +5219,7 @@ fn mcp_prepare_repair_agrees_with_the_cli_on_inline_test_seams() -> Result<(), S
                 json!({ "canonical_id": id }),
                 REPLY_TIMEOUT,
             )?;
-            let prepare = structured_tool_success(&prepare, "ripr_prepare_repair")?;
+            let prepare = structured_prepare_document(&prepare, "ripr_prepare_repair")?;
             let gap = session.call_tool(
                 "gap",
                 "ripr_get_gap",
@@ -5234,7 +5382,7 @@ fn truncated_seam_inventory_refuses_repair_readiness_over_stdio() -> Result<(), 
             json!({ "canonical_id": id }),
             REPLY_TIMEOUT,
         )?;
-        let prepare = structured_tool_success(&prepare, "ripr_prepare_repair")?;
+        let prepare = structured_prepare_document(&prepare, "ripr_prepare_repair")?;
         if prepare["repair_packet_ready"] != false
             || !prepare["attempt"].is_null()
             || prepare["ineligibility"]["reason"] != TRUNCATED
@@ -5640,7 +5788,7 @@ fn weak_boundary_naming_its_discriminator_is_repair_ready_only_where_the_cli_adm
             json!({ "canonical_id": id }),
             REPLY_TIMEOUT,
         )?;
-        let prepare = structured_tool_success(&prepare, "ripr_prepare_repair")?;
+        let prepare = structured_prepare_document(&prepare, "ripr_prepare_repair")?;
         if gap["item"]["readiness"]["repair_packet_ready"] != item["repair_packet_ready"]
             || prepare["repair_packet_ready"] != item["repair_packet_ready"]
         {
@@ -6134,7 +6282,7 @@ fn refresh_source_worktree_serves_repair_card_and_readiness_with_established_cus
         json!({ "canonical_id": ready_id }),
         TIMEOUT,
     )?;
-    let prepared = structured_tool_success(&prepared, "ripr_prepare_repair")?;
+    let prepared = structured_prepare_document(&prepared, "ripr_prepare_repair")?;
     if prepared.get("repair_packet_ready") != Some(&json!(true))
         || prepared.pointer("/attempt/state") != Some(&json!("awaiting_edit"))
     {

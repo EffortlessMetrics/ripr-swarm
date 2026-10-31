@@ -124,6 +124,15 @@ const BINDINGS: &[Binding] = &[
         )],
     },
     Binding {
+        schema_path: "schemas/ripr/check-timeout-refusal.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: timeout_refusal_with_stashed_context_renders_input_context_at_generation_0_3 in crates/ripr/src/output/limited_check.rs asserts the rendered document's generation, keys, and fact/recovery shapes at the renderer, and check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery in crates/ripr/tests/cli_smoke.rs parses the real CLI bytes of a forced-deadline run; the committed fixture is hand-written (forced-deadline bytes only exist per run), so release replay still passes it with --artifact",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/check-timeout-refusal.valid.json"],
+        excluded: &[],
+    },
+    Binding {
         schema_path: "schemas/ripr/gate-decision.schema.json",
         pointer: None,
         corpus: Corpus::FileName("gate-decision.json"),
@@ -1735,7 +1744,17 @@ mod tests {
     fn exempt_rows_name_authorities_that_still_exist() -> Result<(), String> {
         // (name, is_test_fn, source). A helper must be defined and called; a
         // test fn must sit directly under `#[test]`.
-        let pins: [(&str, bool, &str); 3] = [
+        let pins: [(&str, bool, &str); 5] = [
+            (
+                "timeout_refusal_with_stashed_context_renders_input_context_at_generation_0_3",
+                true,
+                include_str!("../../crates/ripr/src/output/limited_check.rs"),
+            ),
+            (
+                "check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery",
+                true,
+                include_str!("../../crates/ripr/tests/cli_smoke.rs"),
+            ),
             (
                 "assert_manifest_matches_published_schema",
                 false,
