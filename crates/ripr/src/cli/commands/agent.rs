@@ -711,29 +711,15 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
                 "agent repair seam_id `{seam_id}` names seam `{resolved}`, which is not repair-eligible: {reason}; no repair attempt was started. Run `ripr pilot --root {root_arg}` to list current seam IDs"
             )))
         }
-        Ok(RepairSubjectOutcome::Ambiguous(seam_ids)) => {
-            const MAX_LISTED: usize = 8;
-            let mut listed: Vec<&str> = seam_ids
-                .iter()
-                .map(String::as_str)
-                .take(MAX_LISTED)
-                .collect();
-            listed.sort_unstable();
-            let mut message = format!(
-                "agent repair seam_id `{seam_id}` names {} seams; select one explicitly: {}",
-                seam_ids.len(),
-                listed.join(", ")
-            );
-            if seam_ids.len() > MAX_LISTED {
-                message.push_str(&format!(" (and {} more)", seam_ids.len() - MAX_LISTED));
-            }
+        Ok(RepairSubjectOutcome::Ambiguous(seams)) => {
+            let (listing, tail) = crate::app::task_first::ambiguous_seam_listing(&seams);
             let root_arg = crate::agent::loop_commands::shell_arg(
                 &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
             );
-            message.push_str(&format!(
-                ". Retry: `ripr agent repair --seam-id <seam-id> --root {root_arg} --phase before`"
-            ));
-            Err(crate::cli::CommandError::Decision(message))
+            Err(crate::cli::CommandError::Decision(format!(
+                "agent repair seam_id `{seam_id}` names {} seams; select one explicitly: {listing}{tail}. Retry: `ripr agent repair --seam-id <seam-id> --root {root_arg} --phase before`",
+                seams.len()
+            )))
         }
         Ok(RepairSubjectOutcome::Unknown) => {
             let root_arg = crate::agent::loop_commands::shell_arg(

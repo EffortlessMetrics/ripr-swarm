@@ -1392,10 +1392,52 @@ pub(crate) enum RepairSubjectOutcome {
         reason: String,
         kind: RefusalKind,
     },
-    /// Several seams name the item; the bounded seam IDs to choose from.
-    Ambiguous(Vec<String>),
+    /// Several seams name the item; the seams to choose from.
+    Ambiguous(Vec<AmbiguousSeam>),
     /// No current seam names the item (stale or unmapped).
     Unknown,
+}
+
+/// One candidate of an ambiguous repair item: the exact seam ID to retry with
+/// and a short plain description (kind and changed expression) so the choice
+/// is not between opaque hashes (#11466).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AmbiguousSeam {
+    pub(crate) id: String,
+    pub(crate) label: String,
+}
+
+impl AmbiguousSeam {
+    fn from_entry(entry: &crate::analysis::ClassifiedSeam) -> Self {
+        const MAX_EXPRESSION_CHARS: usize = 40;
+        let expression: String = entry
+            .seam
+            .expression()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let shown: String = expression.chars().take(MAX_EXPRESSION_CHARS).collect();
+        let ellipsis = if expression.chars().count() > MAX_EXPRESSION_CHARS {
+            "…"
+        } else {
+            ""
+        };
+        let kind = entry.seam.kind().as_str();
+        let label = if shown.is_empty() {
+            kind.to_string()
+        } else {
+            format!("{kind}: `{shown}{ellipsis}`")
+        };
+        Self {
+            id: entry.seam.id().as_str().to_string(),
+            label,
+        }
+    }
+
+    /// `id (label)`, the form an ambiguity message lists.
+    pub(crate) fn listing(&self) -> String {
+        format!("{} ({})", self.id, self.label)
+    }
 }
 
 /// Resolve an explicit `ripr repair` item to its seam, rendering the
@@ -1411,9 +1453,8 @@ pub(crate) fn resolve_repair_subject(root: &Path, item: &str) -> Result<RepairSu
         RepairSubjectOutcome::Ineligible {
             seam_id, reason, ..
         } => RepairSubject::Decision(ineligible_repair_item(root, item, &seam_id, &reason)),
-        RepairSubjectOutcome::Ambiguous(seam_ids) => {
-            let seam_refs: Vec<&str> = seam_ids.iter().map(String::as_str).collect();
-            RepairSubject::Decision(ambiguous_gap_item(root, item, &seam_refs))
+        RepairSubjectOutcome::Ambiguous(seams) => {
+            RepairSubject::Decision(ambiguous_gap_item(root, item, &seams))
         }
         RepairSubjectOutcome::Unknown => RepairSubject::Decision(unknown_repair_item(root, item)),
     })
@@ -1503,7 +1544,7 @@ pub(crate) fn resolve_repair_subject_in(
         _ => RepairSubjectOutcome::Ambiguous(
             matches
                 .iter()
-                .map(|entry| entry.seam.id().as_str().to_string())
+                .map(|entry| AmbiguousSeam::from_entry(entry))
                 .collect(),
         ),
     }
@@ -2554,23 +2595,33 @@ pub(crate) fn unknown_repair_item_reason(root: Option<&Path>, item: &str) -> Str
     format!("repair item `{item}` names no seam in the selected root; run {list}")
 }
 
-fn ambiguous_gap_item(root: &Path, item: &str, matches: &[&str]) -> String {
-    const MAX_LISTED: usize = 8;
-    let mut listed: Vec<&str> = matches.iter().take(MAX_LISTED).copied().collect();
-    listed.sort_unstable();
-    let mut message = format!(
-        "repair item `{item}` names {} seams; select one explicitly: {}",
+pub(crate) fn ambiguous_gap_item(root: &Path, item: &str, matches: &[AmbiguousSeam]) -> String {
+    let (listing, tail) = ambiguous_seam_listing(matches);
+    format!(
+        "repair item `{item}` names {} seams; select one explicitly: {listing}{tail}. Retry: `ripr repair <seam-id> --root {}`",
         matches.len(),
-        listed.join(", ")
-    );
-    if matches.len() > MAX_LISTED {
-        message.push_str(&format!(" (and {} more)", matches.len() - MAX_LISTED));
-    }
-    message.push_str(&format!(
-        ". Retry: `ripr repair <seam-id> --root {}`",
         shell_arg(&bound_root(&root.to_string_lossy()))
-    ));
-    message
+    )
+}
+
+/// The bounded, sorted listing of an ambiguous item's candidates and the
+/// "(and N more)" tail. The first eight supplied matches are kept (analysis
+/// order) and only that window is sorted for display.
+pub(crate) fn ambiguous_seam_listing(matches: &[AmbiguousSeam]) -> (String, String) {
+    const MAX_LISTED: usize = 8;
+    let mut listed: Vec<&AmbiguousSeam> = matches.iter().take(MAX_LISTED).collect();
+    listed.sort_unstable_by(|a, b| a.id.cmp(&b.id));
+    let listing = listed
+        .iter()
+        .map(|seam| seam.listing())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let tail = if matches.len() > MAX_LISTED {
+        format!(" (and {} more)", matches.len() - MAX_LISTED)
+    } else {
+        String::new()
+    };
+    (listing, tail)
 }
 
 /// Message when the façade's follow-on card render fails after the
@@ -4499,25 +4550,41 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    fn test_seam(id: &str, label: &str) -> AmbiguousSeam {
+        AmbiguousSeam {
+            id: id.to_string(),
+            label: label.to_string(),
+        }
+    }
+
     /// An ambiguous item lists at most eight seams, sorted, and counts the
     /// rest; the retry names the explicit seam form, never a pick.
     #[test]
     fn ambiguous_gap_item_sorts_and_bounds_the_listing() -> Result<(), String> {
         let root = Path::new("/ripr-task-first-root");
-        let few = ambiguous_gap_item(root, "gap:x", &["seam:b", "seam:a"]);
-        if !few.contains("names 2 seams; select one explicitly: seam:a, seam:b.")
-            || few.contains("more)")
+        let few = ambiguous_gap_item(
+            root,
+            "gap:x",
+            &[
+                test_seam("seam:b", "return_value"),
+                test_seam("seam:a", "match_arm"),
+            ],
+        );
+        if !few.contains(
+            "names 2 seams; select one explicitly: seam:a (match_arm), seam:b (return_value).",
+        ) || few.contains("more)")
         {
             return Err(format!(
                 "two matches must list sorted without a tail:\n{few}"
             ));
         }
-        let ids: Vec<String> = (0..10).map(|n| format!("seam:{n}")).collect();
-        let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
-        let many = ambiguous_gap_item(root, "gap:x", &refs);
+        let seams: Vec<AmbiguousSeam> = (0..10)
+            .map(|n| test_seam(&format!("seam:{n}"), "k"))
+            .collect();
+        let many = ambiguous_gap_item(root, "gap:x", &seams);
         for expected in [
             "names 10 seams",
-            "seam:0, seam:1, seam:2, seam:3, seam:4, seam:5, seam:6, seam:7 (and 2 more).",
+            "seam:0 (k), seam:1 (k), seam:2 (k), seam:3 (k), seam:4 (k), seam:5 (k), seam:6 (k), seam:7 (k) (and 2 more).",
             "ripr repair <seam-id> --root",
         ] {
             if !many.contains(expected) {
@@ -4536,11 +4603,12 @@ pub(crate) mod tests {
     #[test]
     fn ambiguous_gap_item_bounds_before_sorting() -> Result<(), String> {
         let root = Path::new("/ripr-task-first-root");
-        let ids: Vec<String> = (0..10).rev().map(|n| format!("seam:{n}")).collect();
-        let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
-        let many = ambiguous_gap_item(root, "gap:x", &refs);
-        let expected =
-            "seam:2, seam:3, seam:4, seam:5, seam:6, seam:7, seam:8, seam:9 (and 2 more).";
+        let seams: Vec<AmbiguousSeam> = (0..10)
+            .rev()
+            .map(|n| test_seam(&format!("seam:{n}"), "k"))
+            .collect();
+        let many = ambiguous_gap_item(root, "gap:x", &seams);
+        let expected = "seam:2 (k), seam:3 (k), seam:4 (k), seam:5 (k), seam:6 (k), seam:7 (k), seam:8 (k), seam:9 (k) (and 2 more).";
         if !many.contains(expected) {
             return Err(format!(
                 "the first eight supplied matches must list sorted:\n{many}"
