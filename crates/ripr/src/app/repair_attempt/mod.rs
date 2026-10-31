@@ -533,7 +533,14 @@ pub(crate) fn receipt_binding_from(
                 .map(|binding| binding.base.as_str()),
         );
         return Err(format!(
-            "repair attempt after verdict binding is tampered or stale: the recorded binding no longer matches the attempt. Output this command wrote during the run (stdout or stderr redirected into a repository file, including under `target/ripr`), a path outside `target/ripr` that changed after the after phase bound it, or an attempt that already finished can each cause this. Next: `{status}` reads the attempt's state. From `ripr agent receipt`, remove the stray file or edit and rerun. From the after phase the verdict is already recorded, so a rerun reports the attempt as already finished and only a new attempt recovers it. The restart refuses while your repair edit is present, because that edit already reads the gap as exposed: first set your edit aside without discarding it (for example `git stash`; ripr changes none of your files), run `{restart}`, then restore the edit and run the new --attempt command it prints. Write command output outside the repository"
+            "repair attempt after verdict binding is tampered or stale: the recorded binding no longer matches the attempt.\n\
+             Causes: command output redirected into a repository file during the run (stdout or stderr, including under `target/ripr`), a path outside `target/ripr` that changed after the after phase bound it, or an attempt that already finished.\n\
+             Next: `{status}` reads the attempt's state.\n\
+             From `ripr agent receipt`: remove the stray file or edit and rerun.\n\
+             From the after phase: the verdict is already recorded, so a rerun reports the attempt as already finished and only a new attempt recovers it.\n\
+             The restart refuses while your repair edit is present, because that edit already reads the gap as exposed.\n\
+             Set the edit aside without discarding it (stash only your test edit: `git stash push --include-untracked -- <your test file>`, which also takes an untracked test file and leaves the attempt store in place), run `{restart}`, then restore the edit with `git stash pop` and run the new --attempt command it prints.\n\
+             Write command output outside the repository"
         ));
     }
     validate_trusted_head_surface(

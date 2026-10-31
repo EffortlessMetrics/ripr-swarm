@@ -9531,6 +9531,11 @@ fn agent_repair_after_phase_stderr_redirected_into_repo_names_new_attempt_route(
     let restart_refs = restart_args.iter().map(String::as_str).collect::<Vec<_>>();
     let blocked = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&outside), &restart_refs)?;
     assert_failure(&blocked);
+    let blocked_err = String::from_utf8_lossy(&blocked.stderr);
+    assert!(
+        blocked_err.contains("exposed") || blocked_err.contains("strongly_gripped"),
+        "the blocked restart must say why: {blocked_err}"
+    );
     git_stdout(&root, &["stash", "push", "--include-untracked"])?;
     assert_success(&run_command(
         env!("CARGO_BIN_EXE_ripr"),
@@ -9668,7 +9673,7 @@ fn agent_repair_admits_a_cargo_lock_first_generated_between_the_phases()
             && moved_stderr.contains("`ripr agent status --root ")
             && moved_stderr.contains("remove the stray file or edit and rerun")
             && moved_stderr.contains("Write command output outside the repository")
-            && moved_stderr.contains("set your edit aside without discarding it")
+            && moved_stderr.contains("Set the edit aside without discarding it")
             && moved_stderr.contains("`ripr agent repair --root ")
             && moved_stderr.contains(" --seam-id ")
             && moved_stderr.contains(" --phase before`"),
