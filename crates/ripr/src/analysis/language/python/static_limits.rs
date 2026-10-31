@@ -468,6 +468,15 @@ pub(super) fn python_prefix_hides_code(prefix: &str) -> bool {
         if ch == '\'' || ch == '"' {
             let triple = chars.get(index + 1) == Some(&ch) && chars.get(index + 2) == Some(&ch);
             let width = if triple { 3 } else { 1 };
+            // A single-line f-string whose quote pairing cannot be followed
+            // (3.12 same-quote nesting in a field, a newline in a field)
+            // hides what follows: a miss, never an invented call (#9230).
+            if !triple
+                && chars_end_with_f_prefix(&chars[..index])
+                && single_line_fstring_is_ambiguous(chars[index..].iter().copied())
+            {
+                return true;
+            }
             open = Some((ch, width));
             index += width;
             continue;
@@ -475,6 +484,60 @@ pub(super) fn python_prefix_hides_code(prefix: &str) -> bool {
         index += 1;
     }
     open.is_some()
+}
+
+/// Whether the identifier run that ends `before` is an `f` string prefix
+/// (`f`, `F`, `rf`, `fR`, ...): at most two characters, and not the tail of a
+/// longer name such as `perf`.
+fn chars_end_with_f_prefix(before: &[char]) -> bool {
+    let run = before
+        .iter()
+        .rev()
+        .take_while(|ch| is_python_identifier_char(**ch))
+        .count();
+    let prefix: String = before[before.len() - run..].iter().collect();
+    run <= 2 && matches!(prefix.to_ascii_lowercase().as_str(), "f" | "rf" | "fr")
+}
+
+/// Whether the single-line f-string literal that starts at the first character
+/// of `literal` (its opening quote) has a replacement field the quote pairing
+/// cannot follow: its own quote nested inside a field (Python 3.12), or a
+/// newline inside a field. Both are valid source where the text after the
+/// nested quote or the line break is not necessarily code, so the caller hides
+/// the rest of the text. `false` for a literal that closes cleanly, for one
+/// whose field is still open when the text ends (the open-string rule already
+/// hides it) and for a newline outside any field (not this rule's concern).
+pub(super) fn single_line_fstring_is_ambiguous(literal: impl Iterator<Item = char>) -> bool {
+    let mut literal = literal.peekable();
+    let Some(quote) = literal.next() else {
+        return false;
+    };
+    // Open replacement fields; `0` is literal text.
+    let mut depth = 0usize;
+    while let Some(ch) = literal.next() {
+        if ch == '\\' {
+            literal.next();
+        } else if depth == 0 {
+            if ch == quote {
+                return false;
+            }
+            if ch == '{' {
+                // `{{` is an escaped brace, not a field.
+                if literal.peek() == Some(&'{') {
+                    literal.next();
+                } else {
+                    depth = 1;
+                }
+            }
+        } else if ch == quote || ch == '\n' {
+            return true;
+        } else if ch == '{' {
+            depth += 1;
+        } else if ch == '}' {
+            depth -= 1;
+        }
+    }
+    false
 }
 
 pub(super) fn contains_metaprogramming(text: &str) -> bool {

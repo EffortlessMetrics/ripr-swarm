@@ -3,10 +3,13 @@ import { promises as fs } from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import {
+  CloseAction,
+  ErrorAction,
   InitializeParams,
   LanguageClient,
   LanguageClientOptions,
   ServerOptions,
+  State,
   Trace
 } from 'vscode-languageclient/node';
 import { explicitSetting, getConfig, RiprConfig } from './config';
@@ -132,6 +135,13 @@ const OPEN_SETTINGS_ACTION = 'Open Settings';
 const COPY_DIAGNOSTIC_ACTION = 'Copy Diagnostic';
 const COPY_INSTALL_COMMAND_ACTION = 'Copy Install Command';
 const RETRY_ACTION = 'Retry';
+/** Action on the mid-session crash message; runs `ripr.restartServer`. */
+export const SERVER_CRASH_RESTART_ACTION = 'Restart Server';
+/** Automatic `CloseAction.Restart` budget inside `SERVER_CRASH_RESTART_WINDOW_MS`. */
+export const SERVER_CRASH_RESTART_LIMIT = 4;
+const SERVER_CRASH_RESTART_WINDOW_MS = 3 * 60 * 1000;
+const SERVER_CRASH_MESSAGE =
+  'The ripr server stopped unexpectedly and will not restart on its own. Restart the server to continue analysis.';
 
 /**
  * Popup actions for a missing-server error. Copy Install Command is only
@@ -390,6 +400,8 @@ interface RiprLanguageClient {
   setTrace(trace: Trace): void;
   start(): Promise<void>;
   stop(): Promise<void>;
+  readonly state?: State;
+  onDidChangeState?(listener: (event: { oldState: State; newState: State }) => void): vscode.Disposable;
 }
 
 export type RiprClientLifecycleWait = (
@@ -486,6 +498,9 @@ export class RiprClientController {
   private client: RiprLanguageClient | undefined;
   private server: ResolvedServer | undefined;
   private readonly notificationDisposables = new Map<RiprLanguageClient, vscode.Disposable[]>();
+  private crashRestartAtMs: number[] = [];
+  private lastCrashCloseAction: CloseAction | undefined;
+  private stoppingClient = false;
   private receivedTypedAnalysisStatus = false;
   private typedAnalysisStatusState: RiprAnalysisStatusPayload['state'] | undefined;
   private readonly dirtyRiprDocuments = new Set<string>();
@@ -747,6 +762,15 @@ export class RiprClientController {
         fileEvents: this.runtime.createFileSystemWatcher(
           new vscode.RelativePattern(this.workspaceRoot, '**/{Cargo.toml,ripr.toml}')
         )
+      },
+      errorHandler: {
+        error: (_error, _message, count) => {
+          if (count !== undefined && count <= 3) {
+            return { action: ErrorAction.Continue };
+          }
+          return { action: ErrorAction.Shutdown };
+        },
+        closed: () => this.handleLanguageClientClosed()
       }
     };
 
@@ -768,9 +792,13 @@ export class RiprClientController {
     );
     this.client = client;
     client.setTrace(traceFromConfig(config.traceServer));
+    const stateListener = client.onDidChangeState
+      ? client.onDidChangeState((event) => this.handleClientStateChange(client, event))
+      : undefined;
     this.notificationDisposables.set(client, [
       client.onNotification('ripr/analysisStatus', (params) => this.handleAnalysisStatus(params)),
-      client.onNotification('window/logMessage', (params) => this.handleServerLog(params))
+      client.onNotification('window/logMessage', (params) => this.handleServerLog(params)),
+      ...(stateListener ? [stateListener] : [])
     ]);
     try {
       await client.start();
@@ -1042,14 +1070,101 @@ export class RiprClientController {
   }
 
   /**
-   * Whether the language client is currently bound and (nominally) running.
+   * Whether the language client is currently bound and actively running.
    * Used by listeners (e.g. onDidChangeWorkspaceFolders) to decide whether a
    * transition should trigger a fresh start, or whether the server is already
-   * up and a restart would just churn. This is a cheap nominal check; it does
-   * not probe the language-client's actual lifecycle state.
+   * up and a restart would just churn. When the client exposes lifecycle
+   * `state`, Stopped is not running; fakes without `state` keep the previous
+   * bound-client check.
    */
   isRunning(): boolean {
-    return this.client !== undefined;
+    return this.clientIsActivelyRunning(this.client);
+  }
+
+  private clientIsActivelyRunning(client: RiprLanguageClient | undefined): boolean {
+    if (client === undefined) {
+      return false;
+    }
+    if (client.state === undefined) {
+      return true;
+    }
+    return client.state === State.Running || client.state === State.Starting;
+  }
+
+  private handleLanguageClientClosed(): { action: CloseAction; handled?: boolean } {
+    if (this.stoppingClient || this.client === undefined) {
+      return { action: CloseAction.DoNotRestart, handled: true };
+    }
+    const now = Date.now();
+    this.crashRestartAtMs = this.crashRestartAtMs.filter(
+      (stamp) => now - stamp <= SERVER_CRASH_RESTART_WINDOW_MS
+    );
+    if (this.crashRestartAtMs.length < SERVER_CRASH_RESTART_LIMIT) {
+      this.crashRestartAtMs.push(now);
+      this.lastCrashCloseAction = CloseAction.Restart;
+      this.output.appendLine('ripr server stopped unexpectedly; restarting it.');
+      return { action: CloseAction.Restart };
+    }
+    this.crashRestartAtMs = [];
+    this.lastCrashCloseAction = CloseAction.DoNotRestart;
+    this.output.appendLine(
+      'ripr server stopped unexpectedly too many times and will not restart on its own.'
+    );
+    this.markServerStoppedUnexpectedly();
+    this.offerCrashRestart();
+    return { action: CloseAction.DoNotRestart, handled: true };
+  }
+
+  private handleClientStateChange(
+    client: RiprLanguageClient,
+    event: { oldState: State; newState: State }
+  ): void {
+    if (this.client !== client || this.stoppingClient) {
+      return;
+    }
+    if (event.newState === State.Running) {
+      this.lastCrashCloseAction = undefined;
+      return;
+    }
+    if (event.newState === State.StartFailed) {
+      this.lastCrashCloseAction = undefined;
+      this.markServerStoppedUnexpectedly();
+      return;
+    }
+    if (event.newState !== State.Stopped) {
+      return;
+    }
+    if (this.lastCrashCloseAction === CloseAction.Restart) {
+      return;
+    }
+    this.markServerStoppedUnexpectedly();
+  }
+
+  private markServerStoppedUnexpectedly(): void {
+    const server = this.server;
+    this.updateStatus({
+      kind: 'serverFailed',
+      summary: 'The ripr server stopped unexpectedly.',
+      detail: server
+        ? `Server: ${server.source} (${server.detail})`
+        : 'The language server process is no longer running.',
+      nextStep: 'Run ripr: Restart Server to start analysis again.'
+    });
+  }
+
+  private offerCrashRestart(): void {
+    void Promise.resolve(
+      this.runtime.showErrorMessage(SERVER_CRASH_MESSAGE, SERVER_CRASH_RESTART_ACTION)
+    )
+      .then(async (choice) => {
+        if (choice === SERVER_CRASH_RESTART_ACTION) {
+          await this.restartThroughLifecycle();
+        }
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.output.appendLine(`ripr crash-restart message failed: ${message}`);
+      });
   }
 
   private disposeNotifications(client: RiprLanguageClient): void {
@@ -1099,10 +1214,17 @@ export class RiprClientController {
     if (this.client !== client) {
       return { kind: this.client ? 'replaced' : startupFailed ? 'startupFailed' : 'cancelled' };
     }
-    if (client) {
-      await client.stop();
-      this.client = undefined;
-      this.disposeNotifications(client);
+    this.stoppingClient = true;
+    this.crashRestartAtMs = [];
+    this.lastCrashCloseAction = undefined;
+    try {
+      if (client) {
+        await client.stop();
+        this.client = undefined;
+        this.disposeNotifications(client);
+      }
+    } finally {
+      this.stoppingClient = false;
     }
     this.server = undefined;
     this.receivedTypedAnalysisStatus = false;
@@ -4204,7 +4326,7 @@ const LIMITED_RUN_STATUS_PRESENTATIONS: Record<string, { summary: string; detail
   limited_partial_scope: {
     summary: 'ripr analysis completed on a bounded partition of the diff.',
     detail: 'The diff exceeded the analysis scope budget, so this run covered only part of it and the remainder was not evaluated.',
-    nextStep: `Run ripr: Show Top Limitation to see which budget stopped the run (RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET), raise it or narrow the diff, then run ${REFRESH_DIAGNOSTICS_COMMAND_TITLE}.`
+    nextStep: `Run ripr: Show Main Analysis Limit to see which budget stopped the run (RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET), raise it or narrow the diff, then run ${REFRESH_DIAGNOSTICS_COMMAND_TITLE}.`
   },
   limited_incomplete_input: {
     summary: 'ripr analysis completed with incomplete input.',

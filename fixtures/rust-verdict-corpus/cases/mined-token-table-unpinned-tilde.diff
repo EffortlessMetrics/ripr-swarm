@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -102,7 +102,7 @@
+         map[i] = matches!(
+             b,
+             b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+' | b'-' | b'.'
+-                | b'^' | b'_' | b'`' | b'|' | b'~'
++                | b'~' | b'|' | b'`' | b'_' | b'^'
+                 | b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z'
+         );
+         i += 1;

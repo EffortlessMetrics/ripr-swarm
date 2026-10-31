@@ -22,7 +22,7 @@ code = [
   "crates/ripr/src/app/check.rs",
 ]
 outputs = [
-  "changelog.d/10725-ts-per-file-fact-cache.md",
+  "CHANGELOG.md",
 ]
 metrics = [
   "unit_test_pass_rate",

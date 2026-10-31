@@ -1,0 +1,2 @@
+crates/ripr/tests/refusal_next_step.rs|Command::new|2|cli-tests|#11539: one direct-argv `git` spawn builds a throwaway scratch repository under the OS temp dir, and one runs the built `ripr` binary (CARGO_BIN_EXE_ripr) on real bad invocations to assert each refusal names a next step. No shell, bounded by `.output()`/`.status()`.
+crates/ripr/tests/refusal_next_step.rs|use std::process::Command|1|cli-tests|#11539: import for the two bounded spawns above.

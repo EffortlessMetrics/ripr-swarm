@@ -36,6 +36,8 @@ pin is a commit whose own change touches production Rust, so the warm
 trend; `cargo-no-rust` pins its first parent as the base because its commit is a merge. Those rows are wall time, so they gate only against a same-runner baseline; the runner-independent guard is `crates/ripr/tests/no_rust_diff_reads_no_rust.rs`, which fails on any runner if a docs-only diff indexes the workspace's Rust sources (a discarded read is outside what it observes) in `instant`, `draft` or `fast` mode. Entries marked
 `heavy = true` (ripr-swarm at two sizes, cargo, `cargo-no-rust`, `poetry-python`, `pandas-python`, `django-python`) run only with `--include-heavy`.
 
+Entries may set `ceilings`, a table of hard bounds on that repository's own samples by metric id (only measured per-repository `lower_is_better` metrics). With `--gate`, a sample above its ceiling, a ceilinged row that ran without producing a value, or a row the run selected with no sample of its ceilinged metric fails the run whatever the baseline holds, including when the baseline is from another runner class or absent; a relative regression margin alone would let a row creep back over a bar it was cut under. `pandas-python` and `django-python` carry a 2000 ms `speed.warm_check_ms` and a 512 MiB `speed.warm_check_peak_rss_mb` ceiling (#10914).
+
 Entries may set `language` (`rust` when absent; `python`, `typescript` or `perl`), which the report carries on each repository row so a non-Rust edit is its own population. `click-python` (small), `poetry-python` (larger), `pandas-python` (about 1500 `.py` files and 23k tests, the large-workspace row from #10750) and `django-python` (2,937 `.py` files, a 27-file edit) pin single-parent commits that edit Python and its test; all four complete under `--mode draft`. The editor-refresh samples stay `not_measured` for them, because that instrument opens a changed Rust file. Django fits under the 4,000-file Python workspace cap since #10468. `defu-typescript` pins a single-parent TypeScript edit and completes. `ky-typescript` (about 100 files) pins a single-parent edit to `source/utils/merge.ts` and its test and its warm `ripr check --base HEAD~1 --format json --mode draft` completes with findings on that diff, since the partial-extraction disclosure is scoped to test files that can reach the diff (#10436); other typed limitations can still make a different diff partial, and it has no changed Rust file, so its editor-refresh samples stay `not_measured`. `h3-typescript` pins a single-parent edit to `src/tracing.ts` and its test (a Vitest suite repository) and completes with findings now that links to non-source files (#10614) and `describe.skipIf/runIf` suites (#10629) no longer make it partial. `execa-typescript` pins a single-parent JavaScript edit (`lib/transform/generator.js` and its ava test), which the same adapter analyzes, and completes with findings; the commits that were partial there were partial only because `.d.ts` files were parsed as ordinary TypeScript (#10812). `destr-typescript` pins a single-parent edit to `src/index.ts` and its Vitest test and completes with findings. `zod-typescript` pins a single-parent edit to `packages/zod/src/v4/core/schemas.ts` and its union test and completes with findings now that a tooling directory alias (#10836) and text that only mentions the aliased path (#10901) no longer count as skipped links; other zod commits can still show typed limitations such as conditional assertion credit, so only the pinned diff is claimed. `valibot-typescript` pins a single-parent source-only edit to six object-schema files under `library/` (no test changes) and completes with findings; it stresses the workspace package table (#10943) and, with `library/` below the root, nested detection (#10941). `remeda-typescript` pins a single-parent edit to `packages/remeda/src/funnel.ts` and its test and completes with findings; without a `ripr.toml` only nested detection (#10941) selects the adapter for its `packages/remeda` layout, and its latest upstream commits are over the 2,000-line TypeScript diff budget, so only the pinned diff is claimed. `hono-typescript` pins a single-parent edit to `src/middleware/serve-static/index.ts` and its test and completes with five findings (about 3.7 s cold and 0.6 s warm on a release build of f7d3a66); it stresses reach scoping of the test-extraction disclosure against nested tsconfig `extends`/`references`, a lint rule named `no-this-alias` in the vite config, and a package self-import (#10954), and other hono commits are still partial when the diff reaches the unindexed `src/jsx/dom` tests, so only the pinned diff is claimed. Perl is blocked on its adapter and exporter not being available to the scoreboard's binary (#10338).
 Checkouts live under `target/ripr/dx-scoreboard/corpus/`; cloning is opt-in:
 
@@ -370,6 +372,33 @@ silent 0/34; Perl (producer packets) false verdict 8/27, false actionable
 corpus oracle accuracy 44/44 and overclaim rate 0/44. Each sample names its
 language corpus `corpus.json` blob and `expected/rows` tree. No target or
 threshold changed.
+
+#10809 re-records four of the five Perl (producer packets) rows after the Perl
+corpus grew from 27 to 54 packets and 36 case definitions changed, which left the
+8/27 population with no unchanged common case: false verdict 1/54, false
+actionable 0/28, false exposed 1/26 (the parked `perl-testmore-tier-far-from-boundary`
+known-false row, #8979) and false silent 0/26, at
+`ea5229fba660d284841b3954f73ca7948a88d0ea`. The aggregate rates are at or better than
+the ones they replace, but this is a corpus migration with retained per-case
+changes, not a regression-free acceptance: no case is unchanged across the
+two populations, and four producer cases that read ideal in the old population
+read abstained now (`perl-test2-format-entry-like`,
+`perl-testexception-close-out-dies-ok`, `perl-testmore-points-cmp-ok-positive`,
+`perl-testmore-round-cents-like`; the first three are `not_discriminated` and
+the last is `partially_discriminated`). RIPR-SPEC-0235 rule 16 (broad oracle)
+and rule 18 (null observable) cause them deliberately. Owner-delegated
+disposition (2026-10-31, recorded on #10874): all four are accepted as correct
+fail-closed abstentions, not false verdicts (each case's acceptable verdicts
+are `gap` and `limited`, and `limited` is what they now read); the
+producer-side matcher grading that would restore the `gap` on the first three
+and the last remains tracked by #10897. The Perl
+abstention row is deliberately not re-recorded: its rate
+rose from 8/27 to 40/54 (derivation and per-case list in
+`testdata/10809-perl-abstention-ea5229f.json`, rebuilt from the committed expected
+rows at `ea5229f`) because the pinned producer emits only `file_proximity`
+relations for files whose first package is a sibling (#10525), so recording it would
+accept that regression. It keeps failing its comparison until #10525 lands or the
+owner accepts the rise as #7325 did for Rust.
 
 `testdata/7552-rust-abstention.json` freezes committed expected records at
 `6da363f9b630845d82d8a073c42429d90cd03732`, rather than executing the analyzer.

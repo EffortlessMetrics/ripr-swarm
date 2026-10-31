@@ -61,6 +61,10 @@ case = "perl-moose-builder-join"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
+case = "perl-test2-close-month-subtest"
+reason = "Tests discriminate the change (a zero month and a month short by one straddle the threshold), but the threshold is reached through a sum, so the call carries no literal on it and ripr cannot establish the boundary input; it abstains rather than credit an input that may sit far from the threshold (RIPR-SPEC-0235 rule 22, #8979). Delete this entry when the producer emits the row-owned predicate-input fact (perl-lsp-swarm#17237, consumed by #5562) and the row credits."
+
+[[entry]]
 case = "perl-test2-net-change-imported"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
@@ -74,11 +78,11 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 
 [[entry]]
 case = "perl-testexception-class-then-message"
-reason = "Tests discriminate the change but ripr abstains for two independent reasons: the pinned producer writes zero-based lines (the packet's coordinate is one line above the changed line, #3221, #6586), and the packet is partial with only a file_proximity relation aimed at the Forms::Error package, no change-linked owner or oracle witness, so packet_to_findings_with_currentness returns static_unknown regardless of coordinates (#8352). Delete this entry only after the row actually credits; a line fix alone is not shown to be sufficient."
+reason = "Tests discriminate the change but ripr abstains for two independent reasons: the pinned producer writes zero-based lines (the packet's coordinate is one line above the changed line, #3221, #6586), and the test's `throws_ok` carries a class matcher the producer now grades strong_exact, which RIPR-SPEC-0235 rule 16 reads as static_unknown because a class pins that an error is raised, not which boundary raises it (test-file `eval {` blocks are no longer boundaries, perl-lsp-swarm#18498). Delete this entry only after the row actually credits; neither a line fix nor the relations alone is shown to be sufficient."
 
 [[entry]]
 case = "perl-testexception-eval-like-dollar-at"
-reason = "Tests discriminate the change but ripr abstains for two independent reasons: the pinned producer writes zero-based lines (the packet's coordinate is one line above the changed line, #3221, #6586), and the packet is partial with only a file_proximity relation aimed at the Forms::Error package, no change-linked owner or oracle witness, so packet_to_findings_with_currentness returns static_unknown regardless of coordinates (#8352). Delete this entry only after the row actually credits; a line fix alone is not shown to be sufficient."
+reason = "Tests discriminate the change but ripr abstains: the producer now binds `like($@, qr/zero not allowed/)` to Forms::eval_like and grades it strong_exact, which RIPR-SPEC-0235 rule 16 reads as static_unknown because a message matcher pins that an error is raised, not which boundary raises it (test-file `eval {` blocks are no longer boundaries, perl-lsp-swarm#18498). Before the binding the row read a false reachable_unrevealed gap. Delete this entry only after the row actually credits."
 
 [[entry]]
 case = "perl-testexception-freeze-class"

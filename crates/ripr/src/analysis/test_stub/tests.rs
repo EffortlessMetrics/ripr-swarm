@@ -87,6 +87,30 @@ fn boundary_stub_inserts_into_the_existing_inline_module_and_stops_at_the_expect
     Ok(())
 }
 
+#[test]
+fn unrelated_generic_does_not_remove_a_concrete_stub_comparison() -> Result<(), String> {
+    let source = format!("fn helper<u32>() {{}}\n{PRICE}");
+    let seam = seam_at(
+        "src/lib.rs",
+        &source,
+        "amount >= threshold",
+        SeamKind::PredicateBoundary,
+        boundary("amount == threshold"),
+    )?;
+    let stub = rust_test_stub(&seam, None, &source).map_err(|r| r.reason().to_string())?;
+    assert!(
+        stub.text.contains("let expected: u32 = todo!("),
+        "{}",
+        stub.text
+    );
+    assert!(
+        stub.text.contains("assert_eq!(actual, expected);"),
+        "{}",
+        stub.text
+    );
+    Ok(())
+}
+
 /// #8891: a second run for the same seam recomputes byte-identical text. The
 /// name collision is ripr's own earlier write, so the stub is flagged
 /// already present instead of suffixing a `_2` duplicate.

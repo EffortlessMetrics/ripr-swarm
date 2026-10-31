@@ -1,0 +1,1 @@
+crates/ripr/tests/readiness_agree.rs|Command::new|3|cli-tests|#11397: runs git (fixture setup) and the built ripr binary (`pilot`, `repair`, `agent card`, `mcp --stdio`) against isolated temp workspaces to compare repair-readiness answers across surfaces. No shell, network, or user-repository mutation.

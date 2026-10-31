@@ -34,6 +34,11 @@ the real-crate shape it mirrors, or its twin, without copying code;
 `authored-spec-results` for the Result-returning owners of RIPR-SPEC-0106
 (`unwrap_err` variant binding) and RIPR-SPEC-0175 (guarded Result matches,
 boxed `Box<dyn Error>` owners, routed matches and Ok-payload observation);
+`authored-mined-features` for feature-gated modules and tests, inline
+snapshots compared through a local snapbox-style helper, and static byte tables
+(truth for a feature-gated case is the feature set its own `test_command`
+runs, for example `cargo test --features v4`; the default-features twin
+labels the same shape as missed);
 `authored-spec-confirm` for spec cells that had no runtime-truth case:
 oracle confirmation (RIPR-SPEC-0094), non-escaping sinks (0096), owner-result
 field bindings and same-name owner resolution (0005) and owner-return

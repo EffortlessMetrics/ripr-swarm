@@ -457,3 +457,21 @@ fn installed_pin_missing_locked_dependency_refuses_then_seeded_cache_succeeds() 
     assert_eq!(server.requests.load(Ordering::SeqCst), 0);
     Ok(())
 }
+
+#[test]
+fn perl_variant_command_uses_dedicated_target_overlay() -> Result<(), String> {
+    let target = std::path::Path::new("owned-target");
+    build_perl_variant_with(
+        target,
+        &[("CARGO_HOME", "home".into())],
+        &|program, args, envs| {
+            assert_eq!(program, "cargo");
+            assert_eq!(args, ["build", "-p", "ripr", "--features", "lang-perl"]);
+            assert_eq!(
+                envs,
+                [("CARGO_HOME", "home"), ("CARGO_TARGET_DIR", "owned-target")]
+            );
+            Ok(())
+        },
+    )
+}

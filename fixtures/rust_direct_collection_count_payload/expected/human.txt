@@ -15,7 +15,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:rust:src/lib.rs:send:side_effect:side_effect:events_sent.push_0+id
   Changed behavior: events_sent.push(0 + id)
-  Missing check: No strong discriminator was detected
+  Missing check: No strong assertion was detected
   Related test: src/lib.rs:12 send_records_one_event (ripr could not confirm that this assertion observes the changed behavior)
   Next step: Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
@@ -43,5 +43,7 @@ Write this test by hand: call the function, then assert the visible change the c
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
     - ./src/lib.rs:3 (exposed); kind: call_deletion; reason: Strong oracle found: exact value or pattern assertion
+  Hidden classes:
+    exposed = tests appear to notice the change
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

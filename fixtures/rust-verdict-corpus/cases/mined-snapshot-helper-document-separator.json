@@ -1,0 +1,52 @@
+{
+  "case_id": "mined-snapshot-helper-document-separator",
+  "subject_id": "authored-mined-features",
+  "diff": "cases/mined-snapshot-helper-document-separator.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 86
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "inline_snapshot_via_helper_macro",
+  "hard_case": "A whole-document inline snapshot, as in toml's ser_to_string tests, compared through the same local assert_data_eq! stand-in.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "out += &format!(\"{key}={value}\\n\");",
+        "mutated_line": "out += &format!(\"{key}={value}\\n\");",
+        "outcome": "tests_failed",
+        "failing_test": "tests::document_snapshot",
+        "equivalence_review": "not equivalent: the separator loses its spaces"
+      },
+      {
+        "replacement": "out += &format!(\"{key} = {value}\");",
+        "mutated_line": "out += &format!(\"{key} = {value}\");",
+        "outcome": "tests_failed",
+        "failing_test": "tests::document_snapshot",
+        "equivalence_review": "not equivalent: the newline between entries is lost"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "document_snapshot pins the whole two-line document in an inline snapshot, so both separator mutants fail it.",
+  "labeling_observation": {
+    "ripr_commit": "f0397266",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

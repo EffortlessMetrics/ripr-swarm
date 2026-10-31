@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A repo-scope analysis that selects both the `typescript` and `javascript` ids (reachable through the library pipeline; `ripr.toml` `[languages].enabled` does not accept `javascript`) no longer retains each TypeScript/JavaScript finding twice: the shared adapter result is merged once per family in either id order, and the family's file total is attributed to `typescript` whatever the order, so retained findings and per-language file counts match the single-id run. Completes the diff-mode fix (#10013).

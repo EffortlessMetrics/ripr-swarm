@@ -15,7 +15,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:rust:src/lib.rs:call_through_pointer:return_value:return_value:3*x
   Changed behavior: 3 * x
-  Missing check: No strong discriminator was detected
+  Missing check: No strong assertion was detected
   Related test: src/lib.rs:9 outside_alias_scope (ripr could not confirm that this assertion observes the changed behavior)
   Next step: The indexed related tests do not establish a call to the changed owner. Inspect
     existing tests, doctests and examples before changing assertions; they may already constrain the

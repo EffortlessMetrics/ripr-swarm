@@ -818,6 +818,7 @@ example = 2
 reason = "the repeated state is reached only by an input that recurses forever at runtime, so no test row can reach it and no runtime label can pin it; match_transfer unit tests (repeated state) and the recursive_controls fixture cover the refusal"
 
 # Unsafe execution boundary probes
+# Rust unsafe boundary probes
 [[spec]]
 id = "RIPR-SPEC-0168"
 scope = "in"

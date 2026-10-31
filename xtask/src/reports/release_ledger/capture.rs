@@ -78,6 +78,7 @@ struct Commit {
 }
 
 pub(super) fn capture(args: &CaptureArgs<'_>) -> Result<GitFacts, String> {
+    require_full_history(args.repo)?;
     let base = rev_parse(args.repo, args.base)?;
     let cut = rev_parse(args.repo, args.cut)?;
     let main = rev_parse(args.repo, args.main)?;
@@ -484,6 +485,20 @@ fn rev_parse(repo: &Path, rev: &str) -> Result<String, String> {
 
 fn shas(text: &str) -> Vec<String> {
     text.split_whitespace().map(str::to_string).collect()
+}
+
+/// A shallow clone silently truncates `base..cut`, so facts would carry a
+/// fraction of the real commits and `derive` would fail later with a confusing
+/// out-of-range error. Refuse before reading any history.
+pub(super) fn require_full_history(repo: &Path) -> Result<(), String> {
+    let shallow = git_text(repo, &["rev-parse", "--is-shallow-repository"])?;
+    if shallow.trim() == "true" {
+        return Err(format!(
+            "release-ledger capture requires full history (full clone required), but {} is a shallow repository; run `git fetch --unshallow` there and retry",
+            repo.display()
+        ));
+    }
+    Ok(())
 }
 
 fn git_text(repo: &Path, args: &[&str]) -> Result<String, String> {

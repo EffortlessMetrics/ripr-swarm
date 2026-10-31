@@ -276,10 +276,11 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
     // outside a collapsed block.
     let openers = summary.matches("<details><summary>Full report: ").count();
     assert!(openers > 0, "summary collapses no full report:\n{summary}");
+    // The governance fold is a `<details>` block too, so compare every opener.
     assert_eq!(
-        openers,
+        summary.matches("<details").count(),
         summary.matches("</details>").count(),
-        "every collapsed full report must close"
+        "every collapsed block must close"
     );
     let mut collapsed = false;
     for line in summary.lines() {
@@ -3576,6 +3577,167 @@ fn parse_warning(line: &str) -> Result<(String, String, String, String), String>
         title.ok_or("missing title")?,
         decode_github(message)?,
     ))
+}
+
+/// Text between `open` and the next `close` in `haystack`.
+fn between<'a>(haystack: &'a str, open: &str, close: &str) -> Option<&'a str> {
+    let rest = haystack.split_once(open)?.1;
+    rest.split_once(close).map(|(inside, _)| inside)
+}
+
+/// #5874: the executable twin of the unix bash replay below. It needs no
+/// shell, so it runs on Windows and Linux alike: it reads the generated
+/// Install-step and summary-step shell and evaluates only what the failure
+/// explanation depends on (the target `case`, the `why` and error templates,
+/// the cargo fallback pin, and the summary `printf`) with the same variable
+/// values the runner would supply. Corrupting the message in the template
+/// fails here on every host.
+#[test]
+fn generated_install_failure_explanation_is_consistent_on_every_host() -> Result<(), Box<dyn Error>>
+{
+    let base = std::env::temp_dir().join(format!(
+        "ripr-portable-failed-install-{}-{}",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+    ));
+    fs::create_dir_all(&base)?;
+    let init = run_ripr_init(&base)?;
+    assert!(
+        init.status.success(),
+        "ripr init failed: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let workflow = fs::read_to_string(base.join(".github/workflows/ripr.yml"))?;
+    let install = workflow_step_block(&workflow, "Install ripr").ok_or("no `Install ripr` step")?;
+    let summary_step = workflow_step_block(&workflow, "Add RIPR advisory summary")
+        .ok_or("no `Add RIPR advisory summary` step")?;
+
+    // Both install routes pin one version: the generated pin.
+    let version = between(&install, "version=", "\n")
+        .map(str::trim)
+        .filter(|v| !v.is_empty() && !v.contains(' '))
+        .ok_or("install step names no version pin")?
+        .to_string();
+    let cargo_pin = between(&install, "cargo install ripr --version ", " ")
+        .ok_or("install step names no cargo fallback pin")?;
+    assert_eq!(
+        cargo_pin, version,
+        "prebuilt and cargo routes must pin the same version"
+    );
+
+    // Windows-X64 has no prebuilt archive: no `case` arm other than the
+    // catch-all (which sets an empty target) may match it.
+    let arms = install
+        .lines()
+        .filter_map(|line| line.trim().split_once(") target="))
+        .collect::<Vec<_>>();
+    assert!(!arms.is_empty(), "no target arms in {install}");
+    let target = arms
+        .iter()
+        .find(|(pattern, _)| *pattern == "Windows-X64")
+        .or_else(|| arms.iter().find(|(pattern, _)| *pattern == "*"))
+        .map(|(_, rest)| *rest)
+        .ok_or("no target arm or catch-all")?;
+    assert!(
+        target.trim_start().starts_with("\"\""),
+        "Windows-X64 now has a prebuilt target ({target}); update this twin and the unix replay together"
+    );
+
+    // The no-prebuilt reason, the no-cargo error and the cargo notice, with
+    // the runner's variable values.
+    let render = |template: &str, why: &str| {
+        template
+            .replace("$RUNNER_OS", "Windows")
+            .replace("$RUNNER_ARCH", "X64")
+            .replace("$version", &version)
+            .replace("$why", why)
+    };
+    let why_template =
+        between(&install, "why=\"", "\"").ok_or("no `why` reason in install step")?;
+    let why = render(why_template, "");
+    assert_eq!(why, format!("no prebuilt ripr {version} for Windows-X64"));
+    let error_template = between(
+        &install,
+        "echo \"::error::Cannot install ripr:",
+        "\"; exit 1",
+    )
+    .ok_or("no no-cargo error line in install step")?;
+    assert_eq!(
+        render(error_template, &why),
+        format!(
+            " no prebuilt ripr {version} for Windows-X64, and this runner has no cargo to build it. Install Rust on the runner (https://rustup.rs) or add a Rust toolchain step before Install ripr."
+        )
+    );
+    // The error path exits nonzero before any cargo invocation.
+    let (before_error, _) = install
+        .split_once("::error::Cannot install ripr:")
+        .ok_or("no error line")?;
+    let guard = before_error
+        .rsplit_once("command -v cargo")
+        .ok_or("no cargo guard before the error line")?
+        .1;
+    assert!(!guard.contains("cargo install"), "{install}");
+    // The guard is the negation: the error path runs only when cargo is absent.
+    assert!(
+        before_error.contains("if ! command -v cargo >/dev/null 2>&1; then"),
+        "{install}"
+    );
+    let notice_template = between(&install, "echo \"::notice::", "\"")
+        .ok_or("no cargo-fallback notice in install step")?;
+    assert_eq!(
+        render(notice_template, &why),
+        format!("no prebuilt ripr {version} for Windows-X64; building it with cargo install")
+    );
+    assert!(
+        install.contains(&format!("cargo install ripr --version {version} --locked")),
+        "{install}"
+    );
+
+    // The summary step after the failed install.
+    let format = between(&summary_step, "printf '", "' \"${RIPR_INSTALL_OUTCOME")
+        .ok_or("no summary printf in the summary step")?;
+    let rendered = format.replace("%s", "failure").replace("\\n", "\n");
+    assert!(
+        rendered.starts_with("## RIPR advisory summary\n"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("the pinned ripr is not installed (Install ripr step: failure), so this run produced no RIPR reports."),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("Next: open the Install ripr step log."),
+        "{rendered}"
+    );
+    assert!(
+        summary_step.contains(
+            "::error::the pinned ripr is not installed (Install ripr step: ${RIPR_INSTALL_OUTCOME:-not run})"
+        ),
+        "{summary_step}"
+    );
+    assert!(
+        summary_step.contains("RIPR_INSTALL_OUTCOME: ${{ steps.install.outcome }}"),
+        "{summary_step}"
+    );
+    // The explanation runs only when the install did not succeed, fails the
+    // step, and does so before the normal summary command.
+    let guard_at = summary_step
+        .find("if [ \"${RIPR_INSTALL_OUTCOME:-}\" != success ]; then")
+        .ok_or("no install-outcome guard in the summary step")?;
+    let printf_at = summary_step
+        .find("printf '## RIPR advisory summary")
+        .ok_or("no summary printf")?;
+    let exit_at = summary_step
+        .find("see that step's log.\"; exit 1")
+        .ok_or("summary error line does not exit 1")?;
+    let ci_summary_at = summary_step
+        .find("ripr reports ci-summary")
+        .ok_or("no ci-summary command")?;
+    assert!(
+        guard_at < printf_at && printf_at < exit_at && exit_at < ci_summary_at,
+        "{summary_step}"
+    );
+    Ok(())
 }
 
 /// One spawn site for the built-binary `ripr init` invocations below

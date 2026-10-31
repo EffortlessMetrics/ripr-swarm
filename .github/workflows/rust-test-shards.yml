@@ -69,6 +69,26 @@ jobs:
         timeout-minutes: 20
         run: cargo xtask check-covered-by
 
+      # The verify job runs `cargo xtask verify-test-shards`. Compiling xtask there
+      # cost about 2.4 minutes after the last shard finished; the warm build above
+      # already produced the same binary from this checkout, so one shard hands it
+      # over (stripped of debug sections) and the verifier starts at once. The
+      # attempt suffix keeps a re-run from colliding with an earlier upload.
+      - name: Retain the xtask binary for the verify job
+        if: matrix.shard == 1
+        run: |
+          mkdir -p target/xtask-binary
+          strip --strip-debug -o target/xtask-binary/xtask target/debug/xtask
+
+      - name: Upload the xtask binary
+        if: matrix.shard == 1
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact-name }}-xtask-${{ github.run_attempt }}
+          path: target/xtask-binary/xtask
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Required Rust tests (shard ${{ matrix.shard }} of 4)
         id: rust-test-shard
         timeout-minutes: 40
@@ -135,17 +155,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.95
-        with:
-          toolchain: 1.95.0
-
-      # Restore only: the shard jobs own the cache, and a warm xtask build keeps the
-      # verifier off the clock.
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          shared-key: ripr-swarm-rust-shards-${{ runner.os }}
-          save-if: false
-
+      # No toolchain or cache here: the verifier is the xtask binary shard 1 built
+      # from this same checkout, so this job never compiles anything.
       # A partial "re-run failed jobs" uploads fresh artifacts only for the
       # re-run shards (#10605), so the download cannot be limited to the
       # current attempt: every attempt's shard artifacts come down, and
@@ -156,6 +167,14 @@ jobs:
         with:
           pattern: ${{ inputs.artifact-name }}-nextest-shard-*
           path: shards
+
+      # A partial re-run that skips shard 1 leaves the binary in an earlier attempt's
+      # artifact (same commit), so take the newest one present.
+      # One match extracts straight into the path; several each get a directory.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: ${{ inputs.artifact-name }}-xtask-*
+          path: xtask-binary
 
       # `verify-test-shards` accepts the shards only as conservation of the one
       # unpartitioned run: each shard's status, run context (repository, checkout,
@@ -169,7 +188,10 @@ jobs:
       # combined context.
       - name: Check the shards are a complete, disjoint, green cover
         run: |
-          cargo xtask verify-test-shards \
+          xtask="$(find xtask-binary -type f -name xtask | sort -V | tail -n 1)"
+          test -n "$xtask" || { echo "::error::no xtask binary artifact from shard 1"; exit 1; }
+          chmod +x "$xtask"
+          "$xtask" verify-test-shards \
             --dir shards \
             --artifact "${{ inputs.artifact-name }}" \
             --attempt "${{ github.run_attempt }}" \

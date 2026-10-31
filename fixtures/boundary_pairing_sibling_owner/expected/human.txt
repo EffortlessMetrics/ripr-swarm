@@ -43,6 +43,8 @@ No test stub here: the owner is in a nested module with no inline test module of
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:3 (weak); kind: return_value; reason: No strong discriminator was detected
+    - ./src/lib.rs:3 (weak); kind: return_value; reason: No strong assertion was detected
+  Hidden classes:
+    weak = tests reach it but check it only loosely
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

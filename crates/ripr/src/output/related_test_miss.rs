@@ -6,6 +6,10 @@
 
 use crate::domain::{ProbeFamily, RelatedTest, RelatedTestMiss, RelationReason};
 
+/// Why a TypeScript or JavaScript assertion's observation stays unconfirmed.
+const SCRIPT_OBSERVATION_UNCONFIRMED: &str =
+    "the preview adapter could not confirm that this assertion observes the changed behavior";
+
 /// Short reason the test misses the changed behavior, or `None` when the
 /// analyzer did not establish one.
 ///
@@ -37,7 +41,16 @@ pub(crate) fn related_test_miss_reason(test: &RelatedTest, family: &ProbeFamily)
         // `assertion_not_observing` claims the assertion observes something
         // else.
         RelatedTestMiss::ObservationUnconfirmed => {
-            "ripr could not confirm that this assertion observes the changed behavior".to_string()
+            // #11229: a TypeScript or JavaScript row is read from file text by
+            // the preview adapter, which never runs the code. Say why the
+            // observation is unknown instead of repeating the generic
+            // sentence. Wording only: the verdict and credit are unchanged.
+            if is_script_file(&test.file) {
+                SCRIPT_OBSERVATION_UNCONFIRMED.to_string()
+            } else {
+                "ripr could not confirm that this assertion observes the changed behavior"
+                    .to_string()
+            }
         }
         // The wording of `missing_input` follows the finding's typed probe
         // family, never the punctuation of the support value: a guard the
@@ -229,6 +242,40 @@ mod tests {
             "assert_eq!(a,  b);"
         );
         assert_eq!(single_line_evidence_text(""), "");
+    }
+
+    #[test]
+    fn observation_unconfirmed_names_the_preview_adapter_only_for_script_files() {
+        assert!(
+            !SCRIPT_OBSERVATION_UNCONFIRMED.contains("branch")
+                && !SCRIPT_OBSERVATION_UNCONFIRMED.contains("reaches"),
+            "the unknown is observation, not reach or a branch"
+        );
+        // #11229: script rows explain why; Rust and Python keep the generic
+        // sentence, and the verdict-carrying `miss` is untouched.
+        for file in ["tests/a.test.ts", "web/a.spec.tsx", "t/a.mjs", "t/A.JS"] {
+            let mut test = test_with(Some(RelatedTestMiss::ObservationUnconfirmed), None);
+            test.file = PathBuf::from(file);
+            // Predicate and side-effect rows say the same thing: the
+            // unknown is observation, never reach or a branch.
+            for family in [ProbeFamily::Predicate, ProbeFamily::SideEffect] {
+                assert_eq!(
+                    reason(&test, &family).as_deref(),
+                    Some(SCRIPT_OBSERVATION_UNCONFIRMED),
+                    "{file}"
+                );
+            }
+            assert_eq!(test.miss, Some(RelatedTestMiss::ObservationUnconfirmed));
+        }
+        for file in ["tests/a.rs", "tests/test_a.py", "tests/a.pl"] {
+            let mut test = test_with(Some(RelatedTestMiss::ObservationUnconfirmed), None);
+            test.file = PathBuf::from(file);
+            assert_eq!(
+                reason(&test, &ProbeFamily::Predicate).as_deref(),
+                Some("ripr could not confirm that this assertion observes the changed behavior"),
+                "{file}"
+            );
+        }
     }
 
     fn test_with(miss: Option<RelatedTestMiss>, reason: Option<RelationReason>) -> RelatedTest {

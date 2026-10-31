@@ -53,6 +53,9 @@ Hidden:
     - src/owners.ts:2 (exposed); kind: return_value; reason: Related test reaches `formatPrice` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant…
     - src/owners.ts:11 (weak); kind: return_value; reason: Related test reaches `build` with a smoke-only oracle; replace or augment the truthiness check with an exact-value assertion for the changed discriminator before routing a repair…
     - src/owners.ts:15 (weak); kind: return_value; reason: Related test reaches `DEFAULT_RATE` but the strongest extracted oracle is `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or…
+  Hidden classes:
+    exposed = tests appear to notice the change
+    weak = tests reach it but check it only loosely
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

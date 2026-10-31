@@ -83,6 +83,7 @@ const CATALOG: &[CatalogEntry] = &[
     entry("ripr-diagnostic-quarantine-withdrawn"),
     entry("ripr-diagnostic-analysis-pending"),
     entry("ripr-diagnostic-language-not-analyzed"),
+    entry("ripr-diagnostic-preview-withheld"),
 ];
 
 /// The workspace-scoped warning code emitted when the fail-closed
@@ -101,6 +102,12 @@ pub(crate) const DIAGNOSTIC_ANALYSIS_PENDING_CODE: &str = "ripr-diagnostic-analy
 /// limitation that `check` and MCP carry.
 pub(crate) const DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE: &str =
     "ripr-diagnostic-language-not-analyzed";
+
+/// The Hint marker on a changed file whose preview-language findings the
+/// actionable profile withheld (#11296): an empty list for that file would
+/// read as clean. It carries no finding identity, repair data, or
+/// actionability, and sits outside the delivery budget.
+pub(crate) const DIAGNOSTIC_PREVIEW_WITHHELD_CODE: &str = "ripr-diagnostic-preview-withheld";
 
 /// The governed catalog of diagnostic codes.
 pub(crate) fn catalog() -> &'static [CatalogEntry] {

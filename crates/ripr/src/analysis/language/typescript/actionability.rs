@@ -1,6 +1,7 @@
 //! Actionability analysis for the TypeScript preview adapter.
 
 use super::*;
+use crate::domain::EvidenceState;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct TypeScriptActionability {
@@ -51,7 +52,7 @@ pub(crate) fn typescript_actionability_for(
 ) -> TypeScriptActionability {
     if let Some(limit) = static_limit {
         return TypeScriptActionability {
-            gap_state: "static_limitation",
+            gap_state: EvidenceState::StaticLimitation.as_str(),
             category: limit.kind.as_str(),
             why_not_actionable: format!(
                 "static limit `{}` prevents bounded TypeScript repair guidance",
@@ -65,7 +66,7 @@ pub(crate) fn typescript_actionability_for(
 
     if matches!(class, ExposureClass::Exposed) {
         return TypeScriptActionability {
-            gap_state: "already_observed",
+            gap_state: EvidenceState::AlreadyObserved.as_str(),
             category: "strong_oracle_observed",
             why_not_actionable: format!(
                 "{observed_evidence_label} already has a strong exact oracle; no repair packet should be emitted"

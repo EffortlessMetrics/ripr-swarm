@@ -133,6 +133,79 @@ and takes the earliest missing judgment; no separate tracker or idle polling
 worker is needed. [Continuation scenarios](agent-context/delivery-continuation-scenarios.md)
 exercise both proceed and hold decisions without claiming actual CI or merge.
 
+## Multi-actor ownership signaling
+
+Several autonomous actors can converge on the same PR from the same review
+corpus. The merge-flow one-writer rule
+([who owns the change](MERGE_FLOW.md#who-owns-the-change)) names the owner;
+this section makes that ownership discoverable across actor boundaries, and
+[the PR convergence runbook](agent-context/convergence-runbook.md) carries the
+matching merge mechanics and push guards. Racing is the dominant waste: the
+campaign logs — and the runbook's ownership section — record one 14-lane wave
+in which 11 lanes were raced mid-flight by another actor implementing the same
+repair. Racing also destroys candidate identity. The #10297 branch carries
+another lane's TypeScript fix (`a3baa97f53`, merged in through
+`1ad5cd8111`), and its `2d7762b549` push admits in its own commit message:
+"Not yet compiled or run locally (shared disk exhausted); needs hosted
+proof." Uncoordinated pushes leave the owning lane re-establishing what is on
+its head and which proof still applies.
+
+### Claim before substantive work
+
+Before pushing, re-blessing goldens, or changing labels on an existing PR, an
+actor records its claim:
+
+- Add a single PR comment `Converging this PR: <actor id>, started <UTC
+  timestamp>`, or reuse an existing owned-convergence comment by editing it.
+  Keep one current claim comment per actor, edited at transitions — the same
+  discipline as the PR-native continuation record above.
+- Treat any other actor's claim younger than 4 hours as ownership. While a
+  live claim is held, do not push to the branch, re-bless, or change labels.
+  This coordinates writers; it does not replace `stackable = false`,
+  `blocked_by`, review or qualification routes.
+- A claim alone does not keep ownership. Judge liveness from actual activity
+  (next subsection), and record a stale-claim takeover in the claim comment
+  you edit in.
+- Before every push, run the runbook's writer guard: `git ls-remote` the head
+  branch and reconcile a mismatch instead of pushing over it.
+
+### Judging activity
+
+The commits API is the truth signal: `commit.author.date` from
+`GET /repos/{owner}/{repo}/pulls/{number}/commits` shows the last real push.
+`updatedAt` is bot-polluted — any comment, label edit, review submission, or
+linked check event advances it with no writer action — so it overstates
+activity and can never establish that an actor went idle. Every PR sampled on
+the 2026-10-31 open board showed `updatedAt` minutes past its last commit
+(for example #11499: last commit 11:58:00Z, `updatedAt` 12:09:54Z). Use
+author dates and claim comments to judge activity; do not declare a rival
+idle from `updatedAt`.
+
+### Yield on contact
+
+On discovering another actor's live claim or a fresh push you did not make:
+
+1. Stop pushing. Never force-push another writer's branch.
+2. Preserve proven work as a named branch or ref before yielding — the
+   campaign's preserved-candidate pattern. #11112 retains its #11109/#11110
+   predecessors as incorporated Drafts until the selected candidate lands.
+3. Leave one handback comment listing what is preserved and where.
+4. Return to the parent goal and the next ready claim. Do not poll the branch
+   or hover as a second writer.
+
+### Honor recorded dispositions
+
+When a fleet records a candidate disposition, actors honor it and record only
+verification evidence. #11112's candidate-relationships record is the working
+example: "#11109 and #11110 remain open Drafts for provenance and must not be
+independently qualified or merged." That disposition forbids independently
+qualifying, merging, or re-implementing the incorporated predecessors. Useful
+actor work there is verification against the named successor, not a rival
+candidate.
+
+These conventions coordinate writers; they are not a gate. They add no
+required check, no workflow, and no qualification route.
+
 ## Current Commands
 
 The current repo automation surface is:
@@ -214,7 +287,7 @@ cargo xtask fix-pr
 cargo xtask fixtures [name]
 cargo xtask gh-pr-status --pr <number>
 cargo xtask golden-drift
-cargo xtask goldens bless <name> --reason <reason>
+cargo xtask goldens bless <name> --reason "RIPR-SPEC-NNNN: <reviewed change>"
 cargo xtask goldens check
 cargo xtask impacted-evidence [--pr-evidence <path>] [--label <label>] [--labels <csv>] [--check]
 cargo xtask install-hooks
@@ -263,7 +336,7 @@ cargo xtask route-quality [--attempt-ledger <path>]
 cargo xtask rust-conversion-candidates
 cargo xtask rust-repair-trust-report
 cargo xtask sarif-policy --current <path> [--baseline <path>]
-cargo xtask schema-producer-sweep [--rev REV] [--artifact SCHEMA[#POINTER]=FILE[#POINTER]]...
+cargo xtask schema-producer-sweep [--rev REV] [--live-replay [--ripr BINARY]] [--artifact SCHEMA[#POINTER]=FILE[#POINTER]]...
 cargo xtask shape
 cargo xtask specs next
 cargo xtask suggested-fixes
@@ -633,10 +706,11 @@ fixture directories exist yet.
 outputs without mutating checked-in files. It also writes
 `target/ripr/reports/golden-drift.md` and
 `target/ripr/reports/golden-drift.json` so reviewers can inspect semantic drift
-before any blessing. `goldens bless <fixture> --reason <reason>` requires the
-reason to cite an existing `RIPR-SPEC-NNNN` under `docs/specs/`, then records
+before any blessing. `goldens bless <fixture> --reason "RIPR-SPEC-NNNN: <reviewed change>"` requires both placeholders filled with the fixture name, a governing spec id from `docs/specs/`, and a short reviewed change description; the reason must cite an existing `RIPR-SPEC-NNNN`, then records
 the explicit blessing reason, updates expected JSON and human outputs, and
-appends the fixture expected-output changelog.
+appends the fixture expected-output changelog. Bless from the Linux arbiter
+platform, never from a Windows host; the sanctioned route is documented in
+[Validation commands](agent-context/validation.md#golden-fixtures-and-the-blessing-platform).
 
 Human goldens (`human.txt`, `human-full.txt`) mask only the explanatory prose
 of the line `no repair start offered: <reason>`. Pinned: the line's presence and
@@ -846,8 +920,12 @@ Current:
 ```bash
 cargo xtask shape
 cargo xtask fix-pr
-cargo xtask goldens bless <fixture> --reason "..."
+cargo xtask goldens bless <fixture> --reason "RIPR-SPEC-NNNN: <reviewed change>"
 ```
+
+Replace `<fixture>`, `RIPR-SPEC-NNNN`, and `<reviewed change>` with the fixture
+you blessed, its governing spec under `docs/specs/`, and what you reviewed.
+Ellipsis or a description without a spec id is rejected before fixture execution.
 
 There are no `--write` variants of `metrics`, `docs-index`, or
 `capability-matrix`; earlier revisions of this section listed them as future

@@ -55,6 +55,8 @@ Hidden:
     - pricing.py:11 (no path); kind: predicate; reason: No Python test references `loyalty_price(`; add a pytest or unittest test that calls the changed owner.
     - pricing.py:12 (no path); kind: return_value; reason: No Python test references `loyalty_price(`; add a pytest or unittest test that calls the changed owner.
     - pricing.py:13 (no path); kind: return_value; reason: No Python test references `loyalty_price(`; add a pytest or unittest test that calls the changed owner.
+  Hidden classes:
+    no path = no test path was found
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

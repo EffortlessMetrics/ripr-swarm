@@ -257,6 +257,15 @@ root counts, so an alias at
 a range that restores the same tree yields the same empty result, and the
 Start-here action owns the remediation instead.
 
+### Non-Git root refusal keeps its remedy (#11408)
+
+The not-a-work-tree refusal leads with the remedy (run from inside a
+repository or pass `--root <path>` to one; `ripr pilot --root .` works
+without Git history) and trails the root path. The LSP shows it as a
+`window/showMessage` warning bounded to 240 characters, so an over-long
+root is the part shortened, never the remedy. A short failure message is
+shown unchanged.
+
 ### Non-claims
 
 - This spec does NOT auto-run the suggested scope or pick an arbitrary ref.
@@ -322,6 +331,12 @@ Start-here action owns the remediation instead.
 - `crates/ripr/src/analysis/diff/load.rs::tests::explicit_base_is_used_as_is_without_resolution`
 - `crates/ripr/src/analysis/diff/load.rs::tests::load_diff_from_file_returns_content`
 - `crates/ripr/tests/cli_smoke.rs::history_commands_resolve_the_default_base_without_origin`
+- `crates/ripr/src/lsp/backend.rs::bounded_failure_message_tests::non_git_workspace_warning_keeps_the_remedy_inside_the_bound`
+  — positive: a long root keeps the remedy inside the 240-character bound.
+- `crates/ripr/src/lsp/backend.rs::bounded_failure_message_tests::non_git_workspace_warning_keeps_the_remedy_for_short_and_multibyte_roots`
+  — the shortest root and a multibyte root keep the remedy inside the bound.
+- `crates/ripr/src/lsp/backend.rs::bounded_failure_message_tests::short_analysis_failure_warning_is_unchanged`
+  — negative control: a short failure is shown unchanged.
 - `crates/ripr/tests/cli_smoke.rs::history_commands_without_a_resolvable_default_base_fail_named`
 - `crates/ripr/tests/cli_smoke.rs::first_pr_check_missing_packet_recovers_without_a_resolvable_base`
 - `crates/ripr/tests/cli_smoke.rs::first_pr_check_recovery_write_resolves_the_default_base`

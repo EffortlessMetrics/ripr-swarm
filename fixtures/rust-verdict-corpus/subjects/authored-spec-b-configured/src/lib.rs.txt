@@ -1,0 +1,16 @@
+pub mod unregistered;
+
+pub fn shipped_value(base: u32) -> u32 {
+    base + 16
+}
+
+#[cfg(test)]
+#[path = "nested/renamed.rs"]
+mod nested;
+
+#[cfg(test)]
+include!("fragments/body.rs");
+
+#[cfg(test)]
+#[cfg_attr(é, path = "alternate.rs")]
+mod unicode_child;

@@ -1,0 +1,5 @@
+crates/ripr/src/app/check_artifact.rs|failed to canonicalize root {}: {err}
+crates/ripr/src/app/check_artifact.rs|failed to canonicalize {}: {err} failed to canonicalize root {}: {err}
+crates/ripr/src/app/check_artifact.rs|failed to serialize check artifact: {err}
+crates/ripr/src/app/check_artifact.rs|recorded base/head diff could not be re-resolved: {err} recorded worktree diff could not be re-resolved: {err}
+crates/ripr/src/app/check_artifact.rs|recorded worktree diff could not be re-resolved: {err}

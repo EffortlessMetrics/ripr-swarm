@@ -1,0 +1,55 @@
+{
+  "case_id": "spec-b-0153-registered-harness-subject",
+  "subject_id": "authored-spec-b-configured",
+  "diff": "cases/spec-b-0153-registered-harness-subject.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "registered_custom_harness_adapter_subject",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test --locked",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "base + 15",
+        "mutated_line": "base + 15",
+        "outcome": "tests_failed",
+        "failing_test": "registered_base_is_ten",
+        "equivalence_review": "not equivalent: shipped_value(10) becomes 25, not 26"
+      },
+      {
+        "replacement": "base + 17",
+        "mutated_line": "base + 17",
+        "outcome": "tests_failed",
+        "failing_test": "registered_base_is_ten",
+        "equivalence_review": "not equivalent: shipped_value(10) becomes 27, not 26"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The only assertion reaching this production function is a Trial callback in a declared harness=false custom path, registered through retained ripr.toml. The actual libtest-mimic run pins shipped_value(10) to 26. Removing the registration must lose adapted test evidence; the separate helper and invalid-target cases cover file-role boundaries. Typed refusal/provenance are inspected separately from projected verdict rows.",
+  "spec_examples": [
+    "RIPR-SPEC-0153#7"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "5abb7591b0510f2fe563c086b42c381d8b4a2164",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,4 @@
+export function banner(name: string): string {
+  return `hello ${name}   
+bye`;
+}

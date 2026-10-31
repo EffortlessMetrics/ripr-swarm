@@ -1,0 +1,4 @@
+crates/ripr/src/lsp/action_contract.rs|code action data action_id does not recompute from its payload identity
+crates/ripr/src/lsp/action_contract.rs|code action data payload is missing `{key}`
+crates/ripr/src/lsp/action_contract.rs|code action data payload must be an object
+crates/ripr/src/lsp/action_contract.rs|unsupported code action data schema version `{schema_version}`

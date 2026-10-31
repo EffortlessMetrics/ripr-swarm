@@ -51,6 +51,9 @@ Hidden:
   2 lower-priority finding(s) omitted from default human output (TypeScript preview: 2).
     - src/context.ts:2 (no path); kind: predicate; reason: No statically linked test call to `thresholdLabel(` was established; inspect existing test calls and their import/export paths.
     - src/pricing.ts:2 (weak); kind: predicate; reason: Only heuristic TypeScript test links were found for `discountedTotal`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
+  Hidden classes:
+    weak = tests reach it but check it only loosely
+    no path = no test path was found
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

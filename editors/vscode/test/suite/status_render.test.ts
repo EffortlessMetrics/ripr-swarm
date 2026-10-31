@@ -44,3 +44,34 @@ suite('Status bar render kinds (#8587)', () => {
     );
   });
 });
+
+suite('Passive stale status presentation (#5319)', () => {
+  test('stale uses a neutral icon and label without warning styling', () => {
+    const text = statusText('stale');
+    assert.strictEqual(text, '$(circle-outline) ripr: unsaved changes');
+    assert.ok(!text.includes('$(warning)'), text);
+    assert.strictEqual(statusBarColors('stale'), undefined);
+  });
+
+  test('degraded and failure kinds keep warning or error styling', () => {
+    assert.ok(statusBarColors('analysisLimited'));
+    assert.ok(statusText('analysisLimited').includes('$(warning)'));
+
+    assert.ok(statusBarColors('gapArtifactWarning'));
+    assert.ok(statusText('gapArtifactWarning').includes('$(warning)'));
+
+    assert.ok(statusBarColors('analysisFailed'));
+    assert.ok(statusText('analysisFailed').includes('$(error)'));
+  });
+
+  test('first useful action stale branch keeps warning presentation', () => {
+    const text = statusText('analysisReady', {
+      status: 'stale',
+      actionKind: 'write_focused_test',
+      title: 'Add test',
+      reportPath: '/tmp/report.json',
+      warningCount: 0
+    });
+    assert.strictEqual(text, '$(warning) ripr: first action');
+  });
+});

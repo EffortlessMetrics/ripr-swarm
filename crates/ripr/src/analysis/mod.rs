@@ -14,12 +14,25 @@ pub(crate) use generated_rust_corpus::{
     absent_changed_rust_file_limitations, generated_rust_recovery,
 };
 pub(crate) mod harness_projection;
+mod input_facts;
+#[cfg(test)]
+pub(crate) use input_facts::PublishedInputFacts;
+pub(crate) use input_facts::{
+    CapturedInputFacts, InputFactsSlot, InputSource,
+    publish_input_source as publish_input_source_fact,
+    publish_loaded_diff as publish_loaded_input_facts,
+    publish_scoped_intake as publish_scoped_intake_facts, published as published_input_facts,
+    with_input_facts_capture,
+};
 pub(crate) mod language;
 pub(crate) mod language_outcome;
 pub(crate) mod new_test_target;
 pub(crate) mod path_glob;
 mod pipeline;
 pub(crate) use extract::{mask_comments_and_strings, rust_identity_spans};
+// Source-role recognition stays with the cfg-predicate authority (#3530/#3534);
+// consumers outside `analysis` ask it instead of matching attribute text.
+pub(crate) use facts::cfg_predicates::attribute_is_plain_test_gate;
 pub(crate) use pipeline::NON_TEXT_ONLY_DETAIL;
 pub(crate) use pipeline::{
     DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
@@ -56,10 +69,17 @@ pub(crate) use diff::parse_unified_diff_bounded_with_metadata;
 pub(crate) use diff_scope_filter::DiffIntake;
 pub use diff_scope_filter::DiffScopeFilter;
 
+/// Test-only construction handle for the deadline-refusal input-facts
+/// publisher (RIPR-SPEC-0241 #10796); production publishers run inside the
+/// analysis tree and name the type through inference.
+#[cfg(test)]
+pub(crate) use diff::LoadedDiff;
 /// Shared pinned PR-evidence diff assembly (#3930, #4004): the one named
 /// owner for packet diff presentation, consumed by the product route and the
 /// xtask route alike. Neither route may rebuild its argv inline.
 pub use diff::load_pr_evidence_diff_range;
+#[cfg(test)]
+pub(crate) use diff::not_a_work_tree_message;
 /// Shared NUL-delimited Git path-record authority (#4006), consumed by the
 /// product and xtask routes alike.
 pub use diff::records::{
@@ -182,6 +202,14 @@ pub(crate) fn workspace_unanalyzed_source_languages(root: &Path) -> Vec<(&'stati
 /// walk; see `workspace::has_inspectable_source_file`.
 pub(crate) fn workspace_has_inspectable_source(root: &Path) -> bool {
     workspace::has_inspectable_source_file(root)
+}
+
+/// Whether the root is not a workspace ripr can inspect: no `Cargo.toml` and
+/// no source file in any language ripr reads. The single owner of this verdict
+/// (#11395): `ripr pilot` refuses on it and `ripr status` withholds the pilot
+/// command on it, so the two cannot disagree.
+pub(crate) fn root_has_no_inspectable_workspace(root: &Path) -> bool {
+    !(root.join("Cargo.toml").is_file() || workspace_has_inspectable_source(root))
 }
 
 /// Re-export workspace Rust file discovery for the output layer so it can

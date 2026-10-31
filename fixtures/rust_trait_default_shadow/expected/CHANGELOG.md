@@ -221,3 +221,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_trait_default_shadow (18)
+
+Reason:
+RIPR-SPEC-0108: seam-side trait default-method shadow no longer credited as direct owner call, #11469; human text only, withholding change
+
+Command:
+`cargo xtask goldens bless rust_trait_default_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -1,0 +1,3 @@
+crates/ripr/src/domain/language_capability_drift.rs|begin marker missing
+crates/ripr/src/domain/language_capability_drift.rs|end marker missing
+crates/ripr/src/domain/language_capability_drift.rs|expected exactly one capability-registry begin/end marker pair, found {begin}/{end}

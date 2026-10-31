@@ -14,7 +14,7 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: None =>
-  Missing check: No strong discriminator was detected
+  Missing check: No strong assertion was detected
   Related test: src/lib.rs:10 selected (ripr could not confirm that this assertion observes the changed behavior)
   Next step: Inspect `lease.elapsed` at the existing owner call and whether a related assertion
     observes that call's returned value; add or strengthen a test only if that inspection identifies
@@ -43,7 +43,10 @@ Write a test for it:
 
 Hidden:
   All 2 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - ./src/lib.rs:5 (weak); kind: match_arm; reason: No strong discriminator was detected
+    - ./src/lib.rs:5 (weak); kind: match_arm; reason: No strong assertion was detected
     - ./src/lib.rs:5 (unrevealed); kind: return_value; reason: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
+  Hidden classes:
+    weak = tests reach it but check it only loosely
+    unrevealed = tests reach it but nothing appears to notice a change
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

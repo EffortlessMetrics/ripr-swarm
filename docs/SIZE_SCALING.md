@@ -13,6 +13,11 @@ cargo build --release -p ripr
 cargo xtask size-scaling --binary target/release/ripr
 ```
 
+A nightly advisory lane (`.github/workflows/size-scaling.yml`) builds the release
+binary and runs the gate at a 512 KiB base, so the largest step is 2 MiB; the
+report is kept as the `size-scaling` artifact, which is the trend. It is not
+part of the required PR workflow.
+
 Outputs: `target/ripr/reports/size-scaling.{json,md}`. The workspaces are owned
 and disposable under `target/ripr/size-scaling/<pid>`; a run refuses to reuse an
 existing root and fails if it cannot remove its own.
@@ -66,3 +71,60 @@ of the input.
   release binary.
 - Perl is not covered: `ripr` needs an external producer for it (#10364).
 - It does not change product behavior, publish, or qualify a release.
+
+## Warm-check A/B on ripr's own diffs (#10639)
+
+The size cells are far smaller than a real large test file, and the
+dx-scoreboard speed row goes uncompared when the baseline runner class differs
+from the current one, which is the normal case. #10489 doubled the warm check of
+this repository's own two-xtask-file diff (about 31 s to 64 s) and merged with
+every required check green. `cargo xtask warm-ab` is the row that fails.
+
+```bash
+cargo xtask warm-ab --baseline <bin> --candidate <bin> --tree <checkout> --diff <file> --pin <id>
+```
+
+It copies both binaries, gives each its own `RIPR_CACHE_DIR`, runs one cold
+check each to fill the caches, then `--runs` (default 3) warm checks alternating
+baseline and candidate, so a drifting runner touches both alike. Runner class
+and load cancel because the comparison is inside one job. It fails when:
+
+- the candidate's median warm time is more than `--max-ratio` (default 1.5) times
+  the baseline's and the difference is over a 2 s noise floor;
+- the candidate's median exceeds `--ceiling-secs` (default 300);
+- a run times out (10 minutes), ends on a signal, exits with a code other than
+  0 or 1, or prints a report that is not JSON or has no `findings` array;
+- either binary reports no finding in any measured check (cold or warm) for
+  the pinned diff, so that side analyzed nothing. A one-sided empty report
+  fails even when the other side still finds something.
+
+The report (`warm-ab-<pin>.{json,md}`) records both binaries' sha256, cold and
+warm milliseconds, finding counts, and whether the two findings reports are
+byte-identical. A difference is reported, not failed: the two are different
+builds.
+
+The nightly `warm-ab` job in `size-scaling.yml` runs
+`cargo xtask warm-ab --baseline-ref <ref> --candidate-ref <ref> --pins <id=commit,...>`,
+which builds the candidate release binary at the run's commit and the baseline at
+the newest first-parent commit at least 24 hours older (`baseline_ref` and
+`candidate_ref` override both for `workflow_dispatch`), makes a worktree and diff
+for each pin, and runs the A/B on two pins, each a fixed commit of this repository whose tree and diff do not
+drift with main:
+
+| Pin | Commit | Shape |
+|---|---|---|
+| `xtask-tests` | `a58975de` | two `xtask` files including the 57,000-line `xtask/src/tests.rs`: tests times file size |
+| `product-rust` | `af8136f7` | product Rust under `crates/ripr` |
+
+The negative control is the pre-#10638 build as candidate against the post-#10638
+build as baseline: it must fail the `xtask-tests` pin. Run locally on 2026-10-26 (release builds of `a58975de` and `3fa4ad28`, 4 cores, 3 warm runs each, interleaved): the pre-fix build as candidate failed at 2.17x (medians 24.4 s baseline, 52.9 s candidate), and with the roles swapped the fix passed at 0.46x. The judge also has a unit
+test on the #10489 shape (about 31 s against about 64 s).
+
+Not claimed: wall time only; a regression under the ratio or the noise floor
+passes; two pinned diffs do not cover other shapes of change. The default
+baseline is the newest first-parent commit at least 24 hours older than the
+candidate, so the detection window is a single night: if one nightly run is
+missed, skipped or never acted on, the next baseline can be the regression
+itself and the gate compares it against itself. Scheduled and dispatched
+runs use separate concurrency groups so a manual dispatch cannot cancel the
+nightly mid-measurement, but a missed night still consumes the window.

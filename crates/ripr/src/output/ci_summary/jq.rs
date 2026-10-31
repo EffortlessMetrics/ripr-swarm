@@ -54,6 +54,28 @@ impl Doc {
         Self { values, broken }
     }
 
+    /// A count the report states outright: one parsed top-level object whose
+    /// dotted `path` is an array (its length) or a non-negative integer.
+    /// `None` when the report is unreadable, has another shape, or omits the
+    /// field, so a count that is not established is never read as zero.
+    pub(super) fn strict_count(&self, path: &str) -> Option<u64> {
+        if self.broken {
+            return None;
+        }
+        let [root] = self.values.as_slice() else {
+            return None;
+        };
+        let mut value = root;
+        for key in path.split('.') {
+            value = value.as_object()?.get(key)?;
+        }
+        match value {
+            Value::Array(items) => Some(items.len() as u64),
+            Value::Number(number) => number.as_u64(),
+            _ => None,
+        }
+    }
+
     /// `$(jq -r QUERY file 2>/dev/null || echo FAIL)`, captured. jq runs
     /// the query on every value and exits nonzero when the last one failed
     /// or the input was malformed; then `FAIL` follows whatever it printed.

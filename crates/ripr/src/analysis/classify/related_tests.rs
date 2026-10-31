@@ -1708,6 +1708,28 @@ fn find_related_tests_with_candidates<'a>(
     related
 }
 
+/// Restore the finder's final order after a caller replaced or appended
+/// entries (#11151): confidence tier, then diff-touched, then name, file and
+/// start line. This is the composition of the finder's two stable sorts.
+pub(super) fn order_related(
+    related: &mut [(&TestSummary, RelationReason)],
+    candidate_index: &RelatedTestCandidateIndex,
+) {
+    let touched = |test: &TestSummary| {
+        candidate_index
+            .diff_touched()
+            .touches(&test.file, test.start_line)
+    };
+    related.sort_by(|(a, a_reason), (b, b_reason)| {
+        relation_rank(*b_reason)
+            .cmp(&relation_rank(*a_reason))
+            .then_with(|| touched(b).cmp(&touched(a)))
+            .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| a.file.cmp(&b.file))
+            .then_with(|| a.start_line.cmp(&b.start_line))
+    });
+}
+
 /// Sort rank of a relation: higher confidence ranks first.
 fn relation_rank(reason: RelationReason) -> u8 {
     match reason.confidence() {
@@ -4344,9 +4366,9 @@ fn declared_return_names_type(function: &FunctionSummary, index: &RustIndex, ty:
     // A type parameter named like the impl type is not that type.
     if ast::HasGenericParams::generic_param_list(&declared).is_some_and(|params| {
         params.generic_params().any(|param| match param {
-            ast::GenericParam::TypeParam(param) => {
-                param.name().is_some_and(|name| name.text() == ty)
-            }
+            ast::GenericParam::TypeParam(param) => param
+                .name()
+                .is_some_and(|name| name.text().trim_start_matches("r#") == ty),
             _ => false,
         })
     }) {
@@ -5117,7 +5139,6 @@ pub(in crate::analysis) fn requires_inherent_receiver_identity(owner: &FunctionS
 /// never a raw captured-line comment or a binding in an expired inner block.
 /// Aliases, receiver value flow and unsupported binding scopes stay unresolved.
 /// This does not establish general type or Cargo-target identity.
-#[cfg(test)]
 pub(in crate::analysis) fn inherent_receiver_call_resolves(
     test: &TestSummary,
     method: &str,
@@ -5158,6 +5179,11 @@ fn inherent_receiver_call_resolves_with(
     let unit_struct = |name: &str| {
         index.is_some_and(|index| {
             super::owner_pin::unit_struct_value(name, &test.file, index, pin_syntax)
+        })
+    };
+    let unit_variant = |name: &str| {
+        index.is_some_and(|index| {
+            super::owner_pin::imported_enum_variant_value(name, impl_type, &test.file, index)
         })
     };
     // The file-local claims below speak of the test file's own root `ty`, so
@@ -5202,7 +5228,7 @@ fn inherent_receiver_call_resolves_with(
                 scope,
                 method,
                 impl_type,
-                &unit_struct,
+                (&unit_struct, &unit_variant),
                 &factory,
                 &owner_unrebound,
             )
@@ -5317,7 +5343,7 @@ fn executable_call_resolves(
 
 /// Both source and synthetic assertion trees obey the same execution boundary.
 /// Constructing an unpolled future does not execute calls in its body.
-fn node_executes_in(node: &SyntaxNode, function: &SyntaxNode) -> bool {
+pub(super) fn node_executes_in(node: &SyntaxNode, function: &SyntaxNode) -> bool {
     node.ancestors()
         .skip(1)
         .take_while(|scope| scope != function)
@@ -5328,12 +5354,15 @@ fn node_executes_in(node: &SyntaxNode, function: &SyntaxNode) -> bool {
         })
 }
 
+/// A bare-spelling probe: whether the name is a value of the owner's type.
+type BareValueProbe<'a> = &'a dyn Fn(&str) -> bool;
+
 fn inherent_call_node_resolves(
     node: SyntaxNode,
     original_scope: Option<&SyntaxNode>,
     method: &str,
     impl_type: &str,
-    unit_struct: &dyn Fn(&str) -> bool,
+    (unit_struct, unit_variant): (BareValueProbe<'_>, BareValueProbe<'_>),
     factory: &dyn Fn(&str, &str) -> bool,
     owner_unrebound: &dyn Fn() -> bool,
 ) -> bool {
@@ -5360,6 +5389,7 @@ fn inherent_call_node_resolves(
                     original_scope.unwrap_or_else(|| call.syntax()),
                     impl_type,
                     unit_struct,
+                    unit_variant,
                     factory,
                     owner_unrebound,
                 )
@@ -5384,6 +5414,7 @@ fn inherent_call_node_resolves(
                     original_scope.unwrap_or_else(|| call.syntax()),
                     impl_type,
                     unit_struct,
+                    unit_variant,
                     factory,
                     owner_unrebound,
                 )
@@ -5477,6 +5508,7 @@ fn scoped_receiver_names_type(
     call: &SyntaxNode,
     impl_type: &str,
     unit_struct: &dyn Fn(&str) -> bool,
+    unit_variant: &dyn Fn(&str) -> bool,
     factory: &dyn Fn(&str, &str) -> bool,
     owner_unrebound: &dyn Fn() -> bool,
 ) -> bool {
@@ -5499,7 +5531,9 @@ fn scoped_receiver_names_type(
             if !name.is_empty() && name.bytes().all(is_ident_byte) {
                 // A bare type name is a value only for a verified unit struct
                 // (`Formatter.format(..)`), not a same-spelled constant/import.
-                if name == impl_type && unit_struct(impl_type) {
+                // A bare variant is the owner's value only when exactly one
+                // `use` brings that variant of the one workspace enum in (#8782).
+                if (name == impl_type && unit_struct(impl_type)) || unit_variant(name) {
                     return true;
                 }
                 return visible_receiver_binding_names_type(
@@ -6104,6 +6138,56 @@ fn impl_identity_is_shadowed(
     false
 }
 
+/// Whether the test's own scope rebinds the owner's impl type or trait, so a
+/// receiver of that name is not the production type (#11382). The seam-side
+/// relation applies the same refusal the finding-level relation applies to a
+/// direct owner call. Fails open: a free function, or an owner without an
+/// established impl type, is never reported as shadowed.
+pub(in crate::analysis) fn owner_impl_identity_shadowed(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    let test_source = index
+        .files()
+        .get(&test.file)
+        .map(|facts| facts.data().source.as_ref());
+    let Some(impl_type) = impl_self_type_name(&owner.id.0) else {
+        // #11469: a trait-declaration default method has no impl
+        // self type, but the finding-level relation still refuses a test
+        // that rebinds the declaring trait; mirror it through the same
+        // shared predicate.
+        return trait_declaration_owner_shadowed(test, owner, test_source, index);
+    };
+    impl_identity_is_shadowed(test, owner, &impl_type, test_source, index)
+}
+
+/// Whether a same-named `trait` declared in the test's own module scope (or at
+/// the root of an out-of-line parent module) shadows a trait-declaration
+/// default-method owner (#7123, #7087). The trait name comes from the
+/// parser-backed container fact; an unestablished container is never shadowed.
+fn trait_declaration_owner_shadowed(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    test_source: Option<&str>,
+    index: &RustIndex,
+) -> bool {
+    let FunctionContainer::Trait { trait_name } = &owner.item.container else {
+        return false;
+    };
+    let owner_scope =
+        super::owner_pin::OwnerScope::new(owner.name.as_str(), owner.start_line, &owner.file);
+    test_source.is_some_and(|source| {
+        super::owner_pin::test_module_shadows_trait(
+            test,
+            source,
+            trait_name,
+            Some(owner_scope),
+            index,
+        )
+    }) || super::owner_pin::parent_chain_shadows_trait(test, trait_name, owner_scope, index)
+}
+
 fn owner_call_relation_reason(
     test: &TestSummary,
     owner_fn: Option<&FunctionSummary>,
@@ -6127,7 +6211,7 @@ fn owner_call_relation_reason(
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "each argument is one independent input of the receiver-identity gate"
+    reason = "the gated form adds one input to the existing relation reason without a parameter struct"
 )]
 fn owner_call_relation_reason_gated(
     test: &TestSummary,
@@ -6175,28 +6259,8 @@ fn owner_call_relation_reason_gated(
             // refuses the same way (#7087). The trait name comes from the
             // parser-backed container fact; an unestablished container keeps
             // the credit.
-            if let FunctionContainer::Trait { trait_name } = &owner.item.container {
-                let owner_scope = super::owner_pin::OwnerScope::new(
-                    owner.name.as_str(),
-                    owner.start_line,
-                    &owner.file,
-                );
-                if test_source.is_some_and(|source| {
-                    super::owner_pin::test_module_shadows_trait(
-                        test,
-                        source,
-                        trait_name,
-                        Some(owner_scope),
-                        index,
-                    )
-                }) || super::owner_pin::parent_chain_shadows_trait(
-                    test,
-                    trait_name,
-                    owner_scope,
-                    index,
-                ) {
-                    return RelationReason::WeakTokenSubstring;
-                }
+            if trait_declaration_owner_shadowed(test, owner, test_source, index) {
+                return RelationReason::WeakTokenSubstring;
             }
             // #11113: a trait default method is not an inherent method of a
             // standard collection. When every spelling is a method call on a

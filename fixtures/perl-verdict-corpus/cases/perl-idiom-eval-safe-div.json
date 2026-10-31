@@ -57,7 +57,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-idiom-eval-safe-div.json",
-    "sha256": "2437d7dfb45984a76c63993f63efd79808c8767fd05e34858d3a2dd2d6e71b5e",
+    "sha256": "22ce22bbc8b008cfe89c27ce26e9f6fb61a4f9517bc77c953fe88e0ddc37793a",
     "provenance": "producer"
   }
 }

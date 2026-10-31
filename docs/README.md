@@ -46,7 +46,7 @@ result means.
 - [Contributing](../CONTRIBUTING.md) — development setup and validation.
 - [Scoped PR contract](SCOPED_PR_CONTRACT.md) — keep one coherent change and evidence denominator.
 - [PR automation](PR_AUTOMATION.md) — repository review and integration mechanics.
-- Agent context: [repository map](agent-context/repo-map.md), [review invariants](agent-context/review-invariants.md), and [validation](agent-context/validation.md).
+- Agent context: [repository map](agent-context/repo-map.md), [review invariants](agent-context/review-invariants.md), [validation](agent-context/validation.md), and the [PR convergence runbook](agent-context/convergence-runbook.md).
 - [Source-of-truth doctrine](source-of-truth/README.md) — proposals, specs, ADRs, plans, policy, proof, and closeout.
 - [Spec/proposal system](SPEC_PROPOSAL_SYSTEM.md) — how proposals become reviewed specifications and implementation work.
 - [Documentation system](DOCUMENTATION.md) — document roles and maintenance rules.

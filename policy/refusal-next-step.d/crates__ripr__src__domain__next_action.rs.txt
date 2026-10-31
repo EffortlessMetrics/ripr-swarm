@@ -1,0 +1,14 @@
+crates/ripr/src/domain/next_action.rs|canonical next action alternatives must name a label and route
+crates/ripr/src/domain/next_action.rs|canonical next action binds one item exactly when it is not a selection
+crates/ripr/src/domain/next_action.rs|canonical next action carries a typed stop exactly when it is not executable
+crates/ripr/src/domain/next_action.rs|canonical next action command display must not be blank
+crates/ripr/src/domain/next_action.rs|canonical next action command id must not be blank
+crates/ripr/src/domain/next_action.rs|canonical next action item must not be blank
+crates/ripr/src/domain/next_action.rs|canonical next action names its expected transition exactly when it moves state
+crates/ripr/src/domain/next_action.rs|canonical next action requires a bound root
+crates/ripr/src/domain/next_action.rs|check producer must bind its triage case
+crates/ripr/src/domain/next_action.rs|doctor producer must bind a precise recovery or declare its limitation
+crates/ripr/src/domain/next_action.rs|next-action producer must bind a root
+crates/ripr/src/domain/next_action.rs|next-action producer must bind one item or name candidates, not both
+crates/ripr/src/domain/next_action.rs|next-action producer must name the current state
+crates/ripr/src/domain/next_action.rs|next-action producer must name the offered command's effect

@@ -125,7 +125,7 @@ Create options:
   --force        Overwrite an existing baseline ledger.
 
 Diff options:
-  --baseline PATH    Reviewed baseline ledger. Defaults are supplied by callers.
+  --baseline PATH    Required. Reviewed baseline ledger, for example .ripr/gate-baseline.json.
   --current PATH     Current gate-decision JSON from `ripr gate evaluate`.
   --out PATH         JSON output path. Defaults to target/ripr/reports/baseline-debt-delta.json.
   --out-md PATH      Markdown output path. Defaults to target/ripr/reports/baseline-debt-delta.md.

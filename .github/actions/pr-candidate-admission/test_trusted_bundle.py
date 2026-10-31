@@ -16,9 +16,32 @@ FILES = ("action.yml", "candidate_admission.py", "release_cut_admission.py")
 PIN = "${{ steps.trusted.outputs.sha }}"
 
 
+def bash():
+    """The bash the workflow steps run under. On Windows a bare `bash` resolves to
+    the WSL launcher in System32 (no distributions installed on the runner), so
+    prefer Git for Windows' bash and ignore PATH, which a case may poison."""
+    if os.name != "nt":
+        return "bash"
+    for variable in ("ProgramFiles", "ProgramFiles(x86)"):
+        prefix = os.environ.get(variable)
+        for relative in ("Git/bin/bash.exe", "Git/usr/bin/bash.exe"):
+            if prefix and (Path(prefix) / relative).is_file():
+                return str(Path(prefix) / relative)
+    raise RuntimeError("Git for Windows bash.exe not found under ProgramFiles")
+
+
 def shell(source):
     return "\n".join(line[8:] if line.startswith("        ") else line
                      for line in source.split("      run: |\n", 1)[1].splitlines())
+
+
+def script_argv(source, directory):
+    """Run a workflow step from a file. Passing the multi-line script as one
+    `bash -c` argument is re-parsed by the Windows/MSYS command line and loses
+    quoting, so the long action step failed with `unexpected end of file`."""
+    script = Path(directory) / "workflow-step.sh"
+    script.write_bytes(source.encode("utf-8") + b"\n")  # LF: CRLF breaks bash
+    return [bash(), "-euo", "pipefail", script.as_posix()]
 
 
 def step(workflow, name):
@@ -31,7 +54,7 @@ def step(workflow, name):
 GH = r'''#!/usr/bin/env python3
 import base64,json,os,sys
 from pathlib import Path
-d=json.loads(Path(os.environ['CONTROL_CASE']).read_text())
+d=json.loads(Path(os.environ['CONTROL_CASE']).read_text(encoding="utf-8"))
 url=next(x for x in sys.argv if x.startswith('repos/'))
 head='a'*40; base='d'*40
 if '/git/ref/' in url: value=base
@@ -66,27 +89,27 @@ class Bundle(unittest.TestCase):
             workspace = tmp / "candidate"
             candidate = workspace / ACTION
             candidate.mkdir(parents=True)
-            (workspace / ".gitattributes").write_text(attributes)
+            (workspace / ".gitattributes").write_text(attributes, encoding="utf-8")
             (workspace / "policy").mkdir()
-            inactive = json.loads((ROOT / "policy/release-hard-cut-admission.json").read_text())
-            (workspace / "policy/release-hard-cut-admission.json").write_text(json.dumps(inactive))
+            inactive = json.loads((ROOT / "policy/release-hard-cut-admission.json").read_text(encoding="utf-8"))
+            (workspace / "policy/release-hard-cut-admission.json").write_text(json.dumps(inactive), encoding="utf-8")
             trusted = workspace / ".admission-trusted"
             trusted_action = trusted / ACTION
             trusted_action.mkdir(parents=True)
             for name in FILES:
-                content = (ROOT / ACTION / name).read_text()
-                (trusted_action / name).write_text(content)
-                (candidate / name).write_text(content)
+                content = (ROOT / ACTION / name).read_bytes()
+                (trusted_action / name).write_bytes(content)
+                (candidate / name).write_bytes(content)
             marker = tmp / "candidate-executed"
             if poison == "wrapper":
-                (candidate / "action.yml").write_text('name: Candidate poison\ndescription: Controlled candidate wrapper fixture\nruns:\n  using: composite\n  steps:\n    - shell: bash\n      run: |\n        touch "$CONTROL_MARKER"\n        exit 0\n')
+                (candidate / "action.yml").write_text('name: Candidate poison\ndescription: Controlled candidate wrapper fixture\nruns:\n  using: composite\n  steps:\n    - shell: bash\n      run: |\n        touch "$CONTROL_MARKER"\n        exit 0\n', encoding="utf-8")
             else:
                 for name in FILES[1:]:
-                    (candidate / name).write_text("import os,pathlib\npathlib.Path(os.environ['CONTROL_MARKER']).touch()\n")
+                    (candidate / name).write_text("import os,pathlib\npathlib.Path(os.environ['CONTROL_MARKER']).touch()\n", encoding="utf-8")
             env = dict(os.environ, GITHUB_WORKSPACE=str(workspace), RUNNER_TEMP=str(tmp), CONTROL_MARKER=str(marker),
                        GITHUB_OUTPUT=str(tmp / "outputs"), GITHUB_STEP_SUMMARY=str(tmp / "summary"))
             def run(*args, **kwargs):
-                return subprocess.run(args, env=env, text=True, stdout=subprocess.PIPE,
+                return subprocess.run(args, env=env, text=True, encoding="utf-8", stdout=subprocess.PIPE,
                                       stderr=subprocess.PIPE, check=False, **kwargs)
             for args in [("git", "init", "-q", str(trusted)),
                          ("git", "-C", str(trusted), "add", ACTION),
@@ -98,13 +121,13 @@ class Bundle(unittest.TestCase):
             if damage == "missing":
                 (trusted_action / "release_cut_admission.py").unlink()
             elif damage == "mismatch":
-                (trusted_action / "candidate_admission.py").write_text("raise SystemExit(0)\n")
+                (trusted_action / "candidate_admission.py").write_text("raise SystemExit(0)\n", encoding="utf-8")
             elif damage == "head":
                 env["TRUSTED_ADMISSION_SHA"] = "0" * 40
-            workflow = (ROOT / ".github/workflows/routed-rust.yml").read_text()
+            workflow = (ROOT / ".github/workflows/routed-rust.yml").read_text(encoding="utf-8")
             verify = step(workflow, "Verify trusted admission bundle")
             if verify:
-                result = run("bash", "-euo", "pipefail", "-c", shell(verify), cwd=workspace)
+                result = run(*script_argv(shell(verify), tmp), cwd=workspace)
                 if result.returncode:
                     self.assertFalse(marker.exists())
                     return result.returncode, result.stdout + result.stderr, False
@@ -124,14 +147,14 @@ class Bundle(unittest.TestCase):
                               admitted=[{"pr":9,"head_sha":"9"*40,"admission":"admitted","disposition":"release_required_product","owner_issue":99,"release_effect":"landed before cut","proof_refs":["#99"]}])
             case = tmp / "case.json"
             case.write_text(json.dumps(dict(lines=lines, packet=packet, inactive=inactive,
-                                           filename=filename, base_attributes=base_attributes)))
+                                           filename=filename, base_attributes=base_attributes)), encoding="utf-8")
             env["CONTROL_CASE"] = str(case)
-            (tmp / "gh").write_text(GH)
+            (tmp / "gh").write_bytes(GH.encode("utf-8"))  # LF: a CRLF shebang cannot run
             (tmp / "gh").chmod(0o755)
-            (tmp / "gh.cmd").write_text('@python3 "%~dp0gh" %*\r\n')
+            (tmp / "gh.cmd").write_text(f'@"{sys.executable}" "%~dp0gh" %*\r\n', encoding="utf-8")
             env["PATH"] = str(tmp) + os.pathsep + env["PATH"]
-            result = run("bash", "-euo", "pipefail", "-c", shell((action / "action.yml").read_text()), cwd=workspace)
-            outputs = (tmp / "outputs").read_text() if (tmp / "outputs").exists() else ""
+            result = run(*script_argv(shell((action / "action.yml").read_text(encoding="utf-8")), tmp), cwd=workspace)
+            outputs = (tmp / "outputs").read_text(encoding="utf-8") if (tmp / "outputs").exists() else ""
             return result.returncode, outputs + result.stdout + result.stderr, marker.exists()
 
     def test_candidate_wrapper_and_both_interpreters_are_data(self):
@@ -177,7 +200,7 @@ class Bundle(unittest.TestCase):
         self.assertEqual(code, 0, output)
 
     def test_caller_pins_both_action_invocations_and_checks_reserved_destination(self):
-        workflow = (ROOT / ".github/workflows/routed-rust.yml").read_text()
+        workflow = (ROOT / ".github/workflows/routed-rust.yml").read_text(encoding="utf-8")
         admission = workflow.split("  admission:\n", 1)[1].split("\n  rust-cx43:", 1)[0]
         self.assertIn("ref: " + PIN, admission)
         self.assertIn("TRUSTED_ADMISSION_SHA: " + PIN, admission)
@@ -189,14 +212,14 @@ class Bundle(unittest.TestCase):
             for collision in (False, True):
                 if collision:
                     (workspace / ".admission-trusted").mkdir()
-                result = subprocess.run(["bash", "-euo", "pipefail", "-c", shell(check)], cwd=workspace,
+                result = subprocess.run([bash(), "-euo", "pipefail", "-c", shell(check)], cwd=workspace,
                                         env=dict(os.environ, GITHUB_WORKSPACE=str(workspace),
                                                  GITHUB_OUTPUT=str(workspace / "outputs"), EVENT_NAME="pull_request",
                                                  PR_BASE_SHA="b"*40, GROUP_BASE_SHA="c"*40, EVENT_SHA="a"*40), capture_output=True)
                 self.assertEqual(result.returncode, int(collision), result)
 
     def test_event_identity_selection_has_no_candidate_fallback(self):
-        check = step((ROOT / ".github/workflows/routed-rust.yml").read_text(), "Select trusted admission source")
+        check = step((ROOT / ".github/workflows/routed-rust.yml").read_text(encoding="utf-8"), "Select trusted admission source")
         self.assertIsNotNone(check)
         with tempfile.TemporaryDirectory(prefix="ripr-admission-source-") as temporary:
             output = Path(temporary) / "outputs"
@@ -210,11 +233,11 @@ class Bundle(unittest.TestCase):
                                    EVENT_NAME=event, PR_BASE_SHA="b"*40, GROUP_BASE_SHA="c"*40, EVENT_SHA="a"*40)
                         if missing:
                             env[field] = ""
-                        output.write_text("")
-                        result = subprocess.run(["bash", "-euo", "pipefail", "-c", shell(check)],
+                        output.write_text("", encoding="utf-8")
+                        result = subprocess.run([bash(), "-euo", "pipefail", "-c", shell(check)],
                                                 env=env, capture_output=True)
                         self.assertEqual(result.returncode, int(missing), result)
-                        self.assertEqual(output.read_text(), "" if missing else "sha="+expected*40+"\n")
+                        self.assertEqual(output.read_text(encoding="utf-8"), "" if missing else "sha="+expected*40+"\n")
 
 
 if __name__ == "__main__":

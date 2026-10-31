@@ -1,0 +1,21 @@
+//! Authored for RIPR-SPEC-0367. `limit` has no `#[test]`; the only caller is a
+//! Kani proof harness, which `cargo test` does not compile (`cfg(kani)`).
+
+pub fn limit(x: u32) -> u32 {
+    if x > 100 { 100 } else { x }
+}
+
+#[cfg(kani)]
+mod verification {
+    use super::limit;
+
+    #[kani::proof]
+    fn limit_never_exceeds() {
+        let x: u32 = kani::any();
+        assert!(limit(x) <= 100);
+    }
+}
+
+pub fn unrelated() -> u32 {
+    7
+}

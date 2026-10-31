@@ -11,11 +11,11 @@
 # workflow, so their run blocks carry the same visible budget (#3841).
 
 .github/actions/ci-scratch-lease/action.yml|86|Shared self-hosted scratch ownership authority (#3841): acquire/release a kernel flock lease per job, self-check it at reclaim and release, and reclaim only terminal trees this repository owns while holding that lease. It must run before the Rust toolchain exists and on the toolchain-free scheduled GC lane, so it cannot be an xtask command; the executed behavior harness lives in tools/repo-policy/src/ci_scratch/tests.rs.
-.github/actions/ripr-check/action.yml|7|Adoption composite action installs ripr when missing and runs one ripr check command (#2626).
+.github/actions/ripr-check/action.yml|33|Adoption composite action installs a checksum-verified prebuilt ripr (same route as the generated workflow, #5236) and derives the PR base for one ripr check command (#2626, #11540).
 .github/actions/pr-candidate-admission/action.yml|281|Candidate and hard-cut admission (#2022, #4987, #5391): bounded read-only GitHub snapshots feed two self-tested pure Python decisions; the wrapper validates status/exit agreement, reads the release packet from the exact live base commit, and fails if the base moves before product allocation.
 
 .github/workflows/badge-endpoints.yml|1|Badge endpoint refresh delegates generation to cargo xtask and opens a PR.
-.github/workflows/ci.yml|38|#4987: bounded event-head Rust surface detection; remaining CI blocks call direct Cargo or npm commands. Locked proptest fixture preparation fits this existing per-block limit (#10839).
+.github/workflows/ci.yml|39|#4987: exact-subject callable guard/result and bounded legacy event-head Rust detection; unchanged feature/release payloads. Locked proptest fixture preparation fits this existing per-block limit (#10839).
 .github/workflows/coverage.yml|1|Coverage workflow keeps each run block to one coverage command. Locked proptest fixture preparation fits this existing per-block limit (#10839).
 .github/workflows/droid-security-scan.yml|20|Droid scheduled security scan writes local Factory BYOK settings, then uses reusable actions.
 .github/workflows/droid.yml|20|Droid tag-response workflow writes local Factory BYOK settings, then uses reusable actions.
@@ -41,6 +41,7 @@
 .github/workflows/scratch-gc.yml|3|Scheduled scratch-GC lane reclaims terminal scratch through the shared ci-scratch-lease action (#3841), then trims sccache, reports disk, and keeps the hard-fail guard on a timer so disk recovery does not depend on PR traffic (#1028).
 .github/workflows/security.yml|1|Security workflow installs cargo-deny as a normal binary, then runs the standard cargo-deny command without requiring Docker.
 .github/workflows/server-archive-qualification.yml|90|Exact measured largest run block retains ruleset diagnostics plus five-target producer, explicit per-target archive-readback evidence, and receipt-v3 aggregation; credential-free qualification delegates payload and archive construction to Rust xtask commands.
+.github/workflows/size-scaling.yml|3|Nightly hostile-input size gate (#10362): one release build step, then one cargo xtask size-scaling command that owns the matrix, the analyzed-evidence check and the verdict; the warm-ab job adds one run block in which an rm -rf reclaim of aborted-run workspaces precedes one cargo xtask warm-ab command that builds both sides and owns the A/B verdict (#10639).
 .github/workflows/source-of-truth.yml|15|Advisory source-of-truth workflow runs two xtask doc checks, publishes the bounded spec maintenance digest, and annotates an instrument failure as a failed advisory observation (#3467).
 .github/workflows/test-analytics.yml|1|Test analytics workflow keeps each run block to one cargo or echo command. Locked proptest fixture preparation fits this existing per-block limit (#10839).
 .github/workflows/ub-review.yml|5|Pinned advisory action, locked owner-return fixture preparation, native receipt reporter tests and bounded consumer summary with native-status-preserving failure diagnostic (#7903, #8082); existing sensor commands, execution caps and advisory verdict unchanged. Locked proptest fixture preparation fits this existing per-block limit (#10839).
@@ -54,3 +55,4 @@
 .github/workflows/python-wheelhouse-qualification.yml|50|On-demand local-wheelhouse pip/uv qualification writes isolation facts and a fail-closed aggregate; credential-free, artifact-only, no publication.
 .github/workflows/zed-extension.yml|1|Zed extension workflow keeps each run block to one Cargo command.
 .github/workflows/contabo-qualification.yml|0|#4988/#7164 reviewed dispatch-only standard reusable consumer rehearsal; no shell, hosted fallback, or protected-context claim.
+.github/workflows/windows-subset-qualification.yml|437|Extracted #4987 native Windows subset retains the existing inline producer/oracles and bounded source precheck; no new write authority.

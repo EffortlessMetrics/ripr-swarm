@@ -314,6 +314,27 @@ Mismatched aliases (`describe as test` or `test as describe`) receive no trusted
 test record and retain a typed partial-extraction limitation, including an
 assertion-only callback with no nested test call. This does not expand aliases.
 
+Skipped-suite disclosure resolves the referenced lexical runner binding, not
+its spelling (#10169). Known runner imports and immutable aliases (including
+namespace members) may establish a dormant suite callback. Parameters,
+block/catch/loop/namespace locals, unrelated imports, writes and opaque code
+cannot establish that fact. Only the dormant callback is omitted; evaluated
+registration arguments and later siblings remain eligible for a partial
+extraction notice. This disclosure rule does not expand test extraction or
+oracle credit. Computed aliases, mutable aliases and unresolved flows retain
+the conservative notice.
+
+Runner values escaping through throws, iterable values, arrow returns, tagged
+substitutions or computed member reads cannot establish dormancy. An ambient
+global-object write removes only the written property name from runner
+identity, for both bare and qualified reads of that name; a write through a
+global-object name shadowed by a local still counts as a whole-file mutation.
+The `x`-prefixed spellings (`xdescribe`, `xcontext`, `xsuite`, `xit`, `xtest`,
+`xspecify`) are dormant runner roots.
+Evaluated inline ordinary
+function constructors and tags retain body registration notices; their parameter
+shadows and uncalled function values remain separate from runner registrations.
+
 ### Assertion collection
 
 - Only the test callback's own statement list is walked, through blocks,
@@ -2119,6 +2140,13 @@ keys); do not take the next number.
   with a discriminating negative each; `error_payload_guard.rs` unit tests pin the readers. The corpus cases
   `mocha-throw-class-changed`, `mocha-throw-message-reworded`,
   `node-match-anchored-slug` and `node-retry-last-error` read `credited`.
+- #10170: the same `assertion_form_tests.rs` pins rule 20's whole-owner
+  lexical scan: nested callback calls and later nested throws withhold credit,
+  an uncaught parameter callback withholds credit despite another caught call,
+  and a neighboring owner before or after the changed owner does not affect
+  its guard. Matched positive controls keep credit. The forwarded-local
+  controls require literal absence from the new `String(err)`, including its
+  class prefix; a different message still containing the literal stays weak.
 - Existing: `crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs`
   and the `tests/` modules beside it: `mock_form_tests.rs`,
   `scope_receiver_tests.rs`, `reexport_chain_tests.rs`.

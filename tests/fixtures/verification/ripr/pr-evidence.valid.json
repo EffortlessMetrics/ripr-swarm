@@ -10,6 +10,8 @@
   "generated_at": "2026-05-14T00:00:00Z",
   "summary": {
     "changed_files": 2,
+    "changed_files_sha256": "sha256:a057d2831e2031e8b03bafa9b94ce7fe8ebe826c9f9e0f9a148214722b7dfc05",
+    "changed_files_recipe": "sha256 over decoded UTF-8 paths sorted bytewise and deduplicated, each followed by one NUL byte",
     "comments": 1,
     "summary_only": 1,
     "suppressed": 0,

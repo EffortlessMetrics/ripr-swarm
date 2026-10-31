@@ -1,0 +1,23 @@
+[analysis]
+production_like_targets = ["tests/api_contract.rs"]
+
+[[analysis.test_harnesses]]
+registration_id = "registered"
+target = "src/custom_runner.rs"
+kind = "custom_harness"
+adapter = "libtest_mimic_v1"
+marker = "libtest_mimic"
+
+[[analysis.test_harnesses]]
+registration_id = "enabled"
+target = "src/enabled_runner.rs"
+kind = "custom_harness"
+adapter = "libtest_mimic_v1"
+marker = "libtest_mimic"
+
+[[analysis.test_harnesses]]
+registration_id = "undeclared"
+target = "src/unregistered.rs"
+kind = "custom_harness"
+adapter = "libtest_mimic_v1"
+marker = "libtest_mimic"

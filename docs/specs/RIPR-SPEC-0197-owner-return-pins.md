@@ -2345,7 +2345,26 @@ receiving call is itself resolved.
   macros elsewhere in the file stay invisible, as for every other site.
   `macro_use` or `no_implicit_prelude` anywhere in a non-trusted macro's
   arguments makes every trusted name ambiguous (stricter than the same
-  attribute written on an item, which a resolved module can admit). A
+  attribute written on an item, which a resolved module can admit). The one
+  exception (#5993) is `#[macro_use] mod NAME;` written directly in the
+  branches of `cfg_if::cfg_if! { if #[cfg(..)] { .. } else { .. } }`, where
+  `cfg_if` is a manifest-verified registry crate no module, alias or
+  workspace package takes the name of: that is the same item written
+  directly, admitted when `NAME.rs` or `NAME/mod.rs` beside the declaring
+  crate-root or `mod.rs` file is indexed; a crate root is `src/lib.rs`,
+  `src/main.rs` or `src/bin/NAME/main.rs`, so a non-root `lib.rs` or
+  `main.rs` (for example `src/util/lib.rs` declared by `mod lib;`, whose
+  children live under `lib/`) stays ambiguous. The `cfg_if!` call must sit at
+  the declaring file's top level (inside an inline module the file is
+  `inner/NAME.rs`, which stays ambiguous), and a file with a glob `use`, a
+  `use` naming `cfg_if`, an `include!`, or any item-position macro invocation
+  other than a `cfg_if::cfg_if!` block that never names `cfg_if` stays
+  ambiguous because any of them could bind `cfg_if` to something else (a user
+  `macro_rules!` can expand to `use ..::cfg_if;` or `mod cfg_if` that exist
+  only as token trees). An `extern crate`, an inline module
+  body, a `#[path]` or other attribute on the item, a bare `cfg_if!`, any
+  `no_implicit_prelude`, and a mention of the assertion in the arguments stay
+  ambiguous. A
   `macro_rules!` confined to an inline module or function body (no
   `#[macro_use]` on any enclosing module, no out-of-line child module)
   refuses only tests inside that item; a glob import from a workspace member
@@ -2398,6 +2417,32 @@ receiving call is itself resolved.
   `[lib]`/`[[bin]]`/`[[test]]` `path` that moves a target is not read, so a
   file at a default target path that some other target includes through
   `#[path]` is still judged by its default root.
+- A manifest-established binary context is also a containment boundary for
+  exported bindings and opaque macro arguments (#10191). A binary cannot be
+  imported by another crate, so `fuzz_target!` in a separate fuzz binary does
+  not rebind an integration test's `assert_eq!`. Changed constructed fields
+  use the same assertion-identity gate as whole returns, including whole-record
+  equality and field reads. A local or imported shadow and an opaque in-scope
+  expansion refuse credit and disclose the refusal; a qualified standard
+  assertion retains credit despite a local bare-name shadow. Every approved execution
+  context must be a binary root, read from the selected manifest epoch:
+  ordinary binary layouts or a literal `[[bin]] path`, including paths outside
+  `src/`. A file also declared as any discovered package's library root,
+  including a sibling package's `../` target path, does not qualify. The bounded
+  manifest inventory and library paths use the selected source epoch; an
+  incomplete inventory cannot establish binary-only ownership. The
+  inventory walk fails closed: a symlink anywhere in the workspace, or more
+  than 200,000 walked entries, leaves it incomplete, so the exception
+  degrades to the conservative refusal on such checkouts rather than
+  crediting from a partial inventory. A composition (`#[path]`, `include!`)
+  of a withheld binary from any admitted file, nested packages included,
+  returns that binary's macros to workspace scope; quote-delimited
+  segments are all read, so an unpaired quote cannot hide a composed name.
+  Shared library/module contexts, unresolved includes,
+  unknown paths, unparsed files and missing manifests keep the conservative
+  refusal. The narrowed dependent-scope scan applies the same boundary only
+  when the withheld file itself is that binary root. This exception does not
+  establish positive owner-call identity for custom binary paths.
 - A private file-level foreign glob (`use rayon::prelude::*;` with no
   visibility, outside any inline module or block) is visible only in its own
   module and the modules declared beneath it, so it reaches a test only when

@@ -1,0 +1,54 @@
+{
+  "case_id": "spec-b-0169-unreadable-cfg-attr-helper",
+  "subject_id": "authored-spec-b-configured",
+  "diff": "cases/spec-b-0169-unreadable-cfg-attr-helper.diff",
+  "anchor": {
+    "file": "src/unicode_child.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "0169_unreadable_cfg_attr_helper",
+  "hard_case": "The test promises only positivity: zero is rejected and nineteen survives. This deliberately partial oracle isolates source-role admission; it does not assert exact-value discrimination.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test --locked",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "0",
+        "mutated_line": "0",
+        "outcome": "tests_failed",
+        "failing_test": "unicode_child::unicode_condition_is_unresolved",
+        "equivalence_review": "not equivalent: returning zero violates the independent positivity assertion"
+      },
+      {
+        "replacement": "19",
+        "mutated_line": "19",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: returning 19 changes the value, but the positivity-only assertion accepts it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Rust leaves the undeclared Unicode cfg predicate false and executes the default child in test builds. The analyzer cannot read that cfg_attr condition and must not guess the default child to grant cfg(test) evidence. A positivity-only test rejects mutant zero and accepts non-equivalent nineteen, so truth is partially_discriminated independently of the analyzer. Correct fail-closed indexing retains a probe; removing the unknown attribute changes this to a resolved test-only child and silence. Typed Unknown/no-edge identity is also pinned by direct producer tests. The separate earlier exact-value experiment exposed an existing assertion-credit limitation; this case does not repair it.",
+  "spec_examples": [
+    "RIPR-SPEC-0169#5"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "5abb7591b0510f2fe563c086b42c381d8b4a2164",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

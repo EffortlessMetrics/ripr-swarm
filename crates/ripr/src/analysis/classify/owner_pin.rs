@@ -77,9 +77,9 @@ use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equali
 use crate::analysis::syntax::{
     AssertionContextRefusal, GeneratedTestPins, HelperLoan, ItemNesting, MacroBindingCandidates,
     MacroBindingKind, MacroBindingSite, OwnerPinAssertions, PatternPins, RootShadow,
-    TRUSTED_MACRO_NAMES, attribute_settles_test_outcome, drop_in_assertion_leaf,
-    empty_macro_binding_ambiguities, err_return_guard_key, generated_test_pins,
-    local_empty_macro_names, macro_binding_scan, owner_pin_assertions,
+    TRUSTED_MACRO_NAMES, attribute_settles_test_outcome, cfg_if_module_name,
+    drop_in_assertion_leaf, empty_macro_binding_ambiguities, err_return_guard_key,
+    generated_test_pins, local_empty_macro_names, macro_binding_scan, owner_pin_assertions,
     owner_pin_matches_assertions, parse_clean_source_file, pattern_pins, qualified_matches_paths,
     returns_leave_the_function, source_binds_value_name, source_declares_value_name,
     source_imported_claims_macros, trusted_macro_binding_site_sets, trusted_macro_binding_sites,
@@ -308,8 +308,17 @@ const STD_ROOTED_ASSERT_EQ: [&str; 24] = [
     "::core::debug_assert",
 ];
 
+#[cfg(test)]
+thread_local! {
+    static PROJECTED_WORKSPACE_FILE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static PROJECTED_WORKSPACE_FILE_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static STD_ROOTED_FILE_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl StdRootedCalls {
     fn of(source: &str) -> Self {
+        #[cfg(test)]
+        STD_ROOTED_FILE_PARSES.with(|count| count.set(count.get() + 1));
         let Some(file) = parse_clean_source_file(source) else {
             return Self::default();
         };
@@ -416,6 +425,9 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// probe, test and assertion, and each input below scans the workspace,
     /// so every answer is kept for the run under the key it depends on.
     path_memo: SyncMemo<PathCallMemo>,
+    /// Pure workspace-source checks for projected collection equality,
+    /// keyed by the retained source identities of the indexed files.
+    projected_collection_workspace: SyncMemo<ProjectedCollectionWorkspaceMemo>,
     /// #7097: bare-call binding verdicts per [`BareCallKey`].
     bare_call_memo: SyncMemo<BTreeMap<BareCallKey, bool>>,
     /// #7097: out-of-line module children per (parent file, `mod` name):
@@ -461,8 +473,7 @@ struct PathCallMemo {
     /// Per (owner file, owner start line, owner name, path prefix, test
     /// file, test line): the verdict.
     verdicts: BTreeMap<(PathBuf, usize, String, String, PathBuf, usize), bool>,
-    /// Per (file, fn name, start line): the inline modules enclosing that
-    /// item, or `None` when ripr cannot place it.
+    /// Per (file, name, line): the pure item-nesting facts (#6974).
     nesting: BTreeMap<(PathBuf, String, usize), Option<ItemNesting>>,
     /// Per (owner crate root, owner name): whether the crate may hold an
     /// item of the name ripr cannot see.
@@ -472,6 +483,63 @@ struct PathCallMemo {
     /// Per (test crate root, path root): whether the test's crate may bind
     /// the root itself.
     test_crate_binds: BTreeMap<(PathBuf, String), bool>,
+}
+
+/// Only pure workspace-source verdicts belong here. The retained strong
+/// references prevent address reuse from making a different source look equal.
+#[derive(Clone, Debug, Default)]
+struct ProjectedCollectionWorkspaceMemo {
+    sources: Vec<(PathBuf, std::sync::Arc<str>)>,
+    verdicts: BTreeMap<ProjectedCollectionWorkspaceKey, bool>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum ProjectedCollectionWorkspaceKey {
+    StandardRoots,
+    Constructor(PathBuf, String),
+}
+
+impl ProjectedCollectionWorkspaceMemo {
+    fn refresh(&mut self, index: &RustIndex) {
+        let files = index.files();
+        if self.sources.len() != files.len()
+            || !self
+                .sources
+                .iter()
+                .zip(files.iter())
+                .all(|((path, source), (file, facts))| {
+                    path == file && std::sync::Arc::ptr_eq(source, &facts.source)
+                })
+        {
+            self.sources = files
+                .iter()
+                .map(|(path, facts)| (path.clone(), facts.source.clone()))
+                .collect();
+            self.verdicts.clear();
+        }
+    }
+
+    fn verdict(
+        memo: &SyncMemo<Self>,
+        index: &RustIndex,
+        key: ProjectedCollectionWorkspaceKey,
+        scan: impl FnOnce() -> bool,
+    ) -> bool {
+        {
+            let mut memo = memo.borrow_mut();
+            memo.refresh(index);
+            if let Some(verdict) = memo.verdicts.get(&key) {
+                return *verdict;
+            }
+        }
+        // A resolver may itself consult syntax. Never hold a memo lock while
+        // computing a miss, including a refused/invalid-source verdict.
+        let verdict = scan();
+        let mut memo = memo.borrow_mut();
+        memo.refresh(index);
+        memo.verdicts.insert(key, verdict);
+        verdict
+    }
 }
 
 /// The macro bindings of files a narrowed diff index withheld (#5320).
@@ -498,17 +566,33 @@ pub(in crate::analysis) struct WithheldMacroBindings {
     by_root: CrateMacroBindings,
     /// The first such site per trusted name and root, for disclosure.
     root_sites: BTreeMap<(String, PathBuf), (PathBuf, MacroBindingSite)>,
+    /// Withheld binary roots whose sites were confined to themselves. A file
+    /// that composes one of them (`#[path]`, `include!`) puts its macros in
+    /// another crate, which [`Self::widen_composed`] undoes.
+    confined_binaries: BTreeSet<PathBuf>,
 }
 
 impl WithheldMacroBindings {
     /// Fold one withheld file in. Returns `true` once nothing further can
     /// change the result, so the caller can stop reading.
+    #[cfg(test)]
     pub(in crate::analysis) fn absorb(
         &mut self,
         path: &Path,
         source: &str,
         packages: &BTreeSet<String>,
         drop_ins: &DropInManifests,
+    ) -> bool {
+        self.absorb_with_members(path, source, packages, drop_ins, &Default::default())
+    }
+
+    pub(in crate::analysis) fn absorb_with_members(
+        &mut self,
+        path: &Path,
+        source: &str,
+        packages: &BTreeSet<String>,
+        drop_ins: &DropInManifests,
+        members: &crate::analysis::facts::member_crates::MemberCrates,
     ) -> bool {
         if self.any_name {
             return true;
@@ -521,20 +605,30 @@ impl WithheldMacroBindings {
             }
         };
         let root = withheld_crate_root(path);
+        let binary_root = OnceCell::new();
         for (name, site) in macro_binding_scan(
             source,
             packages,
             &assertion_context_macros(),
             &drop_in_verified,
         ) {
-            if let Some(root) = root.as_ref().filter(|_| site.crate_local) {
+            let binary = *binary_root.get_or_init(|| members.is_binary_target_root(path));
+            let local_root = if binary {
+                Some(path)
+            } else {
+                root.as_deref().filter(|_| site.crate_local)
+            };
+            if let Some(root) = local_root {
+                if binary {
+                    self.confined_binaries.insert(path.to_path_buf());
+                }
                 self.root_any_name |= site.kind.binds_any_name();
                 self.by_root
-                    .entry(root.clone())
+                    .entry(root.to_path_buf())
                     .or_default()
                     .insert(name.clone());
                 self.root_sites
-                    .entry((name, root.clone()))
+                    .entry((name, root.to_path_buf()))
                     .or_insert_with(|| (path.to_path_buf(), site));
                 continue;
             }
@@ -543,6 +637,42 @@ impl WithheldMacroBindings {
             self.sites
                 .entry(name)
                 .or_insert_with(|| (path.to_path_buf(), site));
+        }
+        self.any_name
+    }
+}
+
+impl WithheldMacroBindings {
+    /// A withheld binary's macros stay in its own crate only while no file
+    /// composes it into another one. `composed` holds the file names that
+    /// path/include compositions spell, with `"*"` standing for a
+    /// composition ripr cannot read; a binary so named, or any binary under
+    /// `"*"`, keeps its sites workspace-wide again. Returns `any_name`.
+    pub(in crate::analysis) fn widen_composed(&mut self, composed: &BTreeSet<String>) -> bool {
+        let unreadable = composed.contains("*");
+        let widened = std::mem::take(&mut self.confined_binaries)
+            .into_iter()
+            .filter(|binary| {
+                unreadable
+                    || binary
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| composed.contains(name))
+            })
+            .collect::<Vec<_>>();
+        for binary in widened {
+            let Some(names) = self.by_root.remove(&binary) else {
+                continue;
+            };
+            for name in names {
+                let Some((path, site)) = self.root_sites.remove(&(name.clone(), binary.clone()))
+                else {
+                    continue;
+                };
+                self.any_name |= site.kind.binds_any_name();
+                self.trusted.insert(name.clone());
+                self.sites.entry(name).or_insert((path, site));
+            }
         }
         self.any_name
     }
@@ -661,7 +791,7 @@ impl OwnerPinSyntax {
         }
     }
 
-    /// #6974: [`item_nesting`], kept per (file, name, line).
+    /// #6974: reuse compact nesting facts only for the same retained source.
     fn item_nesting(
         &self,
         index: &RustIndex,
@@ -849,6 +979,7 @@ impl OwnerPinSyntax {
             Some("assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne") => matches!(
                 family,
                 ProbeFamily::ReturnValue
+                    | ProbeFamily::FieldConstruction
                     | ProbeFamily::ErrorPath
                     | ProbeFamily::Predicate
                     | ProbeFamily::SideEffect
@@ -905,6 +1036,27 @@ impl OwnerPinSyntax {
                         .refusal_trusting_comparison_macros(test, assertion, index)
                         .is_none()
             }
+            // Field construction: only a real shadow (a definition or import
+            // of the assertion name) or an opaque in-scope expansion that
+            // mentions it refuses credit. A site that only may rebind it
+            // (`#[macro_use] extern crate`, a glob import) does not, matching
+            // the operand-whitespace contracts on main; the return family
+            // keeps refusing on those sites.
+            Some(AssertionRefusal::Syntax(AssertionContextRefusal::MacroBinding(name))) => {
+                family == ProbeFamily::FieldConstruction
+                    && self
+                        .macro_binding_site(test, assertion.line, &name, index)
+                        .is_some_and(|(_, site)| {
+                            !rebinds(&site)
+                                && !matches!(
+                                    site.kind,
+                                    MacroBindingKind::MacroArgument(_)
+                                        | MacroBindingKind::MacroBody(_)
+                                        | MacroBindingKind::BodyBindsAny { .. }
+                                        | MacroBindingKind::ArgumentAttribute { .. }
+                                )
+                        })
+            }
             Some(_) => false,
         }
     }
@@ -940,50 +1092,62 @@ impl OwnerPinSyntax {
         ));
         Some(match refusal {
             AssertionRefusal::Syntax(AssertionContextRefusal::MacroBinding(name)) => {
-                let resolved_modules = self.resolved_module_declarations(index);
-                let resolved = |path: &Path, line: usize, declaration: &str| {
-                    resolved_modules.contains(&(path.to_path_buf(), line, declaration.to_string()))
-                };
-                let test_roots = self.target_roots(index).roots(&test.file, index);
-                // #8255: the single ambiguity pass retained the earliest
-                // sites; a lookup completes that pass once when it stopped
-                // early, instead of rescanning the workspace per
-                // (name, test root).
-                let workspace = self
-                    .workspace_macro_site_in(&name, test_roots.as_ref(), Some(&test.file), index)
-                    .or_else(|| self.withheld.sites.get(&name).cloned())
-                    .or_else(|| {
-                        self.withheld
-                            .root_sites
-                            .iter()
-                            .find_map(|((site_name, root), site)| {
-                                (*site_name == name
-                                    && test_roots.as_ref().is_none_or(|roots| roots.contains(root)))
-                                .then(|| site.clone())
-                            })
-                    });
-                // A definition or `use` covering the test is a real
-                // rebinding; it outranks a workspace site that only may
-                // rebind the name, or the refusal would read as an analyzer
-                // limit (RIPR-SPEC-0240) for a macro that is really replaced.
-                let local = test_macro_binding_site(
-                    &name,
-                    test,
-                    assertion.line,
-                    index,
-                    &self.test_file_macro_sites,
-                    self.target_roots(index),
-                    &resolved,
-                );
-                let site = if local.as_ref().is_some_and(|(_, site)| rebinds(site)) {
-                    local
-                } else {
-                    workspace.or(local)
-                };
+                let site = self.macro_binding_site(test, assertion.line, &name, index);
                 AssertionRefusal::MacroBinding { name, site }
             }
             refusal => refusal,
         })
+    }
+
+    /// The binding site behind a `MacroBinding` refusal for `name`: a real
+    /// local rebinding outranks a workspace site that only may rebind it.
+    fn macro_binding_site(
+        &self,
+        test: &TestSummary,
+        assertion_line: usize,
+        name: &str,
+        index: &RustIndex,
+    ) -> Option<(PathBuf, MacroBindingSite)> {
+        let resolved_modules = self.resolved_module_declarations(index);
+        let resolved = |path: &Path, line: usize, declaration: &str| {
+            module_declaration_resolved(resolved_modules, index, path, line, declaration)
+        };
+        let test_roots = self.target_roots(index).roots(&test.file, index);
+        // #8255: the single ambiguity pass retained the earliest
+        // sites; a lookup completes that pass once when it stopped
+        // early, instead of rescanning the workspace per
+        // (name, test root).
+        let workspace = self
+            .workspace_macro_site_in(name, test_roots.as_ref(), Some(&test.file), index)
+            .or_else(|| self.withheld.sites.get(name).cloned())
+            .or_else(|| {
+                self.withheld
+                    .root_sites
+                    .iter()
+                    .find_map(|((site_name, root), site)| {
+                        (*site_name == name
+                            && test_roots.as_ref().is_none_or(|roots| roots.contains(root)))
+                        .then(|| site.clone())
+                    })
+            });
+        // A definition or `use` covering the test is a real
+        // rebinding; it outranks a workspace site that only may
+        // rebind the name, or the refusal would read as an analyzer
+        // limit (RIPR-SPEC-0240) for a macro that is really replaced.
+        let local = test_macro_binding_site(
+            name,
+            test,
+            assertion_line,
+            index,
+            &self.test_file_macro_sites,
+            self.target_roots(index),
+            &resolved,
+        );
+        if local.as_ref().is_some_and(|(_, site)| rebinds(site)) {
+            local
+        } else {
+            workspace.or(local)
+        }
     }
 
     fn execution_context(
@@ -1381,7 +1545,7 @@ impl OwnerPinSyntax {
     fn trusted_macro_ambiguities(&self, index: &RustIndex) -> BTreeSet<String> {
         let resolved_modules = self.resolved_module_declarations(index);
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
-            resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
+            module_declaration_resolved(resolved_modules, index, file, line, declaration)
         };
         let mut ambiguous = self.ambiguous_macro_bindings.borrow_mut();
         ambiguous
@@ -1505,7 +1669,7 @@ impl OwnerPinSyntax {
         }
         let resolved_modules = self.resolved_module_declarations(index);
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
-            resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
+            module_declaration_resolved(resolved_modules, index, file, line, declaration)
         };
         let (_, rest) = partition_macro_scan_files(index);
         let sites = scan_macro_sites(&rest, index, self.target_roots(index), &module_resolved);
@@ -1633,7 +1797,7 @@ impl OwnerPinSyntax {
         }
         let resolved_modules = self.resolved_module_declarations(index);
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
-            resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
+            module_declaration_resolved(resolved_modules, index, file, line, declaration)
         };
         let ambiguous = self.trusted_macro_ambiguities(index);
         let Some(facts) = index
@@ -2340,6 +2504,9 @@ struct TargetRoots {
     src_dirs: BTreeSet<PathBuf>,
     /// Per-file answers, so repeated admissions do not recompute them.
     memo: SyncMemo<BTreeMap<PathBuf, Option<BTreeSet<PathBuf>>>>,
+    /// #10191: all contexts must be non-importable binary crates before
+    /// opaque expansions or exported bindings can be confined to them.
+    binary_macro_roots: SyncMemo<BTreeMap<PathBuf, Option<BTreeSet<PathBuf>>>>,
 }
 
 impl TargetRoots {
@@ -2365,6 +2532,7 @@ impl TargetRoots {
             disabled,
             src_dirs,
             memo: SyncMemo::default(),
+            binary_macro_roots: SyncMemo::default(),
         }
     }
 
@@ -2387,6 +2555,44 @@ impl TargetRoots {
         (roots.len() == 1)
             .then(|| roots.into_iter().next())
             .flatten()
+    }
+
+    fn binding_roots(
+        &self,
+        file: &Path,
+        site: &MacroBindingSite,
+        index: &RustIndex,
+    ) -> Option<BTreeSet<PathBuf>> {
+        if self.disabled {
+            return None;
+        }
+        if site.crate_local
+            && let Some(roots) = self.roots(file, index)
+        {
+            return Some(roots);
+        }
+        self.binary_roots(file, index)
+    }
+
+    fn binary_roots(&self, file: &Path, index: &RustIndex) -> Option<BTreeSet<PathBuf>> {
+        if self.disabled {
+            return None;
+        }
+        if let Some(roots) = self.binary_macro_roots.borrow().get(file) {
+            return roots.clone();
+        }
+        let roots = index.execution_context(file).and_then(|context| {
+            (!context.roots.is_empty()
+                && context
+                    .roots
+                    .iter()
+                    .all(|root| index.member_crates.is_binary_target_root(root)))
+            .then_some(context.roots)
+        });
+        self.binary_macro_roots
+            .borrow_mut()
+            .insert(file.to_path_buf(), roots.clone());
+        roots
     }
 
     fn may_belong(&self, file: &Path, root: &Path, index: &RustIndex) -> bool {
@@ -2860,17 +3066,16 @@ fn workspace_macro_binding_site_for(
         .files()
         .iter()
         .map(|(path, facts)| {
-            let placed = roots.roots(path, index);
-            let root = test_root.and_then(|_| placed.clone());
-            (path, facts, root, placed.is_some())
+            // Preserve the selected manifest overlay before entering rayon.
+            if test_root.is_some() {
+                let _ = roots.roots(path, index);
+                let _ = roots.binary_roots(path, index);
+            }
+            let placed = roots.roots(path, index).is_some();
+            (path, facts, placed)
         })
         .collect();
-    let scan = |(path, facts, root, placed): &(
-        &PathBuf,
-        FileFactsView<'_>,
-        Option<BTreeSet<PathBuf>>,
-        bool,
-    )| {
+    let scan = |(path, facts, placed): &(&PathBuf, FileFactsView<'_>, bool)| {
         // The same rule as the decision: a crate-local site in another
         // recognized root does not reach this test.
         let reaches = |site: &MacroBindingSite| {
@@ -2882,11 +3087,11 @@ fn workspace_macro_binding_site_for(
             {
                 return ancestors.contains(path.as_path());
             }
-            !site.crate_local
-                || test_root.is_none()
-                || root.as_ref().is_none_or(|site_roots| {
-                    test_root.is_some_and(|root| site_roots.contains(root))
-                })
+            test_root.is_none_or(|test_root| {
+                roots
+                    .binding_roots(path, site, index)
+                    .is_none_or(|site_roots| site_roots.contains(test_root))
+            })
         };
         let mut first = None;
         for (_, site) in macro_binding_sites(
@@ -2917,7 +3122,7 @@ fn workspace_macro_binding_site_for(
         } else {
             chunk.iter().map(scan).collect()
         };
-        for ((path, _, _, _), (rebinding, site)) in chunk.iter().zip(per_file) {
+        for ((path, _, _), (rebinding, site)) in chunk.iter().zip(per_file) {
             if let Some(site) = rebinding {
                 return Some(((*path).clone(), site));
             }
@@ -2927,6 +3132,48 @@ fn workspace_macro_binding_site_for(
         }
     }
     first
+}
+
+/// Whether the module declaration `declaration` on `line` of `file` resolves
+/// to an indexed file. A parsed `mod NAME;` is answered by the module edges;
+/// a [`cfg_if_module_declaration`] key (#5993), which exists only as tokens in
+/// a `cfg_if!`, by the default layout: the one `NAME.rs` or `NAME/mod.rs`
+/// beside a crate-root-named or `mod.rs` declaring file. Other declaring
+/// files nest their children one directory deeper, which this does not model.
+fn module_declaration_resolved(
+    resolved: &BTreeSet<(PathBuf, usize, String)>,
+    index: &RustIndex,
+    file: &Path,
+    line: usize,
+    declaration: &str,
+) -> bool {
+    let Some(name) = cfg_if_module_name(declaration) else {
+        return resolved.contains(&(file.to_path_buf(), line, declaration.to_string()));
+    };
+    if !cfg_if_layout_file(file) {
+        return false;
+    }
+    let directory = file.parent().unwrap_or(Path::new(""));
+    let files = index.files();
+    let flat = files.get(&directory.join(format!("{name}.rs"))).is_some();
+    let nested = files.get(&directory.join(name).join("mod.rs")).is_some();
+    // Both layouts present is a rustc error (E0761), never one module.
+    flat != nested
+}
+
+/// Whether `file` places its child modules in its own directory: `mod.rs`,
+/// or a `lib.rs`/`main.rs` that is an actual crate root (`src/lib.rs`,
+/// `src/main.rs`, `src/bin/NAME/main.rs`). A `lib.rs` or `main.rs` declared by
+/// `mod lib;` nests children under `lib/`, so file name alone is not enough.
+fn cfg_if_layout_file(file: &Path) -> bool {
+    let parts: Vec<&str> = file
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .collect();
+    matches!(
+        parts.as_slice(),
+        [.., "mod.rs"] | [.., "src", "lib.rs" | "main.rs"] | [.., "src", "bin", _, "main.rs"]
+    )
 }
 
 /// A definition or `use` of the name: a real rebinding, not one that only
@@ -3192,11 +3439,7 @@ fn retain_macro_sites(
                 .absorb(&path, position, &site);
             continue;
         }
-        if let Some(contexts) = site
-            .crate_local
-            .then(|| roots.roots(&path, index))
-            .flatten()
-        {
+        if let Some(contexts) = roots.binding_roots(&path, &site, index) {
             for root in contexts {
                 retained
                     .by_root
@@ -3312,11 +3555,7 @@ fn absorb_macro_sites(
             binding.names.insert(name);
             continue;
         }
-        if let Some(contexts) = site
-            .crate_local
-            .then(|| roots.roots(&path, index))
-            .flatten()
-        {
+        if let Some(contexts) = roots.binding_roots(&path, &site, index) {
             for root in contexts {
                 by_root.entry(root).or_default().insert(name.clone());
             }
@@ -8333,20 +8572,12 @@ pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
         || !index
             .drop_in_manifests
             .unbound_standard_root(&test.file, "core")
-        || index.files().values().any(|facts| {
-            let masked = mask_comments_and_strings(&facts.source).replace("r#", "");
-            let modules = declared_module_names(&masked);
-            let imports = file_use_statements(&masked);
-            STD_ROOTS.iter().any(|root| {
-                modules.contains(root)
-                    || declares_type(&masked, root)
-                    || binds_extern_crate(&masked, root)
-                    || file_renames_to(&masked, root)
-                    || imports
-                        .iter()
-                        .any(|item| use_statement_binds_name(item, root))
-            })
-        })
+        || ProjectedCollectionWorkspaceMemo::verdict(
+            &syntax.projected_collection_workspace,
+            index,
+            ProjectedCollectionWorkspaceKey::StandardRoots,
+            || projected_standard_roots_shadowed(index),
+        )
     {
         return false;
     }
@@ -8365,74 +8596,12 @@ pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
     // tuple constructor. A competing local, function, constant or static
     // keeps this deliberately bounded binding unestablished.
     let names_constructor = |name: String| name.strip_prefix("r#").unwrap_or(&name) == constructor;
-    if index.files().iter().any(|(file, facts)| {
-        let masked = mask_comments_and_strings(&facts.source).replace("r#", "");
-        if file_aliases_type(&masked, constructor)
-            || file_renames_to(&masked, constructor)
-            || !fn_definition_offsets(&masked, constructor).is_empty()
-            || file_use_statements(&masked).iter().any(|import| {
-                ["test", "cfg"]
-                    .iter()
-                    .any(|name| use_statement_binds_name(import, name))
-            })
-            || flattened_use_paths(&masked).iter().any(|import| {
-                let segments: Vec<_> = import.path.trim_start_matches("::").split("::").collect();
-                if !segments
-                    .last()
-                    .is_some_and(|name| *name == constructor || *name == "*")
-                {
-                    return false;
-                }
-                // A constructor reached through another module may be a
-                // callable re-export whose defining bytes were not indexed.
-                // Only direct local namespace imports establish this bounded
-                // same-file construction; a missing companion cannot clear it.
-                !matches!(segments.as_slice(), ["crate" | "self" | "super", _])
-            })
-        {
-            return true;
-        }
-        let Some(parsed) = parse_clean_source_file(&facts.source) else {
-            return true;
-        };
-        parsed.tree().syntax().descendants().any(|node| {
-            // Attribute/derive expansion can also manufacture a binding.
-            // This bounded construction admits only the ordinary test
-            // harness attributes; expansion is not type-identity evidence.
-            ast::Attr::cast(node.clone()).is_some_and(|attr| {
-                let text = attr.syntax().text().to_string();
-                collapse_whitespace(&text) != "#[test]"
-                    && !crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate(&text)
-            }) ||
-            // Arbitrary expansion can introduce a constructor binding that
-            // the parsed item index never saw. The two observation macros
-            // still require their carried canonical binding authority.
-            ast::MacroCall::cast(node.clone()).is_some_and(|call| {
-                call.path().is_none_or(|path| {
-                    let path = collapse_whitespace(&path.syntax().text().to_string());
-                    !matches!(
-                        path.as_str(),
-                        "assert_eq" | "vec" | "std::vec" | "::std::vec"
-                    ) && !STD_ROOTED_ASSERT_EQ.contains(&path.as_str())
-                })
-            }) || (file != &test.file
-                && ast::Adt::cast(node.clone())
-                    .and_then(|item| item.name())
-                    .is_some_and(|name| names_constructor(name.text().to_string())))
-                || ast::Fn::cast(node.clone())
-                    .and_then(|item| item.name())
-                    .is_some_and(|name| names_constructor(name.text().to_string()))
-                || ast::Const::cast(node.clone())
-                    .and_then(|item| item.name())
-                    .is_some_and(|name| names_constructor(name.text().to_string()))
-                || ast::Static::cast(node.clone())
-                    .and_then(|item| item.name())
-                    .is_some_and(|name| names_constructor(name.text().to_string()))
-                || ast::IdentPat::cast(node)
-                    .and_then(|item| item.name())
-                    .is_some_and(|name| names_constructor(name.text().to_string()))
-        })
-    }) {
+    if ProjectedCollectionWorkspaceMemo::verdict(
+        &syntax.projected_collection_workspace,
+        index,
+        ProjectedCollectionWorkspaceKey::Constructor(test.file.clone(), constructor.to_owned()),
+        || projected_constructor_shadowed(constructor, &test.file, index),
+    ) {
         return false;
     }
     let definitions: Vec<_> = parse
@@ -8519,6 +8688,101 @@ pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
     standard_vec(&selected.ty)
         .zip(standard_vec(receiver_type))
         .is_some_and(|(field, receiver)| field == receiver)
+}
+
+fn projected_standard_roots_shadowed(index: &RustIndex) -> bool {
+    index.files().values().any(|facts| {
+        #[cfg(test)]
+        PROJECTED_WORKSPACE_FILE_VISITS.with(|count| count.set(count.get() + 1));
+        let masked = mask_comments_and_strings(&facts.source).replace("r#", "");
+        let modules = declared_module_names(&masked);
+        let imports = file_use_statements(&masked);
+        STD_ROOTS.iter().any(|root| {
+            modules.contains(root)
+                || declares_type(&masked, root)
+                || binds_extern_crate(&masked, root)
+                || file_renames_to(&masked, root)
+                || imports
+                    .iter()
+                    .any(|item| use_statement_binds_name(item, root))
+        })
+    })
+}
+
+fn projected_constructor_shadowed(constructor: &str, test_file: &Path, index: &RustIndex) -> bool {
+    let names_constructor = |name: String| name.strip_prefix("r#").unwrap_or(&name) == constructor;
+    index.files().iter().any(|(file, facts)| {
+        #[cfg(test)]
+        PROJECTED_WORKSPACE_FILE_VISITS.with(|count| count.set(count.get() + 1));
+        let masked = mask_comments_and_strings(&facts.source).replace("r#", "");
+        if file_aliases_type(&masked, constructor)
+            || file_renames_to(&masked, constructor)
+            || !fn_definition_offsets(&masked, constructor).is_empty()
+            || file_use_statements(&masked).iter().any(|import| {
+                ["test", "cfg"]
+                    .iter()
+                    .any(|name| use_statement_binds_name(import, name))
+            })
+            || flattened_use_paths(&masked).iter().any(|import| {
+                let segments: Vec<_> = import.path.trim_start_matches("::").split("::").collect();
+                if !segments
+                    .last()
+                    .is_some_and(|name| *name == constructor || *name == "*")
+                {
+                    return false;
+                }
+                // A constructor reached through another module may be a
+                // callable re-export whose defining bytes were not indexed.
+                // Only direct local namespace imports establish this bounded
+                // same-file construction; a missing companion cannot clear it.
+                !matches!(segments.as_slice(), ["crate" | "self" | "super", _])
+            })
+        {
+            return true;
+        }
+        #[cfg(test)]
+        PROJECTED_WORKSPACE_FILE_PARSES.with(|count| count.set(count.get() + 1));
+        let Some(parsed) = parse_clean_source_file(&facts.source) else {
+            return true;
+        };
+        parsed.tree().syntax().descendants().any(|node| {
+            // Attribute/derive expansion can also manufacture a binding.
+            // This bounded construction admits only the ordinary test
+            // harness attributes; expansion is not type-identity evidence.
+            ast::Attr::cast(node.clone()).is_some_and(|attr| {
+                let text = attr.syntax().text().to_string();
+                collapse_whitespace(&text) != "#[test]"
+                    && !crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate(&text)
+            }) ||
+            // Arbitrary expansion can introduce a constructor binding that
+            // the parsed item index never saw. The two observation macros
+            // still require their carried canonical binding authority.
+            ast::MacroCall::cast(node.clone()).is_some_and(|call| {
+                call.path().is_none_or(|path| {
+                    let path = collapse_whitespace(&path.syntax().text().to_string());
+                    !matches!(
+                        path.as_str(),
+                        "assert_eq" | "vec" | "std::vec" | "::std::vec"
+                    ) && !STD_ROOTED_ASSERT_EQ.contains(&path.as_str())
+                })
+            }) || (file != test_file
+                && ast::Adt::cast(node.clone())
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string())))
+                || ast::Fn::cast(node.clone())
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string()))
+                || ast::Const::cast(node.clone())
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string()))
+                || ast::Static::cast(node.clone())
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string()))
+                || ast::IdentPat::cast(node)
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string()))
+        })
+    })
 }
 
 /// RIPR-SPEC-0225 rule 4: whether a field type compares by value: a
@@ -9757,19 +10021,21 @@ fn word_after_as(rest: &str) -> &str {
 /// changed file can never read a stale answer; bounded so a long-lived
 /// process cannot grow without limit. `None` if the lock is poisoned.
 fn renamed_names_memoized(source: &str) -> Option<Arc<BTreeSet<String>>> {
-    use std::hash::{Hash, Hasher};
     // The full text is kept beside its answer and compared on a hit, so a
-    // hash collision can only miss, never hand one file another's renames
-    // (which would drop a refusal).
+    // key collision can only miss, never hand one file another's renames
+    // (which would drop a refusal). The key is the length plus a bounded
+    // byte sample: a pilot asks per (seam, test, type) triple, and hashing the
+    // whole file each time (SipHash over every byte) was a third of ripgrep's
+    // evidence stage. Files that share a key sit side by side in one bucket.
     type Entry = (Arc<str>, Arc<BTreeSet<String>>);
-    static MEMO: std::sync::Mutex<BTreeMap<u64, Entry>> = std::sync::Mutex::new(BTreeMap::new());
+    static MEMO: std::sync::Mutex<BTreeMap<u64, Vec<Entry>>> =
+        std::sync::Mutex::new(BTreeMap::new());
     const MAX_ENTRIES: usize = 2048;
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    source.hash(&mut hasher);
-    let key = hasher.finish();
+    let key = source_sample_key(source);
     if let Ok(memo) = MEMO.lock()
-        && let Some((text, found)) = memo.get(&key)
-        && &**text == source
+        && let Some((_, found)) = memo
+            .get(&key)
+            .and_then(|bucket| bucket.iter().find(|(text, _)| &**text == source))
     {
         return Some(Arc::clone(found));
     }
@@ -9789,11 +10055,30 @@ fn renamed_names_memoized(source: &str) -> Option<Arc<BTreeSet<String>>> {
         .collect();
     let renamed = Arc::new(renamed);
     let mut memo = MEMO.lock().ok()?;
-    if memo.len() >= MAX_ENTRIES {
+    if memo.values().map(Vec::len).sum::<usize>() >= MAX_ENTRIES {
         memo.clear();
     }
-    memo.insert(key, (Arc::from(source), Arc::clone(&renamed)));
+    let bucket = memo.entry(key).or_default();
+    if !bucket.iter().any(|(text, _)| &**text == source) {
+        bucket.push((Arc::from(source), Arc::clone(&renamed)));
+    }
     Some(renamed)
+}
+
+/// A cheap memo key for `source`: its length and a byte sample spread evenly
+/// across it (the whole file when it is under 2048 bytes, otherwise up to
+/// about 2047 bytes at a stride of `len / 1024`). Equal texts always share a key; unequal texts may, which
+/// callers resolve by comparing the full text.
+fn source_sample_key(source: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let bytes = source.as_bytes();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.len().hash(&mut hasher);
+    let stride = (bytes.len() / 1024).max(1);
+    for byte in bytes.iter().step_by(stride) {
+        byte.hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 /// The byte spans in `masked` where an `as` may rename: every `use ..;`
@@ -14146,6 +14431,119 @@ pub(super) fn unit_struct_value(
     declared_in_test_file == 1
 }
 
+/// Whether bare `name` in `test_file` is a variant of the one workspace enum
+/// `enum_name`, brought in by exactly one non-aliased `use` of that enum's
+/// glob or of the variant itself (#9676). Fail-closed: a prelude spelling,
+/// another import of `name`, a same-named local item or a `macro_rules!` in
+/// the file, or an enum that is not the single declaration all refuse.
+pub(super) fn imported_enum_variant_value(
+    name: &str,
+    enum_name: &str,
+    test_file: &Path,
+    index: &RustIndex,
+) -> bool {
+    if name.is_empty() || enum_name.is_empty() || PRELUDE_VALUES.contains(&name) {
+        return false;
+    }
+    let declaring: Vec<_> = index
+        .files()
+        .values()
+        .filter(|facts| {
+            facts.source.contains(enum_name)
+                && declares_type(&mask_comments_and_strings(&facts.source), enum_name)
+        })
+        .collect();
+    let [declaring] = declaring.as_slice() else {
+        return false;
+    };
+    // Equality facts are not needed (and can be unavailable for an enum with
+    // exotic derives): only the single non-test `enum` declaration's variants.
+    let Some(parse) = parse_clean_source_file(&declaring.source) else {
+        return false;
+    };
+    let mut enums = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Enum::cast)
+        .filter(|item| item.name().is_some_and(|ident| ident.text() == enum_name));
+    let (Some(item), None) = (enums.next(), enums.next()) else {
+        return false;
+    };
+    if !item.variant_list().is_some_and(|list| {
+        list.variants().any(|variant| {
+            variant.name().is_some_and(|ident| ident.text() == name)
+                && variant.field_list().is_none()
+        })
+    }) {
+        return false;
+    }
+    let Some(file) = index.files().get(test_file) else {
+        return false;
+    };
+    let masked = mask_comments_and_strings(&file.source);
+    if masked.contains("macro_rules") {
+        return false;
+    }
+    let enum_glob = format!("{enum_name}::*");
+    let enum_variant = format!("{enum_name}::{name}");
+    let rooted = |path: &str, tail: &str| {
+        path.strip_suffix(tail).is_some_and(|prefix| {
+            prefix.is_empty()
+                || prefix.strip_suffix("::").is_some_and(|prefix| {
+                    prefix
+                        .split("::")
+                        .all(|segment| matches!(segment, "self" | "super" | "crate"))
+                })
+        })
+    };
+    let mut admitted = 0usize;
+    for import in flattened_use_paths(&file.source) {
+        let last = import.path.rsplit("::").next().unwrap_or("");
+        let binds_name = last == name || import.alias.as_deref() == Some(name);
+        if import.alias.is_none()
+            && (rooted(&import.path, &enum_glob) || rooted(&import.path, &enum_variant))
+        {
+            admitted += 1;
+        } else if binds_name || import.path.ends_with("::*") || import.path == "*" {
+            // Another binding of the name, or any other glob that could
+            // supply it: the use items are read file-wide rather than by the
+            // test's lexical scope, so a second glob keeps the spelling
+            // ambiguous (e.g. `std::cmp::Ordering::*` beside a sibling
+            // module's `E::*`).
+            return false;
+        }
+    }
+    if admitted != 1 {
+        return false;
+    }
+    // A same-named item (other than the enum's own variant list) would shadow
+    // the glob; refuse any item keyword directly before the spelling.
+    !whole_word_offsets(&masked, name).into_iter().any(|offset| {
+        // A parameter or closure parameter of the same name shadows the
+        // variant: `name:` (a single colon) or a leading `|` binds it.
+        let after = masked[offset + name.len()..].trim_start();
+        if (after.starts_with(':') && !after.starts_with("::"))
+            || masked[..offset].trim_end().ends_with('|')
+        {
+            return true;
+        }
+        let before = masked[..offset].trim_end();
+        [
+            "const", "static", "fn", "struct", "union", "type", "mod", "trait", "enum", "let",
+            "mut",
+        ]
+        .iter()
+        .any(|keyword| {
+            before.ends_with(keyword)
+                && before[..before.len() - keyword.len()]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        })
+    })
+}
+
 /// The prelude's value-namespace names a unit struct could share.
 const PRELUDE_VALUES: &[&str] = &["None", "Some", "Ok", "Err"];
 
@@ -14551,11 +14949,14 @@ fn test_module_shadows_item(
         owner.map(|o| (o.file.to_path_buf(), o.name.to_string(), o.start_line)),
     );
     snapshot.shadow_answer(key, || {
-        let masked = mask_comments_and_strings(source);
+        // The snapshot is built from `source` (or is the index's snapshot of
+        // those same bytes), so its masked copy is the same text; mask once
+        // per file instead of once per (test, owner, name) key.
+        let masked = snapshot.masked_source(|| mask_comments_and_strings(source));
         let raw = format!("r#{base}");
         let declared = match kind {
-            ShadowKind::Type => declares_type(&masked, base) || file_aliases_type(source, base),
-            ShadowKind::Trait => declares_trait(&masked, base),
+            ShadowKind::Type => declares_type(masked, base) || file_aliases_type(source, base),
+            ShadowKind::Trait => declares_trait(masked, base),
         };
         if !declared && !masked.contains(raw.as_str()) {
             return false;

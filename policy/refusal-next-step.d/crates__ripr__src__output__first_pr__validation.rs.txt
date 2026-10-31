@@ -1,0 +1,9 @@
+crates/ripr/src/output/first_pr/validation.rs|first-pr start-here contract violations:\n{} - {violation} \n status ready needs_attention preflight.status {s
+crates/ripr/src/output/first_pr/validation.rs|missing or unreadable {}: {err}
+crates/ripr/src/output/first_pr/validation.rs|selected command context directory is not a bounded absolute path
+crates/ripr/src/output/first_pr/validation.rs|selected command context directory is unavailable: {error}
+crates/ripr/src/output/first_pr/validation.rs|selected command context has missing or invalid display authority
+crates/ripr/src/output/first_pr/validation.rs|selected command context multiline directory requires withheld shell forms
+crates/ripr/src/output/first_pr/validation.rs|selected command context {step}.{field} is missing or not a string/null
+crates/ripr/src/output/first_pr/validation.rs|selected repository directory is unavailable: {error}
+crates/ripr/src/output/first_pr/validation.rs|{} is not valid JSON: {err}

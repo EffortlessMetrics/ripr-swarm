@@ -41,7 +41,7 @@ Start here:
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: 2 related Python test(s) found for owner `discounted_total`
-    - infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary
+    - infection weak: Related tests reach the changed predicate, but static evidence does not place a strong related test input at the changed boundary
     - 8 more detail line(s) in --format human-full
 
 Next: drill into the top finding:

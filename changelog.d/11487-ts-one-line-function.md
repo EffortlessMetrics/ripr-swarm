@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- TypeScript preview: a function written on one line (`function f(a, t) { if (a > t) { return 1 } return 0 }`) is read by its first statement, so a changed `>` to `>=` names the `a == t` boundary instead of reporting that the preview adapter "does not recognise the shape" of the line (#11487). When the call input still cannot be bound to the parameter, the finding now says that specific reason.

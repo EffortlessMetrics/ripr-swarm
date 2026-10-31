@@ -382,3 +382,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_missing_discriminator_evidence (32)
+
+Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
+
+Command:
+`cargo xtask goldens bless rust_missing_discriminator_evidence --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

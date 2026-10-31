@@ -3,6 +3,9 @@
   "tool": "ripr",
   "kind": "gap_decision_ledger",
   "status": "advisory",
+  "analysis_outcome": {
+    "analysis_complete": true
+  },
   "root": "fixtures/first_successful_pr/typescript-preview-gap",
   "generated_at": "unix_ms:1783555421569",
   "inputs": {
@@ -28,6 +31,7 @@
   "records": [
     {
       "gap_id": "gap:pr:gap:typescript:typescript_preview:2396aec1",
+      "source_currentness": "candidate_current",
       "canonical_gap_id": "gap:typescript:typescript_preview:2396aec1",
       "kind": "MissingBoundaryAssertion",
       "language": "typescript",

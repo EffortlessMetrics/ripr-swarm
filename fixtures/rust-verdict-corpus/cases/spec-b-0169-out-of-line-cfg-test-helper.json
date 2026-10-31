@@ -40,7 +40,7 @@
       "silent"
     ]
   },
-  "reasoning": "The edited line is a helper in the out-of-line child `checks.rs` of a cfg(test) module (a neutral basename, so only the module edge can make it test source), so it carries a test-only role and seeds no production probe. The helper feeds an assert_eq! against 7, so either neighbor fails the test. Spec cells: RIPR-SPEC-0169#1.",
+  "reasoning": "The edited line is a helper in the out-of-line child of a cfg(test) module, so it carries a test-only role and seeds no production probe. The helper feeds an assert_eq! against 7, so either neighbor fails the test. Spec cells: RIPR-SPEC-0169#1.",
   "labeling_observation": {
     "ripr_commit": "5fc9de08",
     "full_checkout_verdict": "silent",

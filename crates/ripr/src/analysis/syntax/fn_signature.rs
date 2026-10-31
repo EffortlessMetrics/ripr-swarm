@@ -374,65 +374,231 @@ fn local_impl_traits(source: &str, name: &str) -> Option<Vec<String>> {
 /// `self::`/`super::` globs, which can reach another file's module. An
 /// unparsed file counts as binding it, so callers fail closed.
 pub(crate) fn shadows_type_name(source: &str, name: &str) -> bool {
-    let Some(parse) = parse_clean_source_file(source) else {
-        return true;
-    };
-    parse.tree().syntax().descendants().any(|node| {
-        let named = ast::Adt::cast(node.clone())
-            .and_then(|adt| adt.name())
-            .or_else(|| ast::TypeAlias::cast(node.clone()).and_then(|alias| alias.name()))
-            .is_some_and(|ident| ident.text() == name)
-            || ast::UseTree::cast(node.clone()).is_some_and(|tree| use_tree_binds(&tree, name));
-        named
-            && !node
+    TypeNameBindings::from_source(source).shadows(name)
+}
+
+/// Collect a file's binding evidence once when several parameter types need
+/// admission. Root rebinding still reaches a fixed point, but never rescans
+/// the AST for each root or queried type.
+pub(crate) struct TypeNameBindings {
+    names: std::collections::BTreeSet<String>,
+    unresolved_glob: bool,
+}
+
+impl TypeNameBindings {
+    pub(crate) fn from_source(source: &str) -> Self {
+        Self::collect(source, None)
+    }
+
+    /// Generic spellings in the owner's enclosing declarations cannot prove
+    /// primitive identity, including an outer fn's forbidden generic capture.
+    /// Descendant generic declarations do not bind the selected owner.
+    pub(crate) fn for_owner(source: &str, name: &str, start_line: usize) -> Self {
+        Self::collect(source, Some((name, start_line)))
+    }
+
+    fn collect(source: &str, owner: Option<(&str, usize)>) -> Self {
+        let Some(parse) = parse_clean_source_file(source) else {
+            return Self {
+                names: Default::default(),
+                unresolved_glob: true,
+            };
+        };
+        let mut names = std::collections::BTreeSet::new();
+        let mut root_bindings = std::collections::BTreeSet::new();
+        let mut imports = Vec::new();
+        let owner_line = owner.and_then(|(_, line)| {
+            let start = match line {
+                0 => return None,
+                1 => 0,
+                _ => source.match_indices('\n').nth(line - 2)?.0 + 1,
+            };
+            let end = source[start..]
+                .find('\n')
+                .map_or(source.len(), |offset| start + offset);
+            Some(start..end)
+        });
+        let mut owner_functions = Vec::new();
+        for node in parse.tree().syntax().descendants().filter(|node| {
+            !node
                 .ancestors()
                 .filter_map(ast::Module::cast)
                 .any(|module| module_attributes_require_test(&module))
-    })
+        }) {
+            if let Some(function) = ast::Fn::cast(node.clone())
+                && let Some((name, _)) = owner
+                && function.name().is_some_and(|ident| ident.text() == name)
+                && function.fn_token().is_some_and(|token| {
+                    owner_line
+                        .as_ref()
+                        .is_some_and(|line| line.contains(&usize::from(token.text_range().start())))
+                })
+            {
+                owner_functions.push(function);
+            }
+            let type_name = ast::Adt::cast(node.clone())
+                .and_then(|item| item.name())
+                .or_else(|| ast::TypeAlias::cast(node.clone()).and_then(|item| item.name()));
+            if let Some(name) = type_name {
+                names.insert(name.text().trim_start_matches("r#").to_string());
+            }
+            let root_name = ast::Module::cast(node.clone())
+                .and_then(|item| item.name())
+                .or_else(|| ast::Rename::cast(node.clone()).and_then(|item| item.name()));
+            if let Some(name) = root_name {
+                root_bindings.insert(name.text().trim_start_matches("r#").to_string());
+            }
+            if let Some(tree) = ast::UseTree::cast(node)
+                && tree.use_tree_list().is_none()
+            {
+                imports.push(TypeImportBinding::from_tree(&tree));
+            }
+        }
+        if owner.is_some() {
+            let [function] = owner_functions.as_slice() else {
+                // A missing or same-name/same-line ambiguous owner cannot
+                // establish which scoped bindings apply.
+                return Self {
+                    names,
+                    unresolved_glob: true,
+                };
+            };
+            let mut add_generics = |list: Option<ast::GenericParamList>| {
+                for parameter in list.into_iter().flat_map(|list| list.generic_params()) {
+                    if let ast::GenericParam::TypeParam(parameter) = parameter
+                        && let Some(name) = parameter.name()
+                    {
+                        names.insert(name.text().trim_start_matches("r#").to_string());
+                    }
+                }
+            };
+            add_generics(function.generic_param_list());
+            for ancestor in function.syntax().ancestors().skip(1) {
+                // A module resets type lookup. A nested fn cannot capture
+                // an outer generic (E0401), but that forbidden reference is
+                // still not evidence of a primitive with the same spelling.
+                if ast::Module::can_cast(ancestor.kind()) {
+                    break;
+                }
+                if let Some(item) = ast::Fn::cast(ancestor.clone()) {
+                    add_generics(item.generic_param_list());
+                } else if let Some(item) = ast::Impl::cast(ancestor.clone()) {
+                    add_generics(item.generic_param_list());
+                } else if let Some(item) = ast::Trait::cast(ancestor) {
+                    add_generics(item.generic_param_list());
+                }
+            }
+        }
+        root_bindings.extend(names.iter().cloned());
+        // A standard-looking import can name a local module or an extern-crate
+        // rename. Three roots require at most three propagation rounds, including
+        // a chain whose dependency order is alloc -> core -> std.
+        let mut rebound_roots = Vec::new();
+        for _ in 0..3 {
+            let before = rebound_roots.len();
+            for root in ["std", "core", "alloc"] {
+                if !rebound_roots.contains(&root)
+                    && (root_bindings.contains(root)
+                        || imports
+                            .iter()
+                            .any(|import| import.binds(root, &rebound_roots)))
+                {
+                    rebound_roots.push(root);
+                }
+            }
+            if before == rebound_roots.len() {
+                break;
+            }
+        }
+        let mut unresolved_glob = false;
+        for import in imports {
+            if import.glob {
+                unresolved_glob |= !import.is_std_source(&rebound_roots);
+            } else if let Some(name) = &import.name
+                && import.binds(name, &rebound_roots)
+            {
+                names.insert(name.clone());
+            }
+        }
+        Self {
+            names,
+            unresolved_glob,
+        }
+    }
+
+    pub(crate) fn shadows(&self, name: &str) -> bool {
+        self.unresolved_glob || self.names.contains(name)
+    }
 }
 
-/// Whether one leaf of a `use` binds `name` from outside std.
-fn use_tree_binds(tree: &ast::UseTree, name: &str) -> bool {
-    if tree.use_tree_list().is_some() {
-        return false;
-    }
-    // The full path: this leaf's segments behind every enclosing prefix.
-    let mut segments = Vec::new();
-    let mut current = Some(tree.clone());
-    while let Some(tree) = current {
-        if let Some(path) = tree.path() {
-            let text = path.syntax().text().to_string();
-            segments.splice(0..0, text.split("::").map(|s| s.trim().to_string()));
+struct TypeImportBinding {
+    root: Option<String>,
+    name: Option<String>,
+    renamed: bool,
+    glob: bool,
+}
+
+impl TypeImportBinding {
+    fn from_tree(tree: &ast::UseTree) -> Self {
+        // The full path: this leaf's segments behind every enclosing prefix.
+        let mut segments = Vec::new();
+        let mut current = Some(tree.clone());
+        while let Some(tree) = current {
+            if let Some(path) = tree.path() {
+                let text = path.syntax().text().to_string();
+                segments.splice(
+                    0..0,
+                    text.split("::")
+                        .map(|s| s.trim().trim_start_matches("r#").to_string()),
+                );
+            }
+            current = tree
+                .syntax()
+                .parent()
+                .and_then(ast::UseTreeList::cast)
+                .and_then(|list| list.syntax().parent())
+                .and_then(ast::UseTree::cast);
         }
-        current = tree
-            .syntax()
-            .parent()
-            .and_then(ast::UseTreeList::cast)
-            .and_then(|list| list.syntax().parent())
-            .and_then(ast::UseTree::cast);
+        let root = segments.iter().find(|segment| !segment.is_empty()).cloned();
+        let rename = tree.rename();
+        let name = match &rename {
+            // `use std::sync::Mutex as Vec` shadows `Vec` as surely as a local
+            // import does.
+            Some(rename) => rename
+                .name()
+                .map(|ident| ident.text().trim_start_matches("r#").to_string()),
+            // A std path keeps its own name; the same-named std types ripr
+            // assumes (`Result` aside, which needs both arguments) compare.
+            // `use a::Name::{self}` binds the segment before `self`.
+            None => {
+                let leaf = match segments.as_slice() {
+                    [.., parent, last] if last == "self" => Some(parent),
+                    [.., last] => Some(last),
+                    [] => None,
+                };
+                leaf.cloned()
+            }
+        };
+        Self {
+            root,
+            name,
+            renamed: rename.is_some(),
+            glob: tree.star_token().is_some(),
+        }
     }
-    let root = segments
-        .iter()
-        .find(|segment| !segment.is_empty())
-        .map(|segment| segment.trim_start_matches("::"));
-    let from_std = matches!(root, Some("std" | "core" | "alloc"));
-    if tree.star_token().is_some() {
-        return !from_std;
+
+    fn is_std_source(&self, rebound_roots: &[&str]) -> bool {
+        self.root.as_deref().is_some_and(|root| {
+            matches!(root, "std" | "core" | "alloc") && !rebound_roots.contains(&root)
+        })
     }
-    match tree.rename() {
-        // `use std::sync::Mutex as Vec` shadows `Vec` as surely as a local
-        // import does.
-        Some(rename) => rename.name().is_some_and(|ident| ident.text() == name),
-        // A std path keeps its own name; the same-named std types ripr
-        // assumes (`Result` aside, which needs both arguments) compare.
-        // `use a::Name::{self}` binds the segment before `self`.
-        None => {
-            let leaf = match segments.as_slice() {
-                [.., parent, last] if last == "self" => Some(parent),
-                [.., last] => Some(last),
-                [] => None,
-            };
-            !from_std && leaf.is_some_and(|leaf| leaf == name)
+
+    fn binds(&self, name: &str, rebound_roots: &[&str]) -> bool {
+        if self.glob {
+            !self.is_std_source(rebound_roots)
+        } else {
+            self.name.as_deref() == Some(name)
+                && (self.renamed || !self.is_std_source(rebound_roots))
         }
     }
 }
@@ -1311,5 +1477,80 @@ mod cmp {
             "#[cfg(test)]\nmod tests {\n    use crate::time::Duration;\n}",
             "Duration"
         ));
+    }
+
+    #[test]
+    fn intrinsic_type_bindings_keep_generic_test_and_root_chain_controls() {
+        assert!(
+            TypeNameBindings::for_owner("fn score<usize>(n: usize) {}", "score", 1)
+                .shadows("usize")
+        );
+        assert!(!shadows_type_name(
+            "#[cfg(test)] mod tests { type usize = u8; }",
+            "usize"
+        ));
+        assert!(shadows_type_name(
+            "use custom::core; use core::primitive::usize;",
+            "usize"
+        ));
+        // In std/core/alloc iteration order this requires all three rounds.
+        let bindings = TypeNameBindings::from_source(
+            "mod alloc; use alloc::core; use core::std; use std::primitive::{usize, u32};",
+        );
+        assert!(bindings.shadows("usize"));
+        assert!(bindings.shadows("u32"));
+        assert!(!bindings.shadows("String"));
+    }
+
+    #[test]
+    fn intrinsic_generic_bindings_follow_the_selected_owner_scope() {
+        for source in [
+            "fn helper<usize>() {}\nfn score(n: usize) {}",
+            "struct Other<usize>(usize); impl<usize> Other<usize> { fn helper() {} }\nfn score(n: usize) {}",
+            "trait Other<usize> { fn helper() {} }\nfn score(n: usize) {}",
+            "fn outer<T>() {\nfn score(n: usize) {}\n}",
+            "fn outer<usize>() { mod nested {\nfn score(n: usize) {}\n} }",
+            "use std::primitive::usize; fn helper<std, core, alloc>() {}\nfn score(n: usize) {}",
+        ] {
+            assert!(
+                !TypeNameBindings::for_owner(source, "score", 2).shadows("usize"),
+                "{source}"
+            );
+        }
+        for (source, line) in [
+            ("fn score<usize>(n: usize) {}", 1),
+            ("fn score<r#usize>(n: r#usize) {}", 1),
+            (
+                "struct Cell<T>(T); impl<usize> Cell<usize> { fn score(n: usize) {} }",
+                1,
+            ),
+            ("trait Cell<usize> { fn score(n: usize) {} }", 1),
+            ("fn outer<usize>() {\nfn score(n: usize) {}\n}", 2),
+            (
+                "fn outer<usize>() { fn middle() {\nfn score(n: usize) {}\n} }",
+                2,
+            ),
+        ] {
+            assert!(
+                TypeNameBindings::for_owner(source, "score", line).shadows("usize"),
+                "{source}"
+            );
+        }
+        for (source, name, line) in [
+            ("fn score(n: usize) {}", "missing", 1),
+            ("fn score(n: usize) {}", "score", 2),
+            ("fn score(n: usize) {", "score", 1),
+            (
+                "mod a { fn score() {} } mod b { fn score() {} }",
+                "score",
+                1,
+            ),
+        ] {
+            assert!(TypeNameBindings::for_owner(source, name, line).shadows("usize"));
+        }
+        assert!(
+            !TypeNameBindings::for_owner("fn helper<usize>() {} fn score(n: usize) {}", "score", 1)
+                .shadows("usize")
+        );
     }
 }

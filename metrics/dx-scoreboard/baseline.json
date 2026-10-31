@@ -19741,222 +19741,534 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "fixtures/perl-verdict-corpus by_packet_provenance.producer.false_verdict_rate: 8/27; committed expected records, not fresh analyzer execution",
+          "detail": "fixtures/perl-verdict-corpus by_packet_provenance.producer.false_verdict_rate: 1/54; committed expected records, not fresh analyzer execution",
           "population": {
             "cases": [
               {
                 "case_id": "perl-0235-ex01-sink-unconfirmed",
-                "definition_sha256": "a1bbe43196c34caaa32cd8d1b6158f65ecec477ec1ff8393e8b80cc3db92ddbc",
+                "definition_sha256": "58c77a07fbe1ecdc3e50b937d4bebbb7d60e04c9eb7e3f2bec07b6d63989670a",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex03-smoke-ok-strong-exact",
+                "definition_sha256": "2c8f313015a1e993506088473e3fbe879ddabd9b53b96275e94904d76ff02f4a",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex04-dies-only-strong-exact",
+                "definition_sha256": "b6972ed0e06bbe3fca50cba0c48ff884966d188a9cacbd348a9e5c257c4f17e0",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex05-exception-observer-strong-exact",
+                "definition_sha256": "ff05900138f555a2e405c3264421bbe42baa136556f9d7d896dcdcb3ec5bf034",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex06-hash-field-assertion",
+                "definition_sha256": "37c59b369eee8d69f438c9a88910f8ff0232932b77c3efdc6f2acac493331ef6",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex06-output-observer",
+                "definition_sha256": "ccea1c246717564e92c437412de20329d0f7ea12047b060cbd451754318b0c48",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex07-like-weak-broad",
+                "definition_sha256": "17822e656e7fa3256a216784cc237507e3cf9a688e8b04463fe7bfe0a20744e2",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex08-mention-only",
+                "definition_sha256": "a6dfb8b400cd689733f9ea096fd9bed74163f485874759f1323c1928c1c99fda",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex09-oracle-without-owner",
+                "definition_sha256": "7d1b6680ed1ac39f551354f9edd981f3ad4edb9b8f45f6080df42d7c9ee075e8",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex10-relation-without-oracle",
+                "definition_sha256": "4987a50efe19baa80b7b4ea8780ef26626f6dde3e2a6bb20d37c5a399ddab96f",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex11-weakly-reachable-no-sink",
+                "definition_sha256": "7723eb5ada378fce7f9ecafd1230f6dfc453274b03a3ccf0c943a0e183345b3f",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex12-static-unknown-hint",
-                "definition_sha256": "1c594940a1689316ec719bd22b422a98ab0b220ddfc2a6e5d175ca43955563e4",
+                "definition_sha256": "d29c113e7f96a192a215273d2e823b1e7dd5da8e8161480d1be6b662d5598d5e",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex13-method-receiver",
-                "definition_sha256": "c26ac9d2f555c44d46e7b4cb5625a7da9c6068ab64d0c1f777de9e0ce597ce21",
+                "definition_sha256": "d786d1c71d2fc4776cae9925b21dc5fa3284410eefc30ef3e6fa5c76c5c76895",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex14-helper-call",
-                "definition_sha256": "8b1621061a6c5f23c9ebd50d92d4be98b597550edf33584bc1938cd0ac3d8b00",
+                "definition_sha256": "f3de28d1d9d4bd3117892c4e654e4d2d6be0f62af3b8a42d4f2255c2b46d72c4",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex15-package-reference",
+                "definition_sha256": "e35f1bdd3bbfbdaf167090c16f0cfc753b03b9550913604b924dee551233105e",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex15-test-name-match",
+                "definition_sha256": "cdcd662ded071721acbdfd49038bc2f1e0a351ee767b867cb9298abaee88dd04",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex16-no-relations-complete",
+                "definition_sha256": "0788207dac920d850ca173249c266c07967c1e2d48684bdc6e6de132d880e025",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex16-no-relations",
+                "definition_sha256": "e802f6687bf959411d82012450f1530839ff87424ddc0073c6ea4e138354d46a",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex17-aligned-sinks-complete-packet",
+                "definition_sha256": "c21aa6c58d13b192dcf0be7553e5ab3cf73ed972c20981f26965acd05d68d986",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex18-reversed-sinks",
+                "definition_sha256": "dced63fc873fe63dc9bfa3d0677cbc6a2d42b2e91299d88ef5fe6705886e5446",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex19-sink-whitespace",
-                "definition_sha256": "6ada80a4a251e4b780f324c8d72c46d404cc86b750d5cae046d92364a59458ac",
+                "definition_sha256": "5d044a314da45b72c32ac5bfe891fdfe2e18c2be597ef5695f2ada39154dc8aa",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex20-method-receiver-aligned-sinks",
+                "definition_sha256": "b21a07a509d4dab74bff325f3c5afff64d2d2738216362309368e7758cf3c3d3",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex21-weakly-reachable-aligned-sinks",
+                "definition_sha256": "0f4641f276c515f159ef98238ee3cafa4057b472ed4644407f9198b0a2a60eb8",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex23-missing-test-runner",
-                "definition_sha256": "8a2fee9b63bf631af2125347606db277e965def14d82eae67a82fa4ced71e8c8",
+                "definition_sha256": "0a361827ec1622ecf06534fea35dfd15cb22deb29265e8abd2a9e02b18e2cb53",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex24-framework-indirection",
-                "definition_sha256": "337a50dcf605bd2f3d376fb89aeb371de99e5f209ff05760b975d7a9f545bbce",
+                "definition_sha256": "e201e6b145fcfc99a6afea6f0c7d3ec5717ab17ae101bffc94545fe7398c2276",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex25-dynamic-dispatch",
-                "definition_sha256": "c451c19c00cd35d2e0705f5ba4728be96e98f4b67bf70103303d1c34eac1f493",
+                "definition_sha256": "fda44ff1141da76183e509cad36dea1e2b91c870abc94c0a869e3638ec75e7fd",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex26-partial-inference",
+                "definition_sha256": "7992d790e146b576bbfee8cb89baefdd24bf0ccfcd53b277febbdd8ab13d78fc",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex27-file-proximity-control",
+                "definition_sha256": "d3dac982fe04a5a5c611564ed34543580bf99f6ef142b71dd652788774014706",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex27-weakly-reachable-and-package-reference",
+                "definition_sha256": "8ddccdec351e92dc8011a73759122d85292482a6de760f7b5e9ea511388fb5ad",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex28-cross-test-oracle",
-                "definition_sha256": "83ff3e4c8640f584bdb3fbea9674d718d4049438b29237f13bb99bebf26beb9f",
+                "definition_sha256": "1ef5891d8965626b1accb0482988ab212a8286beda59b7ff147074f41ac970d6",
                 "denominator": 0,
                 "numerator": 0
               },
               {
+                "case_id": "perl-0235-ex29-low-confidence-relation",
+                "definition_sha256": "ff89b03145e40891a763a61d0499d4bccf7808b97397b90a7953f3eab403af80",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex29-unknown-framework",
+                "definition_sha256": "5be317c9e0f78f6210bd1f378ea12911fb58553eaba656eb0190d7c68590a097",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex30-rangeless-owner-id",
+                "definition_sha256": "914f447083d203cf9120bdd684ed423586280edc55e696f189b118a562047b69",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex31-unknown-owner-kind",
+                "definition_sha256": "062873b28e87e09c351c27535c53cbf9720c845d582cc368f911ed8ad852deff",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-bless-counter-inc",
+                "definition_sha256": "91533add7290f7fd0750a3c0f6613116dfadd2ed529c5f2d330b9200522df6bc",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-bless-counter-start",
+                "definition_sha256": "58bc0566fc8378ca89a8770f4156bd04f412da88bc7605be31f973a5b44bde24",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-autoload-field",
+                "definition_sha256": "98713aa02f5251bf252a8e80ccf170f0230a4004f9dc55d954bdaeb6ced7d771",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-constant-tax",
+                "definition_sha256": "1999e7561bda433585c0085b3aaa5f10b87977e166cf404ab1d7779dce101632",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-glob-double",
+                "definition_sha256": "23b6cf2f5465e8e398841b30f3b6bef00fda7feb18261378a82f94243fd16f97",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-glob-triple-unexercised",
+                "definition_sha256": "1b7fe66e08f60505256b4a5cf4d54681bd98fea393a293d89929854be552d003",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-heredoc-greeting",
+                "definition_sha256": "cbb6577b4779652dcd2d0cc7905cd388425f04964acfed872a55b29187d573d6",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-line-directive-pad",
+                "definition_sha256": "47f48e5db003fd0b2305a7fb27d91ce0742e7eb7f0d1879e89b7a9abf0697d12",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-string-eval-quad",
+                "definition_sha256": "784717b66186a707fd4e6cd00bc96cd79b7fbd02bfd58552639c10a85cb1cf18",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-unicode-sub-name",
+                "definition_sha256": "1ab66bca3b8421dea1ef7a0e8ac38060803d1941696e72a409d9fc1218c20107",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-banner-repeat",
+                "definition_sha256": "856d021d51508746aa07dad9e24ae148af7984ffeb16f5a71cf494c233787cf2",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-closure-counter",
+                "definition_sha256": "981dfe1f1fc4123c11078eb107e7e4d6a7c4ed41df2ae425703ce4a0b27c99a4",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-eval-safe-div",
+                "definition_sha256": "134e087a096f986e2535f7522adceaf1b793bf686cf9fb842ccb5c623fdd0573",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-local-separator",
+                "definition_sha256": "2ca68b53a107479f5d77663dbbcc25b8b478d494c03854bfff1272e41ad69254",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-regex-version",
+                "definition_sha256": "feeb2eb5867dbc0a2cb460dd3e413d18c3303bdbe3e12dc127208a7e37fb7b05",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-slugify-subst",
+                "definition_sha256": "c3a4d31dbc52bdeda7f26bd414c1fdf25a431efe3e2e478e35c2c10f32015115",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-wantarray-exact",
+                "definition_sha256": "5d16c2571b2fede541ab536e1f27fd52c2a50b3a66d97f9a1d5e2d045e7b9d93",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-wantarray-smoke",
+                "definition_sha256": "7a3acbd857dde25a021c77b5824d1c01785a1fe3ef664949ac89510302edf877",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-moose-birthday-smoke",
+                "definition_sha256": "37536d549d1c8a88e5e2e0ec7fece1c654e770176528cf35da75673820a6405a",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-moose-builder-join",
+                "definition_sha256": "0c13ac377eed8e47032f91239a5ad2bf1b34d0904c905fd827bc0b4135807513",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-moose-is-adult-boundary",
+                "definition_sha256": "bfe2c4ade235b1bee9d4ab324b3070589d6a9f5e0ff2a00b5dac229116f0acd1",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
                 "case_id": "perl-test2-close-month-subtest",
-                "definition_sha256": "ea2392c1d1d78b46eb768239b158fb160e2e908a3181bf1b8d696d76725f689a",
+                "definition_sha256": "0c56d2db3e91d59b99e0b2f090d2cc377e6f02c4bf88d42cb04a65773d4af4b7",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-test2-deposit-lives-only",
-                "definition_sha256": "a4ca744ea63f5d8980520b6820c76aa5a2256cc9849bc913d8f86fb58f0b9ee2",
+                "definition_sha256": "33162ce19b15cc106b8e1372f83df9537f86d5f04d710bad3501d1f0020102ef",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-test2-fee-isnt-zero",
-                "definition_sha256": "64292419f964294475cbed98463b8662c1fa1c2ef011830040a557f992ae858f",
+                "definition_sha256": "181d0276aa35c046052300ce0f861f5570c8718342ae8d13c1e5a9e029a95685",
                 "denominator": 1,
-                "numerator": 1
+                "numerator": 0
               },
               {
                 "case_id": "perl-test2-format-entry-like",
-                "definition_sha256": "af193e49f2ed4d19b7e26db45d06bf0c6d29467ae1ba06c8ca9374a02d9e38ec",
+                "definition_sha256": "5317c33b51b99b3347898345398e9eb44a1bb815bc4b4aeb21470c89e039d61c",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-test2-net-change-imported",
-                "definition_sha256": "73b640c777650a8b2af1895deec5fe774721f51bb8fe3f974053f2c2ad27a086",
+                "definition_sha256": "cfaae1766b932a9a195400614bdf03d563659c33b9198b4e79afd00680d28dec",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-test2-overdrawn-ok-smoke",
-                "definition_sha256": "ba25c03ad641a88a808f9b034c51117d89caaa1bac5e84564dfa82f499c5bb7d",
+                "definition_sha256": "bb57539c86105b63f9d653d3ab55f73c7805a30a7b87677d71792a473f492ff6",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-test2-summary-deep-is-count",
-                "definition_sha256": "0bd216fa453eb35230231987da15348fdbf816c371f2b8e626c7d6bf1ebeda5c",
+                "definition_sha256": "afe0e9b9d608f4385da58ebd77ac14edebcf0959c1c9139dad8fcad5a0654ba5",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-test2-withdraw-dies-like-message",
-                "definition_sha256": "a167a542e9b955b44e1d3ebd85191be4a5272500319b997ac4cdcaf3c933cda8",
+                "definition_sha256": "a9221a576b332418f9eff36b1326a15bcdbdca9877e817b5a4cb73351357d051",
                 "denominator": 1,
-                "numerator": 1
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-testdeep-adjust-exact-hash",
+                "definition_sha256": "4f2f9949b0067ca1d3205c2af5ff24b4efa5c10f5645f1b3f4c1c0d17df88b2f",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-testdeep-label-pair-code",
+                "definition_sha256": "4193d4352d710c571fe012355e6719c85319544c7a7122c2acd3bc8f0a4ba847",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-testdeep-record-ignore",
+                "definition_sha256": "e0766b932f681d14e26378ad4cffabe6a539607ab35a6e053391ab1ead91366e",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-testdeep-restock-superhashof",
+                "definition_sha256": "b6bce08fad3724ea55cff7c9b7481b1b46a303c1565130dd48b13f724bcf6078",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-testdeep-sku-re",
+                "definition_sha256": "ef640429fd1630b78f6cb17661d2e5174786e8ece24aaa14357fdc92d99ddd97",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-testdeep-tag-list-bag",
+                "definition_sha256": "5dad4fc31cf94173b151926fb0fe810137594046567c8d7c0c05e8fe238f7f78",
+                "denominator": 1,
+                "numerator": 0
               },
               {
                 "case_id": "perl-testexception-close-out-dies-ok",
-                "definition_sha256": "900cb04f947f4a72b79782e4d859f30628b1a64dfbc9ed3ab9d0e9a8a23cb789",
+                "definition_sha256": "006140fa5cedce8cbb79b25a6923075eca99cdd8b9dc0b43755faa6f6ecba38c",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testexception-freeze-class",
-                "definition_sha256": "aa3679c2ee51fdc203a8c845170f8e4f1385dd943c06314f30fe2aca27496168",
+                "definition_sha256": "786743e6071abe6374c4490923965c270b6464d081c3ecd396a400285a766f08",
                 "denominator": 1,
-                "numerator": 1
+                "numerator": 0
               },
               {
                 "case_id": "perl-testexception-interest-lives-ok",
-                "definition_sha256": "2afca0fd1fc1feffda5075d18f4ae47920bcf3e82417289e0a3ac7e7ad426da2",
+                "definition_sha256": "6ba0441f89eb5b7e5f333549750d1803e2f0fd15afd44432bdb6db81c6957037",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testexception-lives-and-is",
-                "definition_sha256": "01b22c32df514601a1f1b9bcead236a2ea3487d9c43e372bad60898fb3728bbe",
+                "definition_sha256": "6f747475ae0fe0fe1d11c26fa675b32da8e82c3fe01afd278879bec8793cfc27",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testexception-transfer-boundary-pair",
-                "definition_sha256": "aa21030150443a739cef88706776130dee20a83875961542219b135eac4ab4d9",
+                "definition_sha256": "7b9afead67082160b0033fba66f9b3728322def4e408c6f84eb6d6976ffdccdf",
                 "denominator": 1,
-                "numerator": 1
+                "numerator": 0
               },
               {
                 "case_id": "perl-testexception-withdraw-throws-message",
-                "definition_sha256": "956aba8afee890db1c88640812dc5924fe022a83d5a5ef5828cea1bca7cf8c86",
+                "definition_sha256": "32a307098688ae5c1cb850c352bb5d7bb64f4e29b43605fffe9a169ba3ad5bd0",
                 "denominator": 1,
-                "numerator": 1
+                "numerator": 0
               },
               {
                 "case_id": "perl-testmore-bulk-subtest",
-                "definition_sha256": "f15ae7223b6f292d84d67ae09dbbcba6003d92feed27fc4a56ed6e900feb6d44",
+                "definition_sha256": "546bcf31b1473ee9f236781749154fc065d84665813f1b41dc1eb1cfa38aa14a",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-bundle-helper-sub",
-                "definition_sha256": "04d9c6e93c9a91e049d31554f4399927969f4a2bb9706b4791daa3aa4d79e0d1",
+                "definition_sha256": "868f2b188cc979ff1b72ecb2bc35f194ab9e2624252aab8d379fe0bfc3a03ae6",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-can-ok-only",
-                "definition_sha256": "68e300bb19f08188c24daa26d3f95f23820a1e8362ff2934cbcb46ee3047e6fe",
+                "definition_sha256": "0a717bc39132d2856fef5bf246af05536fe7d8ab7ac06db196aa19abc0e17cc5",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-cart-dynamic-dispatch",
-                "definition_sha256": "e6083a3d17b05260244502539822a5850eae7ed78d5b3c789be61af8a0cf7208",
+                "definition_sha256": "f08b36537a1305c0697796d4f04902af83574fe05bdb3af472a80b869d82c490",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-cart-method-total",
-                "definition_sha256": "b9a2f76ace26d2954f6a0af5ef072d963ccfc8748a5ec7ec388cbffcafdea279",
+                "definition_sha256": "1a5605bb8fad6f4981536fa45dd07c8e29df0afd177dfd507296b081422b5316",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-clamp-isnt",
-                "definition_sha256": "4bf5f5e05a23467477edc30a243099aac05b2ec6b668d904f468751679db2b97",
+                "definition_sha256": "d0137d86b166b734e67e9df3277e436012edf465f62119444ad2efc6869aa453",
                 "denominator": 1,
-                "numerator": 1
+                "numerator": 0
               },
               {
                 "case_id": "perl-testmore-discount-imported-boundary",
-                "definition_sha256": "f1429a787e315e4bf89fa3a81d6ee1e48ea5790022bc3d46b85e62eb8ece5f62",
+                "definition_sha256": "b2a2ab819bb9e79e296d8f428a10ab6ec2e6fa11780de1b860c8046ea7c309bc",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-points-cmp-ok-positive",
-                "definition_sha256": "e33ca3e86e9cf4aa724e9322b919e94974b062888114b81f7950699e24f4a7ae",
+                "definition_sha256": "30dcf552b9b28dfe58529682872ccd2f12132b89892e79c150231656285fa9c5",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-quote-is-deeply-total",
-                "definition_sha256": "433cb77e417356af364ad44c21d4b7a77368bd7ea11e8d30ad716afe301b37af",
+                "definition_sha256": "ad32a41af98087caa23430d97bec94bae779221c609b48d2187752d596f62c97",
                 "denominator": 1,
-                "numerator": 1
+                "numerator": 0
               },
               {
                 "case_id": "perl-testmore-round-cents-like",
-                "definition_sha256": "74d49eb457edd9e5ed3be122bc2cf72e2b948f7cbe4b448cc5526fc774edfb8f",
+                "definition_sha256": "fc8c948f2e4f8393efe7eac538b9b30e9fd7cd648a91106860f7b8c260c1b65d",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-shipping-smoke-ok",
-                "definition_sha256": "3baed1c41e75c6c465442277c0d09f8b38f8b38ec38eb9b61e1d3d6305b7320f",
+                "definition_sha256": "f1ddfd341e27efc1af4e140929428a1408c04bb91a2c34f64d9a7173579b117a",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-tax-table-loop",
-                "definition_sha256": "aa887096f3f4febf59eea33a88438ba74506851298612a0276b2a5c5006d7bcb",
+                "definition_sha256": "00b4c26910bdaeaee87fbfb7be1a00c6614b1c9d590f664a01fcf1b2195b30a3",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-tier-far-from-boundary",
-                "definition_sha256": "b3edf6f135f44b2c2d8868033f2eed5ff700fae7087720f98e5da0e7ddba6847",
+                "definition_sha256": "240840305287cf665495b2787612c60aee2a1e0e3e60dc0a506487ba7da573e1",
                 "denominator": 1,
                 "numerator": 1
               }
@@ -19964,24 +20276,24 @@
             "rate": "by_packet_provenance.producer.false_verdict_rate",
             "schema_version": "ripr-verdict-case-population-v1"
           },
-          "population_provenance": {
-            "approved": "EffortlessMetrics/ripr-swarm#8035",
-            "corpus_blob": "186c7d8c3ce2e1766603cd030a37ba273c0a194c",
-            "kind": "committed_expected_rows",
-            "revision": "76651d1cdf9242b301c9ddf28c442838ccf73c59",
-            "rows_tree": "46a0dc499fe0a9e43ac672ad34d1305b68bad33b"
-          },
           "repo": null,
-          "status": "below_target",
-          "value": 0.2963
+          "status": "meets_target",
+          "value": 0.0185,
+          "population_provenance": {
+            "approved": "EffortlessMetrics/ripr-swarm#10809",
+            "corpus_blob": "6b0da537f6aa117f126cb732c7e19acee7c24f8f",
+            "kind": "committed_expected_rows",
+            "revision": "ea5229fba660d284841b3954f73ca7948a88d0ea",
+            "rows_tree": "5b1718f4c61eb369f055d938d26421102ba79c50"
+          }
         }
       ],
       "source": "verdict-corpus:fixtures/perl-verdict-corpus#by_packet_provenance.producer.false_verdict_rate",
-      "status": "below_target",
+      "status": "meets_target",
       "target": 0.05,
       "title": "Wrong Perl verdicts on the hand-checked Perl verdict corpus (producer packets)",
       "unit": "ratio",
-      "value": 0.2963
+      "value": 0.0185
     },
     {
       "baseline": {
@@ -19996,222 +20308,534 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "fixtures/perl-verdict-corpus by_packet_provenance.producer.false_actionable_rate: 5/15; committed expected records, not fresh analyzer execution",
+          "detail": "fixtures/perl-verdict-corpus by_packet_provenance.producer.false_actionable_rate: 0/28; committed expected records, not fresh analyzer execution",
           "population": {
             "cases": [
               {
                 "case_id": "perl-0235-ex01-sink-unconfirmed",
-                "definition_sha256": "a1bbe43196c34caaa32cd8d1b6158f65ecec477ec1ff8393e8b80cc3db92ddbc",
+                "definition_sha256": "58c77a07fbe1ecdc3e50b937d4bebbb7d60e04c9eb7e3f2bec07b6d63989670a",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex03-smoke-ok-strong-exact",
+                "definition_sha256": "2c8f313015a1e993506088473e3fbe879ddabd9b53b96275e94904d76ff02f4a",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex04-dies-only-strong-exact",
+                "definition_sha256": "b6972ed0e06bbe3fca50cba0c48ff884966d188a9cacbd348a9e5c257c4f17e0",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex05-exception-observer-strong-exact",
+                "definition_sha256": "ff05900138f555a2e405c3264421bbe42baa136556f9d7d896dcdcb3ec5bf034",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex06-hash-field-assertion",
+                "definition_sha256": "37c59b369eee8d69f438c9a88910f8ff0232932b77c3efdc6f2acac493331ef6",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex06-output-observer",
+                "definition_sha256": "ccea1c246717564e92c437412de20329d0f7ea12047b060cbd451754318b0c48",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex07-like-weak-broad",
+                "definition_sha256": "17822e656e7fa3256a216784cc237507e3cf9a688e8b04463fe7bfe0a20744e2",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex08-mention-only",
+                "definition_sha256": "a6dfb8b400cd689733f9ea096fd9bed74163f485874759f1323c1928c1c99fda",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex09-oracle-without-owner",
+                "definition_sha256": "7d1b6680ed1ac39f551354f9edd981f3ad4edb9b8f45f6080df42d7c9ee075e8",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex10-relation-without-oracle",
+                "definition_sha256": "4987a50efe19baa80b7b4ea8780ef26626f6dde3e2a6bb20d37c5a399ddab96f",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex11-weakly-reachable-no-sink",
+                "definition_sha256": "7723eb5ada378fce7f9ecafd1230f6dfc453274b03a3ccf0c943a0e183345b3f",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex12-static-unknown-hint",
-                "definition_sha256": "1c594940a1689316ec719bd22b422a98ab0b220ddfc2a6e5d175ca43955563e4",
+                "definition_sha256": "d29c113e7f96a192a215273d2e823b1e7dd5da8e8161480d1be6b662d5598d5e",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex13-method-receiver",
-                "definition_sha256": "c26ac9d2f555c44d46e7b4cb5625a7da9c6068ab64d0c1f777de9e0ce597ce21",
+                "definition_sha256": "d786d1c71d2fc4776cae9925b21dc5fa3284410eefc30ef3e6fa5c76c5c76895",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex14-helper-call",
-                "definition_sha256": "8b1621061a6c5f23c9ebd50d92d4be98b597550edf33584bc1938cd0ac3d8b00",
+                "definition_sha256": "f3de28d1d9d4bd3117892c4e654e4d2d6be0f62af3b8a42d4f2255c2b46d72c4",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex15-package-reference",
+                "definition_sha256": "e35f1bdd3bbfbdaf167090c16f0cfc753b03b9550913604b924dee551233105e",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex15-test-name-match",
+                "definition_sha256": "cdcd662ded071721acbdfd49038bc2f1e0a351ee767b867cb9298abaee88dd04",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex16-no-relations-complete",
+                "definition_sha256": "0788207dac920d850ca173249c266c07967c1e2d48684bdc6e6de132d880e025",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex16-no-relations",
+                "definition_sha256": "e802f6687bf959411d82012450f1530839ff87424ddc0073c6ea4e138354d46a",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex17-aligned-sinks-complete-packet",
+                "definition_sha256": "c21aa6c58d13b192dcf0be7553e5ab3cf73ed972c20981f26965acd05d68d986",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex18-reversed-sinks",
+                "definition_sha256": "dced63fc873fe63dc9bfa3d0677cbc6a2d42b2e91299d88ef5fe6705886e5446",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex19-sink-whitespace",
-                "definition_sha256": "6ada80a4a251e4b780f324c8d72c46d404cc86b750d5cae046d92364a59458ac",
+                "definition_sha256": "5d044a314da45b72c32ac5bfe891fdfe2e18c2be597ef5695f2ada39154dc8aa",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex20-method-receiver-aligned-sinks",
+                "definition_sha256": "b21a07a509d4dab74bff325f3c5afff64d2d2738216362309368e7758cf3c3d3",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex21-weakly-reachable-aligned-sinks",
+                "definition_sha256": "0f4641f276c515f159ef98238ee3cafa4057b472ed4644407f9198b0a2a60eb8",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex23-missing-test-runner",
-                "definition_sha256": "8a2fee9b63bf631af2125347606db277e965def14d82eae67a82fa4ced71e8c8",
+                "definition_sha256": "0a361827ec1622ecf06534fea35dfd15cb22deb29265e8abd2a9e02b18e2cb53",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex24-framework-indirection",
-                "definition_sha256": "337a50dcf605bd2f3d376fb89aeb371de99e5f209ff05760b975d7a9f545bbce",
+                "definition_sha256": "e201e6b145fcfc99a6afea6f0c7d3ec5717ab17ae101bffc94545fe7398c2276",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex25-dynamic-dispatch",
-                "definition_sha256": "c451c19c00cd35d2e0705f5ba4728be96e98f4b67bf70103303d1c34eac1f493",
+                "definition_sha256": "fda44ff1141da76183e509cad36dea1e2b91c870abc94c0a869e3638ec75e7fd",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex26-partial-inference",
+                "definition_sha256": "7992d790e146b576bbfee8cb89baefdd24bf0ccfcd53b277febbdd8ab13d78fc",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex27-file-proximity-control",
+                "definition_sha256": "d3dac982fe04a5a5c611564ed34543580bf99f6ef142b71dd652788774014706",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex27-weakly-reachable-and-package-reference",
+                "definition_sha256": "8ddccdec351e92dc8011a73759122d85292482a6de760f7b5e9ea511388fb5ad",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex28-cross-test-oracle",
-                "definition_sha256": "83ff3e4c8640f584bdb3fbea9674d718d4049438b29237f13bb99bebf26beb9f",
+                "definition_sha256": "1ef5891d8965626b1accb0482988ab212a8286beda59b7ff147074f41ac970d6",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex29-low-confidence-relation",
+                "definition_sha256": "ff89b03145e40891a763a61d0499d4bccf7808b97397b90a7953f3eab403af80",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex29-unknown-framework",
+                "definition_sha256": "5be317c9e0f78f6210bd1f378ea12911fb58553eaba656eb0190d7c68590a097",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex30-rangeless-owner-id",
+                "definition_sha256": "914f447083d203cf9120bdd684ed423586280edc55e696f189b118a562047b69",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex31-unknown-owner-kind",
+                "definition_sha256": "062873b28e87e09c351c27535c53cbf9720c845d582cc368f911ed8ad852deff",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-bless-counter-inc",
+                "definition_sha256": "91533add7290f7fd0750a3c0f6613116dfadd2ed529c5f2d330b9200522df6bc",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-bless-counter-start",
+                "definition_sha256": "58bc0566fc8378ca89a8770f4156bd04f412da88bc7605be31f973a5b44bde24",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-autoload-field",
+                "definition_sha256": "98713aa02f5251bf252a8e80ccf170f0230a4004f9dc55d954bdaeb6ced7d771",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-constant-tax",
+                "definition_sha256": "1999e7561bda433585c0085b3aaa5f10b87977e166cf404ab1d7779dce101632",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-glob-double",
+                "definition_sha256": "23b6cf2f5465e8e398841b30f3b6bef00fda7feb18261378a82f94243fd16f97",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-glob-triple-unexercised",
+                "definition_sha256": "1b7fe66e08f60505256b4a5cf4d54681bd98fea393a293d89929854be552d003",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-heredoc-greeting",
+                "definition_sha256": "cbb6577b4779652dcd2d0cc7905cd388425f04964acfed872a55b29187d573d6",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-line-directive-pad",
+                "definition_sha256": "47f48e5db003fd0b2305a7fb27d91ce0742e7eb7f0d1879e89b7a9abf0697d12",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-string-eval-quad",
+                "definition_sha256": "784717b66186a707fd4e6cd00bc96cd79b7fbd02bfd58552639c10a85cb1cf18",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-unicode-sub-name",
+                "definition_sha256": "1ab66bca3b8421dea1ef7a0e8ac38060803d1941696e72a409d9fc1218c20107",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-banner-repeat",
+                "definition_sha256": "856d021d51508746aa07dad9e24ae148af7984ffeb16f5a71cf494c233787cf2",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-closure-counter",
+                "definition_sha256": "981dfe1f1fc4123c11078eb107e7e4d6a7c4ed41df2ae425703ce4a0b27c99a4",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-eval-safe-div",
+                "definition_sha256": "134e087a096f986e2535f7522adceaf1b793bf686cf9fb842ccb5c623fdd0573",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-local-separator",
+                "definition_sha256": "2ca68b53a107479f5d77663dbbcc25b8b478d494c03854bfff1272e41ad69254",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-regex-version",
+                "definition_sha256": "feeb2eb5867dbc0a2cb460dd3e413d18c3303bdbe3e12dc127208a7e37fb7b05",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-slugify-subst",
+                "definition_sha256": "c3a4d31dbc52bdeda7f26bd414c1fdf25a431efe3e2e478e35c2c10f32015115",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-wantarray-exact",
+                "definition_sha256": "5d16c2571b2fede541ab536e1f27fd52c2a50b3a66d97f9a1d5e2d045e7b9d93",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-wantarray-smoke",
+                "definition_sha256": "7a3acbd857dde25a021c77b5824d1c01785a1fe3ef664949ac89510302edf877",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-moose-birthday-smoke",
+                "definition_sha256": "37536d549d1c8a88e5e2e0ec7fece1c654e770176528cf35da75673820a6405a",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-moose-builder-join",
+                "definition_sha256": "0c13ac377eed8e47032f91239a5ad2bf1b34d0904c905fd827bc0b4135807513",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-moose-is-adult-boundary",
+                "definition_sha256": "bfe2c4ade235b1bee9d4ab324b3070589d6a9f5e0ff2a00b5dac229116f0acd1",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-test2-close-month-subtest",
-                "definition_sha256": "ea2392c1d1d78b46eb768239b158fb160e2e908a3181bf1b8d696d76725f689a",
+                "definition_sha256": "0c56d2db3e91d59b99e0b2f090d2cc377e6f02c4bf88d42cb04a65773d4af4b7",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-test2-deposit-lives-only",
-                "definition_sha256": "a4ca744ea63f5d8980520b6820c76aa5a2256cc9849bc913d8f86fb58f0b9ee2",
+                "definition_sha256": "33162ce19b15cc106b8e1372f83df9537f86d5f04d710bad3501d1f0020102ef",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-test2-fee-isnt-zero",
-                "definition_sha256": "64292419f964294475cbed98463b8662c1fa1c2ef011830040a557f992ae858f",
+                "definition_sha256": "181d0276aa35c046052300ce0f861f5570c8718342ae8d13c1e5a9e029a95685",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-test2-format-entry-like",
-                "definition_sha256": "af193e49f2ed4d19b7e26db45d06bf0c6d29467ae1ba06c8ca9374a02d9e38ec",
+                "definition_sha256": "5317c33b51b99b3347898345398e9eb44a1bb815bc4b4aeb21470c89e039d61c",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-test2-net-change-imported",
-                "definition_sha256": "73b640c777650a8b2af1895deec5fe774721f51bb8fe3f974053f2c2ad27a086",
+                "definition_sha256": "cfaae1766b932a9a195400614bdf03d563659c33b9198b4e79afd00680d28dec",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-test2-overdrawn-ok-smoke",
-                "definition_sha256": "ba25c03ad641a88a808f9b034c51117d89caaa1bac5e84564dfa82f499c5bb7d",
+                "definition_sha256": "bb57539c86105b63f9d653d3ab55f73c7805a30a7b87677d71792a473f492ff6",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-test2-summary-deep-is-count",
-                "definition_sha256": "0bd216fa453eb35230231987da15348fdbf816c371f2b8e626c7d6bf1ebeda5c",
+                "definition_sha256": "afe0e9b9d608f4385da58ebd77ac14edebcf0959c1c9139dad8fcad5a0654ba5",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-test2-withdraw-dies-like-message",
-                "definition_sha256": "a167a542e9b955b44e1d3ebd85191be4a5272500319b997ac4cdcaf3c933cda8",
+                "definition_sha256": "a9221a576b332418f9eff36b1326a15bcdbdca9877e817b5a4cb73351357d051",
                 "denominator": 1,
-                "numerator": 1
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-testdeep-adjust-exact-hash",
+                "definition_sha256": "4f2f9949b0067ca1d3205c2af5ff24b4efa5c10f5645f1b3f4c1c0d17df88b2f",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-testdeep-label-pair-code",
+                "definition_sha256": "4193d4352d710c571fe012355e6719c85319544c7a7122c2acd3bc8f0a4ba847",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-testdeep-record-ignore",
+                "definition_sha256": "e0766b932f681d14e26378ad4cffabe6a539607ab35a6e053391ab1ead91366e",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-testdeep-restock-superhashof",
+                "definition_sha256": "b6bce08fad3724ea55cff7c9b7481b1b46a303c1565130dd48b13f724bcf6078",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-testdeep-sku-re",
+                "definition_sha256": "ef640429fd1630b78f6cb17661d2e5174786e8ece24aaa14357fdc92d99ddd97",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-testdeep-tag-list-bag",
+                "definition_sha256": "5dad4fc31cf94173b151926fb0fe810137594046567c8d7c0c05e8fe238f7f78",
+                "denominator": 0,
+                "numerator": 0
               },
               {
                 "case_id": "perl-testexception-close-out-dies-ok",
-                "definition_sha256": "900cb04f947f4a72b79782e4d859f30628b1a64dfbc9ed3ab9d0e9a8a23cb789",
+                "definition_sha256": "006140fa5cedce8cbb79b25a6923075eca99cdd8b9dc0b43755faa6f6ecba38c",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testexception-freeze-class",
-                "definition_sha256": "aa3679c2ee51fdc203a8c845170f8e4f1385dd943c06314f30fe2aca27496168",
+                "definition_sha256": "786743e6071abe6374c4490923965c270b6464d081c3ecd396a400285a766f08",
                 "denominator": 1,
-                "numerator": 1
+                "numerator": 0
               },
               {
                 "case_id": "perl-testexception-interest-lives-ok",
-                "definition_sha256": "2afca0fd1fc1feffda5075d18f4ae47920bcf3e82417289e0a3ac7e7ad426da2",
+                "definition_sha256": "6ba0441f89eb5b7e5f333549750d1803e2f0fd15afd44432bdb6db81c6957037",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testexception-lives-and-is",
-                "definition_sha256": "01b22c32df514601a1f1b9bcead236a2ea3487d9c43e372bad60898fb3728bbe",
+                "definition_sha256": "6f747475ae0fe0fe1d11c26fa675b32da8e82c3fe01afd278879bec8793cfc27",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testexception-transfer-boundary-pair",
-                "definition_sha256": "aa21030150443a739cef88706776130dee20a83875961542219b135eac4ab4d9",
+                "definition_sha256": "7b9afead67082160b0033fba66f9b3728322def4e408c6f84eb6d6976ffdccdf",
                 "denominator": 1,
-                "numerator": 1
+                "numerator": 0
               },
               {
                 "case_id": "perl-testexception-withdraw-throws-message",
-                "definition_sha256": "956aba8afee890db1c88640812dc5924fe022a83d5a5ef5828cea1bca7cf8c86",
+                "definition_sha256": "32a307098688ae5c1cb850c352bb5d7bb64f4e29b43605fffe9a169ba3ad5bd0",
                 "denominator": 1,
-                "numerator": 1
+                "numerator": 0
               },
               {
                 "case_id": "perl-testmore-bulk-subtest",
-                "definition_sha256": "f15ae7223b6f292d84d67ae09dbbcba6003d92feed27fc4a56ed6e900feb6d44",
+                "definition_sha256": "546bcf31b1473ee9f236781749154fc065d84665813f1b41dc1eb1cfa38aa14a",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-bundle-helper-sub",
-                "definition_sha256": "04d9c6e93c9a91e049d31554f4399927969f4a2bb9706b4791daa3aa4d79e0d1",
+                "definition_sha256": "868f2b188cc979ff1b72ecb2bc35f194ab9e2624252aab8d379fe0bfc3a03ae6",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-can-ok-only",
-                "definition_sha256": "68e300bb19f08188c24daa26d3f95f23820a1e8362ff2934cbcb46ee3047e6fe",
+                "definition_sha256": "0a717bc39132d2856fef5bf246af05536fe7d8ab7ac06db196aa19abc0e17cc5",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-cart-dynamic-dispatch",
-                "definition_sha256": "e6083a3d17b05260244502539822a5850eae7ed78d5b3c789be61af8a0cf7208",
+                "definition_sha256": "f08b36537a1305c0697796d4f04902af83574fe05bdb3af472a80b869d82c490",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-cart-method-total",
-                "definition_sha256": "b9a2f76ace26d2954f6a0af5ef072d963ccfc8748a5ec7ec388cbffcafdea279",
+                "definition_sha256": "1a5605bb8fad6f4981536fa45dd07c8e29df0afd177dfd507296b081422b5316",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-clamp-isnt",
-                "definition_sha256": "4bf5f5e05a23467477edc30a243099aac05b2ec6b668d904f468751679db2b97",
+                "definition_sha256": "d0137d86b166b734e67e9df3277e436012edf465f62119444ad2efc6869aa453",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-discount-imported-boundary",
-                "definition_sha256": "f1429a787e315e4bf89fa3a81d6ee1e48ea5790022bc3d46b85e62eb8ece5f62",
+                "definition_sha256": "b2a2ab819bb9e79e296d8f428a10ab6ec2e6fa11780de1b860c8046ea7c309bc",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-points-cmp-ok-positive",
-                "definition_sha256": "e33ca3e86e9cf4aa724e9322b919e94974b062888114b81f7950699e24f4a7ae",
+                "definition_sha256": "30dcf552b9b28dfe58529682872ccd2f12132b89892e79c150231656285fa9c5",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-quote-is-deeply-total",
-                "definition_sha256": "433cb77e417356af364ad44c21d4b7a77368bd7ea11e8d30ad716afe301b37af",
+                "definition_sha256": "ad32a41af98087caa23430d97bec94bae779221c609b48d2187752d596f62c97",
                 "denominator": 1,
-                "numerator": 1
+                "numerator": 0
               },
               {
                 "case_id": "perl-testmore-round-cents-like",
-                "definition_sha256": "74d49eb457edd9e5ed3be122bc2cf72e2b948f7cbe4b448cc5526fc774edfb8f",
+                "definition_sha256": "fc8c948f2e4f8393efe7eac538b9b30e9fd7cd648a91106860f7b8c260c1b65d",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-shipping-smoke-ok",
-                "definition_sha256": "3baed1c41e75c6c465442277c0d09f8b38f8b38ec38eb9b61e1d3d6305b7320f",
+                "definition_sha256": "f1ddfd341e27efc1af4e140929428a1408c04bb91a2c34f64d9a7173579b117a",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-tax-table-loop",
-                "definition_sha256": "aa887096f3f4febf59eea33a88438ba74506851298612a0276b2a5c5006d7bcb",
+                "definition_sha256": "00b4c26910bdaeaee87fbfb7be1a00c6614b1c9d590f664a01fcf1b2195b30a3",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-tier-far-from-boundary",
-                "definition_sha256": "b3edf6f135f44b2c2d8868033f2eed5ff700fae7087720f98e5da0e7ddba6847",
+                "definition_sha256": "240840305287cf665495b2787612c60aee2a1e0e3e60dc0a506487ba7da573e1",
                 "denominator": 0,
                 "numerator": 0
               }
@@ -20219,24 +20843,24 @@
             "rate": "by_packet_provenance.producer.false_actionable_rate",
             "schema_version": "ripr-verdict-case-population-v1"
           },
-          "population_provenance": {
-            "approved": "EffortlessMetrics/ripr-swarm#8035",
-            "corpus_blob": "186c7d8c3ce2e1766603cd030a37ba273c0a194c",
-            "kind": "committed_expected_rows",
-            "revision": "76651d1cdf9242b301c9ddf28c442838ccf73c59",
-            "rows_tree": "46a0dc499fe0a9e43ac672ad34d1305b68bad33b"
-          },
           "repo": null,
-          "status": "below_target",
-          "value": 0.3333
+          "status": "meets_target",
+          "value": 0.0,
+          "population_provenance": {
+            "approved": "EffortlessMetrics/ripr-swarm#10809",
+            "corpus_blob": "6b0da537f6aa117f126cb732c7e19acee7c24f8f",
+            "kind": "committed_expected_rows",
+            "revision": "ea5229fba660d284841b3954f73ca7948a88d0ea",
+            "rows_tree": "5b1718f4c61eb369f055d938d26421102ba79c50"
+          }
         }
       ],
       "source": "verdict-corpus:fixtures/perl-verdict-corpus#by_packet_provenance.producer.false_actionable_rate",
-      "status": "below_target",
+      "status": "meets_target",
       "target": 0.05,
       "title": "Hand-checked Perl edits the tests fully catch that ripr still flags as a gap (producer packets)",
       "unit": "ratio",
-      "value": 0.3333
+      "value": 0.0
     },
     {
       "baseline": {
@@ -20251,222 +20875,534 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "fixtures/perl-verdict-corpus by_packet_provenance.producer.false_exposed_rate: 3/12; committed expected records, not fresh analyzer execution",
+          "detail": "fixtures/perl-verdict-corpus by_packet_provenance.producer.false_exposed_rate: 1/26; committed expected records, not fresh analyzer execution",
           "population": {
             "cases": [
               {
                 "case_id": "perl-0235-ex01-sink-unconfirmed",
-                "definition_sha256": "a1bbe43196c34caaa32cd8d1b6158f65ecec477ec1ff8393e8b80cc3db92ddbc",
+                "definition_sha256": "58c77a07fbe1ecdc3e50b937d4bebbb7d60e04c9eb7e3f2bec07b6d63989670a",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex03-smoke-ok-strong-exact",
+                "definition_sha256": "2c8f313015a1e993506088473e3fbe879ddabd9b53b96275e94904d76ff02f4a",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex04-dies-only-strong-exact",
+                "definition_sha256": "b6972ed0e06bbe3fca50cba0c48ff884966d188a9cacbd348a9e5c257c4f17e0",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex05-exception-observer-strong-exact",
+                "definition_sha256": "ff05900138f555a2e405c3264421bbe42baa136556f9d7d896dcdcb3ec5bf034",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex06-hash-field-assertion",
+                "definition_sha256": "37c59b369eee8d69f438c9a88910f8ff0232932b77c3efdc6f2acac493331ef6",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex06-output-observer",
+                "definition_sha256": "ccea1c246717564e92c437412de20329d0f7ea12047b060cbd451754318b0c48",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex07-like-weak-broad",
+                "definition_sha256": "17822e656e7fa3256a216784cc237507e3cf9a688e8b04463fe7bfe0a20744e2",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex08-mention-only",
+                "definition_sha256": "a6dfb8b400cd689733f9ea096fd9bed74163f485874759f1323c1928c1c99fda",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex09-oracle-without-owner",
+                "definition_sha256": "7d1b6680ed1ac39f551354f9edd981f3ad4edb9b8f45f6080df42d7c9ee075e8",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex10-relation-without-oracle",
+                "definition_sha256": "4987a50efe19baa80b7b4ea8780ef26626f6dde3e2a6bb20d37c5a399ddab96f",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex11-weakly-reachable-no-sink",
+                "definition_sha256": "7723eb5ada378fce7f9ecafd1230f6dfc453274b03a3ccf0c943a0e183345b3f",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex12-static-unknown-hint",
-                "definition_sha256": "1c594940a1689316ec719bd22b422a98ab0b220ddfc2a6e5d175ca43955563e4",
+                "definition_sha256": "d29c113e7f96a192a215273d2e823b1e7dd5da8e8161480d1be6b662d5598d5e",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex13-method-receiver",
-                "definition_sha256": "c26ac9d2f555c44d46e7b4cb5625a7da9c6068ab64d0c1f777de9e0ce597ce21",
+                "definition_sha256": "d786d1c71d2fc4776cae9925b21dc5fa3284410eefc30ef3e6fa5c76c5c76895",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex14-helper-call",
-                "definition_sha256": "8b1621061a6c5f23c9ebd50d92d4be98b597550edf33584bc1938cd0ac3d8b00",
+                "definition_sha256": "f3de28d1d9d4bd3117892c4e654e4d2d6be0f62af3b8a42d4f2255c2b46d72c4",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex15-package-reference",
+                "definition_sha256": "e35f1bdd3bbfbdaf167090c16f0cfc753b03b9550913604b924dee551233105e",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex15-test-name-match",
+                "definition_sha256": "cdcd662ded071721acbdfd49038bc2f1e0a351ee767b867cb9298abaee88dd04",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex16-no-relations-complete",
+                "definition_sha256": "0788207dac920d850ca173249c266c07967c1e2d48684bdc6e6de132d880e025",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex16-no-relations",
+                "definition_sha256": "e802f6687bf959411d82012450f1530839ff87424ddc0073c6ea4e138354d46a",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex17-aligned-sinks-complete-packet",
+                "definition_sha256": "c21aa6c58d13b192dcf0be7553e5ab3cf73ed972c20981f26965acd05d68d986",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex18-reversed-sinks",
+                "definition_sha256": "dced63fc873fe63dc9bfa3d0677cbc6a2d42b2e91299d88ef5fe6705886e5446",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex19-sink-whitespace",
-                "definition_sha256": "6ada80a4a251e4b780f324c8d72c46d404cc86b750d5cae046d92364a59458ac",
+                "definition_sha256": "5d044a314da45b72c32ac5bfe891fdfe2e18c2be597ef5695f2ada39154dc8aa",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex20-method-receiver-aligned-sinks",
+                "definition_sha256": "b21a07a509d4dab74bff325f3c5afff64d2d2738216362309368e7758cf3c3d3",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex21-weakly-reachable-aligned-sinks",
+                "definition_sha256": "0f4641f276c515f159ef98238ee3cafa4057b472ed4644407f9198b0a2a60eb8",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex23-missing-test-runner",
-                "definition_sha256": "8a2fee9b63bf631af2125347606db277e965def14d82eae67a82fa4ced71e8c8",
+                "definition_sha256": "0a361827ec1622ecf06534fea35dfd15cb22deb29265e8abd2a9e02b18e2cb53",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex24-framework-indirection",
-                "definition_sha256": "337a50dcf605bd2f3d376fb89aeb371de99e5f209ff05760b975d7a9f545bbce",
+                "definition_sha256": "e201e6b145fcfc99a6afea6f0c7d3ec5717ab17ae101bffc94545fe7398c2276",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex25-dynamic-dispatch",
-                "definition_sha256": "c451c19c00cd35d2e0705f5ba4728be96e98f4b67bf70103303d1c34eac1f493",
+                "definition_sha256": "fda44ff1141da76183e509cad36dea1e2b91c870abc94c0a869e3638ec75e7fd",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex26-partial-inference",
+                "definition_sha256": "7992d790e146b576bbfee8cb89baefdd24bf0ccfcd53b277febbdd8ab13d78fc",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex27-file-proximity-control",
+                "definition_sha256": "d3dac982fe04a5a5c611564ed34543580bf99f6ef142b71dd652788774014706",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex27-weakly-reachable-and-package-reference",
+                "definition_sha256": "8ddccdec351e92dc8011a73759122d85292482a6de760f7b5e9ea511388fb5ad",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex28-cross-test-oracle",
-                "definition_sha256": "83ff3e4c8640f584bdb3fbea9674d718d4049438b29237f13bb99bebf26beb9f",
+                "definition_sha256": "1ef5891d8965626b1accb0482988ab212a8286beda59b7ff147074f41ac970d6",
                 "denominator": 0,
                 "numerator": 0
               },
               {
+                "case_id": "perl-0235-ex29-low-confidence-relation",
+                "definition_sha256": "ff89b03145e40891a763a61d0499d4bccf7808b97397b90a7953f3eab403af80",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex29-unknown-framework",
+                "definition_sha256": "5be317c9e0f78f6210bd1f378ea12911fb58553eaba656eb0190d7c68590a097",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex30-rangeless-owner-id",
+                "definition_sha256": "914f447083d203cf9120bdd684ed423586280edc55e696f189b118a562047b69",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex31-unknown-owner-kind",
+                "definition_sha256": "062873b28e87e09c351c27535c53cbf9720c845d582cc368f911ed8ad852deff",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-bless-counter-inc",
+                "definition_sha256": "91533add7290f7fd0750a3c0f6613116dfadd2ed529c5f2d330b9200522df6bc",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-bless-counter-start",
+                "definition_sha256": "58bc0566fc8378ca89a8770f4156bd04f412da88bc7605be31f973a5b44bde24",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-autoload-field",
+                "definition_sha256": "98713aa02f5251bf252a8e80ccf170f0230a4004f9dc55d954bdaeb6ced7d771",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-constant-tax",
+                "definition_sha256": "1999e7561bda433585c0085b3aaa5f10b87977e166cf404ab1d7779dce101632",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-glob-double",
+                "definition_sha256": "23b6cf2f5465e8e398841b30f3b6bef00fda7feb18261378a82f94243fd16f97",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-glob-triple-unexercised",
+                "definition_sha256": "1b7fe66e08f60505256b4a5cf4d54681bd98fea393a293d89929854be552d003",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-heredoc-greeting",
+                "definition_sha256": "cbb6577b4779652dcd2d0cc7905cd388425f04964acfed872a55b29187d573d6",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-line-directive-pad",
+                "definition_sha256": "47f48e5db003fd0b2305a7fb27d91ce0742e7eb7f0d1879e89b7a9abf0697d12",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-string-eval-quad",
+                "definition_sha256": "784717b66186a707fd4e6cd00bc96cd79b7fbd02bfd58552639c10a85cb1cf18",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-unicode-sub-name",
+                "definition_sha256": "1ab66bca3b8421dea1ef7a0e8ac38060803d1941696e72a409d9fc1218c20107",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-banner-repeat",
+                "definition_sha256": "856d021d51508746aa07dad9e24ae148af7984ffeb16f5a71cf494c233787cf2",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-closure-counter",
+                "definition_sha256": "981dfe1f1fc4123c11078eb107e7e4d6a7c4ed41df2ae425703ce4a0b27c99a4",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-eval-safe-div",
+                "definition_sha256": "134e087a096f986e2535f7522adceaf1b793bf686cf9fb842ccb5c623fdd0573",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-local-separator",
+                "definition_sha256": "2ca68b53a107479f5d77663dbbcc25b8b478d494c03854bfff1272e41ad69254",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-regex-version",
+                "definition_sha256": "feeb2eb5867dbc0a2cb460dd3e413d18c3303bdbe3e12dc127208a7e37fb7b05",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-slugify-subst",
+                "definition_sha256": "c3a4d31dbc52bdeda7f26bd414c1fdf25a431efe3e2e478e35c2c10f32015115",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-wantarray-exact",
+                "definition_sha256": "5d16c2571b2fede541ab536e1f27fd52c2a50b3a66d97f9a1d5e2d045e7b9d93",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-wantarray-smoke",
+                "definition_sha256": "7a3acbd857dde25a021c77b5824d1c01785a1fe3ef664949ac89510302edf877",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-moose-birthday-smoke",
+                "definition_sha256": "37536d549d1c8a88e5e2e0ec7fece1c654e770176528cf35da75673820a6405a",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-moose-builder-join",
+                "definition_sha256": "0c13ac377eed8e47032f91239a5ad2bf1b34d0904c905fd827bc0b4135807513",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-moose-is-adult-boundary",
+                "definition_sha256": "bfe2c4ade235b1bee9d4ab324b3070589d6a9f5e0ff2a00b5dac229116f0acd1",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
                 "case_id": "perl-test2-close-month-subtest",
-                "definition_sha256": "ea2392c1d1d78b46eb768239b158fb160e2e908a3181bf1b8d696d76725f689a",
+                "definition_sha256": "0c56d2db3e91d59b99e0b2f090d2cc377e6f02c4bf88d42cb04a65773d4af4b7",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-test2-deposit-lives-only",
-                "definition_sha256": "a4ca744ea63f5d8980520b6820c76aa5a2256cc9849bc913d8f86fb58f0b9ee2",
+                "definition_sha256": "33162ce19b15cc106b8e1372f83df9537f86d5f04d710bad3501d1f0020102ef",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-test2-fee-isnt-zero",
-                "definition_sha256": "64292419f964294475cbed98463b8662c1fa1c2ef011830040a557f992ae858f",
+                "definition_sha256": "181d0276aa35c046052300ce0f861f5570c8718342ae8d13c1e5a9e029a95685",
                 "denominator": 1,
-                "numerator": 1
+                "numerator": 0
               },
               {
                 "case_id": "perl-test2-format-entry-like",
-                "definition_sha256": "af193e49f2ed4d19b7e26db45d06bf0c6d29467ae1ba06c8ca9374a02d9e38ec",
+                "definition_sha256": "5317c33b51b99b3347898345398e9eb44a1bb815bc4b4aeb21470c89e039d61c",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-test2-net-change-imported",
-                "definition_sha256": "73b640c777650a8b2af1895deec5fe774721f51bb8fe3f974053f2c2ad27a086",
+                "definition_sha256": "cfaae1766b932a9a195400614bdf03d563659c33b9198b4e79afd00680d28dec",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-test2-overdrawn-ok-smoke",
-                "definition_sha256": "ba25c03ad641a88a808f9b034c51117d89caaa1bac5e84564dfa82f499c5bb7d",
+                "definition_sha256": "bb57539c86105b63f9d653d3ab55f73c7805a30a7b87677d71792a473f492ff6",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-test2-summary-deep-is-count",
-                "definition_sha256": "0bd216fa453eb35230231987da15348fdbf816c371f2b8e626c7d6bf1ebeda5c",
+                "definition_sha256": "afe0e9b9d608f4385da58ebd77ac14edebcf0959c1c9139dad8fcad5a0654ba5",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-test2-withdraw-dies-like-message",
-                "definition_sha256": "a167a542e9b955b44e1d3ebd85191be4a5272500319b997ac4cdcaf3c933cda8",
+                "definition_sha256": "a9221a576b332418f9eff36b1326a15bcdbdca9877e817b5a4cb73351357d051",
                 "denominator": 0,
                 "numerator": 0
               },
               {
+                "case_id": "perl-testdeep-adjust-exact-hash",
+                "definition_sha256": "4f2f9949b0067ca1d3205c2af5ff24b4efa5c10f5645f1b3f4c1c0d17df88b2f",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-testdeep-label-pair-code",
+                "definition_sha256": "4193d4352d710c571fe012355e6719c85319544c7a7122c2acd3bc8f0a4ba847",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-testdeep-record-ignore",
+                "definition_sha256": "e0766b932f681d14e26378ad4cffabe6a539607ab35a6e053391ab1ead91366e",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-testdeep-restock-superhashof",
+                "definition_sha256": "b6bce08fad3724ea55cff7c9b7481b1b46a303c1565130dd48b13f724bcf6078",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-testdeep-sku-re",
+                "definition_sha256": "ef640429fd1630b78f6cb17661d2e5174786e8ece24aaa14357fdc92d99ddd97",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-testdeep-tag-list-bag",
+                "definition_sha256": "5dad4fc31cf94173b151926fb0fe810137594046567c8d7c0c05e8fe238f7f78",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
                 "case_id": "perl-testexception-close-out-dies-ok",
-                "definition_sha256": "900cb04f947f4a72b79782e4d859f30628b1a64dfbc9ed3ab9d0e9a8a23cb789",
+                "definition_sha256": "006140fa5cedce8cbb79b25a6923075eca99cdd8b9dc0b43755faa6f6ecba38c",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testexception-freeze-class",
-                "definition_sha256": "aa3679c2ee51fdc203a8c845170f8e4f1385dd943c06314f30fe2aca27496168",
+                "definition_sha256": "786743e6071abe6374c4490923965c270b6464d081c3ecd396a400285a766f08",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testexception-interest-lives-ok",
-                "definition_sha256": "2afca0fd1fc1feffda5075d18f4ae47920bcf3e82417289e0a3ac7e7ad426da2",
+                "definition_sha256": "6ba0441f89eb5b7e5f333549750d1803e2f0fd15afd44432bdb6db81c6957037",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testexception-lives-and-is",
-                "definition_sha256": "01b22c32df514601a1f1b9bcead236a2ea3487d9c43e372bad60898fb3728bbe",
+                "definition_sha256": "6f747475ae0fe0fe1d11c26fa675b32da8e82c3fe01afd278879bec8793cfc27",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testexception-transfer-boundary-pair",
-                "definition_sha256": "aa21030150443a739cef88706776130dee20a83875961542219b135eac4ab4d9",
+                "definition_sha256": "7b9afead67082160b0033fba66f9b3728322def4e408c6f84eb6d6976ffdccdf",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testexception-withdraw-throws-message",
-                "definition_sha256": "956aba8afee890db1c88640812dc5924fe022a83d5a5ef5828cea1bca7cf8c86",
+                "definition_sha256": "32a307098688ae5c1cb850c352bb5d7bb64f4e29b43605fffe9a169ba3ad5bd0",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-bulk-subtest",
-                "definition_sha256": "f15ae7223b6f292d84d67ae09dbbcba6003d92feed27fc4a56ed6e900feb6d44",
+                "definition_sha256": "546bcf31b1473ee9f236781749154fc065d84665813f1b41dc1eb1cfa38aa14a",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-bundle-helper-sub",
-                "definition_sha256": "04d9c6e93c9a91e049d31554f4399927969f4a2bb9706b4791daa3aa4d79e0d1",
+                "definition_sha256": "868f2b188cc979ff1b72ecb2bc35f194ab9e2624252aab8d379fe0bfc3a03ae6",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-can-ok-only",
-                "definition_sha256": "68e300bb19f08188c24daa26d3f95f23820a1e8362ff2934cbcb46ee3047e6fe",
+                "definition_sha256": "0a717bc39132d2856fef5bf246af05536fe7d8ab7ac06db196aa19abc0e17cc5",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-cart-dynamic-dispatch",
-                "definition_sha256": "e6083a3d17b05260244502539822a5850eae7ed78d5b3c789be61af8a0cf7208",
+                "definition_sha256": "f08b36537a1305c0697796d4f04902af83574fe05bdb3af472a80b869d82c490",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-cart-method-total",
-                "definition_sha256": "b9a2f76ace26d2954f6a0af5ef072d963ccfc8748a5ec7ec388cbffcafdea279",
+                "definition_sha256": "1a5605bb8fad6f4981536fa45dd07c8e29df0afd177dfd507296b081422b5316",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-clamp-isnt",
-                "definition_sha256": "4bf5f5e05a23467477edc30a243099aac05b2ec6b668d904f468751679db2b97",
+                "definition_sha256": "d0137d86b166b734e67e9df3277e436012edf465f62119444ad2efc6869aa453",
                 "denominator": 1,
-                "numerator": 1
+                "numerator": 0
               },
               {
                 "case_id": "perl-testmore-discount-imported-boundary",
-                "definition_sha256": "f1429a787e315e4bf89fa3a81d6ee1e48ea5790022bc3d46b85e62eb8ece5f62",
+                "definition_sha256": "b2a2ab819bb9e79e296d8f428a10ab6ec2e6fa11780de1b860c8046ea7c309bc",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-points-cmp-ok-positive",
-                "definition_sha256": "e33ca3e86e9cf4aa724e9322b919e94974b062888114b81f7950699e24f4a7ae",
+                "definition_sha256": "30dcf552b9b28dfe58529682872ccd2f12132b89892e79c150231656285fa9c5",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-quote-is-deeply-total",
-                "definition_sha256": "433cb77e417356af364ad44c21d4b7a77368bd7ea11e8d30ad716afe301b37af",
+                "definition_sha256": "ad32a41af98087caa23430d97bec94bae779221c609b48d2187752d596f62c97",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-round-cents-like",
-                "definition_sha256": "74d49eb457edd9e5ed3be122bc2cf72e2b948f7cbe4b448cc5526fc774edfb8f",
+                "definition_sha256": "fc8c948f2e4f8393efe7eac538b9b30e9fd7cd648a91106860f7b8c260c1b65d",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-shipping-smoke-ok",
-                "definition_sha256": "3baed1c41e75c6c465442277c0d09f8b38f8b38ec38eb9b61e1d3d6305b7320f",
+                "definition_sha256": "f1ddfd341e27efc1af4e140929428a1408c04bb91a2c34f64d9a7173579b117a",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-tax-table-loop",
-                "definition_sha256": "aa887096f3f4febf59eea33a88438ba74506851298612a0276b2a5c5006d7bcb",
+                "definition_sha256": "00b4c26910bdaeaee87fbfb7be1a00c6614b1c9d590f664a01fcf1b2195b30a3",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-tier-far-from-boundary",
-                "definition_sha256": "b3edf6f135f44b2c2d8868033f2eed5ff700fae7087720f98e5da0e7ddba6847",
+                "definition_sha256": "240840305287cf665495b2787612c60aee2a1e0e3e60dc0a506487ba7da573e1",
                 "denominator": 1,
                 "numerator": 1
               }
@@ -20474,16 +21410,16 @@
             "rate": "by_packet_provenance.producer.false_exposed_rate",
             "schema_version": "ripr-verdict-case-population-v1"
           },
-          "population_provenance": {
-            "approved": "EffortlessMetrics/ripr-swarm#8035",
-            "corpus_blob": "186c7d8c3ce2e1766603cd030a37ba273c0a194c",
-            "kind": "committed_expected_rows",
-            "revision": "76651d1cdf9242b301c9ddf28c442838ccf73c59",
-            "rows_tree": "46a0dc499fe0a9e43ac672ad34d1305b68bad33b"
-          },
           "repo": null,
           "status": "below_target",
-          "value": 0.25
+          "value": 0.0385,
+          "population_provenance": {
+            "approved": "EffortlessMetrics/ripr-swarm#10809",
+            "corpus_blob": "6b0da537f6aa117f126cb732c7e19acee7c24f8f",
+            "kind": "committed_expected_rows",
+            "revision": "ea5229fba660d284841b3954f73ca7948a88d0ea",
+            "rows_tree": "5b1718f4c61eb369f055d938d26421102ba79c50"
+          }
         }
       ],
       "source": "verdict-corpus:fixtures/perl-verdict-corpus#by_packet_provenance.producer.false_exposed_rate",
@@ -20491,7 +21427,7 @@
       "target": 0.0,
       "title": "Hand-checked Perl edits the tests miss that ripr credits as caught (producer packets)",
       "unit": "ratio",
-      "value": 0.25
+      "value": 0.0385
     },
     {
       "baseline": {
@@ -20506,222 +21442,534 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "fixtures/perl-verdict-corpus by_packet_provenance.producer.false_silent_rate: 0/12; committed expected records, not fresh analyzer execution",
+          "detail": "fixtures/perl-verdict-corpus by_packet_provenance.producer.false_silent_rate: 0/26; committed expected records, not fresh analyzer execution",
           "population": {
             "cases": [
               {
                 "case_id": "perl-0235-ex01-sink-unconfirmed",
-                "definition_sha256": "a1bbe43196c34caaa32cd8d1b6158f65ecec477ec1ff8393e8b80cc3db92ddbc",
+                "definition_sha256": "58c77a07fbe1ecdc3e50b937d4bebbb7d60e04c9eb7e3f2bec07b6d63989670a",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex03-smoke-ok-strong-exact",
+                "definition_sha256": "2c8f313015a1e993506088473e3fbe879ddabd9b53b96275e94904d76ff02f4a",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex04-dies-only-strong-exact",
+                "definition_sha256": "b6972ed0e06bbe3fca50cba0c48ff884966d188a9cacbd348a9e5c257c4f17e0",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex05-exception-observer-strong-exact",
+                "definition_sha256": "ff05900138f555a2e405c3264421bbe42baa136556f9d7d896dcdcb3ec5bf034",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex06-hash-field-assertion",
+                "definition_sha256": "37c59b369eee8d69f438c9a88910f8ff0232932b77c3efdc6f2acac493331ef6",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex06-output-observer",
+                "definition_sha256": "ccea1c246717564e92c437412de20329d0f7ea12047b060cbd451754318b0c48",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex07-like-weak-broad",
+                "definition_sha256": "17822e656e7fa3256a216784cc237507e3cf9a688e8b04463fe7bfe0a20744e2",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex08-mention-only",
+                "definition_sha256": "a6dfb8b400cd689733f9ea096fd9bed74163f485874759f1323c1928c1c99fda",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex09-oracle-without-owner",
+                "definition_sha256": "7d1b6680ed1ac39f551354f9edd981f3ad4edb9b8f45f6080df42d7c9ee075e8",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex10-relation-without-oracle",
+                "definition_sha256": "4987a50efe19baa80b7b4ea8780ef26626f6dde3e2a6bb20d37c5a399ddab96f",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex11-weakly-reachable-no-sink",
+                "definition_sha256": "7723eb5ada378fce7f9ecafd1230f6dfc453274b03a3ccf0c943a0e183345b3f",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex12-static-unknown-hint",
-                "definition_sha256": "1c594940a1689316ec719bd22b422a98ab0b220ddfc2a6e5d175ca43955563e4",
+                "definition_sha256": "d29c113e7f96a192a215273d2e823b1e7dd5da8e8161480d1be6b662d5598d5e",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex13-method-receiver",
-                "definition_sha256": "c26ac9d2f555c44d46e7b4cb5625a7da9c6068ab64d0c1f777de9e0ce597ce21",
+                "definition_sha256": "d786d1c71d2fc4776cae9925b21dc5fa3284410eefc30ef3e6fa5c76c5c76895",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex14-helper-call",
-                "definition_sha256": "8b1621061a6c5f23c9ebd50d92d4be98b597550edf33584bc1938cd0ac3d8b00",
+                "definition_sha256": "f3de28d1d9d4bd3117892c4e654e4d2d6be0f62af3b8a42d4f2255c2b46d72c4",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex15-package-reference",
+                "definition_sha256": "e35f1bdd3bbfbdaf167090c16f0cfc753b03b9550913604b924dee551233105e",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex15-test-name-match",
+                "definition_sha256": "cdcd662ded071721acbdfd49038bc2f1e0a351ee767b867cb9298abaee88dd04",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex16-no-relations-complete",
+                "definition_sha256": "0788207dac920d850ca173249c266c07967c1e2d48684bdc6e6de132d880e025",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex16-no-relations",
+                "definition_sha256": "e802f6687bf959411d82012450f1530839ff87424ddc0073c6ea4e138354d46a",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex17-aligned-sinks-complete-packet",
+                "definition_sha256": "c21aa6c58d13b192dcf0be7553e5ab3cf73ed972c20981f26965acd05d68d986",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex18-reversed-sinks",
+                "definition_sha256": "dced63fc873fe63dc9bfa3d0677cbc6a2d42b2e91299d88ef5fe6705886e5446",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex19-sink-whitespace",
-                "definition_sha256": "6ada80a4a251e4b780f324c8d72c46d404cc86b750d5cae046d92364a59458ac",
+                "definition_sha256": "5d044a314da45b72c32ac5bfe891fdfe2e18c2be597ef5695f2ada39154dc8aa",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex20-method-receiver-aligned-sinks",
+                "definition_sha256": "b21a07a509d4dab74bff325f3c5afff64d2d2738216362309368e7758cf3c3d3",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex21-weakly-reachable-aligned-sinks",
+                "definition_sha256": "0f4641f276c515f159ef98238ee3cafa4057b472ed4644407f9198b0a2a60eb8",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex23-missing-test-runner",
-                "definition_sha256": "8a2fee9b63bf631af2125347606db277e965def14d82eae67a82fa4ced71e8c8",
+                "definition_sha256": "0a361827ec1622ecf06534fea35dfd15cb22deb29265e8abd2a9e02b18e2cb53",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex24-framework-indirection",
-                "definition_sha256": "337a50dcf605bd2f3d376fb89aeb371de99e5f209ff05760b975d7a9f545bbce",
+                "definition_sha256": "e201e6b145fcfc99a6afea6f0c7d3ec5717ab17ae101bffc94545fe7398c2276",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex25-dynamic-dispatch",
-                "definition_sha256": "c451c19c00cd35d2e0705f5ba4728be96e98f4b67bf70103303d1c34eac1f493",
+                "definition_sha256": "fda44ff1141da76183e509cad36dea1e2b91c870abc94c0a869e3638ec75e7fd",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex26-partial-inference",
+                "definition_sha256": "7992d790e146b576bbfee8cb89baefdd24bf0ccfcd53b277febbdd8ab13d78fc",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex27-file-proximity-control",
+                "definition_sha256": "d3dac982fe04a5a5c611564ed34543580bf99f6ef142b71dd652788774014706",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex27-weakly-reachable-and-package-reference",
+                "definition_sha256": "8ddccdec351e92dc8011a73759122d85292482a6de760f7b5e9ea511388fb5ad",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-0235-ex28-cross-test-oracle",
-                "definition_sha256": "83ff3e4c8640f584bdb3fbea9674d718d4049438b29237f13bb99bebf26beb9f",
+                "definition_sha256": "1ef5891d8965626b1accb0482988ab212a8286beda59b7ff147074f41ac970d6",
                 "denominator": 0,
                 "numerator": 0
               },
               {
+                "case_id": "perl-0235-ex29-low-confidence-relation",
+                "definition_sha256": "ff89b03145e40891a763a61d0499d4bccf7808b97397b90a7953f3eab403af80",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex29-unknown-framework",
+                "definition_sha256": "5be317c9e0f78f6210bd1f378ea12911fb58553eaba656eb0190d7c68590a097",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex30-rangeless-owner-id",
+                "definition_sha256": "914f447083d203cf9120bdd684ed423586280edc55e696f189b118a562047b69",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-0235-ex31-unknown-owner-kind",
+                "definition_sha256": "062873b28e87e09c351c27535c53cbf9720c845d582cc368f911ed8ad852deff",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-bless-counter-inc",
+                "definition_sha256": "91533add7290f7fd0750a3c0f6613116dfadd2ed529c5f2d330b9200522df6bc",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-bless-counter-start",
+                "definition_sha256": "58bc0566fc8378ca89a8770f4156bd04f412da88bc7605be31f973a5b44bde24",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-autoload-field",
+                "definition_sha256": "98713aa02f5251bf252a8e80ccf170f0230a4004f9dc55d954bdaeb6ced7d771",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-constant-tax",
+                "definition_sha256": "1999e7561bda433585c0085b3aaa5f10b87977e166cf404ab1d7779dce101632",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-glob-double",
+                "definition_sha256": "23b6cf2f5465e8e398841b30f3b6bef00fda7feb18261378a82f94243fd16f97",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-glob-triple-unexercised",
+                "definition_sha256": "1b7fe66e08f60505256b4a5cf4d54681bd98fea393a293d89929854be552d003",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-heredoc-greeting",
+                "definition_sha256": "cbb6577b4779652dcd2d0cc7905cd388425f04964acfed872a55b29187d573d6",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-line-directive-pad",
+                "definition_sha256": "47f48e5db003fd0b2305a7fb27d91ce0742e7eb7f0d1879e89b7a9abf0697d12",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-string-eval-quad",
+                "definition_sha256": "784717b66186a707fd4e6cd00bc96cd79b7fbd02bfd58552639c10a85cb1cf18",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-hostile-unicode-sub-name",
+                "definition_sha256": "1ab66bca3b8421dea1ef7a0e8ac38060803d1941696e72a409d9fc1218c20107",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-banner-repeat",
+                "definition_sha256": "856d021d51508746aa07dad9e24ae148af7984ffeb16f5a71cf494c233787cf2",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-closure-counter",
+                "definition_sha256": "981dfe1f1fc4123c11078eb107e7e4d6a7c4ed41df2ae425703ce4a0b27c99a4",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-eval-safe-div",
+                "definition_sha256": "134e087a096f986e2535f7522adceaf1b793bf686cf9fb842ccb5c623fdd0573",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-local-separator",
+                "definition_sha256": "2ca68b53a107479f5d77663dbbcc25b8b478d494c03854bfff1272e41ad69254",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-regex-version",
+                "definition_sha256": "feeb2eb5867dbc0a2cb460dd3e413d18c3303bdbe3e12dc127208a7e37fb7b05",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-slugify-subst",
+                "definition_sha256": "c3a4d31dbc52bdeda7f26bd414c1fdf25a431efe3e2e478e35c2c10f32015115",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-wantarray-exact",
+                "definition_sha256": "5d16c2571b2fede541ab536e1f27fd52c2a50b3a66d97f9a1d5e2d045e7b9d93",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-idiom-wantarray-smoke",
+                "definition_sha256": "7a3acbd857dde25a021c77b5824d1c01785a1fe3ef664949ac89510302edf877",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-moose-birthday-smoke",
+                "definition_sha256": "37536d549d1c8a88e5e2e0ec7fece1c654e770176528cf35da75673820a6405a",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-moose-builder-join",
+                "definition_sha256": "0c13ac377eed8e47032f91239a5ad2bf1b34d0904c905fd827bc0b4135807513",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-moose-is-adult-boundary",
+                "definition_sha256": "bfe2c4ade235b1bee9d4ab324b3070589d6a9f5e0ff2a00b5dac229116f0acd1",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
                 "case_id": "perl-test2-close-month-subtest",
-                "definition_sha256": "ea2392c1d1d78b46eb768239b158fb160e2e908a3181bf1b8d696d76725f689a",
+                "definition_sha256": "0c56d2db3e91d59b99e0b2f090d2cc377e6f02c4bf88d42cb04a65773d4af4b7",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-test2-deposit-lives-only",
-                "definition_sha256": "a4ca744ea63f5d8980520b6820c76aa5a2256cc9849bc913d8f86fb58f0b9ee2",
+                "definition_sha256": "33162ce19b15cc106b8e1372f83df9537f86d5f04d710bad3501d1f0020102ef",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-test2-fee-isnt-zero",
-                "definition_sha256": "64292419f964294475cbed98463b8662c1fa1c2ef011830040a557f992ae858f",
+                "definition_sha256": "181d0276aa35c046052300ce0f861f5570c8718342ae8d13c1e5a9e029a95685",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-test2-format-entry-like",
-                "definition_sha256": "af193e49f2ed4d19b7e26db45d06bf0c6d29467ae1ba06c8ca9374a02d9e38ec",
+                "definition_sha256": "5317c33b51b99b3347898345398e9eb44a1bb815bc4b4aeb21470c89e039d61c",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-test2-net-change-imported",
-                "definition_sha256": "73b640c777650a8b2af1895deec5fe774721f51bb8fe3f974053f2c2ad27a086",
+                "definition_sha256": "cfaae1766b932a9a195400614bdf03d563659c33b9198b4e79afd00680d28dec",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-test2-overdrawn-ok-smoke",
-                "definition_sha256": "ba25c03ad641a88a808f9b034c51117d89caaa1bac5e84564dfa82f499c5bb7d",
+                "definition_sha256": "bb57539c86105b63f9d653d3ab55f73c7805a30a7b87677d71792a473f492ff6",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-test2-summary-deep-is-count",
-                "definition_sha256": "0bd216fa453eb35230231987da15348fdbf816c371f2b8e626c7d6bf1ebeda5c",
+                "definition_sha256": "afe0e9b9d608f4385da58ebd77ac14edebcf0959c1c9139dad8fcad5a0654ba5",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-test2-withdraw-dies-like-message",
-                "definition_sha256": "a167a542e9b955b44e1d3ebd85191be4a5272500319b997ac4cdcaf3c933cda8",
+                "definition_sha256": "a9221a576b332418f9eff36b1326a15bcdbdca9877e817b5a4cb73351357d051",
                 "denominator": 0,
                 "numerator": 0
               },
               {
+                "case_id": "perl-testdeep-adjust-exact-hash",
+                "definition_sha256": "4f2f9949b0067ca1d3205c2af5ff24b4efa5c10f5645f1b3f4c1c0d17df88b2f",
+                "denominator": 0,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-testdeep-label-pair-code",
+                "definition_sha256": "4193d4352d710c571fe012355e6719c85319544c7a7122c2acd3bc8f0a4ba847",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-testdeep-record-ignore",
+                "definition_sha256": "e0766b932f681d14e26378ad4cffabe6a539607ab35a6e053391ab1ead91366e",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-testdeep-restock-superhashof",
+                "definition_sha256": "b6bce08fad3724ea55cff7c9b7481b1b46a303c1565130dd48b13f724bcf6078",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-testdeep-sku-re",
+                "definition_sha256": "ef640429fd1630b78f6cb17661d2e5174786e8ece24aaa14357fdc92d99ddd97",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
+                "case_id": "perl-testdeep-tag-list-bag",
+                "definition_sha256": "5dad4fc31cf94173b151926fb0fe810137594046567c8d7c0c05e8fe238f7f78",
+                "denominator": 1,
+                "numerator": 0
+              },
+              {
                 "case_id": "perl-testexception-close-out-dies-ok",
-                "definition_sha256": "900cb04f947f4a72b79782e4d859f30628b1a64dfbc9ed3ab9d0e9a8a23cb789",
+                "definition_sha256": "006140fa5cedce8cbb79b25a6923075eca99cdd8b9dc0b43755faa6f6ecba38c",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testexception-freeze-class",
-                "definition_sha256": "aa3679c2ee51fdc203a8c845170f8e4f1385dd943c06314f30fe2aca27496168",
+                "definition_sha256": "786743e6071abe6374c4490923965c270b6464d081c3ecd396a400285a766f08",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testexception-interest-lives-ok",
-                "definition_sha256": "2afca0fd1fc1feffda5075d18f4ae47920bcf3e82417289e0a3ac7e7ad426da2",
+                "definition_sha256": "6ba0441f89eb5b7e5f333549750d1803e2f0fd15afd44432bdb6db81c6957037",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testexception-lives-and-is",
-                "definition_sha256": "01b22c32df514601a1f1b9bcead236a2ea3487d9c43e372bad60898fb3728bbe",
+                "definition_sha256": "6f747475ae0fe0fe1d11c26fa675b32da8e82c3fe01afd278879bec8793cfc27",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testexception-transfer-boundary-pair",
-                "definition_sha256": "aa21030150443a739cef88706776130dee20a83875961542219b135eac4ab4d9",
+                "definition_sha256": "7b9afead67082160b0033fba66f9b3728322def4e408c6f84eb6d6976ffdccdf",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testexception-withdraw-throws-message",
-                "definition_sha256": "956aba8afee890db1c88640812dc5924fe022a83d5a5ef5828cea1bca7cf8c86",
+                "definition_sha256": "32a307098688ae5c1cb850c352bb5d7bb64f4e29b43605fffe9a169ba3ad5bd0",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-bulk-subtest",
-                "definition_sha256": "f15ae7223b6f292d84d67ae09dbbcba6003d92feed27fc4a56ed6e900feb6d44",
+                "definition_sha256": "546bcf31b1473ee9f236781749154fc065d84665813f1b41dc1eb1cfa38aa14a",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-bundle-helper-sub",
-                "definition_sha256": "04d9c6e93c9a91e049d31554f4399927969f4a2bb9706b4791daa3aa4d79e0d1",
+                "definition_sha256": "868f2b188cc979ff1b72ecb2bc35f194ab9e2624252aab8d379fe0bfc3a03ae6",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-can-ok-only",
-                "definition_sha256": "68e300bb19f08188c24daa26d3f95f23820a1e8362ff2934cbcb46ee3047e6fe",
+                "definition_sha256": "0a717bc39132d2856fef5bf246af05536fe7d8ab7ac06db196aa19abc0e17cc5",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-cart-dynamic-dispatch",
-                "definition_sha256": "e6083a3d17b05260244502539822a5850eae7ed78d5b3c789be61af8a0cf7208",
+                "definition_sha256": "f08b36537a1305c0697796d4f04902af83574fe05bdb3af472a80b869d82c490",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-cart-method-total",
-                "definition_sha256": "b9a2f76ace26d2954f6a0af5ef072d963ccfc8748a5ec7ec388cbffcafdea279",
+                "definition_sha256": "1a5605bb8fad6f4981536fa45dd07c8e29df0afd177dfd507296b081422b5316",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-clamp-isnt",
-                "definition_sha256": "4bf5f5e05a23467477edc30a243099aac05b2ec6b668d904f468751679db2b97",
+                "definition_sha256": "d0137d86b166b734e67e9df3277e436012edf465f62119444ad2efc6869aa453",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-discount-imported-boundary",
-                "definition_sha256": "f1429a787e315e4bf89fa3a81d6ee1e48ea5790022bc3d46b85e62eb8ece5f62",
+                "definition_sha256": "b2a2ab819bb9e79e296d8f428a10ab6ec2e6fa11780de1b860c8046ea7c309bc",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-points-cmp-ok-positive",
-                "definition_sha256": "e33ca3e86e9cf4aa724e9322b919e94974b062888114b81f7950699e24f4a7ae",
+                "definition_sha256": "30dcf552b9b28dfe58529682872ccd2f12132b89892e79c150231656285fa9c5",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-quote-is-deeply-total",
-                "definition_sha256": "433cb77e417356af364ad44c21d4b7a77368bd7ea11e8d30ad716afe301b37af",
+                "definition_sha256": "ad32a41af98087caa23430d97bec94bae779221c609b48d2187752d596f62c97",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-round-cents-like",
-                "definition_sha256": "74d49eb457edd9e5ed3be122bc2cf72e2b948f7cbe4b448cc5526fc774edfb8f",
+                "definition_sha256": "fc8c948f2e4f8393efe7eac538b9b30e9fd7cd648a91106860f7b8c260c1b65d",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-shipping-smoke-ok",
-                "definition_sha256": "3baed1c41e75c6c465442277c0d09f8b38f8b38ec38eb9b61e1d3d6305b7320f",
+                "definition_sha256": "f1ddfd341e27efc1af4e140929428a1408c04bb91a2c34f64d9a7173579b117a",
                 "denominator": 1,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-tax-table-loop",
-                "definition_sha256": "aa887096f3f4febf59eea33a88438ba74506851298612a0276b2a5c5006d7bcb",
+                "definition_sha256": "00b4c26910bdaeaee87fbfb7be1a00c6614b1c9d590f664a01fcf1b2195b30a3",
                 "denominator": 0,
                 "numerator": 0
               },
               {
                 "case_id": "perl-testmore-tier-far-from-boundary",
-                "definition_sha256": "b3edf6f135f44b2c2d8868033f2eed5ff700fae7087720f98e5da0e7ddba6847",
+                "definition_sha256": "240840305287cf665495b2787612c60aee2a1e0e3e60dc0a506487ba7da573e1",
                 "denominator": 1,
                 "numerator": 0
               }
@@ -20729,16 +21977,16 @@
             "rate": "by_packet_provenance.producer.false_silent_rate",
             "schema_version": "ripr-verdict-case-population-v1"
           },
-          "population_provenance": {
-            "approved": "EffortlessMetrics/ripr-swarm#8035",
-            "corpus_blob": "186c7d8c3ce2e1766603cd030a37ba273c0a194c",
-            "kind": "committed_expected_rows",
-            "revision": "76651d1cdf9242b301c9ddf28c442838ccf73c59",
-            "rows_tree": "46a0dc499fe0a9e43ac672ad34d1305b68bad33b"
-          },
           "repo": null,
           "status": "meets_target",
-          "value": 0.0
+          "value": 0.0,
+          "population_provenance": {
+            "approved": "EffortlessMetrics/ripr-swarm#10809",
+            "corpus_blob": "6b0da537f6aa117f126cb732c7e19acee7c24f8f",
+            "kind": "committed_expected_rows",
+            "revision": "ea5229fba660d284841b3954f73ca7948a88d0ea",
+            "rows_tree": "5b1718f4c61eb369f055d938d26421102ba79c50"
+          }
         }
       ],
       "source": "verdict-corpus:fixtures/perl-verdict-corpus#by_packet_provenance.producer.false_silent_rate",

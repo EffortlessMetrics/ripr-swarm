@@ -1,0 +1,22 @@
+crates/ripr/src/cli/commands/pr_comments_github.rs|{EXISTING} --out cannot contain a tab or line break
+crates/ripr/src/cli/commands/pr_comments_github.rs|{EXISTING} --out must be a relative file path inside --root (got {})
+crates/ripr/src/cli/commands/pr_comments_github.rs|{EXISTING} could not create {}: {err}
+crates/ripr/src/cli/commands/pr_comments_github.rs|{EXISTING} could not read standard input: {err}
+crates/ripr/src/cli/commands/pr_comments_github.rs|{EXISTING} could not write {}: {err}
+crates/ripr/src/cli/commands/pr_comments_github.rs|{EXISTING}: standard input is not JSON: {err}
+crates/ripr/src/cli/commands/pr_comments_github.rs|{REQUESTS} could not create {}: {err}
+crates/ripr/src/cli/commands/pr_comments_github.rs|{REQUESTS} could not read {}: {err}
+crates/ripr/src/cli/commands/pr_comments_github.rs|{SUMMARY} could not create {}: {err}
+crates/ripr/src/cli/commands/pr_comments_github.rs|{SUMMARY} could not read standard input: {err}
+crates/ripr/src/cli/commands/pr_comments_github.rs|{SUMMARY} could not remove {}: {err}
+crates/ripr/src/cli/commands/pr_comments_github.rs|{SUMMARY}: standard input is not JSON: {err}
+crates/ripr/src/cli/commands/pr_comments_github.rs|{command} --out-dir cannot contain a tab or line break: the request manifest is tab-separated
+crates/ripr/src/cli/commands/pr_comments_github.rs|{command} --out-dir must be a relative directory inside --root (got {}); the run replaces its request files
+crates/ripr/src/cli/commands/pr_comments_github.rs|{command} could not create {}: {err}
+crates/ripr/src/cli/commands/pr_comments_github.rs|{command} could not inspect {}: {err}
+crates/ripr/src/cli/commands/pr_comments_github.rs|{command} could not read {}: {err}
+crates/ripr/src/cli/commands/pr_comments_github.rs|{command} could not render {}: {err}
+crates/ripr/src/cli/commands/pr_comments_github.rs|{command} could not write {}: {err}
+crates/ripr/src/cli/commands/pr_comments_github.rs|{command} could not write {}: {err} --out-dir the run replaces request files there
+crates/ripr/src/cli/commands/pr_comments_github.rs|{command} {flag} cannot pass through a link ({} is one); {why}
+crates/ripr/src/cli/commands/pr_comments_github.rs|{command}: {} is not JSON: {err} {command} could not create {}: {err}

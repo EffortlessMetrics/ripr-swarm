@@ -1182,26 +1182,93 @@ pub(crate) fn ripr_fixture_binary() -> Result<String, String> {
 /// process owes the Perl verdict corpus. See [`ripr_perl_fixture_binary`].
 static RIPR_PERL_BINARY_BUILD: OnceLock<Result<(), String>> = OnceLock::new();
 
-/// Target directory for in-suite fixture variant builds (#11197): a
-/// `fixture-variants` sibling under the resolved shared target root, so
-/// building a variant never rewrites the shared `target/debug/ripr` the
-/// running suite executes. Honors `CARGO_TARGET_DIR` like
-/// [`ripr_debug_binary`], so routed CI jobs build and cache it in the same
-/// restored target and `cargo clean` clears it with the rest of the
-/// artifacts.
-fn fixture_variant_target_dir() -> Result<PathBuf, String> {
-    let mut root = std::env::var_os("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("target"));
-    root.push("fixture-variants");
-    std::path::absolute(&root)
-        .map_err(|err| format!("resolve variant target dir {}: {err}", root.display()))
+#[cfg(test)]
+pub(crate) mod variant_test {
+    use super::*;
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+    use std::rc::Rc;
+
+    type RecordedCommand = (String, Vec<String>, Option<PathBuf>);
+
+    pub(crate) struct Context {
+        pub(crate) shared: PathBuf,
+        pub(crate) once: OnceLock<Result<(), String>>,
+        pub(crate) files: RefCell<BTreeMap<PathBuf, Vec<u8>>>,
+        pub(crate) commands: RefCell<Vec<RecordedCommand>>,
+        pub(crate) writes: RefCell<Vec<PathBuf>>,
+    }
+
+    impl Context {
+        pub(crate) fn write(&self, path: PathBuf, bytes: Vec<u8>) {
+            self.writes.borrow_mut().push(path.clone());
+            self.files.borrow_mut().insert(path, bytes);
+        }
+
+        pub(crate) fn shared_generation(&self) -> usize {
+            self.writes
+                .borrow()
+                .iter()
+                .filter(|p| **p == self.shared)
+                .count()
+        }
+    }
+
+    thread_local! { static ACTIVE: RefCell<Option<Rc<Context>>> = const { RefCell::new(None) }; }
+
+    pub(crate) fn active() -> Option<Rc<Context>> {
+        ACTIVE.with(|slot| slot.borrow().clone())
+    }
+
+    pub(crate) fn with_context<T>(context: Rc<Context>, f: impl FnOnce() -> T) -> T {
+        struct Restore(Option<Rc<Context>>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                ACTIVE.with(|slot| *slot.borrow_mut() = self.0.take());
+            }
+        }
+        let old = ACTIVE.with(|slot| slot.borrow_mut().replace(context));
+        let _restore = Restore(old);
+        f()
+    }
+
+    pub(super) fn run(
+        program: &str,
+        args: &[&str],
+        envs: &[(&str, &str)],
+    ) -> Option<Result<(), String>> {
+        let context = active()?;
+        let target = envs
+            .iter()
+            .rev()
+            .find(|(key, _)| *key == "CARGO_TARGET_DIR")
+            .map(|(_, value)| PathBuf::from(value));
+        context.commands.borrow_mut().push((
+            program.into(),
+            args.iter().map(|s| (*s).into()).collect(),
+            target.clone(),
+        ));
+        let output = target
+            .map(|dir| crate::ripr_debug_binary_in(Some(dir)))
+            .unwrap_or_else(|| context.shared.clone());
+        context.write(output, b"perl".to_vec());
+        Some(Ok(()))
+    }
+
+    pub(super) fn copy(source: &Path, destination: &Path) -> Option<Result<(), String>> {
+        let context = active()?;
+        let Some(bytes) = context.files.borrow().get(source).cloned() else {
+            return Some(Err(format!("missing source {}", source.display())));
+        };
+        context.write(destination.to_path_buf(), bytes);
+        Some(Ok(()))
+    }
 }
 
 /// The debug binary with the `lang-perl` preview adapter compiled in, for the
 /// Perl verdict corpus (RIPR-SPEC-0245): the default build refuses Perl
 /// packets. The variant builds in a dedicated target directory
-/// ([`fixture_variant_target_dir`], #11197): it used to relink the shared
+/// (#11197): it used to relink the shared
 /// `target/debug/ripr` to the Perl feature set mid-suite and restore it
 /// afterwards, so a cross-process consumer of the suite binary could observe
 /// a different analyzer identity between two execs. The built variant is
@@ -1211,22 +1278,52 @@ fn fixture_variant_target_dir() -> Result<PathBuf, String> {
 /// to wait there. Once the variant target is warm, only the `ripr` crate
 /// recompiles.
 pub(crate) fn ripr_perl_fixture_binary() -> Result<String, String> {
-    let shared = ripr_debug_binary();
+    #[cfg(test)]
+    let context = variant_test::active();
+    #[cfg(test)]
+    let (shared, once) = context.as_ref().map_or_else(
+        || (ripr_debug_binary(), &RIPR_PERL_BINARY_BUILD),
+        |context| (context.shared.clone(), &context.once),
+    );
+    #[cfg(not(test))]
+    let (shared, once) = (ripr_debug_binary(), &RIPR_PERL_BINARY_BUILD);
+    fixture_variant_binary_built_by(
+        shared,
+        once,
+        &preparation::build_perl_variant,
+        &|source, destination| {
+            #[cfg(test)]
+            if let Some(result) = variant_test::copy(source, destination) {
+                return result;
+            }
+            fs::copy(source, destination).map(|_| ()).map_err(|err| {
+                format!(
+                    "copy {} to {} failed: {err}",
+                    source.display(),
+                    destination.display()
+                )
+            })
+        },
+    )
+}
+
+pub(crate) fn fixture_variant_binary_built_by(
+    shared: PathBuf,
+    build_once: &OnceLock<Result<(), String>>,
+    build: &(dyn Fn(&Path) -> Result<(), String> + Sync),
+    copy: &(dyn Fn(&Path, &Path) -> Result<(), String> + Sync),
+) -> Result<String, String> {
+    let target = shared
+        .parent()
+        .and_then(Path::parent)
+        .ok_or("missing shared target root")?;
+    let variant_target = std::path::absolute(target.join("fixture-variants"))
+        .map_err(|err| format!("resolve variant target: {err}"))?;
     let perl = shared.with_file_name(format!("ripr-lang-perl{}", std::env::consts::EXE_SUFFIX));
-    let variant_target = fixture_variant_target_dir()?;
     let variant = ripr_debug_binary_in(Some(variant_target.clone()));
-    ripr_fixture_binary_built_by(perl.clone(), &RIPR_PERL_BINARY_BUILD, &|| {
-        preparation::build_in_target_dir(
-            &["build", "-p", "ripr", "--features", "lang-perl"],
-            &variant_target,
-        )?;
-        fs::copy(&variant, &perl).map(|_| ()).map_err(|err| {
-            format!(
-                "copy {} to {} failed: {err}",
-                variant.display(),
-                perl.display()
-            )
-        })
+    ripr_fixture_binary_built_by(perl.clone(), build_once, &|| {
+        build(&variant_target)?;
+        copy(&variant, &perl)
     })
 }
 
@@ -1820,23 +1917,17 @@ fn is_path_bearing_json_key(key: &str) -> bool {
             .any(|needle| key.contains(needle))
 }
 
+/// Human fixture text is never separator-folded: the Windows-facing human
+/// producers already print paths with `/` (`human_path`, `display_path`,
+/// `root_path_display`), and everything else in it is quoted SOURCE text
+/// (`read \"error\"`, `\u{7b}`, `root: \u{7b}`) that must stay byte-identical
+/// on every host so the checked-in goldens hold the real source (#11178).
 pub(crate) fn normalize_fixture_human_output(value: &str) -> String {
-    let normalized = project_renderer_cwd(&normalize_separators(value));
+    let normalized = project_renderer_cwd(value);
     let trimmed = normalized.trim_end_matches(['\r', '\n']);
     let mut output = trimmed.to_string();
     output.push('\n');
     output
-}
-
-/// Turn Windows separators into `/` while keeping the shell's `'\''`
-/// escape intact, so a checkout path containing an apostrophe still reaches
-/// `project_cwd_prefix` as one quoted token (#6762).
-fn normalize_separators(value: &str) -> String {
-    value
-        .split(r"'\''")
-        .map(|part| part.replace('\\', "/"))
-        .collect::<Vec<_>>()
-        .join(r"'\''")
 }
 
 /// The `check` drill-in commands bind `--root` to the resolved repository
@@ -3300,15 +3391,30 @@ mod tests {
             ),
             "--root <cwd>/fixtures/x/input --diff d"
         );
-        // The full human-output path keeps that escape through separator
-        // normalization; replacing every backslash first left it unprojected.
-        assert_eq!(
-            project_cwd_prefix(
-                &normalize_separators(r"--root '/tmp/dev'\''s repo/fixtures\x\input' --diff d"),
-                "/tmp/dev's repo/"
-            ),
-            "--root <cwd>/fixtures/x/input --diff d"
-        );
+    }
+
+    #[test]
+    fn human_normalizer_never_rewrites_source_text_backslashes() {
+        let human = [
+            "root: \\u{7b}",
+            "  root: \\u{7b}",
+            "owner: \\u{7d}",
+            "owner: \\n",
+            "WARNING .\\src\\lib.rs:5",
+            "  - src\\foo.rs:3 (weak)",
+            "  before: write!(f, \"\\u{7b}\\u{7d}\", self.0)",
+            "  - source assertion argument value \"read \\\"error\\\"\" at line 18",
+            "  before: write!(f, r#\"prefix src\\foo.rs suffix\"#)",
+            "ripr does not infer `\\u{7b}` here",
+        ]
+        .join("\n");
+        assert_eq!(normalize_fixture_human_output(&human), format!("{human}\n"));
+    }
+
+    #[test]
+    fn human_normalizer_projects_cwd_and_ends_with_one_newline() {
+        let out = normalize_fixture_human_output("root: \\u{7b}\r\n\n");
+        assert_eq!(out, "root: \\u{7b}\n");
     }
 
     /// Unique per process and per call. Fixed names under the shared temp
@@ -4008,6 +4114,68 @@ mod tests {
         }
         if transitional_refusal_aliases_apply("match_arm_blind", "check.json", &old, &gripped) {
             return Err("an unlisted surface stays strict".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn automation_guide_bless_example_passes_the_installed_reason_contract() -> Result<(), String> {
+        let _cwd_guard = crate::acquire_test_cwd_read_guard();
+        let doc = include_str!("../../../docs/PR_AUTOMATION.md");
+        let (_, section) = doc
+            .split_once("### Mutating Shape Commands\n")
+            .ok_or("automation guide lost the mutating command examples")?;
+        let section = section.split("\n### ").next().ok_or("missing section")?;
+        let examples = section
+            .lines()
+            .filter(|line| line.starts_with("cargo xtask goldens bless "))
+            .collect::<Vec<_>>();
+        if examples.len() != 1 {
+            return Err(format!(
+                "expected one golden-bless example, got {examples:?}"
+            ));
+        }
+        let reason = bless_reason_quoted_in_step4(examples[0])?;
+        if reason.contains("...") {
+            return Err("guide still documents an ellipsis bless reason".to_string());
+        }
+        if parse_reason(&["--reason".to_string(), reason.clone()]).is_ok() {
+            return Err(
+                "unfilled template reason must fail parse_reason before substitution".to_string(),
+            );
+        }
+        let resolved = reason.replace("RIPR-SPEC-NNNN", "RIPR-SPEC-0001").replace(
+            "<reviewed change>",
+            "reviewed expected output for the fixture",
+        );
+        let parsed = parse_reason(&["--reason".to_string(), resolved.clone()])?;
+        validate_bless_reason(&parsed)?;
+
+        let absent = "__automation_guide_bless_smoke_absent__";
+        if fixture_dir_for_name(absent)?.exists() {
+            return Err("smoke requires its fixture name to be absent".to_string());
+        }
+        let invoke = |reason: &str| {
+            goldens_impl(&[
+                "bless".to_string(),
+                absent.to_string(),
+                "--reason".to_string(),
+                reason.to_string(),
+            ])
+        };
+        let error = invoke(&resolved)
+            .err()
+            .ok_or("absent fixture was accepted after valid reason")?;
+        if !error.starts_with("fixture does not exist:") {
+            return Err(format!(
+                "documented reason failed before fixture lookup: {error}"
+            ));
+        }
+        for invalid in ["...", "RIPR-SPEC-9999: unknown spec control"] {
+            let error = invoke(invalid).err().ok_or("invalid reason was accepted")?;
+            if !error.contains("spec id") {
+                return Err(format!("invalid reason reached fixture lookup: {error}"));
+            }
         }
         Ok(())
     }

@@ -1,0 +1,2 @@
+crates/ripr/src/app/agent_workflow.rs|failed to parse generated agent brief JSON: {err}
+crates/ripr/src/app/agent_workflow.rs|generated agent brief JSON is missing top_seams array

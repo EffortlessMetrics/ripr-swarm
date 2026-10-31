@@ -48,8 +48,11 @@ Next: drill into the top finding:
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output (TypeScript preview: 2).
-    - src/deep_over_budget.ts:2 (unknown); kind: static_unknown; reason: The surrounding syntax is not yet supported by ripr's static model, so the reaching path is not resolvable.
+    - src/deep_over_budget.ts:2 (unknown: static analysis limited); kind: unclear; reason: The surrounding syntax is not yet supported by ripr's static model, so the reaching path is not resolvable.
     - src/ok.ts:2 (no path); kind: predicate; reason: No statically linked test call to `ok(` was established; inspect existing test calls and their import/export paths.
+  Hidden classes:
+    no path = no test path was found
+    unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

@@ -1,2 +1,0 @@
-<!-- section: Changed -->
-- `ripr continue` before any test edit now ends its refusal with a plain explanation (`the repository is still at b4109b6, so nothing has changed since the before phase and there is nothing to compare yet`) instead of `both are current at revision <40-character hash>`. The leading `agent verify no repository movement between before and after artifacts` clause, the exit code and the recorded refusal kind are unchanged (#11026).

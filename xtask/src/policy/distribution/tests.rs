@@ -892,3 +892,123 @@ fn workflow_comment_trailing_backslash_does_not_hide_next_line() {
         "explicit non-`latest`"
     ));
 }
+
+const INIT_WORKFLOW_TEXT: &str =
+    include_str!("../../../../crates/ripr/src/cli/commands/init_workflow.rs");
+
+/// Runner `$RUNNER_OS-$RUNNER_ARCH` label for a contract target, derived from
+/// the contract's own npm os/cpu identity rather than a second target list.
+fn runner_label(target: &contract::TargetContract) -> Result<String, String> {
+    let os = match target.npm_os.as_str() {
+        "linux" => "Linux",
+        "darwin" => "macOS",
+        "win32" => "Windows",
+        other => return Err(format!("unmapped npm_os `{other}`")),
+    };
+    let arch = match target.npm_cpu.as_str() {
+        "x64" => "X64",
+        "arm64" => "ARM64",
+        other => return Err(format!("unmapped npm_cpu `{other}`")),
+    };
+    Ok(format!("{os}-{arch}"))
+}
+
+/// Every `Label) target=value ;;` arm of the generated install step, in source
+/// order, including the `*)` fallback.
+fn install_step_arm_lines() -> Vec<(String, String)> {
+    INIT_WORKFLOW_TEXT
+        .lines()
+        .filter_map(|line| {
+            let (label, rest) = line.trim().split_once(") target=")?;
+            let target = rest.strip_suffix(" ;;")?;
+            Some((label.to_string(), target.to_string()))
+        })
+        .collect()
+}
+
+/// `Runner-Arch) target=rust-target ;;` arms of the generated install step
+/// (fallback excluded). A duplicated label would silently keep the later arm in
+/// a map, so the parsed count must equal the map size.
+fn install_step_arms() -> std::collections::BTreeMap<String, String> {
+    let parsed: Vec<(String, String)> = install_step_arm_lines()
+        .into_iter()
+        .filter(|(label, _)| label != "*")
+        .collect();
+    let count = parsed.len();
+    let arms: std::collections::BTreeMap<String, String> = parsed.into_iter().collect();
+    assert_eq!(
+        count,
+        arms.len(),
+        "a runner label is duplicated in the install step; the later arm would shadow the earlier one"
+    );
+    arms
+}
+
+/// #6245 slice 1: the generated `Install ripr` mapping is bound to the
+/// distribution contract instead of standing as an unchecked second matrix.
+/// Every tar.gz contract target must be mapped to exactly its contract Rust
+/// target (falsifier 9), and no arm may name a target the contract lacks.
+#[test]
+fn generated_install_step_mapping_matches_distribution_contract() -> Result<(), String> {
+    let contract = parsed_contract(CONTRACT_TEXT)?;
+    let arms = install_step_arms();
+    let mut expected = std::collections::BTreeMap::new();
+    for target in contract
+        .target
+        .iter()
+        .filter(|target| target.archive == "tar.gz")
+    {
+        expected.insert(runner_label(target)?, target.rust_target.clone());
+    }
+    assert_eq!(
+        arms, expected,
+        "install-step arms drifted from the contract"
+    );
+    let fallbacks: Vec<_> = install_step_arm_lines()
+        .into_iter()
+        .filter(|(label, _)| label == "*")
+        .collect();
+    assert_eq!(
+        fallbacks,
+        vec![("*".to_string(), r#""""#.to_string())],
+        "the `*)` fallback must keep target=\"\" (Cargo fallback route), never name a real target"
+    );
+    assert!(
+        INIT_WORKFLOW_TEXT.contains(r#"asset="ripr-server-v$version-$target.tar.gz""#),
+        "the unix asset name must stay the contract's tar.gz shape"
+    );
+    Ok(())
+}
+
+/// #6245 slice 1: the Windows x64 identities the installer must consume are
+/// owned by the contract (ZIP + `ripr.exe`), and the installer does not yet
+/// carry a Windows arm, so Windows-X64 still reports "no prebuilt" rather than
+/// a half-implemented route. Adding the arm (slice 2) must update this test.
+#[test]
+fn windows_x64_identity_is_contract_owned_and_not_yet_mapped() -> Result<(), String> {
+    let contract = parsed_contract(CONTRACT_TEXT)?;
+    let windows = contract
+        .target
+        .iter()
+        .find(|target| target.rust_target == "x86_64-pc-windows-msvc")
+        .ok_or("contract lacks the Windows x64 MSVC target")?;
+    assert_eq!(runner_label(windows)?, "Windows-X64");
+    assert_eq!(windows.archive, "zip");
+    assert_eq!(windows.executable, "ripr.exe");
+    assert!(
+        !install_step_arms()
+            .keys()
+            .any(|label| label.starts_with("Windows")),
+        "a Windows arm needs the zip/checksum/extraction route (#6245 slice 2) and a contract-tied update here"
+    );
+    Ok(())
+}
+
+/// #6245 falsifier 7 (partial): the install step's shell contract is Bash.
+#[test]
+fn generated_workflow_shell_contract_stays_bash() {
+    assert!(
+        INIT_WORKFLOW_TEXT.contains("defaults:\n  run:\n    shell: bash\n"),
+        "the generated workflow default shell changed; the Install ripr step is Bash-only"
+    );
+}

@@ -32,6 +32,42 @@ impl Fixture {
         Ok(Self(root))
     }
 
+    /// The finding on line 5 of the `numeric_identifier` fixtures, where
+    /// `digit > b'9'` became `digit >= b'9'` (#11481).
+    fn boundary_finding(&self) -> Result<Finding, String> {
+        let diff_text = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -5,1 +5,1 @@\n-        if digit < b'0' || digit > b'9' {\n+        if digit < b'0' || digit >= b'9' {\n";
+        self.finding_on_line(diff_text, 5)
+    }
+
+    fn finding_on_line(&self, diff_text: &str, line: usize) -> Result<Finding, String> {
+        let changed_files = diff::parse_unified_diff(diff_text);
+        let result = RustAdapter.analyze_diff(
+            &AnalysisOptions {
+                root: self.0.clone(),
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                perl_producer_failure: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+        result
+            .findings
+            .into_iter()
+            .find(|finding| finding.probe.location.line == line)
+            .ok_or_else(|| "no finding on the changed line".to_string())
+    }
+
     /// The finding on line 2, where `x * 3` became `3 * x`.
     fn rate_finding(&self) -> Result<Finding, String> {
         let diff_text = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n fn inner_rate(x: i64) -> i64 {\n-    x * 3\n+    3 * x\n }\n";
@@ -1094,5 +1130,314 @@ fn nested_scans_run_in_line_on_a_pool_worker_only() -> Result<(), String> {
         !pool.install(nested_parallelism_allowed),
         "a worker must not block in a nested par_iter while it can hold a memo lock"
     );
+    Ok(())
+}
+
+// #11481: an `infection_unknown` finding whose related tests are all
+// proximity-only names the transitive limit like a `weakly_exposed` one.
+// The private owner is reached only through `Version::parse` ->
+// `Version::from_str`; the test is related by name alone.
+const PRIVATE_HELPER_BEHIND_PUBLIC_ENTRY: &str = r####"use std::str::FromStr;
+fn numeric_identifier(input: &str) -> Result<u64, String> {
+    let mut value = 0u64;
+    for digit in input.bytes() {
+        if digit < b'0' || digit > b'9' {
+            return Err("bad digit".to_string());
+        }
+        value = value * 10 + (digit - b'0') as u64;
+    }
+    Ok(value)
+}
+pub struct Version(pub u64);
+pub struct Req(pub u64);
+impl FromStr for Version {
+    type Err = String;
+    fn from_str(text: &str) -> Result<Self, String> {
+        Ok(Version(numeric_identifier(text)?))
+    }
+}
+impl FromStr for Req {
+    type Err = String;
+    fn from_str(text: &str) -> Result<Self, String> {
+        Ok(Req(text.len() as u64))
+    }
+}
+impl Version {
+    pub fn parse(text: &str) -> Result<Self, String> {
+        Version::from_str(text)
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn numeric_identifier_rejects_garbage() {
+        assert!(Version::parse("1x").is_err());
+    }
+}
+"####;
+
+const ENTRY_NEVER_CALLED_BY_A_TEST: &str = r####"use std::str::FromStr;
+fn numeric_identifier(input: &str) -> Result<u64, String> {
+    let mut value = 0u64;
+    for digit in input.bytes() {
+        if digit < b'0' || digit > b'9' {
+            return Err("bad digit".to_string());
+        }
+        value = value * 10 + (digit - b'0') as u64;
+    }
+    Ok(value)
+}
+pub struct Version(pub u64);
+pub struct Req(pub u64);
+impl FromStr for Version {
+    type Err = String;
+    fn from_str(text: &str) -> Result<Self, String> {
+        Ok(Version(numeric_identifier(text)?))
+    }
+}
+impl FromStr for Req {
+    type Err = String;
+    fn from_str(text: &str) -> Result<Self, String> {
+        Ok(Req(text.len() as u64))
+    }
+}
+impl Version {
+    pub fn parse(text: &str) -> Result<Self, String> {
+        Version::from_str(text)
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn numeric_identifier_rejects_garbage() {
+        assert_eq!(1 + 1, 2);
+    }
+}
+"####;
+
+const ENTRY_NEVER_CALLS_THE_OWNER: &str = r####"use std::str::FromStr;
+fn numeric_identifier(input: &str) -> Result<u64, String> {
+    let mut value = 0u64;
+    for digit in input.bytes() {
+        if digit < b'0' || digit > b'9' {
+            return Err("bad digit".to_string());
+        }
+        value = value * 10 + (digit - b'0') as u64;
+    }
+    Ok(value)
+}
+pub struct Version(pub u64);
+pub struct Req(pub u64);
+impl FromStr for Version {
+    type Err = String;
+    fn from_str(text: &str) -> Result<Self, String> {
+        Ok(Version(numeric_identifier(text)?))
+    }
+}
+impl FromStr for Req {
+    type Err = String;
+    fn from_str(text: &str) -> Result<Self, String> {
+        Ok(Req(text.len() as u64))
+    }
+}
+impl Version {
+    pub fn parse(text: &str) -> Result<Self, String> {
+        Ok(Version(text.len() as u64))
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn numeric_identifier_rejects_garbage() {
+        assert!(Version::parse("1x").is_err());
+    }
+}
+"####;
+
+#[test]
+fn an_infection_unknown_private_helper_behind_a_public_entry_names_the_limit() -> Result<(), String>
+{
+    let fixture = Fixture::new("private-entry", PRIVATE_HELPER_BEHIND_PUBLIC_ENTRY)?;
+    let finding = fixture.boundary_finding()?;
+    // Fixture construction: infection_unknown, weak reach, and the only
+    // relation is the test's name.
+    assert_eq!(finding.class, ExposureClass::InfectionUnknown);
+    assert_eq!(finding.ripr.reach.state, StageState::Weak);
+    assert!(
+        all_relations(&finding, |reason| reason == RelationReason::OwnerNamedTest),
+        "{:?}",
+        finding.related_tests
+    );
+    // The class and reach stay; only the named limitation is added, as
+    // indirect candidate-path evidence and never a related-test relation.
+    assert!(
+        finding.static_limit_kind.is_some(),
+        "{:?}",
+        finding.evidence
+    );
+    assert!(
+        finding
+            .stop_reasons
+            .contains(&StopReason::TransitiveReachUnresolved)
+    );
+    assert_eq!(
+        finding.related_tests.len(),
+        1,
+        "{:?}",
+        finding.related_tests
+    );
+    assert!(
+        finding.evidence.iter().any(|line| line.contains("`parse`")),
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+#[test]
+fn an_infection_unknown_helper_no_test_enters_keeps_its_bare_reading() -> Result<(), String> {
+    for (label, lib) in [
+        ("never-called", ENTRY_NEVER_CALLED_BY_A_TEST),
+        ("never-calls-owner", ENTRY_NEVER_CALLS_THE_OWNER),
+    ] {
+        let fixture = Fixture::new(label, lib)?;
+        let finding = fixture.boundary_finding()?;
+        assert_eq!(finding.class, ExposureClass::InfectionUnknown, "{label}");
+        assert_eq!(finding.ripr.reach.state, StageState::Weak, "{label}");
+        assert_eq!(finding.static_limit_kind, None, "{label}");
+        assert!(
+            finding.stop_reasons.iter().all(|reason| {
+                *reason != StopReason::TransitiveReachUnresolved
+                    && *reason != StopReason::MacroReachUnresolved
+            }),
+            "{label}"
+        );
+    }
+    Ok(())
+}
+
+// #11481 negatives for the `infection_unknown` + `owner_named_test` admission.
+const NUMERIC_OWNER: &str = r####"use std::str::FromStr;
+fn numeric_identifier(input: &str) -> Result<u64, String> {
+    let mut value = 0u64;
+    for digit in input.bytes() {
+        if digit < b'0' || digit > b'9' {
+            return Err("bad digit".to_string());
+        }
+        value = value * 10 + (digit - b'0') as u64;
+    }
+    Ok(value)
+}
+"####;
+
+const OWNER_NAMED_TEST: &str = r####"#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn numeric_identifier_rejects_garbage() {
+        assert!(other::parse("1x").is_err());
+    }
+}
+"####;
+
+fn assert_unlimited(finding: &Finding, label: &str) {
+    assert_eq!(finding.static_limit_kind, None, "{label}");
+    assert!(
+        finding.stop_reasons.iter().all(|reason| {
+            *reason != StopReason::TransitiveReachUnresolved
+                && *reason != StopReason::MacroReachUnresolved
+        }),
+        "{label}"
+    );
+}
+
+// (a) A same-named function in a different module is what the entry calls.
+// Observed behavior: the lexical walk matches callee names only, so it does
+// not distinguish `other::numeric_identifier` from the changed owner and
+// still names the (advisory) limit. This pins that known limit; the class,
+// reach and related tests are unchanged either way.
+#[test]
+fn a_same_named_function_in_another_module_is_witnessed_by_name_only_known_limit()
+-> Result<(), String> {
+    let lib = format!(
+        "{NUMERIC_OWNER}pub mod other {{\n    pub fn numeric_identifier(input: &str) -> Result<u64, String> {{\n        Ok(input.len() as u64)\n    }}\n    pub fn parse(text: &str) -> Result<u64, String> {{\n        numeric_identifier(text)\n    }}\n}}\n{OWNER_NAMED_TEST}"
+    );
+    let fixture = Fixture::new("same-name-other-module", &lib)?;
+    let finding = fixture.boundary_finding()?;
+    assert_eq!(finding.class, ExposureClass::InfectionUnknown);
+    assert_eq!(finding.ripr.reach.state, StageState::Weak);
+    assert!(all_relations(&finding, |reason| {
+        reason == RelationReason::OwnerNamedTest
+    }));
+    // Known limit: witnessed through the name-only walk, still advisory.
+    assert!(
+        finding.static_limit_kind.is_some(),
+        "{:?}",
+        finding.evidence
+    );
+    assert_eq!(finding.related_tests.len(), 1);
+    Ok(())
+}
+
+// (d) A `#[cfg(test)]`-only helper as the entry is not production reach.
+#[test]
+fn a_cfg_test_only_helper_entry_names_no_limit() -> Result<(), String> {
+    let lib = format!(
+        "{NUMERIC_OWNER}#[cfg(test)]\nmod helpers {{\n    pub fn parse(text: &str) -> Result<u64, String> {{\n        super::numeric_identifier(text)\n    }}\n}}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn numeric_identifier_rejects_garbage() {{\n        assert!(helpers::parse(\"1x\").is_err());\n    }}\n}}\n"
+    );
+    let fixture = Fixture::new("cfg-test-helper", &lib)?;
+    let finding = fixture.boundary_finding()?;
+    assert_eq!(finding.ripr.reach.state, StageState::Weak);
+    assert_unlimited(&finding, "cfg-test-helper");
+    Ok(())
+}
+
+fn related(
+    template: &crate::domain::RelatedTest,
+    reason: RelationReason,
+) -> crate::domain::RelatedTest {
+    let mut row = template.clone();
+    row.relation_reason = Some(reason);
+    row
+}
+
+// (b) and (c) pin the trigger on a real owner-named finding, varying only the
+// class and the relation set.
+#[test]
+fn the_owner_named_admission_is_limited_to_infection_unknown_all_owner_named() -> Result<(), String>
+{
+    let lib = format!(
+        "{NUMERIC_OWNER}pub struct Version(pub u64);\nimpl Version {{\n    pub fn parse(text: &str) -> Result<Self, String> {{\n        Ok(Version(numeric_identifier(text)?))\n    }}\n}}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn numeric_identifier_rejects_garbage() {{\n        assert!(Version::parse(\"1x\").is_err());\n    }}\n}}\n"
+    );
+    let fixture = Fixture::new("admission-matrix", &lib)?;
+    let mut finding = fixture.boundary_finding()?;
+    finding.static_limit_kind = None;
+    finding.class = ExposureClass::InfectionUnknown;
+    finding.ripr.reach.state = StageState::Weak;
+    let template = finding
+        .related_tests
+        .first()
+        .cloned()
+        .ok_or("fixture has no related test")?;
+    let base = related(&template, RelationReason::OwnerNamedTest);
+    finding.related_tests = vec![base.clone()];
+    assert!(super::needs_proximity_reach_limit(&finding));
+    // (b) mixed with another non-proximity relation stays unlimited.
+    for other in [
+        RelationReason::ImportPathAffinity,
+        RelationReason::FixtureOwnerAffinity,
+        RelationReason::DirectOwnerCall,
+    ] {
+        finding.related_tests = vec![base.clone(), related(&template, other)];
+        assert!(!super::needs_proximity_reach_limit(&finding), "{other:?}");
+    }
+    // (c) deliberate asymmetry: owner_named_test alone does not limit a
+    // weakly_exposed finding (follow-up, #11481).
+    finding.class = ExposureClass::WeaklyExposed;
+    finding.related_tests = vec![base];
+    assert!(!super::needs_proximity_reach_limit(&finding));
     Ok(())
 }

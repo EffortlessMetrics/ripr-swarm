@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- `ripr check` no longer re-masks and re-parses a parent module file for every related test of every probe when it checks whether a parent module shadows the receiver type or trait. The owner-independent part is memoized per file and name (workers racing on the same first miss may each compute it once), and a parent that never mentions the name is answered from its text without a parse, so a warm check on a large crate does less repeated parsing (on this repository's `crates/ripr` diff, warm 120 s to 102 s with byte-identical reports) (#10809).

@@ -1,0 +1,53 @@
+{
+  "case_id": "spec-b-0169-path-parent-child-helper",
+  "subject_id": "authored-spec-b-configured",
+  "diff": "cases/spec-b-0169-path-parent-child-helper.diff",
+  "anchor": {
+    "file": "src/nested/child.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "0169_path_parent_child_helper",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test --locked",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "3",
+        "mutated_line": "3",
+        "outcome": "tests_failed",
+        "failing_test": "nested::child::nested_directory_anchor",
+        "equivalence_review": "not equivalent: nested::child::nested_directory_anchor expects 4, not 3"
+      },
+      {
+        "replacement": "5",
+        "mutated_line": "5",
+        "outcome": "tests_failed",
+        "failing_test": "nested::child::nested_directory_anchor",
+        "equivalence_review": "not equivalent: nested::child::nested_directory_anchor expects 4, not 5"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The cfg(test) path-selected renamed parent declares an ordinary mod child. Rust compiles nested/child.rs, not nested/renamed/child.rs; its edited helper inherits the actual module context and stays silent. The misleading stem child is retained as a decoy, while runtime truth is established only for the compiled child.",
+  "spec_examples": [
+    "RIPR-SPEC-0169#3"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "5abb7591b0510f2fe563c086b42c381d8b4a2164",
+    "full_checkout_verdict": "silent",
+    "full_checkout_classifications": [],
+    "excerpt_parity": "matched"
+  }
+}

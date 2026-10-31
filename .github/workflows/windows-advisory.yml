@@ -364,10 +364,13 @@ jobs:
   # #4337 (Windows-host-only clippy in cfg(windows) test code), #4918
   # (cache-unusable warning silent on native Windows), and #4921 (gap_artifacts
   # tests failing on a POSIX-only test root) were each caught only because
-  # someone ran the suite or clippy natively on Windows. This job runs on an
-  # explicit `merge-ready` `labeled` event (other subscribed actions are skipped
-  # by the guard; `unlabeled` stays omitted per #4380) and
-  # covers exactly that family:
+  # someone ran the suite or clippy natively on Windows. This job is
+  # unchanged and still runs on schedule, manual dispatch and an explicit
+  # `merge-ready` `labeled` event (other subscribed actions are skipped by the
+  # guard; `unlabeled` stays omitted per #4380). On a merge-ready request
+  # routed-rust also runs the extracted windows-subset-qualification producer
+  # as an admitted aggregate child; that is a separate run of the same family,
+  # not a replacement for this job. It covers exactly that family:
   #
   #   - lsp::gap_artifacts: the #4921 class;
   #   - Cargo-home configuration identity: the #7748 Windows spelling class;

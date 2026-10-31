@@ -55,6 +55,9 @@ Hidden:
     - src/signals.ts:21 (exposed); kind: side_effect; reason: Related test reaches `notifyLiteral` with a `mock_expectation` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant…
     - src/signals.ts:25 (exposed); kind: return_value; reason: Related test reaches `loadProfile` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant…
     - src/signals.ts:29 (weak); kind: side_effect; reason: Related test reaches `notifyAudit` with bounded mock payload evidence `expect(record).toHaveBeenCalledWith("audit")`; keep the item advisory until mock-shape actionability can…
+  Hidden classes:
+    exposed = tests appear to notice the change
+    weak = tests reach it but check it only loosely
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

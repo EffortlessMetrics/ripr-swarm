@@ -168,3 +168,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_json_ignored_result (14)
+
+Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_ignored_result --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

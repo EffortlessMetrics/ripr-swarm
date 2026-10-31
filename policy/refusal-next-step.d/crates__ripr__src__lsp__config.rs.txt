@@ -1,0 +1,4 @@
+crates/ripr/src/lsp/config.rs|workspace/configuration item for the `ripr` section must be an object or null, got {item}
+crates/ripr/src/lsp/config.rs|workspace/configuration returned no items
+crates/ripr/src/lsp/config.rs|workspace/configuration value for `{key}` exceeds the {MAX_PULLED_VALUE_BYTES}-byte pulled-value bound
+crates/ripr/src/lsp/config.rs|workspace/configuration value for `{key}` has an invalid type or literal: {value} instant draft fast deep read

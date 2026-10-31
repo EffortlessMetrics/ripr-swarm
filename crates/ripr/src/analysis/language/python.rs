@@ -80,6 +80,7 @@ mod call_chain;
 mod caplog_text;
 mod classify;
 mod conditional_defs;
+mod conditional_expression;
 mod dataclass_default;
 mod deleted_lines;
 mod doctest_eval;
@@ -90,6 +91,7 @@ mod guard_credit;
 mod helper_inline;
 mod imported_call_operator;
 mod known_equality_helpers;
+mod loop_walk;
 mod message_pin;
 mod module_value;
 mod test_local_literal;
@@ -109,6 +111,7 @@ mod hypothesis;
 mod module_constants;
 mod no_behavior;
 mod oracles;
+mod owner_exact;
 mod owners_tests;
 mod param_fixtures;
 mod parametrize;
@@ -595,6 +598,11 @@ struct PythonAssertion {
     /// library's; `known_equality_helpers` re-reads the assertion as
     /// `assert left == right` once the file's imports prove it.
     known_equality_helper: Option<PythonKnownEqualityHelper>,
+    /// Set when rule 25 demoted `f(g(x)) == g(x)`: `f` is the bare callee
+    /// whose result the independent `g(x)` pins. The demotion stays for every
+    /// other owner; `owner_exact.rs` re-reads it as an exact pin per finding
+    /// whose owner is `f` (#9814).
+    owner_exact_callee: Option<String>,
 }
 
 /// The call under a candidate numpy.testing or assertpy equality helper
@@ -1149,6 +1157,10 @@ impl PythonAdapter {
             BTreeMap::new();
         let mut import_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
             BTreeMap::new();
+        let mut module_attribute_writes: Vec<(
+            PathBuf,
+            Vec<module_constants::PythonModuleAttributeWrite>,
+        )> = Vec::new();
         let mut limitations = Vec::new();
         // The diff-scoped limitation set describes the changed scope (the
         // read-failure disclosure model below); parse-failure promotions
@@ -1241,6 +1253,7 @@ impl PythonAdapter {
                 {
                     reach_conftests.insert(relative.clone());
                 }
+                module_attribute_writes.push((relative.clone(), facts.module_attribute_writes));
                 if is_test_file(relative) {
                     all_tests.extend(facts.tests);
                 } else {
@@ -1280,6 +1293,10 @@ impl PythonAdapter {
         fixtures::record_bare_sibling_imports(&mut all_tests, |path| {
             options.root.join(path).exists()
         });
+        module_constants::apply_foreign_module_attribute_writes(
+            &mut all_tests,
+            &module_attribute_writes,
+        );
         reexports::apply_package_reexports(
             &mut all_owners,
             |file| workspace_read.sources.get(file).map(String::as_str),
@@ -1848,6 +1865,9 @@ mod unreachable_assertion_tests;
 mod arm_activation_tests;
 
 #[cfg(test)]
+mod conditional_expression_tests;
+
+#[cfg(test)]
 mod assertion_selection_tests;
 
 #[cfg(test)]
@@ -1909,6 +1929,8 @@ mod test_body_writer_tests;
 #[cfg(test)]
 mod test_local_literal_tests;
 #[cfg(test)]
+mod test_module_constant_tests;
+#[cfg(test)]
 mod trailing_comment_tests;
 
 #[cfg(test)]
@@ -1940,6 +1962,8 @@ mod row_miss_tests;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod loop_walk_tests;
 #[cfg(test)]
 mod verdict_corpus_tests;
 

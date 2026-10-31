@@ -1,0 +1,72 @@
+{
+  "kind": "retained_public_cli_field_assertion_identity_projection",
+  "producer": "Public ripr check over retained field-review input/diff after the family-gate repair; selected semantic fields copied without value changes. Live stimulus retained in rust_macro_crate_scope.rs.",
+  "summary": {
+    "changed_rust_files": 1,
+    "probes": 1,
+    "findings": 1,
+    "exposed": 0,
+    "weakly_exposed": 0,
+    "reachable_unrevealed": 1,
+    "no_static_path": 0,
+    "infection_unknown": 0,
+    "propagation_unknown": 0,
+    "static_unknown": 0,
+    "changed_files_by_language": [
+      {
+        "language": "rust",
+        "files": 1
+      }
+    ]
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:field_construction:690f94ce",
+      "classification": "reachable_unrevealed",
+      "probe": {
+        "id": "probe:src_lib.rs:field_construction:690f94ce",
+        "family": "field_construction",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 5,
+        "expression": "minor: 8"
+      },
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "related_tests": [
+        {
+          "name": "pin",
+          "file": "tests/pin.rs",
+          "line": 4,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "assertion_not_credited",
+          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+        }
+      ],
+      "evidence": [
+        "Complete propagation witness reaches constructed field: minor: 8",
+        "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)",
+        "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)",
+        "Reachable tests can plausibly activate this changed behavior",
+        "Related tests appear to reach value: pin",
+        "assertion not credited: `assert_eq!` in pin at tests/pin.rs:4: tests/pin.rs:1 defines a macro named `assert_eq`"
+      ],
+      "ripr": {
+        "observe": {
+          "state": "no",
+          "confidence": "medium",
+          "summary": "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"
+        },
+        "discriminate": {
+          "state": "no",
+          "confidence": "medium",
+          "summary": "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"
+        }
+      }
+    }
+  ]
+}

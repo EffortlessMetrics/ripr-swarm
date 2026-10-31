@@ -64,7 +64,7 @@ exercised boundary from a missing one.
 - Evaluated families: `find`/`rfind` (present, absent, empty,
   multibyte), `len`, `starts_with`/`ends_with`/`contains`,
   `strip_prefix`/`strip_suffix`, `chars().next()`/`next_back()`,
-  `char::len_utf8`, `map_or` with a literal default and the identity
+  `char::len_utf8`, `map_or` with a bounded default and the identity
   closure, `checked_add`/`checked_sub`, and bounded string slicing
   from exact indices. Exact integer arithmetic (`+ - * / %`, with
   precedence and parentheses, failing closed on a leading sign,
@@ -111,7 +111,53 @@ exercised boundary from a missing one.
   evaluates it; a computed local keeps its existing any-row semantics
   (#3295), where one evaluable row suffices. The difference is
   deliberate: the direct form is new and fails closed on a row that may
-  sit on the other side.
+  sit on the other side. A local initializer retains the declared types of
+  owner parameters it reads: bounded arithmetic uses the same wide-integer
+  gate, and `checked_add`/`checked_sub` over integer parameters require
+  `usize`. A different integer width or signedness, or an unknown type,
+  stays unresolved instead of borrowing `usize` overflow semantics. String
+  lengths and char-derived indices keep their intrinsic `usize` semantics.
+  A same-file type alias, import rename or unresolved glob that can shadow
+  an intrinsic type spelling refuses integer evaluation in both direct
+  expressions and local initializers, including raw identifier spellings.
+  The root spellings (`std`, `core`, `alloc`) are refused by a
+  workspace-global pre-check: admission fails whenever any indexed file
+  aliases or renames a root, not only the owner's file, while every other
+  intrinsic spelling stays scoped to the owner's file. That broader
+  over-refusal is fail-closed and deliberate; narrowing it to the owner's
+  file rides the recorded optimization follow-up rather than this repair.
+  Type parameters of the owner and its enclosing impl/trait also refuse
+  intrinsic identity; unrelated functions' generic parameters do not bind
+  that owner. A missing or ambiguous owner context remains unresolved.
+  Generic declarations inside an owner do not escape into its signature.
+  A nested function's forbidden reference to an outer generic stays unresolved;
+  the absence of legal capture does not establish primitive identity.
+  Both forms share the intrinsic-identity admission; their operation-family
+  limits remain distinct. Literal-only expressions do not require unused
+  parameter types to be resolved. Alias resolution is not inferred from a name.
+  A directly compared owner parameter also constrains unsuffixed arithmetic:
+  `let k = ((if flag { 255 } else { 0 }) + 1) / 2; k <= bound` is not a
+  wide-integer computation when `bound: u8`. Local and direct forms retain
+  that declared counterpart constraint even for literal-only initializers.
+  Narrow or unresolved counterpart identities refuse arithmetic credit;
+  genuine wide counterparts and unrelated unused narrow parameters retain
+  their existing support. A live comparison local retains its initializer's
+  declared parameter constraints; unsupported declarations or rebound inputs
+  cannot borrow a stale wide parameter type. This does not infer typed constants, annotations,
+  helper return types or arbitrary Rust result types.
+  Raw or Unicode value names remain unresolved where existing plain-identifier
+  liveness evidence cannot certify the comparison constraint.
+  Explicit numeric suffixes on the counterpart retain their intrinsic limits:
+  narrow suffixes refuse arithmetic, wide suffixes preserve bounded arithmetic,
+  and checked integer methods still require usize semantics.
+- `map_or` evaluates its default once before selecting `Some` or `None`.
+  A refused default (including division by zero or an unsupported call)
+  leaves either arm unresolved. An evaluated default contributes its
+  provenance on both arms, even when the identity closure supplies the
+  selected value. This does not add any evaluated operation families.
+  Receiver and default failures precede closure-shape refusal, matching
+  their evaluation order; arbitrary closures and opaque defaults stay
+  unsupported.
 - Failure modes are typed and named: `Unsupported` names the earliest
   edge (unknown method family, non-identity closure, `map_or_else`,
   dynamic non-input identifier, over-limit chain/literal);
@@ -458,6 +504,9 @@ only reaches the owner without a bound exact assertion stays below `exposed`.
 `activation_evidence_resolves_computed_local_boundary_operands`,
 `exact_values_compare_plain_decimals_by_digits_only` and
 `an_integer_local_meets_only_an_integer_counterpart_cell`;
+`crates/ripr/tests/local_value_transfer_semantics.rs` and fixture
+`binding_value_semantics_fail_closed` (declared integer widths and eager
+`map_or` defaults, with intrinsic-index, scoped-generic and safe-default controls);
 `rust-verdict-corpus` cases `local-boundary-flag-hit`,
 `local-boundary-flag-trap`, `local-boundary-flag-negated`,
 `local-boundary-flag-shadowed`, `local-boundary-flag-loop` and

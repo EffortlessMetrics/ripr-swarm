@@ -191,8 +191,14 @@ fn assert_plain_reason(case: &str, old_src: &str, new_src: &str, test: &str) -> 
         repair.contains(plain),
         "{case}: repair must state the plain reason:\n{repair}"
     );
+    // Both callers change an async owner, which `ripr agent stub` refuses:
+    // the route is a hand-written test, and the refusal is named instead of
+    // a stub command that would refuse (#11111 burn-down).
     assert!(
-        repair.contains("--kind return_value") && repair.contains("write the test by hand"),
+        repair.contains("write the test by hand")
+            && repair
+                .contains("ripr cannot write a fill-in skeleton here because the owner is async")
+            && !repair.contains("--kind return_value"),
         "{case}: repair must name the working route:\n{repair}"
     );
     assert!(

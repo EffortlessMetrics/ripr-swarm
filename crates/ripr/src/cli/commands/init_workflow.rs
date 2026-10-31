@@ -411,6 +411,19 @@ mod install_version_tests {
         }
     }
 
+    /// The composite Action's default `version` is the same release the
+    /// generated workflow falls back to, so the two install routes cannot
+    /// drift apart when `LATEST_RELEASED_VERSION` advances.
+    #[test]
+    fn composite_action_default_version_tracks_the_latest_release() {
+        let action = include_str!("../../../../../.github/actions/ripr-check/action.yml");
+        let expected = format!("default: '{LATEST_RELEASED_VERSION}'");
+        assert!(
+            action.contains(&expected),
+            "update the `version` default in .github/actions/ripr-check/action.yml to {LATEST_RELEASED_VERSION}"
+        );
+    }
+
     /// A version that always exceeds the release constant, so this test
     /// stays unreleased no matter how far the constant advances (a hardcoded
     /// `0.11.0` would rot into a released version at the next bump).

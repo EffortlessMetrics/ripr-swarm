@@ -1,0 +1,3 @@
+crates/ripr/src/app/repair_card.rs|producer claims a suggested assertion but supplied no assertion text
+crates/ripr/src/app/repair_card.rs|repair card rejected_alternatives exceed the compact-card boundary
+crates/ripr/src/app/repair_card.rs|repair card route gate is closed; the card must not present a runnable route

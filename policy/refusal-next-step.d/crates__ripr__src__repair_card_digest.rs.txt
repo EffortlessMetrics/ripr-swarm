@@ -1,0 +1,1 @@
+crates/ripr/src/repair_card_digest.rs|repair card digest serialization failed: {error}

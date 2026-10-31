@@ -609,6 +609,118 @@ fn given_same_quote_nesting_in_a_single_line_f_string_field_then_the_rest_stays_
     ));
 }
 
+#[test]
+fn given_a_single_line_f_string_the_quote_pairing_cannot_follow_then_the_rest_stays_hidden() {
+    // Valid on CPython 3.12 with no Call node: `helper(1)` is string text.
+    for body in [
+        "x = f\"{ \"helper(1)\" }\"\n",
+        "x = f\"{y[\"helper(1)\"]}\"\n",
+        "x = f'{ 'helper(1)' }'\n",
+        "x = rf\"{y[\"helper(1)\"]}\"\n",
+        "assert F\"{y[\"helper(1)\"]}\" == x\n",
+        "x = f\"{\n    y\n}  helper(1)\"\n",
+        "x = f'{\n    y\n}  helper(1)'\n",
+        "x = f\"{y:{w}}{ \"helper(1)\" }\"\n",
+    ] {
+        assert!(!sees_call(body), "{body:?}");
+    }
+}
+
+#[test]
+fn given_an_f_string_the_quote_pairing_can_follow_then_a_real_call_stays_visible() {
+    for body in [
+        // Ordinary and different-quote nesting pair cleanly.
+        "assert f\"{x}\" == helper(1)\n",
+        "assert f\"{d['k']}\" == helper(1)\n",
+        "assert f'{d[\"k\"]}' == helper(1)\n",
+        "assert f\"{{\" == helper(1)\n",
+        "assert f\"{x:{w}}\" == helper(1)\n",
+        "assert f\"{x}\" + f\"{y}\" == helper(1)\n",
+        // A plain string is never an f-string: no field, no ambiguity.
+        "assert \"{ \" + helper(1) == x\n",
+        "assert perf\"{x}\" == helper(1)\n",
+        // A field closed on its own line within a triple-quoted f-string.
+        "assert f\"\"\"v\n{\n    helper(1)\n}\"\"\" == x\n",
+    ] {
+        assert!(sees_call(body), "{body:?}");
+    }
+}
+
+#[test]
+fn given_a_single_line_f_string_the_quote_pairing_can_follow_then_the_classifier_credits_a_real_call()
+-> Result<(), String> {
+    // Controls: the fix must not withhold credit for a real call after an
+    // f-string that pairs cleanly.
+    for body in [
+        "    assert f\"{x}\" == str(helper(1))\n",
+        "    assert f\"{d['k']}\" == str(helper(1))\n",
+    ] {
+        let body = indent_into_test_body(body);
+        let tests = format!("from src.version import helper\n\n\ndef test_x():\n{body}");
+        let finding = direct_call_finding(&tests)?;
+        assert!(call_credit(&finding), "{body:?}: {finding:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn given_degenerate_single_line_f_string_text_then_the_ambiguity_scan_never_panics() {
+    // (text, ambiguous): only a nested own quote or a newline inside a field
+    // is ambiguous; unterminated or empty input is not (the open-string rule
+    // hides it).
+    for (text, ambiguous) in [
+        ("", false),
+        ("f\"", false),
+        ("f\"{", false),
+        ("f\"{\"", false),
+        ("f\"\\", false),
+        ("f\"{\\", false),
+        ("f\"}}{{", false),
+        ("f'{'", false),
+        ("\"{ \"", true),
+        ("'{\n", true),
+    ] {
+        assert_eq!(
+            static_limits::single_line_fstring_is_ambiguous(text.chars()),
+            ambiguous,
+            "{text:?}"
+        );
+        let _ = static_limits::python_prefix_hides_code(text);
+        let _ = related_tests::contains_call_name(text, "helper");
+    }
+}
+
+#[test]
+fn given_an_ambiguous_single_line_f_string_in_the_line_prefix_then_the_prefix_check_hides_it() {
+    // Direct pin of the `python_prefix_hides_code` hunk: the prefix is
+    // balanced by naive quote pairing yet the f-string is ambiguous.
+    for prefix in [
+        "x = f\"{ \"",
+        "x = f\"{y[\"",
+        "x = rf'{ '",
+        "assert F\"{ \"a\" }\" == ",
+    ] {
+        assert!(
+            static_limits::python_prefix_hides_code(prefix),
+            "{prefix:?}"
+        );
+    }
+    // Controls: cleanly paired f-strings, a plain string and a longer name
+    // ending in `f` leave what follows visible.
+    for prefix in [
+        "x = f\"{y}\" + ",
+        "x = f\"{d['k']}\" + ",
+        "x = f\"{{\" + ",
+        "x = \"{ \" + ",
+        "x = perf\"{y}\" + ",
+    ] {
+        assert!(
+            !static_limits::python_prefix_hides_code(prefix),
+            "{prefix:?}"
+        );
+    }
+}
+
 fn nested_f_strings(levels: usize) -> String {
     let mut inner = "helper(1)".to_string();
     for level in (1..=levels).rev() {

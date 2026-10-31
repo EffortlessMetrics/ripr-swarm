@@ -62,8 +62,8 @@ use super::test_grip_evidence::RelatedTestGrip;
 use super::test_grip_evidence::shared_grips::SharedGrips;
 use crate::config::{
     PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, TYPESCRIPT_PROJECT_MARKERS,
-    TYPESCRIPT_SOURCE_DIR_MARKERS, source_dir_contains_detectable_python,
-    source_dir_contains_detectable_typescript,
+    TYPESCRIPT_SOURCE_DIR_MARKERS, detect_javascript_led_root,
+    source_dir_contains_detectable_python, source_dir_contains_detectable_typescript,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -594,7 +594,13 @@ pub(crate) struct CachedSeamLimitInfo {
 /// no longer reads as comparing by its fields (#10684).
 /// `1.123`: return/error matches! assertions require shared test execution
 /// admission. Older entries may credit ignored or broad expected-panic tests.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.123";
+/// `1.124`: retain the opaque assertion-macro limit beside nested expected
+/// macros when a bare owner call sits outside their inputs (#9644). The same
+/// version also covers a Kani proof harness getting its own source role
+/// instead of reading as a production function (RIPR-SPEC-0367).
+/// `1.125`: a bare imported unit variant receiver resolves to its enum's impl, so
+/// the receiver-unestablished withhold reads where a false gap was cached (#8782).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.125";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -763,7 +769,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.123";
 /// `0.127`: same literal fold and sole-glob reach as full `1.120` (#10479).
 /// `0.128`: same Display placeholder-edit refusal as full `1.121` (#9836).
 /// `0.130`: same matches! execution admission as full `1.123`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.130";
+/// `0.131`: same nested expected-macro limitation as full `1.124` (#9644).
+/// `0.132`: same imported-variant receiver as full `1.125` (#8782).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.132";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -934,7 +942,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.130";
 /// `0.127`: same literal fold and sole-glob reach as full `1.120` (#10479).
 /// `0.128`: same Display placeholder-edit refusal as full `1.121` (#9836).
 /// `0.130`: same matches! execution admission as full `1.123`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.130";
+/// `0.131`: same nested expected-macro limitation as full `1.124` (#9644).
+/// `0.132`: same imported-variant receiver as full `1.125` (#8782).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.132";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1129,7 +1139,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `return_value` (RIPR-SPEC-0360, #9478); `1.48` facts keep it unmapped.
 /// `1.50`: the row's literal arguments are substituted into the returned
 /// expression (#10797); `1.49` facts keep the unsubstituted row.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.50";
+/// `1.51`: exact `#[kani::proof]` functions carry the proof-harness role
+/// (RIPR-SPEC-0367); `1.50` facts leave them production.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.51";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -2976,11 +2988,15 @@ impl RepoFileFactCache {
             stage: FileFactStoreStage::CreateDir,
             message: format!("create file fact cache dir failed: {err}"),
         })?;
-        let envelope = FileFactCacheEnvelope::new(key.clone(), facts.clone());
-        let bytes = codec::encode_file_facts(&envelope).map_err(|message| FileFactStoreError {
-            stage: FileFactStoreStage::Encode,
-            message,
-        })?;
+        // Borrow the key and facts: the owned envelope deep-cloned the whole
+        // `FileFacts` (and four key strings) for every cold write only to
+        // serialize it once for the digest and once for the entry.
+        let envelope = FileFactCacheEnvelopeRef::new(key, facts);
+        let bytes =
+            codec::encode_file_facts_ref(&envelope).map_err(|message| FileFactStoreError {
+                stage: FileFactStoreStage::Encode,
+                message,
+            })?;
         crate::atomic_file::write_cache(&self.entry_path(key), &bytes, "file fact cache").map_err(
             |message| FileFactStoreError {
                 stage: FileFactStoreStage::Write,
@@ -3111,6 +3127,36 @@ struct FileFactCacheEnvelope {
     file_facts: FileFacts,
 }
 
+/// Borrowing write-side twin of [`FileFactCacheEnvelope`]. Field names, order
+/// and the omitted `payload_digest` match the owned envelope exactly, so the
+/// digest and the entry bytes are identical; it only avoids cloning the facts.
+#[derive(serde::Serialize)]
+struct FileFactCacheEnvelopeRef<'a> {
+    file_fact_cache_schema_version: &'a str,
+    analyzer_version: &'a str,
+    file_path: &'a Path,
+    content_hash: &'a str,
+    file_facts: &'a FileFacts,
+}
+
+impl<'a> FileFactCacheEnvelopeRef<'a> {
+    fn new(key: &'a RepoFileFactCacheKey, file_facts: &'a FileFacts) -> Self {
+        Self {
+            file_fact_cache_schema_version: &key.schema_version,
+            analyzer_version: &key.analyzer_version,
+            file_path: &key.file_path,
+            content_hash: &key.content_hash,
+            file_facts,
+        }
+    }
+
+    fn expected_digest(&self) -> Result<String, String> {
+        semantic_body_digest(FILE_FACT_ENVELOPE_DIGEST_DOMAIN, self)
+    }
+}
+
+const FILE_FACT_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:FileFactCacheEnvelope:v1";
+
 /// The envelope fields the inventory needs; serde skips the rest.
 #[derive(serde::Deserialize)]
 struct FileFactCacheHeader {
@@ -3222,6 +3268,7 @@ impl KnownFilePaths {
 }
 
 impl FileFactCacheEnvelope {
+    #[cfg(test)]
     fn new(key: RepoFileFactCacheKey, file_facts: FileFacts) -> Self {
         Self {
             payload_digest: None,
@@ -3655,7 +3702,7 @@ impl FileFactCacheEnvelope {
     /// Unsigned typed body binds identity and all serialized served fields in fixed order.
     /// Nested serde-skipped derived state is excluded by the existing serialization contract.
     fn expected_digest(&self) -> Result<String, String> {
-        semantic_body_digest("ripr-cache:FileFactCacheEnvelope:v1", self)
+        semantic_body_digest(FILE_FACT_ENVELOPE_DIGEST_DOMAIN, self)
     }
     fn validate_integrity(&self) -> Result<(), String> {
         let expected = self.expected_digest()?;
@@ -3724,8 +3771,8 @@ mod codec {
     #[cfg(test)]
     use super::CountCacheEnvelope;
     use super::{
-        CacheEnvelope, CorpusFingerprintEnvelope, FileFactCacheEnvelope, ShardedCacheEnvelope,
-        ShardedCacheManifest,
+        CacheEnvelope, CorpusFingerprintEnvelope, FileFactCacheEnvelope, FileFactCacheEnvelopeRef,
+        ShardedCacheEnvelope, ShardedCacheManifest,
     };
 
     #[cfg(test)]
@@ -3769,7 +3816,14 @@ mod codec {
         serde_json::from_slice(bytes).map_err(|err| format!("decode counts failed: {err}"))
     }
 
+    #[cfg(test)]
     pub(super) fn encode_file_facts(envelope: &FileFactCacheEnvelope) -> Result<Vec<u8>, String> {
+        super::encode_integrity_body(envelope, envelope.expected_digest()?)
+    }
+
+    pub(super) fn encode_file_facts_ref(
+        envelope: &FileFactCacheEnvelopeRef<'_>,
+    ) -> Result<Vec<u8>, String> {
         super::encode_integrity_body(envelope, envelope.expected_digest()?)
     }
 
@@ -4653,6 +4707,11 @@ fn hash_named_workspace_files(root: &Path, file_name: &str) -> String {
 /// (bounded to two presence booleans — never a per-file enumeration).
 /// TypeScript no-config detection (`tsconfig.json`/`jsconfig.json` and
 /// detectable TypeScript source below `src`/`tests`) binds the same way.
+/// A package-led JavaScript root (#11336: root `package.json` plus detectable
+/// JS/TS source at the root or below `src`/`test`/`tests`) also selects the
+/// TypeScript adapter, so its effective detection result binds as one
+/// `js_led_root=1` line, only when true. Roots where it is false keep their
+/// prior identities byte-for-byte.
 /// Content-only edits intentionally preserve this identity while creation
 /// and deletion invalidate it. Generated files and excluded directories do
 /// not participate: detection ignores them, so binding them would orphan
@@ -4679,10 +4738,12 @@ fn hash_workspace_manifests(root: &Path) -> String {
         .copied()
         .filter(|dir| source_dir_contains_detectable_typescript(root, dir))
         .collect();
+    let javascript_led_root = detect_javascript_led_root(root);
     if present_python_markers.is_empty()
         && detectable_source_dirs.is_empty()
         && present_typescript_markers.is_empty()
         && detectable_typescript_dirs.is_empty()
+        && !javascript_led_root
     {
         return cargo_identity;
     }
@@ -4707,6 +4768,9 @@ fn hash_workspace_manifests(root: &Path) -> String {
         identity.push_str("typescript_source_dir=");
         identity.push_str(dir);
         identity.push('\n');
+    }
+    if javascript_led_root {
+        identity.push_str("js_led_root=1\n");
     }
     hash_str(&identity)
 }
@@ -5204,7 +5268,7 @@ mod tests {
         // 1.47 -> 1.48: arrow-row oracles (RIPR-SPEC-0231 rule 9, #9619).
         // 1.48 -> 1.49: call-in-term accumulator probe (RIPR-SPEC-0360, #9478).
         // 1.49 -> 1.50: arrow row inputs substituted (RIPR-SPEC-0231 rule 9, #10797).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.50");
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.51");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -5351,7 +5415,10 @@ mod tests {
         // 1.120 -> 1.121: Display placeholder-edit refusal (#9836).
         // 1.121 -> 1.122: foreign embedded-type equality reading (#10684).
         // 1.122 -> 1.123: return/error matches! execution admission.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.123");
+        // 1.123 -> 1.124: nested expected-macro limit (#9644) and the
+        // proof-harness source role (RIPR-SPEC-0367).
+        // 1.124 -> 1.125: imported unit-variant receiver (#8782).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.125");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5461,8 +5528,10 @@ mod tests {
         // 0.127 -> 0.128: same Display placeholder-edit refusal as full 1.121.
         // 0.128 -> 0.129: same foreign embedded-type reading as full 1.122.
         // 0.129 -> 0.130: same matches! admission as full 1.123.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.130");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.130");
+        // 0.130 -> 0.131: same nested expected-macro limit as full 1.124 (#9644).
+        // 0.131 -> 0.132: same imported-variant receiver as full 1.125 (#8782).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.132");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.132");
     }
 
     #[test]
@@ -5499,6 +5568,26 @@ mod tests {
             CacheLoad::Hit(facts) => assert_eq!(facts, current_facts),
             other => return Err(format!("quarantined facts did not round trip: {other:?}")),
         }
+        Ok(())
+    }
+
+    #[test]
+    fn store_file_facts_writes_the_owned_envelope_bytes() -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        // The store path borrows the key and facts instead of cloning them
+        // into an owned envelope; the entry on disk must stay byte-identical
+        // to what the owned envelope encodes.
+        let scratch = integrity_scratch("store-owned-bytes")?;
+        let cache = RepoFileFactCache::at_dir(scratch.0.clone());
+        let file = Path::new("src/lib.rs");
+        let source = "pub fn f(x: u32) -> u32 { if x > 0 { x + 1 } else { 0 } }\n\
+                      #[test] fn t() { assert_eq!(f(1), 2); }\n";
+        let facts = RaRustSyntaxAdapter.summarize_file(file, source)?;
+        let key = RepoFileFactCacheKey::new(file, source.as_bytes());
+        cache.store_file_facts(&key, &facts)?;
+        let owned = FileFactCacheEnvelope::new(key.clone(), facts);
+        let on_disk = std::fs::read(cache.entry_path(&key)).map_err(|err| err.to_string())?;
+        assert_eq!(on_disk, codec::encode_file_facts(&owned)?);
         Ok(())
     }
 
@@ -7536,6 +7625,85 @@ mod tests {
             baseline.workspace_manifests_hash,
             cache_key().workspace_manifests_hash
         );
+
+        ignore_remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn package_led_javascript_root_changes_cache_identity() -> Result<(), String> {
+        let root = isolated_dir("javascript-led-root");
+        ignore_remove_dir_all(&root);
+        std::fs::create_dir_all(&root).map_err(|err| format!("create workspace: {err}"))?;
+        let identity = || hash_workspace_manifests(&root);
+        let cargo_only = hash_named_workspace_files(&root, "Cargo.toml");
+
+        // JavaScript with no manifest is not detected: the identity stays the
+        // bare Cargo identity (the early-return path), byte for byte.
+        std::fs::write(root.join("index.js"), "x").map_err(|err| format!("write index: {err}"))?;
+        assert!(!detect_javascript_led_root(&root));
+        assert_eq!(identity(), cargo_only);
+
+        let manifest = root.join("package.json");
+        std::fs::write(&manifest, "{}").map_err(|err| format!("write package.json: {err}"))?;
+        assert!(detect_javascript_led_root(&root));
+        let with_manifest = identity();
+        assert_ne!(with_manifest, cargo_only, "package.json creation flips it");
+
+        std::fs::write(&manifest, "{\"name\":\"edited\"}")
+            .map_err(|err| format!("rewrite package.json: {err}"))?;
+        assert_eq!(
+            with_manifest,
+            identity(),
+            "content-only package.json edits preserve the presence identity"
+        );
+
+        std::fs::remove_file(&manifest).map_err(|err| format!("remove package.json: {err}"))?;
+        assert_eq!(identity(), cargo_only, "package.json deletion restores it");
+
+        // A manifest alone is not a marker either.
+        std::fs::remove_file(root.join("index.js")).map_err(|err| format!("remove: {err}"))?;
+        std::fs::write(&manifest, "{}").map_err(|err| format!("write package.json: {err}"))?;
+        assert_eq!(identity(), cargo_only);
+
+        // #11419: each package-led source directory (`src/`, `test/`,
+        // `tests/`) participates in the identity, mirroring the detector's
+        // own per-directory coverage — not just the root source.
+        for dir in ["src", "test", "tests"] {
+            let source = root.join(dir).join("present.js");
+            std::fs::create_dir_all(root.join(dir))
+                .map_err(|err| format!("create {dir}: {err}"))?;
+            std::fs::write(&source, "x").map_err(|err| format!("write {dir}: {err}"))?;
+            assert!(
+                detect_javascript_led_root(&root),
+                "{dir}/ source selects the adapter"
+            );
+            assert_ne!(
+                identity(),
+                cargo_only,
+                "creating the first {dir} source must invalidate the cache identity"
+            );
+
+            std::fs::remove_file(&source).map_err(|err| format!("remove {dir}: {err}"))?;
+            assert_eq!(
+                identity(),
+                cargo_only,
+                "removing the last {dir} source must restore the baseline identity"
+            );
+
+            // Nested sources are covered by the recursive detector walk.
+            let nested = root.join(dir).join("pkg").join("nested.js");
+            std::fs::create_dir_all(root.join(dir).join("pkg"))
+                .map_err(|err| format!("create {dir}/pkg: {err}"))?;
+            std::fs::write(&nested, "x").map_err(|err| format!("write {dir}/pkg: {err}"))?;
+            assert_ne!(
+                identity(),
+                cargo_only,
+                "nested {dir} sources participate in detection identity"
+            );
+            std::fs::remove_file(&nested).map_err(|err| format!("remove nested {dir}: {err}"))?;
+        }
 
         ignore_remove_dir_all(&root);
         Ok(())

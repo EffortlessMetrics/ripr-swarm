@@ -6681,6 +6681,77 @@ fn analyze_diff_keeps_single_occurrence_probe_ids_stable() -> Result<(), String>
 }
 
 #[test]
+fn a_one_line_function_body_classifies_like_the_same_statement_on_its_own_line() {
+    // #11487: formatting must not change the shape or the boundary.
+    let one_line =
+        "export function disc(a: number, t: number) { if (a >= t) { return 10 } return 0 }";
+    let (family, delta) = classify_probe_shape(one_line);
+    assert_eq!(family, ProbeFamily::Predicate);
+    assert_eq!(delta, DeltaKind::Control);
+    assert_eq!(
+        typescript_boundary_discriminator(one_line),
+        typescript_boundary_discriminator("  if (a >= t) {"),
+    );
+    assert!(typescript_boundary_discriminator(one_line).is_some());
+    // Braces inside the parameter annotation are not the body.
+    let annotated = "function f(o: { a: number }, t: number): boolean { return o.a > t }";
+    assert_eq!(
+        typescript_boundary_discriminator(annotated),
+        typescript_boundary_discriminator("return o.a > t"),
+    );
+    // A signature whose body continues on later lines has nothing to read
+    // after the brace, so it yields no boundary of its own.
+    assert_eq!(
+        typescript_boundary_discriminator("export function disc(a: number, t: number) {"),
+        None
+    );
+}
+
+#[test]
+fn one_line_function_reading_does_not_claim_lookalikes_or_unchanged_guards() {
+    use super::probe_shape::{inline_guard_condition, one_line_function_body};
+    // `function` must be a whole keyword (reviewer finding on #11564).
+    for line in [
+        "functionality(a) { if (a > 1) { return 2 } }",
+        "functionHandler = (a) => { if (a > 1) { return 2 } }",
+    ] {
+        assert_eq!(one_line_function_body(line), line, "{line}");
+    }
+    // A generator is a function.
+    assert_ne!(
+        one_line_function_body("function* g(a) { if (a > 1) { yield 2 } }"),
+        "function* g(a) { if (a > 1) { yield 2 } }"
+    );
+    // The unchanged-guard check sees through the function head, so an edit
+    // to the statement after the guard is not credited at the guard's
+    // threshold.
+    let old = "function f(n: number) { if (n > 100) return n - 20; return 0 }";
+    let new = "function f(n: number) { if (n > 100) return n - 21; return 0 }";
+    assert!(inline_guard_condition(new).is_some());
+    assert_eq!(inline_guard_condition(old), inline_guard_condition(new));
+}
+
+#[test]
+fn one_line_function_first_statement_is_parseable_on_its_own() {
+    use super::probe_shape::one_line_function_first_statement as first;
+    assert_eq!(
+        first("export function d(a: number, t: number) { if (a >= t) { return 10 } return 0 }"),
+        "if (a >= t) { return 10 }"
+    );
+    assert_eq!(
+        first("function f(o: { a: number }, t: number): boolean { return o.a > t }"),
+        "return o.a > t"
+    );
+    // A brace inside a string does not close the consequent early.
+    assert_eq!(
+        first("function f(a) { if (a > 1) { return \"}\" } return 0 }"),
+        "if (a > 1) { return \"}\" }"
+    );
+    // Not a one-line function: unchanged.
+    assert_eq!(first("  if (a >= t) {"), "  if (a >= t) {");
+}
+
+#[test]
 fn classify_probe_shape_recognises_if_predicate() {
     let (family, delta) = classify_probe_shape("    if (amount >= threshold) {");
     assert_eq!(family, ProbeFamily::Predicate);
@@ -6749,6 +6820,73 @@ fn classify_probe_shape_reads_a_returned_ternary_as_its_condition_boundary() {
             "{line}"
         );
     }
+}
+
+/// #11256: a quoted operand is one operand, and an operator inside a string
+/// literal is no comparison.
+#[test]
+fn boundary_discriminator_is_faithful_or_withheld() {
+    // A plain quoted literal is named whole.
+    assert_eq!(
+        typescript_boundary_discriminator("  if (arg === \"stop\") {").as_deref(),
+        Some("arg == \"stop\"")
+    );
+    assert_eq!(
+        typescript_boundary_discriminator("  if (\"stop\" === arg) {").as_deref(),
+        Some("\"stop\" == arg")
+    );
+    // A literal holding `-` or a space was cut at that character (`arg == "`).
+    for line in [
+        "  if (arg !== \"--\") {",
+        "  if (\"--\" === arg) {",
+        "  if (mode === \"a b\") {",
+        "  if (mode === 'a-b') {",
+        "  if (mode === \"unterminated) {",
+    ] {
+        assert_eq!(typescript_boundary_discriminator(line), None, "{line}");
+    }
+    // A comparison-looking operator inside a string, or an arrow, is not a
+    // second comparison.
+    assert_eq!(
+        typescript_boundary_discriminator("  if (total >= 100 && ready) {").as_deref(),
+        Some("total == 100")
+    );
+    assert_eq!(
+        typescript_boundary_discriminator("  if (kind === \"a>=b\") {").as_deref(),
+        None,
+        "an unsimple literal is withheld"
+    );
+    assert_eq!(
+        typescript_boundary_discriminator("  if (kind === \"ab\" && ok) {").as_deref(),
+        Some("kind == \"ab\"")
+    );
+    // Through the changed-comparison selection the production path uses: the
+    // `--` edit names no discriminator (it was `arg == "`), and the compound
+    // edit names its own comparison, not the neighbouring `typeof` test.
+    let narrowed = |old: &str, new: &str| {
+        typescript_boundary_discriminator(&typescript_changed_boundary_text(
+            Path::new("src/_parser.ts"),
+            &ProbeFamily::Predicate,
+            Some(old),
+            new,
+        ))
+    };
+    assert_eq!(
+        narrowed("    if (arg === \"--\") {", "    if (arg !== \"--\") {"),
+        None
+    );
+    assert_eq!(
+        narrowed("    if (arg === \"stop\") {", "    if (arg !== \"stop\") {").as_deref(),
+        Some("arg == \"stop\"")
+    );
+    assert_eq!(
+        narrowed(
+            "    if (type === \"boolean\" && typeof value === \"string\") {",
+            "    if (type !== \"boolean\" && typeof value === \"string\") {"
+        )
+        .as_deref(),
+        Some("type == \"boolean\"")
+    );
 }
 
 #[test]
@@ -17921,6 +18059,54 @@ fn analyze_diff_contains_a_parse_worker_panic_on_a_changed_file() -> Result<(), 
     Ok(())
 }
 
+/// An armed analysis must not affect another concurrent analysis using the
+/// same relative file path under a different workspace root.
+#[test]
+fn parse_worker_injection_is_scoped_to_the_arming_analysis() -> Result<(), String> {
+    let armed_root = ts_unique_tempdir("workerpanic-isolation-armed")?;
+    let other_root = ts_unique_tempdir("workerpanic-isolation-other")?;
+    for root in [&armed_root, &other_root] {
+        ts_write_file(
+            &root.join("src/isolation.ts"),
+            "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
+        )?;
+    }
+    let run = |root: PathBuf| {
+        TypeScriptAdapter.analyze_diff(
+            &ts_analysis_options(root),
+            &OraclePolicy::default(),
+            &[changed_with_lines(
+                "src/isolation.ts",
+                &[(2, "  return a + b;")],
+            )],
+        )
+    };
+    let armed = super::parse::injected_worker_panic::arm(Path::new("src/isolation.ts"), 0);
+    // The other analysis completes while the first analysis's injection remains armed.
+    let other = std::thread::spawn(move || run(other_root))
+        .join()
+        .map_err(|_panic| "other analysis panicked".to_string())??;
+    assert!(
+        other.limitations.is_empty(),
+        "unrelated analysis: {:?}",
+        other.limitations
+    );
+    let failed = run(armed_root)?;
+    assert!(
+        failed.limitations.iter().any(|limit| {
+            limit.path.as_deref() == Some("src/isolation.ts")
+                && limit
+                    .bounded_detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("parse_worker_failed"))
+        }),
+        "armed analysis must disclose worker failure: {:?}",
+        failed.limitations
+    );
+    drop(armed);
+    Ok(())
+}
+
 /// #11132: a worker failure while extracting an UNCHANGED test file used to
 /// serve an empty extraction with no disclosure, so the file's tests vanished
 /// from the index and an owner they cover read as a confident false
@@ -18325,6 +18511,21 @@ fn detect_partial_none_when_every_test_extracted() {
     assert!(
         detect_partial_test_extraction(file, source, &extracted).is_none(),
         "fully extracted file must not report a partial-extraction gap"
+    );
+}
+
+/// Review on #10224: type-only parameter lists (`type F = (test: T) => void`,
+/// interface method signatures, `declare function`) never create runtime
+/// bindings, so their identifiers must not shadow the runner in the enclosing
+/// scope. A skipped suite still resolves dormant and reports no gap.
+#[test]
+fn detect_partial_none_when_type_only_parameters_name_the_runner() {
+    let file = Path::new("tests/shadow.test.ts");
+    let source = "type Handler = (test: unknown) => void;\ninterface Suite {\n  run(describe: string): void;\n}\ndeclare function setup(test: unknown): void;\ndescribe.skip('legacy', () => {\n  test('works', () => {\n    expect(1).toBe(1);\n  });\n});\n";
+    let extracted = extract_tests(file, source);
+    assert!(
+        detect_partial_test_extraction(file, source, &extracted).is_none(),
+        "a skipped suite shadowed only by type-only parameters must stay silent, got {extracted:?}"
     );
 }
 
@@ -19887,6 +20088,7 @@ mod comparison_edit_tests;
 mod custom_matcher_tests;
 mod decorated_reach_tests;
 mod default_object_member_tests;
+mod derived_operand_tests;
 mod directory_specifier_tests;
 mod dropped_term_tests;
 mod enum_member_tests;
@@ -19897,6 +20099,7 @@ mod guard_entry_tests;
 mod infection_tests;
 mod instance_class_tests;
 mod instance_factory_tests;
+mod issue10925_alias_resolution_tests;
 mod issue10925_shadow_index_tests;
 mod issue10925_shadow_scan_tests;
 mod issue7507_shadow_tests;

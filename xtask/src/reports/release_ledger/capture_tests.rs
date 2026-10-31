@@ -573,3 +573,51 @@ fn blank_separators_beside_a_test_module_do_not_hide_a_test_only_edit() -> Resul
     let _ = fs::remove_dir_all(&root);
     result
 }
+
+#[test]
+fn capture_refuses_shallow_repository_but_accepts_full_one() -> Result<(), String> {
+    let source = new_repo("shallow-src")?;
+    let base = commit(&source, &[("a.txt", Some("1\n"))], "base")?;
+    commit(&source, &[("a.txt", Some("2\n"))], "feat: two (#1)")?;
+    let tip = commit(&source, &[("a.txt", Some("3\n"))], "feat: three (#2)")?;
+    let shallow = source.with_file_name(format!(
+        "{}-shallow",
+        source.file_name().and_then(|n| n.to_str()).unwrap_or("x")
+    ));
+    let url = format!("file://{}", source.display());
+    let result = (|| -> Result<(), String> {
+        git(
+            &source,
+            &[
+                "clone",
+                "--quiet",
+                "--depth",
+                "1",
+                &url,
+                &shallow.display().to_string(),
+            ],
+        )?;
+        let run = |repo: &Path| {
+            capture(&CaptureArgs {
+                repo,
+                repository: "example/ledger",
+                base: &base,
+                cut: &tip,
+                main: &tip,
+            })
+        };
+        let error = run(&shallow).err().ok_or("shallow capture must fail")?;
+        require(
+            error.contains("full clone required") && error.contains("git fetch --unshallow"),
+            "shallow refusal names the full-clone requirement and the fix",
+        )?;
+        let facts = run(&source)?;
+        require(
+            facts.range.reachable.len() == 2,
+            "a full repository captures the whole range",
+        )
+    })();
+    let _ = fs::remove_dir_all(&source);
+    let _ = fs::remove_dir_all(&shallow);
+    result
+}

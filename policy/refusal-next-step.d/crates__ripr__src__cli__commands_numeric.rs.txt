@@ -1,0 +1,2 @@
+crates/ripr/src/cli/commands_numeric.rs|{flag} requires a non-negative integer; got {value:?}
+crates/ripr/src/cli/commands_numeric.rs|{flag} requires a positive integer; got {value:?}

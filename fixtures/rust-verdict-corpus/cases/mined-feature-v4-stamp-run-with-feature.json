@@ -1,0 +1,52 @@
+{
+  "case_id": "mined-feature-v4-stamp-run-with-feature",
+  "subject_id": "authored-mined-features",
+  "diff": "cases/mined-feature-v4-stamp-run-with-feature.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 9
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_bitmask",
+  "test_shape": "feature_gated_module_tests_run_with_feature",
+  "hard_case": "Mirrors uuid, where the v4 module and its tests exist only under `cfg(feature = \"v4\")`. Truth convention for feature-gated cases: truth is the feature set the case's own test_command runs. ripr analyzes the source without choosing a feature set, so the verdict does not depend on the command.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test --features v4",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "0x5000 | (raw & 0x0fff)",
+        "mutated_line": "0x5000 | (raw & 0x0fff)",
+        "outcome": "tests_failed",
+        "failing_test": "v4::tests::stamp_sets_the_version_nibble",
+        "equivalence_review": "not equivalent: the version nibble becomes 5"
+      },
+      {
+        "replacement": "0x4000 | raw",
+        "mutated_line": "0x4000 | raw",
+        "outcome": "tests_failed",
+        "failing_test": "v4::tests::stamp_sets_the_version_nibble",
+        "equivalence_review": "not equivalent: stamp(0xffff) keeps the high nibble bits"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "With the v4 feature on, stamp_sets_the_version_nibble pins stamp(0xffff) and stamp(0x0000), so both mutants fail it. The twin mined-feature-v7-stamp-default-features-run labels the same shape under a command that leaves the feature off.",
+  "labeling_observation": {
+    "ripr_commit": "f0397266",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,6 @@
+crates/ripr/src/app/pr_summary/mod.rs|failed to create parent dir for {label}: {err}
+crates/ripr/src/app/pr_summary/mod.rs|failed to determine working directory: {err} failed to create parent dir for {label}: {err}
+crates/ripr/src/app/pr_summary/mod.rs|failed to write {label}: {err}
+crates/ripr/src/app/pr_summary/mod.rs|missing or unreadable {PR_SUMMARY_MD}: {err}
+crates/ripr/src/app/pr_summary/mod.rs|pr-summary {arg} requires a fully qualified or ordinary relative path; \                              Windows
+crates/ripr/src/app/pr_summary/mod.rs|pr-summary {arg} requires a non-empty path value

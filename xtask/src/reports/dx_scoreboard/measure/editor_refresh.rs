@@ -1,5 +1,6 @@
 //! Editor-refresh instrument for `speed.editor_refresh_ms` and
-//! `speed.editor_refresh_unanswered_progress_ms` (#5317, #9149).
+//! `speed.editor_refresh_unanswered_progress_ms` (#5317, #9149) and the
+//! server's peak memory, `speed.editor_refresh_peak_rss_mb`.
 //!
 //! Drives `ripr lsp --stdio` the way an editor does: initialize with
 //! work-done-progress and pull configuration advertised, open one changed
@@ -54,6 +55,9 @@ pub(super) struct EditorRefresh {
     /// Terminal `state` the server reported for that refresh.
     pub(super) state: String,
     pub(super) file: String,
+    /// Peak resident set (`VmHWM`) of the language-server process once the
+    /// edited save settled; `None` off Linux.
+    pub(super) peak_rss_bytes: Option<u64>,
 }
 
 impl EditorRefresh {
@@ -128,11 +132,15 @@ pub(super) fn measure_editor_refresh(
         Wait::Closed => "lsp_closed".to_string(),
     };
     let ms = started.elapsed().as_secs_f64() * 1000.0;
+    // Read while the server is still alive: the peak is only visible in
+    // /proc until the process exits.
+    let peak_rss_bytes = crate::run::proc_peak_rss_bytes(session.child.id());
     session.shutdown();
     Ok(Some(EditorRefresh {
         ms,
         state,
         file: relative.display().to_string(),
+        peak_rss_bytes,
     }))
 }
 

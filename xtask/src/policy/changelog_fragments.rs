@@ -14,15 +14,15 @@ use std::path::Path;
 
 use crate::{FixKind, PolicyReportSpec, finish_policy_report};
 
-const FRAGMENT_DIR: &str = "changelog.d";
-const README: &str = "README.md";
+pub(super) const FRAGMENT_DIR: &str = "changelog.d";
+pub(super) const README: &str = "README.md";
 const POLICY_DOC: &str = "docs/CHANGELOG_POLICY.md";
-const CHANGELOG: &str = "CHANGELOG.md";
+pub(super) const CHANGELOG: &str = "CHANGELOG.md";
 
 /// The section headings `docs/CHANGELOG_POLICY.md` allows. The check also
 /// fails when the policy doc stops listing one of them, so the two cannot
 /// drift apart silently.
-const ALLOWED_SECTIONS: &[&str] = &[
+pub(super) const ALLOWED_SECTIONS: &[&str] = &[
     "Added",
     "Changed",
     "Deprecated",
@@ -159,7 +159,7 @@ pub(crate) fn unfolded_fragment_paths<'a>(
 }
 
 /// Violations for one fragment file, given its file name and contents.
-fn fragment_violations(name: &str, text: &str) -> Vec<String> {
+pub(super) fn fragment_violations(name: &str, text: &str) -> Vec<String> {
     let path = format!("{FRAGMENT_DIR}/{name}");
     let mut violations = Vec::new();
 
@@ -392,7 +392,7 @@ fn unreleased_section_violations(text: &str) -> Vec<String> {
     violations
 }
 
-fn section_of(line: &str) -> Option<&str> {
+pub(super) fn section_of(line: &str) -> Option<&str> {
     line.trim()
         .strip_prefix("<!--")?
         .strip_suffix("-->")?

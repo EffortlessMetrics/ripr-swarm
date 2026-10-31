@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- TypeScript test extraction indexes a renamed registration alias the imports layer admits (`const { test: t } = require('node:test')`, `import { test as t }`): the alias registers like the direct spelling, bare or through an active modifier, with the same runner, shadowing, skip and options fences; a namespace object's own name, a member read off it, inactive modifiers, and aliased `.each` still register nothing (#10987).

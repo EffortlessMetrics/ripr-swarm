@@ -103,7 +103,12 @@ cause.
   assert_eq`, and the factory-declaration, shadow, qualifier and generic
   boundaries of the identity gate.
 - The serde rows `serde-derive-rename-field-upper` and
-  `serde-derive-rename-variant-lower` read `limited`.
+  `serde-derive-rename-variant-lower` read `limited`. Their receiver is a
+  bare-imported unit variant (`UpperCase.apply_to_field`). The identity gate
+  resolves it only when exactly one non-aliased `use` of the enum's glob or of
+  the variant brings it in, the enum has one declaration, the spelling is not a
+  prelude value and no macro or same-named item can rebind it (#8782); then
+  only the placement input is missing and this rule withholds the gap.
 - Own-scope controls (PR3): a mounted file, a `#[macro_use]` module, a literal
   `#[path]` into another package, a nested `src`, and files with no package
   keep the bare-assertion gap; so do a glob or explicit import, `extern crate`,

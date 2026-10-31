@@ -580,3 +580,94 @@ fn git_patch_preserves_trailing_whitespace_paths_and_empty_renames() -> io::Resu
     }
     Ok(())
 }
+
+#[cfg(unix)]
+#[test]
+fn git_rename_source_with_embedded_header_separator() -> io::Result<()> {
+    use super::super::parse::parse_unified_diff_with_metadata;
+
+    let repo = Repo::new("rename-embedded-separator")?;
+    fs::create_dir_all(repo.root.join("src/old b"))?;
+    fs::write(
+        repo.root.join("src/old b/name.rs"),
+        "pub fn value() -> u8 { 1 }\n",
+    )?;
+    fs::write(
+        repo.root.join("src/control old.rs"),
+        "pub fn control() -> u8 { 2 }\n",
+    )?;
+    fs::write(
+        repo.root.join("src/line\nbreak.rs"),
+        "pub fn newline() -> u8 { 3 }\n",
+    )?;
+    git(&repo.root, &["add", "."])?;
+    git(&repo.root, &["commit", "--quiet", "-m", "rename sources"])?;
+    let base = git(&repo.root, &["rev-parse", "HEAD"])?;
+    git(&repo.root, &["mv", "src/old b/name.rs", "src/new.rs"])?;
+    git(
+        &repo.root,
+        &["mv", "src/control old.rs", "src/control new.rs"],
+    )?;
+    git(
+        &repo.root,
+        &["mv", "src/line\nbreak.rs", "src/new\nline.rs"],
+    )?;
+    git(
+        &repo.root,
+        &["commit", "--quiet", "-m", "rename sources to targets"],
+    )?;
+    let patch = load_diff_range(&repo.root, base.trim(), "HEAD").map_err(io::Error::other)?;
+    assert!(
+        patch.contains("diff --git a/src/old b/name.rs b/src/new.rs\n"),
+        "{patch:?}"
+    );
+    assert!(
+        patch.contains("rename from src/old b/name.rs\nrename to src/new.rs\n"),
+        "{patch:?}"
+    );
+    let parsed = parse_unified_diff_with_metadata(&patch);
+    assert_eq!(parsed.renamed_file_count, 3, "{patch:?}");
+    assert_eq!(parsed.pure_rename_file_count, 3, "{patch:?}");
+    assert!(
+        parsed
+            .pure_rename_paths
+            .contains(&PathBuf::from("src/new\nline.rs"))
+    );
+    assert!(
+        parsed
+            .pure_rename_paths
+            .contains(&PathBuf::from("src/new.rs"))
+    );
+    assert!(
+        parsed
+            .pure_rename_paths
+            .contains(&PathBuf::from("src/control new.rs"))
+    );
+    for contradictory in [
+        patch.replacen(
+            "rename from src/old b/name.rs",
+            "rename from src/other.rs",
+            1,
+        ),
+        patch.replacen("rename to src/new.rs", "rename to src/other.rs", 1),
+        patch.replacen(
+            "rename from src/old b/name.rs",
+            "rename from ../escape.rs",
+            1,
+        ),
+    ] {
+        let rejected = parse_unified_diff_with_metadata(&contradictory);
+        assert_eq!(rejected.pure_rename_file_count, 2, "{contradictory:?}");
+        assert!(
+            !rejected
+                .pure_rename_paths
+                .contains(&PathBuf::from("src/new.rs"))
+        );
+        assert!(
+            !rejected
+                .pure_rename_paths
+                .contains(&PathBuf::from("src/other.rs"))
+        );
+    }
+    Ok(())
+}

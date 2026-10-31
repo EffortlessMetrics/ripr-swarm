@@ -944,6 +944,10 @@ fn validate_artifact_identity(
             ));
         }
     }
+    // #3056: the currentness enum is the repository-currentness axis only.
+    // The production-time dirty declaration is carried separately so the
+    // `Historical` classification does not discard it.
+    let produced_from_dirty = identity.analysis.worktree == "dirty";
     let currentness = if actual_head == identity.repository.head {
         if identity.analysis.worktree == "dirty" || actual_worktree_dirty {
             ArtifactCurrentness::DirtyWorktree
@@ -955,6 +959,7 @@ fn validate_artifact_identity(
     };
     Ok(ValidatedArtifact {
         currentness,
+        produced_from_dirty,
         base_revision: identity.analysis.base_revision,
         input_identity: identity.analysis.input_identity,
         snapshot_identity: identity.snapshot_identity,
@@ -1164,6 +1169,11 @@ pub(crate) fn pair_currentness_label(
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ValidatedArtifact {
     pub(crate) currentness: ArtifactCurrentness,
+    /// The artifact envelope's production-time `analysis.worktree == "dirty"`
+    /// declaration (#3056). Independent of `currentness`: an artifact produced
+    /// from a dirty worktree classifies as `Historical` once the repository
+    /// advances, and this keeps the fact visible. Pair tokens never read it.
+    pub(crate) produced_from_dirty: bool,
     pub(crate) base_revision: Option<String>,
     pub(crate) input_identity: String,
     pub(crate) snapshot_identity: String,
@@ -1175,6 +1185,16 @@ pub(crate) struct ValidatedArtifact {
     /// envelope. Verify output binds this value so a later byte change to the
     /// artifact is detectable downstream (#2922 PR B).
     pub(crate) content_sha256: String,
+}
+
+impl ValidatedArtifact {
+    /// True only when this artifact is classified `Historical` and its
+    /// envelope declared a dirty production-time worktree (#3056). Current
+    /// and dirty-worktree artifacts already disclose dirtiness through
+    /// `currentness`, so they never set this additive verify field.
+    pub(crate) fn historical_produced_from_dirty(&self) -> bool {
+        self.currentness == ArtifactCurrentness::Historical && self.produced_from_dirty
+    }
 }
 
 /// Validate that two producer artifacts describe comparable analyses. The
@@ -3368,6 +3388,7 @@ mod tests {
     fn comparable_artifact() -> ValidatedArtifact {
         ValidatedArtifact {
             currentness: ArtifactCurrentness::Current,
+            produced_from_dirty: false,
             base_revision: None,
             input_identity: "input:stable".to_string(),
             snapshot_identity: format!("snapshot:input:stable;revision:{}", "a".repeat(40)),
@@ -4499,6 +4520,77 @@ mod tests {
                     "a declared-dirty artifact must stay DirtyWorktree on a clean worktree"
                         .to_string(),
                 );
+            }
+            Ok(())
+        })();
+        let cleanup =
+            std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"));
+        result?;
+        cleanup?;
+        Ok(())
+    }
+
+    #[test]
+    fn historical_classification_preserves_production_time_dirty_fact() -> Result<(), String> {
+        let advance = |root: &Path| {
+            run_git(
+                root,
+                &[
+                    "-c",
+                    "commit.gpgSign=false",
+                    "commit",
+                    "--quiet",
+                    "--allow-empty",
+                    "-m",
+                    "advance",
+                ],
+            )
+        };
+        let root = temporary_git_root()?;
+        let result = (|| -> Result<(), String> {
+            commit_fixture_file(&root)?;
+            // Clean-produced artifact.
+            let clean_raw = commit_content(&repo_exposure_raw_with_placeholder(&root)?)?;
+            // Dirty-produced artifact at the same revision.
+            std::fs::write(root.join("Cargo.toml"), "[workspace]\n# unsaved edit\n")
+                .map_err(|error| format!("dirty fixture file: {error}"))?;
+            let dirty_raw = commit_content(&repo_exposure_raw_with_placeholder(&root)?)?;
+            run_git(&root, &["checkout", "--", "Cargo.toml"])?;
+
+            // Current-revision controls: the flag mirrors the declaration,
+            // but the verify-facing projection stays false because currentness
+            // already discloses the dirty side.
+            let clean_now = validate_repo_exposure_artifact(&root, &clean_raw, "clean")?;
+            let dirty_now = validate_repo_exposure_artifact(&root, &dirty_raw, "dirty")?;
+            if clean_now.produced_from_dirty || !dirty_now.produced_from_dirty {
+                return Err("flag must mirror the envelope worktree declaration".to_string());
+            }
+            if clean_now.historical_produced_from_dirty()
+                || dirty_now.currentness != ArtifactCurrentness::DirtyWorktree
+                || dirty_now.historical_produced_from_dirty()
+            {
+                return Err("non-historical artifacts must not set the verify field".to_string());
+            }
+
+            advance(&root)?;
+            let clean_hist = validate_repo_exposure_artifact(&root, &clean_raw, "clean")?;
+            let dirty_hist = validate_repo_exposure_artifact(&root, &dirty_raw, "dirty")?;
+            if clean_hist.currentness != ArtifactCurrentness::Historical
+                || dirty_hist.currentness != ArtifactCurrentness::Historical
+            {
+                return Err("both artifacts must be historical after movement".to_string());
+            }
+            if clean_hist.historical_produced_from_dirty() {
+                return Err("clean-produced historical must not report dirty".to_string());
+            }
+            if !dirty_hist.historical_produced_from_dirty() {
+                return Err("dirty-produced historical must preserve the dirty fact".to_string());
+            }
+            // Pair tokens are unchanged by the additive flag.
+            if pair_currentness_label(&clean_hist.currentness, &dirty_hist.currentness)
+                != "historical_noncurrent"
+            {
+                return Err("pair token must stay historical_noncurrent".to_string());
             }
             Ok(())
         })();

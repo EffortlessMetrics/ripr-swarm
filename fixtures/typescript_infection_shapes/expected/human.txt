@@ -3,12 +3,12 @@ mode: fast
 root: fixtures/typescript_infection_shapes/input
 config: <cwd>/fixtures/typescript_infection_shapes/input/ripr.toml
 
-Summary: 7 changed behaviors checked: 1 appear noticed by tests, 1 partly noticed, 1 reached but not noticed, 0 no test path, 4 unclear. 7 found, 0 suppressed by your settings
+Summary: 6 changed behaviors checked: 1 appear noticed by tests, 1 partly noticed, 1 reached but not noticed, 0 no test path, 3 unclear. 6 found, 0 suppressed by your settings
 
 Changed file(s) by language: typescript = 2
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 2 changed file(s), 14 changed line(s), 7 candidate line(s), 7 changed behavior(s) checked, 7 finding(s)
+  Counts: 2 changed file(s), 14 changed line(s), 6 candidate line(s), 6 changed behavior(s) checked, 6 finding(s)
 
 Start here:
   State: preview language, advisory only
@@ -47,13 +47,16 @@ Next: drill into the top finding:
   no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
 
 Hidden:
-  6 lower-priority finding(s) omitted from default human output (TypeScript preview: 6).
+  5 lower-priority finding(s) omitted from default human output (TypeScript preview: 5).
     - src/guard.ts:9 (weak); kind: return_value; reason: Related test reaches `floorAt` but the strongest extracted oracle is `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a…
-    - src/pricing.ts:3 (unknown); kind: return_value; reason: The change to `bulk` is a `literal_return` edit: the edit changes a literal return value, and the adapter does not model whether any test input reaches this return. No assertion…
+    - src/pricing.ts:3 (unknown: infection unclear); kind: return_value; reason: The change to `bulk` is a `literal_return` edit: the edit changes a literal return value, and the adapter does not model whether any test input reaches this return. No assertion…
     - src/pricing.ts:24 (exposed); kind: return_value; reason: Related test reaches `div` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.
-    - src/pricing.ts:27 (unknown); kind: return_value; reason: The change to `cap` is a `fallback_literal` edit: the edit changes the literal operand of a `??` / `||` fallback, and the adapter does not model whether any test input takes the…
-    - src/pricing.ts:32 (unknown); kind: predicate; reason: The change to `say` is a `default_parameter` edit: the edit changes a default parameter value, and the adapter does not model whether any test call omits the argument. No…
-    - src/pricing.ts:39 (unknown); kind: return_value; reason: The change to `same` is a `comment_only` edit: the edit changes only a comment, so no input changes the executed code; no infection exists to establish. No assertion is requested…
+    - src/pricing.ts:27 (unknown: infection unclear); kind: return_value; reason: The change to `cap` is a `fallback_literal` edit: the edit changes the literal operand of a `??` / `||` fallback, and the adapter does not model whether any test input takes the…
+    - src/pricing.ts:32 (unknown: infection unclear); kind: predicate; reason: The change to `say` is a `default_parameter` edit: the edit changes a default parameter value, and the adapter does not model whether any test call omits the argument. No…
+  Hidden classes:
+    exposed = tests appear to notice the change
+    weak = tests reach it but check it only loosely
+    unknown: infection unclear = ripr could not tell what input makes the change take effect
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

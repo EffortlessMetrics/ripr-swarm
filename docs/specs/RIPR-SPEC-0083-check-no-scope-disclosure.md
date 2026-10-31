@@ -108,6 +108,11 @@ is set to `true`. The renderers read this field. The analyzed-file discriminator
 
 ### Human output
 
+The empty-findings headline for a nothing-in-scope result is "Nothing to check:
+no changed Rust, Python or TypeScript source was available to analyze, so ripr
+examined no behavior." It replaces "No findings: ripr checked no changed
+behavior." (#11396); the note below carries the detail.
+
 When `no_scope_provided` is true, a note is appended after the
 "No diff-derived mutation exposure probes found." line. The note names what
 was actually established (#4012):

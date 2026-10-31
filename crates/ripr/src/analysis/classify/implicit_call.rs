@@ -28,8 +28,8 @@
 
 use super::gap_admission::{is_ignored, withhold_gap};
 use super::related_tests::{
-    expr_ending_at_has_type, impl_self_type_name, let_binding_certain_type_head,
-    let_binding_mentions_type, owner_trait_name, stringified_ranges,
+    expr_ending_at_has_type, impl_self_type_name, inherent_receiver_call_resolves,
+    let_binding_certain_type_head, let_binding_mentions_type, owner_trait_name, stringified_ranges,
 };
 use super::reveal::contains_as_whole_word;
 use crate::analysis::facts::TestFact;
@@ -107,6 +107,7 @@ const OWNED_ELSEWHERE_TRAITS: [&str; 14] = [
 pub(in crate::analysis) fn withhold_implicit_call_gap(
     finding: &mut Finding,
     index: &RustIndex,
+    pre_cap_syntax_only: Option<bool>,
 ) -> bool {
     if finding.static_limit_kind.is_some()
         || !matches!(
@@ -141,7 +142,8 @@ pub(in crate::analysis) fn withhold_implicit_call_gap(
     if finding.ripr.reach.state != StageState::Weak
         && !(matches!(kind, ImplicitCall::Syntax(_))
             && only_discrimination_unconfirmed(finding)
-            && reached_only_through_syntax(finding, owner, index))
+            && pre_cap_syntax_only
+                .unwrap_or_else(|| reached_only_through_syntax(finding, owner, index, None)))
     {
         return false;
     }
@@ -243,6 +245,38 @@ fn only_discrimination_unconfirmed(finding: &Finding) -> bool {
         && matches!(ripr.propagate.state, StageState::Yes | StageState::Weak)
 }
 
+/// Compute the syntax-only decision while the admitted pre-cap rows are in scope.
+/// Retaining this compact result avoids carrying an unbounded row set for every
+/// probe while diff classification waits for its serial limit pass.
+pub(in crate::analysis) fn pre_cap_syntax_only(
+    finding: &Finding,
+    index: &RustIndex,
+    direct_rows: &[crate::domain::RelatedTest],
+) -> Option<bool> {
+    if finding.static_limit_kind.is_some()
+        || !matches!(
+            finding.class,
+            ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+        )
+    {
+        return None;
+    }
+    let owner_id = finding.probe.owner.as_ref()?;
+    let line = finding.probe.location.line;
+    let owner = index.functions().iter().find(|function| {
+        function.id == *owner_id && function.start_line <= line && line <= function.end_line
+    })?;
+    if !matches!(ImplicitCall::of_owner(owner), Some(ImplicitCall::Syntax(_))) {
+        return None;
+    }
+    Some(reached_only_through_syntax(
+        finding,
+        owner,
+        index,
+        Some(direct_rows),
+    ))
+}
+
 /// Whether every test related to the owner by a direct call reaches it only
 /// through syntax: none of them calls `.name(` on the owner's method, so the relation
 /// came from an operator, loop or scope exit the language runs. A finding with
@@ -252,9 +286,10 @@ fn reached_only_through_syntax(
     finding: &Finding,
     owner: &FunctionSummary,
     index: &RustIndex,
+    direct_rows: Option<&[crate::domain::RelatedTest]>,
 ) -> bool {
-    let mut direct = finding
-        .related_tests
+    let mut direct = direct_rows
+        .unwrap_or(&finding.related_tests)
         .iter()
         .filter(|related| related.relation_reason == Some(RelationReason::DirectOwnerCall))
         .peekable();
@@ -262,33 +297,66 @@ fn reached_only_through_syntax(
         return false;
     }
     let path_owner = type_path_owner(owner, index);
-    // The related rows are capped for display. When some were cut, a test that
-    // names the owner may be among them, and which tests survive depends on
-    // test names, so the cut finding is never judged syntax-only on the rows
-    // that happen to remain (#10551): it stays withheld, whatever the order.
-    if finding
+    let capped = finding
         .related_tests_matched_total
-        .is_some_and(|total| finding.related_tests.len() < total)
-    {
+        .is_some_and(|total| finding.related_tests.len() < total);
+    // Fallback callers without pre-cap evidence must still fail closed.
+    if direct_rows.is_none() && capped {
         return true;
     }
+    // Large capped relation sets must not scan the full test index once per
+    // row. Preserve `find`'s first-match behavior for duplicate identities.
+    // Small sets retain the cheap linear path without building a map.
+    let lookup = (capped && direct_rows.is_some_and(|rows| rows.len() > 8)).then(|| {
+        let mut lookup = std::collections::HashMap::new();
+        for test in index.tests().iter() {
+            lookup
+                .entry((test.name.as_str(), test.file.as_path(), test.start_line))
+                .or_insert(test);
+        }
+        lookup
+    });
     direct.all(|related| {
-        index
-            .tests()
-            .iter()
-            .find(|test| {
+        let test = if let Some(lookup) = &lookup {
+            lookup
+                .get(&(related.name.as_str(), related.file.as_path(), related.line))
+                .copied()
+        } else {
+            index.tests().iter().find(|test| {
                 test.name == related.name
                     && test.file == related.file
                     && test.start_line == related.line
             })
-            .is_some_and(|test| {
-                let code = crate::analysis::extract::mask_comments_and_strings(&test.body);
-                !calls_method_named(&code, &owner.name)
-                    && !path_owner.as_ref().is_some_and(|path| {
-                        type_path_scope_is_clear(test, owner, index, path)
-                            && calls_by_type_path(&code, &owner.name, path)
-                    })
-            })
+        };
+        test.is_none_or(|test| {
+            if is_ignored(test) {
+                return true;
+            }
+            let code = crate::analysis::extract::mask_comments_and_strings(&test.body);
+            let scope_is_clear =
+                |path: &TypePathOwner| type_path_scope_is_clear(test, owner, index, path);
+            // Previously a capped finding was withheld outright. Do not
+            // lift that safety on a same-named call of another receiver.
+            // Preserve the existing uncapped reading.
+            let names_method = calls_method_named(&code, &owner.name)
+                && (!capped
+                    || path_owner.as_ref().is_some_and(|path| {
+                        path.sole_method
+                            && path.trait_unique
+                            && scope_is_clear(path)
+                            && inherent_receiver_call_resolves(
+                                test,
+                                &owner.name,
+                                &path.self_type,
+                                Some(index),
+                                Some(owner),
+                            )
+                    }));
+            !names_method
+                && !path_owner.as_ref().is_some_and(|path| {
+                    scope_is_clear(path) && calls_by_type_path(&code, &owner.name, path)
+                })
+        })
     })
 }
 

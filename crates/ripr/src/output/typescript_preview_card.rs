@@ -186,7 +186,7 @@ pub(crate) fn typescript_preview_card(finding: &Finding) -> Option<TypeScriptPre
         why_not_actionable: actionability.why_not_actionable,
         repair_route: actionability.repair_route,
         repair_packet_ready: actionability.repair_packet_ready,
-        limits: limits(),
+        limits: limits(actionability.repair_packet_ready),
     })
 }
 
@@ -812,11 +812,20 @@ fn static_limit_label(kind: StaticLimitKind) -> String {
     kind.as_str().to_string()
 }
 
-fn limits() -> Vec<String> {
+fn limits(repair_packet_ready: bool) -> Vec<String> {
+    // #10709: a card whose shared validator reports `repair_packet_ready:
+    // true` must not also say it is not a repair packet. The card is still
+    // only a summary; the complete packet is a separate, equally advisory
+    // projection.
+    let card_boundary = if repair_packet_ready {
+        "This card is an advisory summary; the complete repair packet is projected separately and is also advisory."
+    } else {
+        "This card is advisory and is not a repair packet."
+    };
     vec![
         "Syntax-first TypeScript/JavaScript preview evidence only.".to_string(),
         "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.".to_string(),
-        "This card is advisory and is not a repair packet.".to_string(),
+        card_boundary.to_string(),
     ]
 }
 

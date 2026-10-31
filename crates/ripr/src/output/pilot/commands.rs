@@ -26,10 +26,7 @@ use std::path::Path;
 /// Built here rather than in `agent::loop_commands`, whose file xtask includes
 /// into its own tree: a template only pilot calls reads as dead code there.
 fn offered_repair_start_route(root: &Path, entry: &ClassifiedSeam) -> Option<String> {
-    if !repair_packet_eligibility(entry).eligible() {
-        return None;
-    }
-    if !recommended_test_is_repair_edit_target(entry) {
+    if !has_repair_route(entry) {
         return None;
     }
     // `root_path_display` before `bound_root`, like the CLI recovery route:
@@ -113,6 +110,14 @@ pub(super) fn repair_start_command(root: &Path, entry: &ClassifiedSeam) -> Optio
         },
         Err(_) => offered_repair_start_route(root, entry),
     }
+}
+
+/// Whether pilot may offer a repair start for `entry`: the fail-closed
+/// repair-packet flip plus an edit target the cage can route. The one
+/// predicate behind the offered route, the ranking preference and the
+/// "no gap has a route" note (#11292), so the three cannot disagree.
+pub(super) fn has_repair_route(entry: &ClassifiedSeam) -> bool {
+    repair_packet_eligibility(entry).eligible() && recommended_test_is_repair_edit_target(entry)
 }
 
 /// Where the focused test may go for `entry`'s repair, stated after the

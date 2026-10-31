@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testexception-close-out-dies-ok.json",
-    "sha256": "034254d5c397587134f6889db765da4120d8d49d50796c8b51fe203f43666b27",
+    "sha256": "65473f7c90ca593d9bb7cde93e1c1c993aba655c2913b9547f77c296c95fac59",
     "provenance": "producer"
   }
 }

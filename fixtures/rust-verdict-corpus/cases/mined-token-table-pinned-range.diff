@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -103,7 +103,7 @@
+             b,
+             b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+' | b'-' | b'.'
+                 | b'^' | b'_' | b'`' | b'|' | b'~'
+-                | b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z'
++                | b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9'
+         );
+         i += 1;
+     }

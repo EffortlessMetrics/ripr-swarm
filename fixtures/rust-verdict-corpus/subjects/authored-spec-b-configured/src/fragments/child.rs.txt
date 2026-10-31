@@ -1,0 +1,10 @@
+use super::*;
+
+fn fragment_base() -> u32 {
+    6
+}
+
+#[test]
+fn included_directory_anchor() {
+    assert_eq!(fragment_shift(fragment_base()), 11);
+}

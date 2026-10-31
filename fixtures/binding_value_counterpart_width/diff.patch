@@ -1,0 +1,15 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,9 +1,9 @@
+ pub fn unsigned(n: bool, bound: u8) -> bool {
+     let k = ((if n { 255 } else { 0 }) + 1) / 2;
+-    k < bound
++    k <= bound
+ }
+ 
+ pub fn signed(n: bool, bound: i8) -> bool {
+     let k = ((if n { 127 } else { 0 }) + 1) / 2;
+-    k < bound
++    k <= bound
+ }

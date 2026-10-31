@@ -134,11 +134,101 @@ pub(crate) fn sample_order<'a>(cases: &[&'a Case], seed: &str) -> Vec<&'a Case> 
     keyed.into_iter().map(|(_, case)| case).collect()
 }
 
+/// Parsed `cargo test ...` argv plus any leading `KEY=value` words from the
+/// labeled command. The replay applies those pairs first, then the scrub
+/// list, so a case cannot override toolchain, rustflags, target dir, or
+/// offline mode.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TestCommand {
+    pub(crate) env: Vec<(String, String)>,
+    pub(crate) args: Vec<String>,
+}
+
+const SHELL_METACHARS: [char; 7] = ['|', ';', '&', '>', '<', '`', '$'];
+
+/// Leading `KEY=value` word: key `[A-Za-z_][A-Za-z0-9_]*`, one unquoted
+/// `=`, value the rest of the word.
+fn env_assignment(word: &str) -> Option<(&str, &str)> {
+    let (key, value) = word.split_once('=')?;
+    let mut chars = key.chars();
+    let first = chars.next()?;
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return None;
+    }
+    if !chars.all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return None;
+    }
+    Some((key, value))
+}
+
+/// Keys the replay env scrub owns. A labeled command that sets one of these
+/// is refused rather than silently overwritten.
+fn replay_owns_env_key(key: &str) -> bool {
+    key.starts_with("RUSTC")
+        || key.starts_with("RUSTUP_")
+        || key.starts_with("RUSTDOC")
+        || matches!(
+            key,
+            "CARGO_TARGET_DIR"
+                | "CARGO_NET_OFFLINE"
+                | "RUSTFLAGS"
+                | "CARGO_ENCODED_RUSTFLAGS"
+                | "CARGO_BUILD_RUSTFLAGS"
+                | "CARGO_ENCODED_RUSTDOCFLAGS"
+        )
+}
+
+/// Case env first, then the isolation scrub, so the scrub always wins when
+/// a name collides.
+fn replay_env_pairs(
+    case_env: &[(String, String)],
+    target: &str,
+    toolchain: &str,
+) -> Vec<(String, String)> {
+    let mut pairs = case_env.to_vec();
+    pairs.extend([
+        ("CARGO_TARGET_DIR".to_string(), target.to_string()),
+        ("CARGO_TERM_COLOR".to_string(), "never".to_string()),
+        ("RUSTUP_TOOLCHAIN".to_string(), toolchain.to_string()),
+        ("RUSTUP_AUTO_INSTALL".to_string(), "0".to_string()),
+        ("CARGO_NET_OFFLINE".to_string(), "true".to_string()),
+        ("RUSTC".to_string(), "rustc".to_string()),
+        ("RUSTDOC".to_string(), "rustdoc".to_string()),
+        ("CARGO_BUILD_RUSTDOC".to_string(), "rustdoc".to_string()),
+        ("RUSTC_WRAPPER".to_string(), String::new()),
+        ("RUSTC_WORKSPACE_WRAPPER".to_string(), String::new()),
+        ("RUSTFLAGS".to_string(), String::new()),
+        ("CARGO_ENCODED_RUSTFLAGS".to_string(), String::new()),
+        ("CARGO_BUILD_RUSTFLAGS".to_string(), String::new()),
+        ("RUSTDOCFLAGS".to_string(), String::new()),
+        ("CARGO_ENCODED_RUSTDOCFLAGS".to_string(), String::new()),
+        ("RUSTC_BOOTSTRAP".to_string(), String::new()),
+    ]);
+    pairs
+}
+
 /// The case's test command as cargo arguments. Labels name a plain
-/// `cargo test ...` line; anything else (a shell pipeline, another program)
-/// is refused rather than interpreted.
-pub(crate) fn test_command_args(command: &str) -> Result<Vec<String>, String> {
-    let mut words = command.split_whitespace();
+/// `cargo test ...` line, optionally prefixed with `KEY=value` assignments;
+/// anything else (a shell pipeline, another program) is refused rather than
+/// interpreted.
+pub(crate) fn test_command_args(command: &str) -> Result<TestCommand, String> {
+    let mut words = command.split_whitespace().peekable();
+    let mut env = Vec::new();
+    while let Some(word) = words.peek().copied() {
+        let Some((key, value)) = env_assignment(word) else {
+            break;
+        };
+        if value.contains(SHELL_METACHARS) {
+            return Err(format!("test command `{command}` contains shell syntax"));
+        }
+        if replay_owns_env_key(key) {
+            return Err(format!(
+                "test command `{command}` sets `{key}`, which the replay env scrub owns"
+            ));
+        }
+        env.push((key.to_string(), value.to_string()));
+        words.next();
+    }
     if words.next() != Some("cargo") {
         return Err(format!("test command `{command}` is not a cargo command"));
     }
@@ -146,10 +236,7 @@ pub(crate) fn test_command_args(command: &str) -> Result<Vec<String>, String> {
     if rest.first().map(String::as_str) != Some("test") {
         return Err(format!("test command `{command}` is not `cargo test ...`"));
     }
-    if rest
-        .iter()
-        .any(|word| word.contains(['|', ';', '&', '>', '<', '`', '$']))
-    {
+    if rest.iter().any(|word| word.contains(SHELL_METACHARS)) {
         return Err(format!("test command `{command}` contains shell syntax"));
     }
     // Cargo options that move the build out of the run-owned tree or change
@@ -179,7 +266,7 @@ pub(crate) fn test_command_args(command: &str) -> Result<Vec<String>, String> {
             "test command `{command}` passes `{flag}` to the test binary, which hides the per-test results the replay reads"
         ));
     }
-    Ok(rest)
+    Ok(TestCommand { env, args: rest })
 }
 
 /// Insert `--locked` after `test` when the rebuilt tree has a `Cargo.lock`.
@@ -625,6 +712,7 @@ impl Runner<'_> {
         subject_id: &str,
         toolchain: &str,
         command: &[String],
+        case_env: &[(String, String)],
     ) -> Result<Vec<RunOutcome>, String> {
         let target = self
             .work_root
@@ -634,35 +722,22 @@ impl Runner<'_> {
             .map_err(|err| format!("resolve {}: {err}", normalize_path(&target)))?;
         let target = target.to_string_lossy().into_owned();
         let command = locked_test_args(tree, command);
-        let envs = [
-            ("CARGO_TARGET_DIR", target.as_str()),
-            ("CARGO_TERM_COLOR", "never"),
-            ("RUSTUP_TOOLCHAIN", toolchain),
-            ("RUSTUP_AUTO_INSTALL", "0"),
-            // Replays never reach the network: an upstream checkout whose
-            // dependencies are not in the cargo cache fails to build rather
-            // than downloading them.
-            ("CARGO_NET_OFFLINE", "true"),
-            // The caller's compiler settings must not reach the subject: a
-            // `-D warnings` turns a deleted statement into a build failure,
-            // a `--cfg` enables disabled tests, and `RUSTC` or `RUSTDOC`
-            // would bypass the labeled toolchain (rustdoc builds and runs the
-            // doctests). An empty wrapper disables it; an empty
-            // RUSTFLAGS-family value overrides every config-file rustflags,
-            // so a subject's own `.cargo/config.toml` rustflags are ignored
-            // too. An empty RUSTC_BOOTSTRAP keeps the toolchain stable.
-            ("RUSTC", "rustc"),
-            ("RUSTDOC", "rustdoc"),
-            ("CARGO_BUILD_RUSTDOC", "rustdoc"),
-            ("RUSTC_WRAPPER", ""),
-            ("RUSTC_WORKSPACE_WRAPPER", ""),
-            ("RUSTFLAGS", ""),
-            ("CARGO_ENCODED_RUSTFLAGS", ""),
-            ("CARGO_BUILD_RUSTFLAGS", ""),
-            ("RUSTDOCFLAGS", ""),
-            ("CARGO_ENCODED_RUSTDOCFLAGS", ""),
-            ("RUSTC_BOOTSTRAP", ""),
-        ];
+        // Case env first; the scrub list is appended so isolation vars always
+        // win. Replays never reach the network: an upstream checkout whose
+        // dependencies are not in the cargo cache fails to build rather than
+        // downloading them. The caller's compiler settings must not reach the
+        // subject: a `-D warnings` turns a deleted statement into a build
+        // failure, a `--cfg` enables disabled tests, and `RUSTC` or `RUSTDOC`
+        // would bypass the labeled toolchain (rustdoc builds and runs the
+        // doctests). An empty wrapper disables it; an empty RUSTFLAGS-family
+        // value overrides every config-file rustflags, so a subject's own
+        // `.cargo/config.toml` rustflags are ignored too. An empty
+        // RUSTC_BOOTSTRAP keeps the toolchain stable.
+        let env_store = replay_env_pairs(case_env, &target, toolchain);
+        let envs: Vec<(&str, &str)> = env_store
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+            .collect();
         let mut runs = Vec::with_capacity(self.args.repeat);
         for _ in 0..self.args.repeat {
             let output = capture_output_measured(
@@ -910,8 +985,10 @@ fn relabel_case(
     subject: &Subject,
 ) -> Result<CaseResult, String> {
     let id = &case.case_id;
-    let command =
+    let parsed =
         test_command_args(&case.truth.test_command).map_err(|err| format!("case `{id}`: {err}"))?;
+    let command = &parsed.args;
+    let case_env = &parsed.env;
     let tree = prepare_tree(
         dir,
         case,
@@ -946,7 +1023,7 @@ fn relabel_case(
         });
     }
 
-    let baseline = runner.run_tests(&tree, &case.subject_id, toolchain, &command)?;
+    let baseline = runner.run_tests(&tree, &case.subject_id, toolchain, command, case_env)?;
     if baseline.iter().any(|run| *run != RunOutcome::TestsPassed) {
         let seen: Vec<String> = baseline.iter().map(describe).collect();
         drift.push(format!(
@@ -964,7 +1041,7 @@ fn relabel_case(
         .nth(case.anchor.line.saturating_sub(1))
         .map(|line| line.trim().to_string())
         .unwrap_or_default();
-    let edited = runner.run_tests(&tree, &case.subject_id, toolchain, &command)?;
+    let edited = runner.run_tests(&tree, &case.subject_id, toolchain, command, case_env)?;
 
     let mut mutants = Vec::new();
     match case.edit_kind {
@@ -1012,7 +1089,8 @@ fn relabel_case(
                 let mutated = apply_mutated_line(&edited_text, case.anchor.line, line)?;
                 fs::write(&anchored, mutated)
                     .map_err(|err| format!("write {}: {err}", normalize_path(&anchored)))?;
-                let observed = runner.run_tests(&tree, &case.subject_id, toolchain, &command);
+                let observed =
+                    runner.run_tests(&tree, &case.subject_id, toolchain, command, case_env);
                 fs::write(&anchored, &edited_text)
                     .map_err(|err| format!("restore {}: {err}", normalize_path(&anchored)))?;
                 let observed = observed?;

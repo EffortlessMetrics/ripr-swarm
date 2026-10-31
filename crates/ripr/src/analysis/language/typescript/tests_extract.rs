@@ -6,8 +6,8 @@ use super::*;
 mod hook_identity;
 use hook_identity::HookCalls;
 
-#[derive(Clone, Copy)]
-enum TestDeclarationRoot {
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum TestDeclarationRoot {
     Test,
     Describe,
 }
@@ -17,7 +17,7 @@ impl TestDeclarationRoot {
     /// `context` and the TDD / Vitest / `node:test` `suite` (#4548). The
     /// skipped spellings (`xit`, `xcontext`, `.skip`) are deliberately not
     /// matched: they register no running test.
-    fn matches_identifier(self, name: &str) -> bool {
+    pub(super) fn matches_identifier(self, name: &str) -> bool {
         match self {
             Self::Test => matches!(name, "test" | "it" | "specify"),
             Self::Describe => matches!(name, "describe" | "context" | "suite"),
@@ -4227,21 +4227,10 @@ fn is_playwright_describe_member(
 /// A `describe`-root call the runner skips: a `.skip` / `.fixme`
 /// modifier on the root (alone or after active modifiers), or an options
 /// object that turns the suite off.
-fn callee_is_skipped_describe(call: &oxc_ast::ast::CallExpression<'_>) -> bool {
-    fn skipped_modifier_on_describe(expression: &Expression<'_>) -> bool {
-        match expression {
-            Expression::StaticMemberExpression(member) => {
-                (matches!(member.property.name.as_str(), "skip" | "fixme")
-                    && expression_is_active_declaration(
-                        &member.object,
-                        TestDeclarationRoot::Describe,
-                    ))
-                    || (is_active_declaration_modifier(member.property.name.as_str())
-                        && skipped_modifier_on_describe(&member.object))
-            }
-            _ => false,
-        }
-    }
+fn callee_is_skipped_describe(
+    call: &oxc_ast::ast::CallExpression<'_>,
+    bindings: &super::declaration_bindings::DeclarationBindings,
+) -> bool {
     // Only a literal `skip: true` turns the suite off; a
     // dynamic value, a spread or any other key (`fails`) leaves it active.
     let literally_off = |call: &oxc_ast::ast::CallExpression<'_>| {
@@ -4269,9 +4258,8 @@ fn callee_is_skipped_describe(call: &oxc_ast::ast::CallExpression<'_>) -> bool {
             off
         })
     };
-    skipped_modifier_on_describe(&call.callee)
-        || (expression_is_active_declaration(&call.callee, TestDeclarationRoot::Describe)
-            && literally_off(call))
+    bindings.skipped_describe(&call.callee)
+        || (bindings.active(&call.callee, TestDeclarationRoot::Describe) && literally_off(call))
 }
 
 fn is_active_declaration_modifier(name: &str) -> bool {
@@ -4757,13 +4745,17 @@ pub(crate) fn detect_partial_test_extraction_expanded(
         }
         let imports = extract_imports_from_statements(&ret.program.body);
         let admission = TypeScriptAdmissionContext::of_program(&ret.program, &imports, file);
+        let bindings =
+            super::declaration_bindings::DeclarationBindings::of_program(&ret.program, &admission);
         let source = SourceText::new(source);
         let mut finder = UnextractedTestFinder {
+            bindings,
             source: &source,
             extracted_starts: &extracted_starts,
             covered: covered.as_deref().unwrap_or_default(),
             admission,
             shadowed: Vec::new(),
+            evaluated_only: false,
             gap: None,
         };
         finder.visit_statements(&ret.program.body);
@@ -4831,6 +4823,7 @@ fn extracted_span_starts(
 /// (statement containers, call arguments, function bodies). Array-element and
 /// object-property subtrees are out of scope for this disclosure slice.
 struct UnextractedTestFinder<'a> {
+    bindings: super::declaration_bindings::DeclarationBindings,
     source: &'a SourceText<'a>,
     extracted_starts: &'a std::collections::HashSet<usize>,
     /// Suite-factory declarations whose registrations the appended
@@ -4841,6 +4834,8 @@ struct UnextractedTestFinder<'a> {
     /// parameter's value, not a runner registration (`async function run({
     /// test }) { await test(); }`).
     shadowed: Vec<String>,
+    /// Stored function values stay dormant throughout an invoked argument body.
+    evaluated_only: bool,
     gap: Option<(usize, &'static str, String)>,
 }
 
@@ -4872,22 +4867,48 @@ impl UnextractedTestFinder<'_> {
     }
 
     fn visit_statements(&mut self, statements: &[Statement<'_>]) {
+        self.with_statement_bindings(statements, |finder| {
+            for stmt in statements {
+                if finder.gap.is_some() {
+                    break;
+                }
+                finder.visit_statement(stmt);
+                if finder.evaluated_only
+                    && matches!(
+                        stmt,
+                        Statement::ReturnStatement(_) | Statement::ThrowStatement(_)
+                    )
+                {
+                    break;
+                }
+            }
+        });
+    }
+
+    fn with_statement_bindings(
+        &mut self,
+        statements: &[Statement<'_>],
+        visit: impl FnOnce(&mut Self),
+    ) {
         // A declaration in this block can rebind a parameter's name to
         // something else (`const test = runner`). Fail closed: the name no
         // longer counts as a parameter inside this block.
         let mut rebound = Vec::new();
-        collect_block_declared_names(statements, &mut rebound);
+        collect_registration_scope_names(
+            statements,
+            &mut rebound,
+            self.admission.block_functions_are_lexical,
+        );
+        self.with_rebound_names(&rebound, visit);
+    }
+
+    fn with_rebound_names(&mut self, rebound: &[String], visit: impl FnOnce(&mut Self)) {
         let outer = (!rebound.is_empty()).then(|| {
             let outer = self.shadowed.clone();
             self.shadowed.retain(|name| !rebound.contains(name));
             outer
         });
-        for stmt in statements {
-            if self.gap.is_some() {
-                break;
-            }
-            self.visit_statement(stmt);
-        }
+        visit(self);
         if let Some(outer) = outer {
             self.shadowed = outer;
         }
@@ -4915,17 +4936,39 @@ impl UnextractedTestFinder<'_> {
             }
             Statement::DoWhileStatement(do_while) => self.visit_statement(&do_while.body),
             Statement::WhileStatement(while_stmt) => self.visit_statement(&while_stmt.body),
-            Statement::ForStatement(for_stmt) => self.visit_statement(&for_stmt.body),
-            Statement::ForInStatement(for_in) => self.visit_statement(&for_in.body),
-            Statement::ForOfStatement(for_of) => self.visit_statement(&for_of.body),
+            Statement::ForStatement(for_stmt) => {
+                let rebound = match &for_stmt.init {
+                    Some(oxc_ast::ast::ForStatementInit::VariableDeclaration(declaration)) => {
+                        declaration_binding_names(declaration)
+                    }
+                    _ => Vec::new(),
+                };
+                self.with_rebound_names(&rebound, |finder| finder.visit_statement(&for_stmt.body));
+            }
+            Statement::ForInStatement(for_in) => {
+                self.visit_loop_binding_body(&for_in.left, &for_in.body);
+            }
+            Statement::ForOfStatement(for_of) => {
+                self.visit_loop_binding_body(&for_of.left, &for_of.body);
+            }
             Statement::LabeledStatement(labeled) => self.visit_statement(&labeled.body),
             Statement::SwitchStatement(switch_stmt) => {
+                let mut rebound = Vec::new();
                 for case in &switch_stmt.cases {
-                    self.visit_statements(&case.consequent);
-                    if self.gap.is_some() {
-                        return;
-                    }
+                    collect_registration_scope_names(
+                        &case.consequent,
+                        &mut rebound,
+                        self.admission.block_functions_are_lexical,
+                    );
                 }
+                self.with_rebound_names(&rebound, |finder| {
+                    for case in &switch_stmt.cases {
+                        finder.visit_statements(&case.consequent);
+                        if finder.gap.is_some() {
+                            break;
+                        }
+                    }
+                });
             }
             Statement::TryStatement(try_stmt) => {
                 self.visit_statements(&try_stmt.block.body);
@@ -4933,7 +4976,15 @@ impl UnextractedTestFinder<'_> {
                     && !super::oracle::try_catch_is_unreachable(try_stmt)
                     && let Some(handler) = &try_stmt.handler
                 {
-                    self.visit_statements(&handler.body.body);
+                    let rebound: Vec<String> = handler
+                        .param
+                        .iter()
+                        .flat_map(|param| param.pattern.get_binding_identifiers())
+                        .map(|id| id.name.to_string())
+                        .collect();
+                    self.with_rebound_names(&rebound, |finder| {
+                        finder.visit_statements(&handler.body.body);
+                    });
                 }
                 if self.gap.is_none()
                     && let Some(finalizer) = &try_stmt.finalizer
@@ -4954,7 +5005,7 @@ impl UnextractedTestFinder<'_> {
             }
             Statement::FunctionDeclaration(func) => {
                 let span = func.span.start as usize..func.span.end as usize;
-                if !self.covered.contains(&span) {
+                if !self.evaluated_only && !self.covered.contains(&span) {
                     self.visit_function(func);
                 }
             }
@@ -4981,6 +5032,20 @@ impl UnextractedTestFinder<'_> {
         }
     }
 
+    fn visit_loop_binding_body(
+        &mut self,
+        left: &oxc_ast::ast::ForStatementLeft<'_>,
+        body: &Statement<'_>,
+    ) {
+        let rebound = match left {
+            oxc_ast::ast::ForStatementLeft::VariableDeclaration(declaration) => {
+                declaration_binding_names(declaration)
+            }
+            _ => Vec::new(),
+        };
+        self.with_rebound_names(&rebound, |finder| finder.visit_statement(body));
+    }
+
     fn visit_function(&mut self, func: &Function<'_>) {
         if let Some(body) = &func.body {
             self.with_parameters(&func.params, |finder| {
@@ -5003,6 +5068,14 @@ impl UnextractedTestFinder<'_> {
     }
 
     fn visit_expression(&mut self, expr: &Expression<'_>, statement_position: bool) {
+        if self.evaluated_only {
+            self.visit_empty_table_evaluated_expression(expr);
+        } else {
+            self.visit_expression_inner(expr, statement_position);
+        }
+    }
+
+    fn visit_expression_inner(&mut self, expr: &Expression<'_>, statement_position: bool) {
         match expr {
             Expression::CallExpression(call) => self.visit_call(call, statement_position),
             Expression::NewExpression(new_expr) => self.visit_arguments(&new_expr.arguments),
@@ -5117,6 +5190,15 @@ impl UnextractedTestFinder<'_> {
     /// chains — that the extractor did not index. Only checked at statement
     /// position: nested calls (assertions, helpers) are never registrations.
     fn visit_call(&mut self, call: &oxc_ast::ast::CallExpression<'_>, statement_position: bool) {
+        self.visit_call_with_arguments(call, statement_position, false);
+    }
+
+    fn visit_call_with_arguments(
+        &mut self,
+        call: &oxc_ast::ast::CallExpression<'_>,
+        statement_position: bool,
+        evaluated_arguments: bool,
+    ) {
         // A known-empty table's callback cannot register descendants. Keep
         // scanning evaluated title/options expressions, but do not report
         // inline callbacks as dropped active registrations.
@@ -5139,7 +5221,19 @@ impl UnextractedTestFinder<'_> {
         // A skipped suite (`describe.skip(...)`, `describe('x', { skip: true },
         // ...)`) registers nothing and its callback never runs, so a
         // registration inside it is not one the extractor dropped.
-        if callee_is_skipped_describe(call) {
+        if callee_is_skipped_describe(call, &self.bindings) {
+            // The callback is dormant, but titles/options are evaluated before
+            // the runner receives them. Retain registrations in invoked values.
+            for argument in &call.arguments {
+                if let Some(expression) = argument.as_expression() {
+                    self.visit_empty_table_evaluated_expression(expression);
+                } else {
+                    self.visit_argument(argument);
+                }
+                if self.gap.is_some() {
+                    break;
+                }
+            }
             return;
         }
         if statement_position && self.gap.is_none() && !self.callee_is_parameter(&call.callee) {
@@ -5182,7 +5276,24 @@ impl UnextractedTestFinder<'_> {
                 return;
             }
         }
-        self.visit_arguments(&call.arguments);
+        if evaluated_arguments {
+            self.visit_evaluated_arguments(&call.arguments);
+        } else {
+            self.visit_arguments(&call.arguments);
+        }
+    }
+
+    fn visit_evaluated_arguments(&mut self, arguments: &[Argument<'_>]) {
+        for argument in arguments {
+            if self.gap.is_some() {
+                return;
+            }
+            if let Argument::SpreadElement(spread) = argument {
+                self.visit_empty_table_evaluated_expression(&spread.argument);
+            } else if let Some(value) = argument.as_expression() {
+                self.visit_empty_table_evaluated_expression(value);
+            }
+        }
     }
 
     /// Empty-table arguments still evaluate calls and comma operands;
@@ -5199,58 +5310,111 @@ impl UnextractedTestFinder<'_> {
                 }
             }
             Expression::CallExpression(call) => {
-                self.visit_call(call, true);
+                self.visit_empty_table_evaluated_expression(&call.callee);
+                if self.gap.is_some() {
+                    return;
+                }
+                self.visit_call_with_arguments(call, true, true);
                 if self.gap.is_none() {
-                    match runtime_expression(&call.callee) {
-                        Expression::ArrowFunctionExpression(arrow) => {
-                            self.visit_empty_table_invoked_statements(&arrow.body.statements);
-                        }
-                        Expression::FunctionExpression(function) if !function.generator => {
-                            if let Some(body) = &function.body {
-                                self.visit_empty_table_invoked_statements(&body.statements);
-                            }
-                        }
-                        _ => {}
-                    }
+                    self.visit_empty_table_invoked_value(&call.callee, false);
                 }
             }
-            expression => self.visit_expression(expression, false),
+            Expression::NewExpression(call) => {
+                self.visit_empty_table_evaluated_expression(&call.callee);
+                self.visit_evaluated_arguments(&call.arguments);
+                if self.gap.is_none() {
+                    self.visit_empty_table_invoked_value(&call.callee, true);
+                }
+            }
+            Expression::AssignmentExpression(assignment) => {
+                self.visit_empty_table_evaluated_expression(&assignment.right)
+            }
+            Expression::ImportExpression(import) => {
+                self.visit_empty_table_evaluated_expression(&import.source);
+                if let Some(options) = &import.options {
+                    self.visit_empty_table_evaluated_expression(options);
+                }
+            }
+            Expression::TaggedTemplateExpression(tagged) => {
+                self.visit_empty_table_evaluated_expression(&tagged.tag);
+                for value in &tagged.quasi.expressions {
+                    self.visit_empty_table_evaluated_expression(value);
+                }
+                if self.gap.is_none() {
+                    self.visit_empty_table_invoked_value(&tagged.tag, false);
+                }
+            }
+            Expression::YieldExpression(yielded) => {
+                if let Some(value) = &yielded.argument {
+                    self.visit_empty_table_evaluated_expression(value);
+                }
+            }
+            Expression::PrivateFieldExpression(member) => {
+                self.visit_empty_table_evaluated_expression(&member.object)
+            }
+            Expression::StaticMemberExpression(member) => {
+                self.visit_empty_table_evaluated_expression(&member.object)
+            }
+            Expression::ComputedMemberExpression(member) => {
+                self.visit_empty_table_evaluated_expression(&member.object);
+                self.visit_empty_table_evaluated_expression(&member.expression);
+            }
+            Expression::UnaryExpression(unary) => {
+                self.visit_empty_table_evaluated_expression(&unary.argument)
+            }
+            Expression::AwaitExpression(awaited) => {
+                self.visit_empty_table_evaluated_expression(&awaited.argument)
+            }
+            Expression::TemplateLiteral(template) => {
+                for value in &template.expressions {
+                    self.visit_empty_table_evaluated_expression(value);
+                }
+            }
+            Expression::ConditionalExpression(conditional) => {
+                self.visit_empty_table_evaluated_expression(&conditional.test);
+                self.visit_empty_table_evaluated_expression(&conditional.consequent);
+                self.visit_empty_table_evaluated_expression(&conditional.alternate);
+            }
+            Expression::LogicalExpression(logical) => {
+                self.visit_empty_table_evaluated_expression(&logical.left);
+                self.visit_empty_table_evaluated_expression(&logical.right);
+            }
+            Expression::BinaryExpression(binary) => {
+                self.visit_empty_table_evaluated_expression(&binary.left);
+                self.visit_empty_table_evaluated_expression(&binary.right);
+            }
+            expression => self.visit_expression_inner(expression, false),
         }
     }
 
-    /// Returning or storing a function value in an IIFE still leaves it dormant.
-    fn visit_empty_table_invoked_statements(&mut self, statements: &[Statement<'_>]) {
-        for statement in statements {
-            if self.gap.is_some() {
-                return;
+    /// Inline calls and tags execute ordinary function bodies. Constructors
+    /// additionally exclude arrows and async functions, which cannot be `new`ed.
+    fn visit_empty_table_invoked_value(&mut self, expression: &Expression<'_>, constructor: bool) {
+        match runtime_expression(expression) {
+            Expression::ArrowFunctionExpression(arrow) if !constructor => {
+                self.with_parameters(&arrow.params, |finder| {
+                    finder.visit_empty_table_invoked_statements(&arrow.body.statements);
+                });
             }
-            match statement {
-                Statement::ExpressionStatement(expression) => {
-                    self.visit_empty_table_evaluated_expression(&expression.expression);
+            Expression::FunctionExpression(function)
+                if !function.generator && (!constructor || !function.r#async) =>
+            {
+                if let Some(body) = &function.body {
+                    self.with_parameters(&function.params, |finder| {
+                        finder.visit_empty_table_invoked_statements(&body.statements);
+                    });
                 }
-                Statement::ReturnStatement(returned) => {
-                    if let Some(argument) = &returned.argument {
-                        self.visit_empty_table_evaluated_expression(argument);
-                    }
-                    return;
-                }
-                Statement::VariableDeclaration(declaration) => {
-                    for declarator in &declaration.declarations {
-                        if let Some(initializer) = &declarator.init {
-                            self.visit_empty_table_evaluated_expression(initializer);
-                        }
-                        if self.gap.is_some() {
-                            return;
-                        }
-                    }
-                }
-                Statement::BlockStatement(block) => {
-                    self.visit_empty_table_invoked_statements(&block.body);
-                }
-                Statement::FunctionDeclaration(_) => {}
-                statement => self.visit_statement(statement),
             }
+            _ => {}
         }
+    }
+
+    /// Propagate evaluation through the shared statement and scope walker.
+    fn visit_empty_table_invoked_statements(&mut self, statements: &[Statement<'_>]) {
+        let outer_mode = self.evaluated_only;
+        self.evaluated_only = true;
+        self.visit_statements(statements);
+        self.evaluated_only = outer_mode;
     }
 
     fn visit_arguments(&mut self, arguments: &[Argument<'_>]) {

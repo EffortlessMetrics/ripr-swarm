@@ -139,9 +139,13 @@ pub(crate) fn canonical_agent_receipt_verify_render(
     // the canonical byte comparison below is the single authority that
     // rejects a verify JSON replayed against different or mutated artifact
     // bytes.
+    let before_produced_from_dirty = before_identity.historical_produced_from_dirty();
+    let after_produced_from_dirty = after_identity.historical_produced_from_dirty();
     let binding = output::outcome::AgentVerifyArtifactBinding {
         before_content_sha256: before_identity.content_sha256.clone(),
         after_content_sha256: after_identity.content_sha256.clone(),
+        before_produced_from_dirty,
+        after_produced_from_dirty,
     };
     // A gap-bound verify document (`agent verify --gap-id`, #9103) carries a
     // `bound_gap` member. It is never trusted as written: the closure is

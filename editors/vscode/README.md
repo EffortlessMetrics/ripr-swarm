@@ -144,8 +144,8 @@ The development extension also exposes the following commands:
 - `ripr: First PR - Copy Repair Packet`
 - `ripr: Copy Repair Packet at Cursor`
 - `ripr: First PR - Copy Verify Command`
-- `ripr: First PR - Copy Receipt Command`
-- `ripr: First PR - Copy Regeneration Guidance`
+- `ripr: First PR - Copy Result Record Command`
+- `ripr: First PR - Copy Steps to Regenerate Packet`
 - `ripr: Inspect Test Gap - Copy Context`
 - `ripr: Write Targeted Test - Copy Suggested Assertion`
 - `ripr: Write Targeted Test - Copy Brief`
@@ -154,19 +154,19 @@ The development extension also exposes the following commands:
 - `ripr: Agent Handoff - Copy Brief Command`
 - `ripr: Verify After Test - Copy After Snapshot Command`
 - `ripr: Verify After Test - Copy Verify Command`
-- `ripr: Review Result - Copy Receipt Command`
+- `ripr: Review Result - Copy Result Record Command`
 - `ripr: Write Targeted Test - Open Best Related Test`
 - `ripr: Open Settings`
 - `ripr: Copy Top Repair Packet`
 - `ripr: Copy Verify Command (Top Repair Packet)`
-- `ripr: Copy Receipt Command (Top Repair Packet)`
+- `ripr: Copy Result Record Command (Top Repair Packet)`
 - `ripr: Open Report`
-- `ripr: Show Top Limitation`
-- `ripr: Show Receipt Status`
+- `ripr: Show Main Analysis Limit`
+- `ripr: Show Result Record Status`
 - `ripr: Show Repair Attempt Status`
-- `ripr: Copy Receipt Command (Receipt Status)`
-- `ripr: Open Attempt Ledger`
-- `ripr: Show Route Quality`
+- `ripr: Copy Result Record Command (Result Record Status)`
+- `ripr: Open Repair Attempt History`
+- `ripr: Show Repair Route Summary`
 
 </details>
 

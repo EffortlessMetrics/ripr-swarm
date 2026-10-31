@@ -112,10 +112,10 @@ Analysis:
   ripr rerun --changed-test PATH[::TEST_NODE] [--root PATH] [--json] [--out PATH]
   ripr rerun --gap CANONICAL_GAP_ID --gap-ledger PATH [--root PATH] [--json] [--out PATH]
   ripr evidence-health [--root PATH] [--out PATH] [--out-md PATH] [--mutation-calibration PATH]
-  ripr calibrate cargo-mutants --mutants-json PATH --repo-exposure-json PATH [--format md|json] [--out PATH]
+  ripr calibrate cargo-mutants --mutants-json PATH --repo-exposure-json PATH [--format md|markdown|text|json] [--out PATH]
 
 Repair:
-  ripr repair [<item>] [--root PATH]
+  ripr repair [<item>] [--root PATH] [--base REF]
   ripr continue [--attempt ID] [--root PATH]
   ripr status [--attempt ID] [--root PATH] [--json]
 
@@ -140,7 +140,7 @@ Editor & Agent:
   ripr plus (--repo-exposure-summary target/ripr/reports/repo-exposure-summary.json|--gap-ledger target/ripr/reports/gap-decision-ledger.json) [--check]
 
 PR & Review:
-  ripr outcome --before PATH --after PATH [--format md|json] [--out PATH]
+  ripr outcome --before PATH --after PATH [--format md|markdown|text|json] [--out PATH]
   ripr first-pr [--root .] [--base REV] [--head HEAD] [--gap-ledger target/ripr/reports/gap-decision-ledger.json] [--out-dir target/ripr/reports] [--check]
   ripr start-here [same options as first-pr]   [compatibility]
   ripr first-action [--root .] (--pr-guidance target/ripr/review/comments.json|--assistant-proof target/ripr/reports/test-oracle-assistant-proof.json|--gap-ledger target/ripr/reports/gap-decision-ledger.json|--ledger target/ripr/reports/pr-evidence-ledger.json) [--out target/ripr/reports/first-useful-action.json]

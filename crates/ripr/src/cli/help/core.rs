@@ -126,7 +126,7 @@ run reads as success (#9368).
 "#;
 pub(super) const OUTCOME_HELP: &str = r#"Compare before/after static evidence after adding a focused test.
 
-Usage: ripr outcome --before PATH --after PATH [--format md|json] [--out PATH]
+Usage: ripr outcome --before PATH --after PATH [--format md|markdown|text|json] [--out PATH]
 
 Options:
   --before PATH    Static snapshot before the focused test: repo exposure or check JSON.
@@ -272,6 +272,7 @@ Options:
                            Choose by task: eye review -> human (the default);
                            every finding with drill-in commands -> human-full;
                            machine consumer (jq, CI scripts) -> json (--json);
+                           compact report for a coding agent -> agent;
                            file annotations in Actions logs -> github; code
                            scanning upload -> sarif; README badge ->
                            repo-badge-shields (repo ledger); PR/CI status
@@ -279,10 +280,10 @@ Options:
                            inventory -> repo-exposure-json; agent repair
                            evidence -> agent-seam-packets-json. Groups:
                              Analysis (diff-scoped):
-                               human, human-full, json, github, sarif,
+                               human, human-full, json, github, sarif, agent,
                                check-findings-json (identified snapshot
                                for `agent verify`)
-                             Badge (diff-scoped, for README status):
+                             Badge (diff-scoped, for PR/CI status):
                                badge-json, badge-shields,
                                badge-plus-json, badge-plus-shields
                              Repo-scope (full-repo analysis):
@@ -392,7 +393,8 @@ Progress:
   they do not disable stderr progress. Unknown totals never become a
   percentage or ETA. Progress does not mean analysis is faster or
   that the command will succeed. `--quiet` turns this stream off; agents
-  and scripts reading json should pass it.
+  and scripts reading json should pass it. Setting `RIPR_QUIET` to anything
+  but empty, `0` or `false` does the same.
 
 Environment variables:
   RIPR_MAX_DIFF_CHANGED_RUST_LINES        Maximum added plus removed Rust diff lines
@@ -450,6 +452,11 @@ Environment variables:
                                           to remove the cap (unbounded); an
                                           unparseable value fails the run.
                                           Default: 1000000 (1 MB).
+  RIPR_QUIET                              Silence the stderr `ripr progress:` stream
+                                          like --quiet (check, explain, context,
+                                          pilot). Any value except empty, 0 or
+                                          false silences it; stdout, exit codes and
+                                          errors are unchanged.
   RIPR_GIT_TIMEOUT                        Cooperative deadline in seconds for each
                                           git invocation in the diff-load path. A
                                           git command that exceeds the deadline is

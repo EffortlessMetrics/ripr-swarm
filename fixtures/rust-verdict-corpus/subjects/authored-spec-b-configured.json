@@ -1,0 +1,81 @@
+{
+  "subject_id": "authored-spec-b-configured",
+  "origin": "authored",
+  "version_label": "authored 2026-10-26 for executable benches and configured source-role controls of RIPR-SPEC-0153; libtest-mimic pinned to 0.8.2",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.lock",
+      "sha256": "e234006c8c657a1c907834810f84d99559e3a11c6fe45d6429ae903a5950f353"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "f711551768bf643cbeb96559b01d4027a7adbac4e90d7ef5e018e1cd4c861e95"
+    },
+    {
+      "path": "benches/common/mod.rs",
+      "sha256": "265270fa220ed66c41daacd4084fbfa7fc656e9ae6bed7192cb80640d85cc7fd"
+    },
+    {
+      "path": "benches/exposure.rs",
+      "sha256": "1dd307f34baefde3a6c6dfce5a4b64961f4508e424b266c55fb264896f32b556"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "8fbb02b9eb1ff9db38a89c14f8a0b282e49454d866915265983683c6477da2f8"
+    },
+    {
+      "path": "src/child.rs",
+      "sha256": "081b644d4f4928bc39370181fed44a2685565e597a7020c85e2a2613311511ee"
+    },
+    {
+      "path": "src/custom_runner.rs",
+      "sha256": "2f8e4a3a87fa636e29ac202892d8f3d6221f0ee33bb73ea67f4801621a4a24ab"
+    },
+    {
+      "path": "src/enabled_runner.rs",
+      "sha256": "3045aa5bd112c0593987187f6fde7ec3076567e13dc7fb48c2c35426beaa7522"
+    },
+    {
+      "path": "src/fragments/body.rs",
+      "sha256": "f55ec5bab9232014cb4b56292e4158a06aeba27111052fa099d99a7b9067019e"
+    },
+    {
+      "path": "src/fragments/child.rs",
+      "sha256": "862dee35edf338ff51bff2d990af7c6e9bb065bf3d7930c9bc9ec38b9335cc08"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "87c63fc2dd73f4e37e5a59fe5269ec9542c0fcfb66e8e3165381be975ae720ed"
+    },
+    {
+      "path": "src/nested/child.rs",
+      "sha256": "83ad7f823f6fa20956b26aac36df80af5d36133c2db20d6d2766589a40efae5f"
+    },
+    {
+      "path": "src/nested/renamed.rs",
+      "sha256": "513e5b7968d010eb81ca94a73c6423544173dd6d7a286bc910d6ae451d474973"
+    },
+    {
+      "path": "src/nested/renamed/child.rs",
+      "sha256": "2bc473f70986ede46e8ff8b59fc8e7e3f42fb6ae1dd8d7910f9392ce5bfdaa8b"
+    },
+    {
+      "path": "src/unicode_child.rs",
+      "sha256": "f77e5444e117d8c4b8a85a2c22d8274f4a5d93e81c49591ed0d1dfc2d838eedc"
+    },
+    {
+      "path": "src/unregistered.rs",
+      "sha256": "74ddecda28488dd6ef1babbb0dbafcb96d52fd082b75e11556a078497c2241aa"
+    },
+    {
+      "path": "tests/api_contract.rs",
+      "sha256": "22e0ecab094bb6ce925561b2b3ced4e781a4004322538e78288cd1c2cadfc6b7"
+    },
+    {
+      "path": "tests/other.rs",
+      "sha256": "0bbf1975f99cee351696c56e9013741e322cf98a3a8fd924dd1f51277ec89dd2"
+    }
+  ]
+}

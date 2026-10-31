@@ -38,5 +38,7 @@ Next: drill into the top finding:
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
     - ./src/lib.rs:13 (exposed); kind: return_value; reason: Strong oracle found: whole-object equality assertion
+  Hidden classes:
+    exposed = tests appear to notice the change
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

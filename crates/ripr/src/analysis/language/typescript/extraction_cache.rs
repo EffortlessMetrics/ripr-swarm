@@ -185,6 +185,13 @@ impl FileFactsCache {
                     .iter()
                     .map(|member| member.identity.len())
                     .sum::<usize>(),
+            )
+            .saturating_add(
+                facts
+                    .phase_two
+                    .probe_shapes
+                    .len()
+                    .saturating_mul(std::mem::size_of::<super::owners::ProbeShapeFact>()),
             );
         key.source_len
             .saturating_add(key.path.len())
@@ -673,6 +680,7 @@ pub(crate) fn phase_two_facts_cached(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::ProbeFamily;
 
     const BARREL_SOURCE: &str = "export { helper } from './helper';\nexport * from './other';\n";
     const ENUM_SOURCE: &str = "export enum Plan {\n    Basic = 1,\n    Pro = 2,\n}\n";
@@ -719,6 +727,87 @@ mod tests {
         assert_eq!(first.export_facts, second.export_facts);
         assert_eq!(first.phase_two, second.phase_two);
         assert_eq!(first.parse_error, second.parse_error);
+    }
+
+    fn ast_shape_at(
+        source: &str,
+        line: usize,
+    ) -> Option<super::super::probe_shape::TypeScriptProbeShape> {
+        let facts = file_facts_cached(Path::new("src/a.ts"), source, Path::new("."), None).ok()?;
+        facts.phase_two.probe_shape_for_line(line).cloned()
+    }
+
+    #[test]
+    fn ast_shape_string_ternary_return_is_return_value() {
+        let source = "export function f(): string {\n  return \"a ? b : c\";\n}\n";
+        let shape = ast_shape_at(source, 2);
+        assert_eq!(
+            shape.as_ref().map(|shape| &shape.family),
+            Some(&ProbeFamily::ReturnValue)
+        );
+        assert_eq!(shape.map(|shape| shape.specific), Some(true));
+    }
+
+    #[test]
+    fn ast_shape_statement_inside_switch_arm_takes_own_family() {
+        let source = "export function f(x: number): number {\n  switch (x) {\n    case 1: throw new Error(\"one\");\n    default: return x;\n  }\n}\n";
+        assert_eq!(
+            ast_shape_at(source, 3).map(|shape| shape.family),
+            Some(ProbeFamily::ErrorPath)
+        );
+        assert_eq!(
+            ast_shape_at(source, 4).map(|shape| shape.family),
+            Some(ProbeFamily::ReturnValue)
+        );
+    }
+
+    #[test]
+    fn ast_shape_multiline_return_ternary_continuation_is_return_value() {
+        let source =
+            "export function f(n: number): number {\n  return n > 100\n    ? n - 20\n    : n;\n}\n";
+        assert_eq!(
+            ast_shape_at(source, 2).map(|shape| shape.family),
+            Some(ProbeFamily::Predicate)
+        );
+        let continuation = ast_shape_at(source, 3);
+        assert_eq!(
+            continuation.as_ref().map(|shape| &shape.family),
+            Some(&ProbeFamily::ReturnValue)
+        );
+        assert_eq!(continuation.map(|shape| shape.specific), Some(true));
+    }
+
+    #[test]
+    fn ast_shape_block_arrow_inside_concise_arrow_keeps_side_effect() {
+        // The inner block-bodied arrow starts a fresh statement context:
+        // `foo(y);` is a side-effect statement, not the outer concise
+        // arrow's returned value.
+        let source =
+            "export const f = (items: number[]): void => items.forEach((y) => {\n  foo(y);\n});\n";
+        assert_eq!(
+            ast_shape_at(source, 2).map(|shape| shape.family),
+            Some(ProbeFamily::SideEffect)
+        );
+    }
+
+    #[test]
+    fn ast_shape_catch_body_statement_is_not_error_path() {
+        // Only the catch header is the error-path shape; a plain statement
+        // in the body must not be stamped ErrorPath by the enclosing clause.
+        let source = "export function f(): number {\n  try { g(); } catch (e) {\n    const x = 1;\n    return x;\n  }\n}\n";
+        assert_ne!(
+            ast_shape_at(source, 3).map(|shape| shape.family),
+            Some(ProbeFamily::ErrorPath)
+        );
+    }
+
+    #[test]
+    fn ast_shape_minified_line_with_disjoint_owners_is_none() {
+        // Several exports share one line: no single AST shape describes a
+        // change on that line, so the classifier must keep its line-text
+        // fallback instead of crediting a sibling owner's shape.
+        let source = "export const total=(n:number):number=>n*2;export const flag=(n:number):boolean=>n>10;\n";
+        assert_eq!(ast_shape_at(source, 1), None);
     }
 
     #[test]

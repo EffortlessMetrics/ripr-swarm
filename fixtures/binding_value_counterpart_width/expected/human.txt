@@ -1,0 +1,61 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/binding_value_counterpart_width/input
+
+Summary: 4 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 4 unclear. 4 found, 0 suppressed by your settings
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 4 changed behavior(s) checked, 4 finding(s)
+
+Start here:
+  State: ripr cannot tell from reading the code whether tests would notice this
+  Safe next action: look at the reason below before adding a test
+  File: ./src/lib.rs:3
+  Static exposure: unknown (severity: warning, confidence 0.66)
+  Why unknown: the change reaches something a test can check, but ripr could not tell which inputs would trigger it
+  Gap ID (for scripts): gap:rust:src/lib.rs:unsigned:predicate_boundary:predicate:k==bound
+  Changed behavior: k <= bound
+  Missing check (1 of 2): Changed boundary input is unresolved: boundary operand `k` is a local or
+    computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the
+    boundary a test reaches; activation/infection is unknown; a related test that passes literal
+    inputs on each side of the boundary would let ripr decide
+  Related test: tests/semantics.rs:4 unsigned_wrap_is_not_the_boundary
+  Next step: Open the related test, check whether it reaches the changed code, and inspect other
+    existing tests. Trace their inputs through the local or computed operand (including default and
+    empty cases) to see which side of the changed condition they exercise, then name an input that
+    would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or
+    strengthen a test only if this inspection finds a gap. Compare the original and changed
+    implementations with a focused run using the project's configured test runner (`cargo test` for
+    ordinary Cargo tests). Static classification may remain unknown
+  Evidence: reach yes · infection unknown · propagation yes · observation yes · discriminator not established
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
+    - reach yes: Related tests appear to reach unsigned: unsigned_wrap_is_not_the_boundary
+    - infection unknown: Changed boundary input is unresolved: boundary operand `k` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which…
+    - 7 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/binding_value_counterpart_width/input --diff <cwd>/fixtures/binding_value_counterpart_width/diff.patch --mode fast probe:src_lib.rs:predicate:4f4e88fc
+  ripr context --root <cwd>/fixtures/binding_value_counterpart_width/input --diff <cwd>/fixtures/binding_value_counterpart_width/diff.patch --mode fast --at probe:src_lib.rs:predicate:4f4e88fc
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test assertion that pins the changed boundary value exactly; a test input that reaches the changed code; follow the Next step above, then rerun `ripr check`
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/binding_value_counterpart_width/input --at src/lib.rs:3 --kind predicate
+
+Hidden:
+  3 lower-priority finding(s) omitted from default human output.
+    - ./src/lib.rs:3 (unknown: propagation unclear); kind: return_value; reason: No clear propagation path from changed behavior to an observable sink
+    - ./src/lib.rs:8 (unknown: infection unclear); kind: predicate; reason: Changed boundary input is unresolved: boundary operand `k` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary…
+    - ./src/lib.rs:8 (unknown: propagation unclear); kind: return_value; reason: No clear propagation path from changed behavior to an observable sink
+  Hidden classes:
+    unknown: infection unclear = ripr could not tell what input makes the change take effect
+    unknown: propagation unclear = ripr could not follow the change through an opaque boundary
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

@@ -1,0 +1,1 @@
+crates/ripr/src/mcp/wire_panic_tests.rs|Command::new|1|mcp-wire-panic-test|#11116: the MCP wire-level panic-containment regression runs `git init` in a temp fixture crate so workspace resolution sees a repository; test-only setup spawn that fails closed on a nonzero status. One call, no shell or descendants.

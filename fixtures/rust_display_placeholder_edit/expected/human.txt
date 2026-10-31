@@ -14,8 +14,8 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:rust:src/display.rs:impl fmt::Display for Temp::fmt:return_value:return_value:write!f_lit5c757b37627d3a3f5c757b37647dc2b043_self.0
-  Changed behavior: write!(f, "/u{7b}:?/u{7d}°C", self.0)
-  Missing check: No strong discriminator was detected
+  Changed behavior: write!(f, "\u{7b}:?\u{7d}°C", self.0)
+  Missing check: No strong assertion was detected
   Related test: src/display.rs:16 exact_display_pin (ripr could not confirm that this assertion observes the changed behavior)
   Next step: The related test `exact_display_pin` already has an exact assertion; this does not
     establish observation of the returned value. Check whether the change can affect the returned

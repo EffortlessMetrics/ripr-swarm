@@ -6386,6 +6386,7 @@ pub(crate) fn classify_change_with_alias_state(
         reexport_index,
         alias_map,
         alias_unavailable,
+        None,
     )
 }
 
@@ -6676,7 +6677,7 @@ fn decorated_return_changed(owner: &TypeScriptOwner, line: usize) -> bool {
 /// for the deleted-lines closure and the test-only wrapper.
 #[allow(
     clippy::too_many_arguments,
-    reason = "12 structurally-distinct context tokens; bundling forces heap allocation; count is stable"
+    reason = "13 structurally-distinct context tokens; bundling forces heap allocation; count is stable"
 )]
 pub(crate) fn classify_resolved_owner(
     file: &Path,
@@ -6691,6 +6692,7 @@ pub(crate) fn classify_resolved_owner(
     reexport_index: &ReExportIndex,
     alias_map: Option<&TsAliasMap>,
     alias_unavailable: Option<&TsAliasMapLoadGap>,
+    ast_shape: Option<TypeScriptProbeShape>,
 ) -> Option<Finding> {
     // RIPR-SPEC-0243 rule 21: a decorated-method reach observes only an edit
     // to the wrapper's pass-through return. Any other line of the decorator
@@ -6726,7 +6728,19 @@ pub(crate) fn classify_resolved_owner(
     // `ts_oracle_kind_matches_seam` filter that `strongest_family_matching_oracle`
     // applies below, so a row never displays a wrong-family assertion while
     // classification judges another.
-    let probe_shape = classify_probe_shape_detail(line_text);
+    // #11250: the AST-derived shape for this line wins when the single
+    // parse produced one; absent facts (old-side lines, parse errors,
+    // test-only paths) keep the line-text classification.
+    // #11487: a function opened and closed on the changed line carries several
+    // statements on it, so the AST fact keeps only the last one (a trailing
+    // `return`). Read such a line by its first statement, as the same code
+    // formatted over several lines would be read.
+    let one_line_function = one_line_function_body(line_text).len() != line_text.len();
+    let probe_shape = if one_line_function {
+        classify_probe_shape_detail(line_text)
+    } else {
+        ast_shape.unwrap_or_else(|| classify_probe_shape_detail(line_text))
+    };
     // A one-line guard whose condition is unchanged was edited in its
     // statement (`if (n > 100) return n - 20;`), so the guard's boundary is not
     // the changed behavior; the shape stays unrecognised rather than crediting
@@ -7084,6 +7098,11 @@ pub(crate) fn classify_resolved_owner(
         typescript_changed_boundary_text(file, &probe_shape.family, old_line_text, line_text);
     let boundary_text = boundary_text.as_ref();
     let predicate_boundary = ts_predicate_boundary(&probe_shape, boundary_text);
+    // #11256: a boundary operand no test call can set names its own limitation.
+    let named_limitations_from_derived_operand: Vec<TypeScriptNamedLimitation> =
+        derived_boundary_operand_limitation(owner, &predicate_boundary)
+            .into_iter()
+            .collect();
     let row_activation = |candidate: &TypeScriptRelatedCandidate<'_>,
                           boundary_fact: Option<&TypeScriptBoundaryFact>| {
         let context = TsBoundaryRowContext {
@@ -7835,6 +7854,7 @@ pub(crate) fn classify_resolved_owner(
     for named_limit in named_limitations_from_static
         .iter()
         .chain(named_limitations_from_oracle.iter())
+        .chain(named_limitations_from_derived_operand.iter())
         .chain(named_limitations_from_ownership.iter())
         .chain(alias_gap.iter().map(|gap| &gap.limitation))
         .chain(named_limitations_from_spy.iter())

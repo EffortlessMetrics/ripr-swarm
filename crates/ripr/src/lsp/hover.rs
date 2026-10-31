@@ -57,6 +57,69 @@ pub(super) enum NoEvidenceState {
     Analyzed,
 }
 
+/// What the server observed about a file quarantined as
+/// `no_analyzed_saved_content` (#11452). Each variant states only a fact the
+/// server read; anything it cannot distinguish falls to
+/// [`UnanalyzedFileCause::NoCommittedAnalysis`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum UnanalyzedFileCause {
+    /// The file is not on disk, so no analysis can read its saved content.
+    NotOnDisk,
+    /// An analysis attempt is queued or running.
+    AttemptInProgress,
+    /// A snapshot committed, yet it recorded no saved content for this file.
+    SnapshotDidNotRecordFile,
+    /// No snapshot committed and the latest attempt failed.
+    LatestAttemptFailed,
+    /// No snapshot has committed (no attempt observed, or it ended without one).
+    NoCommittedAnalysis,
+}
+
+/// Classify an unanalyzed file from observed state. Order is fail-closed: a
+/// route is only offered when the server observed the fact it rests on.
+pub(super) fn classify_unanalyzed_file(
+    file_on_disk: bool,
+    state: AnalysisAttemptState,
+    snapshot_committed: bool,
+) -> UnanalyzedFileCause {
+    if !file_on_disk {
+        UnanalyzedFileCause::NotOnDisk
+    } else if matches!(
+        state,
+        AnalysisAttemptState::Queued | AnalysisAttemptState::Running
+    ) {
+        UnanalyzedFileCause::AttemptInProgress
+    } else if snapshot_committed {
+        UnanalyzedFileCause::SnapshotDidNotRecordFile
+    } else if state == AnalysisAttemptState::Failed {
+        UnanalyzedFileCause::LatestAttemptFailed
+    } else {
+        UnanalyzedFileCause::NoCommittedAnalysis
+    }
+}
+
+/// The hover sentence for an unanalyzed file: the observed cause and the
+/// recovery that cause honors. Static-only; it claims no finding.
+pub(super) fn unanalyzed_file_hover_route(cause: UnanalyzedFileCause) -> &'static str {
+    match cause {
+        UnanalyzedFileCause::NotOnDisk => {
+            "this file is not on disk, so ripr has no saved content to analyze; save it, then refresh (`ripr.refresh`)."
+        }
+        UnanalyzedFileCause::AttemptInProgress => {
+            "an analysis attempt is already queued or running; whether it covers this file is not yet known."
+        }
+        UnanalyzedFileCause::SnapshotDidNotRecordFile => {
+            "the latest committed analysis did not record this file's saved content; refresh (`ripr.refresh`) to ask again. ripr does not know why it was not recorded."
+        }
+        UnanalyzedFileCause::LatestAttemptFailed => {
+            "the latest analysis attempt failed and no analysis has committed; resolve the reported failure, then refresh (`ripr.refresh`)."
+        }
+        UnanalyzedFileCause::NoCommittedAnalysis => {
+            "no analysis has committed for this workspace, so ripr has not analyzed this file's saved content; refresh (`ripr.refresh`)."
+        }
+    }
+}
+
 /// The no-evidence hover, aware of whether any analysis has committed or is
 /// running, and which languages the workspace analyzes (#9604 finding 32).
 /// Before the first successful analysis the generic "run the CLI" pointer
@@ -2464,5 +2527,66 @@ mod root_identity_tests {
         let root = Path::new("/w/sub/proj");
         assert!(root_matches_report(root, Some("/w/sub/proj")));
         assert!(!root_matches_report(root, Some("/w\\sub\\proj")));
+    }
+}
+
+#[cfg(test)]
+mod unanalyzed_file_cause_tests {
+    use super::*;
+
+    #[test]
+    fn classification_follows_observed_state_in_order() {
+        use AnalysisAttemptState::{Cancelled, Failed, Queued, Running, Stopped, Succeeded};
+        assert_eq!(
+            classify_unanalyzed_file(false, Running, true),
+            UnanalyzedFileCause::NotOnDisk
+        );
+        for state in [Queued, Running] {
+            assert_eq!(
+                classify_unanalyzed_file(true, state, true),
+                UnanalyzedFileCause::AttemptInProgress
+            );
+        }
+        for state in [Failed, Succeeded, Stopped] {
+            assert_eq!(
+                classify_unanalyzed_file(true, state, true),
+                UnanalyzedFileCause::SnapshotDidNotRecordFile
+            );
+        }
+        assert_eq!(
+            classify_unanalyzed_file(true, Failed, false),
+            UnanalyzedFileCause::LatestAttemptFailed
+        );
+        // Negative control: an attempt that ended without a snapshot and
+        // without a failure is neither reported as a failure nor in progress.
+        for state in [Cancelled, Stopped, Succeeded] {
+            assert_eq!(
+                classify_unanalyzed_file(true, state, false),
+                UnanalyzedFileCause::NoCommittedAnalysis
+            );
+        }
+    }
+
+    #[test]
+    fn every_cause_has_distinct_static_wording_without_unobserved_claims() {
+        let causes = [
+            UnanalyzedFileCause::NotOnDisk,
+            UnanalyzedFileCause::AttemptInProgress,
+            UnanalyzedFileCause::SnapshotDidNotRecordFile,
+            UnanalyzedFileCause::LatestAttemptFailed,
+            UnanalyzedFileCause::NoCommittedAnalysis,
+        ];
+        let texts: Vec<&str> = causes
+            .iter()
+            .map(|cause| unanalyzed_file_hover_route(*cause))
+            .collect();
+        for (index, text) in texts.iter().enumerate() {
+            assert!(!text.contains("in this session"), "{text}");
+            assert!(!text.contains("evidence appears"), "{text}");
+            assert!(!text.contains("exposed"), "{text}");
+            for other in &texts[index + 1..] {
+                assert_ne!(text, other);
+            }
+        }
     }
 }
