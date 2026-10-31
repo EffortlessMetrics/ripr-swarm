@@ -9501,10 +9501,43 @@ fn agent_repair_after_phase_stderr_redirected_into_repo_names_new_attempt_route(
     assert!(
         refusal.contains("repair attempt after verdict binding is tampered or stale")
             && refusal.contains("the verdict is already recorded")
-            && refusal.contains("start a new attempt with `ripr agent repair --root ")
-            && refusal.contains(" --phase before`"),
+            && refusal.contains("only a new attempt recovers it")
+            && refusal.contains("your repair edit is present"),
         "{refusal}"
     );
+    // Run the printed commands: the status command is bound to this root, and
+    // the restart refuses while the repair edit is present but works once the
+    // edit is set aside (the fixture's own stash, never ripr's).
+    let printed = |name: &str| -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        let start = refusal
+            .find(&format!("`ripr agent {name} --root "))
+            .ok_or("printed command missing")?
+            + 1;
+        let end = start + refusal[start..].find('`').ok_or("unterminated command")?;
+        Ok(refusal[start..end]
+            .split_whitespace()
+            .skip(1)
+            .map(str::to_string)
+            .collect())
+    };
+    let status_args = printed("status")?;
+    let status_refs = status_args.iter().map(String::as_str).collect::<Vec<_>>();
+    assert_success(&run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&outside),
+        &status_refs,
+    )?);
+    let restart_args = printed("repair")?;
+    let restart_refs = restart_args.iter().map(String::as_str).collect::<Vec<_>>();
+    let blocked = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&outside), &restart_refs)?;
+    assert_failure(&blocked);
+    git_stdout(&root, &["stash", "push", "--include-untracked"])?;
+    assert_success(&run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&outside),
+        &restart_refs,
+    )?);
+    git_stdout(&root, &["stash", "pop"])?;
 
     // Removing the file does not revive the attempt: the rerun reports it
     // finished and names the restart command.
@@ -9632,10 +9665,11 @@ fn agent_repair_admits_a_cargo_lock_first_generated_between_the_phases()
     let moved_stderr = String::from_utf8_lossy(&moved.stderr);
     assert!(
         moved_stderr.contains("the recorded binding no longer matches the attempt")
-            && moved_stderr.contains("`ripr agent status`")
+            && moved_stderr.contains("`ripr agent status --root ")
             && moved_stderr.contains("remove the stray file or edit and rerun")
-            && moved_stderr.contains("writing command output outside the repository")
-            && moved_stderr.contains("start a new attempt with `ripr agent repair --root ")
+            && moved_stderr.contains("Write command output outside the repository")
+            && moved_stderr.contains("set your edit aside without discarding it")
+            && moved_stderr.contains("`ripr agent repair --root ")
             && moved_stderr.contains(" --seam-id ")
             && moved_stderr.contains(" --phase before`"),
         "{moved_stderr}"

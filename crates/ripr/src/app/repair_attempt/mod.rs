@@ -519,6 +519,10 @@ pub(crate) fn receipt_binding_from(
         // reaches this refusal after it recorded its verdict, so only a new
         // attempt recovers it; a receipt retry recovers by undoing the change.
         let store_flag = quoted_store_flag_from_identity(manifest.store.as_ref());
+        let status = format!(
+            "ripr agent status --root {}{store_flag}",
+            shell_arg(&root_display)
+        );
         let restart = crate::app::gap_bound_repair::repair_start_command(
             &root_display,
             &store_flag,
@@ -529,7 +533,7 @@ pub(crate) fn receipt_binding_from(
                 .map(|binding| binding.base.as_str()),
         );
         return Err(format!(
-            "repair attempt after verdict binding is tampered or stale: the recorded binding no longer matches the attempt. Output this command wrote during the run (stdout or stderr redirected into a repository file, including under `target/ripr`), a path outside `target/ripr` that changed after the after phase bound it, or an attempt that already finished can each cause this. Next: `ripr agent status` reads the attempt's state. From `ripr agent receipt`, remove the stray file or edit and rerun. From the after phase the verdict is already recorded, so a rerun reports the attempt as already finished: start a new attempt with `{restart}`, writing command output outside the repository"
+            "repair attempt after verdict binding is tampered or stale: the recorded binding no longer matches the attempt. Output this command wrote during the run (stdout or stderr redirected into a repository file, including under `target/ripr`), a path outside `target/ripr` that changed after the after phase bound it, or an attempt that already finished can each cause this. Next: `{status}` reads the attempt's state. From `ripr agent receipt`, remove the stray file or edit and rerun. From the after phase the verdict is already recorded, so a rerun reports the attempt as already finished and only a new attempt recovers it. The restart refuses while your repair edit is present, because that edit already reads the gap as exposed: first set your edit aside without discarding it (for example `git stash`; ripr changes none of your files), run `{restart}`, then restore the edit and run the new --attempt command it prints. Write command output outside the repository"
         ));
     }
     validate_trusted_head_surface(
