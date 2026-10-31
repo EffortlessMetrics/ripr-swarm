@@ -653,3 +653,63 @@ fn partial_indexes_user_field_types_and_handed_receivers_keep_the_part_c_reading
     assert!(run("publish(1, &inv);"));
     assert!(!run("publish(1, 2);"));
 }
+
+#[test]
+fn static_observer_roots_may_carry_written_state() {
+    let tests = |assertion: &str| {
+        format!(
+            "use demo::*;\n\n#[test]\nfn after_receive() {{\n    let mut inv = Inventory::new(5);\n    inv.receive(\"A\", 2);\n    {assertion}\n}}\n"
+        )
+    };
+    let idx = |body: &str| index(&[(LIB, LEDGER), ("tests/ledger.rs", body)]);
+    let admits = |body: &str, assertion: &str| {
+        let index = idx(body);
+        let carrier = establish(&index, "self.refresh_low_stock(sku);");
+        assert!(
+            carrier.is_some(),
+            "the ledger shape must establish a carrier"
+        );
+        carrier.is_some_and(|carrier| carrier.admits(the_test(&index), &whole_object(assertion)))
+    };
+
+    assert!(
+        admits(
+            &tests(
+                r#"assert_eq!(*LOG.lock().unwrap(), vec![Event::Received { sku: "A".to_string(), qty: 2 }]);"#
+            ),
+            r#"assert_eq!(*LOG.lock().unwrap(), vec![Event::Received { sku: "A".to_string(), qty: 2 }]);"#,
+        ),
+        "a static mutex read may observe state written by the callee (#7070 item 1)"
+    );
+    assert!(
+        admits(
+            &tests("assert_eq!(TABLE[0], 3);"),
+            "assert_eq!(TABLE[0], 3);",
+        ),
+        "a static slice index read may carry"
+    );
+
+    // CamelCase struct literals and bare const names stay non-carrying.
+    assert!(
+        !admits(
+            &tests("let count: usize = 3; assert_eq!(count, Store { x: 1 });"),
+            "assert_eq!(count, Store { x: 1 });",
+        ),
+        "CamelCase type roots must not carry"
+    );
+    assert!(
+        !admits(
+            &tests("const LIMIT: u32 = 1; let x = 0u32; assert_eq!(x, LIMIT);"),
+            "assert_eq!(x, LIMIT);",
+        ),
+        "a bare SCREAMING_CASE const comparison must not carry"
+    );
+    // A type path (`Vec::`) is not a static root read.
+    assert!(
+        !admits(
+            &tests("assert_eq!(Vec::new(), inv.history().to_vec());"),
+            "assert_eq!(Vec::new(), inv.history().to_vec());",
+        ),
+        "uppercase type paths must stay refused"
+    );
+}
