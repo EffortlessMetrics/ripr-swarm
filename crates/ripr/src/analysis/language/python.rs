@@ -185,6 +185,7 @@ use source_facts::{
 };
 mod source_utils;
 use source_utils::{is_test_file, normalized_path};
+mod collection_config;
 mod fixtures;
 mod forwarding_decorator;
 mod helper_assertions;
@@ -1279,6 +1280,7 @@ impl PythonAdapter {
         fixtures::record_bare_sibling_imports(&mut all_tests, |path| {
             options.root.join(path).exists()
         });
+        collection_config::apply_collection_config(&mut all_tests, &options.root);
         reexports::apply_package_reexports(
             &mut all_owners,
             |file| workspace_read.sources.get(file).map(String::as_str),
@@ -1853,6 +1855,9 @@ mod assertion_selection_tests;
 mod bool_oracle_tests;
 #[cfg(test)]
 mod known_equality_helpers_tests;
+
+#[cfg(test)]
+mod collection_config_tests;
 
 #[cfg(test)]
 mod conftest_admission_tests;

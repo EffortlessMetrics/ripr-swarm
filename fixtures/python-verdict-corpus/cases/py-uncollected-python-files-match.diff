@@ -1,0 +1,12 @@
+diff --git a/unconfig/core.py b/unconfig/core.py
+--- a/unconfig/core.py
++++ b/unconfig/core.py
+@@ -3,7 +3,7 @@
+ 
+ 
+ def name_on(a, b):
+-    return a * b
++    return a + b
+ 
+ 
+ def ignore_off(a, b):

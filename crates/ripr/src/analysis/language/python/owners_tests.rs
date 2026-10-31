@@ -1355,6 +1355,11 @@ impl<'a> LocalTestClasses<'a> {
                         super::test_activation::DeclarationSite::Class,
                     )
                 }))
+                .chain(class_switched_off(&scope, name).then(|| {
+                    super::test_activation::test_switch_control(
+                        super::test_activation::DeclarationSite::Class,
+                    )
+                }))
                 .collect();
             found.class_activation_controls.insert(name, controls);
             let Some(mro) = scope.mro(name, &mut Vec::new()) else {
@@ -1528,6 +1533,24 @@ impl<'a> ScopeClasses<'a> {
             }
         }
         None
+    }
+}
+
+/// Whether `__test__ = False` (or an unevaluable binding) reaches `name`:
+/// pytest reads the attribute through the class hierarchy, so the class's own
+/// literal `True` re-enables collection and otherwise any ancestor that is
+/// not provably `True` counts (fail-closed).
+fn class_switched_off<'a>(scope: &ScopeClasses<'a>, name: &'a str) -> bool {
+    use super::test_activation::{TestSwitch, test_switch};
+    let switches: Vec<TestSwitch> = scope
+        .ancestors_or_self(name)
+        .iter()
+        .filter_map(|ancestor| scope.defs.get(ancestor))
+        .map(|(_, class)| test_switch(&class.body))
+        .collect();
+    match switches.first() {
+        Some(TestSwitch::Enabled) => false,
+        _ => switches.contains(&TestSwitch::Disabled),
     }
 }
 

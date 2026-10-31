@@ -1,0 +1,12 @@
+diff --git a/uncollected/core.py b/uncollected/core.py
+--- a/uncollected/core.py
++++ b/uncollected/core.py
+@@ -7,7 +7,7 @@
+ 
+ 
+ def conftest_ignored(a, b):
+-    return a * b
++    return a + b
+ 
+ 
+ def class_on(a, b):

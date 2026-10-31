@@ -1,0 +1,9 @@
+diff --git a/unconfig/core.py b/unconfig/core.py
+--- a/unconfig/core.py
++++ b/unconfig/core.py
+@@ -7,4 +7,4 @@
+ 
+ 
+ def ignore_off(a, b):
+-    return a * b
++    return a + b

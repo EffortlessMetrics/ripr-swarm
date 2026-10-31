@@ -1,0 +1,49 @@
+{
+  "subject_id": "authored-py-pytest-uncollected",
+  "origin": "authored",
+  "version_label": "authored@a561a277",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "pyproject.toml",
+      "sha256": "c791c8ef2449b479a2830481539491896f9d7e73f048f62d36389d47b1383225"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/conftest.py",
+      "sha256": "10726999a460552bf4a19b3fce6d2d033101215c1ed5b027f2ec21594fe80fab"
+    },
+    {
+      "path": "tests/test_class_inherited_off.py",
+      "sha256": "d4a4a559afd8b70845cd0d61017cbb4637907704e7e0cb35c4452abecc51d85e"
+    },
+    {
+      "path": "tests/test_class_off.py",
+      "sha256": "2a69a9680d8e2d65fc73d895aa5a080caf73027707f0da6f1bd3999b9d24f6b8"
+    },
+    {
+      "path": "tests/test_class_on.py",
+      "sha256": "4c0f4607495944c0442109f04ebf209183c7c51be8c611cd5ad97030bc61e9d7"
+    },
+    {
+      "path": "tests/test_conftest_ignored.py",
+      "sha256": "cb870a30e8c703a525d73a8e1135bac3038add0e081f920c4298614cdbda6126"
+    },
+    {
+      "path": "tests/test_module_off.py",
+      "sha256": "2c74c315ad8ea575ebcab7f188e3dfc12e73b93deb0760531cb19bdbbfec5031"
+    },
+    {
+      "path": "uncollected/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "uncollected/core.py",
+      "sha256": "09fce50a5cd4f0eb4d17747b6ab7713444e9f3d812262952058a5ddff30664d7"
+    }
+  ]
+}

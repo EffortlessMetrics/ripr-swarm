@@ -1037,6 +1037,21 @@ mutant calibrates the rule; ripr reports only the static shape.
     `importorskip` of a missing module and an empty tuple table, which
     abstain, and `xfail(False, reason=...)` and
     `unittest.skipUnless(True, ...)`, which stay active and credited).
+    A test pytest never collects is controlled the same way
+    (`pytest.collection(...)`, #11527): a class or module whose `__test__`
+    is not provably the literal `True`, a `conftest.py` `collect_ignore` or
+    `collect_ignore_glob` entry that covers the file, and the pytest options
+    `python_files`, `python_classes` (pytest-style classes),
+    `python_functions` (pytest-style tests), `testpaths`, `norecursedirs`
+    and `--ignore` / `--ignore-glob` in `addopts`, read from `pytest.ini`,
+    `.pytest.ini`, `tox.ini`, `setup.cfg`, `pyproject.toml` and
+    `pytest.toml` on the test file's directory chain. The read is
+    parse-everything-or-refuse: a collection form the adapter cannot
+    evaluate (a computed `collect_ignore`, a collection hook, a character
+    class, an unparsable or unreadable file, `-o`, `-c` or `--rootdir` in
+    `addopts`) withholds credit for its scope. Not modelled, so credit is
+    unchanged: the default `norecursedirs`, `-k`, `-m` and `--deselect`,
+    `pytest_collection_modifyitems`, and command-line arguments.
 25. **A property check pins no value.** A single `==` in an `assert`
     statement is a weak relational check, as a tautology is (rule 1), when
     one side is a call and the other side is either a call that appears in

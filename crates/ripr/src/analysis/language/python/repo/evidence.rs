@@ -366,6 +366,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
     super::super::fixtures::record_bare_sibling_imports(&mut all_tests, |path| {
         root.join(path).exists()
     });
+    super::super::collection_config::apply_collection_config(&mut all_tests, root);
 
     // Production subjects: owners + behavior items, related against the
     // evidence pool built above. The public Finding projection is built in
