@@ -10579,6 +10579,7 @@ tests = [
   "crates/ripr/src/output/human/triage.rs::tests::hand_written_step_never_denies_a_route_the_advisory_names",
   "crates/ripr/src/output/human/triage.rs::tests::withheld_and_not_a_gap_stub_decisions_render_plainly",
   "crates/ripr/src/analysis/classify/decision.rs::tests::infection_unknown_next_step_names_a_concrete_action",
+  "crates/ripr/src/analysis/classify/decision.rs::tests::infection_unknown_next_step_only_names_condition_sides_for_predicates",
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::plain_blockers_name_the_test_and_hide_the_limit_id",
   "crates/ripr/src/app/navigation.rs::tests::repair_route_refusal_advisory_names_state_and_recovery",
   "crates/ripr/src/output/human.rs::tests::render_finding_marks_a_match_arm_head_only_after_row",
