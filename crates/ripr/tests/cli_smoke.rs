@@ -5156,6 +5156,8 @@ fn check_json_bound_subject_config_timeout_names_timeout_identity() -> Result<()
 fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery() -> Result<(), String> {
     let root = init_check_refusal_repo("check-json-analysis-timeout", 1)?;
     let root_arg = root.display().to_string();
+    std::fs::write(root.join("ripr.toml"), "[analysis]\nmode = \"deep\"\n")
+        .map_err(|err| format!("write configured deep mode: {err}"))?;
     // Every git call takes 3 s; the 1 s check budget fires inside the first
     // loader call, before any producer published (the early-timeout case).
     let shim_dir = unique_temp_workspace("check-json-analysis-timeout-shim");
@@ -5189,6 +5191,8 @@ fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery() -> 
             "--base",
             "HEAD",
             "--committed",
+            "--mode",
+            "draft",
             "--timeout",
             "1",
         ],
@@ -5278,6 +5282,7 @@ fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery() -> 
         format!("--root {root_arg}").as_str(),
         "--base HEAD",
         "--committed",
+        "--mode draft",
         "--json",
         "--timeout 2",
     ] {

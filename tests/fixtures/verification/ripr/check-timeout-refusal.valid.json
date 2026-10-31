@@ -65,7 +65,7 @@
     },
     "recovery": {
       "kind": "retry_with_larger_budget",
-      "command": "ripr check --root fixtures/timeout-refusal/input --base origin/main --json --timeout 2",
+      "command": "ripr check --root fixtures/timeout-refusal/input --base origin/main --mode draft --json --timeout 2",
       "budget_seconds": 2,
       "rereads": ["base-ref", "head-ref"],
       "note": "the retry re-reads live refs and/or worktree bytes; it is not pinned to the timed-out run's snapshot"
