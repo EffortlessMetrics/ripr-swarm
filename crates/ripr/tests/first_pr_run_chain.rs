@@ -318,3 +318,31 @@ fn run_chain_works_for_a_root_that_is_not_the_cwd_and_has_a_space() -> Result<()
     assert!(!elsewhere.join("target/ripr").exists());
     Ok(())
 }
+
+#[test]
+fn a_ledger_with_a_repair_start_skips_the_cards_and_ends_in_a_top_gap() -> Result<(), String> {
+    let root = fresh_repo("repair-start")?;
+    let ledger = root.join("target/ripr/reports/gap-decision-ledger.json");
+    fs::create_dir_all(ledger.parent().ok_or("no parent")?).map_err(|err| err.to_string())?;
+    let record = r#"{"schema_version":"0.1","kind":"gap_decision_ledger","records":[{
+        "gap_id":"gap:pr:demo:add","canonical_gap_id":"gap:rust:demo:add",
+        "kind":"MissingBoundaryAssertion","language":"rust","language_status":"stable",
+        "scope":"pr_local","gap_state":"actionable","policy_state":"new","repairability":"repairable",
+        "changed_behavior":"a > 10",
+        "anchor":{"file":"src/lib.rs","line":2,"owner":"demo::add","dedupe_fingerprint":"gap:rust:demo:add"},
+        "repair_route":{"route_kind":"AddBoundaryAssertion","target_file":"src/lib.rs","assertion_shape":"assert_eq!(add(11, 1), 11)"},
+        "verification_commands":["cargo test"]}]}"#;
+    fs::write(&ledger, record).map_err(|err| err.to_string())?;
+    let output = ripr(&root, &["first-pr", "--base", "main", "--run-chain"])?;
+    let stdout = stdout_of(&output);
+    assert!(output.status.success(), "{stdout}");
+    assert!(
+        stdout.contains("run-chain step 1/1: review cards: not run;"),
+        "{stdout}"
+    );
+    assert!(!root.join("target/ripr/review/comments.json").exists());
+    assert!(stdout.contains("State: top gap"), "{stdout}");
+    let packet = packet(&root)?;
+    assert_eq!(packet["selected"]["gap_id"], "gap:pr:demo:add", "{packet}");
+    Ok(())
+}

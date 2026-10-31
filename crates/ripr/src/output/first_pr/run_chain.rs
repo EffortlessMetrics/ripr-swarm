@@ -15,9 +15,14 @@ use super::{
     resolve_path, review_comments_regeneration_command, ripr_flag_value, select_from_gap_ledger,
     tokenize_command_words, uses_check_output_gap_ledger,
 };
+use std::collections::VecDeque;
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::process::Stdio;
+
+/// Stderr lines kept to name a failed step's own last diagnostic.
+const STDERR_TAIL_LINES: usize = 20;
 
 /// One executable step of the chain, derived from a printed command.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -230,12 +235,21 @@ pub(super) fn run_steps(
     let exe = std::env::current_exe().map_err(|err| {
         format!("first-pr --run-chain: cannot resolve the running ripr executable: {err}")
     })?;
+    run_steps_with(&exe, root, options, steps)
+}
+
+fn run_steps_with(
+    exe: &Path,
+    root: &Path,
+    options: &FirstPrOptions,
+    steps: &[ChainStep],
+) -> Result<(), String> {
     let total = steps.len();
     for (index, step) in steps.iter().enumerate() {
         let number = index + 1;
         if step.only_when_cards_needed && !review_cards_needed(root, options) {
             println!(
-                "run-chain step {number}/{total}: {}: not run; the gap ledger does not leave the repair start to the cards",
+                "run-chain step {number}/{total}: {}: not run; the gap ledger does not call for the cards (see the packet state)",
                 step.label
             );
             continue;
@@ -244,31 +258,66 @@ pub(super) fn run_steps(
             "run-chain step {number}/{total}: {}: {}",
             step.label, step.display
         );
-        let output = Command::new(&exe)
+        // What this step creates (not what an earlier run left): only that is
+        // removed again if the step turns out not to have produced a result.
+        let created = |path: &Path| !path.exists();
+        let fresh_outputs: Vec<PathBuf> = std::iter::once(&step.expected)
+            .chain(step.companions.iter())
+            .filter(|path| created(path))
+            .cloned()
+            .collect();
+        let mut child = Command::new(exe)
             .args(&step.args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .output()
+            .spawn()
             .map_err(|err| stopped(number, total, step, &format!("could not start: {err}")))?;
-        // The step's diagnostics reach the operator exactly as if it had run
-        // directly; the last of them is also the reason named below.
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        if !stderr.is_empty() {
-            eprint!("{stderr}");
-        }
+        // Diagnostics stream live as if the step ran directly; the tail is
+        // kept so a failure can name the step's own last diagnostic.
+        let tail = child.stderr.take().map(|pipe| {
+            std::thread::spawn(move || {
+                let mut reader = std::io::BufReader::new(pipe);
+                let mut recent: VecDeque<String> = VecDeque::new();
+                let mut line = Vec::new();
+                while matches!(reader.read_until(b'\n', &mut line), Ok(read) if read > 0) {
+                    let text = String::from_utf8_lossy(&line).to_string();
+                    eprint!("{text}");
+                    if !text.trim().is_empty() {
+                        if recent.len() == STDERR_TAIL_LINES {
+                            recent.pop_front();
+                        }
+                        recent.push_back(text.trim().to_string());
+                    }
+                    line.clear();
+                }
+                recent
+            })
+        });
+        let output = child
+            .wait_with_output()
+            .map_err(|err| stopped(number, total, step, &format!("could not run: {err}")))?;
+        let recent = tail
+            .and_then(|handle| handle.join().ok())
+            .unwrap_or_default();
         if !output.status.success() {
+            discard(&fresh_outputs);
             let code = output
                 .status
                 .code()
                 .map_or_else(|| "no exit code".to_string(), |code| format!("exit {code}"));
-            let reason = match stderr.lines().rev().find(|line| !line.trim().is_empty()) {
-                Some(line) => format!("failed ({code}); {}", line.trim()),
+            let reason = match recent.back() {
+                Some(line) => format!("failed ({code}); {line}"),
                 None => format!("failed ({code})"),
             };
             return Err(stopped(number, total, step, &reason));
         }
         if let Some(target) = &step.stdout_to {
+            // Validate before publishing: a bad stdout never reaches the
+            // final path, so a rerun cannot mistake it for evidence.
+            if let Some(problem) = bytes_problem(target, &output.stdout) {
+                return Err(stopped(number, total, step, &problem));
+            }
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent).map_err(|err| {
                     stopped(
@@ -287,8 +336,10 @@ pub(super) fn run_steps(
                     &crate::output::file_write::write_failure_message(target, &err),
                 )
             })?;
-        }
-        if let Some(problem) = output_problem(step) {
+        } else if let Some(problem) = output_problem(step) {
+            // The step wrote its own files; take back what it just created
+            // so the next run re-attempts it instead of skipping it.
+            discard(&fresh_outputs);
             return Err(stopped(number, total, step, &problem));
         }
     }
@@ -313,30 +364,40 @@ fn output_problem(step: &ChainStep) -> Option<String> {
             step.expected.display()
         ));
     }
-    if step.expected.extension().is_some_and(|ext| ext == "json") {
-        let text = match std::fs::read_to_string(&step.expected) {
-            Ok(text) => text,
-            Err(err) => {
-                return Some(format!(
-                    "exited 0 but {} cannot be read: {err}",
-                    step.expected.display()
-                ));
-            }
-        };
-        if text.trim().is_empty() {
+    let bytes = match std::fs::read(&step.expected) {
+        Ok(bytes) => bytes,
+        Err(err) => {
             return Some(format!(
-                "exited 0 but wrote an empty {}",
+                "exited 0 but {} cannot be read: {err}",
                 step.expected.display()
             ));
         }
-        if let Err(err) = serde_json::from_str::<serde_json::Value>(&text) {
-            return Some(format!(
-                "exited 0 but {} is not valid JSON: {err}",
-                step.expected.display()
-            ));
-        }
+    };
+    bytes_problem(&step.expected, &bytes)
+}
+
+/// A `.json` artifact must be non-empty, parseable JSON.
+fn bytes_problem(path: &Path, bytes: &[u8]) -> Option<String> {
+    if path.extension().is_none_or(|ext| ext != "json") {
+        return None;
+    }
+    if bytes.iter().all(u8::is_ascii_whitespace) {
+        return Some(format!("exited 0 but wrote an empty {}", path.display()));
+    }
+    if let Err(err) = serde_json::from_slice::<serde_json::Value>(bytes) {
+        return Some(format!(
+            "exited 0 but {} is not valid JSON: {err}",
+            path.display()
+        ));
     }
     None
+}
+
+fn discard(paths: &[PathBuf]) {
+    for path in paths {
+        // Best effort: a file that is already gone needs no removal.
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 /// The packet's `needed_when` for the review cards: the gap ledger names no
@@ -446,6 +507,81 @@ mod tests {
         assert!(problem(&step_expecting(&json, vec![md.clone()])).contains("a.md"));
         std::fs::write(&md, "x").map_err(|err| err.to_string())?;
         assert_eq!(output_problem(&step_expecting(&json, vec![md])), None);
+        std::fs::remove_dir_all(&dir).map_err(|err| err.to_string())
+    }
+
+    #[cfg(unix)]
+    fn sh_step(script: &str, stdout_to: Option<&Path>, expected: &Path) -> ChainStep {
+        ChainStep {
+            label: "gap ledger",
+            display: format!("sh -c {script}"),
+            args: vec![
+                "-c".to_string(),
+                script.to_string(),
+                expected.to_string_lossy().to_string(),
+            ],
+            stdout_to: stdout_to.map(Path::to_path_buf),
+            expected: expected.to_path_buf(),
+            companions: Vec::new(),
+            only_when_cards_needed: false,
+        }
+    }
+
+    #[cfg(unix)]
+    fn run_sh(step: ChainStep) -> Result<(), String> {
+        let options = FirstPrOptions::default();
+        run_steps_with(Path::new("/bin/sh"), Path::new("."), &options, &[step])
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn invalid_stdout_never_reaches_the_final_path_and_a_rerun_retries() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-11720-stdout-{}", std::process::id()));
+        let target = dir.join("out.json");
+        for bad in ["printf ''", "printf '{\"a\":'"] {
+            let error = run_sh(sh_step(bad, Some(&target), &target))
+                .err()
+                .unwrap_or_default();
+            assert!(error.contains("exited 0 but"), "{error}");
+            assert!(!target.exists(), "a bad stdout was published");
+        }
+        // The path is still free, so a rerun plans and runs the step again.
+        run_sh(sh_step("printf '{}'", Some(&target), &target))?;
+        assert_eq!(
+            std::fs::read_to_string(&target).map_err(|e| e.to_string())?,
+            "{}"
+        );
+        std::fs::remove_dir_all(&dir).map_err(|err| err.to_string())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_bad_file_the_step_just_created_is_taken_back_but_an_older_one_is_kept()
+    -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-11720-created-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let target = dir.join("own.json");
+        let writes_empty = "printf '' > \"$0\"";
+        let error = run_sh(sh_step(writes_empty, None, &target))
+            .err()
+            .unwrap_or_default();
+        assert!(error.contains("empty"), "{error}");
+        assert!(!target.exists(), "the step's own bad file was left behind");
+        // A file that existed before the step is not this chain's to remove.
+        std::fs::write(&target, "").map_err(|err| err.to_string())?;
+        assert!(run_sh(sh_step(writes_empty, None, &target)).is_err());
+        assert!(target.exists());
+        // A failing exit takes back what it created and names its last stderr line.
+        let other = dir.join("fail.json");
+        let error = run_sh(sh_step(
+            "echo first >&2; echo boom >&2; printf x > \"$0\"; exit 3",
+            None,
+            &other,
+        ))
+        .err()
+        .unwrap_or_default();
+        assert!(error.contains("failed (exit 3); boom"), "{error}");
+        assert!(!other.exists());
         std::fs::remove_dir_all(&dir).map_err(|err| err.to_string())
     }
 }
