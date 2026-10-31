@@ -307,6 +307,7 @@ async fn oversized_gap_item_leaves_mcp_through_the_real_routes() -> Result<(), S
     let output = crate::app::CheckOutput {
         value_origins: Default::default(),
         schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
+        kani_source_inventory: None,
         harness_projections: Vec::new(),
         tool: "ripr".to_string(),
         mode: crate::app::Mode::Draft,
@@ -422,6 +423,7 @@ async fn window_sized_gap_item_refuses_typed_instead_of_dropping_structured_cont
     let output = crate::app::CheckOutput {
         value_origins: Default::default(),
         schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
+        kani_source_inventory: None,
         harness_projections: Vec::new(),
         tool: "ripr".to_string(),
         mode: crate::app::Mode::Draft,

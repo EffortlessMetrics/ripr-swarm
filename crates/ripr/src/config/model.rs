@@ -472,6 +472,39 @@ pub struct RustLanguageConfig {
     pub generated_file_patterns: Vec<String>,
     /// Exact normalized repository-relative Rust paths exempt from naming conventions.
     pub handwritten_files: Vec<String>,
+    /// Declared native source context, never verifier discovery or execution.
+    pub kani: Option<KaniAnalysisContext>,
+}
+
+/// The first closed Kani source inventory profile (#10686). The source unit
+/// and native test mode are declarations; neither establishes native selection.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KaniAnalysisContext {
+    pub profile: String,
+    pub source: PathBuf,
+    pub tests: bool,
+}
+
+impl KaniAnalysisContext {
+    pub const PROFILE: &str = "kani_ordinary_proof_v1";
+
+    pub(crate) fn normalized_source(&self) -> Result<PathBuf, String> {
+        if self.profile != Self::PROFILE {
+            return Err("languages.rust.kani.profile must be kani_ordinary_proof_v1".into());
+        }
+        let text = self
+            .source
+            .to_str()
+            .ok_or("languages.rust.kani.source must be UTF-8")?;
+        let source = super::parse_relative_path("languages.rust.kani.source", text)?;
+        if source.extension().and_then(|value| value.to_str()) != Some("rs") {
+            return Err(
+                "languages.rust.kani.source must name one relative Rust source file".into(),
+            );
+        }
+        Ok(source)
+    }
 }
 
 /// `[languages.python]` repository configuration.
@@ -796,7 +829,7 @@ pub struct CheckInputExplicit {
 /// same PR. The classification is closed: the field enumerator destructures
 /// every config struct without `..`, so an unclassified field fails to
 /// compile, and a unit test pins the resulting role of every field.
-pub const CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION: u32 = 4;
+pub const CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION: u32 = 5;
 
 /// How one `ripr.toml` field participates in the check-artifact identity gate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -899,6 +932,7 @@ impl RiprConfig {
                 RustLanguageConfig {
                     generated_file_patterns,
                     handwritten_files,
+                    kani,
                 },
             python:
                 PythonLanguageConfig {
@@ -1053,6 +1087,17 @@ impl RiprConfig {
                 role: ConfigIdentityRole::CapturedElsewhere,
                 value: None,
                 note: "recorded as the artifact identity `enabled_languages` (resolved, including the explicit --perl-facts opt-in)",
+            },
+            ConfigIdentityField {
+                name: "languages.rust.kani",
+                role: ConfigIdentityRole::FindingAffecting,
+                value: Some(if enabled.contains(&LanguageId::Rust) {
+                    kani.as_ref().map_or_else(String::new, |context| {
+                        format!("{}:{}\0{}:{}\0{}", context.profile.len(), context.profile,
+                            context.source.as_os_str().len(), context.source.display(), context.tests)
+                    })
+                } else { String::new() }),
+                note: "declared native source context changes function roles, never test execution",
             },
             ConfigIdentityField {
                 name: "languages.rust.generated_file_patterns",

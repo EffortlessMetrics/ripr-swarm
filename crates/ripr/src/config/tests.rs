@@ -1438,6 +1438,7 @@ fn check_artifact_identity_fields_classify_every_config_field() -> Result<(), St
     actual.sort_by(|left, right| left.0.cmp(right.0));
 
     let finding_affecting = [
+        "languages.rust.kani",
         "languages.rust.generated_file_patterns",
         "languages.rust.handwritten_files",
         "languages.python.handwritten_files",
