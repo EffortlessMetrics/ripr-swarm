@@ -872,7 +872,8 @@ unchanged, and the lines claim no runtime outcome.
   passes the same gates as the return value above, and additionally needs the
   related test's owner call to be direct under `check`'s own relation rules,
   with the owner's impl type (and trait) declared exactly once and never
-  renamed or aliased. The owner's whole body must be one top-level
+  renamed or aliased, and a free-function owner the only free function of
+  its name in the workspace. The owner's whole body must be one top-level
   `match <parameter> { .. }` on a bare parameter; the changed arm's pattern is
   a single plain string, char or integer literal, and every earlier arm is a
   plain literal (or `|` of literals) with no guard, binding or wildcard. One

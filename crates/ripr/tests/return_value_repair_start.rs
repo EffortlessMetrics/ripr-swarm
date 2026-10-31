@@ -1005,6 +1005,25 @@ fn assert_no_start_at(
     Ok(())
 }
 
+/// [`assert_no_start_at`] for a case `check` reads as weak, so the refusal
+/// is the match-arm start's own and not a stronger or unknown reading.
+fn assert_weak_no_start_at(
+    case: &str,
+    old: &str,
+    new: &str,
+    test: &str,
+    at: &str,
+) -> Result<(), String> {
+    let repo = Repo::create(old, new, test)?;
+    let check = repo.check_text()?;
+    assert!(
+        check.contains("Static exposure: weak"),
+        "{case}: precondition, check must report a weak finding:\n{check}"
+    );
+    drop(repo);
+    assert_no_start_at(case, old, new, test, at)
+}
+
 #[test]
 fn changed_match_arm_with_its_literal_and_weak_assert_reaches_repair() -> Result<(), String> {
     assert_repair_ready(
@@ -1480,7 +1499,7 @@ fn spaced_macro_around_the_call_is_not_a_match_arm_start() -> Result<(), String>
         ARM_NEW,
         &rate_test("    let r = rate(\"silver\");\n    assert!(r < 100);\n"),
     )?;
-    assert_no_start_at(
+    assert_weak_no_start_at(
         "arm-spaced-stringify",
         ARM_OLD,
         ARM_NEW,
@@ -1525,7 +1544,37 @@ fn rebound_assert_macro_is_not_a_match_arm_start() -> Result<(), String> {
             ),
         ),
     ] {
-        assert_no_start_at(case, &lib, &new, &test, "src/lib.rs:4")?;
+        // The `use .. as assert` forms read as weak, so only the rebound
+        // check refuses them; a file-local `macro_rules! assert` is already
+        // withheld by the assertion reader.
+        if case == "arm-macro-rules-assert" {
+            assert_no_start_at(case, &lib, &new, &test, "src/lib.rs:4")?;
+        } else {
+            assert_weak_no_start_at(case, &lib, &new, &test, "src/lib.rs:4")?;
+        }
+    }
+    Ok(())
+}
+
+const TWIN_A: &str = "pub mod a {\n    pub fn rate(kind: &str) -> u32 {\n        match kind {\n            \"gold\" => 10,\n            \"silver\" => 5,\n            _ => 0,\n        }\n    }\n}\n";
+const TWIN_B: &str = "\npub mod b {\n    pub fn rate(_kind: &str) -> u32 {\n        1\n    }\n}\n";
+
+/// A free owner `a::rate` beside a same-named `b::rate`: a bare `rate(..)`
+/// may reach either through a file-level import, so the start withholds,
+/// even when the test imports the real owner. The workspace with only
+/// `a::rate` starts.
+#[test]
+fn same_named_free_function_elsewhere_is_not_a_match_arm_start() -> Result<(), String> {
+    let test = |import: &str| {
+        format!(
+            "use ar::{import}::rate;\n\n#[test]\nfn runs() {{\n    let r = rate(\"silver\");\n    assert!(r < 100);\n}}\n"
+        )
+    };
+    let arm_new = |lib: &str| lib.replace("\"silver\" => 5", "\"silver\" => 7");
+    assert_repair_ready("arm-unique-free-name", TWIN_A, &arm_new(TWIN_A), &test("a"))?;
+    let both = format!("{TWIN_A}{TWIN_B}");
+    for (case, import) in [("arm-twin-owner-imported", "a"), ("arm-twin-imported", "b")] {
+        assert_no_start_at(case, &both, &arm_new(&both), &test(import), "src/lib.rs:5")?;
     }
     Ok(())
 }

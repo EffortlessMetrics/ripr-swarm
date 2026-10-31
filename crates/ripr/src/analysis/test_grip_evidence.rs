@@ -691,6 +691,7 @@ fn return_value_missing_discriminator(
         // `use .. as assert`) may never evaluate the call: refuse, as the
         // check-side evidence reader does.
         impl_identity_is_unambiguous(owner_fn, index)
+            && free_owner_name_is_unique(owner_fn, index)
             && !crate::analysis::classify::macro_names_rebound(
                 index,
                 &["assert", "assert_eq", "assert_ne"],
@@ -1119,6 +1120,25 @@ fn impl_identity_is_unambiguous(owner: &FunctionSummary, index: &RustIndex) -> b
         }
         declarations == 1
     })
+}
+
+/// Whether a free-function owner is the only free function of its name in
+/// the workspace. A same-named free function in another module (`b::rate`
+/// beside `a::rate`) can be what a bare `rate(..)` call reaches through a
+/// file-level import, which the call reader does not resolve, so the start
+/// withholds. A method owner passes: its receiver and impl type are checked
+/// by [`impl_identity_is_unambiguous`] and the direct-call relation.
+fn free_owner_name_is_unique(owner: &FunctionSummary, index: &RustIndex) -> bool {
+    !matches!(owner.impl_context, FunctionImplContext::Free)
+        || index
+            .functions()
+            .iter()
+            .filter(|function| {
+                function.name == owner.name
+                    && matches!(function.impl_context, FunctionImplContext::Free)
+            })
+            .count()
+            == 1
 }
 
 /// How many `<keyword> <name>` item declarations masked source holds.

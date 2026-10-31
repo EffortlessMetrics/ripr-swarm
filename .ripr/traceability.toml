@@ -10872,6 +10872,7 @@ tests = [
   "crates/ripr/tests/return_value_repair_start.rs::macro_wrapped_call_or_debug_assert_is_not_a_match_arm_start",
   "crates/ripr/tests/return_value_repair_start.rs::spaced_macro_around_the_call_is_not_a_match_arm_start",
   "crates/ripr/tests/return_value_repair_start.rs::rebound_assert_macro_is_not_a_match_arm_start",
+  "crates/ripr/tests/return_value_repair_start.rs::same_named_free_function_elsewhere_is_not_a_match_arm_start",
   "crates/ripr/tests/return_value_repair_start.rs::closure_argument_with_commas_is_not_a_match_arm_start",
   "crates/ripr/tests/return_value_repair_start.rs::compiled_out_message_only_or_skippable_call_is_not_a_match_arm_start",
   "crates/ripr/tests/return_value_repair_start.rs::discarded_owner_result_with_unrelated_assertion_is_not_a_repair_start",
