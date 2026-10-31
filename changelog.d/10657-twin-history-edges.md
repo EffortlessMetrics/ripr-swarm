@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- Rust: twin field-collection comparisons no longer earn `exposed` when the sides differ only by a getter-spelled read-only use (`d.history().len()`) or when one side is built through the owner in its own `let` (`Bag::new().add(20)`). Same-line rewrites before the assertion are now compared, so those twins keep their credit; twins that differ only by block conditions stay refused (#7135, #10657).
