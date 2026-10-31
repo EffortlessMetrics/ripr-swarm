@@ -216,9 +216,9 @@ fn require_nullable_nonempty_string(
 ) -> Result<RiprAgentRequiredNullable<String>, String> {
     match require_nullable::<String>(value, field)? {
         RiprAgentRequiredNullable::Null => Ok(RiprAgentRequiredNullable::Null),
-        RiprAgentRequiredNullable::Value(text) if text.is_empty() => {
-            Err(format!("{field}: identity strings must be non-empty"))
-        }
+        RiprAgentRequiredNullable::Value(text) if text.is_empty() => Err(format!(
+            "{field}: identity strings must be non-empty; send the payload exactly as ripr returned it, without hand edits"
+        )),
         RiprAgentRequiredNullable::Value(text) => Ok(RiprAgentRequiredNullable::Value(text)),
     }
 }
@@ -269,7 +269,9 @@ fn resolve_route_readiness(
     let derived = match (route, command_spec) {
         (RiprAgentRequiredNullable::Null, None) => RiprAgentRequiredNullable::Null,
         (RiprAgentRequiredNullable::Null, Some(_)) => {
-            return Err(format!("{slot}: a command spec requires a non-null route"));
+            return Err(format!(
+                "{slot}: a command spec requires a non-null route; send the payload exactly as ripr returned it, without hand edits"
+            ));
         }
         (RiprAgentRequiredNullable::Value(_), None) => {
             RiprAgentRequiredNullable::Value(RiprAgentRouteReadiness::LegacyStringOnly)
@@ -277,7 +279,7 @@ fn resolve_route_readiness(
         (RiprAgentRequiredNullable::Value(_), Some(command_spec)) => {
             if command_spec.role != slot_role {
                 return Err(format!(
-                    "{slot}: command spec role does not match the slot role"
+                    "{slot}: command spec role does not match the slot role; send the payload exactly as ripr returned it, without hand edits"
                 ));
             }
             command_spec
@@ -307,7 +309,7 @@ fn resolve_route_readiness(
     };
     if !declared_matches {
         return Err(format!(
-            "{slot}: declared readiness does not match the route and command spec"
+            "{slot}: declared readiness does not match the route and command spec; send the payload exactly as ripr returned it, without hand edits"
         ));
     }
     Ok(derived)
@@ -848,11 +850,11 @@ fn decode_command_spec(
         Some(value) => {
             let object = value
                 .as_object()
-                .ok_or_else(|| format!("{field}: command spec must be an object"))?;
+                .ok_or_else(|| format!("{field}: command spec must be an object; send the payload exactly as ripr returned it, without hand edits"))?;
             for key in object.keys() {
                 if !COMMAND_SPEC_WIRE_FIELDS.contains(&key.as_str()) {
                     return Err(format!(
-                        "{field}: command spec field `{key}` is not part of the published schema"
+                        "{field}: command spec field `{key}` is not part of the published schema; send the payload exactly as ripr returned it, without hand edits"
                     ));
                 }
             }
@@ -2093,7 +2095,7 @@ mod tests {
         );
         assert_decode_rejected(
             &alias_payload,
-            "verify_command_spec: command spec field `cwd` is not part of the published schema",
+            "verify_command_spec: command spec field `cwd` is not part of the published schema; send the payload exactly as ripr returned it, without hand edits",
         )?;
         // Unknown fields are equally rejected.
         let mut unknown_spec = serde_json::to_value(verify_command_spec_fixture())
@@ -2108,7 +2110,7 @@ mod tests {
         );
         assert_decode_rejected(
             &unknown_payload,
-            "verify_command_spec: command spec field `extra` is not part of the published schema",
+            "verify_command_spec: command spec field `extra` is not part of the published schema; send the payload exactly as ripr returned it, without hand edits",
         )?;
         Ok(())
     }
