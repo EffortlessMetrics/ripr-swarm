@@ -29,7 +29,7 @@ pub(super) fn test_owner(name: &str, file: &str) -> TypeScriptOwner {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     }
 }
@@ -1865,7 +1865,7 @@ fn find_related_tests_matches_by_call_name() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = vec![
@@ -1944,7 +1944,7 @@ fn find_related_tests_ignores_object_method_calls_for_function_owners() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = vec![TypeScriptTest {
@@ -1996,7 +1996,7 @@ fn find_related_tests_matches_bounded_method_receiver_calls() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
@@ -2050,7 +2050,7 @@ fn find_related_tests_keeps_factory_receiver_calls_unrelated_for_method_owners()
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
@@ -2088,7 +2088,7 @@ fn find_related_tests_keeps_dynamic_method_receiver_calls_unrelated() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
@@ -2127,7 +2127,7 @@ fn find_related_tests_relates_inline_and_one_line_constructed_receivers() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let cases = [
@@ -2185,7 +2185,7 @@ fn find_related_tests_keeps_mocked_method_receiver_calls_unrelated() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
@@ -2229,7 +2229,7 @@ fn find_related_tests_keeps_mocked_function_owner_call_at_proximity() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
@@ -2290,7 +2290,7 @@ fn find_related_tests_keeps_mocked_arrow_function_owner_call_at_proximity() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
@@ -2356,7 +2356,7 @@ fn find_related_tests_keeps_mocked_namespace_import_owner_call_at_proximity() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
@@ -2415,7 +2415,7 @@ fn find_related_tests_credits_unmocked_function_owner_call() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
@@ -2466,7 +2466,7 @@ fn classify_change_stays_weakly_exposed_when_test_mocks_owner_module() -> Result
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
@@ -2537,7 +2537,7 @@ fn find_related_tests_matches_bounded_class_method_calls() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
@@ -2590,7 +2590,7 @@ fn find_related_tests_keeps_shadowed_class_method_calls_unrelated() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
@@ -2628,7 +2628,7 @@ fn find_related_tests_matches_same_file_class_method_calls() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
@@ -2680,7 +2680,7 @@ fn find_related_tests_keeps_namespace_class_method_calls_unrelated() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
@@ -2717,7 +2717,7 @@ fn find_related_tests_keeps_mocked_class_method_calls_unrelated() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
@@ -2756,7 +2756,7 @@ fn find_related_tests_requires_class_name_for_class_method_calls() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
@@ -2793,7 +2793,7 @@ fn find_related_tests_matches_module_initializer_named_import_observer() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
@@ -2846,7 +2846,7 @@ fn find_related_tests_matches_module_initializer_namespace_observer() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
@@ -2884,7 +2884,7 @@ fn module_value_owner(name: &str) -> TypeScriptOwner {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     }
 }
@@ -3321,7 +3321,7 @@ fn find_related_tests_matches_named_import_alias_calls() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
@@ -3386,7 +3386,7 @@ fn find_related_tests_alias_wrong_name_not_credited() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
@@ -3438,7 +3438,7 @@ fn find_related_tests_alias_shadowed_local_not_credited_high() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
@@ -3490,7 +3490,7 @@ fn find_related_tests_non_alias_import_still_direct_owner_call() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
@@ -3550,7 +3550,7 @@ fn find_related_tests_namespace_import_unchanged_imported_owner_call() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
@@ -3610,7 +3610,7 @@ fn find_related_tests_matches_namespace_import_member_calls() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
@@ -3648,7 +3648,7 @@ fn find_related_tests_ignores_unrelated_and_type_only_import_aliases() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
@@ -3695,7 +3695,7 @@ fn find_related_tests_ignores_call_shaped_string_mentions() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = vec![TypeScriptTest {
@@ -3747,7 +3747,7 @@ fn find_related_tests_ignores_call_shaped_comment_mentions() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = vec![
@@ -3825,7 +3825,7 @@ fn related_test_candidates_use_name_and_proximity_links_as_uncertain_relations()
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     // Each test references the owner without a recognized call shape, so the
@@ -3913,7 +3913,7 @@ fn related_test_name_proximity_ignores_partial_tokens() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
@@ -3957,7 +3957,7 @@ fn classify_change_uses_heuristic_links_as_weak_uncertain_proximity() -> Result<
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = extract_tests(
@@ -4017,7 +4017,7 @@ fn classify_change_returns_weakly_exposed_when_related_test_exists() -> Result<(
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let test = TypeScriptTest {
@@ -4067,7 +4067,7 @@ fn classify_change_marks_weak_direct_typescript_candidate_advisory() -> Result<(
     let finding = classify_weak_direct_line("    if (amount >= threshold) {")?;
 
     assert!(finding.canonical_gap.is_none());
-    assert_evidence_contains(&finding, "gap_state: advisory");
+    assert_evidence_contains(&finding, "gap_state: unknown");
     assert_evidence_contains(&finding, "actionability_category: incomplete_repair_packet");
     assert_evidence_contains(
         &finding,
@@ -4134,7 +4134,7 @@ fn typescript_preview_weak_oracle_guidance_names_snapshot_exact_value_shape() ->
     assert!(matches!(finding.class, ExposureClass::WeaklyExposed));
     assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::Snapshot);
     assert!(finding.canonical_gap.is_none());
-    assert_evidence_contains(&finding, "gap_state: advisory");
+    assert_evidence_contains(&finding, "gap_state: unknown");
     assert!(
         finding.missing.iter().any(|line| {
             line.contains("snapshot evidence") && line.contains("add an exact-value assertion")
@@ -4161,7 +4161,7 @@ fn typescript_preview_weak_oracle_guidance_names_smoke_exact_value_shape() -> Re
     assert!(matches!(finding.class, ExposureClass::WeaklyExposed));
     assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::SmokeOnly);
     assert!(finding.canonical_gap.is_none());
-    assert_evidence_contains(&finding, "gap_state: advisory");
+    assert_evidence_contains(&finding, "gap_state: unknown");
     assert!(
         finding.missing.iter().any(|line| {
             line.contains("smoke-only oracle") && line.contains("exact-value assertion")
@@ -4208,7 +4208,7 @@ fn typescript_preview_weak_oracle_guidance_keeps_broad_error_advisory() -> Resul
     assert!(matches!(finding.class, ExposureClass::WeaklyExposed));
     assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::BroadError);
     assert!(finding.canonical_gap.is_none());
-    assert_evidence_contains(&finding, "gap_state: advisory");
+    assert_evidence_contains(&finding, "gap_state: unknown");
     assert!(
         finding
             .missing
@@ -4260,7 +4260,7 @@ fn typescript_preview_weak_oracle_guidance_distinguishes_mock_payload_limits() -
         OracleStrength::Medium
     );
     assert!(finding.canonical_gap.is_none());
-    assert_evidence_contains(&finding, "gap_state: advisory");
+    assert_evidence_contains(&finding, "gap_state: unknown");
     assert_evidence_contains(&finding, "actionability_category: incomplete_repair_packet");
     assert!(
             finding.missing.iter().any(|line| line.contains(
@@ -4320,7 +4320,7 @@ test("records ready status", () => {
         Some("expect(sink.record).toHaveBeenCalledWith(\"ready\")")
     );
     assert!(finding.canonical_gap.is_none());
-    assert_evidence_contains(&finding, "gap_state: advisory");
+    assert_evidence_contains(&finding, "gap_state: unknown");
     assert_evidence_contains(
         &finding,
         "mock_payload_evidence: expect(sink.record).toHaveBeenCalledWith(\"ready\")",
@@ -4370,7 +4370,7 @@ fn classify_change_labels_javascript_sources_separately() -> Result<(), String> 
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let test = TypeScriptTest {
@@ -4435,7 +4435,7 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             arity: None,
             params: Vec::new(),
             source_text: None,
-            imports: Vec::new(),
+            imports: Default::default(),
             method_kind: TypeScriptMethodKind::Ordinary,
         },
         TypeScriptOwner {
@@ -4455,7 +4455,7 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             arity: None,
             params: Vec::new(),
             source_text: None,
-            imports: Vec::new(),
+            imports: Default::default(),
             method_kind: TypeScriptMethodKind::Ordinary,
         },
     ];
@@ -5296,7 +5296,7 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let test = TypeScriptTest {
@@ -5395,7 +5395,7 @@ fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let test = TypeScriptTest {
@@ -5490,7 +5490,7 @@ fn classify_change_returns_no_static_path_when_no_related_test() -> Result<(), S
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let finding = classify_change(
@@ -5507,7 +5507,7 @@ fn classify_change_returns_no_static_path_when_no_related_test() -> Result<(), S
     assert!(matches!(finding.class, ExposureClass::NoStaticPath));
     assert!(finding.related_tests.is_empty());
     assert!(finding.canonical_gap.is_none());
-    assert_evidence_contains(&finding, "gap_state: advisory");
+    assert_evidence_contains(&finding, "gap_state: unknown");
     assert_evidence_contains(&finding, "actionability_category: missing_context");
     assert_evidence_contains(&finding, "related_test_or_observer");
     Ok(())
@@ -5532,7 +5532,7 @@ fn classify_change_returns_none_when_line_is_outside_any_owner() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let finding = classify_change(
@@ -7552,7 +7552,7 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = vec![
@@ -7647,7 +7647,7 @@ fn collect_related_mock_paths_ignores_unrelated_tests() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = vec![TypeScriptTest {
@@ -7704,7 +7704,7 @@ fn collect_related_mock_paths_ignores_object_method_mentions() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = vec![TypeScriptTest {
@@ -7762,7 +7762,7 @@ fn classify_change_surfaces_mocked_module_static_limit_in_missing_and_evidence()
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = vec![TypeScriptTest {
@@ -7856,7 +7856,7 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
         commonjs_default_export: false,
         commonjs_whole_function: false,
         module_entries: Vec::new(),
-        imports: Vec::new(),
+        imports: Default::default(),
         params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
@@ -7932,7 +7932,7 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
         commonjs_default_export: false,
         commonjs_whole_function: false,
         module_entries: Vec::new(),
-        imports: Vec::new(),
+        imports: Default::default(),
         params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
@@ -7990,7 +7990,7 @@ fn named_limitation_mock_only_observer_emitted_for_mocked_module_static_limit() 
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = vec![TypeScriptTest {
@@ -8101,7 +8101,8 @@ fn named_limitation_import_graph_unresolved_emitted_for_missing_import_graph() -
             imported: Some("normalizeLabel".to_string()),
             local: "normalizeLabel".to_string(),
             namespace: false,
-        }],
+        }]
+        .into(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let tests = vec![TypeScriptTest {
@@ -8222,7 +8223,7 @@ test("renders summary snapshot", () => {
     );
     // static_limit_kind is unset (snapshot is not a static_limit, it is oracle-based)
     assert_eq!(finding.static_limit_kind, None);
-    // repair_packet_ready remains false — gap_state is advisory (not static_limitation)
+    // repair_packet_ready remains false — gap_state is unknown (not static_limitation)
     // because snapshot is not a StaticLimitKind
     assert!(
         !finding
@@ -9504,7 +9505,7 @@ fn package_local_filter_selects_same_package_test() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let test = TypeScriptTest {
@@ -9601,7 +9602,7 @@ fn package_local_filter_rejects_cross_package_test() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let test = TypeScriptTest {
@@ -9943,7 +9944,7 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     // Cross-package test that calls applyDiscount by name (local shadow or
@@ -10286,7 +10287,7 @@ fn ts_swallowed_console_log_exposed_downgrade() -> Result<(), String> {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     // Two strong `toBe` assertions on the UNCHANGED return value.
@@ -10422,7 +10423,7 @@ fn ts_returnvalue_genuinely_observed_control() -> Result<(), String> {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let test = TypeScriptTest {
@@ -10524,7 +10525,7 @@ fn ts_returnvalue_unrelated_strong_assertion_downgrades() -> Result<(), String> 
         commonjs_default_export: false,
         commonjs_whole_function: false,
         module_entries: Vec::new(),
-        imports: Vec::new(),
+        imports: Default::default(),
         params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
@@ -10631,7 +10632,7 @@ fn ts_returnvalue_owner_call_observation_stays_exposed() -> Result<(), String> {
         commonjs_default_export: false,
         commonjs_whole_function: false,
         module_entries: Vec::new(),
-        imports: Vec::new(),
+        imports: Default::default(),
         params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
@@ -10734,7 +10735,7 @@ fn ts_returnvalue_owner_aliased_local_observation_stays_exposed() -> Result<(), 
         commonjs_default_export: false,
         commonjs_whole_function: false,
         module_entries: Vec::new(),
-        imports: Vec::new(),
+        imports: Default::default(),
         params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
@@ -10837,7 +10838,7 @@ fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
         module_entries: Vec::new(),
-        imports: Vec::new(),
+        imports: Default::default(),
         params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
@@ -10946,7 +10947,7 @@ fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let test = TypeScriptTest {
@@ -11065,7 +11066,7 @@ fn ts_field_construction_observed_control() -> Result<(), String> {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let test = TypeScriptTest {
@@ -11167,7 +11168,7 @@ fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), St
         commonjs_default_export: false,
         commonjs_whole_function: false,
         module_entries: Vec::new(),
-        imports: Vec::new(),
+        imports: Default::default(),
         params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
@@ -11342,7 +11343,7 @@ fn ts_side_effect_observed_by_mock_expectation_stays_exposed() -> Result<(), Str
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     // A strong MockExpectation assertion with observed_expression None — exactly
@@ -11446,7 +11447,7 @@ fn ts_side_effect_includes_template_word_does_not_confirm() -> Result<(), String
         commonjs_default_export: false,
         commonjs_whole_function: false,
         module_entries: Vec::new(),
-        imports: Vec::new(),
+        imports: Default::default(),
         params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
@@ -11605,7 +11606,7 @@ fn tsconfig_alias_resolution_flag_on_credits_test_as_exposed() -> Result<(), Str
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let test = TypeScriptTest {
@@ -11696,7 +11697,7 @@ fn tsconfig_alias_resolution_flag_off_stays_no_static_path_with_disclosure() -> 
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let test = TypeScriptTest {
@@ -11787,7 +11788,7 @@ fn unresolved_alias_import_names_the_import_in_no_reach_text() -> Result<(), Str
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
         module_entries: Vec::new(),
     };
@@ -11964,7 +11965,7 @@ fn untested_function_owner_guidance_names_owner_and_ordered_route() -> Result<()
     // lands advisory (the preview card's `repair_packet_ready` remains
     // false, pinned by the fixture goldens), so no packet may be emitted
     // on this evidence.
-    assert_evidence_contains(&finding, "gap_state: advisory");
+    assert_evidence_contains(&finding, "gap_state: unknown");
     let step = finding
         .recommended_next_step
         .as_deref()
@@ -12100,7 +12101,7 @@ fn tsconfig_alias_resolution_multi_entry_value_fails_closed() -> Result<(), Stri
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let test = TypeScriptTest {
@@ -12185,7 +12186,7 @@ fn tsconfig_alias_non_owner_import_emits_no_limitation() -> Result<(), String> {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     // Test only imports `cloneDeep` from lodash — unrelated to the owner name.
@@ -12261,7 +12262,7 @@ fn tsconfig_alias_default_import_local_name_mismatch_emits_no_limitation() -> Re
         commonjs_default_export: false,
         commonjs_whole_function: false,
         module_entries: Vec::new(),
-        imports: Vec::new(),
+        imports: Default::default(),
         params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
@@ -12338,7 +12339,7 @@ fn tsconfig_alias_default_import_local_name_match_emits_limitation() -> Result<(
         commonjs_default_export: false,
         commonjs_whole_function: false,
         module_entries: Vec::new(),
-        imports: Vec::new(),
+        imports: Default::default(),
         params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
@@ -12415,7 +12416,7 @@ fn tsconfig_alias_advice_names_map_unavailable_cause() -> Result<(), String> {
         commonjs_default_export: false,
         commonjs_whole_function: false,
         module_entries: Vec::new(),
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
         params: Vec::new(),
@@ -12508,7 +12509,7 @@ fn tsconfig_alias_advice_names_unmatched_pattern_cause() -> Result<(), String> {
         commonjs_default_export: false,
         commonjs_whole_function: false,
         module_entries: Vec::new(),
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
         params: Vec::new(),
@@ -12602,7 +12603,7 @@ fn tsconfig_alias_advice_names_unresolved_candidate_cause() -> Result<(), String
         commonjs_default_export: false,
         commonjs_whole_function: false,
         module_entries: Vec::new(),
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
         params: Vec::new(),
@@ -12705,7 +12706,7 @@ fn tsconfig_alias_advice_names_absolute_base_url_cause() -> Result<(), String> {
         commonjs_default_export: false,
         commonjs_whole_function: false,
         module_entries: Vec::new(),
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
         params: Vec::new(),
@@ -12797,7 +12798,7 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     // Test A: error-path observer — toThrow(DiscountError) — Strong, ExactErrorVariant.
@@ -12955,7 +12956,7 @@ fn spec_0104_no_over_correct_return_value_with_exact_value_stays_exposed() -> Re
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let exact_value_test = TypeScriptTest {
@@ -13051,7 +13052,7 @@ fn spec_0104_no_over_correct_error_path_with_exact_error_variant_stays_exposed()
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let throw_test = TypeScriptTest {
@@ -13161,7 +13162,7 @@ fn spec_0104_single_test_both_assertions_retains_matching_family_assertion_stays
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     // ONE test with TWO assertions:
@@ -14057,8 +14058,8 @@ fn remove_field_from_missing_list_unit() {
 
     // Wrong prefix — line returned unchanged.
     assert_eq!(
-        remove_field_from_missing_list("gap_state: advisory", "verify_command"),
-        "gap_state: advisory"
+        remove_field_from_missing_list("gap_state: unknown", "verify_command"),
+        "gap_state: unknown"
     );
 
     // Removing another field leaves verify_command intact.
@@ -14089,7 +14090,7 @@ fn parse_limit_owner_and_exact_value_test() -> (TypeScriptOwner, TypeScriptTest)
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let test = TypeScriptTest {
@@ -14438,7 +14439,7 @@ fn spec_0027_namespace_import_member_call_witnesses_boundary() -> Result<(), Str
         commonjs_default_export: false,
         commonjs_whole_function: false,
         module_entries: Vec::new(),
-        imports: Vec::new(),
+        imports: Default::default(),
         params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
@@ -15181,7 +15182,7 @@ pub(super) fn boundary_witness_owner() -> TypeScriptOwner {
         commonjs_default_export: false,
         commonjs_whole_function: false,
         module_entries: Vec::new(),
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: Some(1),
         params: vec!["total".to_string()],
@@ -17287,7 +17288,7 @@ fn expected_side_is_live_credits_a_signed_live_expected_value() {
         commonjs_default_export: false,
         commonjs_whole_function: false,
         module_entries: Vec::new(),
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: Some(1),
         params: vec!["n".to_string()],
@@ -17345,7 +17346,7 @@ fn expected_side_is_live_does_not_equate_negative_zero_with_zero() {
         commonjs_default_export: false,
         commonjs_whole_function: false,
         module_entries: Vec::new(),
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: Some(1),
         params: vec!["n".to_string()],
@@ -18165,50 +18166,82 @@ fn analyze_diff_discloses_a_test_extraction_worker_failure() -> Result<(), Strin
 /// Several unrelated test files with unindexed shapes collapse into ONE
 /// summary limitation carrying the file count, and the recovery names an
 /// inspection or rewrite rather than a bare retry.
+///
+/// #11702: the collapse oracle calls [`super::test_extraction_partial_summary`]
+/// with synthetic gaps so it does not spawn ~16 live 256 MiB parse workers.
+/// A thin `analyze_diff` still reaches that producer through the adapter,
+/// using relative paths the armed-injection tests never share (`src/calc.ts`,
+/// `src/isolation.ts`, `tests/calc.test.ts`).
 #[test]
 fn analyze_diff_collapses_test_extraction_partial_into_one_summary() -> Result<(), String> {
-    let root = ts_unique_tempdir("tmpltitle-many")?;
-    ts_write_file(
-        &root.join("src/calc.ts"),
-        "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
-    )?;
-    for index in 1..=5 {
-        ts_write_file(
-            &root.join(format!("tests/calc{index}.test.ts")),
-            "import { add } from '../src/calc';\nwhile (process.env.CI) {\n  it(`adds ${1} and ${2}`, () => {\n    expect(add(1, 2)).toBe(3);\n  });\n}\n",
-        )?;
-    }
-
-    let adapter = TypeScriptAdapter;
-    let options = ts_analysis_options(root.clone());
-    let result = adapter.analyze_diff(
-        &options,
-        &OraclePolicy::default(),
-        &[changed_with_lines("src/calc.ts", &[(2, "  return a + b;")])],
-    )?;
-    let extraction = result
-        .limitations
-        .iter()
-        .filter(|limitation| {
-            limitation
-                .bounded_detail
-                .as_deref()
-                .is_some_and(|detail| detail.contains("typescript_test_extraction_partial"))
+    let gaps: Vec<TypeScriptTestExtractionGap> = (1..=5)
+        .map(|index| TypeScriptTestExtractionGap {
+            file: PathBuf::from(format!("tests/tmpltitle_many_{index}.test.ts")),
+            sample_line: 3,
+            shape: "template-literal title",
+            snippet: "it(`adds ${1} and ${2}`, () => {".to_string(),
         })
-        .collect::<Vec<_>>();
-    assert_eq!(extraction.len(), 1, "{:?}", result.limitations);
-    let summary = extraction[0];
+        .collect();
+    assert!(
+        super::test_extraction_partial_summary(&[])?.is_none(),
+        "no gaps, no summary"
+    );
+    let single = super::test_extraction_partial_summary(&gaps[..1])?
+        .ok_or("one gap must keep a per-file limitation")?;
+    assert_eq!(single.affected_items, Some(1));
+    assert_eq!(
+        single.path.as_deref(),
+        Some("tests/tmpltitle_many_1.test.ts")
+    );
+    assert_eq!(single.recovery.kind, AnalysisRecoveryKind::InspectFailure);
+    assert_eq!(
+        single.bounded_detail.as_deref(),
+        Some(
+            "typescript_test_extraction_partial: template-literal title at tests/tmpltitle_many_1.test.ts:3"
+        )
+    );
+
+    let summary = super::test_extraction_partial_summary(&gaps)?
+        .ok_or("five gaps must collapse into one summary")?;
     assert_eq!(summary.affected_items, Some(5));
     assert_eq!(summary.path, None);
     assert_eq!(summary.recovery.kind, AnalysisRecoveryKind::InspectFailure);
+    assert_eq!(
+        summary.bounded_detail.as_deref(),
+        Some(
+            "typescript_test_extraction_partial: 5 test file(s) register tests the extractor does not index; e.g. template-literal title at tests/tmpltitle_many_1.test.ts:3; template-literal title at tests/tmpltitle_many_2.test.ts:3; template-literal title at tests/tmpltitle_many_3.test.ts:3 (+2 more)"
+        )
+    );
+
+    let root = ts_unique_tempdir("tmpltitle-many")?;
+    ts_write_file(
+        &root.join("src/tmpltitle_many_owner.ts"),
+        "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/tmpltitle_many.test.ts"),
+        "import { add } from '../src/tmpltitle_many_owner';\nwhile (process.env.CI) {\n  it(`adds ${1} and ${2}`, () => {\n    expect(add(1, 2)).toBe(3);\n  });\n}\n",
+    )?;
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[changed_with_lines(
+            "src/tmpltitle_many_owner.ts",
+            &[(2, "  return a + b;")],
+        )],
+    )?;
     assert!(
-        summary
-            .bounded_detail
-            .as_deref()
-            .is_some_and(|detail| detail.starts_with(
-                "typescript_test_extraction_partial: 5 test file(s) register tests the extractor does not index; e.g. "
-            ) && detail.ends_with("(+2 more)")),
-        "{summary:?}"
+        result.limitations.iter().any(|limitation| {
+            limitation.bounded_detail.as_deref().is_some_and(|detail| {
+                detail.contains("typescript_test_extraction_partial")
+                    && detail.contains("tmpltitle_many")
+                    && !detail.contains("src/calc.ts")
+                    && !detail.contains("tests/calc.test.ts")
+                    && !detail.contains("parse_worker_failed")
+            })
+        }),
+        "unique-path analyze_diff must still disclose extraction-partial: {:?}",
+        result.limitations
     );
     let _ = std::fs::remove_dir_all(&root);
     Ok(())
@@ -18591,14 +18624,94 @@ fn owner_extraction_gap_discloses_arrow_function_class_field() -> Result<(), Str
 }
 
 #[test]
-fn owner_extraction_gap_discloses_private_method() -> Result<(), String> {
+fn owner_extraction_gap_discloses_string_literal_method_key() -> Result<(), String> {
     assert_owner_extraction_gap_disclosed(
-        "owner-gap-private",
+        "owner-gap-string-key",
         "src/ledger.ts",
-        "export class Ledger {\n  #adjust(amount: number): number {\n    if (amount >= 50) {\n      return amount - 5;\n    }\n    return amount;\n  }\n\n  entry(amount: number): number {\n    return this.#adjust(amount);\n  }\n}\n",
+        "export class Ledger {\n  'adjust'(amount: number): number {\n    if (amount >= 50) {\n      return amount - 5;\n    }\n    return amount;\n  }\n}\n",
         (3, "    if (amount >= 50) {"),
         "class method with unsupported key",
     )
+}
+
+/// #10440: a changed line inside a `#private` method used to read as a partial
+/// extraction with no finding. It is now an owner, and because no test can
+/// name it the finding is `static_unknown`, never the confident
+/// `no_static_path` and never credited through a public caller's assertion.
+#[test]
+fn changed_private_method_is_an_unknown_finding_not_partial_silence() -> Result<(), String> {
+    let src = "export class Ledger {\n  #adjust(amount: number): number {\n    if (amount >= 50) {\n      return amount - 5;\n    }\n    return amount;\n  }\n\n  entry(amount: number): number {\n    return this.#adjust(amount);\n  }\n}\n";
+    let test = "import { Ledger } from '../src/ledger';\n\ntest('entry adjusts large amounts', () => {\n  expect(new Ledger().entry(60)).toBe(55);\n});\n";
+    for (label, with_test) in [
+        ("private-no-test", false),
+        ("private-public-caller-test", true),
+    ] {
+        let root = ts_unique_tempdir(label)?;
+        ts_write_file(&root.join("src/ledger.ts"), src)?;
+        if with_test {
+            ts_write_file(&root.join("tests/ledger.test.ts"), test)?;
+        }
+        let result = TypeScriptAdapter.analyze_diff(
+            &ts_analysis_options(root),
+            &OraclePolicy::default(),
+            &[changed_with_lines(
+                "src/ledger.ts",
+                &[(3, "    if (amount >= 50) {")],
+            )],
+        )?;
+        assert_eq!(result.findings.len(), 1, "{label}: {:?}", result.findings);
+        let finding = &result.findings[0];
+        assert!(
+            matches!(finding.class, ExposureClass::StaticUnknown),
+            "{label}: {:?}",
+            finding.class
+        );
+        let joined = finding.evidence.join("\n");
+        assert!(joined.contains("owner: #adjust"), "{label}: {joined}");
+        assert!(
+            !result.limitations.iter().any(|limitation| limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("typescript_owner_extraction_partial"))),
+            "{label}: {:?}",
+            result.limitations
+        );
+        assert_eq!(
+            finding.stop_reasons,
+            vec![StopReason::TransitiveReachUnresolved],
+            "{label}: a private owner's unknown is unmodeled reach, not an unresolved callback"
+        );
+        let summary = finding.ripr.reveal.discriminate.summary.as_str();
+        assert!(
+            summary.contains("`#private` class member"),
+            "{label}: {summary}"
+        );
+    }
+    Ok(())
+}
+
+/// Control for the private-member arm: a public method of the same class and
+/// the same shape keeps its ordinary verdict.
+#[test]
+fn changed_public_method_keeps_its_ordinary_verdict_beside_a_private_one() -> Result<(), String> {
+    let src = "export class Ledger {\n  adjust(amount: number): number {\n    if (amount >= 50) {\n      return amount - 5;\n    }\n    return amount;\n  }\n}\n";
+    let root = ts_unique_tempdir("public-method-control")?;
+    ts_write_file(&root.join("src/ledger.ts"), src)?;
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root),
+        &OraclePolicy::default(),
+        &[changed_with_lines(
+            "src/ledger.ts",
+            &[(3, "    if (amount >= 50) {")],
+        )],
+    )?;
+    assert_eq!(result.findings.len(), 1, "{:?}", result.findings);
+    assert!(
+        matches!(result.findings[0].class, ExposureClass::NoStaticPath),
+        "{:?}",
+        result.findings[0].class
+    );
+    Ok(())
 }
 
 #[test]
@@ -20123,6 +20236,7 @@ mod nullish_chain_tests;
 mod out_dir_specifier_tests;
 mod playwright_fixture_tests;
 mod playwright_unit_tests;
+mod private_method_owner_tests;
 mod reexport_chain_tests;
 mod registration_binding_tests;
 mod require_member_import_tests;

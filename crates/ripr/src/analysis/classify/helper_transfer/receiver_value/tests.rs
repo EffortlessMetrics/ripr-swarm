@@ -37,6 +37,7 @@ fn cell(source: &str, argument: &str) -> Result<Option<String>, String> {
     Ok(receiver_cell_value(
         argument,
         &index_of(&[("src/lib.rs", source)])?,
+        &|_| None,
     ))
 }
 
@@ -121,7 +122,10 @@ fn struct_declared_twice_or_shadowed_by_another_item_builds_no_cell() -> Result<
         ("src/lib.rs", BASE),
         ("tests/other.rs", "struct ByteSize(u64);\n"),
     ])?;
-    assert_eq!(receiver_cell_value("ByteSize(1)", &other_file), None);
+    assert_eq!(
+        receiver_cell_value("ByteSize(1)", &other_file, &|_| None),
+        None
+    );
     for extra in [
         "enum ByteSize { A }\n",
         "type ByteSize = u32;\n",
@@ -314,4 +318,31 @@ fn projection_reads_exactly_one_in_range_tuple_index() {
     for scalar in ["\"(hi)\"", "'('", "\"f(x)\""] {
         assert!(!is_receiver_cell(scalar), "{scalar}");
     }
+}
+
+#[test]
+fn bound_name_reads_only_the_plain_decimal_the_caller_answers() -> Result<(), String> {
+    let index = index_of(&[("src/lib.rs", BASE)])?;
+    let read = |argument: &str, answer: Option<&str>| {
+        receiver_cell_value(argument, &index, &|name| {
+            assert_eq!(name, "count");
+            answer.map(str::to_string)
+        })
+    };
+    assert_eq!(
+        read("ByteSize::kib(count)", Some("1")),
+        Some("ByteSize(1024)".to_string())
+    );
+    assert_eq!(
+        read("ByteSize(count)", Some("215")),
+        Some("ByteSize(215)".to_string())
+    );
+    // No binding, a non-decimal answer or an overflow declines.
+    assert_eq!(read("ByteSize::kib(count)", None), None);
+    assert_eq!(read("ByteSize::kib(count)", Some("1u64")), None);
+    assert_eq!(read("ByteSize::kib(count)", Some("-1")), None);
+    assert_eq!(read("ByteSize(count)", Some("18446744073709551616")), None);
+    // A name inside a larger expression is never resolved.
+    assert_eq!(read("ByteSize::kib(count + 1)", Some("1")), None);
+    Ok(())
 }

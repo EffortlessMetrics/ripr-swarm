@@ -3931,7 +3931,7 @@ mod tests {
               "language_status":"preview",
               "scope":"diff",
               "evidence_class":"weakly_exposed",
-              "gap_state":"advisory",
+              "gap_state": "unknown",
               "policy_state":"preview",
               "repairability":"repairable",
               "anchor":{{"file":"src/pricing.ts","line":7,"owner":"discountedTotal","dedupe_fingerprint":"probe:src/pricing.ts:typescript_preview:1a2b3c4d"}},

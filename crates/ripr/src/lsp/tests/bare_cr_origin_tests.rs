@@ -1,4 +1,5 @@
 use super::*;
+use tower_lsp_server::ls_types::Uri;
 
 #[test]
 fn rust_analysis_deleted_eof_origins_keep_the_terminal_editor_row() -> Result<(), String> {
@@ -263,5 +264,209 @@ fn rust_analysis_origins_project_editor_rows_for_bare_cr() -> Result<(), String>
             }
         }
     }
+    Ok(())
+}
+
+/// Production fixture shared by the lens/hover row tests: a four-line Rust
+/// file whose changed predicate is on editor row 2, analyzed through the real
+/// saved-workspace path into a committed-shape snapshot.
+fn lens_row_snapshot(
+    name: &str,
+    breaks: [&str; 4],
+) -> Result<(TempLspRoot, WorkspaceDiagnostics, Uri), String> {
+    let fixture = boundary_gap_git_fixture_root(&format!("lens-row-{name}"))?;
+    let root = fixture.path();
+    let path = root.join("src/lib.rs");
+    let lines = [
+        "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {",
+        "    let marker = 10;",
+        "    if amount > discount_threshold { amount - marker } else { amount }",
+        "}",
+    ];
+    let before = lines
+        .into_iter()
+        .zip(breaks)
+        .map(|(line, ending)| format!("{line}{ending}"))
+        .collect::<String>();
+    fs::write(&path, &before).map_err(|error| format!("{name} baseline: {error}"))?;
+    run_lsp_scope_git(root, &["add", "src/lib.rs"])?;
+    run_lsp_scope_git(
+        root,
+        &[
+            "-c",
+            "user.email=ripr-test@example.com",
+            "-c",
+            "user.name=ripr-test",
+            "-c",
+            "commit.gpgSign=false",
+            "commit",
+            "-qm",
+            "line-ending baseline",
+        ],
+    )?;
+    let after = before.replace(
+        "amount > discount_threshold",
+        "amount >= discount_threshold",
+    );
+    assert_ne!(before, after, "{name}: setup must change the predicate");
+    fs::write(&path, &after).map_err(|error| format!("{name} edit: {error}"))?;
+    let repo_config = crate::config::RiprConfig::default();
+    let config = boundary_gap_lsp_config(repo_config);
+    let diagnostics = workspace_diagnostics_with_config(root, &config, false)?;
+    assert!(
+        diagnostics
+            .snapshot
+            .findings
+            .iter()
+            .any(|finding| finding.probe.expression == "amount >= discount_threshold"),
+        "{name}: analysis must produce the changed predicate"
+    );
+    let uri = file_uri_for_path(&path)?;
+    Ok((fixture, diagnostics, uri))
+}
+
+const LENS_LAYOUTS: [(&str, [&str; 4]); 4] = [
+    ("cr", ["\r", "\r", "\r", "\r"]),
+    ("mixed", ["\n", "\r", "\r", "\n"]),
+    ("lf", ["\n", "\n", "\n", "\n"]),
+    ("crlf", ["\r\n", "\r\n", "\r\n", "\r\n"]),
+];
+
+fn lens_rows(uri: &Uri, snapshot: &AnalysisSnapshot) -> Vec<u32> {
+    code_lens_response(uri, Some(snapshot))
+        .iter()
+        .map(|lens| lens.range.start.line)
+        .collect()
+}
+
+#[test]
+fn analysis_snapshot_lens_rows_use_captured_editor_row() -> Result<(), String> {
+    for (name, breaks) in LENS_LAYOUTS {
+        let (fixture, diagnostics, uri) = lens_row_snapshot(name, breaks)?;
+        let snapshot = &diagnostics.snapshot;
+        assert!(
+            !snapshot.rust_diagnostic_origins.is_empty(),
+            "{name}: snapshot must retain the captured origins"
+        );
+        let rows = lens_rows(&uri, snapshot);
+        assert!(!rows.is_empty(), "{name}: expected a lens");
+        assert!(rows.iter().all(|row| *row == 2), "{name}: lens {rows:?}");
+
+        // The semantic refresh identity uses the same owner as placement.
+        let identity = lens_view_identity(snapshot);
+        let identity_rows = identity.rows();
+        assert!(!identity_rows.is_empty(), "{name}");
+        assert!(
+            identity_rows.iter().all(|row| *row == 2),
+            "{name}: identity {identity_rows:?}"
+        );
+
+        // A later save cannot move a captured snapshot's lens or identity.
+        fs::write(
+            fixture.path().join("src/lib.rs"),
+            "// later saved contents\n\n\n\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(lens_rows(&uri, snapshot), rows, "{name}: disk move");
+        assert_eq!(lens_view_identity(snapshot), identity, "{name}: disk move");
+
+        // Alternate control: without origins the explicit conservative
+        // fallback is the analyzer row, which differs only where a bare CR
+        // makes the analyzer and editor models disagree.
+        let mut fallback = snapshot.clone();
+        fallback.rust_diagnostic_origins = Default::default();
+        let fallback_rows = lens_rows(&uri, &fallback);
+        assert!(!fallback_rows.is_empty(), "{name}: fallback lens");
+        let expected_fallback = match name {
+            "cr" => 0,
+            "mixed" => 1,
+            _ => 2,
+        };
+        assert!(
+            fallback_rows.iter().all(|row| *row == expected_fallback),
+            "{name}: fallback {fallback_rows:?}"
+        );
+        let fallback_identity = lens_view_identity(&fallback);
+        assert_eq!(
+            fallback_identity == identity,
+            expected_fallback == 2,
+            "{name}: identity must follow the row"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn analysis_snapshot_published_hover_matches_captured_row() -> Result<(), String> {
+    for (name, breaks) in LENS_LAYOUTS {
+        let (_fixture, diagnostics, uri) = lens_row_snapshot(name, breaks)?;
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        backend
+            .refresh_plan(diagnostics)
+            .ok_or_else(|| format!("{name}: expected refresh plan"))?;
+        let hover = backend
+            .hover_for_position(&hover_params(uri, 2, 0))
+            .ok_or_else(|| format!("{name}: expected hover on editor row 2"))?;
+        let HoverContents::Markup(markup) = hover.contents else {
+            return Err(format!("{name}: expected markup hover"));
+        };
+        assert!(
+            markup.value.contains("amount >= discount_threshold"),
+            "{name}: {}",
+            markup.value
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn analysis_snapshot_unpublished_line_lookup_uses_captured_row() -> Result<(), String> {
+    use crate::lsp::lens::lens_findings_at_line;
+    // Line-hover lookup for an unpublished finding reads only the snapshot's
+    // findings and captured origins, never the published diagnostics.
+    for (name, breaks) in LENS_LAYOUTS {
+        let (_fixture, mut diagnostics, uri) = lens_row_snapshot(name, breaks)?;
+        diagnostics.snapshot.diagnostics_by_uri.clear();
+        let snapshot = &diagnostics.snapshot;
+        let on_row = lens_findings_at_line(&uri, snapshot, 2);
+        assert!(
+            on_row
+                .iter()
+                .any(|finding| finding.probe.expression == "amount >= discount_threshold"),
+            "{name}: lookup on editor row 2"
+        );
+        for row in [0u32, 1] {
+            assert!(
+                lens_findings_at_line(&uri, snapshot, row).is_empty(),
+                "{name}: analyzer row {row} must not select the finding"
+            );
+        }
+
+        // Alternate control: no origins selects the analyzer-row fallback.
+        let mut fallback = snapshot.clone();
+        fallback.rust_diagnostic_origins = Default::default();
+        let fallback_row = match name {
+            "cr" => 0,
+            "mixed" => 1,
+            _ => 2,
+        };
+        assert!(
+            !lens_findings_at_line(&uri, &fallback, fallback_row).is_empty(),
+            "{name}: fallback row {fallback_row}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn analysis_snapshot_lens_excludes_deleted_findings_with_captured_origins() -> Result<(), String> {
+    let (_fixture, mut diagnostics, uri) = lens_row_snapshot("cr", LENS_LAYOUTS[0].1)?;
+    for finding in &mut diagnostics.snapshot.findings {
+        finding.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+    }
+    assert!(!diagnostics.snapshot.rust_diagnostic_origins.is_empty());
+    assert!(lens_rows(&uri, &diagnostics.snapshot).is_empty());
+    assert!(lens_view_identity(&diagnostics.snapshot).rows().is_empty());
     Ok(())
 }

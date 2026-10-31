@@ -128,7 +128,7 @@ replace the pre-flip blocked actionability strings with actionable-reading
 strings (`gap_state: actionable`,
 `actionability_category: complete_repair_packet`, `why_actionable:`, and
 `repair_action:`) while preserving non-actionability evidence and raw evidence
-refs. It must not retain the blocked `gap_state: advisory`,
+refs. It must not retain the blocked `gap_state: unknown`,
 `actionability_category: incomplete_repair_packet`, `why_not_actionable:`,
 `repair_route:`, `missing_actionability_fields:`, or non-empty
 `evidence_needed_to_promote:` lines for that packet-ready finding.

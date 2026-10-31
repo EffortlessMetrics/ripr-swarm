@@ -258,7 +258,7 @@ fn clear_last_good_markdown_file(repo: &Path) -> Result<(), String> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::IsADirectory => Ok(()),
         Err(err) => Err(format!(
-            "failed to remove stale {RIPR_PLUS_LAST_GOOD_MD}: {err}"
+            "failed to remove stale {RIPR_PLUS_LAST_GOOD_MD}: {err}; delete it by hand and rerun"
         )),
     }
 }
@@ -306,10 +306,12 @@ fn parse_options(args: &[String]) -> Result<RiprPlusOptions, String> {
 
 fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a str, String> {
     let Some(value) = args.get(index) else {
-        return Err(format!("plus {flag} requires a path"));
+        return Err(format!("plus {flag} requires a path; pass `{flag} <path>`"));
     };
     if value.trim().is_empty() {
-        return Err(format!("plus {flag} requires a non-empty path"));
+        return Err(format!(
+            "plus {flag} requires a non-empty path; pass `{flag} <path>`"
+        ));
     }
     Ok(value)
 }
@@ -367,7 +369,7 @@ repository or turn raw seams into debt.
 pub(crate) fn qualify_legacy_receipt(mut receipt: Value) -> Result<Value, String> {
     let fields = receipt
         .as_object_mut()
-        .ok_or_else(|| "RIPR+ receipt must be an object".to_string())?;
+        .ok_or_else(|| "RIPR+ receipt must be an object; this is a ripr bug, report it with the command you ran".to_string())?;
     let known = fields
         .get("known_actionable_unresolved")
         .or_else(|| fields.get("unresolved"))
@@ -400,7 +402,7 @@ pub(crate) fn qualify_legacy_receipt(mut receipt: Value) -> Result<Value, String
     let warnings = fields.entry("warnings").or_insert_with(|| json!([]));
     let warnings = warnings
         .as_array_mut()
-        .ok_or_else(|| "RIPR+ receipt warnings must be an array".to_string())?;
+        .ok_or_else(|| "RIPR+ receipt warnings must be an array; this is a ripr bug, report it with the command you ran".to_string())?;
     let warning = json!(
         "Exposure/ledger counts alone do not establish complete RIPR+ zero. Complete test-efficiency measurement, current-candidate binding and blocked/unsupported scope disposition are not established, and no ripr command produces those inputs yet (tracked in #7222), so this receipt stays indeterminate until that lands. Do not use it as a zero gate."
     );
@@ -430,7 +432,10 @@ fn ripr_plus_receipt_from_options(options: &RiprPlusOptions, head: &str) -> Resu
     }
 
     // Unreachable: parse_options rejects the no-input case. Kept for clarity.
-    Err("plus requires either --repo-exposure-summary or --gap-ledger".to_string())
+    Err(
+        "plus requires either --repo-exposure-summary or --gap-ledger; pass one of them"
+            .to_string(),
+    )
 }
 
 /// Composes a `repo-badge-json` string from a gap decision ledger using the
@@ -440,7 +445,7 @@ fn ripr_plus_receipt_from_options(options: &RiprPlusOptions, head: &str) -> Resu
 /// RIPR+ basis.
 fn render_gap_ledger_repo_badge_json(gap_ledger: &Path) -> Result<String, String> {
     let text = fs::read_to_string(gap_ledger)
-        .map_err(|err| format!("failed to read gap ledger {}: {err}", gap_ledger.display()))?;
+        .map_err(|err| format!("failed to read gap ledger {}: {err}; check the file is readable or pass another with `--gap-ledger`", gap_ledger.display()))?;
     let policy = output::badge::BadgePolicy {
         suppressions_path: RiprConfig::default().suppressions().display_path(),
         ..output::badge::BadgePolicy::default()
@@ -462,8 +467,12 @@ fn render_gap_ledger_repo_badge_json(gap_ledger: &Path) -> Result<String, String
 }
 
 fn read_repo_exposure_summary_artifact(path: &Path) -> Result<String, String> {
-    let json = fs::read_to_string(path)
-        .map_err(|err| format!("failed to read {}: {err}", normalize_path(path)))?;
+    let json = fs::read_to_string(path).map_err(|err| {
+        format!(
+            "failed to read {}: {err}; check the file exists and is readable",
+            normalize_path(path)
+        )
+    })?;
     let value: Value = serde_json::from_str(&json).map_err(|err| {
         format!(
             "failed to parse repo exposure summary artifact {}: {err}",
@@ -499,7 +508,7 @@ fn ripr_plus_receipt_from_badge(
 ) -> Result<Value, String> {
     if !ripr_plus_accepts_badge_basis(&badge.basis) {
         return Err(format!(
-            "ripr plus requires repo-badge-json with canonical actionable or gap decision ledger basis, got {:?}",
+            "ripr plus requires repo-badge-json with canonical actionable or gap decision ledger basis, got {:?}; regenerate the badge from the gap decision ledger",
             badge.basis
         ));
     }
@@ -575,17 +584,17 @@ fn ripr_plus_receipt_from_repo_exposure_summary_json_with_source(
     source_artifact: Option<&Path>,
 ) -> Result<Value, String> {
     let summary: Value = serde_json::from_str(json)
-        .map_err(|err| format!("failed to parse repo-exposure-summary-json: {err}"))?;
+        .map_err(|err| format!("failed to parse repo-exposure-summary-json: {err}; regenerate it with `ripr check --root . --format repo-exposure-summary-json`"))?;
     let summary_format = json_string_field_value(&summary, "format");
     if summary_format != "repo-exposure-summary-json" {
         return Err(format!(
-            "ripr plus requires repo-exposure-summary-json, got {summary_format:?}"
+            "ripr plus requires repo-exposure-summary-json, got {summary_format:?}; regenerate it with `ripr check --root . --format repo-exposure-summary-json`"
         ));
     }
     let basis = json_string_field_value(&summary, "basis");
     if basis != "canonical_actionable_gap" {
         return Err(format!(
-            "ripr plus requires repo-exposure-summary-json with canonical_actionable_gap basis, got {basis:?}"
+            "ripr plus requires repo-exposure-summary-json with canonical_actionable_gap basis, got {basis:?}; regenerate it with `ripr check --root . --format repo-exposure-summary-json`"
         ));
     }
 
@@ -607,7 +616,7 @@ fn ripr_plus_receipt_from_repo_exposure_summary_json_with_source(
         .get("top_files")
         .and_then(Value::as_array)
         .cloned()
-        .ok_or_else(|| "repo-exposure-summary-json is missing top_files array".to_string())?;
+        .ok_or_else(|| "repo-exposure-summary-json is missing top_files array; regenerate it with `ripr check --root . --format repo-exposure-summary-json`".to_string())?;
     let status = if unresolved == 0 { "pass" } else { "warn" };
 
     Ok(json!({
@@ -802,7 +811,7 @@ fn append_ripr_plus_top_files_table(body: &mut String, receipt: &Value) {
 
 fn write_receipt(repo: &Path, receipt: &Value) -> Result<(), String> {
     let json = serde_json::to_string_pretty(receipt)
-        .map_err(|err| format!("failed to serialize ripr-plus receipt: {err}"))?;
+        .map_err(|err| format!("failed to serialize ripr-plus receipt: {err}; this is a ripr bug, report it with the command you ran"))?;
     let markdown = ripr_plus_receipt_markdown(receipt);
 
     write_parented_file(
@@ -834,7 +843,7 @@ struct BadgeNativeAuditSnapshot {
 
 fn badge_native_audit_snapshot(json: &str) -> Result<BadgeNativeAuditSnapshot, String> {
     let value: Value = serde_json::from_str(json)
-        .map_err(|err| format!("failed to parse native badge JSON: {err}"))?;
+        .map_err(|err| format!("failed to parse native badge JSON: {err}; this is a ripr bug, report it with the command you ran"))?;
     Ok(BadgeNativeAuditSnapshot {
         label: json_string_field_value(&value, "label"),
         kind: json_string_field_value(&value, "kind"),
@@ -890,8 +899,12 @@ fn json_path_usize_optional(value: &Value, path: &[&str]) -> Option<usize> {
 }
 
 fn json_path_usize_required(value: &Value, path: &[&str]) -> Result<usize, String> {
-    json_path_usize_optional(value, path)
-        .ok_or_else(|| format!("JSON is missing numerical field {}", path.join(".")))
+    json_path_usize_optional(value, path).ok_or_else(|| {
+        format!(
+            "JSON is missing numerical field {}; regenerate the input artifact",
+            path.join(".")
+        )
+    })
 }
 
 fn json_array_string_values(value: &Value, key: &str) -> Vec<String> {
@@ -968,16 +981,18 @@ fn git_head_within(repo: &Path, deadline: std::time::Duration) -> String {
 }
 
 fn repo_root() -> Result<PathBuf, String> {
-    std::env::current_dir().map_err(|err| format!("failed to determine working directory: {err}"))
+    std::env::current_dir().map_err(|err| {
+        format!("failed to determine working directory: {err}; run ripr from an existing directory")
+    })
 }
 
 fn write_parented_file(path: &Path, label: &str, contents: impl AsRef<[u8]>) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
-            .map_err(|err| format!("failed to create parent dir for {label}: {err}"))?;
+            .map_err(|err| format!("failed to create parent dir for {label}: {err}; check the output directory is writable"))?;
     }
     crate::output::file_write::write(path, contents.as_ref())
-        .map_err(|err| format!("failed to write {label}: {err}"))
+        .map_err(|err| format!("failed to write {label}: {err}; check the output path is writable"))
 }
 
 #[cfg(test)]
