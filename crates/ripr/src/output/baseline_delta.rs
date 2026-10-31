@@ -611,7 +611,7 @@ pub(crate) fn render_baseline_delta_json(report: &BaselineDeltaReport) -> Result
         projection.insert_comparison_fields(object);
     }
     serde_json::to_string_pretty(&output)
-        .map_err(|err| format!("failed to render baseline debt delta JSON: {err}"))
+        .map_err(|err| format!("failed to render baseline debt delta JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn render_baseline_delta_markdown(report: &BaselineDeltaReport) -> String {
@@ -994,7 +994,7 @@ fn parse_required_json_input(
     json_text: Result<String, String>,
 ) -> Result<Value, String> {
     let text = json_text
-        .map_err(|error| format!("required {input_name} input {path} is invalid: {error}"))?;
+        .map_err(|error| format!("required {input_name} input {path} is invalid: {error}; regenerate the input with the command that wrote it, then rerun"))?;
     serde_json::from_str::<Value>(&text)
         .map_err(|error| format!("required {input_name} input {path} is invalid: {error}"))
 }

@@ -52,7 +52,7 @@ pub(crate) fn render_gate_decision_json(report: &GateDecisionReport) -> Result<S
         object.insert("analysis_scope".to_string(), scope.clone());
     }
     serde_json::to_string_pretty(&document)
-        .map_err(|err| format!("failed to render gate decision JSON: {err}"))
+        .map_err(|err| format!("failed to render gate decision JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 /// Subject identity block (#5263): which build produced the decision and

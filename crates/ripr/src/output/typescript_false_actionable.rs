@@ -174,7 +174,7 @@ pub(crate) fn render_typescript_false_actionable_audit_json(
         warnings: &report.warnings,
         limits: &report.limits,
     })
-    .map_err(|err| format!("serialize TypeScript false-actionable audit JSON failed: {err}"))
+    .map_err(|err| format!("serialize TypeScript false-actionable audit JSON failed: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn render_typescript_false_actionable_audit_markdown(
@@ -246,18 +246,21 @@ pub(crate) fn render_typescript_false_actionable_audit_markdown(
 fn parse_false_actionable_cases(
     contents: &str,
 ) -> Result<Vec<TypeScriptFalseActionableCaseRow>, String> {
-    let value: Value =
-        serde_json::from_str(contents).map_err(|err| format!("invalid JSON: {err}"))?;
+    let value: Value = serde_json::from_str(contents).map_err(|err| {
+        format!(
+            "invalid JSON: {err}; regenerate the input with the command that wrote it, then rerun"
+        )
+    })?;
     if string_at(&value, &["schema_version"]) != Some("0.1") {
-        return Err("expected schema_version 0.1".to_string());
+        return Err("expected schema_version 0.1; regenerate the input with the command that wrote it, then rerun".to_string());
     }
     if string_at(&value, &["kind"]) != Some("typescript_preview_false_actionable_audit_corpus") {
-        return Err("expected kind typescript_preview_false_actionable_audit_corpus".to_string());
+        return Err("expected kind typescript_preview_false_actionable_audit_corpus; regenerate the input with the command that wrote it, then rerun".to_string());
     }
     let cases = value
         .get("cases")
         .and_then(Value::as_array)
-        .ok_or_else(|| "expected corpus object with cases array".to_string())?;
+        .ok_or_else(|| "expected corpus object with cases array; regenerate the input with the command that wrote it, then rerun".to_string())?;
 
     cases
         .iter()
