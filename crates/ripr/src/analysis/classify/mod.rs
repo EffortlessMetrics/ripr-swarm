@@ -97,7 +97,8 @@ pub(in crate::analysis) use gap_admission::{
     CALL_BUDGET_SATURATED, DEBUG_ASSERT_EQ_PIN_PREFIX, MIXED_REFUSAL_IS_ANALYZER_LIMIT,
     REFUSALS_ARE_ANALYZER_LIMITS, is_ignored, should_panic_tests_deciding_changed_panic,
     withhold_call_budget_gap, withhold_debug_assertion_gap, withhold_log_capture_gap,
-    withhold_mixed_refusal_gap, withhold_should_panic_gap, withhold_unsupported_gap,
+    withhold_mixed_refusal_gap, withhold_should_panic_gap, withhold_truncated_discovery_gap,
+    withhold_unsupported_gap,
 };
 pub(in crate::analysis) use helper_transfer::{FieldProjectionReceipt, field_projection_receipt};
 pub(in crate::analysis) use helper_transfer::{
