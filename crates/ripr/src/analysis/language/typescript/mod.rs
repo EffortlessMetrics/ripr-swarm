@@ -155,6 +155,8 @@ mod row_miss;
 mod row_miss_tests;
 #[cfg(test)]
 mod self_comparing_assertion_tests;
+#[cfg(test)]
+mod asymmetric_matcher_tests;
 mod shadow_index;
 mod spread_override_guard;
 mod static_limit;
