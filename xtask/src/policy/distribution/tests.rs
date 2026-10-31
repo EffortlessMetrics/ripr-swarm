@@ -913,19 +913,35 @@ fn runner_label(target: &contract::TargetContract) -> Result<String, String> {
     Ok(format!("{os}-{arch}"))
 }
 
-/// `Runner-Arch) target=rust-target ;;` arms of the generated install step.
-fn install_step_arms() -> std::collections::BTreeMap<String, String> {
+/// Every `Label) target=value ;;` arm of the generated install step, in source
+/// order, including the `*)` fallback.
+fn install_step_arm_lines() -> Vec<(String, String)> {
     INIT_WORKFLOW_TEXT
         .lines()
         .filter_map(|line| {
             let (label, rest) = line.trim().split_once(") target=")?;
-            if label == "*" {
-                return None;
-            }
             let target = rest.strip_suffix(" ;;")?;
             Some((label.to_string(), target.to_string()))
         })
         .collect()
+}
+
+/// `Runner-Arch) target=rust-target ;;` arms of the generated install step
+/// (fallback excluded). A duplicated label would silently keep the later arm in
+/// a map, so the parsed count must equal the map size.
+fn install_step_arms() -> std::collections::BTreeMap<String, String> {
+    let parsed: Vec<(String, String)> = install_step_arm_lines()
+        .into_iter()
+        .filter(|(label, _)| label != "*")
+        .collect();
+    let count = parsed.len();
+    let arms: std::collections::BTreeMap<String, String> = parsed.into_iter().collect();
+    assert_eq!(
+        count,
+        arms.len(),
+        "a runner label is duplicated in the install step; the later arm would shadow the earlier one"
+    );
+    arms
 }
 
 /// #6245 slice 1: the generated `Install ripr` mapping is bound to the
@@ -947,6 +963,15 @@ fn generated_install_step_mapping_matches_distribution_contract() -> Result<(), 
     assert_eq!(
         arms, expected,
         "install-step arms drifted from the contract"
+    );
+    let fallbacks: Vec<_> = install_step_arm_lines()
+        .into_iter()
+        .filter(|(label, _)| label == "*")
+        .collect();
+    assert_eq!(
+        fallbacks,
+        vec![("*".to_string(), r#""""#.to_string())],
+        "the `*)` fallback must keep target=\"\" (Cargo fallback route), never name a real target"
     );
     assert!(
         INIT_WORKFLOW_TEXT.contains(r#"asset="ripr-server-v$version-$target.tar.gz""#),
