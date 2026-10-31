@@ -3002,6 +3002,25 @@ fn preemptive_artifact_ignore(
     }
 }
 
+/// #11879: the same ignore verdict `ripr doctor` gives, for the first `ripr
+/// check` in a project. A newcomer who runs `check` before `doctor` otherwise
+/// meets `?? target/` in `git status` with no hint. Returns the warning only
+/// when git positively reports the artifact root unignored; a covered root,
+/// a missing repository or an unavailable git yield `None`. The default root
+/// is probed; a relocated cache dir is `doctor`'s to report.
+pub(crate) fn first_check_artifact_ignore_note(root: &Path) -> Option<String> {
+    use output::doctor::DoctorArtifactIgnore;
+    let roots = analysis::ripr_artifact_roots(root, &root.join("target/ripr/cache"), None);
+    let verdict = match ripr_artifact_ignore(root, &roots) {
+        DoctorArtifactIgnore::NoArtifacts => preemptive_artifact_ignore(root, &roots),
+        verdict => verdict,
+    };
+    match verdict {
+        DoctorArtifactIgnore::Unignored { warning } => Some(warning),
+        _ => None,
+    }
+}
+
 /// The typed evidence on whether git's index tracks files under ripr's
 /// artifact roots (#8276, relocated bases #8751). An ignore rule never
 /// untracks files committed earlier, so a repository can cover
@@ -5454,6 +5473,37 @@ mod tests {
         .map_err(|error| error.to_string())?;
         assert_eq!(build_output.status.code(), Some(0), "{build_output:?}");
         let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn first_check_note_names_the_entry_only_while_unignored() -> Result<(), String> {
+        let root = unique_command_test_dir("artifact-first-check");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let empty_excludes = root.join("empty-excludes");
+        std::fs::write(&empty_excludes, "").map_err(|error| error.to_string())?;
+        for args in [
+            ["init"].as_slice(),
+            [
+                "config",
+                "core.excludesFile",
+                empty_excludes.to_str().ok_or("non-utf8 excludes path")?,
+            ]
+            .as_slice(),
+        ] {
+            crate::git::run_git(&root, args).map_err(|error| error.to_string())?;
+        }
+        let note = first_check_artifact_ignore_note(&root).ok_or("expected a note")?;
+        assert!(note.contains("/target/ripr/"), "{note}");
+        std::fs::write(root.join(".gitignore"), "/target/ripr/\n")
+            .map_err(|error| error.to_string())?;
+        assert_eq!(first_check_artifact_ignore_note(&root), None);
+        // Outside a repository nothing is established, so nothing is said.
+        let bare = unique_command_test_dir("artifact-first-check-bare");
+        std::fs::create_dir_all(&bare).map_err(|error| error.to_string())?;
+        assert_eq!(first_check_artifact_ignore_note(&bare), None);
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&bare);
         Ok(())
     }
 
