@@ -23383,13 +23383,139 @@ async fn hover_without_evidence_routes_an_unanalyzed_file_to_refresh() -> Result
         Some(HoverContents::Markup(markup)) => markup.value,
         other => return Err(format!("expected a markdown hover, got {other:?}")),
     };
-    if !text.contains("has not analyzed this file's saved content")
-        || !text.contains("ripr.refresh")
+    if !text.contains("is not on disk")
+        || !text.contains("save it, then refresh (`ripr.refresh`)")
         || text.contains("save the file to refresh")
+        || text.contains("in this session")
     {
         return Err(format!(
-            "unanalyzed file hover must route to refresh, not the divergent-buffer text: {text}"
+            "unanalyzed new file hover must name the observed cause, not the divergent-buffer text: {text}"
         ));
+    }
+    Ok(())
+}
+
+/// Hover text for `c.rs` (on disk, never analyzed) opened under a fresh server whose
+/// analysis health is `state` (or untouched when `None`) and, when
+/// `commit_snapshot`, a committed snapshot that records only `a.rs`.
+async fn unanalyzed_hover_text(
+    name: &str,
+    state: Option<AnalysisAttemptState>,
+    commit_snapshot: bool,
+) -> Result<String, String> {
+    let fixture = quarantine_fixture(name)?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .initialize(initialize_params(
+            None,
+            Some(
+                file_uri_for_path(&fixture.root)
+                    .map_err(|err| format!("root URI failed: {err}"))?,
+            ),
+        ))
+        .await
+        .map_err(|err| format!("initialize failed: {err}"))?;
+    // The first open starts the session's real refresh; let it settle so a
+    // later open schedules nothing and the cause under test is pinned below.
+    backend
+        .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
+        .await;
+    let mut settled = false;
+    for _ in 0..200 {
+        if !matches!(
+            backend.analysis_attempt_state_for_test(),
+            AnalysisAttemptState::Queued | AnalysisAttemptState::Running
+        ) {
+            settled = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    if !settled {
+        return Err("the opening refresh did not settle".to_string());
+    }
+    // `c.rs` is on disk but no analysis read it.
+    let path_c = fixture.root.join("src").join("c.rs");
+    std::fs::write(&path_c, QUARANTINE_TEXT_B)
+        .map_err(|err| format!("write c.rs failed: {err}"))?;
+    let uri_c = file_uri_for_path(&path_c).map_err(|err| format!("c.rs URI failed: {err}"))?;
+    backend
+        .did_open(quarantine_open_params(&uri_c, QUARANTINE_TEXT_B))
+        .await;
+    if commit_snapshot {
+        commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
+    } else {
+        backend.clear_latest_analysis_for_test();
+    }
+    if let Some(state) = state {
+        backend.set_analysis_attempt_state_for_test(state);
+    }
+    match backend.document_quarantine(&uri_c) {
+        Some((_, DocumentStalenessReason::NoAnalyzedSavedContent)) => {}
+        other => {
+            return Err(format!(
+                "fixture must quarantine c.rs without an analyzed baseline, got {other:?}"
+            ));
+        }
+    }
+    let hover = backend
+        .hover(hover_params(uri_c.clone(), 0, 4))
+        .await
+        .map_err(|err| format!("hover failed: {err}"))?;
+    match hover.map(|hover| hover.contents) {
+        Some(HoverContents::Markup(markup)) => Ok(markup.value),
+        other => Err(format!("expected a markdown hover, got {other:?}")),
+    }
+}
+
+#[tokio::test]
+async fn unanalyzed_file_hover_names_only_the_observed_cause() -> Result<(), String> {
+    // #11452: one fixed text used to cover several different causes. Each
+    // observed cause gets its own wording; none may assert an unobserved
+    // cause, and none may use the false "in this session" claim.
+    let none = unanalyzed_hover_text("unanalyzed-none", None, false).await?;
+    let running = unanalyzed_hover_text(
+        "unanalyzed-running",
+        Some(AnalysisAttemptState::Running),
+        false,
+    )
+    .await?;
+    let failed = unanalyzed_hover_text(
+        "unanalyzed-failed",
+        Some(AnalysisAttemptState::Failed),
+        false,
+    )
+    .await?;
+    let unrecorded = unanalyzed_hover_text("unanalyzed-unrecorded", None, true).await?;
+
+    if !none.contains("no analysis has committed") || none.contains("already queued") {
+        return Err(format!("no-analysis cause misworded: {none}"));
+    }
+    if !running.contains("already queued or running") || running.contains("failed") {
+        return Err(format!("in-progress cause misworded: {running}"));
+    }
+    if !failed.contains("latest analysis attempt failed") || failed.contains("already queued") {
+        return Err(format!("failed cause misworded: {failed}"));
+    }
+    if !unrecorded.contains("did not record this file's saved content")
+        || unrecorded.contains("no analysis has committed")
+    {
+        return Err(format!(
+            "unrecorded-by-snapshot cause misworded: {unrecorded}"
+        ));
+    }
+    let all = [&none, &running, &failed, &unrecorded];
+    for (index, text) in all.iter().enumerate() {
+        if text.contains("in this session") || text.contains("save the file to refresh") {
+            return Err(format!("unobserved or divergent-buffer claim: {text}"));
+        }
+        for other in &all[index + 1..] {
+            if text == other {
+                return Err("distinct causes must not share one text".to_string());
+            }
+        }
     }
     Ok(())
 }

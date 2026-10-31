@@ -314,7 +314,9 @@ an unsupported schema fails before movement calculation.
   (#3229): the reachable current-before/historical-after descendant pair is
   accepted with its token, and a before artifact that declares a dirty
   worktree still renders `historical_before_current_after` once the
-  repository moves past it.
+  repository moves past it, and (#3056) additionally carries
+  `before_produced_from_dirty: true`, which a clean-produced historical
+  before artifact does not.
 - `xtask/src/reports/release_negative.rs` (#2824) is the integrated
   installed-candidate negative corpus: it shares the release-readiness
   package/install and authentic-journey helpers (the installed binary stays

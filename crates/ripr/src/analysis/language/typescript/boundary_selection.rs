@@ -332,6 +332,7 @@ pub(crate) fn typescript_changed_boundary_text<'a>(
         return Cow::Borrowed(new_line);
     }
     let parse = |line: &str| {
+        let line = one_line_function_first_statement(line);
         parse_on_worker(file, line, |file, line, allocator| {
             parse_line(file, line, allocator)
         })

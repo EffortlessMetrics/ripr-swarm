@@ -385,7 +385,12 @@ fn unbound_item_refusal(item: &GapItem, producers: &SnapshotCardProducers) -> At
             "read the item's evidence with ripr_get_gap, or run `ripr agent card` in the repository",
         )
     };
-    match resolve_repair_subject_in(&producers.candidate_seams, policy, &item.finding_id, None) {
+    match resolve_repair_subject_in(
+        &producers.candidate_seams,
+        policy,
+        &item.finding_id,
+        crate::app::task_first::RefusalRoot::implicit(None),
+    ) {
         RepairSubjectOutcome::Seam(seam_id) | RepairSubjectOutcome::Ineligible { seam_id, .. } => {
             producers
                 .candidate_seams

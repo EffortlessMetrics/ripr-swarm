@@ -100,6 +100,14 @@
           "type": "integer",
           "minimum": 0
         },
+        "changed_files_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "changed_files_recipe": {
+          "type": "string",
+          "minLength": 1
+        },
         "comments": {
           "type": "integer",
           "minimum": 0
