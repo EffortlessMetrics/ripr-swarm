@@ -1100,15 +1100,8 @@ fixed keys: `requested` echoes the invocation-established root, input source
 file, `--path`/`--exclude` scope, and the analysis effort mode under
 `analysis_mode` (never confused with the input source); `resolved` carries the
 base/commit/merge-base revisions and the scoped intake file counts, each as
-`{available, value}` or `{available: false, reason}`, where the reason is
-`not_published_before_deadline` (the producer had not completed; a progress
-heartbeat never establishes discovery), `not_computed_for_source` (the fact
-does not exist for that input source, e.g. a merge base on a committed
-diff), or `published_after_deadline` (a producer finishing inside the
-cancel grace published after the budget owner's deadline stamp, so the fact
-is not available context; a fact's unavailability reason is owned by its own
-producing stage, so an interrupted intake keeps
-`not_published_before_deadline` even when the diff load completed).
+`{available, value}` or `{available: false, reason}`, with a per-fact `reason` (`not_published_before_deadline`, `not_computed_for_source`, or
+`published_after_deadline`).
 `recovery` carries at most one bounded action. For a replayable input it is
 `retry_with_larger_budget`: a shell-safe literal command preserving the
 meaningful root/source/base/scope/output choices and the effective analysis
@@ -1121,11 +1114,7 @@ an explicit `--format VALUE` spelling when one was given, and a finite
 doubled `--timeout`. An explicit `--output-dir` destination is never
 repeated: the refused output set occupies that directory and custody rejects
 an existing destination, so the note names the occupied destination and the
-caller names a new one. `ripr check` has no `--config`/`--lang` switch, so
-the discovered config and `ripr.toml` language set ride the preserved
-`--root`; `--git-timeout` is not repeated because it changes no finding and
-the retry re-resolves under the ambient default or inherited
-`RIPR_GIT_TIMEOUT`. For a stdin diff (`--diff -`) no literal command is
+caller names a new one. For a stdin diff (`--diff -`) no literal command is
 offered: the consumed bytes cannot be replayed, so `recovery.kind` is
 `save_stdin_diff_to_named_file` with `command: null` and the note names the
 honest continuation. `rereads` names what a retry re-reads (the `base-ref`

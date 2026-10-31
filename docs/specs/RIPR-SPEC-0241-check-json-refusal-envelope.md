@@ -321,13 +321,7 @@ enters the document") are amended, not silently violated, for one identity:
   fact for that input source (for example a merge base on a committed-history
   diff, or any base fact for a supplied diff), and `published_after_deadline`
   when the publish landed at or after the deadline stamp — a producer
-  finishing inside the cancel grace must not read as available context. The
-  reason is owned per stage: the diff load completing never speaks for the
-  intake, so counts from an interrupted intake keep
-  `not_published_before_deadline` instead of the false
-  `not_computed_for_source`. Scoped counts are intake quantities —
-  adapter-facing files after the scope filter — never raw Git path counts
-  and never adapter result counts.
+  finishing inside the cancel grace must not read as available context.
 - Only producers that completed before the deadline may populate a fact:
   the diff loader publishes the resolved base/commit/merge-base after its
   load returns, and the scoped intake publishes its counts after the scope
@@ -355,12 +349,7 @@ enters the document") are amended, not silently violated, for one identity:
   An explicit `--output-dir` destination is never repeated: the refused
   output set occupies that directory and custody rejects an existing
   destination, so `note` names the occupied destination and the caller names
-  a new one. `ripr check` has no `--config` or `--lang` switch — config is
-  discovered from the root and the language set comes from `ripr.toml` —
-  so preserving `--root` retains the discovery anchor and no unsupported
-  flag is fabricated; `--git-timeout` is likewise not repeated, because it
-  changes no finding and the retry re-resolves under the ambient default or
-  inherited `RIPR_GIT_TIMEOUT`. For a stdin diff (`--diff -`) no literal
+  a new one. For a stdin diff (`--diff -`) no literal
   command is offered: the consumed bytes cannot be replayed, so the action
   is `save_stdin_diff_to_named_file` with `command: null` and the note names
   the honest continuation. `rereads` names what a retry re-reads (`base-ref`
@@ -368,9 +357,7 @@ enters the document") are amended, not silently violated, for one identity:
   with the base/head merge-base re-resolution for a working-tree diff,
   `diff-file-bytes`, or none for immutable Git candidate objects) and `note`
   states that a live-ref or worktree retry is not pinned to the timed-out
-  run's snapshot. Auto-selected sources and formats keep their
-  auto-selection instead of fabricating flags that would silently narrow or
-  broaden the diff. The recovery is advisory: execution stays with the
+  run's snapshot. The recovery is advisory: execution stays with the
   caller.
 - Enrichment changes no verdict semantics: exit stays `2`, the typed
   `analysis_timeout` identity, repair route `analysis/timeout`, empty
@@ -383,10 +370,7 @@ enters the document") are amended, not silently violated, for one identity:
   same way: `schemas/ripr/check.schema.json` keeps pinning generation `0.2`
   and `schemas/ripr/check-timeout-refusal.schema.json` pins `0.3` with
   `input_context` required, so every emitted refusal has a published schema
-  that admits it. A reader that validates closed key sets
-  must key its validation on `schema_version` and reject or migrate an
-  unknown generation rather than re-blessing unknown keys — the same rule
-  the agent-card refusal envelope already applies to its generations.
+  that admits it.
 
 ## Test Mapping (Amendment #10796)
 
