@@ -1856,18 +1856,58 @@ fn fold_human_path_separators(line: &str) -> String {
     {
         return normalize_separators(line);
     }
-    let mut out = String::with_capacity(line.len());
-    let mut token = String::new();
+    // Split into alternating whitespace / non-whitespace pieces so the line
+    // can be rebuilt byte-for-byte around the one folded token.
+    let mut pieces: Vec<String> = Vec::new();
     for c in line.chars() {
-        if c.is_whitespace() {
-            out.push_str(&fold_human_token(&token));
-            token.clear();
-            out.push(c);
-        } else {
-            token.push(c);
+        let ws = c.is_whitespace();
+        match pieces.last_mut() {
+            Some(last) if last.chars().next().is_some_and(|f| f.is_whitespace() == ws) => {
+                last.push(c);
+            }
+            _ => pieces.push(c.to_string()),
         }
     }
-    out.push_str(&fold_human_token(&token));
+    let words: Vec<usize> = (0..pieces.len())
+        .filter(|&i| !pieces[i].starts_with(char::is_whitespace))
+        .collect();
+    let word = |n: usize| words.get(n).map(|&i| pieces[i].as_str());
+    let upper = |w: Option<&str>| {
+        w.is_some_and(|w| !w.is_empty() && w.chars().all(|c| c.is_ascii_uppercase()))
+    };
+    // The one word position that holds a path, decided by the line's own
+    // leading label so assertion text, before/after code and evidence prose
+    // (which can hold path-shaped words of their own) are never folded.
+    let at = if upper(word(0)) {
+        Some(1) // `WARNING .\src\x.rs:5`
+    } else {
+        match (word(0), word(1), word(2)) {
+            (Some("Fix:"), _, _) | (Some("-"), _, _) => Some(1),
+            (Some("Related"), Some("test:"), _) => Some(2),
+            (Some("related"), Some("test"), _) => Some(2), // evidence row
+            (Some("First"), Some("finding:"), w2) => Some(if upper(w2) { 3 } else { 2 }),
+            _ => None,
+        }
+    };
+    let at = match (at, word(0), word(1), word(2)) {
+        (Some(1), Some("-"), Some("related"), Some("test")) => Some(3),
+        (at, ..) => at,
+    };
+    let gap = matches!(word(0), Some("Gap")) || (word(0) == Some("gap") && word(1) == Some("id"));
+    let mut out = String::with_capacity(line.len());
+    for (i, piece) in pieces.iter().enumerate() {
+        let n = words.iter().position(|&w| w == i);
+        let fold = match n {
+            Some(n) if gap => piece.starts_with("gap:") && n > 0,
+            Some(n) => Some(n) == at,
+            None => false,
+        };
+        if fold {
+            out.push_str(&fold_human_token(piece));
+        } else {
+            out.push_str(piece);
+        }
+    }
     out
 }
 
@@ -3419,8 +3459,8 @@ mod tests {
             ),
             ("- .\\src\\x.rs:5 (weak)", "- ./src/x.rs:5 (weak)"),
             (
-                "tests src\\a.rs:1 and src\\b.rs:2 both",
-                "tests src/a.rs:1 and src/b.rs:2 both",
+                "  - related test src\\a.rs:1 t uses oracle: assert_eq!(p, \"src\\b.rs:2 x\")",
+                "  - related test src/a.rs:1 t uses oracle: assert_eq!(p, \"src\\b.rs:2 x\")",
             ),
             (
                 "  Gap ID: gap:rust:src\\lib.rs:f:error_variant:x",
@@ -3434,6 +3474,12 @@ mod tests {
             r#"  Changed behavior: write!(f, "\u{7b}:?\u{7d}", 1)"#,
             r#"  - source assertion argument value "read \"error\"" at line 18"#,
             r#"  before: let s = "a\nb.rs:3";"#,
+            // Source text holding a whitespace-delimited path-shaped word.
+            r##"  before: write!(f, r#"prefix src\foo.rs suffix {}"#, self.0)"##,
+            r##"  after:  write!(f, r#"prefix src\foo.rs:3 suffix {}"#, self.0)"##,
+            r##"  Changed behavior: write!(f, r#"prefix src\foo.rs:3 suffix"#)"##,
+            r#"  - source assertion argument value "src\foo.rs:3" at line 18"#,
+            r#"  - propagation yes: reaches returned value: format!("src\foo.rs:3")"#,
         ] {
             assert_eq!(fold_human_path_separators(source), source);
         }
