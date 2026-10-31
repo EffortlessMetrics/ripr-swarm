@@ -435,7 +435,13 @@ fn infection_unknown_inspection_step(family: &ProbeFamily) -> &'static str {
         ProbeFamily::MatchArm => {
             "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which match arm each input selects, then name an input that would select the changed arm. ripr.toml does not support fixture/builder value mappings."
         }
-        _ => {
+        ProbeFamily::CallDeletion | ProbeFamily::SideEffect => {
+            "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see whether the call runs and what it does or changes that a test could observe, then name an input for which that observable effect would differ between the original and changed code. ripr.toml does not support fixture/builder value mappings."
+        }
+        ProbeFamily::ReturnValue
+        | ProbeFamily::ErrorPath
+        | ProbeFamily::FieldConstruction
+        | ProbeFamily::StaticUnknown => {
             "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings."
         }
     }
@@ -643,11 +649,25 @@ mod tests {
         for family in [
             ProbeFamily::ErrorPath,
             ProbeFamily::FieldConstruction,
-            ProbeFamily::CallDeletion,
-            ProbeFamily::SideEffect,
             ProbeFamily::StaticUnknown,
         ] {
             let step = step_for(family, "value");
+            assert!(!step.contains("condition"), "{step}");
+            assert!(step.contains("different results"), "{step}");
+        }
+        // A unit-returning call has no result to compare: name the effect.
+        for (family, expression) in [
+            (ProbeFamily::SideEffect, "client.send(value)"),
+            (ProbeFamily::CallDeletion, "log_audit(&entry);"),
+        ] {
+            let step = step_for(family, expression);
+            assert!(
+                step.contains("what it does or changes that a test could observe"),
+                "{step}"
+            );
+            assert!(step.contains("observable effect would differ"), "{step}");
+            assert!(!step.contains("different results"), "{step}");
+            assert!(!step.contains("produces"), "{step}");
             assert!(!step.contains("condition"), "{step}");
         }
         let arm = step_for(ProbeFamily::MatchArm, "Tier::Pro => 2");
