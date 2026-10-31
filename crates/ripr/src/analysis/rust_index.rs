@@ -301,7 +301,7 @@ pub(crate) fn twin_work_start() {
 }
 #[cfg(test)]
 pub(crate) fn twin_work_finish() -> usize {
-    TWIN_WORK.replace(None).expect("counter enabled")
+    TWIN_WORK.replace(None).unwrap_or_default()
 }
 
 macro_rules! twin_work {

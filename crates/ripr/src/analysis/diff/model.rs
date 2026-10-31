@@ -669,7 +669,7 @@ mod tests {
             for i in 1..=n {
                 assert_eq!(ChangedFile::added_run_start_from(&starts, i), 1);
             }
-            let work = RUN_WORK.replace(None).expect("counter enabled");
+            let work = RUN_WORK.replace(None).unwrap_or_default();
             eprintln!("added run {n}: {work} visits");
             assert!((n..=n * 4).contains(&work), "added run {n}: {work} visits");
         }
