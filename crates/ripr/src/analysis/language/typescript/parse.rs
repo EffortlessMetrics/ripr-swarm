@@ -496,6 +496,10 @@ pub(crate) fn max_expression_nesting_estimate_with(source: &str, jsx: bool) -> u
     let mut ternary_open: usize = 0;
     let mut unary_run: usize = 0;
     let mut jsx_open: usize = 0;
+    // Open `<` run (type arguments and chained comparisons: `a<a<a<..`,
+    // `Array<Array<..`), which oxc parses recursively. `>` closes one; the run
+    // resets at statement, list and block boundaries.
+    let mut angle_run: usize = 0;
     let mut max_estimate: usize = 0;
     let mut last_word = LastWord::None;
     // Last significant byte inside code, for the position heuristics.
@@ -655,7 +659,29 @@ pub(crate) fn max_expression_nesting_estimate_with(source: &str, jsx: bool) -> u
                             })
                         {
                             jsx_open = jsx_open.saturating_add(1);
+                        } else {
+                            angle_run = angle_run.saturating_add(1);
                         }
+                        unary_run = 0;
+                        last_word = LastWord::None;
+                        prev = Some(byte);
+                    }
+                    b'<' => {
+                        angle_run = angle_run.saturating_add(1);
+                        unary_run = 0;
+                        last_word = LastWord::None;
+                        prev = Some(byte);
+                    }
+                    b'>' => {
+                        if prev != Some(b'=') {
+                            angle_run = angle_run.saturating_sub(1);
+                        }
+                        unary_run = 0;
+                        last_word = LastWord::None;
+                        prev = Some(byte);
+                    }
+                    b';' | b',' => {
+                        angle_run = 0;
                         unary_run = 0;
                         last_word = LastWord::None;
                         prev = Some(byte);
@@ -680,6 +706,9 @@ pub(crate) fn max_expression_nesting_estimate_with(source: &str, jsx: bool) -> u
                     }
                     b'(' | b'[' | b'{' => {
                         depth = depth.saturating_add(1);
+                        if byte == b'{' {
+                            angle_run = 0;
+                        }
                         last_word = LastWord::None;
                         prev = Some(byte);
                     }
@@ -698,6 +727,7 @@ pub(crate) fn max_expression_nesting_estimate_with(source: &str, jsx: bool) -> u
                             // brace closes the level `${` opened.
                         } else {
                             depth = depth.saturating_sub(1);
+                            angle_run = 0;
                             unary_run = 0;
                             prev = Some(byte);
                         }
@@ -746,7 +776,8 @@ pub(crate) fn max_expression_nesting_estimate_with(source: &str, jsx: bool) -> u
                     depth
                         .saturating_add(ternary_open)
                         .saturating_add(unary_run)
-                        .saturating_add(jsx_open),
+                        .saturating_add(jsx_open)
+                        .saturating_add(angle_run),
                 );
             }
         }
@@ -848,6 +879,29 @@ mod parse_depth_tests {
         source
     }
 
+    /// #11661 family, TypeScript: oxc parses `a < a < a ..` (speculative
+    /// type arguments) and `Array<Array<..` recursively; 300,000 links
+    /// overflowed even the 256 MiB worker in a release build.
+    #[test]
+    fn nesting_estimate_counts_angle_bracket_runs() {
+        let comparisons = format!("const v = a{};", " < a".repeat(5_000));
+        let generics = format!(
+            "let y: {}number{};",
+            "Array<".repeat(5_000),
+            ">".repeat(5_000)
+        );
+        for source in [comparisons, generics] {
+            assert!(
+                max_expression_nesting_estimate_with(&source, false) > PARSE_NESTING_BUDGET,
+                "{}",
+                &source[..30]
+            );
+        }
+        // Ordinary generics, comparisons and arrows stay far below the budget.
+        let ordinary = "const f = (a: Map<string, Array<number>>) => a.size < 3 && a.size > 1 ? new Set<Array<Map<K, V>>>() : [1 < 2, 3 > 2];";
+        assert!(max_expression_nesting_estimate_with(ordinary, false) < 20);
+    }
+
     #[test]
     fn nesting_estimate_counts_recursive_expression_shapes() {
         assert_eq!(max_expression_nesting_estimate("((((a))))"), 4);
@@ -902,19 +956,21 @@ mod parse_depth_tests {
         assert_eq!(max_expression_nesting_estimate(&templates), 5000);
         let elements = format!("return {}x{};", "<a>".repeat(5000), "</a>".repeat(5000));
         assert_eq!(max_expression_nesting_estimate(&elements), 5000);
-        // Siblings, self-closing tags, fragments, comparisons and generics
-        // do not accumulate.
+        // Siblings, self-closing tags and fragments do not accumulate.
         let flat = "return <><a/><b></b><c x=\"1\" /></>;";
         assert_eq!(max_expression_nesting_estimate(flat), 2);
-        assert_eq!(max_expression_nesting_estimate("if (a <b && c > d) {}"), 1);
+        // An open `<` counts while unclosed (#11769) and `>` closes it, so a
+        // comparison adds one transient level and generics add their depth.
+        assert_eq!(max_expression_nesting_estimate("if (a <b && c > d) {}"), 2);
         assert_eq!(
             max_expression_nesting_estimate("const x = f<Array<T>>(y);"),
-            1
+            2
         );
-        // Plain TypeScript: `<T>value` is an assertion, never an element.
+        // Plain TypeScript: `<T>value` is an assertion, never an element (it
+        // adds one transient angle level that `>` closes, never a JSX level).
         assert_eq!(
             max_expression_nesting_estimate_with("x = <T>y; z = <U>w;", false),
-            0
+            1
         );
         for file in ["deep.ts", "deep.tsx", "deep.js"] {
             let reason = parse_on_worker(Path::new(file), &templates, |_, _, _| ());
