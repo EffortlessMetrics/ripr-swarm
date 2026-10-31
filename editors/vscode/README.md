@@ -33,8 +33,10 @@ enabled = ["rust", "typescript"]
 
 After changing `enabled`, run **ripr: Restart Server** (or reload the window).
 With no `ripr.toml`, Python auto-enables on Python project markers or
-detectable `.py` files under root `src/` or `tests/`, while
-TypeScript/JavaScript stay off.
+detectable `.py` files under root `src/` or `tests/`, and TypeScript
+auto-enables on a `tsconfig.json` or `jsconfig.json`, or detectable
+`.ts`/`.tsx` files under `src/` or `tests/`; a `package.json` or JavaScript
+files alone do not enable it.
 [Support tiers](https://github.com/EffortlessMetrics/ripr/blob/main/docs/status/SUPPORT_TIERS.md)
 lists per-language conditions.
 

@@ -682,8 +682,9 @@ attempt creation stays CLI-owned; the adapter's session transactions are
 in-memory and its durable-store reads are read-only). A prepared transaction
 never authorizes an edit, a command, or a merge by itself — the external
 client's approval and sandbox policy remains authoritative. It does not
-load project-local configuration or providers, embed a model, or offer a
-remote transport. It does not watch the worktree: the snapshot is current as
+load project-local provider configuration, embed a model, or offer a
+remote transport (the workspace's own `ripr.toml` is honored by
+`ripr_refresh`, as described above). It does not watch the worktree: the snapshot is current as
 of its completed `ripr_refresh`, so refresh again after edits. The session
 is in-memory; restarting the server drops the snapshot and every session
 transaction unless a new refresh commits one.

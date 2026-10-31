@@ -139,12 +139,12 @@ owns the tracking issue. Keep this table current as items land.
 |---|---|---|---|---|
 | Versioned gate manifest + baseline-debt-delta schema | ripr | unsafe-review | unsafe-review-swarm #1522 | open |
 | Multi-mode gate (visible-only → calibrated) | ripr | unsafe-review | unsafe-review-swarm #1522 | open |
-| Canonical `new_unsuppressed` counter for threshold consumers | ripr | (consumer contract) | ripr-swarm #1038 | open |
+| Canonical `new_unsuppressed` counter for threshold consumers | ripr | (consumer contract) | ripr-swarm #1038 | closed (shipped in `gate-decision.json`, #1270) |
 | Exception-ledger rigor: typed evidence, classification, structural selectors, ownership, dialect marker | cargo-allow | unsafe-review | unsafe-review-swarm #1523 | partial (typed-evidence prefix gate landed; structural selectors and dialect marker open) |
 | `schema_version` integer-vs-string convergence | — | family-wide | cargo-allow #1465, tokmd-swarm #224 | open |
-| Machine-checked spec-status dashboard | unsafe-review | ripr | ripr-swarm #1040 | open |
-| No-finding wording-contract verifier | unsafe-review | ripr | ripr-swarm #1040 | open |
-| Diff-first consumer contract alignment | unsafe-review | ripr | ripr-swarm #1041 | open |
+| Machine-checked spec-status dashboard | unsafe-review | ripr | ripr-swarm #1040 | closed (not planned) |
+| No-finding wording-contract verifier | unsafe-review | ripr | ripr-swarm #1040 | closed (not planned) |
+| Diff-first consumer contract alignment | unsafe-review | ripr | ripr-swarm #1041 | closed (alignment acceptance recorded, #3423) |
 | Coverage-movement vocabulary (new/worsened/resolved/inherited) | unsafe-review | cargo-allow | cargo-allow #1471 | open |
 | tokmd-packets input-schema ownership + `--from-packets` consumer | unsafe-review (producer) ↔ tokmd (consumer) | tokmd | tokmd-swarm #222, unsafe-review-swarm #1857 | partial (consumer and current-main producer acceptance receipt recorded; publication and broader packet-shape coverage remain open) |
 | `check-local-context` / limited-runtime vocabulary — `downstream_consumable` operator field shipped; `has_unix_absolute_machine_path` / `has_session_state_marker` predicates shipped | ripr | unsafe-review | unsafe-review-swarm #1520 | closed |
