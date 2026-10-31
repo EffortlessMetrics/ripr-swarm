@@ -1207,7 +1207,7 @@ impl OwnerPinSyntax {
         self.complete_workspace_site_scan(index);
         let ancestry = test_file.and_then(|file| {
             let context = self.execution_context(&file.to_path_buf(), index);
-            module_ancestry(&context, file, self.target_roots(index))
+            module_ancestry(&context, file, self.target_roots(index), index)
         });
         let scan = self.workspace_site_scan.borrow();
         let retained = scan.as_ref()?;
@@ -1905,8 +1905,12 @@ fn module_ancestry(
     context: &Option<ExecutionContext>,
     file: &Path,
     roots: &TargetRoots,
+    index: &RustIndex,
 ) -> Option<BTreeSet<PathBuf>> {
-    if roots.disabled {
+    // A file no recognized target places may be compiled under any module the
+    // indexer never recorded (a `mod` inside a macro body), so its context of
+    // just itself is not an established ancestry.
+    if roots.disabled || roots.roots(file, index).is_none() {
         return None;
     }
     let context = context.as_ref()?;
@@ -2201,7 +2205,7 @@ impl OwnerPinSyntax {
         };
         let context = self.execution_context(&test.file, index);
         let roots = self.target_roots(index);
-        let ancestry = module_ancestry(&context, &test.file, roots);
+        let ancestry = module_ancestry(&context, &test.file, roots, index);
         let test_roots = roots.roots(&test.file, index);
         by_module
             .iter()
@@ -2500,7 +2504,7 @@ fn workspace_macro_binding_site_for(
     // a file with established composition reaches the test's own file and
     // the files that file's module tree holds, nothing else.
     let ancestry = test_file.and_then(|file| {
-        if roots.disabled {
+        if roots.disabled || roots.roots(file, index).is_none() {
             return None;
         }
         let context = index.execution_context(file)?;

@@ -82,6 +82,16 @@ fn a_glob_reaches_a_child_test_module_file_through_use_super() {
 }
 
 #[test]
+fn a_test_file_no_target_places_keeps_the_workspace_wide_refusal() {
+    // `mod suite;` sits inside a macro body, so no module edge is recorded
+    // for it and the file is orphaned; rustc may still compile it under the
+    // glob's file, so the glob must keep blocking it.
+    let lib = "mod globs;\nmacro_rules! m {\n    () => {\n        mod suite;\n    };\n}\nm!();\n";
+    let orphan = index(&[(LIB, lib), (GLOBS, GLOB), (SUITE, SUITE_BODY)]);
+    assert!(is_binding(&refusal_of(&orphan, SUITE)));
+}
+
+#[test]
 fn a_path_attribute_mount_is_a_module_of_its_declarer() {
     // `#[path]` mounts a file as its own module: its glob stays inside it.
     let lib = "#[path = \"globs.rs\"]\nmod mounted;\nmod suite;\n";
