@@ -4638,6 +4638,96 @@ fn agent_gate_fails_the_receipt_from_before_the_rerun() -> Result<(), String> {
     Ok(())
 }
 
+/// Copy of the committed receipt with one repo's `id` value replaced.
+fn agent_receipt_with_value(id: &str, repo: &str, value: f64) -> Result<Value, String> {
+    let mut receipt = committed_agent_receipt()?;
+    let row = receipt["metrics"]
+        .as_array_mut()
+        .and_then(|rows| {
+            rows.iter_mut()
+                .find(|row| row["id"].as_str() == Some(id) && row["repo"].as_str() == Some(repo))
+        })
+        .ok_or_else(|| format!("receipt has no {id} for {repo}"))?;
+    row["value"] = json!(value);
+    Ok(receipt)
+}
+
+fn agent_receipt_value(id: &str, repo: &str) -> Result<f64, String> {
+    committed_agent_receipt()?["metrics"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|row| row["id"].as_str() == Some(id) && row["repo"].as_str() == Some(repo))
+        .and_then(|row| row["value"].as_f64())
+        .ok_or_else(|| format!("receipt has no {id} for {repo}"))
+}
+
+/// #11816: output size per command is gated per format against the prior
+/// receipt. Growth up to the margin (the larger of `regression_pct` percent
+/// and `regression_floor` bytes, read from the committed config) passes, one
+/// byte more fails and names the metric and repository, and shrinking never
+/// fails. `--format agent` carries the tightest margin.
+#[test]
+fn agent_gate_fails_when_command_output_grows_past_its_margin() -> Result<(), String> {
+    let config = load_config(&committed_config())?;
+    for (id, repo) in [
+        ("agent.check_bytes_agent_format", "bytesize"),
+        ("agent.check_bytes_agent_format", "humantime"),
+        ("agent.check_bytes_agent_format", "semver"),
+        ("agent.check_bytes_human", "bytesize"),
+        ("agent.check_bytes_json", "semver"),
+    ] {
+        let def = config
+            .metric
+            .iter()
+            .find(|def| def.id == id)
+            .ok_or_else(|| format!("{id} not configured"))?;
+        let base = agent_receipt_value(id, repo)?;
+        let slack = (base * def.regression_pct / 100.0).max(def.regression_floor);
+
+        let at_margin = agent_gate_report(&agent_receipt_with_value(id, repo, base + slack)?)?;
+        assert_eq!(
+            at_margin["gate"]["status"].as_str(),
+            Some("pass"),
+            "{id} {repo}: growth equal to the margin must pass: {}",
+            gate_failure_message(&at_margin)
+        );
+
+        let over = agent_gate_report(&agent_receipt_with_value(id, repo, base + slack + 1.0)?)?;
+        assert_eq!(
+            over["gate"]["status"].as_str(),
+            Some("fail"),
+            "{id} {repo}: growth past the margin must fail"
+        );
+        let message = gate_failure_message(&over);
+        assert!(message.contains(id), "{id} not named in: {message}");
+        assert!(message.contains(repo), "{repo} not named in: {message}");
+
+        let smaller = agent_gate_report(&agent_receipt_with_value(id, repo, 1.0)?)?;
+        assert_eq!(smaller["gate"]["status"].as_str(), Some("pass"), "{id}");
+    }
+    Ok(())
+}
+
+/// The committed byte metrics are measurements, not placeholders: all three
+/// formats on all three pinned targets, and the compact format is smaller than
+/// the human one it is meant to replace for an agent.
+#[test]
+fn committed_agent_receipt_records_bytes_for_every_format_and_target() -> Result<(), String> {
+    for repo in ["bytesize", "humantime", "semver"] {
+        let human = agent_receipt_value("agent.check_bytes_human", repo)?;
+        let agent = agent_receipt_value("agent.check_bytes_agent_format", repo)?;
+        let json_bytes = agent_receipt_value("agent.check_bytes_json", repo)?;
+        assert!(agent > 0.0, "{repo}: agent-format bytes not measured");
+        assert!(
+            agent < human,
+            "{repo}: agent {agent} not under human {human}"
+        );
+        assert!(json_bytes > 0.0, "{repo}: json bytes not measured");
+    }
+    Ok(())
+}
+
 /// Dropping evidence passes the generic gate, so the coverage check is the
 /// control: each ratcheted metric, and one repository's sample of a per-repo
 /// metric, must be reported as lost.
@@ -4649,6 +4739,9 @@ fn agent_coverage_check_names_dropped_metrics_and_samples() -> Result<(), String
         "agent.tool_steps_to_fix",
         "agent.false_weak_findings_after_fix",
         "agent.white_box_tests_to_satisfy_ripr",
+        "agent.check_bytes_human",
+        "agent.check_bytes_agent_format",
+        "agent.check_bytes_json",
     ] {
         let mut receipt = committed_agent_receipt()?;
         let rows = receipt["metrics"].as_array_mut().ok_or("no metrics")?;
