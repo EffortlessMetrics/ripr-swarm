@@ -1401,6 +1401,36 @@ pub(crate) fn line_of_offset(source: &str, offset: usize) -> usize {
         .unwrap_or(1)
 }
 
+/// A committed link such as `tests -> /elsewhere` (or a linked owner file)
+/// must not redirect `agent stub --write` outside the analyzed root (#11477).
+/// Resolves the deepest existing ancestor of `path`, dangling links included.
+fn ensure_stub_path_contained(root: &Path, path: &Path) -> Result<(), String> {
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve workspace root {}: {error}", root.display()))?;
+    let mut existing = path;
+    while std::fs::symlink_metadata(existing).is_err() {
+        match existing.parent() {
+            Some(parent) => existing = parent,
+            None => break,
+        }
+    }
+    let resolved = existing.canonicalize().map_err(|error| {
+        format!(
+            "refusing to write test stub: cannot resolve {}: {error}",
+            existing.display()
+        )
+    })?;
+    if resolved.starts_with(&canonical_root) {
+        Ok(())
+    } else {
+        Err(format!(
+            "refusing to write test stub: {} resolves outside the workspace",
+            path.display()
+        ))
+    }
+}
+
 /// Apply the stub: insert into the owner file, or create the new
 /// integration file. Refuses when the owner file changed since the stub was
 /// computed, or the new file already exists.
@@ -1411,6 +1441,7 @@ pub(crate) fn write_test_stub(
 ) -> Result<PathBuf, String> {
     let relative = stub.placement.file();
     let path = root.join(relative);
+    ensure_stub_path_contained(root, &path)?;
     match &stub.placement {
         TestStubPlacement::ExistingInlineModule { offset, .. }
         | TestStubPlacement::NewInlineModule { offset, .. } => {
@@ -1780,6 +1811,25 @@ pub(crate) fn run_command(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    #[test]
+    fn stub_write_refuses_link_outside_root() {
+        let base = std::env::temp_dir().join(format!("ripr-stub-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("root");
+        let victim = base.join("victim");
+        std::fs::create_dir_all(root.join("real")).expect("root");
+        std::fs::create_dir_all(&victim).expect("victim");
+        std::os::unix::fs::symlink(&victim, root.join("tests")).expect("link");
+        std::os::unix::fs::symlink(root.join("real"), root.join("okdir")).expect("link");
+
+        let refused = super::ensure_stub_path_contained(&root, &root.join("tests/new_test.rs"));
+        assert!(refused.is_err_and(|e| e.contains("outside the workspace")));
+        assert!(super::ensure_stub_path_contained(&root, &root.join("okdir/new_test.rs")).is_ok());
+        assert!(super::ensure_stub_path_contained(&root, &root.join("src/lib.rs")).is_ok());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     use super::*;
 
     #[test]
