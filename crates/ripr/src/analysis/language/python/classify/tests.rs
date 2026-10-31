@@ -3013,6 +3013,9 @@ fn coarse_projection_of_owner_result_does_not_credit_exposed() -> Result<(), Str
         "assert f(3) % 3 == 0",
         "self.assertEqual(f(2).__class__.__name__, 'int')",
         "assert len(str(f(3))) == 1",
+        "assert all(f(2) > 0 for _ in range(2))",
+        "assert [f(2) > 0 for _ in range(2)] == [True, True]",
+        "self.assertEqual(f(2) > 0 if True else False, True)",
     ] {
         let finding = classify_case(
             FEE_SOURCE,

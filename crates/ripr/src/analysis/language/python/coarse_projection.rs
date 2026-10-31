@@ -159,6 +159,16 @@ impl Walk<'_> {
             .any(|name| !name.is_empty() && super::mentions_python_name(&text, name))
     }
 
+    fn generators(&mut self, generators: &[ast::Comprehension], coarse: bool) {
+        for generator in generators {
+            self.visit(&generator.iter, coarse);
+            generator
+                .ifs
+                .iter()
+                .for_each(|cond| self.visit(cond, coarse));
+        }
+    }
+
     fn visit(&mut self, expr: &Expr, coarse: bool) {
         match expr {
             Expr::Call(call) => {
@@ -180,6 +190,28 @@ impl Walk<'_> {
                     _ => coarse,
                 };
                 self.visit(call.func.as_ref(), coarse);
+                // `all(f(x) == 6 for x in xs)` asserts each element's equality
+                // just as a top-level `assert` does, so its operands are the
+                // asserted values and a `==` there is a pin. Any other element
+                // (an ordering, `is`, a bare value) is walked as a value.
+                if !coarse && matches!(name, Some("all" | "any")) {
+                    let equality = |element: &Expr| {
+                        matches!(element, Expr::Compare(c) if c.ops.iter().all(|op|
+                            matches!(op, ast::CmpOp::Eq | ast::CmpOp::NotEq)))
+                    };
+                    let element_and_generators = match call.args.as_slice() {
+                        [Expr::GeneratorExp(comp)] => Some((&comp.elt, &comp.generators)),
+                        [Expr::ListComp(comp)] => Some((&comp.elt, &comp.generators)),
+                        _ => None,
+                    };
+                    if let Some((element, generators)) =
+                        element_and_generators.filter(|(element, _)| equality(element))
+                    {
+                        self.operands(element.as_ref());
+                        self.generators(generators, false);
+                        return;
+                    }
+                }
                 for argument in &call.args {
                     self.visit(argument, inner);
                 }
@@ -229,9 +261,43 @@ impl Walk<'_> {
             Expr::List(list) => list.elts.iter().for_each(|e| self.visit(e, coarse)),
             Expr::Starred(starred) => self.visit(starred.value.as_ref(), coarse),
             Expr::Await(await_expr) => self.visit(await_expr.value.as_ref(), coarse),
+            Expr::Set(set) => set.elts.iter().for_each(|e| self.visit(e, coarse)),
+            Expr::Dict(dict) => {
+                dict.keys
+                    .iter()
+                    .flatten()
+                    .for_each(|k| self.visit(k, coarse));
+                dict.values.iter().for_each(|v| self.visit(v, coarse));
+            }
+            Expr::GeneratorExp(comp) => {
+                self.visit(comp.elt.as_ref(), coarse);
+                self.generators(&comp.generators, coarse);
+            }
+            Expr::ListComp(comp) => {
+                self.visit(comp.elt.as_ref(), coarse);
+                self.generators(&comp.generators, coarse);
+            }
+            Expr::SetComp(comp) => {
+                self.visit(comp.elt.as_ref(), coarse);
+                self.generators(&comp.generators, coarse);
+            }
+            Expr::DictComp(comp) => {
+                self.visit(comp.key.as_ref(), coarse);
+                self.visit(comp.value.as_ref(), coarse);
+                self.generators(&comp.generators, coarse);
+            }
+            // `a if c else b` yields one branch, so it keeps their reading; the
+            // condition only selects the branch and is read as a value.
+            Expr::IfExp(if_exp) => {
+                self.visit(if_exp.test.as_ref(), coarse);
+                self.visit(if_exp.body.as_ref(), coarse);
+                self.visit(if_exp.orelse.as_ref(), coarse);
+            }
+            Expr::Lambda(lambda) => self.visit(lambda.body.as_ref(), coarse),
             Expr::Name(_) | Expr::Constant(_) => {}
-            // A shape the walk does not follow: an owner mention there is a
-            // read it cannot place, so it counts as precise and keeps credit.
+            // A shape the walk still does not follow: an owner mention there is
+            // a read it cannot place. Demotion needs proof that every owner
+            // call is coarse, so it counts as precise and the verdict stays.
             other => {
                 if self.mentions_owner(other) {
                     self.precise += 1;
@@ -349,6 +415,38 @@ mod tests {
             "assert len(f(3).attr) == 3",
         ] {
             assert!(!coarse(text, true), "{text}");
+        }
+    }
+
+    #[test]
+    fn comprehension_set_dict_and_ternary_shapes_are_followed() {
+        for text in [
+            "assert all(f(2) > 0 for _ in xs)",
+            "assert any([f(2) is None for _ in xs])",
+            "assert {f(2) > 0 for _ in xs} == {True}",
+            "assert {k: f(2) > 0 for k in xs} == {}",
+            "assert {f(2) > 0, True} == {True}",
+            "assert {1: f(2) > 0} == {1: True}",
+            "self.assertEqual(f(2) > 0 if xs else False, True)",
+            "assert all(f(x) % 3 == 0 for x in xs)",
+            "assert sorted(map(lambda y: f(y) % 3, xs)) == [0]",
+        ] {
+            assert!(coarse(text, false), "{text}");
+        }
+    }
+
+    #[test]
+    fn precise_reads_inside_followed_shapes_keep_credit() {
+        for text in [
+            "assert [f(x) for x in xs] == [6]",
+            "assert all(f(x) == 6 for x in xs)",
+            "assert all(f(2) > 0 for _ in xs) and f(2) == 6",
+            "assert {f(2): 1} == {6: 1}",
+            "assert {f(2)} == {6}",
+            "self.assertEqual(f(2) if xs else 0, 6)",
+            "assert [f(x) % 3 for x in xs if f(x)] == [0]",
+        ] {
+            assert!(!coarse(text, false), "{text}");
         }
     }
 

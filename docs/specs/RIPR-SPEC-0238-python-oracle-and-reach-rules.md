@@ -1257,7 +1257,13 @@ mutant calibrates the rule; ripr reports only the static shape.
     == 0`), a top-level `>` boundary, other arithmetic and a `len` over an
     edit that can change the count keep their verdict. A first `==` operand
     that holds the owner's value at an input the edit leaves fixed is a
-    separate problem and is not read here.
+    separate problem and is not read here. The walk follows comprehensions,
+    generator expressions, set and dict literals, conditional expressions and
+    lambda bodies, so `assert all(f(2) > 0 for _ in xs)` is coarse while
+    `assert [f(x) for x in xs] == [6]` is a direct read. A shape the walk does
+    not follow that mentions the owner counts as a direct read: the demotion
+    needs proof that every owner call is coarse, so an unknown shape never
+    invents one.
 
 ### Verdict ladder
 
