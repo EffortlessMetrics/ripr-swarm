@@ -1524,7 +1524,23 @@ log instead of leaving the summary empty. When `target/ripr/review/comments.json
 exists, the summary opens with "What RIPR found in this pull request": the count
 of changed-behavior spots where the tests may not notice a wrong result, the first
 spot with its missing check, and the `ripr agent repair` start when it is a plain
-`ripr agent repair ...` command (an unfinished analysis is never reported as clean). The summary then continues with
+`ripr agent repair ...` command (an unfinished analysis is never reported as clean). With no gate configured (`RIPR_GATE_MODE`
+unset or empty), the policy and governance sections (readiness, operations,
+history, promotion, waiver aging, suppression health) are folded into one
+collapsed block; when any `RIPR_GATE_MODE` value is set they are not folded.
+The fold stays open ("needs attention") when a folded report is unreadable,
+has an unexpected shape, omits an expected count, or states a warning,
+unknown, blocker, config-error, stale or ownerless-suppression count that is
+not `0`. It folds with the "no warnings or unknowns" label only when every
+the readiness, operations, history, promotion and suppression-health report
+categories each parsed with all expected counts at `0` (preview-promotion and
+waiver-aging reports are conditional and keep it open only when present and not
+clean); it stays open ("some policy reports not found") when a required
+category is missing, and says
+"no policy reports found" (also open) when none was read. First-run status rows
+whose value is only the `not_available` placeholder are omitted, and the
+start-here packet is named as a file in the `ripr-reports` artifact rather than
+a `target/` path. The summary then continues with
 the `start-here` first-run packet when `ripr first-pr` can compose one from
 explicit artifacts, then includes the PR review front panel, first useful
 action fallback, a language preview grouping section when `[languages]` enables
