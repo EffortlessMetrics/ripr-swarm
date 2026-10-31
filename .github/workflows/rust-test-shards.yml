@@ -170,6 +170,7 @@ jobs:
 
       # A partial re-run that skips shard 1 leaves the binary in an earlier attempt's
       # artifact (same commit), so take the newest one present.
+      # One match extracts straight into the path; several each get a directory.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: ${{ inputs.artifact-name }}-xtask-*
@@ -187,7 +188,7 @@ jobs:
       # combined context.
       - name: Check the shards are a complete, disjoint, green cover
         run: |
-          xtask="$(ls xtask-binary/*/xtask | sort -V | tail -n 1)"
+          xtask="$(find xtask-binary -type f -name xtask | sort -V | tail -n 1)"
           test -n "$xtask" || { echo "::error::no xtask binary artifact from shard 1"; exit 1; }
           chmod +x "$xtask"
           "$xtask" verify-test-shards \

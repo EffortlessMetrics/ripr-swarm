@@ -393,7 +393,7 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
     for required in [
         "    needs: rust-test-shard\n    if: ${{ !cancelled() }}\n",
         "\"$xtask\" verify-test-shards \\\n",
-        "xtask=\"$(ls xtask-binary/*/xtask | sort -V | tail -n 1)\"\n",
+        "xtask=\"$(find xtask-binary -type f -name xtask | sort -V | tail -n 1)\"\n",
         "pattern: ${{ inputs.artifact-name }}-xtask-*\n          path: xtask-binary\n",
         "name: ${{ inputs.artifact-name }}-xtask-${{ github.run_attempt }}\n          path: target/xtask-binary/xtask\n",
         "        if: matrix.shard == 1\n        run: |\n          mkdir -p target/xtask-binary\n          strip --strip-debug -o target/xtask-binary/xtask target/debug/xtask\n",
@@ -473,8 +473,8 @@ fn sharded_hosted_tests_reject_a_dropped_or_softened_shard_check() {
         ("shard: [1, 2, 3, 4]", "shard: [1, 2, 3]"),
         ("\"$xtask\" verify-test-shards", "true"),
         (
-            "xtask-binary/*/xtask | sort -V | tail -n 1",
-            "xtask-binary/*/xtask | head -n 1",
+            "find xtask-binary -type f -name xtask | sort -V | tail -n 1",
+            "find xtask-binary -type f -name xtask | head -n 1",
         ),
         (
             "if-no-files-found: error\n          retention-days: 1",
