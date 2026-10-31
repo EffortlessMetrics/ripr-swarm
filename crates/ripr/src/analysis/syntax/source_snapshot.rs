@@ -577,8 +577,12 @@ mod tests {
         // Always release the first worker, including on timeout, so a
         // lock-held regression fails instead of deadlocking the suite.
         let _ = release_tx.send(());
-        let first_answer = first.join().map_err(|_| "first worker panicked")?;
-        second.join().map_err(|_| "second worker panicked")?;
+        let first_answer = first
+            .join()
+            .map_err(|e| format!("first worker panicked: {e:?}"))?;
+        second
+            .join()
+            .map_err(|e| format!("second worker panicked: {e:?}"))?;
         entered.map_err(|e| format!("first computation never started: {e}"))?;
         let second_answer = while_first_blocked
             .map_err(|e| format!("a different key stalled behind the first compute: {e}"))?;
