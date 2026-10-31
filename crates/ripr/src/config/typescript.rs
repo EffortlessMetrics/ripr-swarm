@@ -119,7 +119,8 @@ pub(crate) fn is_detectable_generated_typescript_path(path: &Path) -> bool {
 }
 
 /// Root project-marker files that select the TypeScript preview adapter when
-/// no `ripr.toml` exists. `package.json` is deliberately not a marker: Rust
+/// no `ripr.toml` exists. `package.json` is deliberately not a marker on its own
+/// (see `detect_javascript_led_root` for the JavaScript-led exception): Rust
 /// and Python repositories routinely carry one for docs or tooling, and it
 /// does not say the repository's own tests run under a TS/JS runner.
 ///
@@ -144,8 +145,8 @@ pub(crate) fn detect_typescript_project(root: &Path) -> bool {
 }
 
 /// A plain JavaScript package (#11336): `package.json` at the root, JavaScript
-/// source at the root or under `src`/`test`/`tests`, and no `Cargo.toml` or
-/// Python project marker. `package.json` alone stays a non-marker (#10941):
+/// source (not tooling config files) at the root or under `src`/`test`/`tests`,
+/// and no `Cargo.toml` or Python project marker. `package.json` alone stays a non-marker (#10941):
 /// Rust and Python repositories carry one for docs or tooling, so the root
 /// must be JavaScript-led, not merely contain a manifest.
 #[cfg(any(feature = "lang-typescript", test))]
@@ -169,6 +170,15 @@ fn is_detectable_javascript_source_name(name: &str) -> bool {
                 == Some(crate::analysis::TsJsSourceKind::JavaScript)
         })
         && !is_detectable_generated_typescript_name(name)
+        && !is_javascript_tooling_config_name(name)
+}
+
+/// Tooling config files (`eslint.config.js`, `webpack.config.mjs`,
+/// `.eslintrc.cjs`) say a project uses a bundler or linter, not that its own
+/// code is JavaScript, so they never select the adapter on their own.
+#[cfg(any(feature = "lang-typescript", test))]
+fn is_javascript_tooling_config_name(name: &str) -> bool {
+    name.starts_with('.') || name.contains(".config.") || name.contains("rc.")
 }
 
 /// Direct children only: root-level `index.js` / `test.js` style packages.
@@ -492,6 +502,13 @@ mod tests {
         assert!(
             !detect_typescript_project(&root),
             "excluded and generated JavaScript"
+        );
+        write(&root, "eslint.config.js")?;
+        write(&root, "webpack.config.mjs")?;
+        write(&root, ".eslintrc.cjs")?;
+        assert!(
+            !detect_typescript_project(&root),
+            "tooling config files are not source"
         );
         write(&root, "index.js")?;
         assert!(detect_typescript_project(&root), "root-level JavaScript");
