@@ -148,6 +148,40 @@ fn literal_array_rejection_equality_gains_no_error_path_credit() -> Result<(), S
     Ok(())
 }
 
+/// A nested literal object or an object holding an array is not a rejection
+/// literal either (#11255): it keeps its exact-value kind and earns no
+/// error-path credit.
+#[test]
+fn nested_literal_container_rejection_equality_gains_no_error_path_credit() -> Result<(), String> {
+    for matcher in ["toEqual", "toStrictEqual"] {
+        for expected in [
+            "{ code: { id: \"TOKEN_REQUIRED\" } }",
+            "{ codes: [\"TOKEN_REQUIRED\"] }",
+        ] {
+            let test = TEST
+                .replace("toBe", matcher)
+                .replace("\"TOKEN_REQUIRED\"", expected);
+            assert!(test.contains(expected), "{matcher}: fixture shape");
+            let got = finding(&test, 3)?;
+            assert_ne!(
+                got.class,
+                ExposureClass::Exposed,
+                "{matcher} {expected}: {got:?}"
+            );
+            assert!(
+                got.related_tests
+                    .iter()
+                    .all(|row| row.oracle_kind != OracleKind::ExactErrorVariant
+                        && row.oracle.as_deref()
+                            != Some(format!("expect(...).rejects.{matcher}(...)").as_str())),
+                "{matcher} {expected}: {:?}",
+                got.related_tests
+            );
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn unknown_or_shadowed_expect_does_not_gain_rejection_credit() -> Result<(), String> {
     let shadow = "const expect = (_value: unknown) => ({ rejects: { toBe() {} } });\n";

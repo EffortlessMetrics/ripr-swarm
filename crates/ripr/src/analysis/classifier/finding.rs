@@ -131,9 +131,26 @@ pub(in crate::analysis) fn build_finding_with_origins(
             &evidence.implicit_dispatch_tests,
         );
     }
+    // RIPR-SPEC-0229 / #11024: no related test input selects the changed
+    // match arm, so the repair is an input that selects it, not a stronger
+    // assertion. The arm pattern is the backticked span of the fact reason.
+    let unselected_arm = (class == ExposureClass::WeaklyExposed)
+        .then(|| {
+            input_boundary_fact(
+                &evidence.activation.missing_discriminators,
+                &context.probe.family,
+            )
+        })
+        .flatten()
+        .filter(|fact| fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX))
+        .map(|fact| format!("{} =>", fact.value));
     let recommended_next_step = if let Some(guard) = unentered_guard {
         Some(format!(
             "Add a related test input that enters `{guard}`; no related test call runs the changed line, so no assertion can observe it yet."
+        ))
+    } else if let Some(arm) = unselected_arm {
+        Some(format!(
+            "Add a test that calls the changed code with an input that selects the arm `{arm}` and asserts its result."
         ))
     } else if evidence
         .discriminate
