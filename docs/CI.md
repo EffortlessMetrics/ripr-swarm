@@ -1576,7 +1576,14 @@ Selection and placement must stay conservative:
   to the changed region or owner function;
 - skip recommendations when a nearby test changed in the pull request;
 - target only changed lines, otherwise fall back to summary-only guidance;
-- cap inline review comments to three by default;
+- cap inline review comments to three by default, and fill those slots with
+  gaps that name a missing check before any card that offers no test to add;
+- never post a card that offers no test to add (any `gap_state` other than
+  `actionable`, including none) as an inline review comment: the publish plan
+  skips it as `not_publishable`. A present non-actionable state (a static
+  limitation) annotates as a `::notice` reading "RIPR has no test to suggest
+  here: ...", not a `::warning`; a card with no `gap_state` keeps the
+  `::warning`;
 - include the missing discriminator, suggested assertion shape, recommended
   test file, related test to imitate, and the repair start
   (`ripr agent repair --root . --seam-id <seam-id> --phase before`) when the
@@ -1686,6 +1693,19 @@ configure the workflow, so changing a mode never means editing the file:
 - `RIPR_UPLOAD_SARIF` is set in the file, not as a variable. `"true"` uploads
   SARIF to the Security tab; set `"false"` if the repository does not use code
   scanning.
+
+Pilot deadline (#11205). `RIPR_PILOT_TIMEOUT_MS` is optional and not in the
+generated file. Add it to
+the workflow `env:` (positive milliseconds) when `ripr pilot` stops at its
+deadline on a large repository. The `ripr reports ci-packet` pilot step then
+passes it as an explicit `ripr pilot --timeout-ms` hard limit, with no
+automatic extension; unset keeps pilot's 30 s default plus its automatic
+extension, and a non-numeric or zero value is refused. When the pilot packet
+is the timeout partial, the step summary's First-run status names the pilot
+deadline as the cause of the missing artifacts, the effect, and this next
+step (#11205). Per-file facts computed before the deadline are written to
+`target/ripr/cache`, so restoring that directory between runs lets the retry
+resume.
 
 Permissions and job settings:
 
