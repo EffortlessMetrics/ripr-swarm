@@ -320,18 +320,58 @@ fn initializer_head(initializer: &ast::Expr) -> Option<String> {
 /// item of that name, or imports through a glob other than `self::*`/`super::*`.
 /// Unlike `file_rebinds_type`, a `use super::*;` at the top of a module file
 /// is admitted when the parent module file shows no such binding, because
-/// every test module of a crate starts that way. Grandparent glob chains are
-/// not followed, so a shadow reached only through one is missed and the
-/// relation is demoted wrongly (a gap that fails closed, not open; #11236).
+/// every test module of a crate starts that way. When a parent module only
+/// inherits through `use super::*;`, its parent module files are read too
+/// (#11236 grandparent glob chain).
 fn std_name_rebound(index: &RustIndex, test_file: &Path, head: &str) -> bool {
+    rebound_scope_files(index, test_file, head)
+        .iter()
+        .any(|file| {
+            if file != test_file && index.files().get(file).is_none() {
+                return false;
+            }
+            file_binds_std_name(index, file, head)
+        })
+}
+
+/// The test file and every module file whose `use super::*;` chain can name
+/// `head` without a rebinding stop in between.
+fn rebound_scope_files(index: &RustIndex, test_file: &Path, head: &str) -> Vec<PathBuf> {
     let mut files = vec![test_file.to_path_buf()];
-    files.extend(parent_module_files(test_file));
-    files.iter().any(|file| {
-        if file != test_file && index.files().get(file).is_none() {
-            return false;
+    let mut pending = parent_module_files(test_file);
+    files.extend(pending.iter().cloned());
+    while let Some(module) = pending.pop() {
+        if index.files().get(&module).is_none() {
+            continue;
         }
-        file_binds_std_name(index, file, head)
-    })
+        if !files.contains(&module) {
+            files.push(module.clone());
+        }
+        if module_inherits_via_super_glob(index, &module)
+            && !file_binds_std_name(index, &module, head)
+        {
+            pending.extend(parent_module_files(&module));
+        }
+    }
+    files
+}
+
+fn module_inherits_via_super_glob(index: &RustIndex, file: &Path) -> bool {
+    let Some(tree) = index.source_syntax.get(index, file).and_then(|s| s.tree()) else {
+        return false;
+    };
+    tree.syntax()
+        .descendants()
+        .filter_map(ast::Use::cast)
+        .any(|item| {
+            let compact: String = item
+                .syntax()
+                .text()
+                .to_string()
+                .split_whitespace()
+                .collect();
+            compact == "usesuper::*;"
+        })
 }
 
 #[cfg(test)]
@@ -340,11 +380,15 @@ pub(super) fn std_name_rebound_for_tests(index: &RustIndex, test_file: &str, hea
 }
 
 /// `dir/mod.rs` and `dir.rs` for a test file `dir/stem.rs`: the files a
-/// `super::*` in it can name.
+/// `super::*` in it can name. When `file` is itself `mod.rs`, only the
+/// enclosing inline module file `dir.rs` is returned.
 fn parent_module_files(test_file: &Path) -> Vec<PathBuf> {
     let Some(dir) = test_file.parent() else {
         return Vec::new();
     };
+    if test_file.file_name().is_some_and(|name| name == "mod.rs") {
+        return vec![dir.with_extension("rs")];
+    }
     let mut files = vec![dir.join("mod.rs")];
     if test_file.file_name().is_some_and(|name| name != "mod.rs") {
         files.push(dir.with_extension("rs"));
@@ -401,7 +445,7 @@ fn trait_implemented_for(index: &RustIndex, trait_name: &str, head: &str) -> boo
     let indexed = index.functions().iter().any(|function| {
         matches!(&function.item.container,
             FunctionContainer::TraitImpl { trait_path, self_ty }
-                if impl_trait_name_matches(trait_path, trait_name)
+                if impl_trait_name_matches(index, &function.file, trait_path, trait_name)
                     && (last_segment_name(strip_reference_prefix(self_ty)) == head
                         || impl_self_reaches_std(self_ty)))
     });
@@ -430,7 +474,7 @@ fn source_may_implement_for_std(index: &RustIndex, trait_name: &str, head: &str)
         };
         let root = tree.syntax().clone();
         if file.source.contains(trait_name) {
-            mentioning.push(root.clone());
+            mentioning.push((path.clone(), root.clone()));
         }
         trees.push(root);
     }
@@ -450,13 +494,18 @@ fn source_may_implement_for_std(index: &RustIndex, trait_name: &str, head: &str)
     };
     mentioning
         .iter()
-        .flat_map(|root| root.descendants())
-        .any(|node| {
+        .flat_map(|(path, root)| {
+            root.descendants()
+                .map(|node| (path.clone(), node))
+                .collect::<Vec<_>>()
+        })
+        .any(|(path, node)| {
             if let Some(item) = ast::Impl::cast(node.clone()) {
                 let Some(trait_ty) = item.trait_() else {
                     return false;
                 };
-                if !impl_trait_name_matches(&trait_ty.syntax().text().to_string(), trait_name) {
+                let trait_text = trait_ty.syntax().text().to_string();
+                if !impl_trait_name_matches(index, &path, &trait_text, trait_name) {
                     return false;
                 }
                 let Some(self_ty) = item.self_ty() else {
@@ -508,9 +557,40 @@ fn impl_self_reaches_std(self_ty: &str) -> bool {
         || (text.len() == 1 && text.bytes().all(|byte| byte.is_ascii_uppercase()))
 }
 
-fn impl_trait_name_matches(trait_path: &str, trait_name: &str) -> bool {
+fn impl_trait_name_matches(
+    index: &RustIndex,
+    file: &Path,
+    trait_path: &str,
+    trait_name: &str,
+) -> bool {
     let path = trait_path.split('<').next().unwrap_or(trait_path);
-    path.rsplit("::").next().map(str::trim) == Some(trait_name)
+    let last = path.rsplit("::").next().map(str::trim);
+    if last == Some(trait_name) {
+        return true;
+    }
+    last.is_some_and(|alias| use_rename_imports_trait(index, file, alias, trait_name))
+}
+
+/// Whether a `use … as alias` in `file` binds `alias` to the owner trait name.
+fn use_rename_imports_trait(index: &RustIndex, file: &Path, alias: &str, trait_name: &str) -> bool {
+    let Some(tree) = index.source_syntax.get(index, file).and_then(|s| s.tree()) else {
+        return false;
+    };
+    tree.syntax()
+        .descendants()
+        .filter_map(ast::UseTree::cast)
+        .any(|tree| {
+            tree.rename()
+                .and_then(|rename| rename.name())
+                .is_some_and(|name| name.text() == alias)
+                && tree.path().is_some_and(|path| {
+                    path.segments().last().is_some_and(|segment| {
+                        segment
+                            .name_ref()
+                            .is_some_and(|name| name.text() == trait_name)
+                    })
+                })
+        })
 }
 
 #[cfg(test)]
