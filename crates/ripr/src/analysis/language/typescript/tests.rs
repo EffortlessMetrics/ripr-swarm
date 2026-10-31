@@ -14069,7 +14069,7 @@ fn oracle_metadata_is_kept_for_a_matching_family_assertion() -> Result<(), Strin
 
 // ── RIPR-SPEC-0027: predicate boundary witness ───────────────────────────────
 
-fn exact_value_test(owner_name: &str, observed: &str, expected: &str) -> TypeScriptTest {
+pub(super) fn exact_value_test(owner_name: &str, observed: &str, expected: &str) -> TypeScriptTest {
     TypeScriptTest {
         name: format!("{owner_name} {observed}"),
         local_name: format!("{owner_name} {observed}"),
@@ -15028,7 +15028,7 @@ fn overcredit_4103_spy_fabrication_must_be_tied_to_owner_spy() -> Result<(), Str
 /// 90) and `return total;` (unchanged behavior there: 100). These are the
 /// extraction-populated facts the witness needs for position/arity matching
 /// and expected-side liveness.
-fn boundary_witness_owner() -> TypeScriptOwner {
+pub(super) fn boundary_witness_owner() -> TypeScriptOwner {
     TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
@@ -15061,7 +15061,7 @@ fn boundary_witness_owner() -> TypeScriptOwner {
     }
 }
 
-fn classify_boundary_line_for_owner(
+pub(super) fn classify_boundary_line_for_owner(
     owner: &TypeScriptOwner,
     line_text: &str,
     tests: &[TypeScriptTest],

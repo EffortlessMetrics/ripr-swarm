@@ -1,0 +1,110 @@
+diff --git a/src/letConstant.ts b/src/letConstant.ts
+index 0000000..1111111 100644
+--- a/src/letConstant.ts
++++ b/src/letConstant.ts
+@@ -1,5 +1,5 @@
+ export function letConstant(score: number): string {
+-    if (score > 50) {
++    if (score >= 50) {
+         return "gold";
+     }
+     return "basic";
+diff --git a/src/reassignedConstant.ts b/src/reassignedConstant.ts
+index 0000000..1111111 100644
+--- a/src/reassignedConstant.ts
++++ b/src/reassignedConstant.ts
+@@ -1,5 +1,5 @@
+ export function reassignedConstant(score: number): string {
+-    if (score > 50) {
++    if (score >= 50) {
+         return "gold";
+     }
+     return "basic";
+diff --git a/src/shadowedConstant.ts b/src/shadowedConstant.ts
+index 0000000..1111111 100644
+--- a/src/shadowedConstant.ts
++++ b/src/shadowedConstant.ts
+@@ -1,5 +1,5 @@
+ export function shadowedConstant(score: number): string {
+-    if (score > 50) {
++    if (score >= 50) {
+         return "gold";
+     }
+     return "basic";
+diff --git a/src/innerBlockConstant.ts b/src/innerBlockConstant.ts
+index 0000000..1111111 100644
+--- a/src/innerBlockConstant.ts
++++ b/src/innerBlockConstant.ts
+@@ -1,5 +1,5 @@
+ export function innerBlockConstant(score: number): string {
+-    if (score > 50) {
++    if (score >= 50) {
+         return "gold";
+     }
+     return "basic";
+diff --git a/src/computedConstant.ts b/src/computedConstant.ts
+index 0000000..1111111 100644
+--- a/src/computedConstant.ts
++++ b/src/computedConstant.ts
+@@ -1,5 +1,5 @@
+ export function computedConstant(score: number): string {
+-    if (score > 50) {
++    if (score >= 50) {
+         return "gold";
+     }
+     return "basic";
+diff --git a/src/importedConstant.ts b/src/importedConstant.ts
+index 0000000..1111111 100644
+--- a/src/importedConstant.ts
++++ b/src/importedConstant.ts
+@@ -1,5 +1,5 @@
+ export function importedConstant(score: number): string {
+-    if (score > 50) {
++    if (score >= 50) {
+         return "gold";
+     }
+     return "basic";
+diff --git a/src/mutatedConstant.ts b/src/mutatedConstant.ts
+index 0000000..1111111 100644
+--- a/src/mutatedConstant.ts
++++ b/src/mutatedConstant.ts
+@@ -1,5 +1,5 @@
+ export function mutatedConstant(score: number): string {
+-    if (score > 50) {
++    if (score >= 50) {
+         return "gold";
+     }
+     return "basic";
+diff --git a/src/offValueConstant.ts b/src/offValueConstant.ts
+index 0000000..1111111 100644
+--- a/src/offValueConstant.ts
++++ b/src/offValueConstant.ts
+@@ -1,5 +1,5 @@
+ export function offValueConstant(score: number): string {
+-    if (score > 50) {
++    if (score >= 50) {
+         return "gold";
+     }
+     return "basic";
+diff --git a/src/nestedClosureConstant.ts b/src/nestedClosureConstant.ts
+index 0000000..1111111 100644
+--- a/src/nestedClosureConstant.ts
++++ b/src/nestedClosureConstant.ts
+@@ -1,5 +1,5 @@
+ export function nestedClosureConstant(score: number): string {
+-    if (score > 50) {
++    if (score >= 50) {
+         return "gold";
+     }
+     return "basic";
+diff --git a/src/nestedFunctionConstant.ts b/src/nestedFunctionConstant.ts
+index 0000000..1111111 100644
+--- a/src/nestedFunctionConstant.ts
++++ b/src/nestedFunctionConstant.ts
+@@ -1,5 +1,5 @@
+ export function nestedFunctionConstant(score: number): string {
+-    if (score > 50) {
++    if (score >= 50) {
+         return "gold";
+     }
+     return "basic";

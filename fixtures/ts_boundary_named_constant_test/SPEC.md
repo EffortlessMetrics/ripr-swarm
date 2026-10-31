@@ -57,5 +57,6 @@ The TypeScript preview adapter:
 - Resolve a constant imported from a module that is not the owner's own
   module (the declaring module is unknown to the adapter; it stays
   fail-closed rather than guessed).
-- Credit a test-file module-level constant that is neither in the test body
-  nor imported from the owner's module.
+- Credit a test-file module-level constant that is not a single immutable
+  integer `const` (the credited shapes are pinned by
+  `ts_boundary_local_constant_credit`).
