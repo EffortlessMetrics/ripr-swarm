@@ -1,5 +1,6 @@
 //! Change classifier for the TypeScript preview adapter.
 
+use super::local_constant::{BodyConstant, test_body_integer_constant, test_file_integer_constant};
 use super::*;
 
 // ── Observation guard (RIPR-SPEC-0098) ───────────────────────────────────────
@@ -2867,7 +2868,7 @@ fn top_level_statements(block: &str) -> Option<Vec<String>> {
 }
 
 /// True when `text` is one identifier (`[A-Za-z_$][A-Za-z0-9_$]*`).
-fn is_bare_identifier(text: &str) -> bool {
+pub(super) fn is_bare_identifier(text: &str) -> bool {
     let mut chars = text.chars();
     chars
         .next()
@@ -3156,7 +3157,7 @@ pub(crate) fn substitute_constant_arguments(
         .into_iter()
         .map(|argument| {
             let trimmed = argument.trim();
-            if is_constant_shaped_operand(trimmed)
+            if is_bare_identifier(trimmed)
                 && let Some(value) =
                     ts_test_scope_constant_value(trimmed, test, owner, alias_map, workspace_root)
             {
@@ -3406,12 +3407,22 @@ fn ts_test_scope_constant_value(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> Option<String> {
-    if !is_constant_shaped_operand(name) {
+    if !is_bare_identifier(name) {
         return None;
     }
-    let (const_value, shadowed) = scan_test_body_constant_declarations(&test.body_text, name);
-    if const_value.is_some() || shadowed {
-        return const_value;
+    if is_constant_shaped_operand(name) {
+        let (const_value, shadowed) = scan_test_body_constant_declarations(&test.body_text, name);
+        if const_value.is_some() || shadowed {
+            return const_value;
+        }
+    }
+    // #10707, #10706: the callback's own single immutable local (any
+    // spelling), decided on the token stream. A declaration or binding it
+    // refuses is never rescued by an outer scope.
+    match test_body_integer_constant(&test.file, &test.body_text, name) {
+        BodyConstant::Resolved(value) => return Some(value),
+        BodyConstant::Refused => return None,
+        BodyConstant::Undeclared => {}
     }
     // No test-body declaration: resolve through the import record to the
     // owner's own module. Ambiguous or unrelated imports fail closed.
@@ -3420,7 +3431,11 @@ fn ts_test_scope_constant_value(
         .iter()
         .filter(|import| !import.namespace && import.local == name)
         .collect();
-    if imports.len() != 1 {
+    if imports.is_empty() {
+        // #10707, #10706: a module-level constant of the test file itself.
+        return test_file_integer_constant(test, name, workspace_root);
+    }
+    if imports.len() != 1 || !is_constant_shaped_operand(name) {
         return None;
     }
     let import = imports[0];
