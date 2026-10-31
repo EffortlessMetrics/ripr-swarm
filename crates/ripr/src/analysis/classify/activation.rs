@@ -1951,7 +1951,7 @@ fn contains_word(text: &str, word: &str) -> bool {
 /// one of the binding's direct uses, so the initializer provably feeds
 /// the compared operand. At most one declaration generation can hold
 /// the predicate in its live span; the first that does wins.
-fn live_local_initializer(
+pub(in crate::analysis) fn live_local_initializer(
     owner: &FunctionSummary,
     operand: &str,
     predicate_line: usize,
