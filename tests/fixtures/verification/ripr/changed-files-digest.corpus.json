@@ -1,0 +1,67 @@
+{
+  "description": "Canonical corpus for summary.changed_files_sha256 (#4006 item 6). Digest: decoded UTF-8 paths sorted bytewise, deduplicated, each followed by one NUL byte, SHA-256. Expected values were computed independently with Python hashlib. Read by both PR-evidence producers (crates/ripr/src/app/pr_evidence.rs and xtask/src/reports/pr_evidence.rs); the producers must agree on every case.",
+  "cases": [
+    {
+      "name": "empty",
+      "paths": [],
+      "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "single",
+      "paths": [
+        "src/lib.rs"
+      ],
+      "sha256": "sha256:5428e9f6850844bae1630a76438856f1c09f90f4d977ce781223df64f6a75bef"
+    },
+    {
+      "name": "order_and_duplicates_ignored",
+      "paths": [
+        "b",
+        "a",
+        "a"
+      ],
+      "sha256": "sha256:8fb20ef63ced4145fc2e983ffe597d1dcff39154c3bf21f0fa9dde6a0c50fdc9"
+    },
+    {
+      "name": "newline_name_joined",
+      "paths": [
+        "a\nb",
+        "c"
+      ],
+      "sha256": "sha256:b70e7c54ca7944e385a0bf09cd9a8f0822d5e99f06d8ec11fef7cf1a8abcbd10"
+    },
+    {
+      "name": "newline_name_split",
+      "paths": [
+        "a",
+        "b\nc"
+      ],
+      "sha256": "sha256:f8a091d5894fe986dab2e2f0335d27f4165b2f556ab9c301ed4451983a13d5ab"
+    },
+    {
+      "name": "space_quote_backslash",
+      "paths": [
+        "sp ace.txt",
+        "q\"uote.rs",
+        "back\\slash.rs"
+      ],
+      "sha256": "sha256:efc490fe2485b74e4daa938d4ef736dc0a2e762b1c23480e5573592c2156f4a2"
+    },
+    {
+      "name": "non_ascii",
+      "paths": [
+        "uni-é.txt",
+        "日本.rs"
+      ],
+      "sha256": "sha256:8868e5d0882107bf2f205337366b8d13b75ac2970952be73106549cd079b8c4d"
+    },
+    {
+      "name": "backslash_vs_nested",
+      "paths": [
+        "a\\b.rs",
+        "a/b.rs"
+      ],
+      "sha256": "sha256:a52c998d7be4f1c4fa9a341738a464b58c5aa2030f1ad580ad22bde8fe6bfacd"
+    }
+  ]
+}
