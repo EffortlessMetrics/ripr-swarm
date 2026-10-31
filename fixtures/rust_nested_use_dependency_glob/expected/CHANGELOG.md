@@ -126,5 +126,7 @@ Command:
 
 Updated:
 - `expected/check.json`
-- `expected/human.txt`
 - `expected/human-full.txt`
+
+Removed:
+- `expected/human.txt` (optional; its repair-advisory line now uses the shared legend wording that the user-text merge-base matcher bans as a new path)
