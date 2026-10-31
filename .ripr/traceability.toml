@@ -3520,6 +3520,14 @@ id = "RIPR-SPEC-0027"
 name = "TypeScript preview static facts"
 spec = "docs/specs/RIPR-SPEC-0027-typescript-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::single_const_in_callback_block_resolves",
+  "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::rebound_shadowed_or_computed_local_never_resolves",
+  "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::nested_only_or_unparsed_binding_is_refused_not_rescued_by_outer_scope",
+  "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::name_the_callback_only_reads_is_left_to_the_outer_scope",
+  "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::file_level_constant_resolves_only_when_single_and_immutable",
+  "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::non_file_level_scope_binding_blocks_the_module_constant",
+  "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::lowercase_local_constant_witnesses_the_boundary",
+  "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::local_constant_that_is_rebound_or_off_value_does_not_witness",
   "crates/ripr/src/analysis/language/typescript/typeof_kind_tests.rs::typeof_guard_names_the_kind_test_not_the_type_name_string",
   "crates/ripr/src/analysis/language/typescript/typeof_kind_tests.rs::typeof_guard_never_names_the_bare_operand_as_the_literal",
   "crates/ripr/src/analysis/language/typescript/typeof_kind_tests.rs::non_typeof_comparisons_keep_their_discriminator",
@@ -4037,6 +4045,10 @@ tests = [
   "crates/ripr/src/analysis/language/python/trailing_comment_tests.rs::a_changed_token_keeps_its_probe",
   "crates/ripr/src/analysis/language/python/trailing_comment_tests.rs::the_edit_predicate_is_token_exact_and_fails_closed",
   "crates/ripr/src/analysis/language/python/trailing_comment_tests.rs::string_content_lines_are_found_from_the_whole_file",
+  "crates/ripr/src/analysis/language/python/test_local_literal_tests.rs::a_single_assignment_local_places_the_boundary_input",
+  "crates/ripr/src/analysis/language/python/test_local_literal_tests.rs::a_local_that_is_not_the_boundary_value_does_not_credit",
+  "crates/ripr/src/analysis/language/python/test_local_literal_tests.rs::every_other_way_the_name_can_differ_keeps_the_weak_verdict",
+  "crates/ripr/src/analysis/language/python/test_local_literal_tests.rs::a_parameter_of_the_test_is_not_a_local_literal",
 ]
 fixtures = [
   "fixtures/python_truthiness_swap_no_exposed_credit",
@@ -4120,6 +4132,8 @@ fixtures = [
   "fixtures/python_noop_trailing_comment",
   "fixtures/python_noop_trailing_whitespace",
   "fixtures/python_trailing_whitespace_in_multiline_string",
+  "fixtures/python_boundary_local_input_credited",
+  "fixtures/python_boundary_local_rebound_not_credited",
   "fixtures/python_dynamic_dispatch_limit",
   "fixtures/python_decorator_indirection_limit",
   "fixtures/python_functools_memoization_not_indirection",
