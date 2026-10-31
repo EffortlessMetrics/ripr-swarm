@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.effortlessmetrics.dev/ripr/cli-refusal.schema.json",
+  "title": "RIPR CLI refusal",
+  "description": "The standalone document a ripr command writes to stdout when it refuses or fails under a JSON request (--json, or a JSON --format) and has no result document of its own: argv usage errors, context selector misses, and the repair/continue façade refusals. The exit code (2 or 3) and the stderr prose are unchanged. `check` refusals carry the same status/error block inside the check document instead (#11584).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "kind",
+    "tool",
+    "status",
+    "command",
+    "exit_code",
+    "error"
+  ],
+  "properties": {
+    "schema_version": { "const": "0.1" },
+    "kind": { "const": "cli_refusal" },
+    "tool": { "const": "ripr" },
+    "status": { "const": "refused" },
+    "command": {
+      "description": "The first argv word after the program name, or null when argv named no command.",
+      "type": ["string", "null"]
+    },
+    "exit_code": { "enum": [2, 3] },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "next"],
+      "properties": {
+        "code": {
+          "description": "Closed reason code. Usage: unknown_argument, unknown_value, unknown_command. context: selector_miss. repair/continue: repair_not_started, repair_failed, continue_declined, continue_failed.",
+          "enum": [
+            "unknown_argument",
+            "unknown_value",
+            "unknown_command",
+            "selector_miss",
+            "repair_not_started",
+            "repair_failed",
+            "continue_declined",
+            "continue_failed"
+          ]
+        },
+        "message": {
+          "description": "The human diagnostic, verbatim from stderr. Not an authority: branch on code.",
+          "type": "string"
+        },
+        "next": {
+          "description": "The one command that recovers, or null when no single honest command exists. The key is always present.",
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["purpose", "command"],
+          "properties": {
+            "purpose": { "const": "recover" },
+            "command": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    }
+  }
+}

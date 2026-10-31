@@ -218,8 +218,9 @@ fn required_exit_contract(id: &str) -> Option<CommandExitContract> {
             Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT)
         }
         // #6305: the façade's selection/setup/limitation outcomes exit 3
-        // with prose on stderr and an empty stdout, like the card family.
-        "cmd:repair" | "cmd:continue" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
+        // with prose on stderr. Stdout is empty unless `--json` asked for the
+        // shared `cli_refusal` document (#11584), like the card family.
+        "cmd:repair" | "cmd:continue" => Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
         "cmd:agent.verify-execute" => Some(EXIT_TYPED_REFUSAL_STDOUT_DOCUMENT),
         "cmd:agent.repair" => Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
         "cmd:receipt.check" => Some(EXIT_RECEIPT_CHECK),
@@ -1722,7 +1723,7 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        json_support: true,
         example: "ripr agent repair --root . --seam-id ID --phase before",
         next_routes: &["agent status", "receipt write"],
         stop_states: &[
@@ -1771,14 +1772,14 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        json_support: true,
         example: "ripr repair [<item>] --root .",
         next_routes: &["continue", "status"],
         stop_states: &[
             "several eligible seams print a bounded selection instead of starting",
             "no eligible seam prints the setup or limitation action instead of starting",
         ],
-        exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
+        exit: EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT,
         limitations: "records the before snapshot and packet for one subject; ripr never edits source files and never runs project verification from this command.",
         not_applicable_reason: None,
     },
@@ -1796,14 +1797,14 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        json_support: true,
         example: "ripr continue [--attempt ID] --root .",
         next_routes: &["status", "receipt write"],
         stop_states: &[
             "a receipt-ready attempt reports already-complete; one that ended without a receipt refuses with exit 3",
             "several current attempts print a bounded selection instead of continuing",
         ],
-        exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
+        exit: EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT,
         limitations: "records the after snapshot and composes static verification for one attempt; ripr never performs the edit and never runs project tests itself.",
         not_applicable_reason: None,
     },
@@ -3094,6 +3095,52 @@ mod tests {
         expect_single_violation(&rows, "contradicts the implemented mapping")
     }
 
+    /// #11584: `json_support: false` must never contradict the command's own
+    /// help. A leaf command whose help documents a bare `--json` flag has a
+    /// machine document, so the catalog may not tell an agent otherwise
+    /// (`repair`, `continue` and `agent repair` were wrong this way). Group
+    /// rows summarize their children and are judged through them. The
+    /// opposite direction (`true` for a command that only writes JSON
+    /// artifacts and rejects `--json`) is tracked separately: it needs a typed
+    /// split of "has a JSON document" from "accepts a JSON flag".
+    #[test]
+    fn leaf_commands_documenting_a_json_flag_report_json_support() -> Result<(), String> {
+        let path_of = |row: &CommandMetadata| {
+            row.id
+                .strip_prefix("cmd:")
+                .unwrap_or(row.id)
+                .replace('.', " ")
+        };
+        let paths: Vec<String> = METADATA.iter().map(path_of).collect();
+        let mut checked = 0usize;
+        for row in METADATA {
+            let path = path_of(row);
+            let is_group = paths
+                .iter()
+                .any(|other| other.starts_with(&format!("{path} ")));
+            if is_group {
+                continue;
+            }
+            let Some(help) = crate::cli::help::help_text_for(&path) else {
+                continue;
+            };
+            checked += 1;
+            let documents_flag = help
+                .split_whitespace()
+                .any(|token| token.trim_matches(['[', ']', ',']) == "--json");
+            if documents_flag && !row.json_support {
+                return Err(format!(
+                    "{} documents `--json` in its help but reports json_support: false",
+                    row.id
+                ));
+            }
+        }
+        if checked < 20 {
+            return Err(format!("only {checked} leaf help texts were checked"));
+        }
+        Ok(())
+    }
+
     #[test]
     fn agent_verify_row_cannot_claim_stdout_document_on_refusal() -> Result<(), String> {
         let rows = with_mutated_row("cmd:agent.verify", |row| {
@@ -3403,8 +3450,8 @@ mod tests {
             ("cmd:agent.stub", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
             ("cmd:agent.packet", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
             ("cmd:agent.repair", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
-            ("cmd:repair", EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
-            ("cmd:continue", EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
+            ("cmd:repair", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
+            ("cmd:continue", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
             (
                 "cmd:agent.verify-execute",
                 EXIT_TYPED_REFUSAL_STDOUT_DOCUMENT,
