@@ -545,7 +545,7 @@ fn reaching_test_guidance(
             .and_then(|root| test.file.strip_prefix(root).ok())
             .unwrap_or(&test.file);
         return Some(format!(
-            "`{}` ({}:{}) calls this code, but ripr cannot show that its input reaches the changed branch. Check by hand that it does and asserts on the result there, and add a test input only if it does not",
+            "`{}` ({}:{}) calls this code, but ripr cannot show that its input reaches the changed branch. Check by hand that it does and asserts on the result there, and add a test input only if the existing one does not",
             test.test_name,
             crate::analysis::stable_path_text(file),
             test.line
