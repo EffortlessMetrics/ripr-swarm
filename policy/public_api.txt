@@ -123,6 +123,7 @@ pub use ripr::output::join_cargo_mutants_location
 pub use ripr::output::parse_cargo_mutants_outcomes_json
 pub fn ripr::output::start_here_state::normalize_start_here_output_state
 pub fn ripr::output::start_here_state::start_here_output_state_is_known
+pub fn ripr::process_owner::bind_process_lifetime
 pub fn ripr::set_verbose
 pub mod ripr::analysis
 pub mod ripr::app
