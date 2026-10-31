@@ -21,7 +21,7 @@
         "mutated_line": null,
         "outcome": "tests_passed",
         "failing_test": null,
-        "equivalence_review": "the edit itself: `r.min(0)` on a `u32` is 0 for every `r`, so the branch choice cannot reach the returned value (equivalent mutant)."
+        "equivalence_review": "the edit itself: `r.min(0)` on a `u32` is 0 for every `r`, so the branch choice cannot reach the returned value (equivalent mutant). Run under rustc 1.95.0 with `cargo test` on the edited subject: tests_passed; `cargo xtask verdict-corpus relabel --case absorbing-min-literal-floor` replayed it with 0 drifted."
       }
     ]
   },

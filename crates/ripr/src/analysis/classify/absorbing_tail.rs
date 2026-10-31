@@ -24,6 +24,12 @@
 //!   workspace trait or impl providing the method), no `include!` of code ripr
 //!   did not index, and no item or `use ... as` renaming the primitive.
 //!
+//! The changed condition is not proven pure: it may index, overflow, panic or
+//! have side effects a test could observe. The result only demotes the finding
+//! to a propagation limit (`propagation_unknown`); it never credits or flags a
+//! gap. An untyped `let r = ..; r.min(0)` does not compile (E0689), so the
+//! positives annotate the binding.
+//!
 //! Residual, named and not closed here: a substituted `std`/`core` package or
 //! ambient `RUSTFLAGS` that changes the effective prelude is outside what the
 //! index can authenticate.
@@ -272,7 +278,8 @@ fn workspace_keeps_std_dispatch<'a>(
             || ["type", "struct", "enum", "union", "trait", "mod"]
                 .iter()
                 .any(|keyword| word_follows(source, keyword, |next| next == primitive))
-            || use_renames_to(source, primitive))
+            || use_renames_to(source, primitive)
+            || macro_generates_items(source))
     })
 }
 
@@ -293,22 +300,43 @@ fn word_follows(source: &str, first: &str, accept: impl Fn(&str) -> bool) -> boo
     })
 }
 
-/// Whether a `use` statement renames something to `primitive`
-/// (`use other::Thing as u32;`). A cast `x as u32` outside a `use` is not.
+/// Whether a `use` or `extern crate` statement renames something to
+/// `primitive` (`use other::Thing as u32;`, `extern crate other as u32;`). A
+/// cast `x as u32` outside those statements is not a rename.
 fn use_renames_to(source: &str, primitive: &str) -> bool {
     let bytes = source.as_bytes();
     let ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
-    source.match_indices("use").any(|(start, found)| {
-        let before = start == 0 || bytes.get(start - 1).is_none_or(|byte| !ident(*byte));
-        let after = bytes
-            .get(start + found.len())
-            .is_some_and(|byte| !ident(*byte));
-        if !(before && after) {
-            return false;
-        }
-        let statement = source[start..].split(';').next().unwrap_or_default();
-        word_follows(statement, "as", |next| next == primitive)
+    ["use", "extern"].iter().any(|keyword| {
+        source.match_indices(*keyword).any(|(start, found)| {
+            let before = start == 0 || bytes.get(start - 1).is_none_or(|byte| !ident(*byte));
+            let after = bytes
+                .get(start + found.len())
+                .is_some_and(|byte| !ident(*byte));
+            if !(before && after) {
+                return false;
+            }
+            let statement = source[start..].split(';').next().unwrap_or_default();
+            word_follows(statement, "as", |next| next == primitive)
+        })
     })
+}
+
+/// Whether a workspace macro can declare an item whose name it computes
+/// (`fn $name`, `type $name`, ...), which could define `min`, `clamp` or the
+/// primitive's name out of sight of the plain-text scans above.
+fn macro_generates_items(source: &str) -> bool {
+    let bytes = source.as_bytes();
+    let ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    source.contains("macro_rules")
+        && ["fn", "type", "struct", "enum", "union", "trait", "mod"]
+            .iter()
+            .any(|keyword| {
+                source.match_indices(*keyword).any(|(start, found)| {
+                    let before =
+                        start == 0 || bytes.get(start - 1).is_none_or(|byte| !ident(*byte));
+                    before && source[start + found.len()..].trim_start().starts_with('$')
+                })
+            })
 }
 
 #[cfg(test)]
@@ -367,7 +395,7 @@ mod tests {
         for (body, call, primitive) in [
             (CLAMPED, "r.min(0)", "u32"),
             (
-                "pub fn f(n: u32) -> u32 {\n    let r = if n == 5 { 1 } else { 0 };\n    r.min(0u32)\n}",
+                "pub fn f(n: u32) -> u32 {\n    let r: u32 = if n == 5 { 1 } else { 0 };\n    r.min(0u32)\n}",
                 "r.min(0u32)",
                 "u32",
             ),
@@ -479,6 +507,9 @@ mod tests {
             "use other::Wide as u32;",
             "use other::{Wide as u32, Other};",
             "pub fn f() { let r#min = 1; }",
+            "macro_rules! m { ($n:ident) => { fn $n(self) {} }; }",
+            "macro_rules! m { ($n:ident) => { type  $n = Wide; }; }",
+            "extern crate other as u32;",
         ] {
             assert!(
                 !workspace_keeps_std_dispatch([plain, CLAMPED, hostile], "u32"),
@@ -488,6 +519,11 @@ mod tests {
         // A different primitive's rename does not matter here.
         assert!(workspace_keeps_std_dispatch(
             [plain, "type u64 = Wide;"],
+            "u32"
+        ));
+        // A macro that computes no item name does not refuse.
+        assert!(workspace_keeps_std_dispatch(
+            ["macro_rules! one { () => { 1 } }"],
             "u32"
         ));
         // A cast is not a rename.
