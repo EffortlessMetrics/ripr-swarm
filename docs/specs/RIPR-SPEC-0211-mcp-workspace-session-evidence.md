@@ -13,6 +13,9 @@ Linked issues:
 
 - #7314 (optional tool arguments reject explicit null consistently with
   their advertised non-null input types)
+- #9895 (a SIGTERM (or SIGINT) arriving mid-refresh must not leave the
+  in-flight git child behind: the server entry installs cooperative
+  process-lifetime interrupts on Unix)
 - #9895 (a client-supplied pagination cursor on the static catalog lists
   fails closed instead of being accepted and silently ignored)
 - #3089 (this slice: status, refresh, bounded gap list, and evidence
@@ -23,6 +26,8 @@ Linked issues:
 - #6022 (post-initialize `ping` with handshake `params._meta` returns an
   empty result; pre-init ping+_meta and discovery-lifecycle ping
   rejection stay with #5267 / ADR 0022)
+- #9360 (the text companion of `structuredContent` is selectable: lossless
+  JSON copy by default, opt-in digest via `RIPR_MCP_TEXT_CONTENT=summary`)
 - #6021 (the tool envelope must not fail a budget-approved listing on the
   wire: one calibrated envelope, paging on `ripr_list_gaps`)
 - #3087 (parent standard MCP server epic)
@@ -102,6 +107,36 @@ official SDK transport:
   session for one message; a normal `initialize` still completes afterwards,
   and stdin EOF remains the clean exit. Each attempt consumes at least one
   inbound frame, so recovery always makes progress and never spins.
+- External termination requests settle instead of orphaning children
+  (#9895, Unix). The server entry installs process-lifetime cooperative
+  interrupts for SIGINT and SIGTERM before serving: the first signal of
+  either kind requests cancellation of the in-flight bounded attempt — the
+  child waits (git probes, the Perl exporter, cat-file batch reads)
+  observe the flag at their poll cadence, terminate the owned process
+  tree, and unwind, so no git child outlives an interrupted `ripr_refresh`
+  — and the refresh settles on the same session with the typed failure in
+  its `attempt` block (a completed document, `isError` false per the #5254
+  commit contract).
+  A sequential repeated signal before attempt settlement restores native
+  termination as the escape; process exit itself stays transport-owned
+  (stdin EOF). One atomic terminal exchange consumes the attempt's signal:
+  a signal observed during final projection converts an otherwise successful
+  result to the typed cancellation, and a signal after that boundary belongs
+  to the next attempt. Configuration refusals also settle the pending signal.
+  Repeated native death can bypass cooperative cleanup and leave active children;
+  it is an escape, not a cleanup guarantee. Process-group containment covers
+  descendants that remain in the owned group, not deliberate group/session escape.
+  Later refreshes remain usable. Installation is serialized and idempotent.
+  Only MCP attempt tokens opt into Unix process groups; captured analysis
+  workers retain that choice and other callers preserve their prepared groups.
+  Cleanup observes leader exit without reaping, signals the owned group, then
+  reaps and disarms further group signals. This also settles pipe holders when
+  a primary exits early. Targets lacking the safe non-reaping observation
+  refuse contained spawn before creating a child. On non-Unix targets the
+  install is a no-op: containment there is the job-object ownership in
+  `process_owner`, whose std API cannot express kill-on-job-close, so an
+  abrupt external termination can still outlive a git child (recorded
+  residual).
 - After a successful `initialize` handshake, `ping` is routed by method
   name. A request whose `params._meta` carries the handshake fields this
   server requires pre-init (`io.modelcontextprotocol/protocolVersion`,
@@ -268,8 +303,8 @@ official SDK transport:
   remain compatible for callers omitting filters; strict v1 output readers
   require migration. Other MCP document versions are unchanged.
 - The tool envelope carries the document once at full fidelity (#6021):
-  `content[0].text` is the compact JSON serialization of the structured
-  document (no pretty-print inflation), and `structuredContent` repeats
+  by default `content[0].text` is the compact JSON serialization of the
+  structured document (no pretty-print inflation), and `structuredContent` repeats
   the same document in every successful response. Every tool advertises an
   `outputSchema`, so a success whose structured copy is absent is an
   undeclared contract break: when the complete double-carry envelope does
@@ -285,6 +320,23 @@ official SDK transport:
   reservation applies to the paging fit decision, so a page that passes it
   still carries `structuredContent` on the wire whatever id the client
   sent.
+- The text companion is selectable per server process (#9360).
+  `structuredContent` is the single complete result and is identical in
+  every mode. `RIPR_MCP_TEXT_CONTENT` unset, `full` or any unrecognized value
+  keeps `content[0].text` the compact JSON copy above, so a host that reads
+  only text content loses nothing. `summary` (ASCII case-insensitive, trimmed)
+  makes `content[0].text` a digest that states it is not a copy and names
+  `structuredContent` and `RIPR_MCP_TEXT_CONTENT=full`, then lists one line per
+  top-level field: scalars verbatim (strings over 200 characters clipped with
+  a marker pointing back to `structuredContent`), arrays as entry counts plus
+  at most five leading `canonical_id` values, objects as field names. The
+  digest is a projection of the document and adds no fact. The size guard,
+  paging and `result_too_large` measure the complete double-carry envelope in
+  both modes, so refusal boundaries do not depend on the mode; typed failures
+  (`isError: true`) and the status tool's recovery sentence are unchanged. The
+  default is not flipped because a host that hands only text content to its
+  model would silently lose the result; revisiting it is a compatibility
+  change for text-only hosts.
 - `ripr_list_gaps` accepts `offset` (default 0) and `limit` (minimum 1)
   over the narrowed (filtered) items in snapshot order. When the narrowed set
   would exceed the wire-calibrated tool-document ceiling (half the
@@ -626,6 +678,18 @@ unknown route into a recognized one.
 - `crates/ripr/tests/mcp_stdio.rs::optional_tool_arguments_reject_null_and_recover_over_stdio`
   — the #7314 schema/dispatch contract for all six optional argument
   positions, with omission, valid-type, wrong-type and recovery controls.
+- `crates/ripr/tests/mcp_interrupts.rs::cooperative_interrupt_lifecycle`
+  (Linux) — real stdio and gated git children cover SIGINT, SIGTERM,
+  early-primary pipe holders, typed failure, last-good retention, same-session
+  recovery and an independently owned surviving sentinel. Identity-pinned
+  process handles and adopted descendant wait statuses distinguish product
+  settlement from harness cleanup.
+- `crates/ripr/src/cli/interrupt.rs::tests` — isolated native signal controls,
+  concurrent installation, repeated mixed/TERM escape, terminal signal epochs
+  and bounded adverse harness controls.
+- `crates/ripr/src/process_owner.rs::tests` — non-reaping cleanup ordering,
+  successful output/status, refusal after custody loss, repeated cleanup and
+  preservation of caller process groups.
 - `crates/ripr/tests/mcp_stdio.rs::catalog_list_cursors_fail_closed_over_stdio`
   — a `cursor` on `tools/list`, `prompts/list`, `resources/list`, or
   `resources/templates/list` is a `-32602` whose message explains the list

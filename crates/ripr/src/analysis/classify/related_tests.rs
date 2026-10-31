@@ -33,11 +33,13 @@ mod equality_dispatch;
 mod implicit_dispatch;
 mod iterator_dispatch;
 mod operator_dispatch;
+mod path_arg;
+mod std_receiver;
 pub(in crate::analysis::classify) use operator_dispatch::stringified_ranges;
 
 pub(in crate::analysis) use equality_dispatch::is_partial_eq_method;
 pub(in crate::analysis) use fmt_dispatch::{
-    assertion_pins_display_string, changes_only_string_literals,
+    assertion_pins_display_string, changes_only_string_literals, is_display_fmt_owner,
 };
 
 /// Per-pass workspace dependency context for the #2972 cross-crate admit.
@@ -144,6 +146,9 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     /// Tests the diff adds or changes (#8387). Ranking only; see
     /// [`super::DiffTouchedTests`].
     diff_touched: super::DiffTouchedTests,
+    /// Changed single-line constants with their old and new declarations
+    /// (RIPR-SPEC-0048), for the value-flow check.
+    changed_consts: super::ChangedConsts,
 }
 
 impl RelatedTestCandidateIndex {
@@ -299,6 +304,19 @@ impl RelatedTestCandidateIndex {
 
     pub(in crate::analysis) fn diff_touched(&self) -> &super::DiffTouchedTests {
         &self.diff_touched
+    }
+
+    /// Record the diff's changed constants for the value-flow check.
+    pub(in crate::analysis) fn with_changed_consts(
+        mut self,
+        changed_consts: super::ChangedConsts,
+    ) -> Self {
+        self.changed_consts = changed_consts;
+        self
+    }
+
+    pub(in crate::analysis) fn changed_consts(&self) -> &super::ChangedConsts {
+        &self.changed_consts
     }
 
     /// Fold in the macro bindings of files a narrowed diff index withheld
@@ -882,6 +900,30 @@ fn find_related_tests_with_candidates<'a>(
         }
     }
     let owner_name_is_unique = workspace_complete && same_name_function_count == 1;
+    // #11199: an inherent `Type::method` path value a helper runs. Established
+    // once per probe; it needs the owner's same-named definitions to prove no
+    // other impl or type could be the target of the path.
+    let path_arg_owner = owner_fn.and_then(|owner| {
+        if owner_name.is_empty()
+            || !matches!(owner.item.container, FunctionContainer::Inherent { .. })
+        {
+            return None;
+        }
+        let same_name: Vec<&FunctionSummary> = match candidates {
+            RelatedTestCandidates::Indexed(candidate_index) => candidate_index
+                .function_indices(owner_name)
+                .iter()
+                .map(|&function_index| index.functions().at(function_index))
+                .collect(),
+            #[cfg(test)]
+            RelatedTestCandidates::FullScan => index
+                .functions()
+                .iter()
+                .filter(|function| function.name == owner_name)
+                .collect(),
+        };
+        path_arg::PathArgOwner::new(owner, &same_name)
+    });
     // #8999: a user `PartialEq::eq`/`ne` a comparison macro runs unnamed.
     let equality_owner = owner_fn.and_then(|owner| equality_dispatch::equality_owner(owner, index));
     // #9567: a user operator, `Iterator::next` or `Drop::drop` that syntax runs
@@ -1512,12 +1554,22 @@ fn find_related_tests_with_candidates<'a>(
             && helper_chain.is_some_and(|chain| {
                 super::helper_transfer::test_calls_method_entry(index, test, chain)
             });
+        // #11199: the test hands `Type::method` to a same-file helper that
+        // provably runs the argument. In-file by construction, so it rides no
+        // cross-package bypass; a property-only call never reaches here.
+        let hands_owner_path_to_helper = !calls_owner
+            && !calls_helper_entry
+            && !property_only_owner_call
+            && path_arg_owner
+                .as_ref()
+                .is_some_and(|owner| owner.test_hands_path_to_invoking_helper(test, index));
         let helper_chain_reaches = !calls_owner
             && !assertions_reference_owner
             && (calls_helper_entry
                 || calls_method_entry
                 || dispatches_to_helper_fmt_entry
-                || calls_helper_method_entry);
+                || calls_helper_method_entry
+                || hands_owner_path_to_helper);
 
         if !calls_owner
             && !equality_asserts_owner
@@ -1711,8 +1763,8 @@ struct SameNameDefinitions<'s> {
 ///   qualified call `dependency_name::owner(`, or a bare call whose
 ///   stripped body imports the owner from the declared dependency name
 ///   (`use dependency_name::...owner;`, including nested paths and brace
-///   lists). Aliased (`as`) and glob (`*`) imports prove nothing and are
-///   refused; another dependency supplying the same name defeats the
+///   lists). Aliased (`as`) and glob (`*`) imports prove nothing for a
+///   bare call and are refused; another dependency supplying the same name defeats the
 ///   admit (#2972 review round 3).
 /// - a type-path call `T::name(` (#4558) is admitted before the shadow
 ///   checks when `T` is the owner's impl self type and is imported from
@@ -1783,7 +1835,7 @@ fn dependency_edge_admits_owner_call(
             owner,
             test,
             &callable_dependency_names,
-            &file_level_imports,
+            &stripped_file,
             same_name.definitions,
         )
     {
@@ -1876,16 +1928,22 @@ fn type_path_index_covers_competitors(
 /// not. Any competitor refuses, wherever it lives: this rule does not
 /// resolve which `T` the import names, it only rules out definitions no
 /// `T::name` call could reach. Renamed (`as`) and glob imports never
-/// count, and neither does a type alias spelling.
+/// count, and neither does a type alias spelling; the one exception is
+/// the file's only glob import, rooted at the dependency, with nothing
+/// else naming or binding `T` (#9619, [`sole_glob_import_is_dependency`]).
+/// A rename stays refused because the owner pin refuses `use .. as T`
+/// rebinds (#7067), so a relation through one could not be credited.
 fn type_path_call_admits_owner(
     context: &DependencyEdgeContext<'_>,
     owner_manifest: &str,
     owner: &FunctionSummary,
     test: &TestSummary,
     callable_dependency_names: &BTreeSet<String>,
-    file_level_imports: &str,
+    stripped_file: &str,
     same_name_definitions: &[&FunctionSummary],
 ) -> bool {
+    let file_level_imports = file_level_use_text(stripped_file);
+    let file_level_imports = file_level_imports.as_str();
     let FunctionImplContext::Impl { self_type } = &owner.impl_context else {
         return false;
     };
@@ -1917,9 +1975,72 @@ fn type_path_call_admits_owner(
         captured(&format!("{dependency_name}::{type_path}"))
             || (imported_type_call
                 && imports_owner_from_dependency(file_level_imports, dependency_name, self_type))
+            || (imported_type_call
+                && sole_glob_import_is_dependency(
+                    file_level_imports,
+                    stripped_file,
+                    dependency_name,
+                    self_type,
+                ))
     });
     spelled_through_dependency
         && !owner_crate_imports_type_name(context, owner_manifest, &owner.file, self_type)
+}
+
+/// #9619: whether the file's one glob import is rooted at `dependency_name`
+/// and nothing else in the file can supply a type named `self_type`: no
+/// other glob (of any root), no other `use` statement naming the type, and
+/// no item, `let` or parameter binding of the name. `T::owner(` then names
+/// the type the glob brings in from the owner's dependency, or fails to
+/// compile; a competing definition anywhere in the workspace is refused by
+/// [`type_path_call_admits_owner`] either way.
+fn sole_glob_import_is_dependency(
+    file_level_imports: &str,
+    stripped_file: &str,
+    dependency_name: &str,
+    self_type: &str,
+) -> bool {
+    let statements = use_statement_paths(file_level_imports);
+    let globs: Vec<&&str> = statements
+        .iter()
+        .filter(|statement| statement.contains('*'))
+        .collect();
+    let [glob] = globs.as_slice() else {
+        return false;
+    };
+    let rooted_at_dependency = glob
+        .strip_prefix(dependency_name)
+        .and_then(|rest| rest.trim_start().strip_prefix("::"))
+        .is_some_and(|rest| {
+            // A path of plain segments ending in `*` (`dep::*` or
+            // `dep::module::*`), no brace group: a brace group could hide a
+            // second glob or a rename. Which module the glob names does not
+            // matter here; a type of that name reaching the call from outside
+            // the owner's workspace is refused by the competitor and
+            // owner-crate import checks.
+            !rest.contains(['{', '}', ',']) && rest.trim_end().ends_with('*')
+        });
+    // Scope-blind on purpose: a function-local or nested-module `use` can
+    // shadow the glob for the call (`use other::LevelFilter;` inside the
+    // test), and which scope the call sits in is not resolved here. Any
+    // other glob or any import naming the type anywhere in the file refuses
+    // the admission; over-refusal only withholds the relation.
+    let every_statement = use_statement_paths(stripped_file);
+    let other_statement_names_type = every_statement.iter().any(|statement| {
+        !statement.contains('*')
+            && statement
+                .split(|character: char| !is_ident_char(character))
+                .any(|word| word == self_type)
+    });
+    let another_glob_anywhere = every_statement
+        .iter()
+        .filter(|statement| statement.contains('*'))
+        .count()
+        > 1;
+    rooted_at_dependency
+        && !other_statement_names_type
+        && !another_glob_anywhere
+        && !file_may_bind_name(stripped_file, self_type)
 }
 
 /// Whether any library source of the owner's crate brings a type named
@@ -1995,17 +2116,22 @@ fn use_statement_paths(stripped: &str) -> Vec<&str> {
     let bytes = stripped.as_bytes();
     let mut paths = Vec::new();
     let mut search_from = 0usize;
-    while let Some(relative) = stripped[search_from..].find("use ") {
+    while let Some(relative) = stripped[search_from..].find("use") {
         let at = search_from + relative;
-        search_from = at + 4;
-        if at > 0
-            && bytes
+        search_from = at + 3;
+        // The keyword ends at any non-identifier character, as in
+        // `file_level_use_text`, so a tab- or newline-separated `use` is seen.
+        let starts_word = at == 0
+            || bytes
                 .get(at - 1)
-                .is_some_and(|byte| is_ident_char(char::from(*byte)))
-        {
+                .is_some_and(|byte| !is_ident_char(char::from(*byte)));
+        let ends_word = bytes
+            .get(at + 3)
+            .is_some_and(|byte| !is_ident_char(char::from(*byte)));
+        if !(starts_word && ends_word) {
             continue;
         }
-        let rest = &stripped[at + 4..];
+        let rest = &stripped[at + 3..];
         paths.push(rest.split(';').next().unwrap_or(rest).trim());
     }
     paths
@@ -4137,6 +4263,24 @@ fn associated_fn_returns_own_type(index: &RustIndex, ty: &str, name: &str) -> bo
     declared_return_names_type(function, index, ty)
 }
 
+/// Names of the inherent associated fns of `ty` that
+/// [`associated_fn_returns_own_type`] vouches for, so a path call `ty::name(..)`
+/// is known to build a `ty`.
+fn inherent_constructor_names(index: &RustIndex, ty: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for function in index.functions() {
+        let inherent = matches!(&function.item.container,
+            FunctionContainer::Inherent { self_ty } if base_type_name(self_ty) == ty);
+        if inherent
+            && !names.contains(&function.name)
+            && associated_fn_returns_own_type(index, ty, &function.name)
+        {
+            names.push(function.name.clone());
+        }
+    }
+    names
+}
+
 /// A unique module-level `fn name` (no `self`) whose declared return type is
 /// `ty`: positive index evidence for a free-function receiver such as
 /// `fixture().method()`. A same-named function, trait or method declaration
@@ -4201,7 +4345,12 @@ fn base_type_name(name: &str) -> &str {
 /// `name` is judged by its declared return type alone. With none, `default`
 /// is credited only by positive evidence of `impl Default for ty` or a unique
 /// `#[derive(Default)]` type, and `from` only by an `impl From<_> for ty`.
-fn associated_constructor_names_own_type(index: &RustIndex, ty: &str, name: &str) -> bool {
+fn associated_constructor_names_own_type(
+    index: &RustIndex,
+    ty: &str,
+    name: &str,
+    test_file: Option<&Path>,
+) -> bool {
     let inherent = index.functions().iter().any(|function| {
         function.name == name
             && matches!(&function.item.container,
@@ -4221,7 +4370,11 @@ fn associated_constructor_names_own_type(index: &RustIndex, ty: &str, name: &str
         })
     };
     match name {
-        "default" => trait_impl("Default") || type_derives_default(index, ty),
+        "default" => {
+            trait_impl("Default")
+                || type_derives_default(index, ty)
+                || test_file.is_some_and(|file| type_derives_default_in_file(index, ty, file))
+        }
         "from" => trait_impl("From"),
         _ => false,
     }
@@ -4945,6 +5098,7 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
     method: &str,
     impl_type: &str,
     index: Option<&RustIndex>,
+    owner: Option<&FunctionSummary>,
 ) -> bool {
     // The legacy text scan cannot be a deny gate: its last `let` can live in
     // an expired sibling block, and it cannot read a qualified unit variant.
@@ -4967,18 +5121,47 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
             super::owner_pin::unit_struct_value(name, &test.file, index, pin_syntax)
         })
     };
+    // The file-local claims below speak of the test file's own root `ty`, so
+    // they bind the probed owner only when its `impl` is a root item of that
+    // same file (a sibling module's same-named type is another owner).
+    let owner_local = index
+        .zip(owner)
+        .is_some_and(|(index, owner)| owner_impl_is_root_item_of(index, owner, &test.file));
     let factory = |ty: &str, name: &str| {
         index.is_some_and(|index| {
             if ty.is_empty() {
                 // A free-function receiver head: `fixture().method()`.
                 free_fn_returns_type(index, name, impl_type)
             } else {
-                associated_constructor_names_own_type(index, ty, name)
+                associated_constructor_names_own_type(
+                    index,
+                    ty,
+                    name,
+                    owner_local.then_some(test.file.as_path()),
+                )
             }
         })
     };
+    // The test fragment omits its file's imports, so a parameter's type name
+    // is the owner only when no `use` or `type` in that file rebinds it.
+    // The answer is fixed per probe, so scan the file at most once.
+    let unrebound = std::cell::OnceCell::new();
+    let owner_unrebound = || {
+        *unrebound.get_or_init(|| {
+            owner_local
+                && index.is_some_and(|index| !file_rebinds_type(index, &test.file, impl_type))
+        })
+    };
     executable_call_resolves(test, index, pin_syntax, &|node, scope| {
-        inherent_call_node_resolves(node, scope, method, impl_type, &unit_struct, &factory)
+        inherent_call_node_resolves(
+            node,
+            scope,
+            method,
+            impl_type,
+            &unit_struct,
+            &factory,
+            &owner_unrebound,
+        )
     })
 }
 
@@ -5104,6 +5287,7 @@ fn inherent_call_node_resolves(
     impl_type: &str,
     unit_struct: &dyn Fn(&str) -> bool,
     factory: &dyn Fn(&str, &str) -> bool,
+    owner_unrebound: &dyn Fn() -> bool,
 ) -> bool {
     if !ast::MethodCallExpr::can_cast(node.kind()) && !ast::CallExpr::can_cast(node.kind()) {
         return false;
@@ -5129,6 +5313,7 @@ fn inherent_call_node_resolves(
                     impl_type,
                     unit_struct,
                     factory,
+                    owner_unrebound,
                 )
             });
     }
@@ -5152,6 +5337,7 @@ fn inherent_call_node_resolves(
                     impl_type,
                     unit_struct,
                     factory,
+                    owner_unrebound,
                 )
             })
 }
@@ -5235,6 +5421,7 @@ fn scoped_receiver_names_type(
     impl_type: &str,
     unit_struct: &dyn Fn(&str) -> bool,
     factory: &dyn Fn(&str, &str) -> bool,
+    owner_unrebound: &dyn Fn() -> bool,
 ) -> bool {
     // Parentheses and borrows preserve this bounded receiver identity.
     for _ in 0..32 {
@@ -5264,6 +5451,7 @@ fn scoped_receiver_names_type(
                     impl_type,
                     unit_struct,
                     factory,
+                    owner_unrebound,
                 );
             }
         }
@@ -5312,6 +5500,7 @@ fn visible_receiver_binding_names_type(
     impl_type: &str,
     unit_struct: &dyn Fn(&str) -> bool,
     factory: &dyn Fn(&str, &str) -> bool,
+    owner_unrebound: &dyn Fn() -> bool,
 ) -> bool {
     for ancestor in call.ancestors().skip(1) {
         // These patterns may bind the receiver. This small admission does not
@@ -5392,11 +5581,177 @@ fn visible_receiver_binding_names_type(
                 });
             }
         }
-        if ast::Fn::can_cast(ancestor.kind()) {
-            return false;
+        if let Some(function) = ast::Fn::cast(ancestor) {
+            return owner_unrebound() && fn_param_names_type(&function, name, impl_type);
         }
     }
     false
+}
+
+/// Whether `function` declares a plain parameter `name` whose whole type is
+/// the unqualified `impl_type`, optionally behind exactly one `&` or `&mut`
+/// (stacked borrows and lifetimes are refused). An rstest fixture is injected through such a parameter, and any enclosing fn's
+/// declared parameter type is its nominal type. A qualified path,
+/// generic argument list or `impl`/`dyn` type is not the nominal owner.
+fn fn_param_names_type(function: &ast::Fn, name: &str, impl_type: &str) -> bool {
+    function.param_list().is_some_and(|list| {
+        list.params().any(|param| {
+            let Some(ast::Pat::IdentPat(pattern)) = param.pat() else {
+                return false;
+            };
+            if pattern.at_token().is_some()
+                || pattern.name().is_none_or(|bound| bound.text() != name)
+            {
+                return false;
+            }
+            let Some(ty) = param.ty() else {
+                return false;
+            };
+            let text = ty.syntax().text().to_string();
+            let text = text.trim();
+            let text = text.strip_prefix('&').map_or(text, str::trim_start);
+            let text = text.strip_prefix("mut ").unwrap_or(text).trim();
+            text == impl_type
+        })
+    })
+}
+
+/// Whether `owner` is declared in `file` inside an `impl` that is a direct item
+/// of the file root.
+fn owner_impl_is_root_item_of(index: &RustIndex, owner: &FunctionSummary, file: &Path) -> bool {
+    if owner.file != file {
+        return false;
+    }
+    let Some(snapshot) = index.source_syntax.get(index, file) else {
+        return false;
+    };
+    // The ranges are read once per file snapshot. Rebuilding them per probe
+    // copied the whole file text and recounted its newlines for every `impl`.
+    snapshot
+        .root_impl_lines()
+        .iter()
+        .any(|&(start, end)| start <= owner.start_line && owner.start_line <= end)
+}
+
+/// Whether `file` has a `use` that names `ty` or a glob other than `self::*` /
+/// `super::*`, or a `type` alias called `ty`: any of which can make a bare
+/// `ty` mean a type declared elsewhere.
+fn file_rebinds_type(index: &RustIndex, file: &Path, ty: &str) -> bool {
+    let Some(tree) = index.source_syntax.get(index, file).and_then(|s| s.tree()) else {
+        return true;
+    };
+    let syntax = tree.syntax();
+    let mentions = |node: &SyntaxNode| {
+        node.descendants().any(|node| {
+            ast::Name::cast(node.clone()).is_some_and(|bound| bound.text() == ty)
+                || ast::NameRef::cast(node).is_some_and(|bound| bound.text() == ty)
+        })
+    };
+    for item in syntax.descendants().filter_map(ast::Use::cast) {
+        let compact: String = item
+            .syntax()
+            .text()
+            .to_string()
+            .split_whitespace()
+            .collect();
+        let glob = item
+            .syntax()
+            .descendants()
+            .filter_map(ast::UseTree::cast)
+            .any(|tree| tree.star_token().is_some());
+        // `super::*` reaches the file root only from a `mod` declared directly
+        // in it; anywhere else `super` is another module that may hold `ty`.
+        let reaches_root = match compact.as_str() {
+            "useself::*;" => true,
+            "usesuper::*;" => item
+                .syntax()
+                .parent()
+                .and_then(|list| list.parent())
+                .is_some_and(|module| {
+                    ast::Module::can_cast(module.kind())
+                        && module
+                            .parent()
+                            .is_some_and(|parent| ast::SourceFile::can_cast(parent.kind()))
+                }),
+            _ => false,
+        };
+        if mentions(item.syntax()) || (glob && !reaches_root) {
+            return true;
+        }
+    }
+    // A local alias, trait or module spelled `ty`, or a type declared away
+    // from the root or twice, can stand for a different type than the owner.
+    let at_root = |node: &SyntaxNode| {
+        node.parent()
+            .is_some_and(|parent| ast::SourceFile::can_cast(parent.kind()))
+    };
+    let named = |name: Option<ast::Name>| name.is_some_and(|name| name.text() == ty);
+    let mut root_types = 0;
+    for node in syntax.descendants() {
+        if let Some(alias) = ast::TypeAlias::cast(node.clone()) {
+            if named(alias.name()) {
+                return true;
+            }
+        } else if let Some(item) = ast::Trait::cast(node.clone()) {
+            if named(item.name()) {
+                return true;
+            }
+        } else if let Some(item) = ast::Module::cast(node.clone()) {
+            if named(item.name()) {
+                return true;
+            }
+        } else if let Some(adt) = ast::Adt::cast(node.clone())
+            && named(adt.name())
+        {
+            if !at_root(&node) {
+                return true;
+            }
+            root_types += 1;
+        }
+    }
+    root_types > 1
+}
+
+/// A struct/enum/union `ty` declared exactly once in `test_file`, as a direct
+/// item of the file root, carrying `#[derive(.. Default ..)]`. The file may not
+/// bind `ty` by `use` or `type`, and its only glob imports are `self::*` and
+/// `super::*` (a `mod tests` reaching the root), so no outside module can
+/// supply a same-named type. The workspace-wide uniqueness of
+/// [`type_derives_default`] is too strong for a file-local fixture type that
+/// sibling files also spell.
+fn type_derives_default_in_file(index: &RustIndex, ty: &str, test_file: &Path) -> bool {
+    let Some(tree) = index
+        .source_syntax
+        .get(index, test_file)
+        .and_then(|s| s.tree())
+    else {
+        return false;
+    };
+    let syntax = tree.syntax();
+    if file_rebinds_type(index, test_file, ty) {
+        return false;
+    }
+    let mut found = Vec::new();
+    for adt in syntax.descendants().filter_map(ast::Adt::cast) {
+        if adt.name().is_none_or(|name| name.text() != ty) {
+            continue;
+        }
+        let at_root = adt
+            .syntax()
+            .parent()
+            .is_some_and(|parent| ast::SourceFile::can_cast(parent.kind()));
+        found.push(
+            at_root
+                && ast::HasAttrs::attrs(&adt).any(|attr| {
+                    let text = attr.syntax().text().to_string();
+                    text.trim_start().starts_with("#[derive(")
+                        && text
+                            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                            .any(|word| word == "Default")
+                }),
+        );
+    }
+    matches!(found.as_slice(), [true])
 }
 
 /// Helper last hops borrow the direct owner's complete receiver refusal,
@@ -5710,6 +6065,18 @@ fn owner_call_relation_reason(
                     return RelationReason::WeakTokenSubstring;
                 }
             }
+            // #11113: a trait default method is not an inherent method of a
+            // standard collection. When every spelling is a method call on a
+            // local the test types as one (`all_named.contains(x)` on a
+            // `Vec`), the name match is name-only.
+            if let FunctionContainer::Trait { trait_name } = &owner.item.container
+                && owner.item.has_self_param
+                && std_receiver::method_calls_only_on_std_receivers(
+                    test, owner_name, trait_name, index,
+                )
+            {
+                return RelationReason::WeakTokenSubstring;
+            }
             return RelationReason::DirectOwnerCall;
         }
         if !free_function_call_spells_free_call(test, owner_name) {
@@ -5752,7 +6119,13 @@ fn owner_call_relation_reason(
         return RelationReason::WeakTokenSubstring;
     }
     if requires_inherent_receiver_identity(owner) {
-        return if inherent_receiver_call_resolves(test, owner_name, &impl_type, Some(index)) {
+        return if inherent_receiver_call_resolves(
+            test,
+            owner_name,
+            &impl_type,
+            Some(index),
+            Some(owner),
+        ) {
             RelationReason::DirectOwnerCall
         } else {
             RelationReason::WeakTokenSubstring
@@ -8521,6 +8894,36 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
         related[0].1
     }
 
+    /// [`counter_default_relation`] for a parsed `fn` body (the shape the
+    /// syntax-based receiver rules read), with extra indexed functions and
+    /// the source optionally ending in extra items.
+    fn counter_default_fn_relation(
+        test_body: &str,
+        extra: Vec<FunctionSummary>,
+        source_suffix: &str,
+    ) -> RelationReason {
+        let (mut source, start, end) = counter_default_source(false, test_body);
+        source.push_str(source_suffix);
+        let mut owner = trait_function("src/lib.rs", "advance", "Counter");
+        owner.start_line = 3;
+        let body = format!("fn advances() {{ {test_body} }}");
+        let mut test = test_with_call("src/lib.rs", "advances", &body, "advance");
+        test.start_line = start;
+        test.end_line = end;
+        let mut functions = vec![owner.clone()];
+        functions.extend(extra);
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions,
+            tests: vec![test],
+            ..Default::default()
+        });
+        with_source(&mut index, "src/lib.rs", &source);
+        let probe = probe("src/lib.rs", "4 * self.step()");
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+        assert_eq!(related.len(), 1, "the same-named call is still related");
+        related[0].1
+    }
+
     /// #7123: a test module that redeclares the production trait shadows a
     /// trait-declaration default-method owner exactly like a trait-impl owner
     /// (#7053): every trait-path spelling names the test-local trait, so the
@@ -8560,6 +8963,145 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 "{body}"
             );
         }
+    }
+
+    /// #11113: a trait default method called as `names.advance(..)` on a local
+    /// the test types as a standard collection is a name-only match, in every
+    /// annotation and constructor spelling the rule reads.
+    #[test]
+    fn given_std_collection_receiver_when_calling_default_method_then_name_only_relation() {
+        for body in [
+            "let names: Vec<u32> = Vec::new(); let ok = names.advance();",
+            "let names: Vec<(&'static str, u32)> = collect_names(); let ok = names.advance();",
+            "let names = vec![1u32]; let ok = names.advance();",
+            "let mut seen = HashSet::new(); seen.advance();",
+            "let names: &Vec<u32> = &other(); let ok = names.advance();",
+            "let names: Vec<u32> = Vec::new(); for item in units() { assert!(names.advance(), \"{item:?}\"); }",
+            "let names: Vec<u32> = Vec::new(); assert_eq!(names.advance(), 8);",
+        ] {
+            assert_eq!(
+                counter_default_fn_relation(body, Vec::new(), ""),
+                RelationReason::WeakTokenSubstring,
+                "a std collection receiver must not be direct_owner_call: {body}"
+            );
+        }
+    }
+
+    /// #11113 discriminator: the demotion needs every spelling to be a
+    /// resolved std-receiver method call. An unannotated receiver, a mixed
+    /// body, a path or UFCS spelling, a closure binding, a rebound type and an
+    /// indexed impl of the trait for the std type all keep the credit.
+    #[test]
+    fn given_unresolved_or_mixed_receiver_when_calling_default_method_then_direct_owner_call() {
+        for body in [
+            "let r = Unit.advance();",
+            "let unit = make(); let r = unit.advance();",
+            "let names: Vec<u32> = Vec::new(); names.advance(); let r = Unit.advance();",
+            "let names: Vec<u32> = Vec::new(); run(Unit::advance); names.advance();",
+            "let names: Vec<u32> = Vec::new(); let r = Counter::advance(&names);",
+            "let names: Vec<u32> = Vec::new(); let f = |names: Unit| names.advance(); f(Unit);",
+            "let names: Vec<u32> = Vec::new(); for names in units() { names.advance(); }",
+            "let names: Vec<u32> = Vec::new(); for names in units() { assert!(names.advance()); }",
+            "let names: Vec<u32> = Vec::new(); let names = Unit; let ok = names.advance();",
+            "let names: Vec<u32> = Vec::new(); names.len(); let r = make().advance();",
+            "let names = Vec::<u32>::new().into_iter().collect::<Vec<_>>(); names.advance();",
+        ] {
+            assert_eq!(
+                counter_default_fn_relation(body, Vec::new(), ""),
+                RelationReason::DirectOwnerCall,
+                "{body}"
+            );
+        }
+    }
+
+    /// #11113: a rebound `Vec` (a test-local type of that name) or an indexed
+    /// `impl Counter for Vec<_>` means the receiver may be the trait's own.
+    #[test]
+    fn given_rebound_or_implementing_std_type_when_calling_default_method_then_direct_owner_call() {
+        let body = "let names: Vec<u32> = Vec::new(); let ok = names.advance();";
+        assert_eq!(
+            counter_default_fn_relation(body, Vec::new(), ""),
+            RelationReason::WeakTokenSubstring,
+            "control: the same body without a rebinding is name-only"
+        );
+        assert_eq!(
+            counter_default_fn_relation(body, Vec::new(), "use other::Vec;\n"),
+            RelationReason::DirectOwnerCall
+        );
+        let mut implementor = function("src/lib.rs", "step");
+        implementor.item.container = FunctionContainer::TraitImpl {
+            trait_path: "Counter".to_string(),
+            self_ty: "Vec<u32>".to_string(),
+        };
+        assert_eq!(
+            counter_default_fn_relation(body, vec![implementor], ""),
+            RelationReason::DirectOwnerCall
+        );
+        for self_ty in ["[u32]", "T", "&Vec<u32>", "&mut Vec<u32>"] {
+            let mut deref_implementor = function("src/lib.rs", "step");
+            deref_implementor.item.container = FunctionContainer::TraitImpl {
+                trait_path: "Counter".to_string(),
+                self_ty: self_ty.to_string(),
+            };
+            assert_eq!(
+                counter_default_fn_relation(body, vec![deref_implementor], ""),
+                RelationReason::DirectOwnerCall,
+                "an impl for {self_ty} can reach a Vec receiver"
+            );
+        }
+    }
+
+    /// #11236: an impl no indexed fn records (empty, qualified, aliased,
+    /// macro-generated, multi-letter blanket) still makes a std receiver the
+    /// trait's own, so the genuine call keeps `direct_owner_call`. The control
+    /// pins that an impl for a declared user type does not.
+    #[test]
+    fn given_unindexed_or_opaque_std_impl_when_calling_default_method_then_direct_owner_call() {
+        let body = "let names: Vec<u32> = Vec::new(); let ok = names.advance();";
+        for suffix in [
+            "impl Counter for Vec<u32> {}\n",
+            "impl Counter for std::vec::Vec<u32> {}\n",
+            "impl Counter for std::vec::Vec<u32> { fn step(&self) -> u32 { 1 } }\n",
+            "type Names = Vec<u32>;\nimpl Counter for Names {}\n",
+            "macro_rules! imp { ($t:ty) => { impl Counter for $t {} }; }\nimp!(Vec<u32>);\n",
+            "impl<Item> Counter for Item {}\n",
+        ] {
+            assert_eq!(
+                counter_default_fn_relation(body, Vec::new(), suffix),
+                RelationReason::DirectOwnerCall,
+                "{suffix}"
+            );
+        }
+        for suffix in [
+            "struct Other;\nimpl Counter for Other {}\n",
+            "impl Counter for Unit {}\n",
+        ] {
+            assert_eq!(
+                counter_default_fn_relation(body, Vec::new(), suffix),
+                RelationReason::WeakTokenSubstring,
+                "an impl for a declared user type must not keep the credit: {suffix}"
+            );
+        }
+    }
+
+    /// #11113: a module file's own `use super::*;` is the ordinary test-module
+    /// prelude and does not rebind `Vec`; a named import, a declaration, a
+    /// foreign glob or a parent module that binds the name does.
+    #[test]
+    fn std_name_rebinding_reads_the_test_file_and_its_parent_module_file() {
+        let rebound = |test_source: &str, parent_source: &str| {
+            let mut index =
+                RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex::default());
+            with_source(&mut index, "src/tests/iter.rs", test_source);
+            with_source(&mut index, "src/tests/mod.rs", parent_source);
+            std_receiver::std_name_rebound_for_tests(&index, "src/tests/iter.rs", "Vec")
+        };
+        assert!(!rebound("use super::*;\nfn t() {}", "pub struct Other;"));
+        assert!(rebound("use super::*;\nfn t() {}", "use alloc::vec::Vec;"));
+        assert!(rebound("use super::*;\nfn t() {}", "pub struct Vec;"));
+        assert!(rebound("use foo::*;\nfn t() {}", "pub struct Other;"));
+        assert!(rebound("use foo::Vec;\nfn t() {}", "pub struct Other;"));
+        assert!(rebound("struct Vec;\nfn t() {}", "pub struct Other;"));
     }
 
     /// The relation of the nested out-of-line trait shape for a
@@ -11645,6 +12187,78 @@ fn crate_c_score_test() {
         assert!(level_filter_related(&index, &owner).is_empty());
     }
 
+    /// #9619: the file's one glob of the owner's dependency spells the same
+    /// type-path call.
+    #[test]
+    fn type_path_call_admits_the_sole_glob_of_the_owner_dependency() {
+        let owner = impl_method("crates/crate_a/src/metadata.rs", "LevelFilter", "current");
+        for body in [
+            "use crate_a::*; LevelFilter::current()",
+            "use crate_a::metadata::*; LevelFilter::current()",
+        ] {
+            let index = level_filter_index(body, Vec::new());
+            assert_eq!(
+                level_filter_related(&index, &owner),
+                vec![RelationReason::DirectOwnerCall],
+                "{body}: must relate"
+            );
+        }
+    }
+
+    /// #9619 negatives: each leaves the alias or glob unresolved.
+    #[test]
+    fn type_path_call_refuses_renames_and_ambiguous_glob_spellings() {
+        let owner = impl_method("crates/crate_a/src/metadata.rs", "LevelFilter", "current");
+        for body in [
+            // A rename stays refused: the owner pin refuses `use .. as T`.
+            "use crate_a::LevelFilter as Filter; Filter::current()",
+            "use crate_a::{Level, LevelFilter as Filter}; Filter::current()",
+            // A second glob could supply the type.
+            "use crate_a::*; use crate_b::*; LevelFilter::current()",
+            "use crate_a::*; use std::collections::*; LevelFilter::current()",
+            // A local type shadows the globbed name.
+            "use crate_a::*; struct LevelFilter; LevelFilter::current()",
+            // Another import names the type.
+            "use crate_a::*; use other::LevelFilter; LevelFilter::current()",
+            // Tab- and newline-separated `use` keywords are still statements.
+            "use crate_a::*;\nuse\tother::LevelFilter; LevelFilter::current()",
+            "use crate_a::*;\nuse\nother::LevelFilter; LevelFilter::current()",
+            "use crate_a::*;\nuse\tcrate_b::*; LevelFilter::current()",
+            // The glob belongs to a dependency that is not the owner's.
+            "use crate_b::*; LevelFilter::current()",
+            // A function-local or nested-module import can shadow the glob.
+            "use crate_a::*; fn t() { use other::LevelFilter; LevelFilter::current() }",
+            "use crate_a::*; mod inner { use other::LevelFilter; } LevelFilter::current()",
+            // A function-local glob could supply the type as well.
+            "use crate_a::*; fn t() { use crate_b::*; LevelFilter::current() }",
+            // A brace glob hides a second path.
+            "use crate_a::{metadata::*}; LevelFilter::current()",
+            // No glob and no import at all.
+            "LevelFilter::current()",
+        ] {
+            let index = level_filter_index(body, Vec::new());
+            assert!(
+                level_filter_related(&index, &owner).is_empty(),
+                "{body}: must not relate"
+            );
+        }
+        // The owner's crate bringing in a foreign type of the same name still
+        // refuses the glob spelling.
+        {
+            let body = "use crate_a::*; LevelFilter::current()";
+            let mut index = level_filter_index(body, Vec::new());
+            with_source(
+                &mut index,
+                "crates/crate_a/src/other.rs",
+                "pub use external::LevelFilter;\n",
+            );
+            assert!(
+                level_filter_related(&index, &owner).is_empty(),
+                "{body}: foreign import in owner crate must not relate"
+            );
+        }
+    }
+
     /// #4558 fail-closed rows: each keeps the call from reaching the owner.
     #[test]
     fn type_path_call_fails_closed_without_owner_identity() {
@@ -11662,8 +12276,8 @@ fn crate_c_score_test() {
                 Vec::new(),
             ),
             (
-                "glob import",
-                "use crate_a::*; LevelFilter::current()",
+                "glob import beside another glob",
+                "use crate_a::*; use crate_b::*; LevelFilter::current()",
                 Vec::new(),
             ),
             (
@@ -11801,6 +12415,16 @@ fn crate_c_score_test() {
             narrowed_gauge_related(&owner, DIRECT_IMPORT, Vec::new(), &[SPARE], false),
             vec![RelationReason::DirectOwnerCall]
         );
+        // #9619: the file's one glob of the owner's dependency spells the
+        // same type.
+        {
+            let body = "use crate_a::*; assert_eq!(Gauge::reading(), 42)";
+            assert_eq!(
+                narrowed_gauge_related(&owner, body, Vec::new(), &[SPARE], false),
+                vec![RelationReason::DirectOwnerCall],
+                "{body}: must relate"
+            );
+        }
         // An indexed free `reading` in the sibling crate cannot be the
         // target of `Gauge::reading()` either.
         assert_eq!(
@@ -11828,8 +12452,8 @@ fn crate_c_score_test() {
                 vec![SPARE],
             ),
             (
-                "glob import",
-                "use crate_a::*; assert_eq!(Gauge::reading(), 42)",
+                "glob import beside the other dependency's glob",
+                "use crate_a::*; use crate_b::*; assert_eq!(Gauge::reading(), 42)",
                 Vec::new(),
                 vec![SPARE],
             ),
@@ -12558,8 +13182,11 @@ let r = try_parse_summary(\"x\");",
     }
 
     /// #7415: keep the conservative corpus boundary separate from runtime
-    /// truth. Arbitrary factories, parameters and imported bare variants do
-    /// not gain receiver proof merely because the method name is unique.
+    /// truth. Arbitrary factories and imported bare variants do not gain
+    /// receiver proof merely because the method name is unique. A typed
+    /// parameter names its declared type only with an index that can read the
+    /// file's imports (see the index-backed parameter test), so this
+    /// index-less probe still refuses it.
     #[test]
     fn inherent_receiver_corpus_boundary_and_live_scope() {
         for (body, method, ty, expected) in [
@@ -12647,7 +13274,7 @@ let r = try_parse_summary(\"x\");",
         ] {
             let summary = test("src/lib.rs", "t", body);
             assert_eq!(
-                inherent_receiver_call_resolves(&summary, method, ty, None),
+                inherent_receiver_call_resolves(&summary, method, ty, None, None),
                 expected,
                 "{body}"
             );

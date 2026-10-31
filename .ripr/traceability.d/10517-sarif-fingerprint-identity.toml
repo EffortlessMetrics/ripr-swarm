@@ -3,7 +3,9 @@ id = "RIPR-SPEC-0008"
 tests = [
   "crates/ripr/src/output/sarif.rs::tests::sarif_finding_identity_moves_locations_but_retains_file_and_rule_boundaries",
   "crates/ripr/src/output/sarif.rs::tests::sarif_seam_identity_retains_its_location_bound_contract",
+  # cfg(unix): does not run on Windows hosts (see RIPR-SPEC-0008).
   "crates/ripr/src/output/sarif.rs::tests::sarif_finding_identity_keeps_distinct_native_unix_filenames",
+  # xtask `perl-identity` feature only (Perl lane).
   "xtask/src/reports/sarif_identity_tests.rs::sarif_identity_preserves_perl_changes_and_supported_line_shifts",
   "xtask/src/reports/sarif_identity_tests.rs::sarif_identity_keeps_native_suppression_exact_and_legacy_selector_stale",
   "xtask/src/reports/sarif_identity_tests.rs::sarif_identity_legacy_finding_baselines_require_explicit_transition",

@@ -23,6 +23,10 @@ const VALUE_TEST: &str = "import { applyDiscount } from '../src/discount';\n\nte
 struct TypeScriptCheck {
     finding: Value,
     ledger: Value,
+    /// The typed finding the JSON was rendered from, for pins on the shared
+    /// evidence-line contract between the analysis producer and the output
+    /// readers.
+    typed: crate::domain::Finding,
 }
 
 impl TypeScriptCheck {
@@ -86,7 +90,7 @@ fn check_typescript(label: &str, tests: &[(&str, &str)]) -> Result<TypeScriptChe
         ("src/discount.ts", DISCOUNT_TS),
     ];
     files.extend_from_slice(tests);
-    let output = (|| -> Result<String, String> {
+    let output = (|| -> Result<(String, crate::domain::Finding), String> {
         for (path, contents) in &files {
             let path = root.join(path);
             if let Some(parent) = path.parent() {
@@ -115,11 +119,17 @@ fn check_typescript(label: &str, tests: &[(&str, &str)]) -> Result<TypeScriptChe
             },
             &config,
         )?;
-        crate::render_check(&output, &crate::OutputFormat::Json)
+        let typed = output
+            .findings
+            .first()
+            .cloned()
+            .ok_or_else(|| "check produced no typed finding".to_string())?;
+        let rendered = crate::render_check(&output, &crate::OutputFormat::Json)?;
+        Ok((rendered, typed))
     })();
     let cleanup = fs::remove_dir_all(&root)
         .map_err(|error| format!("remove fixture {}: {error}", root.display()));
-    let check_output = output?;
+    let (check_output, typed) = output?;
     cleanup?;
     let value: Value = serde_json::from_str(&check_output)
         .map_err(|error| format!("parse check output: {error}"))?;
@@ -137,7 +147,11 @@ fn check_typescript(label: &str, tests: &[(&str, &str)]) -> Result<TypeScriptChe
     let ledger = render_gap_decision_ledger_json(&report)?;
     let ledger: Value =
         serde_json::from_str(&ledger).map_err(|error| format!("parse ledger: {error}"))?;
-    Ok(TypeScriptCheck { finding, ledger })
+    Ok(TypeScriptCheck {
+        finding,
+        ledger,
+        typed,
+    })
 }
 
 /// Control: the complete repair-packet shape stays delegatable, so the cases
@@ -202,6 +216,101 @@ fn wrong_family_only_test_cannot_become_the_packet_target() -> Result<(), String
             "wrong-family test became the packet target: {}",
             check.finding
         ));
+    }
+    Ok(())
+}
+
+fn dynamic_limit_present(check: &TypeScriptCheck) -> bool {
+    check
+        .finding
+        .get("evidence")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .any(|line| line == "typescript_limitation: typescript_dynamic_assertion_unresolved")
+}
+
+/// #10682: a dynamic assertion of the wrong oracle family (`toThrow(variable)`
+/// on a predicate seam) no longer lists the dynamic-assertion limitation. It
+/// must not expose the change on its own, and it must not become the packet
+/// target: beside a pinned literal assertion that does not reach the
+/// boundary, the finding stays weakly exposed and the packet (the same one
+/// the control above takes) targets the boundary input, not the dynamic
+/// assertion. This pins the intended effect that the wrong-family dynamic
+/// assertion no longer withholds that packet.
+#[test]
+fn wrong_family_dynamic_assertion_does_not_expose_or_change_the_packet_target() -> Result<(), String>
+{
+    let test = "import { applyDiscount } from '../src/discount';\n\ntest('applyDiscount discounts above the threshold', () => {\n    const expectedError = new TypeError('bad');\n    expect(applyDiscount(500, 100)).toBe(450);\n    expect(() => applyDiscount(Number.NaN, 1)).toThrow(expectedError);\n});\n";
+    let check = check_typescript("wrong-family-dynamic", &[("tests/discount.test.ts", test)])?;
+    if dynamic_limit_present(&check) {
+        return Err(format!(
+            "wrong-family dynamic assertion raised the limit: {}",
+            check.finding
+        ));
+    }
+    if check.class() != Some("weakly_exposed") {
+        return Err(format!(
+            "wrong-family dynamic assertion changed the class: {}",
+            check.finding
+        ));
+    }
+    let shape = check
+        .finding
+        .get("evidence")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .find(|line| line.starts_with("repair_action: "))
+        .unwrap_or_default();
+    if !shape.contains("expect(applyDiscount(100, 100)).toBe(expected)")
+        || shape.contains("toThrow")
+    {
+        return Err(format!(
+            "packet target moved off the boundary input: {}",
+            check.finding
+        ));
+    }
+    Ok(())
+}
+
+/// The plain blockers read the analysis producers' evidence lines by prefix.
+/// This pins that contract on the real producer output: a reworded
+/// `typescript_limitation_sample:` / `typescript_limitation_why:` or
+/// `typescript_assertion_selection:` line fails here instead of silently
+/// dropping the test line or matcher from the human wording.
+#[test]
+fn plain_blockers_read_the_real_producer_evidence() -> Result<(), String> {
+    use crate::output::typescript_packet_projection::{
+        typescript_dynamic_assertion_blocker, typescript_moved_selection_blocker,
+    };
+    let dynamic_test = "import { applyDiscount } from '../src/discount';\n\ntest('applyDiscount at the threshold', () => {\n    const expectedTotal = 90;\n    expect(applyDiscount(100, 100)).toBe(expectedTotal);\n});\n";
+    let dynamic = check_typescript("pin-dynamic", &[("tests/discount.test.ts", dynamic_test)])?;
+    let text = typescript_dynamic_assertion_blocker(&dynamic.typed).ok_or_else(|| {
+        format!(
+            "no dynamic blocker from producer evidence: {}",
+            dynamic.finding
+        )
+    })?;
+    if !text.contains("`tests/discount.test.ts:") || !text.contains("`.toBe(...)`") {
+        return Err(format!(
+            "dynamic blocker lost the test line or matcher: {text}"
+        ));
+    }
+    let moved_test = "import { applyDiscount } from '../src/discount';\n\ntest('applyDiscount rejects NaN', () => {\n    expect(() => applyDiscount(Number.NaN, 1)).toThrow(TypeError);\n});\n";
+    let moved = check_typescript(
+        "pin-moved",
+        &[
+            ("tests/a.test.ts", moved_test),
+            ("tests/b.test.ts", VALUE_TEST),
+        ],
+    )?;
+    let text = typescript_moved_selection_blocker(&moved.typed)
+        .ok_or_else(|| format!("no moved blocker from producer evidence: {}", moved.finding))?;
+    if !text.contains("`applyDiscount rejects NaN`") {
+        return Err(format!("moved blocker lost the test name: {text}"));
     }
     Ok(())
 }

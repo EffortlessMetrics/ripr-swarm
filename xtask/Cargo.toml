@@ -7,6 +7,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+bigdecimal = "0.4"
 home = "=0.5.12"
 num-bigint = "0.4"
 repo-policy = { path = "../tools/repo-policy" }
@@ -22,10 +23,11 @@ tar = "0.4"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 roxmltree = "0.21"
 
-[dev-dependencies]
-# Producer-to-policy SARIF controls must exercise Perl ingestion in the normal
-# workspace test gate; the product's default feature set remains unchanged.
-ripr = { path = "../crates/ripr", features = ["lang-perl"] }
+[features]
+# Producer-to-policy SARIF identity controls need the Perl adapter. They run in
+# the dedicated Perl lane (`--features perl-identity`) so the shared workspace
+# test graph keeps the shipped `ripr` feature set.
+perl-identity = ["ripr/lang-perl"]
 
 [lints]
 workspace = true

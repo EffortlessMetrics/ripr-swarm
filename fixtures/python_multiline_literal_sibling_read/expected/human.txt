@@ -27,7 +27,7 @@ Start here:
   Suggested test file: tests/test_labels.py
   Suggested test: test_name_is_x
   Test node: tests/test_labels.py::test_name_is_x
-  Verify command: python -m pytest tests/test_labels.py::test_name_is_x (high)
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_multiline_literal_sibling_read/input && python -m pytest tests/test_labels.py::test_name_is_x) (high)
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

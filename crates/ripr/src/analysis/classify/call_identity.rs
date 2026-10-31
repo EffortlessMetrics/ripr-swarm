@@ -128,6 +128,14 @@ pub(crate) struct CallIdentityMemos {
     /// further type names its renames and definitions mention, so each name is
     /// read from the corpus once per run instead of once per seam.
     type_word_facts: Mutex<BTreeMap<String, (bool, Vec<String>)>>,
+    /// #10977: whole-index macro-rebound answers keyed by requested name
+    /// set, so the fixed-set production callers share one parser-backed
+    /// scan per set instead of rescanning the corpus per probe.
+    macro_rebound: crate::analysis::sync_memo::SyncMemo<BTreeMap<Vec<String>, bool>>,
+    /// #10977: how many unmemoized rebound scans ran on this index.
+    /// Test-only scaling probe: repeated probes must not rescan.
+    #[cfg(test)]
+    rebound_scans: std::sync::atomic::AtomicUsize,
 }
 
 impl CallIdentityMemos {
@@ -172,6 +180,40 @@ impl CallIdentityMemos {
     ) -> &BTreeMap<String, usize> {
         self.type_name_counts.get_or_init(build)
     }
+
+    /// The memoized rebound answer for requested macro set `key`
+    /// (sorted), computed by `compute` outside the lock on first use.
+    /// The scan is a pure function of the index sources, which never
+    /// change after the build except through producers that
+    /// [`clear`](Self::clear) these memos. Two workers that miss together
+    /// may each scan; the first insert wins and both get the same answer.
+    pub(in crate::analysis) fn macro_rebound(
+        &self,
+        key: Vec<String>,
+        compute: impl FnOnce() -> bool,
+    ) -> bool {
+        if let Some(found) = self.macro_rebound.borrow().get(&key) {
+            return *found;
+        }
+        let computed = compute();
+        #[cfg(test)]
+        self.rebound_scans
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        *self
+            .macro_rebound
+            .borrow_mut()
+            .entry(key)
+            .or_insert(computed)
+    }
+
+    /// How many unmemoized rebound scans ran on this index (#10977
+    /// scaling probe). Every repeated probe of one analysis must reuse
+    /// the first scan, so a repeated fixed-set query keeps this at one.
+    #[cfg(test)]
+    pub(in crate::analysis) fn rebound_scan_count(&self) -> usize {
+        self.rebound_scans
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 impl Clone for CallIdentityMemos {
@@ -213,7 +255,10 @@ fn scan_call_identity_shapes(
     for (path, facts) in index.files().iter() {
         let package = package_key(path);
         let remapped = remaps.entry(package.clone()).or_insert(false);
-        if !*remapped && has_path_attribute(&facts.data().source) {
+        if !*remapped
+            && has_path_attribute(&facts.data().source)
+            && !path_attributes_only_select_cfg_alternatives(&facts.data().source)
+        {
             *remapped = true;
         }
         if under_tests_dir(path) {
@@ -1068,6 +1113,101 @@ fn join(left: &[String], right: &[String]) -> Vec<String> {
 /// comment only switches the rule off.
 fn package_remaps_module_paths(index: &RustIndex, package: Option<&str>) -> bool {
     call_identity_shape(index, package).remaps_module_paths
+}
+
+/// Whether every `#[path]` in `source` only selects between the two files of
+/// a complementary `cfg` pair: top-level out-of-line `#[cfg(P)]` /
+/// `#[cfg(not(P))]` declarations of one module name, each carrying exactly one
+/// `#[path = "..."]` and no other `cfg`, and `P` is not the `test` predicate
+/// (#8999). Such a pair is one module compiled from one of two files, so a
+/// file's own location still tells its same-named functions apart from the
+/// other alternative's; module paths derived from file names are never
+/// spelled by a call, so a spelled path cannot settle on the wrong file. Any
+/// other `#[path]`, a `cfg_attr`, an inline module, a nested declaration, a
+/// parse error, or a backslash anywhere in a gate fails closed (`false`).
+fn path_attributes_only_select_cfg_alternatives(source: &str) -> bool {
+    use ra_ap_syntax::{
+        AstNode,
+        ast::{self, HasAttrs, HasModuleItem, HasName},
+    };
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return false;
+    };
+    let file = parse.tree();
+    let mut gates: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut declared_path_attributes = 0usize;
+    for item in file.items() {
+        let ast::Item::Module(module) = item else {
+            continue;
+        };
+        let mut path_count = 0usize;
+        let mut gate: Option<String> = None;
+        for attr in module.attrs() {
+            let text = attr.syntax().text().to_string();
+            let compact: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
+            if attribute_sets_path(&text) {
+                // Only a bare `#[path = ".."]`; `cfg_attr(.., path = ..)` and
+                // any other carrier of `path =` fail closed.
+                if !compact.starts_with("#[path=") {
+                    return false;
+                }
+                path_count += 1;
+                continue;
+            }
+            let Some(predicate) = compact
+                .strip_prefix("#[cfg(")
+                .and_then(|rest| rest.strip_suffix(")]"))
+            else {
+                continue;
+            };
+            if gate.replace(predicate.to_string()).is_some() {
+                return false;
+            }
+        }
+        if path_count == 0 {
+            continue;
+        }
+        let Some(gate) = gate else { return false };
+        if path_count != 1
+            || module.item_list().is_some()
+            || gate.contains('\\')
+            || gate == "test"
+            || gate == "not(test)"
+        {
+            return false;
+        }
+        let Some(name) = module.name() else {
+            return false;
+        };
+        declared_path_attributes += 1;
+        gates.entry(name.text().to_string()).or_default().push(gate);
+    }
+    // A `#[path]` inside a macro invocation or `macro_rules!` body is raw
+    // tokens, not an `Attr` node, so the count below cannot see it.
+    if file
+        .syntax()
+        .descendants()
+        .filter_map(ast::TokenTree::cast)
+        .any(|tree| has_path_attribute(&tree.syntax().text().to_string()))
+    {
+        return false;
+    }
+    // Every `#[path]` of the file sits on one of those declarations.
+    let total_path_attributes = file
+        .syntax()
+        .descendants()
+        .filter_map(ast::Attr::cast)
+        .filter(|attr| attribute_sets_path(&attr.syntax().text().to_string()))
+        .count();
+    total_path_attributes == declared_path_attributes
+        && declared_path_attributes > 0
+        && gates.values().all(|pair| match pair.as_slice() {
+            [left, right] => {
+                right.strip_prefix("not(").and_then(|r| r.strip_suffix(')')) == Some(left)
+                    || left.strip_prefix("not(").and_then(|r| r.strip_suffix(')')) == Some(right)
+            }
+            _ => false,
+        })
 }
 
 pub(super) fn has_path_attribute(source: &str) -> bool {
@@ -3515,6 +3655,100 @@ fn foreign_glob() {
         ));
         assert!(!has_path_attribute("fn f() { let path = 1; }"));
         assert!(!has_path_attribute("#[doc = \"x\"]\n#[cfg(test)]\nmod z;"));
+    }
+
+    const PAIR_ROOT: &str = "\
+#[cfg(feature = \"parking_lot\")]
+#[path = \"imp_pl.rs\"]
+mod imp;
+#[cfg(not(feature = \"parking_lot\"))]
+#[path = \"imp_std.rs\"]
+mod imp;
+";
+    const PAIR_STD: &str = "\
+pub(crate) fn wait(x: u32) -> u32 {
+    x + 1
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn std_wait() {
+        assert_eq!(super::wait(1), 2);
+    }
+}
+";
+    const PAIR_PL: &str = "\
+pub(crate) fn wait(x: u32) -> u32 {
+    x + 2
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn pl_wait() {
+        assert_eq!(super::wait(1), 3);
+    }
+}
+";
+
+    fn pair_index(root: &str) -> RustIndex {
+        index(&[
+            ("src/lib.rs", root),
+            ("src/imp_std.rs", PAIR_STD),
+            ("src/imp_pl.rs", PAIR_PL),
+        ])
+    }
+
+    /// #8999: a `#[path]` that only picks between `#[cfg(P)]` and
+    /// `#[cfg(not(P))]` files of one module keeps the identity on, so a test
+    /// of the other alternative's own `wait` does not settle on the owner,
+    /// and the owner's own test still does.
+    #[test]
+    fn a_cfg_exclusive_path_pair_tells_the_alternatives_apart() {
+        let index = pair_index(PAIR_ROOT);
+        assert_eq!(
+            settle(&index, "imp_std.rs::wait", "pl_wait"),
+            Some(CallTarget::Other)
+        );
+        assert_eq!(
+            settle(&index, "imp_std.rs::wait", "std_wait"),
+            Some(CallTarget::Owner)
+        );
+    }
+
+    /// Fail-closed controls: every deviation from a plain complementary pair
+    /// keeps the `#[path]` switch-off.
+    #[test]
+    fn other_path_shapes_keep_the_identity_off() {
+        let not_complementary =
+            PAIR_ROOT.replace("not(feature = \"parking_lot\")", "feature = \"std\"");
+        let test_pair = PAIR_ROOT.replace("feature = \"parking_lot\"", "test");
+        let cfg_attr = PAIR_ROOT.replace(
+            "#[path = \"imp_pl.rs\"]",
+            "#[cfg_attr(unix, path = \"imp_pl.rs\")]",
+        );
+        let third = format!("{PAIR_ROOT}#[path = \"elsewhere.rs\"]\nmod moved;\n");
+        let inline = format!("{PAIR_ROOT}mod nested {{\n    #[path = \"x.rs\"]\n    mod x;\n}}\n");
+        let ungated = PAIR_ROOT.replace("#[cfg(feature = \"parking_lot\")]\n", "");
+        let macro_remap =
+            format!("{PAIR_ROOT}cfg_if! {{ if #[cfg(unix)] {{ #[path = \"a.rs\"] mod sys; }} }}\n");
+        for (label, root) in [
+            ("not complementary", not_complementary),
+            ("cfg(test) pair", test_pair),
+            ("cfg_attr path", cfg_attr),
+            ("third remap", third),
+            ("nested path", inline),
+            ("ungated half", ungated),
+            ("macro token-tree path", macro_remap),
+        ] {
+            let index = pair_index(&root);
+            assert_eq!(
+                settle(&index, "imp_std.rs::wait", "pl_wait"),
+                None,
+                "{label}"
+            );
+        }
     }
 
     const SPLIT_A: &str = "pub fn render(x: i32) -> i32 {\n    x + 1\n}\n";

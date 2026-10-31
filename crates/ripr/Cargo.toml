@@ -110,6 +110,13 @@ unicode-ident = { version = "=1.0.24", optional = true }
 [target.'cfg(unix)'.dependencies]
 # Standalone CLI SIGINT observation through safe signal registration.
 signal-hook = { version = "0.3", default-features = false }
+# #9979: safe non-reaping waitid observation pins Unix group identity through
+# cleanup, including macOS (not covered by nix's waitid wrapper). Already
+# locked transitively; the process feature exposes no unsafe product code.
+# The feature set must stay identical to xtask's transitive rustix variant
+# (fs arrives there through tar/xattr) so the ordinary CLI and tool builds
+# share one dependency build (xtask/src/tests/build_feature_reuse.rs).
+rustix = { version = "1.1.5", features = ["process", "event", "fs"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Keep the standard-library flag implementation shared with xtask's archive
@@ -142,17 +149,10 @@ process-wrap = { version = "10.0.1", default-features = false, features = [
 default = ["lang-rust", "lang-typescript", "lang-python"]
 lang-rust = ["dep:ra_ap_syntax", "dep:unicode-ident"]
 lang-typescript = ["dep:oxc_allocator", "dep:oxc_ast", "dep:oxc_ast_visit", "dep:oxc_parser", "dep:oxc_span"]
-lang-python = ["dep:rustpython-parser"]
+lang-python = ["dep:rustpython-parser", "dep:unicode-ident"]
 lang-perl = []
 
 [dev-dependencies]
-# Dev-only self-reference: xtask's dev-dependency enables `lang-perl` in
-# workspace test builds (SARIF identity controls), so package-scoped test
-# builds must resolve the same feature set. Otherwise a policy test's
-# spawned `cargo test -p ripr` relinks the shared test binary with a
-# different `build_identity::cache_identity`, and artifact reuse between
-# the two builds fails closed on `analyzer_version`.
-ripr = { path = ".", features = ["lang-perl"] }
 proptest = "1"
 rmcp = { version = "=3.7.0", default-features = false, features = ["client", "transport-async-rw"] }
 serial_test = "4"

@@ -11,9 +11,10 @@
 //! literal `CliRunner` fixture. Reach evidence only: the relation carries no
 //! oracle, so it never earns `exposed`.
 
+use super::cli_subcommand::CliSubcommand;
 use super::related_tests::{
-    owner_module_callees, python_text_hides_code, test_body_binds_local, test_rebinds_import_alias,
-    text_binds_beyond_assignment,
+    module_callees_named, owner_module_callees, python_text_hides_code, test_body_binds_local,
+    test_imports_owner_module, test_rebinds_import_alias, text_binds_beyond_assignment,
 };
 use super::{PythonImport, PythonOwner, PythonTest};
 use crate::domain::OwnerKind;
@@ -21,6 +22,9 @@ use crate::domain::OwnerKind;
 const RUNNER_MODULES: [&str; 2] = ["click.testing", "typer.testing"];
 
 pub(super) fn cli_runner_invokes_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
+    if let Some(subcommand) = &owner.cli_subcommand {
+        return cli_runner_invokes_subcommand(test, owner, subcommand);
+    }
     if !is_click_command(owner) || !test.body_text.contains(".invoke(") {
         return false;
     }
@@ -33,6 +37,94 @@ pub(super) fn cli_runner_invokes_owner(test: &PythonTest, owner: &PythonOwner) -
             .iter()
             .any(|callee| invokes_command(&test.body_text, receiver, callee))
     })
+}
+
+/// A test that invokes the owner's group, imported through the same
+/// provenance checks as a command, with the subcommand's name as the first
+/// element of a literal argument list (`runner.invoke(cli, ["greet", ...])`).
+/// A name after an option, a string argument line and a name built at run time
+/// make no edge.
+fn cli_runner_invokes_subcommand(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    subcommand: &CliSubcommand,
+) -> bool {
+    if !test.body_text.contains(".invoke(") {
+        return false;
+    }
+    let callees = module_callees_named(test, owner, &subcommand.group, false);
+    if callees.is_empty() {
+        return false;
+    }
+    runner_receivers(test).iter().any(|receiver| {
+        callees
+            .iter()
+            .any(|callee| invokes_subcommand(&test.body_text, receiver, callee, &subcommand.name))
+    })
+}
+
+/// `<receiver>.invoke(<group>, [` or `args=[` with `"<name>"` first and
+/// followed by `,` or `]`.
+fn invokes_subcommand(body: &str, receiver: &str, callee: &str, name: &str) -> bool {
+    let needle = format!("{receiver}.invoke(");
+    body.match_indices(&needle).any(|(index, _)| {
+        if !invoke_at_boundary(body, index) {
+            return false;
+        }
+        let rest = body[index + needle.len()..].trim_start();
+        let Some(after_group) = rest.strip_prefix(callee) else {
+            return false;
+        };
+        let Some(arguments) = after_group.trim_start().strip_prefix(',') else {
+            return false;
+        };
+        let arguments = arguments.trim_start();
+        let arguments = arguments.strip_prefix("args").map_or(arguments, |keyword| {
+            keyword
+                .trim_start()
+                .strip_prefix('=')
+                .map_or(arguments, str::trim_start)
+        });
+        let Some(items) = arguments.strip_prefix('[') else {
+            return false;
+        };
+        first_item_is(items.trim_start(), name)
+    })
+}
+
+/// Whether `items` starts with the string literal `name` as a whole element.
+fn first_item_is(items: &str, name: &str) -> bool {
+    let Some(quote) = items.chars().next().filter(|ch| matches!(ch, '"' | '\'')) else {
+        return false;
+    };
+    let Some(inner) = items[1..].strip_prefix(name) else {
+        return false;
+    };
+    inner
+        .strip_prefix(quote)
+        .is_some_and(|after| after.trim_start().starts_with([',', ']']))
+}
+
+/// #11069: a test that imports the owner's module or a package above it and
+/// calls `.invoke(` on a recognised fresh `CliRunner`. The command it passes is
+/// not followed, so the owner stays `no_static_path`; the test is only named so
+/// the repair text does not ask for a test the project may already have.
+/// The earliest such test by file and line, for a stable pointer.
+pub(super) fn runner_invoking_test<'a>(
+    owner: &PythonOwner,
+    tests: &'a [PythonTest],
+) -> Option<&'a PythonTest> {
+    tests
+        .iter()
+        .filter(|test| {
+            test.body_text.contains(".invoke(") && test_imports_owner_module(test, owner)
+        })
+        .filter(|test| {
+            runner_receivers(test)
+                .iter()
+                .any(|receiver| invokes_receiver(&test.body_text, receiver))
+        })
+        .min_by(|a, b| (&a.file, a.line).cmp(&(&b.file, b.line)))
 }
 
 fn is_click_command(owner: &PythonOwner) -> bool {
@@ -155,17 +247,27 @@ fn bound_beyond_one_assignment(test: &PythonTest, name: &str) -> bool {
 fn invokes_command(body: &str, receiver: &str, callee: &str) -> bool {
     let needle = format!("{receiver}.invoke(");
     body.match_indices(&needle).any(|(index, _)| {
-        let boundary = !python_text_hides_code(body, index)
-            && body[..index]
-                .chars()
-                .next_back()
-                .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_' || ch == '.'));
         let rest = body[index + needle.len()..].trim_start();
-        boundary
+        invoke_at_boundary(body, index)
             && rest
                 .strip_prefix(callee)
                 .is_some_and(|after| after.trim_start().starts_with([',', ')']))
     })
+}
+
+/// Whether `<receiver>.invoke(` at `index` is live code on a whole name.
+fn invoke_at_boundary(body: &str, index: usize) -> bool {
+    !python_text_hides_code(body, index)
+        && body[..index]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_' || ch == '.'))
+}
+
+fn invokes_receiver(body: &str, receiver: &str) -> bool {
+    let needle = format!("{receiver}.invoke(");
+    body.match_indices(&needle)
+        .any(|(index, _)| invoke_at_boundary(body, index))
 }
 
 fn is_identifier(text: &str) -> bool {

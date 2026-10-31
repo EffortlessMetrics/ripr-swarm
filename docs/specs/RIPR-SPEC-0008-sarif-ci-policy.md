@@ -44,7 +44,14 @@ The SARIF layer should:
   complete run is not indistinguishable from a clean analysis (#5091).
   The property is absent when the count is zero. Omitted findings stay
   out of `results`; the property only discloses the filter, matching the
-  GitHub annotation denominator notice (#4393).
+  GitHub annotation denominator notice (#4393);
+- fold diff-scoped results that share a rule, file, line and suppression
+  state into the first one, so one changed line is one code-scanning alert
+  (#11219). The kept result is the one with the smallest fingerprint (input order never
+  changes it), keeps its message and fingerprint, lists the
+  folded results in `properties.folded_results`, and the run records the
+  count in `runs[].properties.folded_same_line_results` (absent when zero).
+  Different classes never fold: a weaker class does not hide a stronger one.
 
 ## Rule IDs
 
@@ -107,7 +114,7 @@ Every SARIF result should include:
 - `ruleId` matching the tables above;
 - `level` from configured severity;
 - one primary physical location when file and line are known;
-- a short message that uses static exposure vocabulary;
+- a short message that uses static exposure vocabulary; finding results (not seam results) lead with the first missing check when one exists and bound that evidence head to 240 characters (the reconciled next step is appended whole per RIPR-SPEC-0088), with full evidence kept in `properties` (#11219);
 - `partialFingerprints.riprFingerprintV1`;
 - `properties.tool = "ripr"`;
 - `properties.kind = "finding"` or `"seam"`;
@@ -308,6 +315,21 @@ then results is empty, run_status is complete, and
 runs[].properties.omitted_not_current is absent.
 ```
 
+### Same-line findings of one class fold into one alert
+
+```text
+Given two current findings of the same class on one file and line,
+when they are rendered as SARIF,
+then results holds one entry with properties.folded_results naming the
+other, and runs[].properties.folded_same_line_results equals 1.
+```
+
+```text
+Given findings that differ in class or line,
+when they are rendered as SARIF,
+then every one is its own result and folded_same_line_results is absent.
+```
+
 ### Baseline policy flags new warnings
 
 ```text
@@ -328,7 +350,7 @@ Implemented renderer tests:
 - `crates/ripr/src/output/sarif.rs::tests::sarif_renders_seams_with_stable_rule_ids`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_finding_identity_moves_locations_but_retains_file_and_rule_boundaries`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_seam_identity_retains_its_location_bound_contract`
-- `crates/ripr/src/output/sarif.rs::tests::sarif_finding_identity_keeps_distinct_native_unix_filenames`
+- `crates/ripr/src/output/sarif.rs::tests::sarif_finding_identity_keeps_distinct_native_unix_filenames` (`#[cfg(unix)]`: `src/a.rs` is a nested path on Windows, so this control does not run there; Windows separator conversion is pinned by `sarif_uri_identity.rs::native_windows_separators_are_slashes`)
 - `crates/ripr/src/output/sarif.rs::tests::sarif_uses_configured_finding_severity`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_uses_configured_seam_severity`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_omits_off_seam_class`
@@ -339,8 +361,13 @@ Implemented renderer tests:
 - `crates/ripr/src/output/sarif.rs::tests::sarif_run_with_only_not_current_findings_records_omitted_property`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_empty_findings_run_omits_omitted_not_current_property`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_mixed_current_and_not_current_records_omitted_count_beside_results`
+- `crates/ripr/src/output/sarif.rs::tests::same_line_same_class_findings_fold_into_one_alert_that_names_the_rest`
+- `crates/ripr/src/output/sarif.rs::tests::findings_that_differ_in_class_or_line_stay_separate`
+- `crates/ripr/src/output/sarif.rs::tests::the_kept_alert_does_not_depend_on_input_order`
+- `crates/ripr/src/output/sarif.rs::tests::a_suppressed_finding_is_not_folded_into_an_active_one`
+- `crates/ripr/src/output/sarif.rs::tests::findings_without_a_line_are_never_folded`
 
-Implemented policy tests:
+Implemented policy tests (the `sarif_identity_*` controls need the Perl adapter and compile only with `cargo test -p xtask --features perl-identity`, run in the Perl lane so the shared workspace graph keeps the shipped feature set):
 
 - `xtask/src/main.rs::tests::sarif_policy_passes_when_no_new_results`
 - `xtask/src/main.rs::tests::sarif_policy_flags_new_warning_result`

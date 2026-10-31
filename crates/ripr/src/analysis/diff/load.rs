@@ -1751,7 +1751,7 @@ fn numstat_new_path(path: &str) -> String {
 
 /// Load `<base>...<head>` for the commands that name both revisions (`diff`,
 /// `review-comments`). Callers verify `base` through
-/// [`resolve_effective_base`] first; this verifies `head` the same way, so an
+/// `resolve_effective_base` first; this verifies `head` the same way, so an
 /// unresolvable revision fails in ripr's own voice instead of git's
 /// `ambiguous argument` advice (#4538). The range then goes through the same
 /// pinned presentation as every analysis loader (#3850, #4086), including
@@ -2021,7 +2021,7 @@ const PR_EVIDENCE_DIFF_DEADLINE: Duration = Duration::from_mins(5);
 /// byte-identical `PR_DIFF`. The packet artifact records evidence, so the
 /// decode stays strict like the pre-#3930 helper: non-UTF-8 stdout is a
 /// named error, never silently recorded with replacement characters. The
-/// diff runs under [`PR_EVIDENCE_DIFF_DEADLINE`] (#4363), so a hung git ends
+/// diff runs under `PR_EVIDENCE_DIFF_DEADLINE` (#4363), so a hung git ends
 /// in the named `git_invocation_timeout` error instead of pinning the packet.
 pub fn load_pr_evidence_diff_range(root: &Path, base: &str, head: &str) -> Result<String, String> {
     load_pr_evidence_diff_range_within(root, base, head, PR_EVIDENCE_DIFF_DEADLINE)
@@ -2184,6 +2184,8 @@ pub(crate) struct AnalyzedRevisions {
     /// `base_commit`: both live diff sources diff from the merge base of the
     /// base and `HEAD`.
     pub(crate) merge_base_commit: Option<String>,
+    /// Exact worktree diff origin captured by the loader, including when equal to the base.
+    pub(crate) loaded_diff_origin: Option<String>,
     /// Full commit id of `HEAD`.
     pub(crate) head_commit: Option<String>,
     /// `true` when the diff ended at the working tree (staged and unstaged
@@ -2236,6 +2238,9 @@ pub(crate) fn resolve_analyzed_revisions(
         base_ref: base.to_string(),
         base_commit,
         merge_base_commit,
+        loaded_diff_origin: loaded_merge_base
+            .filter(|origin| !origin.is_empty())
+            .map(str::to_string),
         head_commit,
         working_tree,
     }
@@ -2610,7 +2615,7 @@ pub(crate) fn no_merge_base_diagnosis(
 
 /// Whether `root` is a shallow clone. `false` when Git cannot answer, so a
 /// failed probe never invents a shallow-clone diagnosis.
-fn is_shallow_repository(root: &Path, git_timeout: Option<Duration>) -> bool {
+pub(crate) fn is_shallow_repository(root: &Path, git_timeout: Option<Duration>) -> bool {
     crate::git::run_git_output_with_deadline(
         root,
         &["rev-parse", "--is-shallow-repository"],

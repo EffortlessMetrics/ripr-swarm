@@ -65,11 +65,19 @@ pub(crate) fn render_check_with_config_and_progress(
             ))
         }
         OutputFormat::CheckFindingsJson => {
+            let inputs = output
+                .analysis_outcome
+                .as_ref()
+                .and_then(|outcome| outcome.check_findings_inputs.as_ref())
+                .ok_or_else(|| {
+                    "check-findings-json requires resolved analysis inputs from the current run"
+                        .to_string()
+                })?;
             let context = crate::agent::artifact::RepoExposureArtifactContext::for_check_findings(
                 output.root.clone(),
                 output.mode.as_str().to_string(),
                 output.base.clone(),
-                config,
+                inputs,
             )?;
             super::check_findings::render_check_findings_json_with_context(output, config, &context)
         }
@@ -179,7 +187,10 @@ pub(crate) fn render_check_with_config_and_progress(
                         output.base.clone(),
                         config,
                     )?
-                    .with_rust_corpus_key(report.corpus_key.as_ref());
+                    .with_rust_inventory(
+                        report.corpus_key.as_ref(),
+                        &report.analyzed_production_files,
+                    );
                 repo_exposure::render_repo_exposure_json_with_context(
                     &report.classified,
                     report.limit_info.as_ref(),

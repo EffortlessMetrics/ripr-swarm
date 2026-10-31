@@ -27,10 +27,10 @@
 //! reported success before the parent had exited.
 //!
 //! Ownership is never dropped without cleanup: [`Drop`] terminates the job
-//! and reaps the direct child even on panic unwinding. Non-Windows targets
-//! keep their existing behavior: a transparent `std::process::Child`
-//! passthrough whose termination kills and reaps the direct child, with the
-//! Unix process-group authority unchanged in its callers.
+//! and reaps the direct child even on panic unwinding. Unix MCP attempts opt
+//! into process-group containment through their captured cancellation token.
+//! Other callers retain their prepared process-group configuration. Group
+//! cleanup precedes the OS reap, which releases PID custody.
 
 use std::process::{ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus};
 use std::time::{Duration, Instant};
@@ -98,15 +98,36 @@ const FALLBACK_REAP_BUDGET: Duration = Duration::from_secs(5);
 /// Windows: the child is created suspended, assigned to a Job Object before
 /// any child user code executes, and only then resumed. Any descendant it
 /// spawns joins the job, so [`OwnedProcess::terminate_tree`] (or ending
-/// ownership) kills the entire assigned tree. Other platforms: a transparent
-/// wrapper over `std::process::Child`; termination kills and reaps the
-/// direct child exactly as the pre-#3803 helpers did.
+/// ownership) kills the entire assigned tree. Unix MCP attempts give each
+/// child a fresh process group, including pipe-inheriting descendants;
+/// other Unix callers preserve their existing process-group configuration. Other
+/// platforms: a transparent wrapper over `std::process::Child`;
+/// termination kills and reaps the direct child exactly as the
+/// pre-#3803 helpers did.
 #[derive(Debug)]
 pub struct OwnedProcess {
     #[cfg(windows)]
     child: Box<dyn ChildWrapper>,
     #[cfg(not(windows))]
     child: std::process::Child,
+    #[cfg(unix)]
+    group_owned: bool,
+    #[cfg(unix)]
+    custody_lost: bool,
+    /// Unix PID custody: the group signal has been issued and the primary
+    /// reaped. Once the leader is reaped its pgid becomes recyclable by an
+    /// unrelated process group, so every later release path — `Drop`, a
+    /// repeated `terminate_tree` — must stay disarmed rather than risk
+    /// signaling a group that reused the number (#9895 review).
+    #[cfg(all(unix, not(windows)))]
+    group_settled: bool,
+    /// Unix test oracle: the custody contract allows exactly one group
+    /// signal per owner lifetime; each `request_kill` on unix increments
+    /// this counter so a witness can pin it.
+    #[cfg(all(test, unix, not(windows)))]
+    test_group_kills: usize,
+    #[cfg(all(test, unix))]
+    test_direct_kills: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     /// Test-only failure injection (#9323 controls 8 and 9): when set, the
     /// tree-termination request reports this error instead of being issued,
     /// so the typed cleanup-failure path can be exercised on every platform.
@@ -119,7 +140,8 @@ impl OwnedProcess {
     ///
     /// Stdio redirection, environment, working directory, arguments and any
     /// platform process-group configuration must be applied to `command`
-    /// before this call; they are preserved exactly. On Windows the process
+    /// before this call. Outside MCP attempt scopes they are preserved exactly;
+    /// an MCP attempt deliberately creates a fresh Unix process group. On Windows the process
     /// is created with `CREATE_SUSPENDED`, assigned to a fresh Job Object,
     /// and resumed inside this call. A setup failure (job creation,
     /// assignment, or resume) is returned as a typed `std::io::Error` and
@@ -133,7 +155,32 @@ impl OwnedProcess {
             let child = wrapped.spawn()?;
             Ok(Self::from_child(child))
         }
-        #[cfg(not(windows))]
+        #[cfg(all(unix, not(windows)))]
+        {
+            use std::os::unix::process::CommandExt as _;
+            let mut command = command;
+            let group_owned = crate::analysis::cancellation::owns_process_groups();
+            if group_owned {
+                // Opt-in belongs to the MCP attempt, including captured workers.
+                // Public CLI/exporter callers keep their original group policy.
+                ensure_group_observation_supported()?;
+                command.process_group(0);
+            }
+            let child = command.spawn()?;
+            Ok(Self {
+                child,
+                group_owned,
+                custody_lost: false,
+                group_settled: false,
+                #[cfg(all(test, unix, not(windows)))]
+                test_group_kills: 0,
+                #[cfg(test)]
+                test_direct_kills: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+                #[cfg(test)]
+                injected_kill_failure: None,
+            })
+        }
+        #[cfg(not(any(windows, unix)))]
         {
             // The passthrough spawn configures the prepared command in
             // place; the owned binding keeps the call site identical to
@@ -153,7 +200,7 @@ impl OwnedProcess {
         }
     }
 
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, unix)))]
     fn from_child(child: std::process::Child) -> Self {
         Self {
             child,
@@ -203,33 +250,58 @@ impl OwnedProcess {
         }
     }
 
-    /// Non-blocking exit check for the direct child.
+    /// Non-blocking exit check. Contained Unix groups settle while the leader
+    /// is still waitable: WNOWAIT observes exit without releasing its identity.
+    /// The group is disarmed before the subsequent standard-library reap.
     pub fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
+        #[cfg(unix)]
+        if self.custody_lost {
+            return Err(std::io::Error::other(
+                "owned child custody was lost; no wait or signal is permitted",
+            ));
+        }
+        #[cfg(unix)]
+        if self.group_owned && !self.group_settled {
+            if !self.observe_owned_exit()? {
+                return Ok(None);
+            }
+            self.request_kill()?;
+        }
         self.child.try_wait()
     }
 
-    /// Reap the direct child to completion.
-    ///
-    /// This polls the child instead of blocking on a job completion port so
-    /// the wait stays bounded by the caller's termination decisions and can
-    /// never hang on queued job notifications.
+    /// Reap the direct child, preserving the same prereap settlement ordering
+    /// as `try_wait`. Callers that need a deadline use their bounded poll loop.
     pub fn wait(&mut self) -> std::io::Result<ExitStatus> {
         let mut backoff = PollBackoff::new();
         loop {
-            if let Some(status) = self.child.try_wait()? {
+            if let Some(status) = self.try_wait()? {
                 return Ok(status);
             }
             backoff.sleep(None);
         }
     }
 
-    /// Request termination of the owned primary process without waiting.
-    ///
-    /// Windows: the Job Object kill request. Other platforms:
-    /// `std::process::Child::kill`, which — like the Job Object request —
-    /// returns `Ok(())` for an already-exited child and never waits, so the
-    /// owner's terminate-then-reap sequence stays the single reaping
-    /// authority.
+    #[cfg(unix)]
+    fn observe_owned_exit(&mut self) -> std::io::Result<bool> {
+        if self.custody_lost {
+            return Err(std::io::Error::other(
+                "owned child custody was lost; signalling is disarmed",
+            ));
+        }
+        match observe_unreaped_exit(&self.child) {
+            Ok(exited) => Ok(exited),
+            Err(error) => {
+                self.custody_lost = true;
+                self.group_settled = true;
+                Err(error)
+            }
+        }
+    }
+
+    /// Request termination while identity custody is retained. An OS
+    /// non-reaping observation at the signal boundary rejects lost custody;
+    /// no numeric group signal is issued after an external/erroneous reap.
     fn request_kill(&mut self) -> std::io::Result<()> {
         #[cfg(test)]
         if let Some(kind) = self.injected_kill_failure.take() {
@@ -241,17 +313,48 @@ impl OwnedProcess {
         }
         #[cfg(not(windows))]
         {
+            #[cfg(unix)]
+            if self.group_owned {
+                if self.custody_lost {
+                    return Err(std::io::Error::other(
+                        "owned child custody was lost; signalling is disarmed",
+                    ));
+                }
+                if self.group_settled {
+                    return Ok(());
+                }
+                self.observe_owned_exit()?;
+                let pid = checked_child_pid(&self.child)?;
+                #[cfg(test)]
+                {
+                    self.test_group_kills += 1;
+                }
+                match rustix::process::kill_process_group(pid, rustix::process::Signal::KILL) {
+                    Ok(()) | Err(rustix::io::Errno::SRCH) => {
+                        self.group_settled = true;
+                        return Ok(());
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            }
             self.child.kill()
         }
     }
 
     /// Terminate the whole owned tree and reap the direct child before
     /// returning. Windows: one termination request kills every process in
-    /// the job. Other platforms: the direct child kill and reap.
+    /// the job. Unix: one `SIGKILL` to the child's process group reaches
+    /// every descendant, including pipe-inheriting grandchildren, and — per
+    /// the PID-custody contract — that group signal is always issued BEFORE
+    /// the primary is reaped: an unreaped leader pins its pgid, so the
+    /// signal can only reach this owner's tree; after the reap the number
+    /// becomes recyclable and later release paths stay disarmed. Other
+    /// platforms: the direct child kill and reap.
     ///
-    /// An already-exited child is reaped and — on Windows — its job is
-    /// still terminated, because `KILL_ON_JOB_CLOSE` is deliberately off
-    /// and descendants the child spawned may outlive it in the job. A
+    /// An already-exited child is reaped and — on Windows and Unix — its
+    /// job or process group is still terminated, because `KILL_ON_JOB_CLOSE`
+    /// is deliberately off and descendants the child spawned may outlive it
+    /// in the job or group. A
     /// FAILED termination request falls back to a bounded best-effort
     /// direct-child kill and reap and is returned as an error that reports
     /// the incomplete tree cleanup: waiting on a process that refused to
@@ -260,6 +363,23 @@ impl OwnedProcess {
     /// stopped. The reap error is reported only when termination
     /// succeeded (a successful kill makes a failed reap a real zombie).
     pub fn terminate_tree(&mut self) -> Result<(), String> {
+        #[cfg(unix)]
+        if self.group_owned {
+            if let Err(error) = self.request_kill() {
+                self.group_settled = true;
+                if self.custody_lost {
+                    return Err(format!(
+                        "incomplete tree cleanup: child custody unavailable: {error}; no fallback signal sent"
+                    ));
+                }
+                return Err(self.failed_termination_fallback(error.to_string()));
+            }
+            return if self.reap_within(FALLBACK_REAP_BUDGET) {
+                Ok(())
+            } else {
+                Err("owned group was signalled but primary reap exceeded its budget".to_string())
+            };
+        }
         if let Some(status) = self
             .child
             .try_wait()
@@ -304,8 +424,8 @@ impl OwnedProcess {
     fn failed_termination_fallback(&mut self, termination_err: String) -> String {
         let fallback_kill = self.kill().map_err(|err| err.to_string());
         let reaped = match &fallback_kill {
-            // The fallback kill reaps the direct child itself; the bounded
-            // poll only confirms it. Without a successful kill request only
+            // The fallback kill requests direct-child termination; the bounded
+            // poll performs and confirms the reap. Without a successful kill request only
             // a natural exit counts, so a single probe avoids stalling the
             // caller on a process nothing has asked to die.
             Ok(()) => self.reap_within(FALLBACK_REAP_BUDGET),
@@ -325,6 +445,10 @@ impl OwnedProcess {
     /// expires. Never blocks past the budget, so a process that ignores
     /// the termination cannot hang the cleanup reporter.
     fn reap_within(&mut self, budget: Duration) -> bool {
+        #[cfg(unix)]
+        if self.custody_lost {
+            return false;
+        }
         let deadline = Instant::now() + budget;
         let mut backoff = PollBackoff::new();
         loop {
@@ -346,11 +470,81 @@ impl OwnedProcess {
     /// This is only the narrow fallback for a failed tree-termination
     /// request; ownership paths must prefer [`OwnedProcess::terminate_tree`].
     /// On Windows the wrapper stack re-issues the Job Object termination
-    /// request and then waits the tree out; on other platforms this kills
-    /// and reaps the direct child.
+    /// request and then waits the tree out; on other platforms this requests
+    /// direct-child termination without reaping.
     pub fn kill(&mut self) -> std::io::Result<()> {
+        #[cfg(unix)]
+        if self.group_owned {
+            self.observe_owned_exit()?;
+        }
+        #[cfg(all(test, unix))]
+        self.test_direct_kills
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.child.kill()
     }
+}
+
+#[cfg(unix)]
+fn checked_child_pid(child: &std::process::Child) -> std::io::Result<rustix::process::Pid> {
+    i32::try_from(child.id())
+        .ok()
+        .and_then(rustix::process::Pid::from_raw)
+        .ok_or_else(|| std::io::Error::other("owned child id is outside the positive PID range"))
+}
+
+#[cfg(unix)]
+fn ensure_group_observation_supported() -> std::io::Result<()> {
+    if cfg!(any(
+        target_os = "cygwin",
+        target_os = "horizon",
+        target_os = "openbsd",
+        target_os = "redox"
+    )) {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "MCP child containment requires a non-reaping process observation",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "cygwin",
+        target_os = "horizon",
+        target_os = "openbsd",
+        target_os = "redox"
+    ))
+))]
+fn observe_unreaped_exit(child: &std::process::Child) -> std::io::Result<bool> {
+    use rustix::process::{WaitId, WaitIdOptions, waitid};
+    let pid = checked_child_pid(child)?;
+    loop {
+        match waitid(
+            WaitId::Pid(pid),
+            WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
+        ) {
+            Ok(status) => return Ok(status.is_some()),
+            Err(rustix::io::Errno::INTR) => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
+#[cfg(all(
+    unix,
+    any(
+        target_os = "cygwin",
+        target_os = "horizon",
+        target_os = "openbsd",
+        target_os = "redox"
+    )
+))]
+fn observe_unreaped_exit(_child: &std::process::Child) -> std::io::Result<bool> {
+    ensure_group_observation_supported()?;
+    Ok(false)
 }
 
 /// Stop a rustup proxy (`cargo`, `rustc`) from installing a toolchain while
@@ -366,20 +560,32 @@ pub(crate) fn forbid_rustup_auto_install(command: &mut Command) {
 
 impl Drop for OwnedProcess {
     fn drop(&mut self) {
+        #[cfg(unix)]
+        if self.group_owned {
+            if self.request_kill().is_err() {
+                self.group_settled = true;
+                if self.custody_lost {
+                    return;
+                }
+                let _ = self.kill();
+            }
+            let _ = self.reap_within(FALLBACK_REAP_BUDGET);
+            return;
+        }
         // Kill-on-close semantics live at this boundary: whichever path
         // releases the owner — normal completion, timeout, cancellation,
         // wait failure, or panic unwinding — terminates the owned tree and
         // reaps the direct child first. Both steps are best-effort here;
         // typed evidence belongs to `terminate_tree`, which every explicit
         // termination path uses. An already-reaped child is left alone on
-        // non-Windows targets, and a failed kill is not followed by an
-        // unbounded wait on a process that refused to die.
+        // platforms without tree containment, and a failed kill is not
+        // followed by an unbounded wait on a process that refused to die.
         if self.child.try_wait().is_ok_and(|status| status.is_some()) {
-            // Even though the primary exited, the job does not kill on
-            // close: descendants it spawned may still hold the job, so
-            // ownership release still issues the termination request and
-            // reaps the (already exited) primary before dropping the job
-            // handle.
+            // Even though the primary exited, the containment boundary does
+            // not kill on close: descendants it spawned may still hold the
+            // job, so ownership release still issues the termination
+            // request and reaps the (already exited) primary before
+            // dropping the owner.
             #[cfg(windows)]
             {
                 if self.request_kill().is_ok() {
@@ -880,5 +1086,178 @@ mod tests {
         let _ = std::fs::remove_file(&marker_path);
         owned.terminate_tree()?;
         assert_descendant_terminated(descendant_pid, "terminate_tree after the primary exited")
+    }
+
+    #[cfg(unix)]
+    fn contained_command(command: Command) -> Result<OwnedProcess, String> {
+        let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let token =
+            crate::analysis::cancellation::AnalysisCancellationToken::with_server_interrupt(flag);
+        crate::analysis::cancellation::with_token(&token, || OwnedProcess::spawn(command))
+            .map_err(|error| error.to_string())
+    }
+
+    #[cfg(unix)]
+    fn successful_group_command() -> Result<OwnedProcess, String> {
+        let mut command = Command::new("sh");
+        command
+            .args(["-c", "printf owned-output; exit 7"])
+            .stdout(Stdio::piped());
+        contained_command(command)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_wait_settles_before_reap_preserving_output_and_status() -> Result<(), String> {
+        let mut owned = successful_group_command()?;
+        let status = owned.wait().map_err(|error| error.to_string())?;
+        assert_eq!(status.code(), Some(7));
+        let mut output = String::new();
+        owned
+            .stdout_pipe()
+            .take()
+            .ok_or("missing stdout")?
+            .read_to_string(&mut output)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(output, "owned-output");
+        assert_eq!(owned.test_group_kills, 1);
+        assert!(
+            observe_unreaped_exit(&owned.child).is_err(),
+            "wait must actually reap"
+        );
+        owned.terminate_tree()?;
+        owned.terminate_tree()?;
+        assert_eq!(owned.test_group_kills, 1, "later releases stay disarmed");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_try_wait_settles_before_reap_without_descendants() -> Result<(), String> {
+        let mut owned = successful_group_command()?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(status) = owned.try_wait().map_err(|error| error.to_string())? {
+                assert_eq!(status.code(), Some(7));
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err("owned fixture did not exit".to_string());
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(owned.test_group_kills, 1);
+        owned.terminate_tree()?;
+        assert_eq!(owned.test_group_kills, 1);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_reap_before_signal_is_refused_without_signalling() -> Result<(), String> {
+        let mut owned = successful_group_command()?;
+        // Deliberate wrong ordering, but the production signal boundary must
+        // refuse it before killpg. No PID reuse or unrelated process is needed.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let status = loop {
+            if let Some(status) = owned.child.try_wait().map_err(|error| error.to_string())? {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                return Err("owned fixture did not exit before deliberate reap".into());
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        };
+        assert_eq!(status.code(), Some(7));
+        assert!(owned.request_kill().is_err());
+        assert_eq!(owned.test_group_kills, 0);
+        assert!(owned.group_settled);
+        Ok(())
+    }
+
+    #[cfg(all(
+        unix,
+        not(any(
+            target_os = "cygwin",
+            target_os = "horizon",
+            target_os = "openbsd",
+            target_os = "redox"
+        ))
+    ))]
+    #[test]
+    fn unix_external_reap_disarms_direct_fallback_and_drop() -> Result<(), String> {
+        use rustix::process::{WaitId, WaitIdOptions, waitid};
+        let mut owned = successful_group_command()?;
+        let pid = checked_child_pid(&owned.child).map_err(|error| error.to_string())?;
+        // An OS reap deliberately bypasses std Child's cached exit status.
+        // This is a disposable child; no PID reuse is attempted or required.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if waitid(
+                WaitId::Pid(pid),
+                WaitIdOptions::EXITED | WaitIdOptions::NOHANG,
+            )
+            .map_err(|error| error.to_string())?
+            .is_some()
+            {
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err("owned fixture did not exit before external reap".into());
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let direct = owned.test_direct_kills.clone();
+        assert!(owned.terminate_tree().is_err());
+        assert!(owned.kill().is_err());
+        // The refusal must name the lost custody, not an arbitrary wait error.
+        let Err(refusal) = owned.try_wait() else {
+            return Err("try_wait after external reap unexpectedly succeeded".into());
+        };
+        assert!(
+            refusal.to_string().contains("custody was lost"),
+            "{refusal}"
+        );
+        assert!(owned.custody_lost);
+        assert_eq!(owned.test_group_kills, 0);
+        drop(owned);
+        assert_eq!(direct.load(std::sync::atomic::Ordering::SeqCst), 0);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_repeated_terminate_tree_stays_disarmed() -> Result<(), String> {
+        let mut command = Command::new("sleep");
+        command.arg("60");
+        let mut owned = contained_command(command)?;
+        owned.terminate_tree()?;
+        owned.terminate_tree()?;
+        assert_eq!(owned.test_group_kills, 1);
+        assert!(
+            owned
+                .child
+                .try_wait()
+                .map_err(|error| error.to_string())?
+                .is_some()
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_public_spawn_preserves_the_callers_group() -> Result<(), String> {
+        use std::os::unix::process::CommandExt;
+        let group = rustix::process::getpgrp();
+        let mut command = Command::new("sleep");
+        command.arg("60").process_group(group.as_raw_pid());
+        let mut owned = OwnedProcess::spawn(command).map_err(|error| error.to_string())?;
+        let pid = checked_child_pid(&owned.child).map_err(|error| error.to_string())?;
+        let observed = rustix::process::getpgid(Some(pid)).map_err(|error| error.to_string())?;
+        assert_eq!(observed, group);
+        assert!(!owned.group_owned);
+        owned.terminate_tree()?;
+        assert_eq!(owned.test_group_kills, 0);
+        Ok(())
     }
 }
