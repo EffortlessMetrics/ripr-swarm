@@ -1093,6 +1093,30 @@ mod tests {
         Ok(())
     }
 
+    /// Containment is judged by where the path resolves, not how it is spelled:
+    /// a lexically foreign spelling whose existing ancestor resolves inside the
+    /// workspace is accepted, while an absent leaf under an outside ancestor
+    /// is refused.
+    #[cfg(unix)]
+    #[test]
+    fn path_within_root_judges_resolved_location_not_spelling() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!("ripr-spelling-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let ws = base.join("ws");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(ws.join("real")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&outside).map_err(|e| e.to_string())?;
+        // `alias` lives outside the workspace but resolves into it.
+        std::os::unix::fs::symlink(ws.join("real"), outside.join("alias"))
+            .map_err(|e| e.to_string())?;
+        let inside = super::ensure_path_within_root(&ws, &outside.join("alias/absent/leaf"), "x");
+        let foreign = super::ensure_path_within_root(&ws, &outside.join("absent/leaf"), "x");
+        let _ = std::fs::remove_dir_all(&base);
+        inside?;
+        assert!(foreign.is_err_and(|e| e.contains("resolves outside")));
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[test]
     fn default_output_guard_refuses_any_target_ripr_child_link() -> Result<(), String> {
