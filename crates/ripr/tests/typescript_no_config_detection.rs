@@ -1,6 +1,8 @@
 //! RIPR-SPEC-0082: with no `ripr.toml`, `ripr check` enables the TypeScript
 //! preview adapter from a root `tsconfig.json` or detectable TypeScript source,
-//! and does not enable it for `package.json` plus plain JavaScript alone.
+//! and (#11336) from a package-led root: `package.json` plus JavaScript or
+//! TypeScript source, Cargo or Python project or not. A manifest alone does
+//! not enable it.
 
 #![cfg(feature = "lang-typescript")]
 
@@ -115,13 +117,32 @@ fn typescript_source_enables_typescript_without_ripr_toml() -> Result<(), String
 }
 
 #[test]
-fn package_json_with_plain_javascript_does_not_enable_typescript() -> Result<(), String> {
+fn package_json_with_plain_javascript_enables_typescript() -> Result<(), String> {
     let subject = Subject::create(
         &[("package.json", PACKAGE), ("src/pricing.js", PRICING_JS)],
         "src/pricing.js",
     )?;
-    if subject.typescript_advisory()? != (false, false) {
-        return Err("package.json plus plain JavaScript must not enable typescript".to_string());
+    if subject.typescript_advisory()? != (true, true) {
+        return Err("a JavaScript-led root must enable and run typescript".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn package_json_with_javascript_beside_a_rust_project_enables_typescript() -> Result<(), String> {
+    let subject = Subject::create(
+        &[
+            ("package.json", PACKAGE),
+            (
+                "Cargo.toml",
+                "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+            ),
+            ("src/pricing.js", PRICING_JS),
+        ],
+        "src/pricing.js",
+    )?;
+    if subject.typescript_advisory()? != (true, true) {
+        return Err("JavaScript beside a Rust project must enable typescript".to_string());
     }
     Ok(())
 }

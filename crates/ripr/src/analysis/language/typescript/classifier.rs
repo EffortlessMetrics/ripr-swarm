@@ -7089,6 +7089,11 @@ pub(crate) fn classify_resolved_owner(
         typescript_changed_boundary_text(file, &probe_shape.family, old_line_text, line_text);
     let boundary_text = boundary_text.as_ref();
     let predicate_boundary = ts_predicate_boundary(&probe_shape, boundary_text);
+    // #11256: a boundary operand no test call can set names its own limitation.
+    let named_limitations_from_derived_operand: Vec<TypeScriptNamedLimitation> =
+        derived_boundary_operand_limitation(owner, &predicate_boundary)
+            .into_iter()
+            .collect();
     let row_activation = |candidate: &TypeScriptRelatedCandidate<'_>,
                           boundary_fact: Option<&TypeScriptBoundaryFact>| {
         let context = TsBoundaryRowContext {
@@ -7840,6 +7845,7 @@ pub(crate) fn classify_resolved_owner(
     for named_limit in named_limitations_from_static
         .iter()
         .chain(named_limitations_from_oracle.iter())
+        .chain(named_limitations_from_derived_operand.iter())
         .chain(named_limitations_from_ownership.iter())
         .chain(alias_gap.iter().map(|gap| &gap.limitation))
         .chain(named_limitations_from_spy.iter())
