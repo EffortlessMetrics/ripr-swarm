@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- `ripr first-pr` run right after `ripr pilot` no longer reports the repo exposure report as a missing artifact: when `target/ripr/reports/repo-exposure.json` is absent it reads the report `ripr pilot` wrote at `target/ripr/pilot/repo-exposure.json`, so the only step left is the printed gap-ledger command, which reads that pilot report. The default report still wins when both exist (#3905).

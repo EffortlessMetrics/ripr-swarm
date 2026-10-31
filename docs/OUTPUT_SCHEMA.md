@@ -101,6 +101,7 @@ map is:
 | Output | Field | Current value |
 | --- | --- | --- |
 | `ripr check --format json` | `schema_version` | `0.2` |
+| `ripr check --format json` refusal envelope, `analysis_timeout` with input context (RIPR-SPEC-0241 amendment #10796) | `schema_version` | `0.3` |
 | `ripr check --output-dir DIR` manifest | `schema_version` | `ripr-native-diff-output-set-v1` |
 | `ripr check --format sarif` | `version` | `2.1.0` (standard SARIF envelope) |
 | `ripr gate evaluate` | `schema_version` | `0.1` |
@@ -152,6 +153,7 @@ records that distinction.
 | Published schema | Current version | Version owner and rationale |
 | --- | --- | --- |
 | `schemas/ripr/check.schema.json` | `0.2` | `crates/ripr/src/app.rs`; check envelope |
+| `schemas/ripr/check-timeout-refusal.schema.json` | `0.3` | `crates/ripr/src/app.rs`; analysis-timeout refusal envelope with input context (RIPR-SPEC-0241 amendment #10796) |
 | `schemas/ripr/doctor.schema.json` | `0.4` | `crates/ripr/src/output/doctor.rs`; doctor environment report (#5214) |
 | `schemas/ripr/executed-control.schema.json` | `1` | `crates/ripr/src/domain/executed_control.rs` and `crates/ripr/src/output/executed_control.rs`; executed-control obligation/result/packet vocabulary (#4641) |
 | `schemas/ripr/gate-decision.schema.json` | `0.1` | `crates/ripr/src/output/gate.rs`; gate decision envelope |
@@ -1093,6 +1095,34 @@ zeroed `summary`, same empty `findings`, same
 The scope-guard identities (`diff_scope_oversized`, `repo_scope_oversized`)
 keep their existing documents byte for byte; they are not members of this
 vocabulary.
+
+An `analysis_timeout` refusal of `ripr check` renders at refusal generation
+`"0.3"` and adds one required key, `input_context` (RIPR-SPEC-0241 amendment
+#10796); every other identity keeps generation `"0.2"` and the exact key set
+above, and a timeout refusal with no stashed projection (a library caller that
+never registered the capture) also keeps `"0.2"`. `input_context` has three
+fixed keys: `requested` echoes the invocation-established root, input source
+(`committed`, `working-tree`, `supplied-diff`, `git-candidate`), base, diff
+file, `--path`/`--exclude` scope, and the analysis effort mode under
+`analysis_mode` (never confused with the input source); `resolved` carries the
+base/commit/merge-base revisions and the scoped intake file counts, each as
+`{available, value}` or `{available: false, reason}`, with a per-fact `reason` (`not_published_before_deadline`, `not_computed_for_source`, or
+`published_after_deadline`).
+`recovery` carries at most one bounded action. For a replayable input it is
+`retry_with_larger_budget`: a shell-safe literal command preserving the
+meaningful root/source/base/scope/output choices and the effective analysis
+settings that change the finding set (the effective `--mode`, including draft,
+`--no-unchanged-tests` when unchanged tests were excluded, and the
+explicit `--perl-facts`/`--suppression-policy` paths) so the retry
+reproduces the requested analysis; the command carries the raw root path
+(the check-JSON `root` echo is the `display_path` spelling and escapes `%`),
+an explicit `--format VALUE` spelling when one was given, and a finite
+doubled `--timeout`. An explicit `--output-dir` is never repeated (the refused set occupies it). For a stdin diff (`--diff -`) no literal command is
+offered: the consumed bytes cannot be replayed, so `recovery.kind` is
+`save_stdin_diff_to_named_file` with `command: null` and the note names the
+honest continuation. `rereads` names what a retry re-reads; such a retry is not pinned to the timed-out snapshot. Input metadata never implies an
+exposure, clean, or repair-ready verdict: exit stays `2`, findings stay
+empty, the summary stays zeroed, and `downstream_consumable` stays `false`.
 
 The same envelope covers the other `--json` commands (#7331): `ripr diff
 --json`, `ripr rerun --json`, `ripr context` (which emits JSON only), `ripr
@@ -16524,8 +16554,9 @@ Field contract:
   scorable route is to resolve the workspace condition that made the
   baseline ambiguous and rerun the same `--phase before` command from a
   clean state. `test_runner_cache_guidance`, when present, explains that a
-  TypeScript gap attempt can refuse or become stale when a test runner writes
-  ignored caches; it recommends recording native test results separately
+  TypeScript gap attempt is refused when a test runner writes ignored caches
+  before the after phase, while Vitest caches written after `continue` do not
+  stale the receipt; it recommends recording native test results separately
   after successful continuation and does not claim a test was recorded in the receipt.
   Without `--json`, stdout is a short prose summary whose
   final line names the same next command — or, for such an ambiguous

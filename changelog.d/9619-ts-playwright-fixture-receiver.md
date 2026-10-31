@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A destructured Playwright fixture parameter whose `base.extend` fixture only constructs a class (`async ({}, use) => { await use(new Cart()); }`) is now the receiver of that class, so a changed method called through it credits the test (TypeScript preview). A fixture that does more than construct, an option tuple, a `test.use` override, a merged or twice-extended test and a hook taking the same fixture stay unresolved (RIPR-SPEC-0243 rule 23, #9619).
