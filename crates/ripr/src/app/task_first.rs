@@ -4385,7 +4385,7 @@ pub(crate) mod tests {
             crate::analysis::seams::SeamKind::PredicateBoundary,
             42,
             88,
-            &format!("a\n   {}", "b".repeat(80)),
+            format!("a\n   {}", "b".repeat(80)),
             crate::analysis::seams::RequiredDiscriminator::BoundaryValue {
                 description: "x".to_string(),
             },
