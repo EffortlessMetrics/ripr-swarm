@@ -350,7 +350,8 @@ fn route_not_ready_reason(
     label
 }
 
-const NO_TEST_MODULE_STUB_NOTE: &str = " (the file has no test module yet; the stub adds one)";
+const NO_TEST_MODULE_STUB_NOTE: &str =
+    " (the file has no test module yet; for an owner at the top of the file the stub adds one)";
 
 /// The missing evidence left once the only target blocker is "the owner file
 /// has no governed inline test module": `agent stub` places a new inline
@@ -2967,13 +2968,20 @@ pub(crate) mod tests {
             refusal.reason
         );
 
-        // Discriminating negative: a different target blocker names no route.
-        let mut private_owner = gate_entry(SeamGripClass::Ungripped, Vec::new());
-        private_owner.evidence.new_test_target =
+        // Discriminating negatives: a different target blocker names no
+        // route and carries no module note.
+        let mut other_blocker = gate_entry(SeamGripClass::Ungripped, Vec::new());
+        other_blocker.evidence.new_test_target =
             Some(admission(NewTestProposalBlocker::GeneratedOrVendor));
-        let bare = repair_start_refusal_for_entry(root, &private_owner, policy)
+        let bare = repair_start_refusal_for_entry(root, &other_blocker, policy)
             .ok_or("a seam without a target must be refused")?;
         assert!(!bare.reason.contains("--kind predicate"), "{}", bare.reason);
+        assert!(
+            !bare.reason.contains("no test module yet"),
+            "{}",
+            bare.reason
+        );
+
         Ok(())
     }
 
