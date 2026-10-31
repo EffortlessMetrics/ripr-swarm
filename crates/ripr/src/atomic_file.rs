@@ -28,6 +28,29 @@ pub(crate) fn ensure_report_output_contained(root: &Path) -> Result<(), String> 
     ensure_default_output_contained_with(root, None)
 }
 
+/// Guard for report writers that take no `--root` (`evidence-health`, `zero`,
+/// `first-action`, `pr-evidence`, baselines): a cwd-relative default `--out`
+/// such as `target/ripr/reports/x.json` is resolved against the current
+/// directory, so a committed `target -> /elsewhere` link there would redirect
+/// the write (#11477). Absolute paths are the caller's explicit choice and are
+/// not judged here.
+pub(crate) fn ensure_relative_output_contained(path: &Path) -> Result<(), String> {
+    if path.is_absolute() {
+        return Ok(());
+    }
+    let cwd = std::env::current_dir().map_err(|error| {
+        format!("refusing to write ripr output: cannot resolve current directory: {error}")
+    })?;
+    ensure_relative_output_contained_in(&cwd, path)
+}
+
+fn ensure_relative_output_contained_in(cwd: &Path, path: &Path) -> Result<(), String> {
+    if path.is_absolute() {
+        return Ok(());
+    }
+    ensure_report_output_contained(cwd)
+}
+
 fn ensure_default_output_contained_with(
     root: &Path,
     cache_dir_env: Option<&str>,
@@ -508,6 +531,7 @@ mod tests {
     // test (#9339) both call this, so the import is unconditional: gating it
     // to unix left the Windows test build without the function.
     use super::ensure_default_output_contained_with;
+    use super::ensure_relative_output_contained_in;
     use std::path::{Path, PathBuf};
 
     fn isolated_dir(label: &str) -> PathBuf {
@@ -1203,5 +1227,27 @@ mod tests {
         assert!(result.is_err_and(|e| e.contains("refusing to write ripr output")));
         assert!(outside_empty, "check wrote through the hostile symlink");
         Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn relative_report_output_refuses_target_link_outside_cwd() -> Result<(), String> {
+        let root = isolated_dir("relative-report-target-link");
+        let outside = isolated_dir("relative-report-outside");
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
+        std::fs::create_dir_all(&root).map_err(|err| format!("root setup: {err}"))?;
+        std::fs::create_dir_all(&outside).map_err(|err| format!("outside setup: {err}"))?;
+        std::os::unix::fs::symlink(&outside, root.join("target"))
+            .map_err(|err| format!("symlink: {err}"))?;
+        let relative = Path::new("target/ripr/reports/evidence-health.json");
+        let refused = ensure_relative_output_contained_in(&root, relative);
+        let absolute_ok = ensure_relative_output_contained_in(&root, &outside.join("x.json"));
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
+        if refused.is_ok() {
+            return Err("a relative path under an escaping target link was allowed".to_string());
+        }
+        absolute_ok
     }
 }

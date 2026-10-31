@@ -38,6 +38,8 @@ fn run_record(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let (options, json) = parse_record_options(args)?;
+    // Feedback records land under `target/ripr/feedback`, never the cache, so
+    // an explicit `RIPR_CACHE_DIR` must not waive the link check (#11477).
     crate::atomic_file::ensure_report_output_contained(&options.root)?;
     let recorded = record_feedback(&options)?;
     if json {
@@ -62,6 +64,8 @@ fn run_export(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let (options, json, out) = parse_export_options(args)?;
+    // Feedback records land under `target/ripr/feedback`, never the cache, so
+    // an explicit `RIPR_CACHE_DIR` must not waive the link check (#11477).
     crate::atomic_file::ensure_report_output_contained(&options.root)?;
     let (rendered, _) = export_feedback_join(&options)?;
     if let Some(path) = out {

@@ -1,2 +1,0 @@
-<!-- section: Changed -->
-- Python: the re-export pass's star-export answers (`__all__` and top-level bindings) and the known-equality helper import checks now come from the workspace source-fact parse, and the fact store persists them. A warm run no longer parses those files a second time. Measured locally on 4 cores against main bd0df8ec, with byte-identical output: pandas ecdb4258 warm went from 2.4–2.5 s at 550 MiB to 2.0–2.3 s at 516 MiB, and Django 5c13b5a warm went from 2.1–2.3 s to 1.9 s (#10914).
