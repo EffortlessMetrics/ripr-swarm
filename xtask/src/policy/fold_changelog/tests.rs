@@ -38,6 +38,7 @@ fn opts(write: bool, limit: Option<usize>) -> FoldOptions {
         write,
         limit,
         keep_fragments: false,
+        release_cut: false,
     }
 }
 
@@ -134,6 +135,7 @@ fn already_folded_entry_is_refused_not_duplicated() -> Result<(), String> {
         write: true,
         limit: None,
         keep_fragments: true,
+        release_cut: false,
     };
     fold_in(&root, &keep)?;
     assert!(root.join("changelog.d/a-one.md").exists());
@@ -219,5 +221,47 @@ fn argument_parsing_is_strict() -> Result<(), String> {
     ] {
         assert!(parse_args(&bad).is_err(), "{bad:?}");
     }
+    Ok(())
+}
+
+#[test]
+fn release_cut_flag_parses_and_conflicts_with_batch_flags() -> Result<(), String> {
+    let cut = parse_args(&args(&["--write", "--release-cut"]))?;
+    assert!(cut.release_cut && cut.write && cut.limit.is_none());
+    let plan = parse_args(&args(&["--release-cut"]))?;
+    assert!(plan.release_cut && !plan.write);
+    for clash in [["--limit", "5"], ["--keep-fragments", ""]] {
+        let mut argv = vec!["--write", "--release-cut"];
+        argv.extend(clash.iter().filter(|a| !a.is_empty()));
+        let err = parse_args(&args(&argv)).err().ok_or("expected refusal")?;
+        assert!(
+            err.contains("--release-cut") && err.contains("conflicts"),
+            "{err}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn release_cut_fold_leaves_no_fragment_for_the_cut_check() -> Result<(), String> {
+    let root = root_with(&[
+        ("a-one.md", frag("Fixed", "- One (#1).\n")),
+        ("b-two.md", frag("Docs", "- Two (#2).\n")),
+    ])?;
+    let cut = FoldOptions {
+        write: true,
+        limit: None,
+        keep_fragments: false,
+        release_cut: true,
+    };
+    let report = fold_in(&root, &cut)?;
+    assert_eq!(report.folded.len(), 2);
+    assert_eq!(report.remaining, 0);
+    let left: Vec<_> = fs::read_dir(root.join("changelog.d"))
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(left, vec!["README.md".to_string()]);
     Ok(())
 }
