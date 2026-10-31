@@ -96,7 +96,7 @@ impl PublishedInputFacts {
 /// claiming the fact was available before the deadline.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct CapturedInputFacts {
-    /// The merged facts, first-writer-wins across producers.
+    /// The merged facts, with newly published values taking precedence.
     pub(crate) facts: PublishedInputFacts,
     /// Presence mask of which `facts` fields arrived at or after the deadline.
     pub(crate) post_deadline: PublishedInputFacts,

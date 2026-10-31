@@ -3830,8 +3830,18 @@ fn assert_check_json_refusal(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let value: serde_json::Value = serde_json::from_str(&stdout)
         .map_err(|err| format!("refusal stdout should parse as JSON: {err}\n{stdout}"))?;
+    let schema_version = if identity == "analysis_timeout" {
+        "0.3"
+    } else {
+        "0.2"
+    };
+    if identity == "analysis_timeout" && !value["input_context"].is_object() {
+        return Err(format!(
+            "context-bearing timeout requires input_context: {stdout}"
+        ));
+    }
     for (pointer, expected) in [
-        ("/schema_version", "0.2"),
+        ("/schema_version", schema_version),
         ("/tool", "ripr"),
         ("/analysis_scope/scope", "diff"),
         ("/analysis_scope/run_status", identity),

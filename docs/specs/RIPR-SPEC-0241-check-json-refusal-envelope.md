@@ -366,7 +366,8 @@ enters the document") are amended, not silently violated, for one identity:
   the honest continuation. `rereads` names what a retry re-reads (`base-ref`
   and `head-ref` for the committed `<base>...HEAD` range, `worktree-bytes`
   with the base/head merge-base re-resolution for a working-tree diff,
-  `diff-file-bytes`, or none for immutable Git candidate objects) and `note`
+  `diff-file-bytes`, `candidate-base-ref` for a mutable candidate base, or none
+  for immutable Git objects) and `note`
   states that a live-ref or worktree retry is not pinned to the timed-out
   run's snapshot. Auto-selected sources and formats keep their
   auto-selection instead of fabricating flags that would silently narrow or

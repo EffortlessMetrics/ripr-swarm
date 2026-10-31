@@ -158,10 +158,17 @@ fn rereads(self_: &TimeoutRefusalProjection) -> Vec<&'static str> {
             reads
         }
         InputSource::SuppliedDiff => vec!["diff-file-bytes"],
-        // Exact-tree object identities are immutable; a retry re-resolves
-        // the same objects rather than live bytes.
+        InputSource::GitCandidate if candidate_base_is_live(self_) => vec!["candidate-base-ref"],
         InputSource::GitCandidate => vec!["none (immutable git objects)"],
     }
+}
+
+fn candidate_base_is_live(self_: &TimeoutRefusalProjection) -> bool {
+    self_
+        .requested
+        .candidate_base
+        .as_deref()
+        .is_some_and(|base| crate::domain::GitObjectId::parse(base).is_err())
 }
 
 fn retry_note(self_: &TimeoutRefusalProjection) -> String {
@@ -174,6 +181,9 @@ fn retry_note(self_: &TimeoutRefusalProjection) -> String {
         }
         InputSource::SuppliedDiff => {
             "the retry re-reads the named diff file; edit the file in place to retry different input".to_string()
+        }
+        InputSource::GitCandidate if candidate_base_is_live(self_) => {
+            "the retry re-resolves the candidate base ref; it is not pinned to the timed-out run's snapshot".to_string()
         }
         InputSource::GitCandidate => {
             "the retry re-resolves the named immutable git objects; the input identity is unchanged".to_string()
@@ -231,20 +241,18 @@ impl TimeoutRefusalProjection {
                     ));
                 }
             }
-            InputSource::WorkingTree => {
-                if self.requested.worktree_explicit {
-                    argv.push("--worktree".to_string());
-                }
-                if let Some(base) = &self.base {
-                    argv.push(format!(
-                        "--base {}",
-                        crate::agent::loop_commands::shell_arg(base)
-                    ));
-                }
-            }
-            InputSource::Committed => {
-                if self.requested.committed_explicit {
-                    argv.push("--committed".to_string());
+            InputSource::WorkingTree | InputSource::Committed => {
+                let source_flag = match self.requested.source {
+                    InputSource::WorkingTree if self.requested.worktree_explicit => {
+                        Some("--worktree")
+                    }
+                    InputSource::Committed if self.requested.committed_explicit => {
+                        Some("--committed")
+                    }
+                    _ => None,
+                };
+                if let Some(flag) = source_flag {
+                    argv.push(flag.to_string());
                 }
                 if let Some(base) = &self.base {
                     argv.push(format!(
@@ -914,18 +922,13 @@ mod tests {
             None,
         );
         let command = projection.recovery_command();
-        assert!(
-            command.contains("--format sarif"),
-            "explicit non-JSON format must be preserved: {command}"
-        );
-        assert!(
-            !command.contains("--output-dir"),
-            "the retry must not reuse the occupied output destination: {command}"
-        );
-        assert!(
-            !command.contains("--json"),
-            "--json must not appear when the user chose --format sarif: {command}"
-        );
+        for (flag, expected) in [
+            ("--format sarif", true),
+            ("--output-dir", false),
+            ("--json", false),
+        ] {
+            assert_eq!(command.contains(flag), expected, "{flag}: {command}");
+        }
         let note = retry_note(&projection);
         assert!(
             note.contains("occupies out dir"),
@@ -1200,6 +1203,32 @@ mod tests {
                 projection.input_context_value()["recovery"]["rereads"],
                 expected
             );
+        }
+        for (base, live) in [
+            (None, false),
+            (Some("0123456789abcdef0123456789abcdef01234567"), false),
+            (Some("HEAD"), true),
+            (Some("HEAD~1"), true),
+            (Some("0123456"), true),
+        ] {
+            let mut request = requested(InputSource::GitCandidate);
+            request.candidate_base = base.map(str::to_string);
+            let projection = bare(
+                &input("repo", None, None),
+                request,
+                Duration::from_mins(1),
+                false,
+            );
+            let value = projection.input_context_value();
+            let reads = &value["recovery"]["rereads"];
+            let expected = if live {
+                "candidate-base-ref"
+            } else {
+                "none (immutable git objects)"
+            };
+            assert_eq!(reads, &json!([expected]), "{base:?}: {value}");
+            let note = value["recovery"]["note"].as_str().unwrap_or_default();
+            assert_eq!(note.contains("not pinned"), live, "{base:?}: {value}");
         }
     }
 }

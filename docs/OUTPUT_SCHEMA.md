@@ -1090,51 +1090,23 @@ The scope-guard identities (`diff_scope_oversized`, `repo_scope_oversized`)
 keep their existing documents byte for byte; they are not members of this
 vocabulary.
 
-An `analysis_timeout` refusal of `ripr check` renders at refusal generation
-`"0.3"` and adds one required key, `input_context` (RIPR-SPEC-0241 amendment
-#10796); every other identity keeps generation `"0.2"` and the exact key set
-above, and a timeout refusal with no stashed projection (a library caller that
-never registered the capture) also keeps `"0.2"`. `input_context` has three
-fixed keys: `requested` echoes the invocation-established root, input source
-(`committed`, `working-tree`, `supplied-diff`, `git-candidate`), base, diff
-file, `--path`/`--exclude` scope, and the analysis effort mode under
-`analysis_mode` (never confused with the input source); `resolved` carries the
-base/commit/merge-base revisions and the scoped intake file counts, each as
-`{available, value}` or `{available: false, reason}`, where the reason is
-`not_published_before_deadline` (the producer had not completed; a progress
-heartbeat never establishes discovery), `not_computed_for_source` (the fact
-does not exist for that input source, e.g. a merge base on a committed
-diff), or `published_after_deadline` (a producer finishing inside the
-cancel grace published after the budget owner's deadline stamp, so the fact
-is not available context; a fact's unavailability reason is owned by its own
-producing stage, so an interrupted intake keeps
-`not_published_before_deadline` even when the diff load completed).
-`recovery` carries at most one bounded action. For a replayable input it is
-`retry_with_larger_budget`: a shell-safe literal command preserving the
-meaningful root/source/base/scope/output choices and the effective analysis
-settings that change the finding set (the effective `--mode`, including draft,
-`--no-unchanged-tests` when unchanged tests were excluded, and the
-explicit `--perl-facts`/`--suppression-policy` paths) so the retry
-reproduces the requested analysis; the command carries the raw root path
-(the check-JSON `root` echo is the `display_path` spelling and escapes `%`),
-an explicit `--format VALUE` spelling when one was given, and a finite
-doubled `--timeout`. An explicit `--output-dir` destination is never
-repeated: the refused output set occupies that directory and custody rejects
-an existing destination, so the note names the occupied destination and the
-caller names a new one. `ripr check` has no `--config`/`--lang` switch, so
-the discovered config and `ripr.toml` language set ride the preserved
-`--root`; `--git-timeout` is not repeated because it changes no finding and
-the retry re-resolves under the ambient default or inherited
-`RIPR_GIT_TIMEOUT`. For a stdin diff (`--diff -`) no literal command is
-offered: the consumed bytes cannot be replayed, so `recovery.kind` is
-`save_stdin_diff_to_named_file` with `command: null` and the note names the
-honest continuation. `rereads` names what a retry re-reads (the `base-ref`
-and `head-ref` of the committed `<base>...HEAD` range, worktree bytes with
-the base/head merge-base re-resolution, the diff file, or nothing for
-immutable Git candidate objects) and the note states that such a retry is
-not pinned to the timed-out run's snapshot. Input metadata never implies an
-exposure, clean, or repair-ready verdict: exit stays `2`, findings stay
-empty, the summary stays zeroed, and `downstream_consumable` stays `false`.
+A `ripr check` analysis-timeout refusal with captured context uses schema
+`0.3` and requires `input_context`; other refusals and timeouts without a
+projection retain the `0.2` key set. `requested` echoes root, source, base,
+diff, scope and analysis mode. `resolved` marks each revision and scoped count
+available or explains why it is unavailable: `not_published_before_deadline`,
+`not_computed_for_source`, or `published_after_deadline`. Each reason belongs
+to its producing stage, so a completed loader cannot stand in for the intake.
+
+`recovery` provides one bounded retry with the effective mode and other
+finding-affecting settings, raw root, source, scope and output choices. It
+uses a doubled timeout and names the refs, worktree bytes, or diff file it
+re-reads. A mutable candidate-base treeish is re-resolved and is not pinned;
+full object IDs and the empty base have no live base ref. An occupied output
+directory is not reused. A consumed stdin diff has no literal command: its
+kind is `save_stdin_diff_to_named_file` and `command` is null. The complete
+contract, including unchanged refusal semantics, is in
+[RIPR-SPEC-0241](specs/RIPR-SPEC-0241-check-json-refusal-envelope.md).
 
 The same envelope covers the other `--json` commands (#7331): `ripr diff
 --json`, `ripr rerun --json`, `ripr context` (which emits JSON only), `ripr

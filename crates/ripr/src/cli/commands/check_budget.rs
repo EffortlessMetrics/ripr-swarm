@@ -378,6 +378,15 @@ mod tests {
         Ok(slot)
     }
 
+    fn loaded_facts(base: Option<&str>, merge_base: Option<&str>) -> crate::analysis::LoadedDiff {
+        crate::analysis::LoadedDiff {
+            text: String::new(),
+            effective_base: base.map(str::to_string),
+            resolved_base_commit: Some("06e6aea".to_string()),
+            merge_base_origin: merge_base.map(str::to_string),
+        }
+    }
+
     #[test]
     fn budget_timeout_before_discovery_retains_no_input_facts() -> Result<(), String> {
         // #10796 decisive control, early timeout: the worker is stuck before
@@ -399,12 +408,7 @@ mod tests {
         let slot = timed_capture(Duration::from_millis(500), || {
             crate::analysis::publish_loaded_input_facts(
                 crate::analysis::InputSource::WorkingTree,
-                &crate::analysis::LoadedDiff {
-                    text: String::new(),
-                    effective_base: Some("origin/main".to_string()),
-                    resolved_base_commit: Some("06e6aea".to_string()),
-                    merge_base_origin: Some("4d3c2b1".to_string()),
-                },
+                &loaded_facts(Some("origin/main"), Some("4d3c2b1")),
             );
             crate::analysis::publish_scoped_intake_facts(6, 2);
         })?;
@@ -442,12 +446,7 @@ mod tests {
         let slot = timed_capture(Duration::from_millis(500), || {
             crate::analysis::publish_loaded_input_facts(
                 crate::analysis::InputSource::WorkingTree,
-                &crate::analysis::LoadedDiff {
-                    text: String::new(),
-                    effective_base: Some("origin/main".to_string()),
-                    resolved_base_commit: Some("06e6aea".to_string()),
-                    merge_base_origin: None,
-                },
+                &loaded_facts(Some("origin/main"), None),
             );
             // The intake never runs: the budget fires inside it.
         })?;
@@ -481,16 +480,7 @@ mod tests {
                 std::sync::Arc::new(std::sync::Mutex::new(None));
             // Mirror the real loader: a supplied diff leaves the base unset
             // because its producer never computes one.
-            let loaded = crate::analysis::LoadedDiff {
-                text: String::new(),
-                effective_base: if expect_base {
-                    Some("origin/main".to_string())
-                } else {
-                    None
-                },
-                resolved_base_commit: Some("06e6aea".to_string()),
-                merge_base_origin: None,
-            };
+            let loaded = loaded_facts(expect_base.then_some("origin/main"), None);
             crate::analysis::with_input_facts_capture(std::sync::Arc::clone(&slot), None, || {
                 crate::analysis::publish_loaded_input_facts(source, &loaded);
             });
@@ -498,14 +488,10 @@ mod tests {
                 .ok_or("loaded facts must publish for every source mode")?;
             let facts = &captured.facts;
             assert_eq!(facts.source, Some(source));
-            if expect_base {
-                assert_eq!(facts.effective_base.as_deref(), Some("origin/main"));
-            } else {
-                assert!(
-                    facts.effective_base.is_none(),
-                    "a supplied diff never computes a base"
-                );
-            }
+            assert_eq!(
+                facts.effective_base.as_deref(),
+                expect_base.then_some("origin/main")
+            );
         }
         Ok(())
     }
