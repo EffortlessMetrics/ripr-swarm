@@ -92,49 +92,49 @@ fn index_answers_equal_the_per_identifier_scan_for_every_name() -> Result<(), St
     Ok(())
 }
 
-/// Single-name shape templates; `N` is the candidate name.
+/// Single-name shape templates; `@@` is the candidate name.
 const SHAPES: &[&str] = &[
-    "const N = 1;\nuse(N);",
-    "{\n  const N = 1;\n  use(N);\n}\nN(2);",
-    "{\n  use(N);\n  let N = 1;\n}\nN;",
-    "use(N);\nfunction N() {}",
-    "const a = 1, N = 2;\nN;",
-    "const { N } = h;\nN;",
-    "const [N] = h;\nN;",
-    "let x = 1, { N } = h;\nN;",
-    "try { r(); } catch (N) { N; }",
-    "try { r(); } catch ({ N }) {}\nN;",
-    "const f = (N) => N;\nN;",
-    "const f = (a, N = 1) => a;\nN;",
-    "const f = (a = N) => a;\nN;",
-    "const f = (a): typeof N => a;\nN;",
-    "const f = N => 1;\nN;",
-    "const f = x: typeof N => 1;\nN;",
-    "const f = o.N => 1;",
-    "function g(a, N) {}\nN;",
-    "const g = function (N) {};\nN;",
-    "const g = function* h(a, ...N) {};",
-    "for (const N of xs) {}\nN;",
-    "for (let i = 0, N = 1; i < N; i++) {}",
-    "for (let i = 0; i < N(2); i++) {}",
-    "for (N in xs) {}",
-    "for (const N in xs) { N; }",
-    "for await (const N of xs) {}",
-    "// const N = 1;\nN;",
-    "const s = 'const N = 1';\nN;",
-    "const t = `${N} const N2 = 1`;",
-    "const t = `${ (() => { const N = 1; return N; })() }`;\nN;",
-    "const o = { N: 1 };\nx.N;",
-    "const N = 1;\nconst o = { a: 1, N: 2 };",
-    "const N = 1;\nx.N;",
-    "const N = 1;\nx?.N;",
-    "const N = 1;",
-    "const N = 1;\n{ const o = { N: 3 }; }",
-    "const o = { a: 1, N: 2 };\nN;",
-    "/* a\n b */ const N = 1;\nN;",
-    "const 'N\nconst N = 2;\nN;",
-    "call((N) => 1);\ncall(N)(x => x);",
-    "if (a) {\n  for (const N of xs) { N; }\n}\nN;",
+    "const @@ = 1;\nuse(@@);",
+    "{\n  const @@ = 1;\n  use(@@);\n}\n@@(2);",
+    "{\n  use(@@);\n  let @@ = 1;\n}\n@@;",
+    "use(@@);\nfunction @@() {}",
+    "const a = 1, @@ = 2;\n@@;",
+    "const { @@ } = h;\n@@;",
+    "const [@@] = h;\n@@;",
+    "let x = 1, { @@ } = h;\n@@;",
+    "try { r(); } catch (@@) { @@; }",
+    "try { r(); } catch ({ @@ }) {}\n@@;",
+    "const f = (@@) => @@;\n@@;",
+    "const f = (a, @@ = 1) => a;\n@@;",
+    "const f = (a = @@) => a;\n@@;",
+    "const f = (a): typeof @@ => a;\n@@;",
+    "const f = @@ => 1;\n@@;",
+    "const f = x: typeof @@ => 1;\n@@;",
+    "const f = o.@@ => 1;",
+    "function g(a, @@) {}\n@@;",
+    "const g = function (@@) {};\n@@;",
+    "const g = function* h(a, ...@@) {};",
+    "for (const @@ of xs) {}\n@@;",
+    "for (let i = 0, @@ = 1; i < @@; i++) {}",
+    "for (let i = 0; i < @@(2); i++) {}",
+    "for (@@ in xs) {}",
+    "for (const @@ in xs) { @@; }",
+    "for await (const @@ of xs) {}",
+    "// const @@ = 1;\n@@;",
+    "const s = 'const @@ = 1';\n@@;",
+    "const t = `${@@} const @@2 = 1`;",
+    "const t = `${ (() => { const @@ = 1; return @@; })() }`;\n@@;",
+    "const o = { @@: 1 };\nx.@@;",
+    "const @@ = 1;\nconst o = { a: 1, @@: 2 };",
+    "const @@ = 1;\nx.@@;",
+    "const @@ = 1;\nx?.@@;",
+    "const @@ = 1;",
+    "const @@ = 1;\n{ const o = { @@: 3 }; }",
+    "const o = { a: 1, @@: 2 };\n@@;",
+    "/* a\n b */ const @@ = 1;\n@@;",
+    "const '@@\nconst @@ = 2;\n@@;",
+    "call((@@) => 1);\ncall(@@)(x => x);",
+    "if (a) {\n  for (const @@ of xs) { @@; }\n}\n@@;",
 ];
 
 #[test]
@@ -143,7 +143,13 @@ fn generated_shapes_match_the_scan_for_every_name_and_nesting() -> Result<(), St
     let mut total = 0usize;
     for template in SHAPES {
         for name in ["N", "cost", "café", "$v", "_u1"] {
-            let shape = template.replace('N', name);
+            if !template.contains("@@") {
+                return Err(format!("template without placeholder: {template:?}"));
+            }
+            let shape = template.replace("@@", name);
+            if !names_for(&shape).contains(name) {
+                return Err(format!("{name:?} is not a token of {shape:?}"));
+            }
             for body in [
                 format!("it('t', () => {{\n{shape}\n}});"),
                 format!("it('t', () => {{\n  if (c) {{\n{shape}\n  }}\n  {name}(1);\n}});"),
@@ -309,6 +315,119 @@ fn public_answers_match_the_scan_inside_and_outside_a_run() -> Result<(), String
                 ));
             }
         }
+    }
+    Ok(())
+}
+
+/// Parameter, catch and loop-header shapes the legacy binding scans model,
+/// each checked for every name token against the untouched scan.
+const BINDING_SHAPES: &[&str] = &[
+    "const f = (x: number) => x;\nx;",
+    "const f = (x: number, y: string = 'a') => x;\ny;",
+    "const f = (x = 1) => x;\nx;",
+    "const f = (x = f(1,2)) => x;\nx; f;",
+    "const f = (x = g(h(1), [2, 3]), y) => y;\nx;",
+    "const f = ({ x }) => x;\nx;",
+    "const f = ({ a: x, b = 2 }) => x;\nx; a; b;",
+    "const f = ([x]) => x;\nx;",
+    "const f = ([a, ...x]) => x;\nx;",
+    "const f = (...x) => x;\nx;",
+    "const f = (...x: number[]) => x;\nx;",
+    "const f = async (x) => x;\nx;",
+    "const f = async x => x;\nx;",
+    "const f = async (x: T, y = 2) => y;\nx;",
+    "const f = <T,>(x: T) => x;\nx; T;",
+    "const f = <T extends object>(x: T, y?: T) => y;\nx;",
+    "function g(x: number, y = 2, { z }, [w], ...rest: any[]) { return x; }\nx; z; w; rest; y;",
+    "function g(\n  x: number,\n  y = 2,\n) {\n  return y;\n}\nx; y;",
+    "function* g(x = 1) {}\nx;",
+    "async function g(x) {}\nx;",
+    "const g = function (x: number = 1) {};\nx;",
+    "try { r(); } catch (e: unknown) { e; }\ne;",
+    "try { r(); } catch ({ message }) { message; }\nmessage;",
+    "try { r(); } catch ({ message: m, ...others }) { m; }\nm; others;",
+    "try { r(); }\ncatch (\n  e\n) { e; }\ne;",
+    "for (const [k, v] of m) { k; }\nk; v;",
+    "for (const { a, b: c } of m) { c; }\na; c;",
+    "for await (const x of y) { x; }\nx; y;",
+    "for (let i = 0, j = 1; i < j; i++) { i; }\ni; j;",
+    "for (\n  let i = 0;\n  i < n;\n  i++\n) { i; }\ni; n;",
+    "for (const x of ys) {}\nfor (const y in xs) {}\nx; y;",
+    "const f = (\n  x,\n  y = 2,\n) =>\n  x;\ny;",
+    "call((x) => x, (y) => y);\nx; y;",
+    "const f = (a) => (x) => a + x;\nx; a;",
+];
+
+#[test]
+fn parameter_catch_and_loop_header_shapes_match_the_scan_for_every_token() -> Result<(), String> {
+    let mut shadowed = 0usize;
+    let mut total = 0usize;
+    for shape in BINDING_SHAPES {
+        for body in [
+            format!("it('t', () => {{\n{shape}\n}});"),
+            format!("it('t', () => {{\n  if (c) {{\n{shape}\n  }}\n}});"),
+            (*shape).to_string(),
+        ] {
+            let index = BodyShadowIndex::build(&body);
+            for candidate in names_for(&body) {
+                let Some(actual) = index.shadows(&body, &candidate) else {
+                    continue;
+                };
+                let expected = local_identifier_declared_in_test_body_scanned(&body, &candidate);
+                if actual != expected {
+                    return Err(format!(
+                        "{candidate:?} in {body:?}: scan {expected}, index {actual}"
+                    ));
+                }
+                total += 1;
+                shadowed += usize::from(actual);
+            }
+        }
+    }
+    if shadowed < 60 || total - shadowed < 60 {
+        return Err(format!(
+            "thin binding corpus: {total} checked, {shadowed} shadowed"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn each_binding_shape_binds_its_parameter_through_the_index() -> Result<(), String> {
+    // Pins that most shapes really bind the name (so the differential is not
+    // vacuously all-false).
+    let cases: &[(&str, &str)] = &[
+        ("const f = (x: number) => 1;", "x"),
+        ("const f = (x = 1) => 1;", "x"),
+        ("const f = ({ x }) => 1;", "x"),
+        ("const f = ([x]) => 1;", "x"),
+        ("const f = (...x) => 1;", "x"),
+        ("const f = <T,>(x: T) => 1;", "x"),
+        ("const f = (x = f(1,2)) => 1;", "x"),
+        ("function g(x: number, y = 2) {}", "y"),
+        ("try { r(); } catch (e: unknown) {}", "e"),
+        ("try { r(); } catch ({ message }) {}", "message"),
+        ("for (const [k, v] of m) {}", "v"),
+        ("for await (const x of y) {}", "x"),
+        ("for (let i = 0, j = 1; i < j; i++) {}", "j"),
+        ("const f = (\n  x,\n  y = 2,\n) => 1;", "y"),
+    ];
+    let mut binding = 0usize;
+    for (body, name) in cases {
+        let index = BodyShadowIndex::build(body);
+        let scanned = local_identifier_declared_in_test_body_scanned(body, name);
+        let actual = index.shadows(body, name);
+        // Legacy is the oracle: some shapes (a nested-paren default with no
+        // later use) are not binding there, and the index must agree.
+        if actual != Some(scanned) {
+            return Err(format!(
+                "{name:?} in {body:?}: scan {scanned}, index {actual:?}"
+            ));
+        }
+        binding += usize::from(scanned);
+    }
+    if binding < 10 {
+        return Err(format!("only {binding} of {} shapes bind", cases.len()));
     }
     Ok(())
 }
