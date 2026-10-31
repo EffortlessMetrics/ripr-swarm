@@ -8340,6 +8340,36 @@ language = "rust"
     }
 
     #[test]
+    fn generated_workflow_label_events_neither_cancel_pushes_nor_run_in_advisory_mode()
+    -> Result<(), String> {
+        let workflow = generated_github_actions_workflow();
+        // A label gets its own concurrency group, so it cannot cancel a push run (#11753).
+        assert!(workflow.contains(
+            "-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.action || 'run' }}\n  cancel-in-progress: true"
+        ));
+        // The job skips label events unless a waiver-reading gate mode is set.
+        let condition = workflow
+            .lines()
+            .find(|line| {
+                line.trim_start()
+                    .starts_with("if: ${{ (github.event.action != 'labeled'")
+            })
+            .ok_or("missing label-event job condition")?;
+        assert!(
+            condition.contains("github.event.action != 'unlabeled'"),
+            "{condition}"
+        );
+        assert!(
+            condition
+                .contains("vars.RIPR_GATE_MODE != '' && vars.RIPR_GATE_MODE != 'visible-only'"),
+            "{condition}"
+        );
+        // Push, open and reopen runs stay unconditional: the `on:` types are unchanged.
+        assert!(workflow.contains("types: [opened, synchronize, reopened, labeled, unlabeled]"));
+        Ok(())
+    }
+
+    #[test]
     fn init_generated_github_workflow_uploads_reports_and_makes_sarif_optional()
     -> Result<(), String> {
         let workflow = generated_github_actions_workflow();
@@ -8534,8 +8564,8 @@ language = "rust"
         // The DX bar from #5409: a workflow an adopter can read in one sitting.
         let line_count = workflow.lines().count();
         assert!(
-            line_count <= 181,
-            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, #4452 added step env bindings, and #11145 added the failed-SARIF-upload explanation"
+            line_count <= 182,
+            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, #4452 added step env bindings, #11145 added the failed-SARIF-upload explanation, and #11753 added the label-event job condition"
         );
 
         assert!(workflow.contains("RIPR_UPLOAD_SARIF: \"true\""));
