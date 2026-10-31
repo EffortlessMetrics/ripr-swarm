@@ -1581,6 +1581,44 @@ fn edit_leaves_imported_symbols_untouched(old: &str, new: &str, imports: &[Pytho
     let new_after = &new_tokens[new_tokens.len() - suffix..];
     !span_touches_import(old_span, old_before, old_after)
         && !span_touches_import(new_span, new_before, new_after)
+        && !edit_inside_imported_call(&old_tokens, prefix, imports)
+        && !edit_inside_imported_call(&new_tokens, prefix, imports)
+}
+
+/// Whether the token at `at` sits inside the parentheses of a call whose callee
+/// chain is rooted at an import alias (`os.environ.get("K", "/var")`). Such a
+/// literal is an argument the imported callee consumes (a default, a bound, a
+/// mode); without the import graph the test cannot be shown to observe it, so
+/// the limit stays (fail-closed). Edits outside imported-call parentheses
+/// (the operator or operand around the call) do not reach the callee.
+fn edit_inside_imported_call(tokens: &[String], at: usize, imports: &[PythonImport]) -> bool {
+    let mut stack: Vec<bool> = Vec::new();
+    for (index, token) in tokens.iter().take(at).enumerate() {
+        match token.as_str() {
+            "(" => {
+                // Walk back over `name(.name)*` to the callee chain root.
+                let mut root = index.checked_sub(1);
+                while let Some(at) = root {
+                    if at >= 2 && tokens[at - 1] == "." {
+                        root = Some(at - 2);
+                    } else {
+                        break;
+                    }
+                }
+                let is_import = root.and_then(|at| tokens.get(at)).is_some_and(|name| {
+                    imports
+                        .iter()
+                        .any(|import| import.alias.split('.').next() == Some(name.as_str()))
+                });
+                stack.push(is_import);
+            }
+            ")" => {
+                stack.pop();
+            }
+            _ => {}
+        }
+    }
+    stack.into_iter().any(|is_import| is_import)
 }
 
 /// Whether `token` is a string literal, with or without a `r`/`b`/`f`/`u`
@@ -2427,24 +2465,68 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn literal_argument_edit_on_imported_call_is_not_import_limited() {
-        let old = "    return itertools.islice(seq, 0, None, n)";
-        let new = "    return itertools.islice(seq, 1, None, n)";
+    fn operator_or_operand_edit_around_imported_call_is_not_import_limited() {
+        let old = "    return itertools.islice(seq, 0) + n";
+        let new = "    return itertools.islice(seq, 0) - n";
         assert_eq!(
             import_limit(None, new),
             Some(StaticLimitKind::MissingImportGraph)
         );
         assert_eq!(import_limit(Some(old), new), None);
+        let old = "    return n + 1 + itertools.count()";
+        let new = "    return n + itertools.count()";
+        assert_eq!(import_limit(Some(old), new), None);
     }
 
+    /// Regression: `os.environ.get("HOME_DIR", "/tmp")` to `"/var"` changes a
+    /// default the imported callee consumes; the bypass once let it fall
+    /// through to an oracle credit although the test never reaches the default
+    /// (`py-idioms-monkeypatch-env-default`, truth not_discriminated).
     #[test]
-    fn operand_edit_around_imported_call_is_not_import_limited() {
-        let old = "    return itertools.islice(seq, max(0, size - n), None)";
-        let new = "    return itertools.islice(seq, size - n, None)";
-        assert_eq!(import_limit(Some(old), new), None);
-        let old = "    return itertools.islice(seq, n + 1)";
-        let new = "    return itertools.islice(seq, n)";
-        assert_eq!(import_limit(Some(old), new), None);
+    fn literal_argument_edit_inside_imported_call_stays_import_limited() {
+        let limited = Some(StaticLimitKind::MissingImportGraph);
+        let owner = owner_with(
+            &[],
+            vec![PythonImport {
+                imported: "os".to_string(),
+                alias: "os".to_string(),
+                source_module: String::new(),
+            }],
+        );
+        let old = "    return os.environ.get(\"HOME_DIR\", \"/tmp\")";
+        let new = "    return os.environ.get(\"HOME_DIR\", \"/var\")";
+        let focus = PythonAssertionFocus::for_change(
+            super::super::probe_shape::classify_probe_shape(new).0,
+            new,
+            Some(old),
+        );
+        assert_eq!(
+            static_limit_for_focused_change(new, Some(old), None, &focus, &owner, "", &[])
+                .map(|limit| limit.kind),
+            limited
+        );
+        assert_eq!(
+            import_limit(
+                Some("    return itertools.islice(seq, 0, None, n)"),
+                "    return itertools.islice(seq, 1, None, n)"
+            ),
+            limited
+        );
+        assert_eq!(
+            import_limit(
+                Some("    return itertools.islice(seq, n + 1)"),
+                "    return itertools.islice(seq, n)"
+            ),
+            limited
+        );
+        // Nested non-imported call inside an imported call is still inside it.
+        assert_eq!(
+            import_limit(
+                Some("    return itertools.islice(seq, max(0, size - n), None)"),
+                "    return itertools.islice(seq, size - n, None)"
+            ),
+            limited
+        );
     }
 
     #[test]
@@ -2473,7 +2555,7 @@ pub(super) mod tests {
                 Some("    return itertools.zip_longest(a, b, fillvalue=0)"),
                 "    return itertools.zip_longest(a, b, fillvalue=1)"
             ),
-            None
+            limited
         );
         assert_eq!(
             import_limit(
@@ -2573,12 +2655,12 @@ pub(super) mod tests {
                 Some("    return itertools.islice(a, a)"),
                 "    return itertools.islice(a)"
             ),
-            None
+            limited
         );
     }
 
     #[test]
-    fn unpacked_dict_key_edit_keeps_the_limit_but_string_argument_edit_does_not() {
+    fn unpacked_dict_key_and_string_argument_edits_keep_the_limit() {
         let limited = Some(StaticLimitKind::MissingImportGraph);
         assert_eq!(
             import_limit(
@@ -2592,7 +2674,7 @@ pub(super) mod tests {
                 Some("    return itertools.islice(\"abc\", 0)"),
                 "    return itertools.islice(\"abd\", 0)"
             ),
-            None
+            limited
         );
     }
 
@@ -2630,12 +2712,13 @@ pub(super) mod tests {
             edit_tokens("f(\"\"\"a \"b\" c\"\"\", 0)"),
             vec!["f", "(", "\"\"\"a \"b\" c\"\"\"", ",", "0", ")"]
         );
+        let limited = Some(StaticLimitKind::MissingImportGraph);
         assert_eq!(
             import_limit(
                 Some("    return itertools.islice(\"\"\"a \"b\" c\"\"\", 0)"),
                 "    return itertools.islice(\"\"\"a \"b\" d\"\"\", 0)"
             ),
-            None
+            limited
         );
     }
 }

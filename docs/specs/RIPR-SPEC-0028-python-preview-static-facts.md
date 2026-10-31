@@ -906,7 +906,11 @@ values defined in RIPR-SPEC-0026:
   adapter cannot resolve syntactically, or the changed line uses dynamic import
   syntax such as `importlib.import_module(...)` / `__import__(...)`; a changed
   line that calls an imported symbol keeps the limit unless the old/new token
-  diff shows only literals, operators or local names changed: an edit that names
+  diff shows only literals, operators or local names changed outside the
+  parentheses of any call rooted at an import alias (a literal inside
+  `os.environ.get("K", "/var")` is an argument the unresolved callee consumes,
+  such as a default the test may never reach, so the limit stays; fail-closed,
+  `py-idioms-monkeypatch-env-default`): an edit that names
   an import alias, an attribute after `.`, an identifier followed by `=` (a
   keyword argument name, kept conservatively even for a plain assignment
   target), an f-string, a literal dict key that could name a keyword
