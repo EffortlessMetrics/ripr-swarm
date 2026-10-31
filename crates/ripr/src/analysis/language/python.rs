@@ -1910,6 +1910,8 @@ mod test_body_writer_tests;
 #[cfg(test)]
 mod test_local_literal_tests;
 #[cfg(test)]
+mod test_module_constant_tests;
+#[cfg(test)]
 mod trailing_comment_tests;
 
 #[cfg(test)]
