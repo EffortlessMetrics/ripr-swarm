@@ -227,6 +227,22 @@ note = "very large TypeScript application (5,328 files); commit edits agentHostC
 heavy = true
 ceilings = { "speed.warm_check_ms" = 90000, "speed.warm_check_peak_rss_mb" = 1024 }
 
+# The TypeScript compiler's own repository: the workspace walk stops at the
+# 20,000-entry cap, so the row pins the refusal rather than a verdict (#11794).
+# The pinned diff's findings are `static_unknown` with the named
+# `typescript_workspace_discovery_truncated` limit; before #11794 the same diff
+# reported zero findings because the changed file was never discovered. Measured
+# on 4 cores: 16.1 s cold, 2.6 s warm, 62 MiB. The ceilings are a regression
+# gate above those numbers, not a claim that the 2 s bar is met.
+[[corpus]]
+id = "typescript-compiler"
+url = "https://github.com/microsoft/TypeScript"
+sha = "ad04bf7488384a5dcdf7d250ccb8e5263021a8ff"
+language = "typescript"
+note = "TypeScript compiler repository (over the 20,000-entry workspace-walk cap); commit fixes declaration emit for nested binding patterns in src/compiler and adds baseline files"
+heavy = true
+ceilings = { "speed.warm_check_ms" = 5000, "speed.warm_check_peak_rss_mb" = 256 }
+
 [[corpus]]
 id = "hono-typescript"
 url = "https://github.com/honojs/hono"

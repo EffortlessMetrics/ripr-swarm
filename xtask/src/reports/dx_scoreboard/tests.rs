@@ -4995,6 +4995,11 @@ fn corpus_pins_the_typescript_commit() -> Result<(), String> {
             true,
         ),
         (
+            "typescript-compiler",
+            "ad04bf7488384a5dcdf7d250ccb8e5263021a8ff",
+            true,
+        ),
+        (
             "hono-typescript",
             "d54720da80134a180f5fe2dd98a7676cfc8f08b4",
             false,
@@ -5002,7 +5007,7 @@ fn corpus_pins_the_typescript_commit() -> Result<(), String> {
     ];
     if typescript != expected {
         return Err(format!(
-            "expected only the verified defu, ky, h3, execa, destr, zod, valibot, remeda, vscode and hono TypeScript rows, got {typescript:?}"
+            "expected only the verified defu, ky, h3, execa, destr, zod, valibot, remeda, vscode, typescript-compiler and hono TypeScript rows, got {typescript:?}"
         ));
     }
     Ok(())
