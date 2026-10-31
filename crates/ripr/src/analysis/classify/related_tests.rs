@@ -1477,11 +1477,32 @@ fn find_related_tests_with_candidates<'a>(
         // method call elsewhere in the test must not hide a real formatting
         // reach. The in-package check is explicit because a name-only owner
         // call can pass the package guard below.
+        // One in-package rule for both entry routes (#8999).
+        let test_in_owner_package = match &owner_package_prefix {
+            Some(prefix) => normalize_path(&test.file).starts_with(prefix),
+            // A root-package owner has no prefix. Only a test that is
+            // itself outside every member package (`tests/..`, `src/..`
+            // of the root) shares its package; a workspace member's
+            // test, and any path that cannot be scoped, fails closed.
+            None => {
+                // `package_prefix` reads a later `/tests/` or `/src/` segment
+                // as a package marker, so a root test at `src/tests/mod.rs`
+                // would look like package `src/`. Root-relative target
+                // directories are the root package by construction.
+                let root_target_path = {
+                    let normalized = normalize_path(&test.file);
+                    ["src/", "tests/", "benches/", "examples/"]
+                        .iter()
+                        .any(|dir| normalized.starts_with(dir))
+                };
+                (root_target_path || package_prefix(&test.file).is_none())
+                    && !path_is_absolute_form(&test.file)
+                    && owner_fn.is_some_and(|owner| !path_is_absolute_form(&owner.file))
+            }
+        };
         let dispatches_to_helper_fmt_entry = !calls_helper_entry
             && !property_only_owner_call
-            && owner_package_prefix
-                .as_ref()
-                .is_none_or(|prefix| normalize_path(&test.file).starts_with(prefix))
+            && test_in_owner_package
             && fmt_entry_hops.iter().any(|entry| {
                 Option::as_ref(&entry.context).is_some_and(|context| {
                     fmt_dispatch::test_dispatches_to_fmt(
@@ -1501,18 +1522,6 @@ fn find_related_tests_with_candidates<'a>(
                     index,
                 )
             });
-        let method_entry_in_owner_package = match &owner_package_prefix {
-            Some(prefix) => normalize_path(&test.file).starts_with(prefix),
-            // A root-package owner has no prefix. Only a test that is
-            // itself outside every member package (`tests/..`, `src/..`
-            // of the root) shares its package; a workspace member's
-            // test, and any path that cannot be scoped, fails closed.
-            None => {
-                package_prefix(&test.file).is_none()
-                    && !path_is_absolute_form(&test.file)
-                    && owner_fn.is_some_and(|owner| !path_is_absolute_form(&owner.file))
-            }
-        };
         // #8999: a plain inherent method entry is judged separately too, on
         // the same in-package terms. The receiver must be bound to the impl's
         // self type by the established receiver rules, and the test must not
@@ -1520,7 +1529,7 @@ fn find_related_tests_with_candidates<'a>(
         let calls_helper_method_entry = !calls_helper_entry
             && !dispatches_to_helper_fmt_entry
             && !property_only_owner_call
-            && method_entry_in_owner_package
+            && test_in_owner_package
             && method_entry_hops.iter().any(|entry| {
                 method_entry_uses_plain_receiver(test, &entry.caller.name, &entry.self_type, index)
                     && entry.identity.binds_inherent_entry_type(test, index)
@@ -1550,7 +1559,7 @@ fn find_related_tests_with_candidates<'a>(
         // mutation test pins on its own (the later cross-package `continue`
         // and the receiver-type check refuse the same test).
         let calls_method_entry = !calls_helper_entry
-            && method_entry_in_owner_package
+            && test_in_owner_package
             && helper_chain.is_some_and(|chain| {
                 super::helper_transfer::test_calls_method_entry(index, test, chain)
             });

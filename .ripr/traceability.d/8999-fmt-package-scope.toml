@@ -1,0 +1,5 @@
+[[extend]]
+id = "RIPR-SPEC-0297"
+tests = [
+  "crates/ripr/tests/fmt_helper_entry_package_scope.rs",
+]
