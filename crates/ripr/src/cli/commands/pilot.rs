@@ -114,7 +114,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     let config = load_for_root(&options.root)?;
     // Refuse an invalid RIPR_PILOT_SEAM_BUDGET (#4529) before the analysis
     // it would bound, not after it.
-    analysis::pilot_seam_budget()?;
+    // The same guard bounds the built-in inventory cap by that budget (#10726).
+    let _pilot_inventory_default = analysis::PilotInventoryDefault::enter()?;
     // RIPR_GIT_TIMEOUT bounds pilot's current-change git calls as it bounds
     // check's (#2613): seconds, `0` disables the deadline, and an invalid
     // value fails closed here rather than running with the default.
@@ -218,6 +219,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             analysis::ClassifiedSeamsReport {
                 classified: Vec::new(),
                 corpus_key: None,
+                analyzed_production_files: Vec::new(),
                 diff_bound_corpus: false,
                 limit_info: None,
                 skipped_generated: Vec::new(),
@@ -293,6 +295,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // budget wins when both fire; inventory limit is the outer bound).
     let mut classified = report.classified;
     let corpus_key = report.corpus_key;
+    let analyzed_production_files = report.analyzed_production_files;
     let diff_bound_corpus = report.diff_bound_corpus;
     let mut inventory_limit_info = report.limit_info;
     let declined_rust_files = report.declined_rust_files.clone();
@@ -382,9 +385,29 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         .with_absent_file_limitations(absent_file_limitations)
         .with_seams_counted(&classified, folded.caveat_limit);
     let budget_started = Instant::now();
-    let pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
+    let mut pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
         current_change.keeps_past_budget(entry)
     })?;
+    // The pilot-scoped default inventory cap (#10726) is the pilot budget cut
+    // earlier. Disclose it as the budget, naming `RIPR_PILOT_SEAM_BUDGET`, and
+    // not as an inventory cut whose repair route would not lift the budget.
+    // The total is the real inventory even when current-change seams folded in
+    // past the cap made the budget fire too (its own total then counts the
+    // capped inventory plus the folded seams). The population is also not what
+    // `ripr check` analyzes, so the snapshot carries no comparable identity,
+    // exactly as for a budget cut.
+    if let Some(default_cut) =
+        analysis::PilotInventoryDefault::as_budget_cut(inventory_limit_info.as_ref())
+    {
+        pilot_budget_info = Some(match pilot_budget_info {
+            Some(budget) => analysis::SeamLimitInfo {
+                total: default_cut.total,
+                ..budget
+            },
+            None => default_cut,
+        });
+        inventory_limit_info = None;
+    }
     timings.record("seam_budget", budget_started, Some(classified.len()));
     let pilot_budget_truncated = pilot_budget_info.is_some();
     // The summary's disclosure counts from the outermost population: when
@@ -461,7 +484,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                 None,
                 &config,
             )?
-            .with_rust_corpus_key(corpus_key.as_ref()),
+            .with_rust_inventory(corpus_key.as_ref(), &analyzed_production_files),
         )
     };
     let write_started = Instant::now();
@@ -495,11 +518,9 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     )?;
 
     let summary_json = output::pilot::render_pilot_summary_json(&classified, context);
+    let (summary_md, terminal) = output::pilot::render_pilot_human_summaries(&classified, context);
     write_pilot_file(&artifacts.pilot_summary_json, &summary_json)?;
-    write_pilot_file(
-        &artifacts.pilot_summary_md,
-        output::pilot::render_pilot_summary_md(&classified, context),
-    )?;
+    write_pilot_file(&artifacts.pilot_summary_md, summary_md)?;
     timings.record("write_artifacts", write_started, Some(classified.len()));
     // #10727: the sidecar is written last, so it cannot change any other
     // artifact. A run without `-v` drops a prior run's sidecar rather than
@@ -517,14 +538,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         remove_timeout_packet_sibling(&timings_path)?;
     }
 
-    print!(
-        "{}",
-        pilot_stdout(
-            options.format,
-            &summary_json,
-            &output::pilot::render_pilot_terminal(&classified, context),
-        )
-    );
+    print!("{}", pilot_stdout(options.format, &summary_json, &terminal));
     // #10727: stderr only, so stdout and the artifacts stay byte-identical.
     // Through the shadowed `eprintln!`, so a held-open TTY progress row is
     // finished before the table starts instead of being glued onto.
@@ -1582,6 +1596,7 @@ mod tests {
                 Ok(analysis::ClassifiedSeamsReport {
                     classified: Vec::new(),
                     corpus_key: None,
+                    analyzed_production_files: Vec::new(),
                     diff_bound_corpus: false,
                     limit_info: None,
                     skipped_generated: Vec::new(),

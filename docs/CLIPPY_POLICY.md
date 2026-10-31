@@ -214,9 +214,10 @@ Two companion ledgers track Clippy state alongside the active/planned table:
 - [`policy/clippy-exceptions.toml`](../policy/clippy-exceptions.toml) records
   per-call-site `#[expect(...)]` / `#[allow(...)]` suppressions with an `id`,
   `owner`, `reason`, `covered_by`, and `expires`. It is the reviewable
-  counterpart to `.ripr/allow-attributes.txt`. It has no live rows;
-  `clippy-exception-0001` was retired when `PanicAllowEntryVersioned::V2`
-  was boxed.
+  counterpart to `.ripr/allow-attributes.txt`. The Windows workflow-backup
+  exception retains a statement-scoped read-only-attribute clear; its native
+  regression is the recorded coverage obligation. `clippy-exception-0001`
+  was retired when `PanicAllowEntryVersioned::V2` was boxed.
 
 These companion ledgers are gated as follows:
 

@@ -288,6 +288,7 @@ fn owner_from_function(
         },
         foreign_writes: Default::default(),
         version_conditional: false,
+        cli_subcommand: None,
     }
 }
 
@@ -391,6 +392,7 @@ fn owner_from_class(
         class_facts: Default::default(),
         foreign_writes: Default::default(),
         version_conditional: false,
+        cli_subcommand: None,
     }
 }
 
@@ -429,6 +431,7 @@ pub(super) fn module_owner(
         class_facts: Default::default(),
         foreign_writes: Default::default(),
         version_conditional: false,
+        cli_subcommand: None,
     }
 }
 

@@ -332,6 +332,7 @@ fn type_path_scope_is_clear(
         return false;
     }
     let root = tree.syntax();
+    let plain_self_type = impl_self_type_is_unqualified(&owner.id.0);
     let clear = |item: ast::Item, module, parent| {
         let owner_path = |value: &str| {
             value.strip_prefix("super::") == Some(path.self_type.as_str()) && parent == owner_module
@@ -388,10 +389,24 @@ fn type_path_scope_is_clear(
             // invocation in an enclosing scope refuses the lift.
             return false;
         }
+        let rebinds =
+            rebinds_type_name(&text, &path.self_type) || rebinds_type_name(&text, &path.trait_name);
         if module == owner_module {
-            return true;
+            // The owner's own module defines the impl type, so a `struct`,
+            // `enum` or `union` of that name is the genuine definition, but
+            // only when the impl header spells its self type unqualified. A
+            // qualified header (`impl Add for other::Money`) leaves a same-
+            // module `type Money = i64` or `struct Money` free to shadow it.
+            // Any other rebinding of the type or trait name is refused.
+            return !rebinds
+                || (plain_self_type
+                    && matches!(
+                        item,
+                        ast::Item::Struct(_) | ast::Item::Enum(_) | ast::Item::Union(_)
+                    )
+                    && !rebinds_type_name(&text, &path.trait_name));
         }
-        !rebinds_type_name(&text, &path.self_type) && !rebinds_type_name(&text, &path.trait_name)
+        !rebinds
     };
     if !tree.items().all(|item| clear(item, None, None)) {
         return false;
@@ -415,6 +430,23 @@ fn type_path_scope_is_clear(
         parent = Some(module.range);
     }
     true
+}
+
+/// Whether the impl header of an owner id spells its self type as a bare name
+/// (`impl Add for Money`, `impl Add for &Money`), not a path
+/// (`impl Add for other::Money`) or anything else the id cannot show plainly.
+fn impl_self_type_is_unqualified(owner_id: &str) -> bool {
+    let Some(impl_rest) = owner_id.split("::impl ").nth(1) else {
+        return false;
+    };
+    let Some((impl_body, _)) = impl_rest.rsplit_once("::") else {
+        return false;
+    };
+    let self_ty = impl_body
+        .rsplit_once(" for ")
+        .map_or(impl_body, |(_, ty)| ty);
+    let bare = self_ty.trim_start_matches('&').trim();
+    !bare.is_empty() && bare.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
 }
 
 /// How the language reaches the owner without a call that names it.

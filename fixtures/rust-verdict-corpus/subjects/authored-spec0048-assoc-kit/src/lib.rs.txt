@@ -1,0 +1,75 @@
+//! RIPR-SPEC-0048 associated-constant must-not-claim shapes (#9871).
+//! A trait default method clamps to `Self::MAX`; each impl below breaks one
+//! binding rule of the associated-constant extension.
+
+use std::marker::PhantomData;
+
+pub trait Limits {
+    const MAX: u32;
+
+    fn clamp(v: u32) -> u32 {
+        if v > Self::MAX { Self::MAX } else { v }
+    }
+}
+
+pub struct Narrow;
+
+impl Limits for Narrow {
+    const MAX: u32 = 10;
+}
+
+pub struct Wide;
+
+impl Limits for Wide {
+    const MAX: u32 = 100;
+}
+
+pub fn limited<T: Limits>(v: u32) -> u32 {
+    T::clamp(v)
+}
+
+pub struct Tall;
+
+impl Limits for Tall {
+    const MAX: u32 = 8;
+}
+
+pub struct Fixed;
+
+impl Limits for Fixed {
+    const MAX: u32 = 6;
+
+    fn clamp(v: u32) -> u32 {
+        v.min(3)
+    }
+}
+
+pub struct Ring;
+
+impl Limits for Ring {
+    const MAX: u32 = 4;
+}
+
+pub struct Wrap<T>(PhantomData<T>);
+
+impl<T> Limits for Wrap<T> {
+    const MAX: u32 = 9;
+}
+
+fn is_big(v: u32) -> bool {
+    v > 20
+}
+
+pub trait Gate {
+    const LIMIT: u32;
+
+    fn pass(v: u32) -> u32 {
+        if is_big(v) { Self::LIMIT } else { v }
+    }
+}
+
+pub struct Door;
+
+impl Gate for Door {
+    const LIMIT: u32 = 12;
+}

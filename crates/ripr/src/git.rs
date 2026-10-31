@@ -743,6 +743,21 @@ pub(crate) fn run_git_output_with_optional_deadline_and_limit(
     )
 }
 
+#[cfg(test)]
+thread_local! {
+    static TEST_PROCESS_SPAWNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Successful subprocess spawns through this module's deadline-limited output
+/// collectors (`collect_output_with_optional_deadline_and_limit` and
+/// `collect_output_with_deadline`) on this test thread. The long-lived
+/// `CatFileBatch` session is not counted. Snapshots exclude concurrent tests
+/// without changing process-wide environment or Git behavior.
+#[cfg(test)]
+pub(crate) fn test_process_spawns() -> usize {
+    TEST_PROCESS_SPAWNS.with(std::cell::Cell::get)
+}
+
 fn collect_output_with_optional_deadline_and_limit(
     mut command: Command,
     timeout: Option<Duration>,
@@ -759,6 +774,8 @@ fn collect_output_with_optional_deadline_and_limit(
     let spawn_site = SpawnSite::of(&command);
     let mut child =
         OwnedProcess::spawn(command).map_err(|err| spawn_site.failure_message(describe, &err))?;
+    #[cfg(test)]
+    TEST_PROCESS_SPAWNS.with(|count| count.set(count.get() + 1));
     let stdout_reader = child
         .stdout_pipe()
         .take()
@@ -1351,6 +1368,8 @@ fn collect_output_with_deadline(
     let spawn_site = SpawnSite::of(&command);
     let mut child =
         OwnedProcess::spawn(command).map_err(|err| spawn_site.failure_message(describe, &err))?;
+    #[cfg(test)]
+    TEST_PROCESS_SPAWNS.with(|count| count.set(count.get() + 1));
     let stdout_reader = child.stdout_pipe().take().map(spawn_pipe_reader);
     let stderr_reader = child.stderr_pipe().take().map(spawn_pipe_reader);
 

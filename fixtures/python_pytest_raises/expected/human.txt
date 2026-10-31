@@ -27,7 +27,7 @@ Start here:
   Suggested test file: tests/test_quantity.py
   Suggested test: test_rejects_zero_quantity
   Test node: tests/test_quantity.py::test_rejects_zero_quantity
-  Verify command: python -m pytest tests/test_quantity.py::test_rejects_zero_quantity (high)
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_pytest_raises/input && python -m pytest tests/test_quantity.py::test_rejects_zero_quantity) (high)
   Next step — Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `value == 0`
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

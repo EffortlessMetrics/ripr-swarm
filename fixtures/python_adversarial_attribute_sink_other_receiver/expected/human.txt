@@ -27,7 +27,7 @@ Start here:
   Suggested test file: tests/test_session.py
   Suggested test: test_session_refresh
   Test node: tests/test_session.py::test_session_refresh
-  Verify command: python -m pytest tests/test_session.py::test_session_refresh (high)
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_adversarial_attribute_sink_other_receiver/input && python -m pytest tests/test_session.py::test_session_refresh) (high)
   Next step — Python preview: strengthen the existing related test with a field/object assertion for missing discriminator `self.status == "active"`
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

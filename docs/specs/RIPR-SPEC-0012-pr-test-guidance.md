@@ -100,6 +100,15 @@ route. No guidance JSON or Markdown is published by the refused dispatch.
 optional `active_step` naming the pass in progress, so a `limited_timeout`
 receipt says which pass spent the budget. The field is absent when no pass is
 active and is cleared when the phase advances or the run completes (#1604).
+A budget spent inside `canonical_analysis` adds
+`canonical_analysis_evaluated_seams` (seams classified so far, a count of work
+done) and the non-claim that this work is not persisted, so an unchanged retry
+restarts the phase and no reuse is claimed. The field is absent for timeouts in
+other phases and for failures, and cleared when the phase advances or the run
+completes. Persisting partial classifications is deliberately not built: the
+analyzer does not expose the exact source set one classification read, so a
+stored entry could not be bound to its inputs, and a missed dependency would
+serve stale evidence (#11107; see also #11108).
 The xtask wrapper preserves the named category and incomplete/non-all-clear
 semantics, rather than turning refusal into clean guidance or a real gap. It
 matches the exact colon-terminated error tag line-wise (after removing an
