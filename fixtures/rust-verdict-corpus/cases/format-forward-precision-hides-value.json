@@ -1,0 +1,44 @@
+{
+  "case_id": "format-forward-precision-hides-value",
+  "subject_id": "authored-format-forward",
+  "diff": "cases/format-forward-precision-hides-value.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 6
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "owner_called_inside_precision_format_macro",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "0.12",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the callee returns a different number, but `{:.1}` renders 0.14 and 0.12 both as 0.1, so no executed assertion observes it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "rate_label formats rate() with one digit, so 0.14 -> 0.12 leaves \"0.1\" unchanged. The exact assertion on the label must not be paired with the callee: only a plain `{}` keeps the whole value.",
+  "labeling_observation": {
+    "ripr_commit": "48666fcb3",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "propagation_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

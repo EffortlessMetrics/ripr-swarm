@@ -145,6 +145,10 @@ pub(super) struct CiSettings {
     pub(super) gate_baseline: String,
     pub(super) comment_mode: String,
     pub(super) upload_sarif: String,
+    /// `RIPR_PILOT_TIMEOUT_MS`: the pilot deadline in milliseconds, passed
+    /// to `ripr pilot --timeout-ms` (#11205). `None` keeps pilot's default
+    /// deadline and its automatic cold-run extension.
+    pub(super) pilot_timeout_ms: Option<u64>,
     /// `github.event_name`.
     pub(super) event_name: String,
     /// `github.base_ref`: empty outside a pull request.
@@ -175,6 +179,7 @@ impl Default for CiSettings {
             gate_baseline: String::new(),
             comment_mode: String::new(),
             upload_sarif: String::new(),
+            pilot_timeout_ms: None,
             event_name: String::new(),
             base_ref: String::new(),
             default_branch: String::new(),
@@ -211,6 +216,7 @@ impl CiSettings {
         settings.gate_baseline = var("RIPR_GATE_BASELINE");
         settings.comment_mode = var("RIPR_COMMENT_MODE");
         settings.upload_sarif = var("RIPR_UPLOAD_SARIF");
+        settings.pilot_timeout_ms = parse_pilot_timeout_ms(&var("RIPR_PILOT_TIMEOUT_MS"))?;
         settings.event_name = var("GITHUB_EVENT_NAME");
         settings.base_ref = var("GITHUB_BASE_REF");
         settings.repository = var("GITHUB_REPOSITORY");
@@ -262,6 +268,45 @@ impl CiSettings {
     fn advisory(&self) -> bool {
         self.gate_mode.is_empty() || self.gate_mode == "visible-only"
     }
+}
+
+/// `RIPR_PILOT_TIMEOUT_MS`: unset or empty keeps pilot's default deadline;
+/// anything else must be a positive integer of milliseconds. An invalid value
+/// is refused up front instead of silently running with the default deadline,
+/// because the variable is the control the step summary tells a PR author to
+/// raise after a pilot timeout (#11205).
+fn parse_pilot_timeout_ms(value: &str) -> Result<Option<u64>, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    match value.parse::<u64>() {
+        Ok(ms) if ms > 0 => Ok(Some(ms)),
+        _ => Err(format!(
+            "{COMMAND}: RIPR_PILOT_TIMEOUT_MS must be a positive integer of milliseconds; got {value:?}"
+        )),
+    }
+}
+
+/// The pilot step's argv. An explicit deadline is a hard limit with no
+/// automatic extension, exactly as `ripr pilot --timeout-ms` (#11205).
+fn pilot_argv(timeout_ms: Option<u64>) -> Vec<String> {
+    let mut argv = args(&[
+        "pilot",
+        "--root",
+        ".",
+        "--out",
+        "target/ripr/pilot",
+        "--mode",
+        "ready",
+        "--max-seams",
+        "5",
+    ]);
+    if let Some(ms) = timeout_ms {
+        argv.push("--timeout-ms".to_string());
+        argv.push(ms.to_string());
+    }
+    argv
 }
 
 /// How a retired step's failure counted.
@@ -483,17 +528,8 @@ impl PacketRun {
             Role::Advisory,
             true,
             |run| {
-                run.ripr(&args(&[
-                    "pilot",
-                    "--root",
-                    ".",
-                    "--out",
-                    "target/ripr/pilot",
-                    "--mode",
-                    "ready",
-                    "--max-seams",
-                    "5",
-                ]))
+                let argv = pilot_argv(run.settings.pilot_timeout_ms);
+                run.ripr(&argv)
             },
         );
 
@@ -1900,6 +1936,7 @@ fn full_packet_settings() -> CiSettings {
         gate_baseline: ".ripr/gate-baseline.json".to_string(),
         comment_mode: "inline".to_string(),
         upload_sarif: "true".to_string(),
+        pilot_timeout_ms: None,
         event_name: "pull_request".to_string(),
         base_ref: "main".to_string(),
         default_branch: "main".to_string(),
@@ -2164,6 +2201,68 @@ mod tests {
         assert!(!manual.contains("ripr review-comments "), "{manual}");
         assert!(!line(&manual, "ripr policy history ").contains("--pr-number"));
         Ok(())
+    }
+
+    #[test]
+    fn pilot_deadline_variable_reaches_the_pilot_step_only_when_set() -> Result<(), String> {
+        // #11205: unset keeps pilot's default deadline and its automatic
+        // cold-run extension; a set value is passed as an explicit hard limit.
+        let pilot_line = |settings: CiSettings| -> Result<String, String> {
+            let (packet, failed) = recorded_packet_with(settings)?;
+            assert!(failed.is_empty(), "{failed:?}");
+            packet
+                .lines()
+                .find(|line| line.starts_with("ripr pilot "))
+                .map(str::to_string)
+                .ok_or_else(|| format!("no pilot line in {packet}"))
+        };
+        assert_eq!(
+            pilot_line(full_packet_settings())?,
+            "ripr pilot --root . --out target/ripr/pilot --mode ready --max-seams 5"
+        );
+        assert_eq!(
+            pilot_line(CiSettings {
+                pilot_timeout_ms: Some(900_000),
+                ..full_packet_settings()
+            })?,
+            "ripr pilot --root . --out target/ripr/pilot --mode ready --max-seams 5 --timeout-ms 900000"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn pilot_deadline_is_a_distinct_argv_pair_with_the_exact_value() {
+        let base = args(&[
+            "pilot",
+            "--root",
+            ".",
+            "--out",
+            "target/ripr/pilot",
+            "--mode",
+            "ready",
+            "--max-seams",
+            "5",
+        ]);
+        assert_eq!(pilot_argv(None), base);
+        let mut with = base;
+        with.extend(args(&["--timeout-ms", "900000"]));
+        assert_eq!(pilot_argv(Some(900_000)), with);
+    }
+
+    #[test]
+    fn pilot_deadline_variable_is_a_positive_integer_or_refused() {
+        assert_eq!(parse_pilot_timeout_ms(""), Ok(None));
+        assert_eq!(parse_pilot_timeout_ms("  "), Ok(None));
+        assert_eq!(parse_pilot_timeout_ms("900000"), Ok(Some(900_000)));
+        assert_eq!(parse_pilot_timeout_ms(" 600000 "), Ok(Some(600_000)));
+        for bad in ["0", "-5", "90s", "1.5", "abc"] {
+            let refused = parse_pilot_timeout_ms(bad);
+            assert!(
+                matches!(&refused, Err(message) if message.contains("RIPR_PILOT_TIMEOUT_MS")
+                    && message.contains(bad)),
+                "{bad:?} must be refused naming the variable: {refused:?}"
+            );
+        }
     }
 
     /// The YAML steps' `continue-on-error` and `always()`, as the packet
