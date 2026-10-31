@@ -105,8 +105,8 @@ fn compute_fp8(
 /// probes that share one eight-hex id but carry different payloads (#8838).
 /// It is the digest `fp8` is a prefix of, so ranking by it does not depend on
 /// the order the diff presents the probes in. The sanitized path and family
-/// are read back from `base_id` (`<prefix>:<path>:<family>:<fp8>`; the
-/// sanitized path holds no `:`), keeping the payload identical to the one
+/// are read back from `base_id` (`<prefix>:<path>:<family>:<fp8>`),
+/// preserving colons in Python paths, and keeping the payload identical to the one
 /// `fingerprint_probe_id` hashed; the caller passes the owner and the
 /// expression normalized the way its producer normalized it. A malformed id
 /// falls back to ranking by the whole id, which still ties by encounter order.
@@ -115,13 +115,13 @@ pub(crate) fn collision_rank_key(
     owner_str: &str,
     normalized_expression: &str,
 ) -> [u8; 32] {
-    let mut parts = base_id.rsplitn(4, ':');
-    let (_fp8, family, path, prefix) = (parts.next(), parts.next(), parts.next(), parts.next());
-    match (path, family) {
-        (Some(path), Some(family)) if prefix.is_some() => {
-            payload_digest(path, family, owner_str, normalized_expression)
-        }
-        _ => payload_digest(base_id, "", owner_str, normalized_expression),
+    let parsed = base_id.split_once(':').and_then(|(_, rest)| {
+        let (path_and_family, _) = rest.rsplit_once(':')?;
+        path_and_family.rsplit_once(':')
+    });
+    match parsed {
+        Some((path, family)) => payload_digest(path, family, owner_str, normalized_expression),
+        None => payload_digest(base_id, "", owner_str, normalized_expression),
     }
 }
 
@@ -285,6 +285,18 @@ mod tests {
             assert_eq!(normalize_rust_expression(expression), expected);
         }
     }
+    #[test]
+    fn collision_rank_keeps_colons_in_python_path() {
+        assert_eq!(
+            collision_rank_key(
+                "probe:src_a:b.py:python_preview:v1-12345678",
+                "owner",
+                "expression"
+            ),
+            payload_digest("src_a:b.py", "python_preview", "owner", "expression")
+        );
+    }
+
     #[test]
     fn sanitize_path_converts_separators_and_colons() {
         let path = PathBuf::from("src/lib.rs");
