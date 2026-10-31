@@ -1,0 +1,106 @@
+name: RIPR 10864 installed diagnostic validation
+on:
+  push:
+    branches: [agents/10864-guidance-preparation]
+    paths: [.github/workflows/10864-installed-validation.yml]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: ripr-10864-installed-validation
+  cancel-in-progress: false
+jobs:
+  installed:
+    if: github.repository == 'EffortlessMetrics/ripr-swarm' && github.event.deleted == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      CANDIDATE_SHA: 5ea6355531dd4c54120dcaf78e018c0d3927bea6
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 5ea6355531dd4c54120dcaf78e018c0d3927bea6
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591
+      - name: Verify exact artifact and run installed refusal/restoration
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WHEEL_ARTIFACT_DIR: ${{ runner.temp }}/ripr-10864-wheel-artifact
+        run: |
+          python - <<'PY'
+          import base64, hashlib, json, os, stat, urllib.request, urllib.error, urllib.parse, zipfile
+          from pathlib import Path, PurePosixPath
+          token=os.environ.pop('GH_TOKEN')
+          api='https://api.github.com/repos/EffortlessMetrics/ripr-swarm/'
+          def get(path):
+              request=urllib.request.Request(api+path,headers={'Authorization':'Bearer '+token,'Accept':'application/vnd.github+json'})
+              with urllib.request.urlopen(request,timeout=45) as response:
+                  data=response.read(2_000_001)
+              if len(data)>2_000_000:
+                  raise RuntimeError('metadata response exceeded bound')
+              return json.loads(data)
+          artifact=get('actions/artifacts/13028906264')
+          assert not artifact['expired']
+          assert artifact['workflow_run']['id']==41164479101
+          assert artifact['workflow_run']['head_sha']==os.environ['CANDIDATE_SHA']
+          assert artifact['name']=='ripr-rs-python-wheel-'+os.environ['CANDIDATE_SHA']
+          digest='52e91ef321ad11359364e124761fce9cb0a66e6dd9f82f9b251f7d6a2505c522'
+          assert artifact['digest']=='sha256:'+digest
+          script_sha='bc6f8603472ddea670f3569de4b3d737d58f9e46'
+          script=base64.b64decode(get('git/blobs/'+script_sha)['content'])
+          assert hashlib.sha1(b'blob '+str(len(script)).encode()+b'\0'+script).hexdigest()==script_sha
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self,req,fp,code,msg,headers,newurl):
+                  return None
+          request=urllib.request.Request(api+'actions/artifacts/13028906264/zip',headers={'Authorization':'Bearer '+token})
+          try:
+              urllib.request.build_opener(NoRedirect).open(request,timeout=45)
+          except urllib.error.HTTPError as error:
+              assert error.code in (301,302,303,307,308)
+              location=error.headers['Location']
+          else:
+              raise RuntimeError('expected GitHub artifact redirect')
+          parsed=urllib.parse.urlsplit(location)
+          assert parsed.scheme=='https' and parsed.hostname and not parsed.username and not parsed.password
+          del token
+          # No GitHub authorization header is sent to the signed storage URL.
+          archive=Path(os.environ['RUNNER_TEMP'])/'ripr-10864-wheel-input.zip'
+          hasher=hashlib.sha256();size=0
+          with urllib.request.urlopen(location,timeout=90) as response, archive.open('wb') as output:
+              while chunk:=response.read(1024*1024):
+                  size+=len(chunk)
+                  if size>128*1024**2:
+                      raise RuntimeError('artifact download exceeded 128 MiB')
+                  hasher.update(chunk);output.write(chunk)
+          assert hasher.hexdigest()==digest
+          destination=Path(os.environ['WHEEL_ARTIFACT_DIR']);destination.mkdir()
+          with zipfile.ZipFile(archive) as package:
+              entries=package.infolist()
+              assert len(entries)<2000 and sum(e.file_size for e in entries)<512*1024**2
+              assert len({e.filename for e in entries})==len(entries)
+              for entry in entries:
+                  path=PurePosixPath(entry.filename)
+                  assert not path.is_absolute() and '..' not in path.parts and '\\' not in entry.filename
+                  assert not stat.S_ISLNK(entry.external_attr>>16)
+                  assert entry.file_size<256*1024**2
+              package.extractall(destination)
+          custody={'artifact_id':13028906264,'source_run':41164479101,
+                   'candidate':os.environ['CANDIDATE_SHA'],'zip_sha256':digest,
+                   'downloaded_bytes':size,'proof_script_blob':script_sha}
+          try:
+              exec(compile(script,'exact-10864-installed-proof','exec'),{'__name__':'__main__'})
+          finally:
+              out=Path(os.environ['RUNNER_TEMP'])/'ripr-10864-installed-proof'
+              out.mkdir(exist_ok=True)
+              (out/'input-artifact.json').write_text(json.dumps(custody,indent=2)+'\n')
+          PY
+      - name: Retain installed native evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ripr-10864-installed-proof-${{ github.run_id }}
+          path: ${{ runner.temp }}/ripr-10864-installed-proof/
+          retention-days: 7
+          if-no-files-found: warn
