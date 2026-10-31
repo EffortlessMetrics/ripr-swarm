@@ -134,7 +134,7 @@ impl TestHarnessKind {
             "custom_harness" => Ok(Self::CustomHarnessTarget),
             "registered_attribute" => Ok(Self::RegisteredAttribute),
             other => Err(format!(
-                "analysis.test_harnesses.kind `{other}` is unknown; expected \"custom_harness\" or \"registered_attribute\" (unknown harness kinds fail closed)"
+                "analysis.test_harnesses.kind `{other}` is unknown; expected \"custom_harness\" or \"registered_attribute\" (unknown harness kinds fail closed); set it to one of those values in ripr.toml"
             )),
         }
     }
@@ -168,7 +168,7 @@ impl TestHarnessAdapter {
             "libtest_mimic_v1" => Ok(Self::LibtestMimicV1),
             "exact_attribute_v1" => Ok(Self::ExactAttributeV1),
             other => Err(format!(
-                "analysis.test_harnesses.adapter `{other}` is unknown; expected \"libtest_mimic_v1\" or \"exact_attribute_v1\" (unknown adapter versions fail closed)"
+                "analysis.test_harnesses.adapter `{other}` is unknown; expected \"libtest_mimic_v1\" or \"exact_attribute_v1\" (unknown adapter versions fail closed); set it to one of those values in ripr.toml"
             )),
         }
     }

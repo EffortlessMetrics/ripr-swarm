@@ -108,6 +108,35 @@ fn unrelated_fuzz_binary_keeps_whole_value_and_field_assertion_credit() -> Resul
 }
 
 #[test]
+fn field_glob_without_macro_use_keeps_credit() -> Result<(), String> {
+    let extra = [
+        (
+            "Cargo.toml",
+            "[package]\nname='demo'\nversion='0.0.0'\nedition='2024'\n[dev-dependencies]\nother={path='target/other'}\n",
+        ),
+        (
+            "target/other/Cargo.toml",
+            "[package]\nname='other'\nversion='0.0.0'\n",
+        ),
+        (
+            "target/other/src/lib.rs",
+            "pub mod empty {}\n#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {} }\n",
+        ),
+    ];
+    for (prefix, name) in [("use other::empty::*;", "assert_eq")] {
+        for operands in ["value(), Value { minor: 8 }", "value().minor, 8"] {
+            let assertion = format!("{name}!({operands});");
+            let finding = field_subject(prefix, &assertion, &extra)?
+                .finding_for("field_construction", "minor: 8")?;
+            assert_eq!(finding["classification"], "exposed", "{finding}");
+            assert_eq!(finding["ripr"]["observe"]["state"], "yes", "{finding}");
+            assert_eq!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn field_assertion_rebindings_refuse_credit_and_disclose_the_site() -> Result<(), String> {
     for (prefix, extra) in [
         ("macro_rules! assert_eq { ($($t:tt)*) => {} }", vec![]),

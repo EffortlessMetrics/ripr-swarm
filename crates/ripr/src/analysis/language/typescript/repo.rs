@@ -48,18 +48,18 @@ pub(super) fn resolve_repo_working_set_limit(
         Err(std::env::VarError::NotPresent) => Ok(TS_REPO_FILE_LIMIT),
         Ok(raw) => {
             let parsed = raw.trim().parse::<usize>().map_err(|err| {
-                format!("{TS_REPO_FILE_LIMIT_ENV} must be a positive integer, got {raw:?}: {err}")
+                format!("{TS_REPO_FILE_LIMIT_ENV} must be a positive integer, got {raw:?}: {err}; set it to a whole number above zero, or unset it to use the default")
             })?;
             if parsed == 0 {
                 return Err(format!(
-                    "{TS_REPO_FILE_LIMIT_ENV} must be a positive integer, got {raw:?}"
+                    "{TS_REPO_FILE_LIMIT_ENV} must be a positive integer, got {raw:?}; set it to a whole number above zero, or unset it to use the default"
                 ));
             }
             Ok(parsed)
         }
-        Err(std::env::VarError::NotUnicode(_)) => {
-            Err(format!("{TS_REPO_FILE_LIMIT_ENV} must be valid UTF-8"))
-        }
+        Err(std::env::VarError::NotUnicode(_)) => Err(format!(
+            "{TS_REPO_FILE_LIMIT_ENV} must be valid UTF-8; set it to a whole number above zero, or unset it to use the default"
+        )),
     }
 }
 

@@ -426,7 +426,7 @@ fn unbound_item_refusal(item: &GapItem, producers: &SnapshotCardProducers) -> At
                 unknown_repair_item_reason(None, &item.finding_id)
             ),
         )),
-        RepairSubjectOutcome::Ambiguous(_) => unbound(),
+        RepairSubjectOutcome::Ambiguous { .. } => unbound(),
     }
 }
 

@@ -204,7 +204,6 @@ async function main() {
   const userDataPath = resolveUserDataDir(artifactRoot);
   let matrixDiagnostics: { userDataDir: string; receiptPath: string } | undefined;
   let error: unknown;
-  let multiRoot: { userDataDir: string; receiptPath: string } | undefined;
   try {
     resetHostLogDir(userDataPath);
     const extensionDevelopmentPath = path.resolve(
