@@ -227,6 +227,10 @@ fn repair_refusal(
                 && entry.class == crate::analysis::seams::SeamGripClass::StronglyGripped
             {
                 (RefusalKind::AlreadyGripped, GRIPPED_SPOT_REASON.to_string())
+            } else if reason == RepairPacketIneligibility::ClassNotHeadlineEligible
+                && let Some(guidance) = opaque_reach_guidance(entry)
+            {
+                (RefusalKind::Other, guidance)
             } else if reason == RepairPacketIneligibility::RouteNotReady {
                 // Name the evidence the route still needs, not just the gate
                 // verdict: "repair route not ready" alone sends the reader
@@ -260,6 +264,40 @@ fn repair_refusal(
     policy
         .omission_reason_for_class(entry.class)
         .map(|reason| (RefusalKind::Other, reason))
+}
+
+/// What to do by hand when the class is opaque because ripr cannot confirm
+/// that any test reaches the changed code: name the candidate test it found,
+/// so the refusal is a next step and not a bare "no automatic repair". Wording
+/// only; the class and the eligibility flip are unchanged.
+fn opaque_reach_guidance(entry: &crate::analysis::ClassifiedSeam) -> Option<String> {
+    use crate::domain::StageState;
+    if entry.class != crate::analysis::seams::SeamGripClass::Opaque
+        || !matches!(
+            entry.evidence.reach.state,
+            StageState::Opaque | StageState::Weak
+        )
+    {
+        return None;
+    }
+    let summary = entry.evidence.reach.summary.as_str();
+    let candidate = if let Some(rest) = summary.strip_prefix("Reach unresolved (")
+        && let Some((_, rest)) = rest.split_once("): ")
+    {
+        let rest = rest.split_once("; no gap").map_or(rest, |(head, _)| head);
+        format!("ripr found {rest}")
+    } else {
+        let test = entry.evidence.related_tests.first()?;
+        format!(
+            "the nearest related test is `{}` ({}:{}), but ripr cannot show that it runs this code",
+            test.test_name,
+            crate::analysis::stable_path_text(&test.file),
+            test.line
+        )
+    };
+    Some(format!(
+        "ripr cannot trace which test runs this code, so it starts no automatic repair: {candidate}. Check by hand that a test runs the changed code and asserts on its result, and add a test only if none does"
+    ))
 }
 
 /// The route-not-ready refusal wording: the plain-language missing evidence
@@ -2888,6 +2926,61 @@ pub(crate) mod tests {
                 .starts_with("repair route not ready (missing evidence: "),
             "{}",
             refused.reason
+        );
+        Ok(())
+    }
+
+    /// An opaque seam is still refused (class and eligibility unchanged), but
+    /// the refusal names the candidate test ripr found instead of ending at
+    /// "no automatic repair for this kind of finding".
+    #[test]
+    fn opaque_reach_refusal_names_the_candidate_test() -> Result<(), String> {
+        use crate::analysis::seams::SeamGripClass;
+        use crate::domain::{Confidence, StageEvidence, StageState};
+        let config = crate::config::RiprConfig::default();
+        let policy = AgentBriefPolicy::from_config(&config);
+        let root = Path::new("/repo");
+
+        let mut unresolved = gate_entry(SeamGripClass::Opaque, Vec::new());
+        unresolved.evidence.reach = StageEvidence::new(
+            StageState::Opaque,
+            Confidence::Low,
+            "Reach unresolved (rust_transitive_reach_unresolved): `doc - new (line 9)` (src/lib.rs:9) calls `new`, which may lead to `price` through a call path ripr does not fully trace; no gap is reported",
+        );
+        let refusal = repair_start_refusal_for_entry(root, &unresolved, policy)
+            .ok_or("an opaque seam must still be refused")?;
+        assert!(
+            refusal
+                .reason
+                .contains("`doc - new (line 9)` (src/lib.rs:9) calls `new`")
+                && refusal.reason.contains("Check by hand")
+                && !refusal.reason.contains("rust_transitive_reach_unresolved")
+                && !refusal.reason.contains("no gap is reported"),
+            "{}",
+            refusal.reason
+        );
+
+        let mut weak = gate_entry(SeamGripClass::Opaque, vec![weak_related_test()]);
+        weak.evidence.reach =
+            StageEvidence::new(StageState::Weak, Confidence::Low, "nearby tests only");
+        let refusal = repair_start_refusal_for_entry(root, &weak, policy)
+            .ok_or("an opaque seam must still be refused")?;
+        assert!(
+            refusal.reason.contains("the nearest related test is"),
+            "{}",
+            refusal.reason
+        );
+
+        // Negative: weak reach with no related test has nothing to name, and
+        // a non-opaque class never takes this wording.
+        let mut nothing = gate_entry(SeamGripClass::Opaque, Vec::new());
+        nothing.evidence.reach = StageEvidence::new(StageState::Weak, Confidence::Low, "x");
+        let refusal = repair_start_refusal_for_entry(root, &nothing, policy)
+            .ok_or("an opaque seam must still be refused")?;
+        assert!(
+            !refusal.reason.contains("Check by hand"),
+            "{}",
+            refusal.reason
         );
         Ok(())
     }
