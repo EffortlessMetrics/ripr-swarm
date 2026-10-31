@@ -1,0 +1,405 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/binding_value_counterpart_width/input",
+  "summary": {"changed_rust_files":1,"probes":4,"findings":4,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":2,"propagation_unknown":2,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:e0018dad5db4e0d22acbb124299972e37740013879bff3e2e5cbd2936c2bcd07","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":4,"candidate_line_count":2,"probe_count":4,"finding_count":4},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:predicate:4f4e88fc",
+      "canonical_gap_id": "gap:rust:src/lib.rs:unsigned:predicate_boundary:predicate:k==bound",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:unsigned:predicate_boundary:predicate:k==bound",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "unsigned",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "k==bound"
+
+      },
+      "classification": "infection_unknown",
+      "severity": "warning",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:4f4e88fc",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 3,
+        "expression": "k <= bound"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach unsigned: unsigned_wrap_is_not_the_boundary"},
+        "infect": {"state":"unknown","confidence":"low","summary":"Changed boundary input is unresolved: boundary operand `k` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: k <= bound"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach unsigned: unsigned_wrap_is_not_the_boundary", "infection unknown: Changed boundary input is unresolved: boundary operand `k` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide", "propagation yes: Changed behavior appears to influence returned value: k <= bound", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: k <= bound (line 3)", "related test tests/semantics.rs:4 unsigned_wrap_is_not_the_boundary uses strong relational check oracle: assert!(unsigned(true, 128));", "source function argument value bound = 128 at line 5", "source function argument value n = true at line 5"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"k <= bound","line":3}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: k <= bound", "Changed boundary input is unresolved: boundary operand `k` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide", "Related tests appear to reach unsigned: unsigned_wrap_is_not_the_boundary", "Strong oracle found: exact value or pattern assertion"],
+      "missing": ["Changed boundary input is unresolved: boundary operand `k` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide", "No detected boundary input for the changed predicate"],
+      "assertion_texts": {
+        "5": "assert!(unsigned(true, 128));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 5,
+            "value": "bound = 128",
+            "context": "function_argument"
+          },
+          {
+            "line": 5,
+            "value": "n = true",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 5,
+          "value": "bound = 128",
+          "context": "function_argument"
+        },
+        {
+          "line": 5,
+          "value": "n = true",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "unsigned_wrap_is_not_the_boundary",
+          "file": "tests/semantics.rs",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(unsigned(true, 128));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["infection_evidence_unknown"],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "suggested_next_action": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:59f646a1",
+      "canonical_gap_id": "gap:rust:src/lib.rs:unsigned:return_value:return_value:k<=bound",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:unsigned:return_value:return_value:k<=bound",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "unsigned",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "k<=bound"
+
+      },
+      "classification": "propagation_unknown",
+      "severity": "note",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:59f646a1",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 3,
+        "expression": "k <= bound"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach unsigned: unsigned_wrap_is_not_the_boundary"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach unsigned: unsigned_wrap_is_not_the_boundary", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (propagation_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches unknown sink (line 3)", "related test tests/semantics.rs:4 unsigned_wrap_is_not_the_boundary uses strong relational check oracle: assert!(unsigned(true, 128));", "source function argument value bound = 128 at line 5", "source function argument value n = true at line 5"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"unknown sink","line":3}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Propagation is not statically obvious from syntax-first analysis", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach unsigned: unsigned_wrap_is_not_the_boundary", "Strong oracle found: exact value or pattern assertion"],
+      "missing": ["No clear propagation path from changed behavior to an observable sink"],
+      "assertion_texts": {
+        "5": "assert!(unsigned(true, 128));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 5,
+            "value": "bound = 128",
+            "context": "function_argument"
+          },
+          {
+            "line": 5,
+            "value": "n = true",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 5,
+          "value": "bound = 128",
+          "context": "function_argument"
+        },
+        {
+          "line": 5,
+          "value": "n = true",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "unsigned_wrap_is_not_the_boundary",
+          "file": "tests/semantics.rs",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(unsigned(true, 128));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["propagation_evidence_unknown"],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "suggested_next_action": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:predicate:cdd0dddc",
+      "canonical_gap_id": "gap:rust:src/lib.rs:signed:predicate_boundary:predicate:k==bound",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:signed:predicate_boundary:predicate:k==bound",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "signed",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "k==bound"
+
+      },
+      "classification": "infection_unknown",
+      "severity": "warning",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:cdd0dddc",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 8,
+        "expression": "k <= bound"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach signed: signed_wrap_is_not_the_boundary"},
+        "infect": {"state":"unknown","confidence":"low","summary":"Changed boundary input is unresolved: boundary operand `k` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: k <= bound"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach signed: signed_wrap_is_not_the_boundary", "infection unknown: Changed boundary input is unresolved: boundary operand `k` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide", "propagation yes: Changed behavior appears to influence returned value: k <= bound", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: k <= bound (line 8)", "related test tests/semantics.rs:9 signed_wrap_is_not_the_boundary uses strong relational check oracle: assert!(signed(true, 64));", "related test tests/semantics.rs:4 unsigned_wrap_is_not_the_boundary uses weak relational check oracle: assert!(unsigned(true, 128));", "source function argument value bound = 64 at line 10", "source function argument value n = true at line 10"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"k <= bound","line":8}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: k <= bound", "Changed boundary input is unresolved: boundary operand `k` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide", "Related tests appear to reach signed: signed_wrap_is_not_the_boundary", "Strong oracle found: exact value or pattern assertion"],
+      "missing": ["Changed boundary input is unresolved: boundary operand `k` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide", "No detected boundary input for the changed predicate"],
+      "assertion_texts": {
+        "10": "assert!(signed(true, 64));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 10,
+            "value": "bound = 64",
+            "context": "function_argument"
+          },
+          {
+            "line": 10,
+            "value": "n = true",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 10,
+          "value": "bound = 64",
+          "context": "function_argument"
+        },
+        {
+          "line": 10,
+          "value": "n = true",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "signed_wrap_is_not_the_boundary",
+          "file": "tests/semantics.rs",
+          "line": 9,
+          "oracle_strength": "strong",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(signed(true, 64));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "unsigned_wrap_is_not_the_boundary",
+          "file": "tests/semantics.rs",
+          "line": 4,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(unsigned(true, 128));",
+          "relation_reason": "owner_named_test",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by name only"
+        }
+      ],
+      "stop_reasons": ["infection_evidence_unknown"],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "suggested_next_action": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:67e13b53",
+      "canonical_gap_id": "gap:rust:src/lib.rs:signed:return_value:return_value:k<=bound",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:signed:return_value:return_value:k<=bound",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "signed",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "k<=bound"
+
+      },
+      "classification": "propagation_unknown",
+      "severity": "note",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:67e13b53",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 8,
+        "expression": "k <= bound"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach signed: signed_wrap_is_not_the_boundary"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach signed: signed_wrap_is_not_the_boundary", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (propagation_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches unknown sink (line 8)", "related test tests/semantics.rs:9 signed_wrap_is_not_the_boundary uses strong relational check oracle: assert!(signed(true, 64));", "related test tests/semantics.rs:4 unsigned_wrap_is_not_the_boundary uses weak relational check oracle: assert!(unsigned(true, 128));", "source function argument value bound = 64 at line 10", "source function argument value n = true at line 10"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"unknown sink","line":8}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Propagation is not statically obvious from syntax-first analysis", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach signed: signed_wrap_is_not_the_boundary", "Strong oracle found: exact value or pattern assertion"],
+      "missing": ["No clear propagation path from changed behavior to an observable sink"],
+      "assertion_texts": {
+        "10": "assert!(signed(true, 64));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 10,
+            "value": "bound = 64",
+            "context": "function_argument"
+          },
+          {
+            "line": 10,
+            "value": "n = true",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 10,
+          "value": "bound = 64",
+          "context": "function_argument"
+        },
+        {
+          "line": 10,
+          "value": "n = true",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "signed_wrap_is_not_the_boundary",
+          "file": "tests/semantics.rs",
+          "line": 9,
+          "oracle_strength": "strong",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(signed(true, 64));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "unsigned_wrap_is_not_the_boundary",
+          "file": "tests/semantics.rs",
+          "line": 4,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(unsigned(true, 128));",
+          "relation_reason": "owner_named_test",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by name only"
+        }
+      ],
+      "stop_reasons": ["propagation_evidence_unknown"],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "suggested_next_action": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}
