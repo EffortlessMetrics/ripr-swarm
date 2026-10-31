@@ -22793,7 +22793,7 @@ async fn preview_withheld_marker_respects_document_quarantine() -> Result<(), St
     let mut workspace = quarantine_workspace_diagnostics(&fixture, QUARANTINE_TEXT_A);
     let marker = super::diagnostics::withheld_preview_diagnostic(
         Range::default(),
-        "python",
+        Some("python"),
         1,
         "set diagnosticProfile: full or run `ripr check`",
         "src/a.rs",
@@ -30352,4 +30352,135 @@ fn show_related_test_refusal_maps_to_invalid_params_over_the_wire() -> Result<()
         }
         Ok(())
     })
+}
+
+/// A committed Python repo with a weak test and one working-tree edit to a
+/// call-argument change (a preview finding without a fix route), analyzed with the Python preview adapter enabled.
+#[cfg(feature = "lang-python")]
+fn python_preview_edit_fixture(name: &str) -> Result<TempLspRoot, String> {
+    let root = unique_lsp_test_root(name)?;
+    std::fs::create_dir_all(root.path().join("src"))
+        .map_err(|err| format!("create src failed: {err}"))?;
+    std::fs::create_dir_all(root.path().join("tests"))
+        .map_err(|err| format!("create tests failed: {err}"))?;
+    std::fs::write(
+        root.path().join("src/pricing.py"),
+        "def log_value(x):\n    print(x)\n    return x\n",
+    )
+    .map_err(|err| format!("write pricing.py failed: {err}"))?;
+    std::fs::write(
+        root.path().join("tests/test_pricing.py"),
+        "from src.pricing import log_value\n\n\ndef test_log_value_runs():\n    assert log_value(1) is not None\n",
+    )
+    .map_err(|err| format!("write test_pricing.py failed: {err}"))?;
+    run_lsp_scope_git(root.path(), &["init", "-q"])?;
+    run_lsp_scope_git(root.path(), &["add", "-A"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &[
+            "-c",
+            "user.email=ripr-test@example.com",
+            "-c",
+            "user.name=ripr-test",
+            "-c",
+            "commit.gpgSign=false",
+            "commit",
+            "-qm",
+            "baseline",
+        ],
+    )?;
+    std::fs::write(
+        root.path().join("src/pricing.py"),
+        "def log_value(x):\n    print(x, x)\n    return x\n",
+    )
+    .map_err(|err| format!("edit pricing.py failed: {err}"))?;
+    Ok(root)
+}
+
+/// #11296 through the real workspace entry point: a Python preview edit is
+/// withheld by the actionable profile and disclosed by one passive marker
+/// that the snapshot's consistency check accounts for; the full profile
+/// publishes the real Information finding and no marker; and once the edit
+/// is reverted the finding and the marker are gone together.
+#[test]
+#[cfg(feature = "lang-python")]
+fn python_preview_edit_discloses_withheld_marker_only_under_actionable_profile()
+-> Result<(), String> {
+    use crate::lsp::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE;
+    let root = python_preview_edit_fixture("preview-withheld-entry")?;
+    let analyze = |profile| {
+        let config = LspAnalysisConfig {
+            base_ref: Some("HEAD".to_string()),
+            mode: Mode::Instant,
+            diagnostic_profile: profile,
+            repo_config: crate::config::tests_only_parse(
+                "[languages]\nenabled = [\"rust\", \"python\"]\n",
+            )?,
+            ..LspAnalysisConfig::default()
+        };
+        workspace_diagnostics_with_config(root.path(), &config, true)
+    };
+    let is_marker = |diagnostic: &Diagnostic| {
+        diagnostic.code
+            == Some(NumberOrString::String(
+                DIAGNOSTIC_PREVIEW_WITHHELD_CODE.to_string(),
+            ))
+    };
+
+    let actionable = analyze(crate::config::LspDiagnosticProfile::Actionable)?;
+    if actionable.snapshot.findings.is_empty() {
+        return Err("fixture must produce a Python preview finding".to_string());
+    }
+    let diagnostics = actionable
+        .batches
+        .iter()
+        .flat_map(|batch| batch.diagnostics.iter())
+        .collect::<Vec<_>>();
+    let [marker] = diagnostics.as_slice() else {
+        return Err(format!(
+            "actionable: exactly one marker expected: {diagnostics:?}"
+        ));
+    };
+    if !is_marker(marker) || marker.severity != Some(DiagnosticSeverity::HINT) {
+        return Err(format!(
+            "actionable: the lone diagnostic must be the Hint marker: {marker:?}"
+        ));
+    }
+    if !actionable.snapshot.is_consistent() {
+        return Err("actionable: snapshot with the marker must be consistent".to_string());
+    }
+
+    let full = analyze(crate::config::LspDiagnosticProfile::Full)?;
+    let full_diagnostics = full
+        .batches
+        .iter()
+        .flat_map(|batch| batch.diagnostics.iter())
+        .collect::<Vec<_>>();
+    if full_diagnostics.is_empty()
+        || full_diagnostics
+            .iter()
+            .any(|diagnostic| is_marker(diagnostic))
+        || !full_diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.severity == Some(DiagnosticSeverity::INFORMATION))
+    {
+        return Err(format!(
+            "full: Information finding and no marker expected: {full_diagnostics:?}"
+        ));
+    }
+    if !full.snapshot.is_consistent() {
+        return Err("full: snapshot must be consistent".to_string());
+    }
+
+    run_lsp_scope_git(root.path(), &["checkout", "--", "src/pricing.py"])?;
+    let reverted = analyze(crate::config::LspDiagnosticProfile::Actionable)?;
+    if reverted
+        .batches
+        .iter()
+        .flat_map(|batch| batch.diagnostics.iter())
+        .any(|diagnostic| is_marker(diagnostic))
+    {
+        return Err("reverted edit: the marker must disappear with its finding".to_string());
+    }
+    Ok(())
 }

@@ -7925,8 +7925,17 @@ fn withheld_findings_status_payload(summary: Option<(usize, Vec<&'static str>, u
 fn profile_withholding_pull_disclosure(snapshot: &AnalysisSnapshot) -> Option<String> {
     let (count, _, preview) = withheld_findings_summary(snapshot)?;
     (count > 0).then(|| {
+        // The `*_unknown` wording is unchanged when no preview finding is
+        // withheld; the preview share is named only when it exists.
+        let subject = match (count - preview, preview) {
+            (_, 0) => format!("{count} finding(s) of the *_unknown classes"),
+            (0, _) => format!("{count} preview-language finding(s)"),
+            (unknown, preview) => format!(
+                "{count} finding(s) ({unknown} of the *_unknown classes, {preview} preview-language)"
+            ),
+        };
         format!(
-            "ripr withheld {count} finding(s) from diagnostics ({preview} preview-language; actionable profile, RIPR-SPEC-0069); {}",
+            "ripr withheld {subject} from diagnostics (actionable profile, RIPR-SPEC-0069); {}",
             diagnostic_profile_full_recovery_route()
         )
     })
@@ -13649,8 +13658,7 @@ mod list_actionable_items_tests {
             let disclosure = super::profile_withholding_pull_disclosure(&snapshot)
                 .ok_or_else(|| format!("{file}: withheld preview finding must disclose"))?;
             assert!(
-                disclosure.contains("1 finding(s)")
-                    && disclosure.contains("1 preview-language")
+                disclosure.contains("1 preview-language finding(s)")
                     && disclosure.contains("diagnosticProfile"),
                 "{file}: {disclosure}"
             );
