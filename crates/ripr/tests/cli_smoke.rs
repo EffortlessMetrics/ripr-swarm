@@ -9467,8 +9467,8 @@ fn rerun_repair_receipt(root: &Path, out: bool) -> Result<Output, std::io::Error
 /// (even under `target/ripr`) breaks the verdict binding it just recorded. The
 /// refusal names the after-phase route (the verdict is recorded, so a rerun
 /// reports `already finished` and only a new attempt recovers), and the rerun
-/// points at the restart command. Control: both streams outside the repo
-/// succeed.
+/// points at the restart command. The printed commands are run, with an
+/// unrelated stash as a negative control for the recovery recipe.
 #[test]
 fn agent_repair_after_phase_stderr_redirected_into_repo_names_new_attempt_route()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -9507,7 +9507,8 @@ fn agent_repair_after_phase_stderr_redirected_into_repo_names_new_attempt_route(
     );
     // Run the printed commands: the status command is bound to this root, and
     // the restart refuses while the repair edit is present but works once the
-    // edit is set aside (the fixture's own stash, never ripr's).
+    // edit is set aside with the printed recipe (copy out, `git checkout --`,
+    // copy back), which must leave an unrelated stash alone.
     let printed = |name: &str| -> Result<Vec<String>, Box<dyn std::error::Error>> {
         let start = refusal
             .find(&format!("`ripr agent {name} --root "))
@@ -9522,11 +9523,17 @@ fn agent_repair_after_phase_stderr_redirected_into_repo_names_new_attempt_route(
     };
     let status_args = printed("status")?;
     let status_refs = status_args.iter().map(String::as_str).collect::<Vec<_>>();
-    assert_success(&run_command(
-        env!("CARGO_BIN_EXE_ripr"),
-        Some(&outside),
-        &status_refs,
-    )?);
+    let status = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&outside), &status_refs)?;
+    assert_success(&status);
+    let status_text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&status.stdout),
+        String::from_utf8_lossy(&status.stderr)
+    );
+    assert!(
+        status_text.contains(&attempt_id) && status_text.contains("ready_to_finish"),
+        "status must report this attempt's state: {status_text}"
+    );
     let restart_args = printed("repair")?;
     let restart_refs = restart_args.iter().map(String::as_str).collect::<Vec<_>>();
     let blocked = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&outside), &restart_refs)?;
@@ -9536,13 +9543,29 @@ fn agent_repair_after_phase_stderr_redirected_into_repo_names_new_attempt_route(
         blocked_err.contains("exposed") || blocked_err.contains("strongly_gripped"),
         "the blocked restart must say why: {blocked_err}"
     );
-    git_stdout(&root, &["stash", "push", "--include-untracked"])?;
+    // Negative control: an unrelated pre-existing stash.
+    let readme = root.join("UNRELATED.txt");
+    std::fs::write(&readme, "unrelated work\n")?;
+    git_stdout(&root, &["add", "UNRELATED.txt"])?;
+    git_stdout(&root, &["stash", "push", "-m", "unrelated"])?;
+    let stash_before = git_stdout(&root, &["stash", "list"])?;
+    assert!(stash_before.contains("unrelated"), "{stash_before}");
+    // The printed recipe: copy the test file out, restore it, restart, copy back.
+    let test_file = root.join("tests/pricing.rs");
+    let saved = outside.join("pricing.rs");
+    std::fs::copy(&test_file, &saved)?;
+    git_stdout(&root, &["checkout", "--", "tests/pricing.rs"])?;
     assert_success(&run_command(
         env!("CARGO_BIN_EXE_ripr"),
         Some(&outside),
         &restart_refs,
     )?);
-    git_stdout(&root, &["stash", "pop"])?;
+    std::fs::copy(&saved, &test_file)?;
+    assert_eq!(
+        git_stdout(&root, &["stash", "list"])?,
+        stash_before,
+        "the recipe must leave the unrelated stash untouched"
+    );
 
     // Removing the file does not revive the attempt: the rerun reports it
     // finished and names the restart command.
@@ -9673,7 +9696,8 @@ fn agent_repair_admits_a_cargo_lock_first_generated_between_the_phases()
             && moved_stderr.contains("`ripr agent status --root ")
             && moved_stderr.contains("remove the stray file or edit and rerun")
             && moved_stderr.contains("Write command output outside the repository")
-            && moved_stderr.contains("Set the edit aside without discarding it")
+            && moved_stderr.contains("Set the edit aside without touching other work")
+            && moved_stderr.contains("Avoid `git stash` here")
             && moved_stderr.contains("`ripr agent repair --root ")
             && moved_stderr.contains(" --seam-id ")
             && moved_stderr.contains(" --phase before`"),

@@ -539,7 +539,7 @@ pub(crate) fn receipt_binding_from(
              From `ripr agent receipt`: remove the stray file or edit and rerun.\n\
              From the after phase: the verdict is already recorded, so a rerun reports the attempt as already finished and only a new attempt recovers it.\n\
              The restart refuses while your repair edit is present, because that edit already reads the gap as exposed.\n\
-             Set the edit aside without discarding it (stash only your test edit: `git stash push --include-untracked -- <your test file>`, which also takes an untracked test file and leaves the attempt store in place), run `{restart}`, then restore the edit with `git stash pop` and run the new --attempt command it prints.\n\
+             Set the edit aside without touching other work: copy your test file outside the repository, restore it with `git checkout -- <your test file>` (delete it instead if it is a new file), run `{restart}`, then copy the file back and run the new --attempt command it prints. Avoid `git stash` here: with nothing to stash, a later `git stash pop` would apply an unrelated stash.\n\
              Write command output outside the repository"
         ));
     }
