@@ -196,7 +196,7 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
                 i += 1;
                 mode_explicit = true;
                 let value = expect_value(args, i, "--mode")?;
-                mode = output::gate::GateMode::parse(value).map_err(|_| {
+                mode = output::gate::GateMode::parse(value).map_err(|_parse_error| {
                     unknown_value("gate mode", value, output::gate::GateMode::ACCEPTED)
                 })?;
             }
