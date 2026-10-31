@@ -346,6 +346,30 @@ test-host failure copies a size-capped, redacted log subset into
 the vscode job fails. Success runs do not retain the diagnostics copy, and
 collection cannot change the original test exit status.
 
+## Flaky tests
+
+A flaky test is a bug in the test, the product, or the harness, so the fix is
+the cause and never a retry. Every nextest profile keeps `retries = 0`, and the
+ledger `policy/flaky-tests.toml` records each intermittent failure with its
+evidence runs, symptom and root cause. A `fixed` entry names the guard test that
+pins the cause; an `open` entry names the issue that owns the fix.
+`xtask/tests/flake_ledger.rs` fails when a ledger row is incomplete, when a
+fixed row's guard test disappears, or when any nextest profile or override sets
+a nonzero `retries`.
+
+Three causes have repeated, so check for them before blaming load:
+
+- Process-global test state keyed by something shared between tests (a relative
+  path, a name). nextest runs one process per test and hides it; `cargo test`
+  and the coverage lane run tests as threads of one process and expose it. Key
+  injected state by the owning thread or a unique root.
+- Copying a binary and executing it. A peer test forking during the copy
+  inherits the write descriptor, and `execve` then fails with `ETXTBSY`. Hard
+  link the built binary (it is already executing, so no writer ever opens it).
+- Asserting on a shared artifact (`target/debug/ripr`) that any other Cargo run
+  in the suite may legitimately rewrite. Assert on the build plan, or build in
+  a private target directory.
+
 ## Golden Output
 
 When changing user-visible output, update or add golden coverage for:

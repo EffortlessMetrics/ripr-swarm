@@ -271,9 +271,13 @@ pub(crate) fn mint_canonical_verify(
         before.display().to_string(),
         after.display().to_string(),
     )?;
+    let before_produced_from_dirty = before_identity.historical_produced_from_dirty();
+    let after_produced_from_dirty = after_identity.historical_produced_from_dirty();
     let binding = crate::output::outcome::AgentVerifyArtifactBinding {
         before_content_sha256: before_identity.content_sha256,
         after_content_sha256: after_identity.content_sha256,
+        before_produced_from_dirty,
+        after_produced_from_dirty,
     };
     crate::output::outcome::render_agent_verify_json_with_currentness(
         &report,
