@@ -1,2 +1,0 @@
-<!-- section: Added -->
-- Kani bounded-model-checking harnesses (`cfg(kani)` only, no effect on normal builds) cover LSP diagnostic budgeting and refresh generations: item-count and serialized-byte limits hold and never wrap, inline-detail omission is exact, the generation counter is monotonic, and a result stamped with an older generation is never current. The budget rule and generation predicate were factored into small pure helpers (`BudgetCursor`, `bump_generation`, `generation_is_current`) with unchanged behavior.
