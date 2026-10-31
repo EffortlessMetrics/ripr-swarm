@@ -81,11 +81,12 @@ binary assets and manifest exist on the GitHub Release. See
 
 ## Secrets
 
-Repository secrets:
+Environment secrets, each scoped to the one publish environment that reads it
+(see [REPO_SETTINGS.md](REPO_SETTINGS.md#release-environments)):
 
 ```text
-VSCE_PAT
-OVSX_PAT
+VSCE_PAT   in environment vs-marketplace-publish
+OVSX_PAT   in environment open-vsx-publish
 ```
 
 The Open VSX namespace must exist before publish:
@@ -119,7 +120,8 @@ receipted release head. Each dispatch publishes to exactly one channel
 The first dispatch packages the VSIX and attaches it to the existing
 `v<version>` GitHub Release (it never creates the Release). The second
 channel's dispatch reuses those attached bytes and must pass their digest as
-`vsix_sha256`.
+`vsix_sha256`. Each publish job waits for approval on its protected
+environment.
 
 Every dispatch requires `version`, `source_sha` (the 40-hex head the release
 tag peels to; dispatch with `--ref` at that commit) and `manifest_sha256` (raw

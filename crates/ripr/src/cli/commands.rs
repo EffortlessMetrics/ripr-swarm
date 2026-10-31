@@ -6360,8 +6360,12 @@ language = "rust"
         );
         assert_eq!(
             parse_pr_comments_plan_options(&args(&["--mode", "post"])),
+            Err("unknown pr-comments plan mode \"post\". Accepted: off, plan, inline.".to_string())
+        );
+        assert_eq!(
+            parse_pr_comments_plan_options(&args(&["--mode", "inlin"])),
             Err(
-                "unknown pr-comments plan mode \"post\"; expected `off`, `plan`, or `inline`"
+                "unknown pr-comments plan mode \"inlin\". Did you mean `inline`? Accepted: off, plan, inline."
                     .to_string()
             )
         );
