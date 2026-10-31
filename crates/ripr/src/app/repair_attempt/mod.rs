@@ -539,8 +539,10 @@ pub(crate) fn receipt_binding_from(
              From `ripr agent receipt`: remove the stray file or the later edit (keep a copy first, so you do not revert your bound repair edit) and rerun.\n\
              From the after phase: the verdict is already recorded, so a rerun reports the attempt as already finished and only a new attempt recovers it.\n\
              The restart refuses while your repair edit is present, because that edit already reads the gap as exposed.\n\
-             Keep your own copy of the edited test file(s) and restore their pre-edit content yourself before running `{restart}`.\n\
-             Then re-apply your edit and run the new --attempt command it prints.\n\
+             To restart: 1. Copy your edited test file(s) outside the repository and check the copy is complete before overwriting anything.\n\
+             2. Restore each file's pre-edit content yourself; a newly created test file has no pre-edit content, so move it aside or remove it. Restoring bytes can leave the repair staged, so unstage it if needed (`git restore --staged <file>`).\n\
+             3. Run `{restart}`; if it fails, put your copy back.\n\
+             4. Re-apply your edit and run the new --attempt command it prints.\n\
              Write command output outside the repository."
         ));
     }

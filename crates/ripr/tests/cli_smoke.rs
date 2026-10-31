@@ -9480,11 +9480,19 @@ fn agent_repair_after_phase_stderr_redirected_into_repo_names_new_attempt_route(
             .ok_or("fixture root has no name")?
     ));
     std::fs::create_dir_all(&outside)?;
-    let result = after_phase_redirect_scenario(&root, &outside);
-    // Clean up on failure paths too.
-    let _ = std::fs::remove_dir_all(&outside);
-    let _ = std::fs::remove_dir_all(&root);
-    result
+    // Drop-based cleanup runs when an assertion panics too.
+    let _cleanup = RemoveDirsOnDrop(vec![outside.clone(), root.clone()]);
+    after_phase_redirect_scenario(&root, &outside)
+}
+
+struct RemoveDirsOnDrop(Vec<PathBuf>);
+
+impl Drop for RemoveDirsOnDrop {
+    fn drop(&mut self) {
+        for dir in &self.0 {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
 }
 
 fn after_phase_redirect_scenario(
@@ -9518,6 +9526,8 @@ fn after_phase_redirect_scenario(
             && refusal.contains("the verdict is already recorded")
             && refusal.contains("only a new attempt recovers it")
             && refusal.contains("your repair edit is present")
+            && refusal.contains("check the copy is complete")
+            && refusal.contains("put your copy back")
             && !refusal.contains("git stash"),
         "{refusal}"
     );
@@ -9695,7 +9705,8 @@ fn agent_repair_admits_a_cargo_lock_first_generated_between_the_phases()
             && moved_stderr.contains("`ripr agent status --root ")
             && moved_stderr.contains("remove the stray file or the later edit (keep a copy first")
             && moved_stderr.contains("Write command output outside the repository.")
-            && moved_stderr.contains("restore their pre-edit content yourself")
+            && moved_stderr.contains("Restore each file's pre-edit content yourself")
+            && moved_stderr.contains("git restore --staged <file>")
             && !moved_stderr.contains("git stash")
             && moved_stderr.contains("`ripr agent repair --root ")
             && moved_stderr.contains(" --seam-id ")
