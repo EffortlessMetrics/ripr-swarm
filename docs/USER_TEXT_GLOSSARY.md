@@ -68,19 +68,30 @@ and its baseline scans the goldens only (`precommit`). Hosted CI (`ci-policy`,
 
 ## Baseline ceilings
 
-`main` still contains some banned terms in default output. They are held by
+`main` still contains some banned terms in default output. They are recorded by
 `policy/user-text-baseline.toml`, one ceiling per surface and term: the number
-of output lines containing the term today.
+of output lines containing the term when last lowered.
 
-- A count above its ceiling fails the check.
-- A term with no row has a ceiling of 0.
+- Golden rows (`golden-human`) gate each PR on its own delta (#11374). The check
+  scans the `expected/human.txt` goldens at the merge-base with `origin/main`
+  through Git objects (no base build) and fails only when this tree has more
+  banned lines than the merge-base for a row, including a term with no row.
+  Removing banned lines passes. A PR never edits the baseline to pass, and a
+  parallel merge cannot turn another PR red.
+- A golden count above its absolute ceiling is reported as a WARNING (main
+  health) and does not fail a PR that did not add lines.
+- If the merge-base cannot be read (no `origin/main`, shallow clone), every row
+  falls back to its absolute ceiling and the report says so; run
+  `git fetch --deepen=200 origin main` (or `git fetch origin main`) to restore
+  the delta gate. This is never a silent pass.
+- Live-surface rows are small and keep absolute ceilings: a live count above
+  its ceiling fails. A term with no row has a ceiling of 0.
 - Ceilings only go down. After fixing wording, run
   `cargo xtask check-user-text --ratchet` to lower them; it never raises or
-  adds a row. A ceiling that is higher than the current count does not fail
-  (so concurrent PRs do not conflict); the report prints these rows at the top
-  as a NOTE and the command prints a reminder to run `--ratchet`. After a
-  rebase, rerun `--ratchet` instead of hand-resolving baseline numbers. Raising a ceiling needs a stated reason in the PR and is a
-  review blocker by default.
+  adds a row, and it does not rewrite while any count is above its ceiling. A
+  ceiling that is higher than the current count does not fail; the report prints
+  these rows as a NOTE. Raising a ceiling needs a stated reason in the PR and is
+  a review blocker by default.
 - Surface issues remove their terms: #10691 (check), #10692 (repair and agent
   refusals), #10693 (agent card), #10694 (pilot), #10695 (editor).
 

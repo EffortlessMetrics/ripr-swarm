@@ -8,9 +8,14 @@
 //!    `status`, `continue`, `repair` and `agent` refusals, an `agent card`, and
 //!    the help screens.
 //!
-//! Terms already present on `main` are held by a documented ceiling file,
-//! `policy/user-text-baseline.toml`. A ceiling can only be lowered (`--ratchet`);
-//! raising one needs a reviewed edit to that file. Excluded on purpose, and
+//! Golden counts gate on the PR's own delta (#11374): a `(surface, term)` row
+//! fails only when the tree has more banned lines than the merge-base tree, so
+//! parallel merges cannot turn `main` red and PRs never edit the baseline. The
+//! live surfaces are small and keep their absolute ceilings from
+//! `policy/user-text-baseline.toml`. A ceiling can only be lowered (`--ratchet`).
+//! A golden count above its ceiling is a reported warning, not a failure, when
+//! the merge-base is readable; otherwise the absolute ceilings gate and the
+//! report names `git fetch --deepen`. Excluded on purpose, and
 //! printed in every report: `human-full.txt`, `--verbose`/`--format human-full`
 //! output, JSON, and spec documents (internal vocabulary lives there).
 
@@ -294,9 +299,12 @@ fn render_baseline(baseline: &Baseline) -> String {
     let mut out = String::from(
         "# Ceilings for banned plain-language terms in default human output (#10697).\n\
          # Each number is the count of output lines containing the term on `main`.\n\
-         # `cargo xtask check-user-text` fails when a count rises above its ceiling.\n\
-         # Lower a ceiling with `cargo xtask check-user-text --ratchet`; never raise one\n\
-         # without a reviewed reason in the PR. A term with no row has a ceiling of 0.\n\
+         # Golden rows (`golden-human`) gate each PR on its own delta against the\n\
+         # merge-base, so a PR never edits this file to pass; a golden count above\n\
+         # its ceiling is only a warning. Live-surface rows fail above their ceiling,\n\
+         # as do golden rows when the merge-base is unreadable (shallow clone).\n\
+         # Lower ceilings with `cargo xtask check-user-text --ratchet` (lowering only);\n\
+         # never raise one. A term with no row has a ceiling of 0.\n\
          # See docs/USER_TEXT_GLOSSARY.md.\n\
          schema_version = \"1.0\"\n",
     );
@@ -312,6 +320,51 @@ fn render_baseline(baseline: &Baseline) -> String {
 pub(crate) struct Evaluation {
     pub violations: Vec<String>,
     pub lowerable: Vec<String>,
+    /// Golden counts above their absolute ceiling that the PR did not cause.
+    pub warnings: Vec<String>,
+}
+
+/// Compare against counts at the merge-base instead of absolute ceilings for
+/// the golden surface (#11374). `base` holds the merge-base golden counts.
+/// Golden rows fail only on a net increase; over-ceiling goldens are warnings.
+/// Every other surface keeps its absolute ceiling.
+pub(crate) fn evaluate_delta(
+    counts: &Counts,
+    baseline: &Baseline,
+    base: &BTreeMap<(String, String), usize>,
+) -> Evaluation {
+    let absolute = evaluate(counts, baseline);
+    let golden_prefix = format!("in {GOLDEN_SURFACE}:");
+    let mut evaluation = Evaluation {
+        violations: Vec::new(),
+        lowerable: absolute.lowerable,
+        warnings: Vec::new(),
+    };
+    for ((surface, term), found) in counts {
+        if surface != GOLDEN_SURFACE {
+            continue;
+        }
+        let before = base
+            .get(&(surface.clone(), term.clone()))
+            .copied()
+            .unwrap_or(0);
+        if found.lines > before {
+            evaluation.violations.push(format!(
+                "`{term}` in {surface}: {} line(s), {before} at the merge-base (+{}). First hits: {}",
+                found.lines,
+                found.lines - before,
+                found.examples.join(" | ")
+            ));
+        }
+    }
+    for violation in absolute.violations {
+        if violation.contains(&golden_prefix) {
+            evaluation.warnings.push(violation);
+        } else {
+            evaluation.violations.push(violation);
+        }
+    }
+    evaluation
 }
 
 pub(crate) fn evaluate(counts: &Counts, baseline: &Baseline) -> Evaluation {
@@ -366,6 +419,114 @@ pub(crate) fn ratchet_outcome(counts: &Counts, baseline: &Baseline) -> Option<Ba
     } else {
         None
     }
+}
+
+// ------------------------------------------------------- merge-base goldens
+
+fn git_text(root: &Path, args: &[&str]) -> Result<String, String> {
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(args)
+        .output()
+        .map_err(|err| format!("git {}: {err}", args.join(" ")))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    String::from_utf8(output.stdout).map_err(|err| format!("git output is not UTF-8: {err}"))
+}
+
+pub(crate) fn is_golden_human_path(path: &str) -> bool {
+    path.starts_with("fixtures/") && path.ends_with("/expected/human.txt")
+}
+
+/// Banned-term counts of the default `human.txt` goldens at the merge-base with
+/// `origin/main`, read through Git objects without building or checking out the
+/// base. Errors (no `origin/main`, shallow history) mean the caller must fall
+/// back to absolute ceilings; this never returns an empty guess.
+fn merge_base_golden_counts(root: &Path) -> Result<(String, Counts), String> {
+    let base = git_text(root, &["merge-base", "origin/main", "HEAD"])?
+        .trim()
+        .to_string();
+    if base.is_empty() {
+        return Err("git merge-base returned nothing".to_string());
+    }
+    let listing = git_text(
+        root,
+        &["ls-tree", "-r", "--name-only", &base, "--", "fixtures"],
+    )?;
+    let paths: Vec<&str> = listing
+        .lines()
+        .filter(|path| is_golden_human_path(path))
+        .collect();
+    if paths.is_empty() {
+        return Err(format!("no default human.txt goldens found at {base}"));
+    }
+    let mut child = Command::new("git")
+        .current_dir(root)
+        .args(["cat-file", "--batch"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|err| format!("git cat-file: {err}"))?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "git cat-file: no stdin".to_string())?;
+    let request: String = paths
+        .iter()
+        .map(|path| format!("{base}:{path}\n"))
+        .collect();
+    let writer = std::thread::spawn(move || {
+        use std::io::Write;
+        stdin.write_all(request.as_bytes())
+    });
+    let output = child
+        .wait_with_output()
+        .map_err(|err| format!("git cat-file: {err}"))?;
+    writer
+        .join()
+        .map_err(|_| "git cat-file writer panicked".to_string())?
+        .map_err(|err| format!("git cat-file write: {err}"))?;
+    if !output.status.success() {
+        return Err("git cat-file --batch failed".to_string());
+    }
+    let mut counts = Counts::new();
+    let data = output.stdout;
+    let mut pos = 0usize;
+    for path in &paths {
+        let end = data[pos..]
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map(|offset| pos + offset)
+            .ok_or_else(|| format!("git cat-file: truncated header for {path}"))?;
+        let header = String::from_utf8_lossy(&data[pos..end]).to_string();
+        let mut parts = header.split(' ');
+        let (_, kind, size) = (parts.next(), parts.next(), parts.next());
+        if kind != Some("blob") {
+            return Err(format!("git cat-file: `{header}` is not a blob"));
+        }
+        let size: usize = size
+            .and_then(|size| size.parse().ok())
+            .ok_or_else(|| format!("git cat-file: bad size in `{header}`"))?;
+        let start = end + 1;
+        let stop = start + size;
+        let body = data
+            .get(start..stop)
+            .ok_or_else(|| format!("git cat-file: truncated body for {path}"))?;
+        scan_text(
+            GOLDEN_SURFACE,
+            path,
+            &String::from_utf8_lossy(body),
+            &mut counts,
+        );
+        pos = stop + 1;
+    }
+    Ok((base, counts))
 }
 
 // ------------------------------------------------------------- live surface
@@ -678,8 +839,19 @@ fn render_report(
     counts: &Counts,
     baseline: &Baseline,
     evaluation: &Evaluation,
+    gate_note: &str,
 ) -> String {
-    let mut out = format!("# check-user-text report\n\nStatus: {status}\n\n");
+    let mut out = format!("# check-user-text report\n\nStatus: {status}\n\n{gate_note}\n\n");
+    if !evaluation.warnings.is_empty() {
+        out.push_str(&format!(
+            "WARNING (main health, does not fail this PR): {} golden count(s) are above their absolute ceiling. This tree did not add them relative to the merge-base; lower them with wording work, then `--ratchet`:\n",
+            evaluation.warnings.len()
+        ));
+        for item in &evaluation.warnings {
+            out.push_str(&format!("- {item}\n"));
+        }
+        out.push('\n');
+    }
     if !evaluation.lowerable.is_empty() {
         out.push_str(&format!(
             "NOTE: {} ceiling(s) are higher than the current count and can be lowered. Run `cargo xtask check-user-text --ratchet` and commit the result (advisory; this does not fail the check):\n",
@@ -714,7 +886,7 @@ fn render_report(
         ));
     }
     if !evaluation.violations.is_empty() {
-        out.push_str("\nAbove ceiling:\n");
+        out.push_str("\nRose (new banned-term lines or live ceiling):\n");
         for violation in &evaluation.violations {
             out.push_str(&format!("- {violation}\n"));
         }
@@ -833,13 +1005,44 @@ pub(crate) fn check_user_text_with_args(args: &[String]) -> Result<(), String> {
         (Vec::new(), golden_only)
     };
 
-    let evaluation = evaluate(&counts, &baseline);
+    // Golden rows gate on this tree's delta against the merge-base (#11374).
+    // Without a readable merge-base, fall back to the absolute ceilings, loudly.
+    let (evaluation, gate_note) = match merge_base_golden_counts(&root) {
+        Ok((base_sha, base_counts)) => {
+            let base: BTreeMap<(String, String), usize> = base_counts
+                .into_iter()
+                .map(|(key, found)| (key, found.lines))
+                .collect();
+            (
+                evaluate_delta(&counts, &baseline, &base),
+                format!(
+                    "Gate: golden-human rows compare against the merge-base {} (delta); live rows use absolute ceilings.",
+                    &base_sha[..base_sha.len().min(12)]
+                ),
+            )
+        }
+        Err(reason) => (
+            evaluate(&counts, &baseline),
+            format!(
+                "Gate: merge-base unavailable ({reason}); falling back to absolute ceilings for every row. Run `git fetch origin main` or `git fetch --deepen=200 origin main` so the per-PR delta gate can run."
+            ),
+        ),
+    };
+    println!("check-user-text: {gate_note}");
     let status = if evaluation.violations.is_empty() {
         "pass"
     } else {
         "fail"
     };
-    let report = render_report(status, golden_files, &live, &counts, &baseline, &evaluation);
+    let report = render_report(
+        status,
+        golden_files,
+        &live,
+        &counts,
+        &baseline,
+        &evaluation,
+        &gate_note,
+    );
     write_report(&root, &report);
     print!("{report}");
     if ratchet {
@@ -861,7 +1064,7 @@ pub(crate) fn check_user_text_with_args(args: &[String]) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "{} plain-language term count(s) rose above their ceiling; see {REPORT_PATH} and {GLOSSARY}",
+            "{} plain-language term count(s) rose (delta or ceiling); see {REPORT_PATH} and {GLOSSARY}",
             evaluation.violations.len()
         ))
     }
@@ -920,6 +1123,77 @@ mod tests {
 
         let clean = scan(GOLDEN_SURFACE, "Summary: 1 changed behavior checked\n");
         assert_eq!(evaluate(&clean, &baseline), Evaluation::default());
+    }
+
+    fn base_of(counts: &Counts) -> BTreeMap<(String, String), usize> {
+        counts
+            .iter()
+            .map(|(key, found)| (key.clone(), found.lines))
+            .collect()
+    }
+
+    /// #11374 positive: adding a banned golden line fails against the merge-base
+    /// even when the absolute ceiling would have allowed it.
+    #[test]
+    fn delta_gate_fails_a_pr_that_adds_a_banned_line() {
+        let mut baseline = Baseline::new();
+        baseline.insert((GOLDEN_SURFACE.into(), "seam".into()), 100);
+        let base = base_of(&scan(GOLDEN_SURFACE, "a seam\nb seam\n"));
+        let grown = scan(GOLDEN_SURFACE, "a seam\nb seam\nc seam\n");
+        let evaluation = evaluate_delta(&grown, &baseline, &base);
+        assert_eq!(evaluation.violations.len(), 1, "{evaluation:?}");
+        assert!(evaluation.violations[0].contains("+1"));
+    }
+
+    /// A new term with no base row and no ceiling also fails (any row).
+    #[test]
+    fn delta_gate_fails_a_newly_introduced_term() {
+        let base = base_of(&scan(GOLDEN_SURFACE, "plain\n"));
+        let grown = scan(GOLDEN_SURFACE, "1 probe checked\n");
+        let evaluation = evaluate_delta(&grown, &Baseline::new(), &base);
+        assert_eq!(evaluation.violations.len(), 1, "{evaluation:?}");
+    }
+
+    /// Negative: removing banned lines passes with no baseline edit.
+    #[test]
+    fn delta_gate_passes_a_pr_that_removes_banned_lines() {
+        let mut baseline = Baseline::new();
+        baseline.insert((GOLDEN_SURFACE.into(), "seam".into()), 2);
+        let base = base_of(&scan(GOLDEN_SURFACE, "a seam\nb seam\n"));
+        let shrunk = scan(GOLDEN_SURFACE, "a seam\n");
+        let evaluation = evaluate_delta(&shrunk, &baseline, &base);
+        assert!(evaluation.violations.is_empty(), "{evaluation:?}");
+    }
+
+    /// Negative: an unrelated PR passes while main is above its absolute ceiling,
+    /// and the over-ceiling state stays visible as a warning.
+    #[test]
+    fn delta_gate_passes_unrelated_pr_while_over_absolute_ceiling() {
+        let mut baseline = Baseline::new();
+        baseline.insert((GOLDEN_SURFACE.into(), "seam".into()), 1);
+        let same = scan(GOLDEN_SURFACE, "a seam\nb seam\n");
+        let base = base_of(&same);
+        let evaluation = evaluate_delta(&same, &baseline, &base);
+        assert!(evaluation.violations.is_empty(), "{evaluation:?}");
+        assert_eq!(evaluation.warnings.len(), 1, "{evaluation:?}");
+        // The absolute fallback (shallow clone) still fails closed on the same input.
+        assert_eq!(evaluate(&same, &baseline).violations.len(), 1);
+    }
+
+    /// Live surfaces keep absolute ceilings: a rise there fails regardless of base.
+    #[test]
+    fn delta_gate_keeps_absolute_ceilings_for_live_surfaces() {
+        let live = scan("check", "a discriminator\n");
+        let evaluation = evaluate_delta(&live, &Baseline::new(), &BTreeMap::new());
+        assert_eq!(evaluation.violations.len(), 1, "{evaluation:?}");
+        assert!(evaluation.warnings.is_empty());
+    }
+
+    #[test]
+    fn golden_path_filter_matches_only_default_human_goldens() {
+        assert!(is_golden_human_path("fixtures/a/expected/human.txt"));
+        assert!(!is_golden_human_path("fixtures/a/expected/human-full.txt"));
+        assert!(!is_golden_human_path("docs/expected/human.txt"));
     }
 
     #[test]
@@ -1125,10 +1399,12 @@ mod tests {
         Ok(())
     }
 
-    /// The committed goldens must already sit within the committed ceilings,
-    /// so a stale baseline cannot hide growth.
+    /// The committed baseline parses and the committed goldens scan. Staying
+    /// under the absolute ceiling is deliberately not asserted here (#11374):
+    /// parallel merges move it, and the gate is each PR's delta; the over-ceiling
+    /// state is a report warning instead.
     #[test]
-    fn committed_goldens_stay_within_the_committed_baseline() -> Result<(), String> {
+    fn committed_goldens_scan_and_baseline_parses_without_an_absolute_gate() -> Result<(), String> {
         let root = repo_root()?;
         let baseline = parse_baseline(
             &fs::read_to_string(root.join(BASELINE_PATH))
@@ -1139,11 +1415,8 @@ mod tests {
         if scanned == 0 {
             return Err("no default human.txt goldens were scanned".into());
         }
-        let golden_only: Baseline = baseline
-            .into_iter()
-            .filter(|((surface, _), _)| surface == GOLDEN_SURFACE)
-            .collect();
-        let evaluation = evaluate(&counts, &golden_only);
+        let itself = base_of(&counts);
+        let evaluation = evaluate_delta(&counts, &baseline, &itself);
         if evaluation.violations.is_empty() {
             Ok(())
         } else {
