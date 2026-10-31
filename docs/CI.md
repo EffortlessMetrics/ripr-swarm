@@ -2683,15 +2683,6 @@ already warm), and the `routed-rust.yml` docs-gate runs it when a docs-only PR
 changes `docs/specs/**` or `docs/status/SUPPORT_TIERS.md` (a renamed spec is the
 one docs-only way to break a `proof_refs` entry).
 
-## Changelog Fold
-
-`cargo xtask fold-changelog [--dry-run | --write] [--limit <N>]
-[--keep-fragments]` (#5114) folds `changelog.d/` fragments into the first
-matching `### <Section>` under `## Unreleased` at the release cut, in file-name
-order, and deletes them with `--write`. The default is a dry run. It reuses the
-`check-changelog-fragments` validator, refuses malformed fragments by file name
-and is not part of `precommit`. `changelog.d/README.md` has the batch procedure.
-
 ## Capability Registry Docs Block
 
 `cargo xtask capability-docs [--check | --write] [--markdown-file <path>]` keeps
