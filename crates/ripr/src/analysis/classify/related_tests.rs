@@ -6196,7 +6196,10 @@ fn owner_call_relation_reason(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the gated form adds one input to the existing relation reason without a parameter struct"
+)]
 fn owner_call_relation_reason_gated(
     test: &TestSummary,
     owner_fn: Option<&FunctionSummary>,
