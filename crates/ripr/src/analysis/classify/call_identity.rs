@@ -2754,6 +2754,45 @@ fn qualified_call_names_owner(
     anchored && module_reexports_owner(index, owner, &owner_path, &owner_crate, rest)
 }
 
+/// Whether every call of `name` in `test` is spelled through a module that the
+/// test's own file declares and that file also defines a body-ful function of
+/// that name (#10855). Such a call names the test-local definition, not an
+/// owner in another file, even when the module is spelled like the owner's
+/// library crate. Used when no [`OwnerCallIdentity`] exists to settle the call
+/// (the rival sits in another crate class, so the identity rule is off).
+pub(in crate::analysis) fn test_calls_only_through_local_rival_module(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+) -> bool {
+    if test.file == owner.file {
+        return false;
+    }
+    let defines_rival = index.functions().iter().any(|function| {
+        function.file == test.file
+            && function.name == owner.name
+            && function.item.container == FunctionContainer::Free
+            && function.item.has_body
+    });
+    if !defines_rival {
+        return false;
+    }
+    let Some(facts) = index.files().get(&test.file) else {
+        return false;
+    };
+    let qualifiers = call_qualifiers(&test.body, &owner.name);
+    !qualifiers.is_empty()
+        && qualifiers.iter().all(|qualifier| {
+            qualifier
+                .as_ref()
+                .and_then(|segments| segments.first())
+                .is_some_and(|first| {
+                    !matches!(first.as_str(), "crate" | "self" | "super" | "Self")
+                        && mentions_word(&facts.data().source, &format!("mod {first}"))
+                })
+        })
+}
+
 /// The spelled module path of every mention of `name` in `body` that is no
 /// call and could be the function used as a value (`.map(a::render)`, `let
 /// f = render;`), in the same shape as [`call_qualifiers`]. Calls, method

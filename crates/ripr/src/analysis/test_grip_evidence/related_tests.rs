@@ -83,6 +83,24 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
                     identity.resolve_test(indexed.test, context.index) != CallTarget::Other
                 })
         });
+    } else if owner.free_function
+        && owner.same_name_count > 1
+        && let Some(owner_fn) = context.owner_function(seam.file(), seam.display_line())
+    {
+        // #10855: no identity exists when the only rival sits in another
+        // crate class (an integration test's own module). A test whose every
+        // call goes through a module its own file declares and defines the
+        // same-named function in names that local rival, not the owner.
+        candidates.retain(|test_index, reason| {
+            *reason == RelationReason::HelperOwnerCall
+                || context.tests.get(*test_index).is_none_or(|indexed| {
+                    !crate::analysis::classify::test_calls_only_through_local_rival_module(
+                        context.index,
+                        owner_fn,
+                        indexed.test,
+                    )
+                })
+        });
     }
 
     // Newly registered property facts carry assertion interpretation, not

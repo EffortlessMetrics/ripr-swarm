@@ -20962,3 +20962,43 @@ fn inherent_helper_declarations_are_not_executable_self_edges() -> Result<(), St
     }
     Ok(())
 }
+
+fn related_test_names_for_boundary_seam(tests_src: &str) -> Result<Vec<String>, String> {
+    let prod_src = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\n";
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), prod_src),
+        (PathBuf::from("tests/boundary.rs"), tests_src),
+    ])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected predicate boundary seam".to_string())?;
+    let evidence = evidence_for_seam(seam, &index);
+    Ok(evidence
+        .related_tests
+        .iter()
+        .map(|test| test.test_name.clone())
+        .collect())
+}
+
+#[test]
+fn given_integration_test_when_local_module_shadows_library_crate_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    let shadow = "mod lib_proptest {\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 90 }\n}\n\n#[test]\nfn equality_boundary_discounts() {\n    assert_eq!(lib_proptest::discounted_total(100, 100), 90);\n}\n";
+    let related = related_test_names_for_boundary_seam(shadow)?;
+    assert!(
+        related.is_empty(),
+        "#10855: a test-local module rival must not relate the production owner: {related:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_no_local_module_shadows_then_owner_keeps_related_test()
+-> Result<(), String> {
+    let real = "#[test]\nfn equality_boundary_discounts() {\n    assert_eq!(lib_proptest::discounted_total(100, 100), 90);\n}\n";
+    let related = related_test_names_for_boundary_seam(real)?;
+    assert_eq!(related, vec!["equality_boundary_discounts".to_string()]);
+    Ok(())
+}
