@@ -866,13 +866,40 @@ fn typescript_incomplete_analysis_withholds_the_gap_bound_start() -> Result<(), 
     // Control first: the unmodified fixture is complete and offers the start.
     let (ok, control) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
     expect_exit(ok, true, "check of the complete fixture")?;
-    if gap_start_tokens(&control).is_none() {
-        return Err(format!(
-            "control: a complete analysis lost its start:\n{control}"
-        ));
-    }
+    let (gap, _) = gap_start_tokens(&control)
+        .ok_or_else(|| format!("control: a complete analysis lost its start:\n{control}"))?;
     if control.contains("analysis incomplete") {
         return Err(format!("control: the fixture is not complete:\n{control}"));
+    }
+
+    // Exercise admission as well as the printed route in a separate root.
+    let (_positive_guard, positive_root, positive_decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "tsi-positive",
+        Some(toml),
+    )?;
+    let positive_root_arg = positive_root.to_string_lossy().into_owned();
+    let (ok, start) = ripr(
+        &positive_decoy,
+        &[
+            "agent",
+            "repair",
+            "--gap-id",
+            &gap,
+            "--base",
+            "HEAD~1",
+            "--root",
+            &positive_root_arg,
+            "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(ok, true, "manual start of complete analysis")?;
+    if attempt_manifests(&positive_root)? != 1 {
+        return Err(format!(
+            "complete control did not publish an attempt:\n{start}"
+        ));
     }
 
     // Scule-shaped: the finding's own tests stay evaluable (its packet is
@@ -932,6 +959,38 @@ fn typescript_incomplete_analysis_withholds_the_gap_bound_start() -> Result<(), 
         ],
     )?;
     expect_exit(findings.status.success(), true, "check-findings-json")?;
+    let parsed: serde_json::Value = serde_json::from_slice(&findings.stdout)
+        .map_err(|error| format!("parse findings: {error}"))?;
+    if parsed["analysis_outcome"]["analysis_complete"] != false
+        || parsed["findings"].as_array().is_none_or(Vec::is_empty)
+    {
+        return Err(format!(
+            "fixture did not produce mixed incomplete findings: {parsed}"
+        ));
+    }
+    let (started, manual) = ripr(
+        &decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", "HEAD~2", "--root", &root_arg,
+            "--phase", "before",
+        ],
+    )?;
+    expect_exit(started, false, "manual start of incomplete analysis")?;
+    need(&manual, "incomplete", "manual refusal names incompleteness")?;
+    need(
+        &manual,
+        &format!(
+            "ripr check --root {} --base {}",
+            printed_shell_arg(&root_arg),
+            printed_shell_arg("HEAD~2")
+        ),
+        "manual refusal preserves selected root and base from the decoy directory",
+    )?;
+    if attempt_manifests(&root)? != 0 || root.join("target/ripr/workflow").exists() {
+        return Err(format!(
+            "incomplete start left an attempt or workflow artifact:\n{manual}"
+        ));
+    }
     let artifact = root.join("incomplete-findings.json");
     std::fs::write(&artifact, &findings.stdout).map_err(|error| format!("write: {error}"))?;
     let artifact_arg = artifact.to_string_lossy().into_owned();
@@ -966,6 +1025,91 @@ fn typescript_incomplete_analysis_withholds_the_gap_bound_start() -> Result<(), 
         return Err(format!("verify still says regenerate:\n{refusal}"));
     }
     decoy_untouched(&decoy)
+}
+
+/// A ready finding must not admit a manual start when a different changed
+/// file's context is unavailable to analysis.
+#[cfg(all(feature = "lang-typescript", unix))]
+#[test]
+fn typescript_manual_gap_start_refuses_unavailable_changed_file() -> Result<(), String> {
+    let (_guard, root, decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "tsi-missing",
+        Some("[languages]\nenabled = [\"typescript\"]\n"),
+    )?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let (ok, control) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+    expect_exit(ok, true, "complete control")?;
+    let (gap, _) =
+        gap_start_tokens(&control).ok_or_else(|| format!("missing control gap: {control}"))?;
+
+    let source = root.join("src/unavailable.ts");
+    std::fs::write(
+        &source,
+        "export function unavailable(x: number) { return x + 1; }\n",
+    )
+    .map_err(|error| format!("write changed source: {error}"))?;
+    fixture_git_ok(&root, &["add", "src/unavailable.ts"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "add unrelated source"])?;
+    let held = root.join("target/held-unavailable.ts");
+    std::fs::create_dir_all(root.join("target")).map_err(|error| error.to_string())?;
+    std::fs::rename(&source, &held).map_err(|error| error.to_string())?;
+    std::os::unix::fs::symlink(&held, &source).map_err(|error| error.to_string())?;
+
+    let report = ripr_output(
+        &decoy,
+        &[
+            "check",
+            "--root",
+            &root_arg,
+            "--base",
+            "HEAD~2",
+            "--mode",
+            "draft",
+            "--format",
+            "check-findings-json",
+        ],
+    )?;
+    expect_exit(report.status.success(), true, "mixed check")?;
+    let json: serde_json::Value =
+        serde_json::from_slice(&report.stdout).map_err(|error| error.to_string())?;
+    if json["analysis_outcome"]["analysis_complete"] != false
+        || !json["findings"].as_array().is_some_and(|findings| {
+            findings
+                .iter()
+                .any(|finding| finding["canonical_gap_id"] == gap)
+        })
+        || !json["analysis_outcome"]["outcome"]["limitations"]
+            .as_array()
+            .is_some_and(|items| {
+                items.iter().any(|item| {
+                    item["kind"] == "language_scope_unsupported"
+                        && item["bounded_detail"].as_str().is_some_and(|detail| {
+                            detail.contains("typescript_workspace_links_skipped")
+                        })
+                })
+            })
+    {
+        return Err(format!(
+            "fixture did not produce a finding and unavailable context: {json}"
+        ));
+    }
+    let (started, result) = ripr(
+        &decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", "HEAD~2", "--root", &root_arg,
+            "--phase", "before",
+        ],
+    )?;
+    expect_exit(started, false, "manual start with unavailable context")?;
+    need(&result, "incomplete", "manual refusal names incompleteness")?;
+    if attempt_manifests(&root)? != 0 || root.join("target/ripr/workflow").exists() {
+        return Err(format!(
+            "refusal left an attempt or workflow artifact: {result}"
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(feature = "lang-typescript")]

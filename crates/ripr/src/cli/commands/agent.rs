@@ -3763,6 +3763,20 @@ fn run_gap_bound_before_phase(
         format!("agent repair --gap-id `{gap_id}`: {error}. No repair attempt was started.")
     })?;
     let snapshot = super::check::gap_check_findings_snapshot(root, &base_commit)?;
+    let analysis_complete = snapshot
+        .output
+        .analysis_outcome
+        .as_ref()
+        .map(|outcome| outcome.kind.is_complete());
+    if !crate::agent::artifact::check_findings_outcome_is_complete(analysis_complete, None) {
+        refusal.start_refused = true;
+        let limitation = crate::app::task_first::incomplete_limitation_summary(&snapshot.output);
+        return Err(format!(
+            "agent repair --gap-id `{gap_id}`: analysis is incomplete ({limitation}). Resolve the limitation and rerun `ripr check --root {} --base {}`; no repair attempt was started.",
+            shell_arg(&root_display),
+            shell_arg(base)
+        ));
+    }
     let python = crate::app::gap_bound_repair::is_python_gap_bound_subject(gap_id);
     let lookup = if python {
         crate::app::gap_bound_repair::lookup_python_gap_start(
