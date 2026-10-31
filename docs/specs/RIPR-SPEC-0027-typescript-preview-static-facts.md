@@ -474,6 +474,30 @@ operands to the same value. Predicates without a comparable boundary (such as
 values stay `weakly_exposed`; the literal or operand-pair boundary becomes the
 missing discriminator when one is known.
 
+The named boundary is the comparison the edit changed (#10399). On a compound
+condition (`a > b || c >= d`) the adapter compares parser-owned tokens of the old and new line and reads
+the boundary from the one condition-level comparison whose tokens differ,
+never from a neighbouring comparison on the same line. Literal and comment
+contents, callback bodies, call arguments, computed access and type syntax do
+not supply comparison sites. Unsupported operands and malformed old or new
+syntax retain refusal; whitespace/comment-only edits name no boundary. When the edit
+touches no comparison (an operand such as `isDone ||` is removed), touches
+several, or the line cannot be tokenized, the changed operator cannot be
+located unambiguously, so no boundary is named: no `missing_discriminator`,
+and the limitation reports that the changed line has no statically comparable
+predicate boundary. An added line with several comparisons is likewise
+unlabeled. The selected comparison and full changed source line retain separate
+identities: expected-side branch checks must still find the original owner line,
+so narrowing a label cannot credit an expectation that matches neither outcome.
+The module-bound boundary-input and boundary-parameters facts likewise keep
+reading the full changed source line rather than the selected text: their
+whole-side and verbatim-line gates need the source line's statement context and
+line identity, so a fact stays available on a compound line whose single
+comparison sits next to the statement opening (`if (total > 100 && ready) {`)
+and refuses on narrowed text alone or on a line holding several comparisons.
+Returned-ternary arm edits retain their sole condition boundary only when the
+condition tokens are unchanged.
+
 Three one-hop input resolutions credit the idiom shapes that reach the same
 boundary without changing the guards (#4104 E):
 
