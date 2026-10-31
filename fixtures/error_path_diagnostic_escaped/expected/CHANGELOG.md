@@ -416,3 +416,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_path_diagnostic_escaped (31)
+
+Reason:
+RIPR-SPEC-0108: restore JSON source-text backslashes the golden normalizer wrongly folded to '/' on non-Windows hosts (#11119)
+
+Command:
+`cargo xtask goldens bless error_path_diagnostic_escaped --reason "..."`
+
+Updated:
+- `expected/check.json`

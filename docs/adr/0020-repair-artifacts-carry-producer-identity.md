@@ -60,6 +60,13 @@ the content-addressed finding id), which is how movement is compared. The
 analysis format is part of the input identity, so a findings artifact and a
 repo-exposure artifact are never comparable to each other.
 
+Check-findings input identity v5 binds the resolved enabled languages and
+unchanged-test setting, including command-line overrides. Earlier findings
+identities are refused because they omitted these inputs. A run that consumed
+a Perl facts packet cannot currently produce a check-findings artifact: its
+consumed packet identity is not yet carried by this producer. Other report
+formats remain available.
+
 This is an integrity/currentness boundary, not a signature system and not
 runtime mutation proof. Signature, command execution, and receipt issuance
 remain separate follow-up contracts under #1941.

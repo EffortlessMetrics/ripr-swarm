@@ -1,0 +1,13 @@
+diff --git a/lib/Forms.pm b/lib/Forms.pm
+index a64ea0b..fa64710 100644
+--- a/lib/Forms.pm
++++ b/lib/Forms.pm
+@@ -23,7 +23,7 @@ sub prefix_only {
+ 
+ sub class_only {
+     my ($n) = @_;
+-    die Forms::Error->new(message => "bad input: $n") if $n < 0;
++    die Forms::Error->new(message => "bad " . "input: $n") if $n < 0;
+     return $n;
+ }
+ 

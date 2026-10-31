@@ -28,7 +28,7 @@ Start here:
   Suggested test file: tests/test_shop.py
   Suggested test: test_handling_fee
   Test node: tests/test_shop.py::test_handling_fee
-  Verify command: python -m pytest tests/test_shop.py::test_handling_fee (high)
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_rewrite_shifted_bound/input && python -m pytest tests/test_shop.py::test_handling_fee) (high)
   Next step — Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `amount == 100`
   Evidence: reach yes · infection weak · propagation weak · observation yes · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

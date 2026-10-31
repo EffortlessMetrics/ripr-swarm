@@ -41,7 +41,7 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach read_all: reads_successfully", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: let n = rdr.read(&mut buf)?", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: let n = rdr.read(&mut buf)? (line 5)", "related test src/lib.rs:14 reads_successfully uses strong exact value oracle: assert_eq!(rdr.len(), 10, \"read /\"error/\", (panic)\");", "source assertion argument value 10 at line 17", "source assertion argument value \"read /\"error/\", (panic)\" at line 18", "source assertion argument value 10 at line 18"],
+      "evidence_path": ["reach yes: Related tests appear to reach read_all: reads_successfully", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: let n = rdr.read(&mut buf)?", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: let n = rdr.read(&mut buf)? (line 5)", "related test src/lib.rs:14 reads_successfully uses strong exact value oracle: assert_eq!(rdr.len(), 10, \"read \\\"error\\\", (panic)\");", "source assertion argument value 10 at line 17", "source assertion argument value \"read \\\"error\\\", (panic)\" at line 18", "source assertion argument value 10 at line 18"],
       "flow_sinks": [
         {"kind":"error_variant","text":"let n = rdr.read(&mut buf)?","line":5}
       ],
@@ -49,7 +49,7 @@
       "missing": ["No exact error variant discriminator was detected"],
       "assertion_texts": {
         "17": "assert_eq!(got.ok(), Some(10));",
-        "18": "assert_eq!(rdr.len(), 10, \"read /\"error/\", (panic)\");"
+        "18": "assert_eq!(rdr.len(), 10, \"read \\\"error\\\", (panic)\");"
       },
       "activation": {
         "observed_values": [
@@ -60,7 +60,7 @@
           },
           {
             "line": 18,
-            "value": "\"read /\"error/\", (panic)\"",
+            "value": "\"read \\\"error\\\", (panic)\"",
             "context": "assertion_argument"
           },
           {
@@ -80,7 +80,7 @@
         },
         {
           "line": 18,
-          "value": "\"read /\"error/\", (panic)\"",
+          "value": "\"read \\\"error\\\", (panic)\"",
           "context": "assertion_argument"
         },
         {
@@ -99,7 +99,7 @@
           "line": 14,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
-          "oracle": "assert_eq!(rdr.len(), 10, \"read /\"error/\", (panic)\");",
+          "oracle": "assert_eq!(rdr.len(), 10, \"read \\\"error\\\", (panic)\");",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",
@@ -146,7 +146,7 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"unknown","confidence":"low","summary":"Assertions exist, but oracle strength is unknown"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach read_all: reads_successfully", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 5)", "related test src/lib.rs:14 reads_successfully uses exact value oracle, not graded against this probe: assert_eq!(rdr.len(), 10, \"read /\"error/\", (panic)\");", "source assertion argument value 10 at line 17", "source assertion argument value \"read /\"error/\", (panic)\" at line 18", "source assertion argument value 10 at line 18"],
+      "evidence_path": ["reach yes: Related tests appear to reach read_all: reads_successfully", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 5)", "related test src/lib.rs:14 reads_successfully uses exact value oracle, not graded against this probe: assert_eq!(rdr.len(), 10, \"read \\\"error\\\", (panic)\");", "source assertion argument value 10 at line 17", "source assertion argument value \"read \\\"error\\\", (panic)\" at line 18", "source assertion argument value 10 at line 18"],
       "flow_sinks": [
         {"kind":"unknown","text":"unknown sink","line":5}
       ],
@@ -154,7 +154,7 @@
       "missing": ["No strong discriminator was detected", "Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests"],
       "assertion_texts": {
         "17": "assert_eq!(got.ok(), Some(10));",
-        "18": "assert_eq!(rdr.len(), 10, \"read /\"error/\", (panic)\");"
+        "18": "assert_eq!(rdr.len(), 10, \"read \\\"error\\\", (panic)\");"
       },
       "activation": {
         "observed_values": [
@@ -165,7 +165,7 @@
           },
           {
             "line": 18,
-            "value": "\"read /\"error/\", (panic)\"",
+            "value": "\"read \\\"error\\\", (panic)\"",
             "context": "assertion_argument"
           },
           {
@@ -185,7 +185,7 @@
         },
         {
           "line": 18,
-          "value": "\"read /\"error/\", (panic)\"",
+          "value": "\"read \\\"error\\\", (panic)\"",
           "context": "assertion_argument"
         },
         {
@@ -204,7 +204,7 @@
           "line": 14,
           "oracle_strength": "unknown",
           "oracle_kind": "exact_value",
-          "oracle": "assert_eq!(rdr.len(), 10, \"read /\"error/\", (panic)\");",
+          "oracle": "assert_eq!(rdr.len(), 10, \"read \\\"error\\\", (panic)\");",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high"
         }

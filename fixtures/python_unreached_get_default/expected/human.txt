@@ -28,7 +28,7 @@ Start here:
   Suggested test file: tests/test_rates.py
   Suggested test: test_lookup_silver
   Test node: tests/test_rates.py::test_lookup_silver
-  Verify command: python -m pytest tests/test_rates.py::test_lookup_silver (high)
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_unreached_get_default/input && python -m pytest tests/test_rates.py::test_lookup_silver) (high)
   Next step — Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `tier not in RATE_TABLE`
   Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

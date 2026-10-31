@@ -1,0 +1,11 @@
+diff --git a/src/clip.py b/src/clip.py
+index 0000000..1111111 100644
+--- a/src/clip.py
++++ b/src/clip.py
+@@ -1,5 +1,5 @@
+ def truncate_visible(text, limit):
+     visible = len(text)
+-    if visible >= limit:
++    if visible > limit:
+         return text[:limit]
+     return text

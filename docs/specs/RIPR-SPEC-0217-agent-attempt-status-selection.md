@@ -129,8 +129,29 @@ receipt strength, and currentness as separate facts:
   manifest's own limitations/non-claims, and the store resolver's
   non-claims.
 
+- Bare `ripr repair` (no item) offers a start only on a seam the diff a bare
+  `ripr check` reads actually changes (#11111): when that diff touches at
+  least one seam, or changes Rust production lines that touch none, every
+  eligible seam outside the changed lines is counted in the refusal, not
+  offered, so repair never starts on a different change than the one `check`
+  reported (a changed constant has no seam, so `check` offers no start and
+  neither does repair). A diff with no Rust production change, or no readable
+  diff, leaves the whole-repository selection unscoped, and an explicit
+  `ripr repair <seam-id>` is never scoped. In the same scope, a seam outside
+  the changed lines that cannot start a repair either (route not ready, a
+  named static limitation) is counted, not listed, so its reason never reads as
+  a second verdict on the change (#11111). Every listed refusal reason names
+  the seam it is about, with or without a diff; identical reasons on several
+  seams are listed once with the first seam and a count.
+  When the diff touches seams and every spot on the changed lines is already
+  gripped (a `return Err(V)` wrapper of a gripped error variant counts as the
+  same behavior), the refusal says only that; it intentionally omits the
+  blocked-outside and eligible-outside hints, which would argue with
+  `ripr check`'s "nothing to repair". A gripped spot beside an open finding on
+  the change is counted as a different check, never cited as its verdict.
+
 - A restart or fresh-start route is named only when the shared repair
-  eligibility gate admits the seam (#8766): `repair_refusal_reason` (the gate
+  eligibility gate admits the seam (#8766): `repair_refusal` (the gate
   `ripr repair` applies), the recommended-test edit-target predicate and the
   held-inline-target check (the checks the before phase applies to the
   packet). The before phase's dirty-premise check over the rest of the

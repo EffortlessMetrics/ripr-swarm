@@ -1,0 +1,6 @@
+# Register the collapsed-lens test under the code lens spec (#11183).
+[[extend]]
+id = "RIPR-SPEC-0100"
+tests = [
+  "crates/ripr/src/lsp/lens.rs::tests::code_lens_response_collapses_identical_lenses_on_one_line",
+]

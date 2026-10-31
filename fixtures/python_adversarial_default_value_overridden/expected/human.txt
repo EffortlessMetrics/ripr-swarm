@@ -28,7 +28,7 @@ Start here:
   Suggested test file: tests/test_render.py
   Suggested test: test_render_explicit_verbose_false
   Test node: tests/test_render.py::test_render_explicit_verbose_false
-  Verify command: python -m pytest tests/test_render.py::test_render_explicit_verbose_false (high)
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_adversarial_default_value_overridden/input && python -m pytest tests/test_render.py::test_render_explicit_verbose_false) (high)
   Next step — Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `call `render` without `verbose``
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

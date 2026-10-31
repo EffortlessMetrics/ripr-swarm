@@ -6,6 +6,7 @@ mod builder_override;
 mod call_identity;
 mod caller_loop_selector;
 mod changed_span;
+mod const_flow;
 mod const_readers;
 mod context;
 mod custom_eq;
@@ -69,6 +70,9 @@ pub(in crate::analysis) use call_identity::{
     shared_owner_call_identity, text_calls_owner,
 };
 pub(in crate::analysis) use caller_loop_selector::withhold_caller_loop_selector_gap;
+pub(in crate::analysis) use const_flow::{
+    ChangedConsts, ConstFlow, associated_const_binding, evaluate_const_flow, shares_module_scope,
+};
 pub(in crate::analysis) use const_readers::same_file_const_readers;
 pub(in crate::analysis) use context::ProbeContext;
 pub(in crate::analysis) use decision::{
@@ -149,7 +153,7 @@ pub(in crate::analysis) use related_tests::{
     body_contains_owner_call, call_text_may_call_free_function, changes_only_string_literals,
     declared_dependent_package_calls_owner, find_related_tests_with_candidate_index,
     free_helper_call_resolves, impl_self_type_name, inherent_owner_call_resolves,
-    is_drop_destructor, is_partial_eq_method, manifests_with_unindexed_files,
+    is_display_fmt_owner, is_drop_destructor, is_partial_eq_method, manifests_with_unindexed_files,
     method_call_resolves_to_impl, module_stem, owner_call_text, owner_dispatch_trait,
     package_prefix, requires_inherent_receiver_identity, resolves_method_in_prefix,
     test_calls_free_function,
