@@ -375,8 +375,7 @@ mod tests {
 
     #[test]
     fn raw_strings_neither_open_nor_unbalance_a_verus_region() {
-        let source =
-            "verus! {\n    fn f() { let a = r\"}\"; let b = r#\"} \"x\" }\"#; }\n}\nfn after() {}\n";
+        let source = "verus! {\n    fn f() { let a = r\"}\"; let b = r#\"} \"x\" }\"#; }\n}\nfn after() {}\n";
         let regions = verus_regions(source);
         assert_eq!(regions.len(), 1);
         assert_eq!((regions[0].start_line, regions[0].end_line), (1, 3));
