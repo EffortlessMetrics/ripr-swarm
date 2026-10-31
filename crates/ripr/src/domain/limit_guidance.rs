@@ -187,9 +187,9 @@ impl StaticLimitKind {
                  that calls it and asserts on its result; ripr does not evaluate the proof."
             }
             StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => {
-                "Raise RIPR_TS_MAX_WORKSPACE_FILES (and RIPR_TS_MAX_WORKSPACE_READ_BYTES if the \
-                 run then reports a read budget), or run ripr from a narrower root, then check \
-                 again."
+                "Run ripr from a narrower root, or raise RIPR_TS_MAX_WORKSPACE_FILES (and \
+                 RIPR_TS_MAX_WORKSPACE_READ_BYTES if the run then reports a read budget), then \
+                 check again."
             }
         }
     }
