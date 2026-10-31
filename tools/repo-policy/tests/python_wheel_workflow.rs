@@ -1281,7 +1281,7 @@ fn callable_graph_uses_exact_subject_and_cannot_turn_guard_failure_into_skip() -
             < app.find("dtolnay/rust-toolchain").ok_or("toolchain")?
     );
     assert!(app.contains("!contains(toJSON(inputs), '\"subject_sha\"')"));
-    assert!(WORKFLOW.contains("CANDIDATE_SHA: ${{ inputs.subject_sha || github.event.pull_request.head.sha || github.sha }}"));
+    assert!(WORKFLOW.contains("CANDIDATE_SHA: ${{ inputs.subject_sha || inputs.candidate_sha || github.event.pull_request.head.sha || github.sha }}"));
     assert!(app.contains("fetch-depth: 0"));
     assert!(WORKFLOW.contains("  workflow_call:\n"));
     assert!(WORKFLOW.contains("  contents: read\n"));
@@ -1437,6 +1437,30 @@ fn canonical_wheel_codegen(source: &str) -> TestResult<bool> {
     }
     let config: Vec<String> = serde_json::from_str(values[0])?;
     Ok(config == ["profile.release.codegen-units=4"])
+}
+
+#[test]
+fn manual_release_candidate_input_survives_and_ranks_after_callable_subject() -> TestResult {
+    // Intentional deviation from the callable source branch: the legacy
+    // workflow_dispatch candidate_sha input (#2769) must remain selectable.
+    let precedence = "CANDIDATE_SHA: ${{ inputs.subject_sha || inputs.candidate_sha || github.event.pull_request.head.sha || github.sha }}";
+    assert_eq!(WORKFLOW.matches(precedence).count(), 1);
+    let (dispatch, _) = WORKFLOW
+        .split_once("  pull_request:\n")
+        .ok_or("pull_request trigger follows dispatch inputs")?;
+    let (_, dispatch) = dispatch
+        .split_once("  workflow_dispatch:\n")
+        .ok_or("workflow_dispatch trigger")?;
+    let input = dispatch
+        .split_once("      candidate_sha:\n")
+        .ok_or("candidate_sha dispatch input")?
+        .1;
+    assert!(input.contains("type: string") && input.contains("required: false"));
+    // Only the env mapping carries the expression; shell reads the variable.
+    assert!(!WORKFLOW.contains("${{ inputs.candidate_sha }}\n"));
+    let dropped = WORKFLOW.replace("inputs.candidate_sha || ", "");
+    assert!(!dropped.contains(precedence));
+    Ok(())
 }
 
 #[test]
