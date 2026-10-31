@@ -36,6 +36,7 @@ use crate::agent::loop_commands::{
 };
 use crate::cli::suggest::unknown_argument;
 use crate::output::ci_summary::annotations::render_workflow_annotations;
+use crate::output::ci_summary::effective_comment_mode;
 use crate::process_owner::OwnedProcess;
 use serde::Serialize;
 use serde_json::Value;
@@ -600,7 +601,10 @@ impl PacketRun {
             "Plan RIPR inline comments",
             When::Always,
             Role::Advisory,
-            pr && self.settings.comment_mode != "off" && self.exists(COMMENTS_JSON),
+            // An empty mode means `off`, as `--comment-mode` documents and
+            // `ci-summary` reads it (#11146); only a named mode is planned.
+            pr && effective_comment_mode(&self.settings.comment_mode) != "off"
+                && self.exists(COMMENTS_JSON),
             Self::plan_inline_comments,
         );
 
@@ -1411,7 +1415,7 @@ impl PacketRun {
             "--pr-guidance",
             COMMENTS_JSON,
             "--mode",
-            &settings.comment_mode,
+            effective_comment_mode(&settings.comment_mode),
             "--event-name",
             &settings.event_name,
             "--pull-request",
@@ -2200,6 +2204,44 @@ mod tests {
         assert!(line(&manual, "ripr first-pr ").contains(" --base origin/trunk "));
         assert!(!manual.contains("ripr review-comments "), "{manual}");
         assert!(!line(&manual, "ripr policy history ").contains("--pr-number"));
+        Ok(())
+    }
+
+    /// #11146: an empty (or blank) `RIPR_COMMENT_MODE` means `off`, so the plan
+    /// stage must not run and fail with `unknown pr-comments plan mode ""`.
+    /// `plan` and an unknown value still plan (the unknown one fails loudly).
+    #[test]
+    fn empty_comment_mode_skips_the_inline_plan_like_off() -> Result<(), String> {
+        let planned = |mode: &str| -> Result<bool, String> {
+            let (packet, _failed) = recorded_packet_with(CiSettings {
+                comment_mode: mode.to_string(),
+                ..full_packet_settings()
+            })?;
+            Ok(packet.contains("ripr pr-comments plan "))
+        };
+        assert!(planned("inline")?, "inline must plan");
+        assert!(planned("plan")?, "plan must plan");
+        assert!(
+            planned("post")?,
+            "an unknown mode must still reach the plan"
+        );
+        assert!(!planned("off")?, "off must not plan");
+        assert!(!planned("")?, "empty must not plan");
+        assert!(!planned("  ")?, "blank must not plan");
+        // A padded value plans, and plans the trimmed mode (the summary reads
+        // it the same way), never `--mode " inline"`.
+        let (padded, _) = recorded_packet_with(CiSettings {
+            comment_mode: " inline ".to_string(),
+            ..full_packet_settings()
+        })?;
+        let plan_line = padded
+            .lines()
+            .find(|line| line.starts_with("ripr pr-comments plan "))
+            .unwrap_or_default();
+        assert!(
+            plan_line.contains(" --mode inline --event-name "),
+            "{plan_line}"
+        );
         Ok(())
     }
 

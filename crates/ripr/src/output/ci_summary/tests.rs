@@ -917,3 +917,15 @@ fn preview_promotion_packets_follow_the_shell_glob() -> TestResult {
     assert!(packets.contains("<details><summary>Full report: target/ripr/reports/preview-promotion-python-a.md</summary>\n\n# A\n</details>"), "{packets}");
     Ok(())
 }
+
+/// #11146: the summary and the packet's plan stage share one reading of
+/// `RIPR_COMMENT_MODE`: whitespace is ignored and empty means `off`.
+#[test]
+fn comment_mode_trims_and_reads_empty_as_off() {
+    use super::effective_comment_mode;
+    assert_eq!(effective_comment_mode(""), "off");
+    assert_eq!(effective_comment_mode("  "), "off");
+    assert_eq!(effective_comment_mode(" inline "), "inline");
+    assert_eq!(effective_comment_mode("plan"), "plan");
+    assert_eq!(effective_comment_mode("post"), "post");
+}

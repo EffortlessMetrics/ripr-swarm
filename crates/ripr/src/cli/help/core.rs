@@ -92,7 +92,9 @@ Environment variables:
                                  When the budget is applied, both artifacts include a
                                  limitations[] disclosure naming the env var and a repair route.
   RIPR_REPO_EXPOSURE_SEAM_LIMIT Maximum gaps analyzed and ranked in one pilot run.
-                                 Default: 10000. Set to 0 to analyze every seam. When the
+                                 Default: the pilot seam budget (2000), so pilot does not
+                                 classify seams it would not rank; `ripr check` keeps 10000.
+                                 Set to 0 to analyze every seam. When the
                                  limit cuts the ranking, the terminal and summary state
                                  "ranked N of M seams" and actionable seam totals become
                                  lower bounds until you raise or remove the limit.

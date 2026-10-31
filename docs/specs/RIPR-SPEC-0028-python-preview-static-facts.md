@@ -1515,6 +1515,31 @@ This differs from `helper_assertions` (#9419, #9711): it is a same-file,
 literal-argument, multi-assert source rewrite that runs first, so
 `helper_assertions` then sees no call to resolve.
 
+## Predicate Swap Amendment (2026-10-30, #9186)
+
+A changed predicate that swaps one single-operand test of an owner parameter
+for another (`x is None` to `not x`) is `weakly_exposed`, not `exposed`, when
+every strong related call binds that parameter to a literal on which both
+tests agree. The rule is a closed allow-list that keeps the existing verdict
+on anything unrecognized: the parameter may be mentioned in the owner body
+only in plain read statements (the changed line included), and a related test
+body may make only recognized calls (the owner, the `assert` statement, named
+`self.assert*` methods, known builtins and `pytest` helpers) with no
+non-ASCII identifier letters, f-strings in the owner, subscript or call-result
+callees, f-strings, or non-call mentions of the owner. A function owner is
+recognized only under its imported name or a module alias the reader
+resolves, never through a receiver alias (`m = src.lib; m.pick(0, 3)`,
+`self.lib.pick(0, 3)`); an owner docstring holding `>>>` refuses. The test
+file source is not read, so these shapes are known limits: an owner call at
+module level (`R = pick(0, 3)`), in a class attribute, in `setUp`, in a
+decorator (`@pytest.mark.parametrize('v', [pick(0, 3)])`), or in a conftest
+or autouse fixture, a module-docstring, README or `.txt` doctest, a
+`--doctest-modules` run over test or source files, a helper or runner table defined at module level
+and seen only through its call in the test body, a discriminating call under
+a non-strong oracle (`assert not pick(0, 3)`), and an owner doctest the
+reader does not see. The change is only `exposed` to `weakly_exposed`, the
+conservative direction.
+
 ## Metrics
 
 In addition to the cross-language metrics in RIPR-SPEC-0026, the Python
