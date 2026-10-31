@@ -1244,6 +1244,7 @@ mod tests {
         let route_not_ready = CardStartHold {
             reason: "repair route not ready".to_string(),
             next: None,
+            command: None,
         };
         let text = agent_card_plain_lines(
             &card,
