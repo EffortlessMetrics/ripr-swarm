@@ -280,6 +280,12 @@ fn route_not_ready_reason(
     } else {
         format!("{label} (missing evidence: {missing})")
     };
+    // A file with no test module blocks the producer's own new-test proposal,
+    // but `ripr agent stub` adds one, so the target facts do not keep the
+    // manual routes below from applying: only the discriminator fact does.
+    let routable = stub_routable_missing_evidence(entry, missing_evidence);
+    let missing_evidence = routable.as_deref().unwrap_or(missing_evidence);
+    let adds_module = routable.is_some();
     // #10622: a Rust predicate boundary whose only missing fact
     // is the boundary discriminator has a concrete manual route —
     // the predicate stub writes a fill-in skeleton for the changed
@@ -303,8 +309,13 @@ fn route_not_ready_reason(
                 shell_arg(&bound_root(&root.to_string_lossy()))
             )
         });
+        let module_note = if adds_module {
+            NO_TEST_MODULE_STUB_NOTE
+        } else {
+            ""
+        };
         label.push_str(&format!(
-            ": write the boundary test by hand — `ripr agent stub{root_flag} --at {at} --kind predicate` writes a fill-in skeleton for the changed comparison; the boundary input is prefilled when it derives, otherwise fill the todo!() values, then rerun `ripr repair`"
+            ": write the boundary test by hand — `ripr agent stub{root_flag} --at {at} --kind predicate` writes a fill-in skeleton for the changed comparison{module_note}; the boundary input is prefilled when it derives, otherwise fill the todo!() values, then rerun `ripr repair`"
         ));
     }
     // #10701: a changed return value or error with no test ripr can
@@ -327,11 +338,45 @@ fn route_not_ready_reason(
                 shell_arg(&bound_root(&root.to_string_lossy()))
             )
         });
+        let module_note = if adds_module {
+            NO_TEST_MODULE_STUB_NOTE
+        } else {
+            ""
+        };
         label.push_str(&format!(
-            ": write the test by hand, or run `ripr agent stub{root_flag} --at {at} --kind {kind}` for a fill-in skeleton, then rerun `ripr repair`"
+            ": write the test by hand, or run `ripr agent stub{root_flag} --at {at} --kind {kind}` for a fill-in skeleton{module_note}, then rerun `ripr repair`"
         ));
     }
     label
+}
+
+const NO_TEST_MODULE_STUB_NOTE: &str =
+    " (the file has no test module yet; for an owner at the top of the file the stub adds one)";
+
+/// The missing evidence left once the only target blocker is "the owner file
+/// has no governed inline test module": `agent stub` places a new inline
+/// module there, so the safe-target items no longer stand between the reader
+/// and the stub route. `None` when that is not the blocker, so every other
+/// target refusal keeps the bare label.
+fn stub_routable_missing_evidence(
+    entry: &crate::analysis::ClassifiedSeam,
+    missing_evidence: &[String],
+) -> Option<Vec<String>> {
+    use crate::analysis::new_test_target::NewTestProposalBlocker;
+    let admission = entry.evidence.new_test_target.as_ref()?;
+    if admission.blocker != Some(NewTestProposalBlocker::NoTestModule) {
+        return None;
+    }
+    let blocked = admission.missing_reason()?;
+    let kept = missing_evidence
+        .iter()
+        .filter(|item| {
+            item.as_str() != crate::analysis::repair_route::SAFE_TEST_TARGET_EVIDENCE
+                && **item != blocked
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    (kept.len() < missing_evidence.len()).then_some(kept)
 }
 
 /// Whether a readiness missing-evidence item is the boundary-value
@@ -418,7 +463,13 @@ pub(crate) const WIDEN_SEAM_BUDGET: &str = "rerun with a wider seam budget (set 
 /// Gather the live authorities and decide one repair start. A truncated seam
 /// inventory fails closed: selecting from a partial list could hide
 /// candidates and silently pick first.
-pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, String> {
+///
+/// `base` is an explicit `--base`; `None` infers the diff base exactly as a
+/// bare `ripr check` does (#11246).
+pub(crate) fn resolve_repair_start(
+    root: &Path,
+    base: Option<&str>,
+) -> Result<RepairStartDecision, String> {
     let config = load_for_root(root)?;
     let (classified, limit_info) =
         crate::analysis::inventory_classified_seams_at_with_config(root, &config)?;
@@ -447,7 +498,7 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
     // as the change's repair start (check offers none for a line with no
     // seam, so repair must not start somewhere else). A diff that changes no
     // Rust production line leaves the whole-repository selection unscoped.
-    let diff = live_check_diff_files(root);
+    let diff = live_check_diff_files(root, base);
     let scope = diff.as_ref().and_then(|files| {
         if classified
             .iter()
@@ -611,6 +662,12 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
                 "{gripped_other_check} other {noun} already noticed by existing tests, but that is a different check than the one still open, so it does not mean the open one is covered"
             ));
         }
+    }
+    // #11246: inference only narrows. When no changed line could be read, the
+    // spots above are not scoped to the change, and the text says so first
+    // (the reason list is capped, so it is placed where it survives).
+    if let Some(note) = unscoped_diff_note(diff.as_deref(), base) {
+        refusal_reasons.insert(0, note);
     }
     let (reasons, reasons_total) =
         collect_no_eligible_reasons(refusal_reasons.iter().map(String::as_str));
@@ -1902,20 +1959,87 @@ pub(crate) struct ChangedNonRust {
     pub(crate) adds_code: bool,
 }
 
-/// The changed files of the diff a bare `ripr check` would read under `root`:
-/// check's own diff-source selection (committed history, or the working tree
-/// when it holds uncommitted work), base resolution and root scoping through
-/// the shared loaders. `None` when no such diff is readable.
-fn live_check_diff_files(root: &Path) -> Option<Vec<crate::analysis::ChangedFile>> {
+/// Why repair could not narrow its spots to the change, when it could not
+/// (#11246): no diff was readable (no base resolved), or the diff against the
+/// base changed nothing. A readable diff with changes is not unscoped here.
+fn unscoped_diff_note(
+    diff: Option<&[crate::analysis::ChangedFile]>,
+    base: Option<&str>,
+) -> Option<String> {
+    match (diff, base) {
+        (None, Some(base)) => Some(format!(
+            "ripr could not tell which lines you changed, because it could not read a diff against `{base}`, so the spots below are not narrowed to your change; check that `{base}` names a ref that exists here"
+        )),
+        (None, None) => Some(
+            "ripr could not tell which lines you changed, because no base to compare against could be found (the same base `ripr check` uses), so the spots below are not narrowed to your change; pass `--base <ref>` to name it".to_string(),
+        ),
+        (Some([]), Some(base)) => Some(format!(
+            "ripr could not tell which lines you changed, because nothing differs from `{base}`, so the spots below are not narrowed to your change; pass `--base <ref>` to name another base"
+        )),
+        (Some([]), None) => Some(
+            "ripr could not tell which lines you changed, because nothing differs from the base `ripr check` compares against (for example, you are on the default branch itself), so the spots below are not narrowed to your change; pass `--base <ref>` to name another base".to_string(),
+        ),
+        (Some(_), _) => None,
+    }
+}
+
+#[cfg(test)]
+mod unscoped_note_tests {
+    use super::unscoped_diff_note;
+
+    #[test]
+    fn unreadable_diff_says_no_base_could_be_found() {
+        let note = unscoped_diff_note(None, None).unwrap_or_default();
+        assert!(note.contains("could not tell which lines you changed"));
+        assert!(note.contains("no base to compare against could be found"));
+        assert!(note.contains("--base <ref>"));
+    }
+
+    #[test]
+    fn an_explicit_base_is_named_when_its_diff_cannot_be_read() {
+        let unreadable = unscoped_diff_note(None, Some("no-such-ref")).unwrap_or_default();
+        assert!(unreadable.contains("could not read a diff against `no-such-ref`"));
+        assert!(!unreadable.contains("no base to compare against could be found"));
+        let empty = unscoped_diff_note(Some(&[]), Some("main")).unwrap_or_default();
+        assert!(empty.contains("nothing differs from `main`"));
+    }
+
+    #[test]
+    fn empty_diff_says_nothing_differs_from_the_base() {
+        let note = unscoped_diff_note(Some(&[]), None).unwrap_or_default();
+        assert!(note.contains("could not tell which lines you changed"));
+        assert!(note.contains("nothing differs from the base"));
+    }
+
+    #[test]
+    fn a_readable_nonempty_diff_adds_no_note() {
+        let files = crate::analysis::parse_unified_diff(
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-a\n+b\n",
+        );
+        assert!(!files.is_empty(), "fixture must parse to a changed file");
+        assert_eq!(unscoped_diff_note(Some(&files), None), None);
+        assert_eq!(unscoped_diff_note(Some(&files), Some("main")), None);
+    }
+}
+
+/// The changed files of the diff a bare `ripr check` would read under `root`
+/// (or under an explicit `base`, which wins over inference): check's own
+/// diff-source selection (committed history, or the working tree when it
+/// holds uncommitted work), base resolution and root scoping through the
+/// shared loaders. `None` when no such diff is readable.
+fn live_check_diff_files(
+    root: &Path,
+    base: Option<&str>,
+) -> Option<Vec<crate::analysis::ChangedFile>> {
     let source = super::diff_source::select_live_diff_source(
         root,
         super::diff_source::DiffSourceRequest::Default,
         None,
     );
     let text = if source.is_working_tree() {
-        crate::analysis::load_worktree_diff(root, None, None)
+        crate::analysis::load_worktree_diff(root, base, None)
     } else {
-        crate::analysis::load_diff(root, None, None, None)
+        crate::analysis::load_diff(root, base, None, None)
     };
     text.ok()
         .map(|text| crate::analysis::parse_unified_diff(&text))
@@ -1928,8 +2052,8 @@ fn live_check_diff_files(root: &Path) -> Option<Vec<crate::analysis::ChangedFile
 /// decoding, so a committed-only branch, a package root and a C-quoted
 /// filename agree with `check`. Best effort: an unreadable diff reads as no
 /// such languages, so the caller keeps its generic message.
-pub(crate) fn changed_non_rust_languages(root: &Path) -> Vec<ChangedNonRust> {
-    let Some(files) = live_check_diff_files(root) else {
+pub(crate) fn changed_non_rust_languages(root: &Path, base: Option<&str>) -> Vec<ChangedNonRust> {
+    let Some(files) = live_check_diff_files(root, base) else {
         return Vec::new();
     };
     let mut found: Vec<ChangedNonRust> = Vec::new();
@@ -2889,6 +3013,54 @@ pub(crate) mod tests {
             "{}",
             refused.reason
         );
+        Ok(())
+    }
+
+    /// A seam whose only target blocker is "the owner file has no test
+    /// module" still names the stub route, because `agent stub` adds that
+    /// module; any other target blocker keeps the bare label.
+    #[test]
+    fn no_test_module_blocker_still_names_the_stub_route() -> Result<(), String> {
+        use crate::analysis::new_test_target::{NewTestProposalBlocker, NewTestTargetAdmission};
+        use crate::analysis::seams::SeamGripClass;
+        let config = crate::config::RiprConfig::default();
+        let policy = AgentBriefPolicy::from_config(&config);
+        let root = Path::new("/repo");
+        let admission = |blocker| NewTestTargetAdmission {
+            blocker: Some(blocker),
+            ..NewTestTargetAdmission::default()
+        };
+
+        let mut no_module = gate_entry(SeamGripClass::Ungripped, Vec::new());
+        no_module.evidence.new_test_target = Some(admission(NewTestProposalBlocker::NoTestModule));
+        let refusal = repair_start_refusal_for_entry(root, &no_module, policy)
+            .ok_or("a seam without a target must be refused")?;
+        assert!(
+            refusal
+                .reason
+                .contains("--at src/pricing.rs:88 --kind predicate")
+                && refusal.reason.contains("the stub adds one")
+                && refusal
+                    .reason
+                    .contains("new test proposal blocked: no governed inline cfg-test module"),
+            "{}",
+            refusal.reason
+        );
+
+        // Discriminating negatives: a different target blocker names no
+        // route and carries no module note.
+        let mut other_blocker = gate_entry(SeamGripClass::Ungripped, Vec::new());
+        other_blocker.evidence.new_test_target =
+            Some(admission(NewTestProposalBlocker::GeneratedOrVendor));
+        let bare = repair_start_refusal_for_entry(root, &other_blocker, policy)
+            .ok_or("a seam without a target must be refused")?;
+        assert!(!bare.reason.contains("--kind predicate"), "{}", bare.reason);
+        assert!(
+            !bare.reason.contains("no test module yet"),
+            "{}",
+            bare.reason
+        );
+
         Ok(())
     }
 

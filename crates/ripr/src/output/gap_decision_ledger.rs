@@ -5599,6 +5599,8 @@ mod tests {
         // #10707: `python_boundary_local_rebound_not_credited` keeps a rebound
         // test local unresolved at the boundary, so its weak finding adds one
         // direct-aligned card; `python_boundary_local_input_credited` is exposed.
+        // #10707: `python_boundary_module_constant_rebound_not_credited` keeps a
+        // twice-bound test-module constant unresolved, one more direct card.
         // #10391: nine conservative patch-scope fixtures
         // (`python_bool_owner_{environment_protocol, escaped_patch_target,
         // fake_environment, mock_comprehension, mock_equality,
@@ -5606,7 +5608,7 @@ mod tests {
         // patched_callee}`) carry one packet-eligible `no_strong_oracle` card
         // each; the admitted-environment positive stays exposed and the
         // formatted-patch limit contributes no card.
-        if (direct, no_strong, orthogonal, family_selection) != (20, 36, 30, 1) {
+        if (direct, no_strong, orthogonal, family_selection) != (21, 36, 30, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));
