@@ -483,6 +483,7 @@ fn evidence_for_seam_with_context(
         path_established.then_some(&discriminate),
         statically_contradicted_related_tests,
         owner_fn,
+        &observed_values,
         context.index,
     ) {
         missing_discriminators.push(fact);
@@ -532,6 +533,11 @@ fn evidence_for_seam_with_context(
 /// statically contradicted. Anything else emits nothing (fail-closed).
 const RETURN_VALUE_START_REASON: &str = "no related test asserts the exact changed return value";
 const ERROR_VARIANT_START_REASON: &str = "no related test asserts the exact changed error variant";
+/// A changed match arm under the same gates, and only when a related test
+/// passes the arm's own literal pattern, so the test is known to select the
+/// changed arm rather than a sibling one.
+const MATCH_ARM_START_REASON: &str =
+    "no related test asserts the exact result of the changed match arm";
 
 fn return_value_missing_discriminator(
     seam: &RepoSeam,
@@ -540,10 +546,13 @@ fn return_value_missing_discriminator(
     discriminate: Option<&StageEvidence>,
     statically_contradicted_related_tests: usize,
     owner_fn: Option<&FunctionSummary>,
+    observed_values: &[ValueFact],
     index: &RustIndex,
 ) -> Option<MissingDiscriminatorFact> {
-    if !matches!(seam.kind(), SeamKind::ReturnValue | SeamKind::ErrorVariant)
-        || statically_contradicted_related_tests > 0
+    if !matches!(
+        seam.kind(),
+        SeamKind::ReturnValue | SeamKind::ErrorVariant | SeamKind::MatchArm
+    ) || statically_contradicted_related_tests > 0
     {
         return None;
     }
@@ -583,9 +592,21 @@ fn return_value_missing_discriminator(
         super::seams::RequiredDiscriminator::ErrorVariant { variant } => {
             (variant, ERROR_VARIANT_START_REASON)
         }
+        super::seams::RequiredDiscriminator::MatchArmTaken { arm }
+            if seam.kind() == SeamKind::MatchArm =>
+        {
+            (arm, MATCH_ARM_START_REASON)
+        }
         _ => return None,
     };
     if description.trim().is_empty() {
+        return None;
+    }
+    // A changed arm is only reached by an input its pattern matches; a test
+    // that exercises a sibling arm would be strengthened in the wrong place.
+    // Only a literal pattern a related test passes verbatim is credited.
+    if reason == MATCH_ARM_START_REASON && !match_arm_literal_observed(description, observed_values)
+    {
         return None;
     }
     // A related test that asserts an exact error variant other than the new
@@ -633,9 +654,23 @@ fn return_value_missing_discriminator(
     {
         return None;
     }
-    let direct_call_with_target = related_tests.iter().any(|test| {
-        test.relation_reason == RelationReason::DirectOwnerCall && test.test_target.is_some()
-    });
+    // A match-arm start additionally needs the related test's owner call to
+    // be direct under `check`'s own relation rules, so a receiver bound to a
+    // test-local shadow type (#6951) never starts one. (A struct-field change
+    // keeps its own producer route in `activate_evidence`.)
+    let check_side_direct_required = seam.kind() == SeamKind::MatchArm;
+    let direct_call_with_target =
+        related_tests
+            .iter()
+            .zip(related_summaries.iter())
+            .any(|(test, summary)| {
+                test.relation_reason == RelationReason::DirectOwnerCall
+                    && test.test_target.is_some()
+                    && (!check_side_direct_required
+                        || (crate::analysis::classify::owner_call_is_direct(
+                            summary, owner_fn, index,
+                        ) && impl_identity_is_unambiguous(owner_fn, index)))
+            });
     direct_call_with_target.then(|| MissingDiscriminatorFact {
         value: description.clone(),
         reason: reason.to_string(),
@@ -1011,6 +1046,91 @@ fn source_declares_type_alias_masked(masked: &str, name: &str) -> bool {
         let ident: String = rest.chars().take_while(|ch| part(*ch)).collect();
         ident == name
     })
+}
+
+/// Whether an impl owner's self type (and trait, for a trait impl) is declared
+/// exactly once in the workspace and never renamed or aliased, so no test can
+/// be calling a same-named shadow type instead (#6950 / #6951 / #7067). A free
+/// function passes; an owner id whose impl type cannot be read withholds.
+fn impl_identity_is_unambiguous(owner: &FunctionSummary, index: &RustIndex) -> bool {
+    if matches!(owner.impl_context, FunctionImplContext::Free) {
+        return true;
+    }
+    let Some(self_type) = crate::analysis::classify::impl_self_type_name(&owner.id.0) else {
+        return false;
+    };
+    let mut names: Vec<(String, &[&str])> = vec![(self_type, &["struct", "enum", "union"])];
+    if let Some(trait_name) = crate::analysis::classify::owner_trait_name(&owner.id.0) {
+        names.push((trait_name, &["trait"]));
+    }
+    names.iter().all(|(name, keywords)| {
+        let mut declarations = 0usize;
+        for facts in index.files().values() {
+            if !facts.source.contains(name.as_str()) {
+                continue;
+            }
+            let masked = crate::analysis::extract::mask_comments_and_strings(&facts.source);
+            if source_declares_type_alias_masked(&masked, name)
+                || !renamed_from(&masked, name).is_empty()
+            {
+                return false;
+            }
+            declarations += count_item_declarations(&masked, name, keywords);
+        }
+        declarations == 1
+    })
+}
+
+/// How many `<keyword> <name>` item declarations masked source holds.
+fn count_item_declarations(masked: &str, name: &str, keywords: &[&str]) -> usize {
+    let part = |ch: Option<char>| ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
+    keywords
+        .iter()
+        .map(|keyword| {
+            masked
+                .match_indices(keyword)
+                .filter(|(at, word)| {
+                    let rest = &masked[at + word.len()..];
+                    if part(masked[..*at].chars().next_back())
+                        || !rest.starts_with(char::is_whitespace)
+                    {
+                        return false;
+                    }
+                    let ident: String = rest
+                        .trim_start()
+                        .chars()
+                        .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
+                        .collect();
+                    ident == *name
+                })
+                .count()
+        })
+        .sum()
+}
+
+/// Whether `arm` is a single literal pattern (a string, char or integer
+/// literal, no `|`, range or guard) that some related test passes verbatim as
+/// an argument of the owner call. Anything else withholds.
+fn match_arm_literal_observed(arm: &str, observed_values: &[ValueFact]) -> bool {
+    let pattern = arm.trim().trim_end_matches("=>").trim();
+    let is_string = pattern.len() >= 2
+        && pattern.starts_with('"')
+        && pattern.ends_with('"')
+        && !pattern[1..pattern.len() - 1].contains(['"', '\\']);
+    let is_char = pattern.len() >= 3
+        && pattern.starts_with('\'')
+        && pattern.ends_with('\'')
+        && !pattern[1..pattern.len() - 1].contains(['\'', '\\']);
+    let is_integer = {
+        let digits = pattern.strip_prefix('-').unwrap_or(pattern);
+        !digits.is_empty() && digits.chars().all(|ch| ch.is_ascii_digit())
+    };
+    if !(is_string || is_char || is_integer) {
+        return false;
+    }
+    observed_values
+        .iter()
+        .any(|fact| fact.value.trim() == pattern)
 }
 
 /// Whether `expression` is a struct literal, not a block, `if`, `match` or loop.

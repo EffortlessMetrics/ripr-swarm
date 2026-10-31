@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr check` and `ripr repair` now offer a repair start for a changed match arm when a related test calls the changed function directly with the arm's own literal (`rate("silver")`) and checks the result only loosely. They use the same conditions as a changed return value, and both commands still decline when the test exercises a different arm, ignores the result, or calls a same-named type declared in a test module (#11111).

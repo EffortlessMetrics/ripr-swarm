@@ -966,3 +966,121 @@ fn the_owners_own_calls_still_reach_repair() -> Result<(), String> {
         &format!("use ar::W;\n{RIVALS}\n#[test]\nfn t() {{\n    assert!(W::dbl(2) > 0);\n}}\n"),
     )
 }
+
+// Changed match arms (not-ready burn-down): the same gates as the return
+// value, plus a check-side direct owner call and a related test that passes
+// the arm's own literal. A struct-literal field keeps its own route: a weak
+// assertion on a sibling field is still not a start.
+
+const FIELD_OLD: &str = "pub struct Config {\n    pub retries: u32,\n    pub verbose: bool,\n}\n\npub fn default_config() -> Config {\n    Config {\n        retries: 3,\n        verbose: false,\n    }\n}\n";
+const FIELD_NEW: &str = "pub struct Config {\n    pub retries: u32,\n    pub verbose: bool,\n}\n\npub fn default_config() -> Config {\n    Config {\n        retries: 5,\n        verbose: false,\n    }\n}\n";
+const ARM_OLD: &str = "pub fn rate(kind: &str) -> u32 {\n    match kind {\n        \"gold\" => 10,\n        \"silver\" => 5,\n        _ => 0,\n    }\n}\n";
+const ARM_NEW: &str = "pub fn rate(kind: &str) -> u32 {\n    match kind {\n        \"gold\" => 10,\n        \"silver\" => 7,\n        _ => 0,\n    }\n}\n";
+
+/// A changed field or arm that must not start: `check` prints no repair start,
+/// and naming the changed line refuses. An unscoped bare `repair` may still
+/// start an unchanged sibling arm, which is a different subject.
+fn assert_no_start_at(
+    case: &str,
+    old: &str,
+    new: &str,
+    test: &str,
+    at: &str,
+) -> Result<(), String> {
+    let repo = Repo::create(old, new, test)?;
+    let check = repo.check_text()?;
+    assert!(
+        printed_repair_seam(&check).is_none(),
+        "{case}: check must not print a repair start:\n{check}"
+    );
+    let (ok, repair) = repo.repair_text(&[at])?;
+    assert!(!ok, "{case}: repair {at} must refuse:\n{repair}");
+    assert!(!repair.contains("Ready to repair."), "{case}: {repair}");
+    Ok(())
+}
+
+#[test]
+fn changed_match_arm_with_its_literal_and_weak_assert_reaches_repair() -> Result<(), String> {
+    assert_repair_ready(
+        "match-arm",
+        ARM_OLD,
+        ARM_NEW,
+        "use ar::rate;\n\n#[test]\nfn silver_runs() {\n    let r = rate(\"silver\");\n    assert!(r < 100);\n}\n",
+    )
+}
+
+#[test]
+fn match_arm_reached_only_through_a_sibling_literal_is_not_a_repair_start() -> Result<(), String> {
+    assert_no_start_at(
+        "match-arm-sibling",
+        ARM_OLD,
+        ARM_NEW,
+        "use ar::rate;\n\n#[test]\nfn gold_runs() {\n    let r = rate(\"gold\");\n    assert!(r < 100);\n}\n",
+        "src/lib.rs:4",
+    )
+}
+
+#[test]
+fn match_arm_without_an_observing_assertion_is_not_a_repair_start() -> Result<(), String> {
+    assert_no_start_at(
+        "match-arm-no-assert",
+        ARM_OLD,
+        ARM_NEW,
+        "use ar::rate;\n\n#[test]\nfn silver_runs() {\n    let _r = rate(\"silver\");\n}\n",
+        "src/lib.rs:4",
+    )
+}
+
+#[test]
+fn exact_field_or_arm_assertion_and_sibling_field_are_not_repair_starts() -> Result<(), String> {
+    assert_no_start_at(
+        "field-exact",
+        FIELD_OLD,
+        FIELD_NEW,
+        "use ar::default_config;\n\n#[test]\nfn retries() {\n    assert_eq!(default_config().retries, 5);\n}\n",
+        "src/lib.rs:8",
+    )?;
+    assert_no_start_at(
+        "arm-exact",
+        ARM_OLD,
+        ARM_NEW,
+        "use ar::rate;\n\n#[test]\nfn silver() {\n    assert_eq!(rate(\"silver\"), 7);\n}\n",
+        "src/lib.rs:4",
+    )?;
+    // A weak assertion on a sibling field does not tie the test to the
+    // changed field (the field route's own rule), so it is not a start.
+    assert_no_start_at(
+        "field-sibling",
+        FIELD_OLD,
+        FIELD_NEW,
+        "use ar::default_config;\n\n#[test]\nfn quiet() {\n    let c = default_config();\n    assert!(!c.verbose);\n}\n",
+        "src/lib.rs:8",
+    )
+}
+
+#[test]
+fn field_result_discarded_beside_an_unrelated_assert_is_not_a_repair_start() -> Result<(), String> {
+    assert_no_start_at(
+        "field-discarded",
+        FIELD_OLD,
+        FIELD_NEW,
+        "use ar::default_config;\n\n#[test]\nfn builds() {\n    let _c = default_config();\n    assert!(1 > 0);\n}\n",
+        "src/lib.rs:8",
+    )
+}
+
+/// #6951: a receiver bound to a test-module type that shadows the owner's type
+/// is not a direct call of the changed owner, so the arm it seems to select is
+/// not a repair start.
+#[test]
+fn shadowed_receiver_type_is_not_a_match_arm_repair_start() -> Result<(), String> {
+    let old = "pub struct Window;\n\nimpl Window {\n    pub fn rate(&self, kind: &str) -> u32 {\n        match kind {\n            \"gold\" => 10,\n            \"silver\" => 5,\n            _ => 0,\n        }\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    struct Window;\n\n    impl Window {\n        fn rate(&self, _kind: &str) -> u32 {\n            1\n        }\n    }\n\n    #[test]\n    fn silver_runs() {\n        let window = Window;\n        assert!(window.rate(\"silver\") > 0);\n    }\n}\n";
+    let new = old.replace("\"silver\" => 5,", "\"silver\" => 7,");
+    assert_no_start_at(
+        "shadowed-arm",
+        old,
+        &new,
+        "// no integration tests\n",
+        "src/lib.rs:7",
+    )
+}

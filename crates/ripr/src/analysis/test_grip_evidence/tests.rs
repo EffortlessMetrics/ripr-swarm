@@ -20962,3 +20962,41 @@ fn inherent_helper_declarations_are_not_executable_self_edges() -> Result<(), St
     }
     Ok(())
 }
+
+/// Not-ready burn-down: a match-arm start credits only a single literal
+/// pattern that a related test passes verbatim.
+#[test]
+fn match_arm_literal_is_credited_only_when_passed_verbatim() {
+    let fact = |value: &str| ValueFact {
+        file: Some(PathBuf::from("tests/t.rs")),
+        line: 5,
+        text: format!("let r = rate({value});"),
+        value: value.to_string(),
+        context: ValueContext::FunctionArgument,
+    };
+    let observed = vec![fact("\"silver\""), fact("3"), fact("'x'")];
+    assert!(match_arm_literal_observed("\"silver\" =>", &observed));
+    assert!(match_arm_literal_observed("3", &observed));
+    assert!(match_arm_literal_observed("'x' =>", &observed));
+    assert!(!match_arm_literal_observed("\"gold\" =>", &observed));
+    assert!(!match_arm_literal_observed(
+        "\"silver\" | \"gold\" =>",
+        &observed
+    ));
+    assert!(!match_arm_literal_observed("1..=3 =>", &observed));
+    assert!(!match_arm_literal_observed("Kind::Silver =>", &observed));
+    assert!(!match_arm_literal_observed("_ =>", &observed));
+    assert!(!match_arm_literal_observed("\"silver\" =>", &[]));
+}
+
+/// The shadow guard counts whole-word item declarations only.
+#[test]
+fn item_declarations_are_counted_as_whole_words() {
+    let masked = "pub struct Window {}\nmod tests { struct Window; struct WindowExt; }\nfn substruct Window() {}\n";
+    assert_eq!(count_item_declarations(masked, "Window", &["struct"]), 2);
+    assert_eq!(count_item_declarations(masked, "WindowExt", &["struct"]), 1);
+    assert_eq!(
+        count_item_declarations(masked, "Window", &["enum", "trait"]),
+        0
+    );
+}

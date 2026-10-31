@@ -857,6 +857,15 @@ unchanged, and the lines claim no runtime outcome.
   non-indexed rival types, and `Self::`, `<W as T>::`, turbofish and `use .. as`
   type spellings are not resolved (the last over-withhold); a bare call of a
   name the test file defines itself never counts.
+- Tests for the match-arm repair start (#11111 burn-down): a changed match arm
+  passes the same gates as the return value above, and additionally needs the
+  related test's owner call to be direct under `check`'s own relation rules,
+  with the owner's impl type (and trait) declared exactly once and never
+  renamed or aliased, and a single string, char or integer literal arm pattern
+  that a related test passes verbatim. A test on a sibling arm, a discarded
+  result, an exact arm assertion, and a receiver bound to a test-module shadow
+  type stay refused; a weak assertion on a sibling struct field is still not a
+  struct-field start (`crates/ripr/tests/return_value_repair_start.rs`).
 - Format parsing tests for `human-full` and `text-full`.
 - CLI unit tests for repo-scope warnings with `--base` and `--diff`, and no
   warning for diff-scoped JSON.
