@@ -2697,8 +2697,7 @@ pub(crate) mod tests {
             "[package]\nname = \"wide\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
         )
         .map_err(|error| error.to_string())?;
-        let mut lib = String::new();
-        for file in 0..110 {
+        let write_module = |file: usize| -> Result<(), String> {
             let mut body = String::new();
             for item in 0..100 {
                 body.push_str(&format!(
@@ -2706,11 +2705,30 @@ pub(crate) mod tests {
                 ));
             }
             std::fs::write(root.join(format!("src/m{file}.rs")), body)
-                .map_err(|error| error.to_string())?;
-            lib.push_str(&format!("pub mod m{file};\n"));
-        }
-        std::fs::write(root.join("src/lib.rs"), lib).map_err(|error| error.to_string())?;
+                .map_err(|error| error.to_string())
+        };
+        let write_lib = |modules: usize| -> Result<(), String> {
+            let lib: String = (0..modules)
+                .map(|file| format!("pub mod m{file};\n"))
+                .collect();
+            std::fs::write(root.join("src/lib.rs"), lib).map_err(|error| error.to_string())
+        };
+        // Calibrate the seams one 100-function module yields, so the fixture
+        // lands between the default cap and the repair ceiling whatever the
+        // extractor's per-function count is.
+        write_module(0)?;
+        write_lib(1)?;
         let config = load_for_root(&root)?;
+        let per_module =
+            crate::analysis::inventory_classified_seams_at_with_config(&root, &config)?
+                .0
+                .len();
+        assert!(per_module > 0, "calibration module yields seams");
+        let modules = (DEFAULT_REPO_EXPOSURE_SEAM_LIMIT + per_module) / per_module + 5;
+        for file in 1..modules {
+            write_module(file)?;
+        }
+        write_lib(modules)?;
 
         // Plain inventory: cut by the default cap.
         let (_, plain) =
