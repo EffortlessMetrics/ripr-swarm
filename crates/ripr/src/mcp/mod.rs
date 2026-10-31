@@ -1,6 +1,7 @@
 mod attempt_inventory;
 mod framing;
 pub(crate) mod gaps;
+mod panic_containment;
 mod protocol;
 mod repair;
 mod repair_admission;
@@ -173,9 +174,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
                 index += 1;
             }
             argument => {
-                return Err(format!(
-                    "unknown mcp argument {argument:?}. Run `ripr mcp --help`."
-                ));
+                return Err(crate::cli::unknown_argument("mcp", argument));
             }
         }
         index += 1;
@@ -278,6 +277,14 @@ mod tests {
         assert_eq!(
             run(&args(&["--bad"])),
             Err("unknown mcp argument \"--bad\". Run `ripr mcp --help`.".to_string())
+        );
+        // Near-miss flags get the shared suggestion; a distant flag does not.
+        assert_eq!(
+            run(&args(&["--stido"])),
+            Err(
+                "unknown mcp argument \"--stido\". Did you mean `--stdio`? Run `ripr mcp --help`."
+                    .to_string()
+            )
         );
         assert_eq!(
             run(&args(&["--root"])),

@@ -63,31 +63,10 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
     )
 }
 
-/// An inherent-method owner reached through an `async fn` hop is not executed
-/// by a test that only calls that hop: the call constructs a future and
-/// nothing here establishes polling (#7415, the same refusal
-/// `inherent_helper_path_reaches_owner` applies to the compact path). Hops
-/// run owner-upward, so the chain keeps the synchronous hops below the first
-/// `async` caller and a test that calls one of those still relates.
-/// Unknown or ambiguous declarations fail closed like an `async` one.
-fn without_async_hops_for_inherent_owner(
-    owner: Option<&crate::analysis::facts::FunctionSummary>,
-    mut chain: super::classify::HelperChain,
-    index: &RustIndex,
-) -> super::classify::HelperChain {
-    if owner.is_some_and(super::classify::requires_inherent_receiver_identity)
-        && let Some(first_async) = chain.hops.iter().position(|hop| {
-            super::classify::function_declaration_is_async(&hop.caller, index) != Some(false)
-        })
-    {
-        chain.hops.truncate(first_async);
-    }
-    chain
-}
-
+#[cfg(test)]
 #[allow(
     clippy::too_many_arguments,
-    reason = "classification inputs plus explicit run-local origin context"
+    reason = "classification inputs plus origin context"
 )]
 pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
     probe: &Probe,
@@ -99,6 +78,33 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
     propagation_origin: Option<&crate::analysis::diff::ChangedLine>,
     value_origins: Option<&std::sync::Mutex<crate::value_origins::ValueOrigins>>,
 ) -> Finding {
+    classify_probe_with_candidate_index_and_origins_with_direct_rows(
+        probe,
+        index,
+        workspace_complete,
+        dependency_edges,
+        candidate_index,
+        transitive_reach,
+        propagation_origin,
+        value_origins,
+    )
+    .0
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "classification inputs plus explicit run-local origin context"
+)]
+pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_direct_rows(
+    probe: &Probe,
+    index: &RustIndex,
+    workspace_complete: bool,
+    dependency_edges: Option<&DependencyEdgeContext<'_>>,
+    candidate_index: &RelatedTestCandidateIndex,
+    transitive_reach: &TransitiveReachIndex<'_>,
+    propagation_origin: Option<&crate::analysis::diff::ChangedLine>,
+    value_origins: Option<&std::sync::Mutex<crate::value_origins::ValueOrigins>>,
+) -> (Finding, Option<bool>) {
     let read_trace = super::probe_read_trace::Scope::begin(probe);
     let owner_fn = resolve_owner_function(probe, index);
     // #3296: one chain resolution per probe, shared by the relation
@@ -107,16 +113,18 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
     // but the uniqueness stop is kept so #7080 can abstain as unknown.
     let resolved_chain = owner_fn
         .map(|owner| super::classify::resolve_chain(&owner.name, index, workspace_complete, &[]));
-    let helper_chain = resolved_chain
-        .clone()
-        .map(|chain| without_async_hops_for_inherent_owner(owner_fn, chain, index))
-        .filter(|chain| !chain.hops.is_empty());
-    let mut related_tests = find_related_tests_with_candidate_index(
+    // An `async fn` hop is not executed by a test that only constructs its
+    // future (#7415, #11151): the chain is cut at the first non-synchronous
+    // hop unless the test provably polls it (`hop_polling`).
+    let super::classify::PolledHops {
+        related: mut related_tests,
+        chain: helper_chain,
+    } = super::classify::related_through_polled_hops(
         probe,
         owner_fn,
         index,
         workspace_complete,
-        helper_chain.as_ref(),
+        resolved_chain.clone(),
         dependency_edges,
         candidate_index,
     );
@@ -286,12 +294,22 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
         .map(|test| test.miss)
         .collect();
 
+    let complete_proximity_oracles_only = evidence.complete_proximity_oracles_only;
+    let direct_rows = std::mem::take(&mut evidence.direct_rows);
     let mut finding = build_finding_with_origins(&context, class, evidence, value_origins);
     if let Some(chain) = resolved_chain.as_ref() {
         withhold_helper_uniqueness_as_unknown(&mut finding, chain, index, &reveal_misses);
     }
+    let pre_cap_syntax_only = super::classify::pre_cap_syntax_only(&finding, index, &direct_rows);
+    if complete_proximity_oracles_only
+        && let Some(owner) = context
+            .owner_fn
+            .filter(|owner| owner.impl_context == crate::analysis::facts::FunctionImplContext::Free)
+    {
+        super::language::apply_complete_proximity_macro_limit(&mut finding, index, &owner.name);
+    }
     read_trace.finish();
-    finding
+    (finding, pre_cap_syntax_only)
 }
 
 /// Evidence line that marks a finding whose classification stopped on an

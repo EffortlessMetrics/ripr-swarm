@@ -21,7 +21,7 @@ mod workflow_catalog;
 pub(crate) use parse::expect_value;
 #[doc(hidden)]
 pub use parse::extract_global_verbose;
-pub(crate) use suggest::unknown_argument;
+pub(crate) use suggest::{unknown_argument, unknown_value};
 
 /// The command completed. Shared by `Ok(())` paths and by the
 /// `help --json` exit contract (`docs/EXIT_CODES.md`).
@@ -290,8 +290,19 @@ fn drive_before_phase_inner(
     let stdout_document = match published {
         Ok(document) => document,
         Err(error) => {
-            if let Some(prior) = prior_artifacts {
-                prior.restore();
+            if let Some(prior) = prior_artifacts
+                && let Err(restore_error) = prior.restore()
+            {
+                // Rollback itself failed: the start did not complete and
+                // prior state may be clobbered, so this is not a clean
+                // refusal — surface both failures as one could-not-complete.
+                let original = match &error {
+                    BeforePhaseError::Refused(message) => message.clone(),
+                    BeforePhaseError::Other(error) => error.message().to_owned(),
+                };
+                return Err(BeforePhaseError::Other(CommandError::Failure(format!(
+                    "{original}; failed to restore prior workflow artifacts: {restore_error}"
+                ))));
             }
             return Err(error);
         }
@@ -334,18 +345,33 @@ impl GapWorkflowArtifactBackup {
         Self { entries }
     }
 
-    fn restore(self) {
+    fn restore(self) -> Result<(), String> {
+        // Attempt every entry: a failed restore of one artifact must not
+        // leave the others unrestored, and no failure may pass silently —
+        // the caller promises a refused start leaves prior state intact.
+        let mut failures: Vec<String> = Vec::new();
         for (path, prior) in self.entries {
             match prior {
                 Some(bytes) => {
-                    if std::fs::read(&path).ok().as_deref() != Some(bytes.as_slice()) {
-                        let _ = std::fs::write(&path, bytes);
+                    if std::fs::read(&path).ok().as_deref() != Some(bytes.as_slice())
+                        && let Err(error) = std::fs::write(&path, bytes)
+                    {
+                        failures.push(format!("restore {} failed: {error}", path.display()));
                     }
                 }
-                None => {
-                    let _ = std::fs::remove_file(&path);
-                }
+                None => match std::fs::remove_file(&path) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => {
+                        failures.push(format!("restore {} failed: {error}", path.display()));
+                    }
+                },
             }
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("; "))
         }
     }
 }
@@ -796,7 +822,7 @@ mod tests {
             // A failed start overwrote one prior file and created the other.
             std::fs::write(&snapshot, b"overwritten").map_err(|e| e.to_string())?;
             std::fs::write(&packet, b"new").map_err(|e| e.to_string())?;
-            backup.restore();
+            backup.restore()?;
             if std::fs::read(&snapshot).map_err(|e| e.to_string())? != b"sentinel-snapshot"
                 || std::fs::read(&baseline).map_err(|e| e.to_string())? != b"sentinel-baseline"
             {
@@ -804,6 +830,47 @@ mod tests {
             }
             if packet.exists() {
                 return Err("a file the failed start created was kept".to_string());
+            }
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        result
+    }
+
+    #[test]
+    fn gap_artifact_backup_restore_reports_write_failure_and_still_restores_remaining_entries()
+    -> Result<(), String> {
+        let root = test_root("gap-backup-restore-failure")?;
+        let result = (|| -> Result<(), String> {
+            let workflow = root.join("target/ripr/workflow");
+            std::fs::create_dir_all(&workflow).map_err(|e| e.to_string())?;
+            let snapshot = workflow.join("before.check-findings.json");
+            let packet = workflow.join("gap-repair-packet.json");
+            let baseline = workflow.join("attempt-baseline.json");
+            std::fs::write(&snapshot, b"sentinel-snapshot").map_err(|e| e.to_string())?;
+            std::fs::write(&baseline, b"sentinel-baseline").map_err(|e| e.to_string())?;
+            let backup = GapWorkflowArtifactBackup::capture(&root);
+            // A failed start overwrote the baseline, created the packet, and
+            // replaced the snapshot file with a directory of the same name,
+            // so restoring the snapshot bytes must fail portably.
+            std::fs::write(&baseline, b"overwritten").map_err(|e| e.to_string())?;
+            std::fs::write(&packet, b"new").map_err(|e| e.to_string())?;
+            std::fs::remove_file(&snapshot).map_err(|e| e.to_string())?;
+            std::fs::create_dir_all(&snapshot).map_err(|e| e.to_string())?;
+            let error = backup
+                .restore()
+                .err()
+                .ok_or_else(|| "restore write failure was discarded".to_string())?;
+            if !error.contains("before.check-findings.json") {
+                return Err(format!("restore error did not name the snapshot: {error}"));
+            }
+            // Collect-all semantics: the other entries were still restored.
+            if std::fs::read(&baseline).map_err(|e| e.to_string())? != b"sentinel-baseline" {
+                return Err("baseline was not restored after the snapshot failure".to_string());
+            }
+            if packet.exists() {
+                return Err("packet was not removed after the snapshot failure".to_string());
             }
             Ok(())
         })();
@@ -1043,7 +1110,7 @@ mod tests {
         assert_eq!(
             run(args(&["ripr", "agent", "brief", "--diff", "change.diff"])),
             Err(CommandError::Failure(
-                "agent brief requires --json (the supported output for this subcommand)"
+                "agent brief requires --json (the supported output for this subcommand); add --json to the command"
                     .to_string()
             ))
         );

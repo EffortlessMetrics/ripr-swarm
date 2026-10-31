@@ -1,2 +1,0 @@
-<!-- section: Changed -->
-- A test-local `macro_rules!` assertion wrapper that expands exactly (one arm, only `$name:expr` fragments, a single assertion statement) is now read as the assertion it stands for, so `check_eq!(surcharge(100), 110)` credits the way `assert_eq!(surcharge(100), 110)` does instead of stopping at the macro limitation. Anything that does not expand exactly keeps the limitation. A `#[cfg(test)]` definition counts as in scope; other `cfg` gates still refuse it (#10650).
