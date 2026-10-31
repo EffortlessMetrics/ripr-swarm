@@ -1925,7 +1925,23 @@ pub(crate) fn chain_entry_pin_admits(
             && is_direct_call_site(&call.text, entry_name)
             && !test_call_is_shadowed(index, test, entry_name, call.line)
     });
-    if !calls_entry {
+    // #9638: an integration test may name the entry through its own library
+    // (`pkg::entry(..)`, `pkg::module::entry(..)`) with no `use`. The path is
+    // the relation's own-crate spelling, established by the same authority that
+    // relates the test to the chain, so the pin adds no second resolver.
+    let qualified_entry = test.calls.iter().find_map(|call| {
+        (call.name == entry_name && !test_call_is_shadowed(index, test, entry_name, call.line))
+            .then(|| {
+                super::related_tests::own_crate_qualified_entry_path(
+                    index,
+                    test,
+                    &entry.caller,
+                    call.line,
+                )
+            })
+            .flatten()
+    });
+    if !calls_entry && qualified_entry.is_none() {
         return false;
     }
     // Exactly one entry call in the assertion, and it is a whole operand
@@ -1951,7 +1967,12 @@ pub(crate) fn chain_entry_pin_admits(
     let Some(operands) = super::reveal::equality_operands(&assertion.text) else {
         return false;
     };
-    let is_entry_operand = |operand: &str| operand_is_exact_call(operand, entry_name);
+    let is_entry_operand = |operand: &str| {
+        (calls_entry && operand_is_exact_call(operand, entry_name))
+            || qualified_entry
+                .as_deref()
+                .is_some_and(|path| operand_is_exact_call(operand, path))
+    };
     let expected = match (
         is_entry_operand(&operands[0]),
         is_entry_operand(&operands[1]),
