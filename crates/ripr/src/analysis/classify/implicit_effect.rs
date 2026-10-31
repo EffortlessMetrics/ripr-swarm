@@ -651,7 +651,7 @@ fn observer_local(assertion: &ast::MacroCall, source: &str) -> Option<(String, S
 fn dispatch_statement(statement: &ast::Stmt, receiver: &str, method: &str) -> bool {
     let text = compact(&statement.syntax().text().to_string());
     match method {
-        "next" | "into_iter" => {
+        "next" => {
             text == format!("for_in{receiver}{{}}")
                 || text == format!("{receiver}.for_each(|_|{{}});")
                 || text == format!("while{receiver}.next().is_some(){{}}")
@@ -1221,6 +1221,16 @@ fn implicit_observer() {
             "impl Counter {\n    fn next(&mut self) -> Option<()> {",
         )?;
         assert!(!observes(&source, "next", "next", DIRECT)?);
+        Ok(())
+    }
+
+    #[test]
+    fn into_iter_named_dispatch_is_refused() -> Result<(), String> {
+        // `into_iter` is not an admitted observer method: an
+        // `impl IntoIterator` is scan-excluded and `fn into_iter` inside
+        // `impl Iterator` is E0407, so admission is unreachable.
+        let source = edit(CELL_OBSERVER, "fn next(", "fn into_iter(")?;
+        assert!(!observes(&source, "into_iter", "into_iter", DIRECT)?);
         Ok(())
     }
 

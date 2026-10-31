@@ -127,6 +127,12 @@ fn check_typescript(label: &str, old: &str, new: &str) -> Result<Check, String> 
 
 /// Positive control: a single operator token substituted in place names that
 /// clause, so the harness really reaches a discriminator.
+///
+/// `repair_packet_ready` is not asserted here: the TypeScript preview is
+/// `preview_advisory_only` and never emits a ready packet, so the negatives'
+/// `packet_ready()` check is a regression tripwire, and the discriminating
+/// signal is that a named `==` discriminator appears (positives) or not
+/// (negatives).
 #[test]
 fn single_operator_substitution_names_its_clause() -> Result<(), String> {
     let check = check_typescript("operator", "a > 1 && ok", "a >= 1 && ok")?;

@@ -364,6 +364,10 @@ fn literal_only_edits_and_token_identical_edits_refuse_boundaries() {
             "if (total > limit || 'unterminated) {",
             "if (total >= limit) {",
         ),
+        // Returned-ternary fallback must not name a boundary for an edit that
+        // changed no token.
+        ("  return a > b ? x : y;", "  return a > b ? x : y; // note"),
+        ("  return a > b ? x : y;", "  return a  >  b ? x : y;"),
     ] {
         assert_eq!(boundary_label(Some(old), new), None, "{old} -> {new}");
     }

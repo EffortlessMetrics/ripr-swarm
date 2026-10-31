@@ -232,6 +232,17 @@ fn parse_line(file: &Path, line: &str, allocator: &Allocator) -> Option<Boundary
 
 fn selected_text(new: &BoundaryLine, old: Option<&BoundaryLine>) -> Option<String> {
     let touched: Vec<&BoundarySite> = if let Some(old) = old {
+        // Token-identical edits (comments, whitespace) changed no behavior, so
+        // the returned-ternary fallback below must not name a boundary either.
+        if old.tokens.len() == new.tokens.len()
+            && old
+                .tokens
+                .iter()
+                .zip(&new.tokens)
+                .all(|(a, b)| a.text == b.text)
+        {
+            return None;
+        }
         // Name a comparison only when exactly one token was substituted in
         // place (#11442): same token count, one differing token, and the same
         // comparison site already existing in the old line. Two tokens in one
@@ -284,6 +295,7 @@ pub(crate) fn typescript_changed_boundary_text<'a>(
         return Cow::Borrowed(new_line);
     }
     let parse = |line: &str| {
+        let line = one_line_function_first_statement(line);
         parse_on_worker(file, line, |file, line, allocator| {
             parse_line(file, line, allocator)
         })
