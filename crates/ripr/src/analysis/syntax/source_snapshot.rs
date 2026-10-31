@@ -129,6 +129,7 @@ pub(crate) struct SourceSnapshot {
     shadows: Mutex<BTreeMap<ShadowKey, bool>>,
     root_shadows: Mutex<BTreeMap<(String, bool), RootShadow>>,
     masked: OnceLock<String>,
+    root_impl_lines: OnceLock<Vec<(usize, usize)>>,
     #[cfg(test)]
     shadow_computations: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
@@ -151,11 +152,35 @@ impl SourceSnapshot {
             shadows: Mutex::default(),
             root_shadows: Mutex::default(),
             masked: OnceLock::new(),
+            root_impl_lines: OnceLock::new(),
             #[cfg(test)]
             shadow_computations: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             root_shadow_computations: std::sync::atomic::AtomicUsize::new(0),
         }
+    }
+
+    /// Inclusive 1-based line ranges of the `impl` blocks that are direct items
+    /// of the file root, in source order, built once per snapshot. Lines count
+    /// the parsed tree's own text, so the answer is identical to counting
+    /// newlines before each range edge; a per-probe rebuild copied the whole
+    /// file text and rescanned it for every `impl`.
+    pub(crate) fn root_impl_lines(&self) -> &[(usize, usize)] {
+        self.root_impl_lines.get_or_init(|| {
+            let Some(tree) = self.tree() else {
+                return Vec::new();
+            };
+            let syntax = tree.syntax();
+            let lines = LineIndex::new(&syntax.text().to_string());
+            syntax
+                .children()
+                .filter_map(ast::Impl::cast)
+                .map(|item| {
+                    let range = item.syntax().text_range();
+                    (lines.line(range.start()), lines.line(range.end()))
+                })
+                .collect()
+        })
     }
 
     pub(crate) fn lexical_items(&self) -> Option<&SourceScopes> {
@@ -414,6 +439,22 @@ pub(crate) fn has_cfg_attr(node: &impl ast::HasAttrs) -> bool {
 mod tests {
     use super::*;
     use crate::analysis::rust_index::summarize_file;
+
+    #[test]
+    fn root_impl_lines_cover_only_direct_root_impls() {
+        // Lines: 1 impl A, 2-4 mod m (with a nested impl B on 3), 5-7 impl C
+        // spanning three lines, 8 fn with a local impl D.
+        let source = "impl A { fn a() {} }\nmod m {\n    impl B { fn b() {} }\n}\nimpl C {\n    fn c() {}\n}\nfn f() { impl D {} }\n";
+        let snapshot = SourceSnapshot::new(source);
+        // The nested `impl B` (line 3) and the fn-local `impl D` (line 8) are
+        // not root items; a descendants-wide answer would include them.
+        assert_eq!(snapshot.root_impl_lines(), &[(1, 1), (5, 7)]);
+        assert!(
+            SourceSnapshot::new("fn broken( {")
+                .root_impl_lines()
+                .is_empty()
+        );
+    }
 
     #[test]
     fn fragment_parses_share_only_exact_bytes_and_clones_start_empty() -> Result<(), String> {

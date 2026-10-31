@@ -10,6 +10,88 @@ use std::path::{Component, Path};
 const MAX_DISPLAY_LENGTH: usize = 512;
 const MAX_TIMEOUT_MS: u64 = 3_600_000;
 
+/// The Python producer's pytest display, shared with its rooted projection.
+/// `node` is the qualified test name with `::` separators, not a shell token.
+pub(crate) fn python_pytest_verify_display(
+    path: &str,
+    node: &str,
+    windows: bool,
+) -> Option<String> {
+    let selector = if windows {
+        shell_quote_file_arg_for_host(&format!("{path}::{node}"), true)?
+    } else {
+        format!("{}::{node}", shell_quote_file_arg_for_host(path, false)?)
+    };
+    Some(format!(
+        "{} {selector}",
+        crate::domain::PYTEST_VERIFY_PROGRAM
+    ))
+}
+
+pub(crate) fn python_unittest_verify_display(
+    path: &str,
+    qualified: &str,
+    windows: bool,
+) -> Option<String> {
+    let module = unittest_module_for_path(path)?;
+    let selector = if windows {
+        shell_quote_file_arg_for_host(&format!("{module}.{qualified}"), true)?
+    } else {
+        format!(
+            "{}.{qualified}",
+            shell_quote_file_arg_for_host(&module, false)?
+        )
+    };
+    Some(format!("python -m unittest {selector}"))
+}
+
+fn unittest_module_for_path(path: &str) -> Option<String> {
+    let module_path = path.strip_suffix(".py").unwrap_or(path);
+    // unittest splits every dot as a module separator. A literal path dot
+    // can therefore select a different file, even when shell quoting is
+    // correct. Keep that unresolved identity out of verification routes.
+    if module_path.contains('.') {
+        return None;
+    }
+    Some(module_path.replace(['/', '\\'], "."))
+}
+
+/// Quote one path or module token for the host's default shell grammar.
+///
+/// Suggested verify commands are text an agent may paste into a shell, so the
+/// quoting must match the host's grammar or the command fails for exactly the
+/// paths that need quoting (#8752). A relative path made of ASCII letters,
+/// digits, `.`, `_`, `/`, `-` stays readable (`:` too on Windows, where it is
+/// not a metachar and the pytest `::` separator must not force quotes); any
+/// other byte is quoted so spaces, unicode, and shell metacharacters reach
+/// the test runner intact. On POSIX hosts the quote is single-quote escaping
+/// (`'\''`), so `$()`, backticks, spaces, and quotes are not expanded. On
+/// Windows hosts the quote is double quotes — the common denominator of cmd
+/// and PowerShell for literal text — but both shells still expand some bytes
+/// inside double quotes (PowerShell: `$()`, `$var`, and backtick escapes;
+/// cmd: `%VAR%`). A token carrying any of those bytes gets no paste-ready
+/// command at all: the verify route stays silent rather than emitting a
+/// command whose paste executes the file name. An embedded `"` in a
+/// quotable token is doubled per the PowerShell grammar; cmd has no
+/// representation for an embedded quote, which stays a documented limit.
+/// Stored node ids and test-file paths stay the raw spelling; only the
+/// command text is quoted. This does not run the command.
+fn shell_quote_file_arg_for_host(file_str: &str, windows: bool) -> Option<String> {
+    let in_safe_class = |c: char| {
+        c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-') || (windows && c == ':')
+    };
+    if !file_str.is_empty() && file_str.chars().all(in_safe_class) {
+        return Some(file_str.to_string());
+    }
+    if windows {
+        if file_str.contains(['$', '`', '%']) {
+            return None;
+        }
+        return Some(format!("\"{}\"", file_str.replace('"', "\"\"")));
+    }
+    Some(format!("'{}'", file_str.replace('\'', "'\\''")))
+}
+
 /// Recognize the closed verification-provenance set of actionable packets.
 ///
 /// RIPR-SPEC-0057 admits an existing canonical command or the producer's
