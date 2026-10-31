@@ -242,8 +242,18 @@ pub(crate) fn render_finding_digest_with_config(
         // with no pointer to the rest). Wrap like the next-step and
         // not-credited lines instead of truncating; `--format human-full`
         // keeps the same text in its Weakness section.
-        let value = trim_field_period(&missing.split_whitespace().collect::<Vec<_>>().join(" "))
-            .to_string();
+        let plain_missing = if missing == "No strong discriminator was detected" {
+            "No strong check was detected"
+        } else {
+            missing.as_str()
+        };
+        let value = trim_field_period(
+            &plain_missing
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" "),
+        )
+        .to_string();
         let prefix = format!("  {label}: ");
         if prefix.chars().count() + value.chars().count() <= LINE_BUDGET {
             out.push_str(&format!("{prefix}{value}\n"));

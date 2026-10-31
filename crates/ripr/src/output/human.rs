@@ -4553,7 +4553,7 @@ mod tests {
             &crate::config::RiprConfig::default(),
             Path::new("."),
         );
-        if !digest.contains("  Missing check (1 of 2): No strong discriminator was detected") {
+        if !digest.contains("  Missing check (1 of 2): No strong check was detected") {
             return Err(format!(
                 "a finding with a real missing discriminator keeps its label:
 {digest}"
@@ -4680,7 +4680,7 @@ mod tests {
         );
 
         assert!(
-            digest.contains("  Missing check (1 of 2): No strong discriminator was detected\n"),
+            digest.contains("  Missing check (1 of 2): No strong check was detected\n"),
             "prose entries must render unchanged; got:\n{digest}"
         );
     }
