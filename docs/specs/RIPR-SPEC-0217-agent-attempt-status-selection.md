@@ -149,6 +149,14 @@ receipt strength, and currentness as separate facts:
   blocked-outside and eligible-outside hints, which would argue with
   `ripr check`'s "nothing to repair". A gripped spot beside an open finding on
   the change is counted as a different check, never cited as its verdict.
+  The closing next step follows the same scope (#11111 burn-down): when every
+  changed spot is already checked it says there is nothing to do for the
+  change; when the changed Rust lines touch no seam the refusal leads with
+  that, even with no repairable spot elsewhere, and closes with a
+  hand-written test; otherwise it keeps the repository route. A
+  route-not-ready reason names a `ripr agent stub` command only when the stub
+  would write one, and otherwise names the stub's own refusal. A seam whose
+  class is an unknown stage names what ripr could not establish.
 
 - A restart or fresh-start route is named only when the shared repair
   eligibility gate admits the seam (#8766): `repair_refusal` (the gate

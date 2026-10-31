@@ -313,6 +313,7 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
             RepairStartDecision::Start { seam_id } => seam_id,
             RepairStartDecision::NoEligible {
                 total_seams,
+                change,
                 reasons,
                 reasons_total,
             } => {
@@ -320,6 +321,7 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
                 // setup/limitation message on stderr, stdout empty.
                 return Err(CommandError::Decision(no_eligible_seam_message(
                     &options.root,
+                    change,
                     total_seams,
                     &reasons,
                     reasons_total,
@@ -643,11 +645,12 @@ fn start_with_repair_clause(root: &std::path::Path, root_arg: &str) -> String {
     match resolve_repair_start(root) {
         Ok(RepairStartDecision::NoEligible {
             total_seams,
+            change,
             reasons,
             reasons_total,
         }) => format!(
             "`ripr repair` starts nothing right now: {}",
-            no_eligible_seam_message(root, total_seams, &reasons, reasons_total)
+            no_eligible_seam_message(root, change, total_seams, &reasons, reasons_total)
         ),
         // The auto selector uses only the packet-eligibility gate; the start
         // itself also applies the edit-target and held-inline checks, so the
@@ -675,6 +678,7 @@ fn start_with_repair_clause(root: &std::path::Path, root_arg: &str) -> String {
 
 fn no_eligible_seam_message(
     root: &std::path::Path,
+    change: crate::app::task_first::NoEligibleChange,
     total_seams: usize,
     reasons: &[String],
     reasons_total: usize,
@@ -711,12 +715,23 @@ fn no_eligible_seam_message(
             ));
         }
     }
-    // `repair` inventories saved repository seams, while `check` reads a
-    // diff: promise a gap only when the branch has changed code, and keep
-    // the repository-wide route first.
-    message.push_str(&format!(
-        ". Next: `ripr pilot --root {root}` explores the whole repository; when this branch has changed code, `ripr check --root {root}` names a gap in it to test by hand"
-    ));
+    // The closing step follows what the outcome says about the change
+    // (#11111 burn-down): nothing to do when every changed spot is already
+    // checked, a hand-written test when the change touches no repairable
+    // code, and otherwise the repository-wide route first, since `repair`
+    // inventories saved repository seams while `check` reads a diff.
+    use crate::app::task_first::NoEligibleChange;
+    match change {
+        NoEligibleChange::AlreadyChecked => message.push_str(&format!(
+            ". Nothing to do for this change: the existing tests already check it, and `ripr check --root {root}` reports the same. To look for gaps elsewhere in the repository, run `ripr pilot --root {root}`"
+        )),
+        NoEligibleChange::NoRepairableCode => message.push_str(&format!(
+            ". Next: write a test for this change by hand; `ripr check --root {root}` shows what ripr can tell about it"
+        )),
+        NoEligibleChange::Other => message.push_str(&format!(
+            ". Next: `ripr pilot --root {root}` explores the whole repository; when this branch has changed code, `ripr check --root {root}` names a gap in it to test by hand"
+        )),
+    }
     message
 }
 
@@ -877,7 +892,13 @@ mod tests {
             "cross-language oracle visibility unresolved".to_string(),
             "repair target unresolved".to_string(),
         ];
-        let truncated = no_eligible_seam_message(Path::new("."), 9, &reasons, 5);
+        let truncated = no_eligible_seam_message(
+            Path::new("."),
+            crate::app::task_first::NoEligibleChange::Other,
+            9,
+            &reasons,
+            5,
+        );
         for expected in ["(and 2 more", "ripr pilot"] {
             if !truncated.contains(expected) {
                 return Err(format!(
@@ -885,7 +906,13 @@ mod tests {
                 ));
             }
         }
-        let complete = no_eligible_seam_message(Path::new("."), 9, &reasons, 3);
+        let complete = no_eligible_seam_message(
+            Path::new("."),
+            crate::app::task_first::NoEligibleChange::Other,
+            9,
+            &reasons,
+            3,
+        );
         if complete.contains("and 2 more") {
             return Err(format!(
                 "complete list must not claim a remainder: {complete}"
@@ -1177,13 +1204,47 @@ mod tests {
         Ok(())
     }
 
+    /// #11111 burn-down: the closing step follows what the outcome says
+    /// about the change, so an exposed change is not sent to look for a gap.
+    #[test]
+    fn no_eligible_closing_step_follows_the_change() -> Result<(), String> {
+        use crate::app::task_first::NoEligibleChange;
+        let root = Path::new("/ripr-task-first-root");
+        let reasons = ["the code at src/lib.rs:2 `x`: existing tests already check it".to_string()];
+        let checked =
+            no_eligible_seam_message(root, NoEligibleChange::AlreadyChecked, 1, &reasons, 1);
+        let no_code =
+            no_eligible_seam_message(root, NoEligibleChange::NoRepairableCode, 1, &reasons, 1);
+        let other = no_eligible_seam_message(root, NoEligibleChange::Other, 1, &reasons, 1);
+        if !checked.contains("Nothing to do for this change")
+            || checked.contains("names a gap in it")
+        {
+            return Err(format!("already-checked tail: {checked}"));
+        }
+        if !no_code.contains("Next: write a test for this change by hand")
+            || no_code.contains("names a gap in it")
+        {
+            return Err(format!("no-repairable-code tail: {no_code}"));
+        }
+        if !other.contains("names a gap in it to test by hand") {
+            return Err(format!("generic tail: {other}"));
+        }
+        Ok(())
+    }
+
     /// The no-eligible message separates the zero-seam setup outcome from
     /// the limitation outcome, pluralizes the noun, and carries the named
     /// reasons only when there are some.
     #[test]
     fn no_eligible_seam_message_separates_setup_from_limitation() -> Result<(), String> {
         let root = Path::new("/ripr-task-first-root");
-        let setup = no_eligible_seam_message(root, 0, &["ignored reason".to_string()], 1);
+        let setup = no_eligible_seam_message(
+            root,
+            crate::app::task_first::NoEligibleChange::Other,
+            0,
+            &["ignored reason".to_string()],
+            1,
+        );
         if !setup.starts_with("no seams visible under ")
             || setup.contains("automatic repair")
             || setup.contains("ignored reason")
@@ -1191,7 +1252,13 @@ mod tests {
         {
             return Err(format!("zero seams must be the setup outcome:\n{setup}"));
         }
-        let one = no_eligible_seam_message(root, 1, &[], 0);
+        let one = no_eligible_seam_message(
+            root,
+            crate::app::task_first::NoEligibleChange::Other,
+            1,
+            &[],
+            0,
+        );
         if !one.starts_with("ripr looked at 1 spot in the code under ") || one.contains("spots in")
         {
             return Err(format!("one seam must be singular:\n{one}"));
@@ -1201,6 +1268,7 @@ mod tests {
         }
         let several = no_eligible_seam_message(
             root,
+            crate::app::task_first::NoEligibleChange::Other,
             3,
             &[
                 "repair route not ready".to_string(),
@@ -1218,7 +1286,13 @@ mod tests {
             }
         }
         // A bounded reason list discloses the omitted remainder (#8728).
-        let bounded = no_eligible_seam_message(root, 5, &["repair route not ready".to_string()], 4);
+        let bounded = no_eligible_seam_message(
+            root,
+            crate::app::task_first::NoEligibleChange::Other,
+            5,
+            &["repair route not ready".to_string()],
+            4,
+        );
         if !bounded.contains("(and 3 more; run `ripr pilot --root ") {
             return Err(format!(
                 "bounded reasons must disclose the rest:\n{bounded}"

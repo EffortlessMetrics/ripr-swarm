@@ -324,7 +324,7 @@ fn already_gripped_seam_is_refused_with_one_cause_on_every_surface() -> Result<(
         "the item must be a listed check class"
     );
     assert!(
-        seen.repair_text.contains("already grip it")
+        seen.repair_text.contains("already check it")
             || seen.repair_text.contains("existing tests already grip"),
         "precondition: the CLI repair gate names the seam already gripped:\n{}",
         seen.repair_text
