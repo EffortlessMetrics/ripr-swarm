@@ -147,7 +147,7 @@
       "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
       "future_support": "repair-card guidance may suggest replacing or augmenting truthiness with exact evidence, but packet routing still requires strict actionability fields",
       "must_remain_non_actionable": true,
-      "required_evidence_fragment": "use `toBe` / `toEqual` / `toStrictEqual` to escalate",
+      "required_evidence_fragment": "cannot name a safe target discriminator",
       "raw_evidence_refs": [
         "fixtures/typescript_jest_vitest_assertion_facts/expected/check.json#probe:src_signals.ts:typescript_preview:54d687f5"
       ],
