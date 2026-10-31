@@ -4759,7 +4759,7 @@ struct ReceiverParameters<'a> {
     index: Option<&'a crate::analysis::rust_index::RustIndex>,
 }
 
-type ReceiverReader<'a> = dyn Fn(&str) -> Option<String> + 'a;
+type ReceiverReader<'a> = dyn Fn(&TestSummary, &str) -> Option<String> + 'a;
 
 impl<'a> ReceiverParameters<'a> {
     fn none() -> Self {
@@ -4791,13 +4791,13 @@ impl<'a> ReceiverParameters<'a> {
         }
     }
 
-    fn cell(&self, parameter: &str, argument: &str) -> Option<Vec<String>> {
+    fn cell(&self, test: &TestSummary, parameter: &str, argument: &str) -> Option<Vec<String>> {
         if !self.names.iter().any(|name| name == parameter) {
             return None;
         }
         Some(
             self.value
-                .and_then(|read| read(argument))
+                .and_then(|read| read(test, argument))
                 .into_iter()
                 .collect(),
         )
@@ -4839,7 +4839,7 @@ fn owner_call_parameter_values_where(
                 .enumerate()
                 .filter_map(|(idx, argument)| {
                     let parameter = parameters.get(idx)?;
-                    if let Some(values) = receivers.cell(parameter, argument) {
+                    if let Some(values) = receivers.cell(test, parameter, argument) {
                         return Some((parameter, values, argument.trim(), false));
                     }
                     let values = owner_row_argument_values(
@@ -5376,8 +5376,14 @@ fn chain_entry_rows(
     // shadow authority that denies its `helper_owner_call` relation).
     // #9329: the entry hop's method receiver (`b` of `b.to_string_as(si)`)
     // is the one parameter whose cell is a constructed receiver string.
-    let receiver_reader =
-        |argument: &str| super::helper_transfer::receiver_cell_value(argument, index);
+    let receiver_reader = |test: &TestSummary, argument: &str| {
+        super::helper_transfer::receiver_cell_value(argument, index, &|name| {
+            // A let-bound name reads as its literal only through the shared
+            // single-immutable-`let` authority, and only a plain decimal.
+            crate::analysis::value_resolution::test_let_bound_literal(&test.body, name)
+                .filter(|value| !value.is_empty() && value.chars().all(|ch| ch.is_ascii_digit()))
+        })
+    };
     let receivers = ReceiverParameters {
         names: entry.receiver.iter().cloned().collect(),
         value: Some(&receiver_reader),
