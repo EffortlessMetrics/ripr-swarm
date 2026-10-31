@@ -281,15 +281,22 @@ fn opaque_reach_guidance(entry: &crate::analysis::ClassifiedSeam) -> Option<Stri
         return None;
     }
     let summary = entry.evidence.reach.summary.as_str();
-    let candidate = if let Some(rest) = summary.strip_prefix("Reach unresolved (")
-        && let Some((_, rest)) = rest.split_once("): ")
-    {
-        let rest = rest.split_once("; no gap").map_or(rest, |(head, _)| head);
+    // Only the transitive-reach sentence ("`t` (f:l) calls `x`, which may lead
+    // to `o` through a call path ripr does not fully trace; no gap is
+    // reported") reads as a candidate once its trailer is cut; macro and
+    // trait-dispatch summaries fall back to a related test instead of leaking
+    // their own wording.
+    let transitive = summary
+        .strip_prefix("Reach unresolved (")
+        .and_then(|rest| rest.split_once("): "))
+        .map(|(_, rest)| rest.split_once("; no gap").map_or(rest, |(head, _)| head))
+        .filter(|rest| rest.starts_with('`') && rest.contains(", which may lead to `"));
+    let candidate = if let Some(rest) = transitive {
         format!("ripr found {rest}")
     } else {
         let test = entry.evidence.related_tests.first()?;
         format!(
-            "the nearest related test is `{}` ({}:{}), but ripr cannot show that it runs this code",
+            "a related test is `{}` ({}:{}), but ripr cannot show that it runs this code",
             test.test_name,
             crate::analysis::stable_path_text(&test.file),
             test.line
@@ -2966,13 +2973,31 @@ pub(crate) mod tests {
         let refusal = repair_start_refusal_for_entry(root, &weak, policy)
             .ok_or("an opaque seam must still be refused")?;
         assert!(
-            refusal.reason.contains("the nearest related test is"),
+            refusal.reason.contains("a related test is"),
             "{}",
             refusal.reason
         );
 
-        // Negative: weak reach with no related test has nothing to name, and
-        // a non-opaque class never takes this wording.
+        // Macro and trait-dispatch summaries do not leak their own wording.
+        let mut macro_reach = gate_entry(SeamGripClass::Opaque, vec![weak_related_test()]);
+        macro_reach.evidence.reach = StageEvidence::new(
+            StageState::Opaque,
+            Confidence::Low,
+            "Reach unresolved (rust_macro_reach_unresolved): `t` (a.rs:1) calls `r`, which reaches macro `m!` (b.rs:2) that names `price`; ripr does not expand macros, so no gap is reported",
+        );
+        let refusal = repair_start_refusal_for_entry(root, &macro_reach, policy)
+            .ok_or("an opaque seam must still be refused")?;
+        assert!(
+            refusal.reason.contains("a related test is")
+                && !refusal.reason.contains("no gap is reported")
+                && !refusal.reason.contains("macro"),
+            "{}",
+            refusal.reason
+        );
+        assert_eq!(refusal.kind, RefusalKind::Other);
+
+        // Negative: weak reach with no related test has nothing to name and
+        // keeps the original class label.
         let mut nothing = gate_entry(SeamGripClass::Opaque, Vec::new());
         nothing.evidence.reach = StageEvidence::new(StageState::Weak, Confidence::Low, "x");
         let refusal = repair_start_refusal_for_entry(root, &nothing, policy)
