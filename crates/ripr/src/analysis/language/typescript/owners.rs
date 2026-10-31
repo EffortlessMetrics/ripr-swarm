@@ -81,6 +81,7 @@ pub(crate) fn owners_from_program(
         &repeated_names,
     );
     assign_decorated_entries(program, source, &mut owners);
+    reshare_owner_imports(&mut owners);
     owners
 }
 
@@ -1105,7 +1106,7 @@ pub(crate) fn owner_from_variable_declarator(
             class_name: None,
             decorated: false,
             exported_as_default: false,
-            imports: imports.to_vec(),
+            imports: imports.to_vec().into(),
             method_kind: TypeScriptMethodKind::Ordinary,
             class_default_export: false,
             default_object_member: false,
@@ -1161,7 +1162,7 @@ pub(crate) fn owner_from_function(
         class_name: None,
         decorated,
         exported_as_default: false,
-        imports: imports.to_vec(),
+        imports: imports.to_vec().into(),
         method_kind: TypeScriptMethodKind::Ordinary,
         class_default_export: false,
         default_object_member: false,
@@ -1193,7 +1194,7 @@ pub(crate) fn owner_from_arrow(
         class_name: None,
         decorated,
         exported_as_default: false,
-        imports: imports.to_vec(),
+        imports: imports.to_vec().into(),
         method_kind: TypeScriptMethodKind::Ordinary,
         class_default_export: false,
         default_object_member: false,
@@ -1261,7 +1262,7 @@ pub(crate) fn owner_from_method(
         class_name: class_name.map(str::to_string),
         decorated: class_decorated || !method.decorators.is_empty(),
         exported_as_default: false,
-        imports: imports.to_vec(),
+        imports: imports.to_vec().into(),
         method_kind: match method.kind {
             oxc_ast::ast::MethodDefinitionKind::Constructor => TypeScriptMethodKind::Constructor,
             oxc_ast::ast::MethodDefinitionKind::Get => TypeScriptMethodKind::Getter,
