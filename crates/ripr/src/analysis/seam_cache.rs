@@ -594,8 +594,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// no longer reads as comparing by its fields (#10684).
 /// `1.123`: return/error matches! assertions require shared test execution
 /// admission. Older entries may credit ignored or broad expected-panic tests.
-/// `1.124`: a Kani proof harness gets its own source role and no longer
-/// reads as a production function (RIPR-SPEC-0367); `1.123` entries score it.
+/// `1.124`: retain the opaque assertion-macro limit beside nested expected
+/// macros when a bare owner call sits outside their inputs (#9644). The same
+/// version also covers a Kani proof harness getting its own source role
+/// instead of reading as a production function (RIPR-SPEC-0367).
 pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.124";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
@@ -765,7 +767,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.124";
 /// `0.127`: same literal fold and sole-glob reach as full `1.120` (#10479).
 /// `0.128`: same Display placeholder-edit refusal as full `1.121` (#9836).
 /// `0.130`: same matches! execution admission as full `1.123`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.130";
+/// `0.131`: same nested expected-macro limitation as full `1.124` (#9644).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.131";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -936,7 +939,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.130";
 /// `0.127`: same literal fold and sole-glob reach as full `1.120` (#10479).
 /// `0.128`: same Display placeholder-edit refusal as full `1.121` (#9836).
 /// `0.130`: same matches! execution admission as full `1.123`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.130";
+/// `0.131`: same nested expected-macro limitation as full `1.124` (#9644).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.131";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5365,6 +5369,8 @@ mod tests {
         // 1.120 -> 1.121: Display placeholder-edit refusal (#9836).
         // 1.121 -> 1.122: foreign embedded-type equality reading (#10684).
         // 1.122 -> 1.123: return/error matches! execution admission.
+        // 1.123 -> 1.124: nested expected-macro limit (#9644) and the
+        // proof-harness source role (RIPR-SPEC-0367).
         assert_eq!(CACHE_SCHEMA_VERSION, "1.124");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -5475,8 +5481,9 @@ mod tests {
         // 0.127 -> 0.128: same Display placeholder-edit refusal as full 1.121.
         // 0.128 -> 0.129: same foreign embedded-type reading as full 1.122.
         // 0.129 -> 0.130: same matches! admission as full 1.123.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.130");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.130");
+        // 0.130 -> 0.131: same nested expected-macro limit as full 1.124 (#9644).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.131");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.131");
     }
 
     #[test]

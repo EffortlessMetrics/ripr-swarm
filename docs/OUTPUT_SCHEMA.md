@@ -101,6 +101,7 @@ map is:
 | Output | Field | Current value |
 | --- | --- | --- |
 | `ripr check --format json` | `schema_version` | `0.2` |
+| `ripr check --format json` refusal envelope, `analysis_timeout` with input context (RIPR-SPEC-0241 amendment #10796) | `schema_version` | `0.3` |
 | `ripr check --output-dir DIR` manifest | `schema_version` | `ripr-native-diff-output-set-v1` |
 | `ripr check --format sarif` | `version` | `2.1.0` (standard SARIF envelope) |
 | `ripr gate evaluate` | `schema_version` | `0.1` |
@@ -152,6 +153,7 @@ records that distinction.
 | Published schema | Current version | Version owner and rationale |
 | --- | --- | --- |
 | `schemas/ripr/check.schema.json` | `0.2` | `crates/ripr/src/app.rs`; check envelope |
+| `schemas/ripr/check-timeout-refusal.schema.json` | `0.3` | `crates/ripr/src/app.rs`; analysis-timeout refusal envelope with input context (RIPR-SPEC-0241 amendment #10796) |
 | `schemas/ripr/doctor.schema.json` | `0.4` | `crates/ripr/src/output/doctor.rs`; doctor environment report (#5214) |
 | `schemas/ripr/executed-control.schema.json` | `1` | `crates/ripr/src/domain/executed_control.rs` and `crates/ripr/src/output/executed_control.rs`; executed-control obligation/result/packet vocabulary (#4641) |
 | `schemas/ripr/gate-decision.schema.json` | `0.1` | `crates/ripr/src/output/gate.rs`; gate decision envelope |
@@ -888,8 +890,13 @@ identity agree and the analysis-outcome validator accepts the artifact.
       "schema_version": "0.1",
       "kind": "complete_with_findings",
       "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": "fnv1a64:0123456789abcdef",
         "base_revision": "origin/main",
-        "input_identity": "sha256:<diff-bytes>"
+        "input_identity": "sha256:<diff-bytes>",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
       },
       "counts": {
         "changed_file_count": 1,
@@ -1088,6 +1095,34 @@ zeroed `summary`, same empty `findings`, same
 The scope-guard identities (`diff_scope_oversized`, `repo_scope_oversized`)
 keep their existing documents byte for byte; they are not members of this
 vocabulary.
+
+An `analysis_timeout` refusal of `ripr check` renders at refusal generation
+`"0.3"` and adds one required key, `input_context` (RIPR-SPEC-0241 amendment
+#10796); every other identity keeps generation `"0.2"` and the exact key set
+above, and a timeout refusal with no stashed projection (a library caller that
+never registered the capture) also keeps `"0.2"`. `input_context` has three
+fixed keys: `requested` echoes the invocation-established root, input source
+(`committed`, `working-tree`, `supplied-diff`, `git-candidate`), base, diff
+file, `--path`/`--exclude` scope, and the analysis effort mode under
+`analysis_mode` (never confused with the input source); `resolved` carries the
+base/commit/merge-base revisions and the scoped intake file counts, each as
+`{available, value}` or `{available: false, reason}`, with a per-fact `reason` (`not_published_before_deadline`, `not_computed_for_source`, or
+`published_after_deadline`).
+`recovery` carries at most one bounded action. For a replayable input it is
+`retry_with_larger_budget`: a shell-safe literal command preserving the
+meaningful root/source/base/scope/output choices and the effective analysis
+settings that change the finding set (the effective `--mode`, including draft,
+`--no-unchanged-tests` when unchanged tests were excluded, and the
+explicit `--perl-facts`/`--suppression-policy` paths) so the retry
+reproduces the requested analysis; the command carries the raw root path
+(the check-JSON `root` echo is the `display_path` spelling and escapes `%`),
+an explicit `--format VALUE` spelling when one was given, and a finite
+doubled `--timeout`. An explicit `--output-dir` is never repeated (the refused set occupies it). For a stdin diff (`--diff -`) no literal command is
+offered: the consumed bytes cannot be replayed, so `recovery.kind` is
+`save_stdin_diff_to_named_file` with `command: null` and the note names the
+honest continuation. `rereads` names what a retry re-reads; such a retry is not pinned to the timed-out snapshot. Input metadata never implies an
+exposure, clean, or repair-ready verdict: exit stays `2`, findings stay
+empty, the summary stays zeroed, and `downstream_consumable` stays `false`.
 
 The same envelope covers the other `--json` commands (#7331): `ripr diff
 --json`, `ripr rerun --json`, `ripr context` (which emits JSON only), `ripr
@@ -1575,7 +1610,8 @@ A finding contains:
   "oracle_strength": "strong",
   "recommended_next_step": "Add boundary tests with exact assertions.",
   "suggested_next_action": "Add boundary tests with exact assertions.",
-  "language": "rust"
+  "language": "rust",
+  "source_currentness": "candidate_current"
 }
 ```
 
@@ -3810,8 +3846,8 @@ retained-count fallback and floor as check findings: older findings without
 matched-total metadata supply their known retained row count, which cannot
 establish how many rows an older producer discarded. `related_tests` remains
 the selected bounded window. Identical eight-row windows with totals 12 and
-13 therefore remain distinguishable. `witness` is additive and is omitted
-when an exposed finding has no unresolved discriminator. It contains only
+13 therefore remain distinguishable. `witness` is additive and is always present;
+its value is `null` when an exposed finding has no unresolved discriminator. It contains only
 producer-owned facts: `fix_site` and `oracle_location` are absent when the
 producer cannot identify them, and `suggested_assertion` is omitted until
 the producer supplies a symbol-resolved assertion template. The typed witness
@@ -15639,7 +15675,9 @@ vocabulary and `final_tree_effect` is a separate closed field backed by an
 same `source`, `range` and `merged_prs` shapes plus `alive_paths_at_cut`,
 `blamed_paths` and one `commits` entry per reachable commit (`paths`,
 `final_tree_effect`, `effect_basis`, `pr_refs` from the trailing `(#N)` of a
-first-parent subject, `issue_refs` for other `#N` mentions).
+first-parent subject, `issue_refs` for other `#N` mentions). `capture` and
+`finalize` need a full clone and refuse a shallow repository; run
+`git fetch --unshallow` first.
 
 `release-ledger derive` writes the `release_ledger` DTO that `release-ledger
 --input` validates: `rule_version` `v1`, `adjudication_basis` `rule_derived`,
@@ -18992,9 +19030,13 @@ For `--check-output`, the top-level optional `input_root` retains the source
 report's root spelling separately from the ledger's selected `root`. A missing
 or relative producer root is not an absolute checkout identity. This additive
 field does not authenticate the input or imply complete corpus provenance.
-`check_output_provenance` retains that root and the original source-subject
-limitation across subsequent `--records` ledger projections; changing the
-immediate input kind cannot make a check-derived no-action conclusion current.
+`check_output_provenance` retains that root, the original root value as
+`source_root_raw` when present, the original source-subject limitation, and the
+producer's `source_subject`, `base`, `base_commit`, `head`,
+and `mode` values when present across subsequent `--records` ledger
+projections. These copied values are unvalidated provenance, including malformed
+values; they do not establish currentness or completeness. Changing the immediate
+input kind cannot make a check-derived no-action conclusion current.
 
 ### Gap artifact source subject
 
