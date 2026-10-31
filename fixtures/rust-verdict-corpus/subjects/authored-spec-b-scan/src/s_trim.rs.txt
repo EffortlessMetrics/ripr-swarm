@@ -1,0 +1,34 @@
+//! The caller passes a computed argument to the scanner.
+
+pub fn scan_trim(input: &str) -> &'static str {
+    let mut state = "text";
+    for symbol in input.chars() {
+        state = match (state, symbol) {
+            ("text", ' ') => "text",
+            ("text", _) => "word",
+            ("word", ' ') => "text",
+            (_, _) => "word",
+        };
+    }
+    state
+}
+
+pub fn classify_trimmed(input: &str) -> &'static str {
+    let final_state = scan_trim(input.trim());
+    if final_state == "word" {
+        "word"
+    } else {
+        "blank"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_reads_the_last_state_s_trim() {
+        assert_eq!(classify_trimmed(" ab "), "word");
+        assert_eq!(classify_trimmed("   "), "blank");
+    }
+}

@@ -209,6 +209,8 @@ fn required_exit_contract(id: &str) -> Option<CommandExitContract> {
         "cmd:check" | "cmd:diff" => Some(EXIT_ADVISORY_FINDINGS),
         "cmd:gate.evaluate" => Some(EXIT_GATE_EVALUATE),
         "cmd:agent.verify" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
+        // An unknown `--seam-id` exits 3 with prose on stderr and empty stdout.
+        "cmd:agent.start" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
         // Unknown-seam and the other named refusals exit 3; under `--json`
         // the refusal document is on stdout, prose on stderr. If that
         // document cannot be rendered or written, the exit is 2, not 3.
@@ -1844,7 +1846,7 @@ const METADATA: &[CommandMetadata] = &[
         example: "ripr agent start --root . --seam-id ID",
         next_routes: &["agent brief", "agent packet"],
         stop_states: &[],
-        exit: EXIT_COMPLETED_OR_FAILED,
+        exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
         limitations: "writes command templates only; it does not call an LLM API, generate tests, or edit files.",
         not_applicable_reason: None,
     },
@@ -1916,7 +1918,7 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:agent.stub",
-        summary: "Write a compiling Rust test stub for one gap, ready to fill and run.",
+        summary: "Write a compiling Rust test stub for one gap, ready to fill and run (Rust files only).",
         task: "Repair a selected Rust gap",
         workflows: &["repair-loop", "editor-agent"],
         operation: CommandOperation::StateChanging,
@@ -3395,6 +3397,7 @@ mod tests {
             ("cmd:diff", EXIT_ADVISORY_FINDINGS),
             ("cmd:gate.evaluate", EXIT_GATE_EVALUATE),
             ("cmd:agent.verify", EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
+            ("cmd:agent.start", EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
             ("cmd:agent.card", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
             ("cmd:agent.stub", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
             ("cmd:agent.packet", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),

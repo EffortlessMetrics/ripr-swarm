@@ -28,7 +28,7 @@ pub(super) fn register_macro_generated_tests(index: &mut RustIndex) -> Result<()
         // workspace spends its whole budget in this loop unless each file
         // observes the run's token (#1604).
         crate::analysis::cancellation::checkpoint()?;
-        let imported = visibility.imported_definitions(path);
+        let imported = visibility.imported_macros(path);
         for expansion in expand_local_test_macros_with(&file.data.source, &imported) {
             let Ok(facts) = summarize_file_with_parser(path, &expansion.text) else {
                 continue;

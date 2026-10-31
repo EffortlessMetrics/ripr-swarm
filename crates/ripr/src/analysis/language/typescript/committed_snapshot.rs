@@ -399,9 +399,80 @@ fn mentions_update_key(text: &str) -> bool {
 /// Jest `projects`, Vitest `workspace`, or a Vitest/Vite `root` key. Jest's
 /// `rootDir` and a `<rootDir>` mapper token do not match `root`.
 fn delegates_to_other_config(text: &str) -> bool {
+    let text = blank_value_strings(text);
     ["projects", "workspace", "root"]
         .into_iter()
-        .any(|key| mentions_named_key(text, key))
+        .any(|key| mentions_named_key(&text, key))
+}
+
+/// `text` with the contents of every quoted property value (`label: "x"`
+/// followed by `,` or `}`) read as spaces, so a label such as `displayName: "projects"` is not
+/// taken for a key (#10295). A string that is a key, a computed key, or a
+/// bracket member keeps its text. Unchanged when the scan cannot be sure of
+/// string boundaries (unterminated string or comment, or a template literal or a `/`,
+/// which may open a regex whose quote could desynchronise it), so the old refusal stands.
+fn blank_value_strings(text: &str) -> String {
+    let Some(clean) = blank_comments(text) else {
+        return text.to_string();
+    };
+    let mut out = String::with_capacity(clean.len());
+    let mut chars = clean.char_indices();
+    let mut previous = ' ';
+    while let Some((open, ch)) = chars.next() {
+        match ch {
+            '"' | '\'' => {
+                let mut close = None;
+                while let Some((at, inner)) = chars.next() {
+                    if inner == '\\' {
+                        if chars.next().is_none() {
+                            return text.to_string();
+                        }
+                    } else if inner == ch {
+                        close = Some(at);
+                        break;
+                    }
+                }
+                let Some(close) = close else {
+                    return text.to_string();
+                };
+                let after = clean.get(close + 1..).unwrap_or_default();
+                out.push(ch);
+                let body = clean.get(open + 1..close).unwrap_or_default();
+                // Only a property value (`label: "x"`): a string after `(`, `,`
+                // or `=` can be a dynamic key (`Object.defineProperty(c, 'root', ..)`).
+                if previous == ':' && skip_trivia(after).starts_with([',', '}']) {
+                    out.extend(body.chars().flat_map(|c| {
+                        let fill = if c.is_ascii() && is_line_terminator(c) {
+                            c
+                        } else {
+                            ' '
+                        };
+                        std::iter::repeat_n(fill, c.len_utf8())
+                    }));
+                } else {
+                    out.push_str(body);
+                }
+                out.push(ch);
+                previous = ch;
+            }
+            // A template can hold quotes this scan would misread as a string.
+            // So can a regex literal, and after comments are blanked a `/`
+            // is a regex or a division this scan cannot tell apart.
+            '`' | '/' => return text.to_string(),
+            c => {
+                if !c.is_whitespace() {
+                    previous = c;
+                }
+                out.push(c);
+            }
+        }
+    }
+    // Callers slice the result with offsets taken from `clean`.
+    if out.len() == clean.len() {
+        out
+    } else {
+        text.to_string()
+    }
 }
 
 /// `true` when a `preset` value in `text` is not a plain package name: a
@@ -522,7 +593,8 @@ fn blank_comments(text: &str) -> Option<String> {
 fn without_plain_inline_projects(raw: &str) -> Option<String> {
     let blanked = blank_comments(raw)?;
     let text = blanked.as_str();
-    let mut found = text.match_indices("projects");
+    let valued = blank_value_strings(&blanked);
+    let mut found = valued.match_indices("projects");
     let (index, matched) = found.next()?;
     if found.next().is_some() {
         return None;
@@ -614,10 +686,12 @@ fn without_plain_inline_projects(raw: &str) -> Option<String> {
     }
     let end = end?;
     let inside = array.get(..end)?;
-    if delegates_to_other_config(inside)
-        || mentions_named_key(inside, "rootDir")
-        || mentions_named_key(inside, "roots")
-        || inside.contains("...")
+    let array_start = text.len() - array.len();
+    let inside_valued = valued.get(array_start..array_start + end)?;
+    if delegates_to_other_config(inside_valued)
+        || mentions_named_key(inside_valued, "rootDir")
+        || mentions_named_key(inside_valued, "roots")
+        || inside_valued.contains("...")
         || preset_may_name_a_file(inside)
     {
         return None;
@@ -651,25 +725,62 @@ fn delegates_beyond_plain_projects(file_name: &str, text: &str) -> bool {
 
 /// JSON string escapes for the whitespace and quotes a `package.json`
 /// script may put around a flag (`"jest\t-u"`, `"jest \"-u\""`).
-const JSON_ESCAPES: [&str; 11] = [
-    "\\t", "\\n", "\\r", "\\f", "\\v", "\\u0020", "\\u0009", "\\u000a", "\\u000d", "\\\"", "\\'",
-];
-
-/// `text` with each JSON escape for whitespace or a quote read as a space,
-/// so a script's flags split the way the shell sees them.
-fn unescape_json_separators(text: &str) -> String {
-    JSON_ESCAPES
-        .iter()
-        .fold(text.to_string(), |acc, escape| acc.replace(escape, " "))
+/// Decode once, preserving escaped literal backslashes.
+/// Unicode hex digits are case-insensitive; the JSON decoder also handles
+/// UTF-16 surrogate pairs. Keep the existing JS `\v` / `\'` spellings.
+fn unescape_json_command_text(text: &str) -> String {
+    let mut decoded = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find('\\') {
+        let (plain, escape) = rest.split_at(start);
+        decoded.push_str(plain);
+        if escape.starts_with("\\u") {
+            // One BMP escape is six bytes; a surrogate pair is twelve.
+            let unicode = [6, 12].into_iter().find_map(|length| {
+                let (value, after) = escape.split_at_checked(length)?;
+                serde_json::from_str::<String>(&format!("\"{value}\""))
+                    .ok()
+                    .map(|value| (value, after))
+            });
+            if let Some((value, after)) = unicode {
+                decoded.push_str(&value);
+                rest = after;
+                continue;
+            }
+        }
+        let mut chars = escape.chars();
+        let _ = chars.next();
+        match chars.next() {
+            Some('t') => decoded.push('\t'),
+            Some('n') => decoded.push('\n'),
+            Some('r') => decoded.push('\r'),
+            Some('b') => decoded.push('\u{0008}'),
+            Some('f') => decoded.push('\u{000c}'),
+            Some('v') => decoded.push('\u{000b}'),
+            Some(ch @ ('\\' | '"' | '\'' | '/')) => decoded.push(ch),
+            Some(ch) => {
+                decoded.push('\\');
+                decoded.push(ch);
+            }
+            None => decoded.push('\\'),
+        }
+        rest = chars.as_str();
+    }
+    decoded.push_str(rest);
+    decoded
 }
 
-/// `true` when `text` holds the short update flag, alone or inside a
+/// `true` when decoded command text holds `--update` or the short update
+/// flag, alone or inside a
 /// combined cluster, after whitespace, a shell quote or a JSON escape of
 /// either: `jest -u`, `jest\t-u`, `jest '-u'`, `jest \"-u\"`, `jest -iu`.
 /// A single dash only: `--ci` and `eslint-plugin-unicorn` do not match.
 /// Over-matching a cluster that merely contains `u` only refuses.
-fn mentions_short_update_flag(text: &str) -> bool {
-    let text = unescape_json_separators(text);
+fn mentions_script_update_flag(text: &str) -> bool {
+    let text = unescape_json_command_text(text);
+    if text.contains("--update") {
+        return true;
+    }
     text.match_indices('-').any(|(index, _)| {
         let before = text.get(..index).unwrap_or_default();
         let boundary = before
@@ -707,7 +818,7 @@ const CONFIG_FLAGS: [&str; 7] = [
 fn passes_config_by_path(text: &str) -> bool {
     text.contains("\"projects\"")
         || text.contains("\"rootDir\"")
-        || unescape_json_separators(text)
+        || unescape_json_command_text(text)
             .split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | '[' | ']'))
             .any(|token| {
                 let flag = token.split('=').next().unwrap_or(token);
@@ -767,7 +878,7 @@ fn scan_config_directory_uncached(directory: &Path, allow_symlink: bool) -> Opti
         if SNAPSHOT_OVERRIDES
             .iter()
             .any(|override_text| text.contains(override_text))
-            || mentions_short_update_flag(&text)
+            || mentions_script_update_flag(&text)
             // Vitest reads `update` from its own config only; a
             // `package.json` script may be named `update`.
             || (file_name != "package.json" && mentions_update_key(&text))

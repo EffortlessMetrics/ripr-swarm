@@ -501,3 +501,77 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_long_expression_display_bound (30)
+
+Reason:
+RIPR-SPEC-0122: state that no seam binds the finding and name the Next step instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless rust_long_expression_display_bound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_long_expression_display_bound (31)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless rust_long_expression_display_bound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_long_expression_display_bound (29)
+
+Reason:
+RIPR-SPEC-0118 / docs/OUTPUT_SCHEMA.md: #10192 displays hidden finding kind/reason, exact ambiguous seam choices, and evidence-specific unresolved-edge guidance; verdict, stage, identity and oracle fields stay unchanged (independently compared against actual JSON).
+
+Command:
+`cargo xtask goldens bless rust_long_expression_display_bound --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_long_expression_display_bound (30)
+
+Reason:
+RIPR-SPEC-0118 / #10192: ambiguous choices retain finding identity and remain discoverable beside bounded current hidden rows; stale/base-side subjects receive no choices. JSON/canonical fields, verdicts and repair admission are unchanged.
+
+Command:
+`cargo xtask goldens bless rust_long_expression_display_bound --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_long_expression_display_bound (32)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless rust_long_expression_display_bound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_long_expression_display_bound (33)
+
+Reason:
+RIPR-SPEC-0122: clarify test reach inspection before changing tests (#8387); check now prints one hand-written-test step when a gap has neither a repair start nor a stub, and only stub commands that produce a stub (#10710)
+
+Command:
+`cargo xtask goldens bless rust_long_expression_display_bound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

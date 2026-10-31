@@ -3,25 +3,26 @@ mode: fast
 root: fixtures/typescript_owner_kinds/input
 config: <cwd>/fixtures/typescript_owner_kinds/input/ripr.toml
 
-Summary: 4 probes (1 exposed, 3 weak, 0 unrevealed, 0 no path); 4 of 4 findings unsuppressed
+Summary: 4 changed behaviors checked: 1 appear noticed by tests, 3 partly noticed, 0 reached but not noticed, 0 no test path. 4 found, 0 suppressed by your settings
 
 Changed file(s) by language: typescript = 1
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 8 changed line(s), 4 candidate line(s), 4 probe(s), 4 finding(s)
+  Counts: 1 changed file(s), 8 changed line(s), 4 candidate line(s), 4 changed behavior(s) checked, 4 finding(s)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: this TypeScript preview finding's repair packet is not ready (TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
+  Safe next action: this TypeScript preview finding's repair packet is not ready (TypeScript preview has owner, related-test, oracle, and changed-behavior evidence but lacks a complete repair packet contract); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
   File: src/owners.ts:7
   Language: typescript
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; related tests hold no exact-value oracle (weak or smoke assertion). Preview score, not on the same scale as Rust confidence.
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: return this.items.length + 1;
-  Missing discriminator (1 of 2): Related test reaches `total` with a smoke-only oracle; replace or
-    augment the truthiness check with an exact-value assertion for the changed discriminator before
-    routing a repair packet
+  Missing check (1 of 2): Related test reaches `total` with a smoke-only oracle; replace or augment
+    the truthiness check with an exact-value assertion for the changed discriminator before routing
+    a repair packet
   Related test: tests/owners.test.ts:7 cart total smoke (assertion too weak to tell the old behavior from the new)
   Next step — TypeScript preview advisory: replace or augment the smoke-only assertion with an
     exact-value assertion for missing discriminator `return value == this.items.length + 1`; no
@@ -33,8 +34,11 @@ Start here:
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
-    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
-      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: 1 related test(s) found for owner `total`
     - infection unknown: TypeScript preview adapter does not yet model infection
     - 5 more detail line(s) in --format human-full
@@ -42,13 +46,13 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_owner_kinds/input --diff <cwd>/fixtures/typescript_owner_kinds/diff.patch --mode fast probe:src_owners.ts:typescript_preview:bd728bcd
   ripr context --root <cwd>/fixtures/typescript_owner_kinds/input --diff <cwd>/fixtures/typescript_owner_kinds/diff.patch --mode fast --at probe:src_owners.ts:typescript_preview:bd728bcd
-  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output (TypeScript preview: 3).
-    - src/owners.ts:2 (exposed)
-    - src/owners.ts:11 (weak)
-    - src/owners.ts:15 (weak)
+    - src/owners.ts:2 (exposed); kind: return_value; reason: Related test reaches `formatPrice` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant…
+    - src/owners.ts:11 (weak); kind: return_value; reason: Related test reaches `build` with a smoke-only oracle; replace or augment the truthiness check with an exact-value assertion for the changed discriminator before routing a repair…
+    - src/owners.ts:15 (weak); kind: return_value; reason: Related test reaches `DEFAULT_RATE` but the strongest extracted oracle is `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or…
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -14,7 +14,7 @@
+ 
+ impl Pool {
+     pub fn try_grow(&mut self, wanted: usize) -> Result<bool, Overflow> {
+-        if wanted > 4 {
++        if wanted >= 4 {
+             self.spilled = true;
+             return Ok(true);
+         }

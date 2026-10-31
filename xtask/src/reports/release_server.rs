@@ -1,3 +1,4 @@
+mod npm_native;
 mod payload;
 mod producer;
 mod qualification;
@@ -11,6 +12,21 @@ use sha2::{Digest, Sha256};
 use crate::{command_success_owned, run_owned};
 
 pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
+    if let Some(payload_dir) = optional_release_arg(args, "npm-payload-dir") {
+        let identity = required_release_arg(args, "payload-identity", "PAYLOAD_IDENTITY")?;
+        let producer = required_release_arg(args, "producer-receipt", "PRODUCER_RECEIPT")?;
+        let build_identity = required_release_arg(args, "build-identity", "BUILD_IDENTITY")?;
+        let archive = required_release_arg(args, "qualified-archive", "QUALIFIED_ARCHIVE")?;
+        let out_dir = required_release_arg(args, "out-dir", "NPM_NATIVE_OUT_DIR")?;
+        return npm_native::produce(
+            Path::new(&payload_dir),
+            Path::new(&identity),
+            Path::new(&producer),
+            Path::new(&build_identity),
+            Path::new(&archive),
+            Path::new(&out_dir),
+        );
+    }
     if let Some(rows_dir) = optional_release_arg(args, "terminal-receipt-dir") {
         let out_dir = required_release_arg(args, "out-dir", "TERMINAL_RECEIPT_OUT_DIR")?;
         let candidate_sha = required_release_arg(args, "candidate-sha", "CANDIDATE_SHA")?;
@@ -508,18 +524,73 @@ pub(crate) fn create_zip_archive(package_dir: &Path, asset_path: &Path) -> Resul
 pub(crate) fn sha256_file(path: &Path) -> Result<String, String> {
     let mut file = fs::File::open(path)
         .map_err(|err| format!("failed to open {} for hashing: {err}", path.display()))?;
+    sha256_reader(&mut file)
+        .map_err(|err| format!("failed to read {} for hashing: {err}", path.display()))
+}
+
+/// Hash a file while retaining its native I/O error for callers that own diagnostics.
+pub(crate) fn sha256_file_io(path: &Path) -> std::io::Result<String> {
+    let mut file = fs::File::open(path)?;
+    sha256_reader(&mut file)
+}
+
+fn sha256_reader(reader: &mut impl Read) -> std::io::Result<String> {
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 8192];
     loop {
-        let read = file
-            .read(&mut buffer)
-            .map_err(|err| format!("failed to read {} for hashing: {err}", path.display()))?;
+        let read = match reader.read(&mut buffer) {
+            Ok(read) => read,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
         if read == 0 {
             break;
         }
         hasher.update(&buffer[..read]);
     }
     Ok(hex_lower(&hasher.finalize()))
+}
+
+#[cfg(test)]
+mod hash_reader_tests {
+    use super::*;
+    use std::io::{self, Cursor};
+
+    struct FailOnce<R> {
+        inner: R,
+        error: Option<io::ErrorKind>,
+    }
+
+    impl<R: Read> Read for FailOnce<R> {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if let Some(kind) = self.error.take() {
+                return Err(io::Error::from(kind));
+            }
+            self.inner.read(buffer)
+        }
+    }
+
+    #[test]
+    fn retries_interruption_but_propagates_other_read_errors() -> io::Result<()> {
+        let bytes = b"the full binary identity";
+        let mut interrupted = FailOnce {
+            inner: Cursor::new(bytes),
+            error: Some(io::ErrorKind::Interrupted),
+        };
+        assert_eq!(
+            sha256_reader(&mut interrupted)?,
+            format!("{:x}", Sha256::digest(bytes))
+        );
+        let mut denied = FailOnce {
+            inner: Cursor::new(bytes),
+            error: Some(io::ErrorKind::PermissionDenied),
+        };
+        assert_eq!(
+            sha256_reader(&mut denied).err().map(|error| error.kind()),
+            Some(io::ErrorKind::PermissionDenied)
+        );
+        Ok(())
+    }
 }
 
 pub(crate) fn hex_lower(bytes: &[u8]) -> String {

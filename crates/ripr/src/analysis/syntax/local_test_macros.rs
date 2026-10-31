@@ -34,8 +34,8 @@
 //!
 //! The table form is a whole-matcher repetition `$( row ) sep? *` (or `+`)
 //! whose row is `$name:ident`, `literal`, `tt` or `block` variables,
-//! literal `,`, `;` or `:` tokens, and delimited groups of comma-separated
-//! metavariables (an `expr` outside a group needs a row separator after it),
+//! literal `,`, `;`, `:` or `=>` tokens, and delimited groups of comma-separated
+//! metavariables (an `expr` outside a group needs a `,`, `;` or `=>` after it),
 //! paired with a transcriber that is exactly one separator-free
 //! `$( body )*`. The invocation must split into rows with nothing left
 //! over; the body is emitted once per row. This is itoa's
@@ -46,7 +46,7 @@
 //! precedence). The result
 //! is plain Rust that the ordinary file-fact producer parses.
 
-use ra_ap_syntax::ast::{HasAttrs, HasName};
+use ra_ap_syntax::ast::{HasAttrs, HasGenericParams, HasModuleItem, HasName};
 use ra_ap_syntax::{AstNode, NodeOrToken, SyntaxKind, SyntaxNode, SyntaxToken, ast};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -90,7 +90,7 @@ pub(crate) fn expand_local_test_macros(source: &str) -> Vec<ExpandedLocalTestMac
 /// reported lines are the file's own.
 pub(crate) fn expand_local_test_macros_with(
     source: &str,
-    imported: &str,
+    imported: &super::macro_scope::ImportedMacros,
 ) -> Vec<ExpandedLocalTestMacro> {
     if imported.is_empty() {
         return expand_local_test_macros(source);
@@ -182,7 +182,7 @@ pub(crate) struct GeneratedTestPins {
 pub(crate) fn generated_test_pins(
     path: &Path,
     source: &str,
-    imported: &str,
+    imported: &super::macro_scope::ImportedMacros,
     trusted: &[&str],
 ) -> Vec<GeneratedTestPins> {
     expand_local_test_macros_with(source, imported)
@@ -457,7 +457,11 @@ fn expand(
             // row that does not could mean a later arm, which this
             // expander does not guess.
             let rows = match_rows(&repetition, invocation)?;
-            return expand_rows(&transcriber, &rows, local_macros);
+            let arrow_rows = repetition
+                .row
+                .iter()
+                .any(|item| matches!(item, RowItem::Separator(RowSeparator::FatArrow)));
+            return expand_rows(&transcriber, &rows, local_macros, arrow_rows);
         }
         let variables = simple_matcher(&matcher)?;
         // `top_level_arguments` drops a trailing comma, which a matcher
@@ -637,14 +641,101 @@ const MAX_EXPANSION_BYTES: usize = 128 * 1024;
 enum RowItem {
     /// `$name:fragment` outside any delimiter.
     Variable { name: String, fragment: String },
-    /// A literal `,`, `;` or `:` between row elements.
-    Separator(SyntaxKind),
+    /// A literal `,`, `;`, `:` or `=>` between row elements.
+    Separator(RowSeparator),
     /// A delimited group of comma-separated metavariables, as in
     /// `name($value:expr, $want:expr)`.
     Group {
         open: char,
         variables: Vec<(String, String)>,
     },
+}
+
+/// A literal token between row elements.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RowSeparator {
+    Token(SyntaxKind),
+    /// `=>`, which a token tree keeps as the two puncts `=` and `>`.
+    FatArrow,
+}
+
+/// Whether `elements[position..]` starts a `=>` token: an `=` and a `>` with
+/// nothing between them, not the tail of a longer punct (`==>`, `+=>`,
+/// `<=>`) that rustc lexes differently.
+fn fat_arrow_at(elements: &[NodeOrToken<SyntaxNode, SyntaxToken>], position: usize) -> bool {
+    let (Some(equals), Some(greater)) = (
+        elements
+            .get(position)
+            .and_then(|element| element.as_token()),
+        elements
+            .get(position + 1)
+            .and_then(|element| element.as_token()),
+    ) else {
+        return false;
+    };
+    let adjacent_before = |at: usize| {
+        let token = at
+            .checked_sub(1)
+            .and_then(|before| elements.get(before))
+            .and_then(|element| element.as_token())?;
+        let start = elements.get(at)?.as_token()?.text_range().start();
+        (token.text_range().end() == start).then(|| token.kind())
+    };
+    // Only the puncts that lex with a following `=` into one token (`==`,
+    // `!=`, `<=`, `>=`, `+=`, `..=` and the rest) swallow the arrow's `=`;
+    // `?`, `;`, `,` and `:` leave a standalone `=>`.
+    let joint_before = match adjacent_before(position) {
+        Some(SyntaxKind::DOT) => adjacent_before(position - 1) == Some(SyntaxKind::DOT),
+        Some(kind) => matches!(
+            kind,
+            SyntaxKind::EQ
+                | SyntaxKind::BANG
+                | SyntaxKind::L_ANGLE
+                | SyntaxKind::R_ANGLE
+                | SyntaxKind::PLUS
+                | SyntaxKind::MINUS
+                | SyntaxKind::STAR
+                | SyntaxKind::SLASH
+                | SyntaxKind::PERCENT
+                | SyntaxKind::CARET
+                | SyntaxKind::AMP
+                | SyntaxKind::PIPE
+        ),
+        None => false,
+    };
+    equals.kind() == SyntaxKind::EQ
+        && greater.kind() == SyntaxKind::R_ANGLE
+        && equals.text_range().end() == greater.text_range().start()
+        && !joint_before
+}
+
+/// Whether `elements[position]` is a punct with another punct directly after
+/// it, so rustc may lex the two as one multi-character token.
+fn punct_fused_to_next(elements: &[NodeOrToken<SyntaxNode, SyntaxToken>], position: usize) -> bool {
+    let (Some(first), Some(second)) = (
+        elements
+            .get(position)
+            .and_then(|element| element.as_token()),
+        elements
+            .get(position + 1)
+            .and_then(|element| element.as_token()),
+    ) else {
+        return false;
+    };
+    first.kind().is_punct()
+        && second.kind().is_punct()
+        && first.text_range().end() == second.text_range().start()
+}
+
+/// Whether the `:` at `position` is directly followed by another `:`.
+fn colon_joined_to_next(
+    elements: &[NodeOrToken<SyntaxNode, SyntaxToken>],
+    position: usize,
+) -> bool {
+    punct_fused_to_next(elements, position)
+        && elements
+            .get(position + 1)
+            .is_some_and(|next| next.kind() == SyntaxKind::COLON)
 }
 
 /// `$( row ) sep? *` or `+` as a whole matcher, the shape of a test table.
@@ -725,8 +816,16 @@ fn row_items(row: &SyntaxNode) -> Option<Vec<RowItem>> {
                 index += 1;
             }
             kind @ (SyntaxKind::COMMA | SyntaxKind::SEMICOLON | SyntaxKind::COLON) => {
-                items.push(RowItem::Separator(kind));
+                // A matcher `::` is one token that `: :` does not match.
+                if kind == SyntaxKind::COLON && colon_joined_to_next(&elements, index) {
+                    return None;
+                }
+                items.push(RowItem::Separator(RowSeparator::Token(kind)));
                 index += 1;
+            }
+            SyntaxKind::EQ if fat_arrow_at(&elements, index) => {
+                items.push(RowItem::Separator(RowSeparator::FatArrow));
+                index += 2;
             }
             _ => return None,
         }
@@ -763,15 +862,35 @@ fn match_rows(
         let mut bindings = RowBindings::new();
         for (index, item) in matcher.row.iter().enumerate() {
             match item {
-                RowItem::Separator(kind) => {
+                RowItem::Separator(RowSeparator::Token(kind)) => {
                     if elements.get(position)?.kind() != *kind {
+                        return None;
+                    }
+                    // A `:` joined to the next `:` is rustc's one `::`
+                    // token, which is not this separator.
+                    if *kind == SyntaxKind::COLON && colon_joined_to_next(&elements, position) {
                         return None;
                     }
                     position += 1;
                 }
+                RowItem::Separator(RowSeparator::FatArrow) => {
+                    if !fat_arrow_at(&elements, position) {
+                        return None;
+                    }
+                    position += 2;
+                }
                 RowItem::Variable { name, fragment } => {
                     let width = match fragment.as_str() {
-                        "ident" | "tt" | "block" => 1,
+                        "ident" | "block" => 1,
+                        // A token tree keeps `::`, `->` and `..=` as single
+                        // puncts, but rustc binds each as one `tt`; a punct
+                        // fused to the next cannot be bound as one element.
+                        "tt" => {
+                            if punct_fused_to_next(&elements, position) {
+                                return None;
+                            }
+                            1
+                        }
                         "literal" => {
                             if elements.get(position)?.kind() == SyntaxKind::MINUS {
                                 2
@@ -785,13 +904,20 @@ fn match_rows(
                         "expr" => {
                             let end = match matcher.row.get(index + 1) {
                                 Some(RowItem::Separator(end)) => *end,
-                                None => matcher.separator?,
+                                None => RowSeparator::Token(matcher.separator?),
                                 Some(_) => return None,
                             };
-                            elements[position..]
-                                .iter()
-                                .position(|element| element.kind() == end)
-                                .unwrap_or(elements.len() - position)
+                            // rustc rejects a macro whose `expr` is followed
+                            // by anything but `=>`, `,` or `;`.
+                            if end == RowSeparator::Token(SyntaxKind::COLON) {
+                                return None;
+                            }
+                            (position..elements.len())
+                                .find(|&at| match end {
+                                    RowSeparator::Token(kind) => elements[at].kind() == kind,
+                                    RowSeparator::FatArrow => fat_arrow_at(&elements, at),
+                                })
+                                .map_or(elements.len() - position, |at| at - position)
                         }
                         _ => return None,
                     };
@@ -834,12 +960,196 @@ fn match_rows(
     (!rows.is_empty()).then_some(rows)
 }
 
+/// Words that can bring another callable named like the changed owner into
+/// scope: a module, an import, a binding, a pattern, an item or a second
+/// function. A `|` (closure parameters, which bind a name) is refused too.
+const SCOPE_WORDS: &[&str] = &[
+    "mod",
+    "use",
+    "let",
+    "static",
+    "const",
+    "type",
+    "struct",
+    "enum",
+    "trait",
+    "impl",
+    "extern",
+    "macro_rules",
+    "for",
+    "match",
+];
+
+/// Standard assertion macros, the only macro calls an arrow row may make. Any
+/// other `name!` could be defined in another module or file and expand to a
+/// `fn` or `let` that never appears in the row text. Macro name resolution is
+/// not modeled, so a crate that redefines one of these names is out of scope.
+const NON_BINDING_MACROS: &[&str] = &[
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+];
+
+/// Whether the text invokes a macro that is not a standard assertion macro.
+/// Comments between the name and the `!` are skipped, as rustc does.
+fn text_invokes_unknown_macro(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let mut index = 0;
+    while index < bytes.len() {
+        if !is_ident(bytes[index]) {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < bytes.len() && is_ident(bytes[index]) {
+            index += 1;
+        }
+        let mut after = index;
+        loop {
+            match bytes.get(after) {
+                Some(byte) if byte.is_ascii_whitespace() => after += 1,
+                Some(b'/') if bytes.get(after + 1) == Some(&b'*') => {
+                    match text[after + 2..].find("*/") {
+                        Some(end) => after += end + 4,
+                        None => return true,
+                    }
+                }
+                Some(b'/') if bytes.get(after + 1) == Some(&b'/') => {
+                    match text[after..].find('\n') {
+                        Some(end) => after += end + 1,
+                        None => return true,
+                    }
+                }
+                _ => break,
+            }
+        }
+        let bang = bytes.get(after) == Some(&b'!') && bytes.get(after + 1) != Some(&b'=');
+        if bang && !NON_BINDING_MACROS.contains(&&text[start..index]) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Whether one substituted arrow row is exactly one `#[test] fn name() { .. }`
+/// whose statements are all standard assertion macro calls. This is parsed, not
+/// scanned: an item-position macro invocation beside the test, a macro name the
+/// lexical scan could misread (nested comments, non-ASCII identifiers), or any
+/// other statement can inject or rebind the callee the assertions name.
+fn is_assertion_only_test(row: &str) -> bool {
+    let Some(parse) = parse_clean_source_file(row) else {
+        return false;
+    };
+    let items: Vec<ast::Item> = parse.tree().items().collect();
+    let [ast::Item::Fn(function)] = items.as_slice() else {
+        return false;
+    };
+    let attributes: Vec<String> = function
+        .attrs()
+        .map(|attribute| attribute.syntax().text().to_string())
+        .collect();
+    if attributes != ["#[test]"]
+        || function.generic_param_list().is_some()
+        || function.where_clause().is_some()
+        || function.ret_type().is_some()
+        || function
+            .param_list()
+            .is_none_or(|params| params.params().next().is_some() || params.self_param().is_some())
+    {
+        return false;
+    }
+    let Some(statements) = function.body().and_then(|body| body.stmt_list()) else {
+        return false;
+    };
+    let is_assertion = |expr: Option<ast::Expr>| match expr {
+        Some(ast::Expr::MacroExpr(call)) => call
+            .macro_call()
+            .and_then(|call| call.path())
+            .is_some_and(|path| {
+                NON_BINDING_MACROS.contains(&path.syntax().text().to_string().as_str())
+            }),
+        _ => false,
+    };
+    // A macro call nested in an assertion's arguments stays an opaque token
+    // tree, so it is found by token: an identifier, `!`, then a delimiter.
+    let tokens: Vec<SyntaxToken> = statements
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(NodeOrToken::into_token)
+        .filter(|token| !matches!(token.kind(), SyntaxKind::WHITESPACE | SyntaxKind::COMMENT))
+        .collect();
+    let nested_macro = tokens.windows(3).any(|window| {
+        window[0].kind() == SyntaxKind::IDENT
+            && window[1].kind() == SyntaxKind::BANG
+            && matches!(
+                window[2].kind(),
+                SyntaxKind::L_PAREN | SyntaxKind::L_BRACK | SyntaxKind::L_CURLY
+            )
+    });
+    if nested_macro {
+        // Only the statement-level assertion macros themselves are allowed;
+        // they are counted below by their statement.
+        let statement_macros =
+            statements.statements().count() + usize::from(statements.tail_expr().is_some());
+        let macro_calls = tokens
+            .windows(3)
+            .filter(|window| {
+                window[0].kind() == SyntaxKind::IDENT
+                    && window[1].kind() == SyntaxKind::BANG
+                    && matches!(
+                        window[2].kind(),
+                        SyntaxKind::L_PAREN | SyntaxKind::L_BRACK | SyntaxKind::L_CURLY
+                    )
+            })
+            .count();
+        if macro_calls != statement_macros {
+            return false;
+        }
+    }
+    statements.statements().all(|statement| match statement {
+        ast::Stmt::ExprStmt(statement) => is_assertion(statement.expr()),
+        _ => false,
+    }) && statements
+        .tail_expr()
+        .is_none_or(|tail| is_assertion(Some(tail)))
+}
+
+/// Whether one substituted row declares a scope word or more than one `fn`.
+fn text_defines_nested_scope(text: &str) -> bool {
+    if text.contains('|') {
+        return true;
+    }
+    if text_invokes_unknown_macro(text) {
+        return true;
+    }
+    let mut functions = 0;
+    for word in text.split(|c: char| !(c.is_alphanumeric() || c == '_')) {
+        if SCOPE_WORDS.contains(&word) {
+            return true;
+        }
+        if word == "fn" {
+            functions += 1;
+        }
+    }
+    functions > 1
+}
+
+/// Whether a transcriber body declares a scope word or more than one `fn`.
+fn defines_nested_scope(body: &ast::TokenTree) -> bool {
+    text_defines_nested_scope(&body.syntax().text().to_string())
+}
+
 /// A transcriber that is exactly one separator-free repetition
 /// `$( body )*` over the matcher's variables, emitted once per row.
 fn expand_rows(
     transcriber: &SyntaxNode,
     rows: &[RowBindings],
     local_macros: &BTreeSet<String>,
+    arrow_rows: bool,
 ) -> Option<String> {
     let elements = inner_elements(transcriber);
     let [dollar, body, repeat] = elements.as_slice() else {
@@ -856,12 +1166,26 @@ fn expand_rows(
     if !has_test_attribute(&body) || invokes_local_macro(&body, local_macros) {
         return None;
     }
+    // The registered test keeps no generated lexical scope, so a module or a
+    // second `fn` in the body could define the callee the test names. Arrow
+    // rows are refused whole until that scope is carried (#9967).
+    if arrow_rows && defines_nested_scope(&body) {
+        return None;
+    }
     let mut text = String::new();
     for row in rows {
-        text.push_str(&substitute(body.syntax(), |name| {
+        let expanded = substitute(body.syntax(), |name| {
             row.get(name)
                 .map(|(fragment, argument)| (fragment.as_str(), argument))
-        })?);
+        })?;
+        // A `tt` row element can supply the `fn`, `mod` or `use` the authored
+        // body lacks, so the scope refusal also reads each substituted row.
+        if arrow_rows
+            && (text_defines_nested_scope(&expanded) || !is_assertion_only_test(&expanded))
+        {
+            return None;
+        }
+        text.push_str(&expanded);
         text.push('\n');
         if text.len() > MAX_EXPANSION_BYTES {
             return None;
@@ -1137,9 +1461,9 @@ mod tests {
             ),
             (
                 "a row item that is not a separator",
-                "$($name:ident => ($v:expr, $w:expr))*",
+                "$($name:ident ~ ($v:expr, $w:expr))*",
                 body,
-                "a => (1, 2)",
+                "a ~ (1, 2)",
             ),
             (
                 "a separator inside the transcriber",
@@ -1168,6 +1492,363 @@ mod tests {
         ] {
             assert!(
                 expand_local_test_macros(&table(matcher, body, invocation)).is_empty(),
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_arrow_separated_table_row_expands_and_other_arrows_refuse() {
+        let table = |matcher: &str, invocation: &str| {
+            format!(
+                "macro_rules! t {{\n    ({matcher}) => {{ $( #[test] fn $name() {{ assert_eq!(gate($v), $w); }} )* }};\n}}\nt! {{ {invocation} }}\n"
+            )
+        };
+        let group = "$($name:ident => ($v:expr, $w:expr))*";
+        let expanded = expand_local_test_macros(&table(group, "a => (1, 2) b => (3, 4)"));
+        assert_eq!(expanded.len(), 1, "{expanded:?}");
+        let text = &expanded[0].text;
+        assert_eq!(text.matches("#[test]").count(), 2, "{text}");
+        for row in [
+            "fn a() { assert_eq!(gate(1), 2); }",
+            "fn b() { assert_eq!(gate(3), 4); }",
+        ] {
+            assert!(text.contains(row), "{row}\n{text}");
+        }
+        let names = summarize_file_with_parser(Path::new("tests/t.rs"), text).map(|facts| {
+            facts
+                .tests
+                .into_iter()
+                .map(|test| test.name)
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            names,
+            Ok(vec!["a".to_string(), "b".to_string()]),
+            "premise: the expansion parses as the two named row tests"
+        );
+
+        // An `expr` ends at `=>` exactly as rustc's follow set allows.
+        let expr = "$($name:ident : $v:expr => $w:expr ;)*";
+        let expanded =
+            expand_local_test_macros(&table(expr, "a : 1 + 1 => 2 ; b : f(1, 2) => 3 ;"));
+        assert_eq!(expanded.len(), 1, "{expanded:?}");
+        let text = &expanded[0].text;
+        assert!(
+            text.contains("gate((1 + 1)), (2)") || text.contains("gate((1 + 1)), 2"),
+            "{text}"
+        );
+        assert!(
+            text.contains("gate(f(1, 2))") || text.contains("gate((f(1, 2)))"),
+            "{text}"
+        );
+
+        // A punct that cannot combine with `=` leaves a standalone arrow:
+        // rustc has no `?=`, `;=`, `,=` or `:=` token.
+        for (label, matcher, invocation, call) in [
+            (
+                "a question mark before the arrow",
+                expr,
+                "a : f()?=> 2 ;",
+                "gate((f()?))",
+            ),
+            (
+                "a semicolon before the arrow",
+                "$($name:ident ;=> ($v:expr, $w:expr))*",
+                "a ;=> (1, 2)",
+                "gate(1)",
+            ),
+            (
+                "a comma before the arrow",
+                "$($name:ident ,=> ($v:expr, $w:expr))*",
+                "a ,=> (1, 2)",
+                "gate(1)",
+            ),
+            (
+                "a colon before the arrow",
+                "$($name:ident :=> ($v:expr, $w:expr))*",
+                "a :=> (1, 2)",
+                "gate(1)",
+            ),
+        ] {
+            let expanded = expand_local_test_macros(&table(matcher, invocation));
+            assert_eq!(expanded.len(), 1, "{label}: {expanded:?}");
+            assert!(
+                expanded[0].text.contains(call),
+                "{label}: {}",
+                expanded[0].text
+            );
+        }
+
+        // The transcriber may not declare a scope that could define the callee
+        // the registered test names.
+        let scoped = |body: &str| {
+            format!(
+                "macro_rules! t {{\n    ($($name:ident => ($v:expr, $w:expr))*) => {{ $( {body} )* }};\n}}\nt! {{ a => (1, 2) }}\n"
+            )
+        };
+        for (label, body) in [
+            (
+                "a module in the body",
+                "mod decoy { pub fn gate(_: u32) -> bool { true } } #[test] fn $name() { assert_eq!(decoy::gate($v), $w); }",
+            ),
+            (
+                "a use in the body",
+                "use decoy::gate; #[test] fn $name() { assert_eq!(gate($v), $w); }",
+            ),
+            (
+                "a let binding in the body",
+                "#[test] fn $name() { let gate = |_: u32| true; assert_eq!(gate($v), $w); }",
+            ),
+            (
+                "a static in the body",
+                "static gate: fn(u32) -> bool = |_| true; #[test] fn $name() { assert_eq!(gate($v), $w); }",
+            ),
+            (
+                "a closure parameter in the body",
+                "#[test] fn $name() { assert_eq!((|gate: fn(u32) -> bool| gate($v))(|_| true), $w); }",
+            ),
+            (
+                "an if let pattern in the body",
+                "#[test] fn $name() { if let Some(gate) = Some(|_: u32| true) { assert_eq!(gate($v), $w); } }",
+            ),
+            (
+                "a while let pattern in the body",
+                "#[test] fn $name() { while let Some(gate) = Some(|_: u32| true) { assert_eq!(gate($v), $w); break; } }",
+            ),
+            (
+                "a for pattern in the body",
+                "#[test] fn $name() { for gate in [|_: u32| true] { assert_eq!(gate($v), $w); } }",
+            ),
+            (
+                "a match pattern in the body",
+                "#[test] fn $name() { match 0 { gate => assert_eq!(gate($v), $w) } }",
+            ),
+            (
+                "a block comment between a macro name and its bang",
+                "shadow /* c */ !(); #[test] fn $name() { assert_eq!(gate($v), $w); }",
+            ),
+            (
+                "a vec! call that a foreign macro could shadow",
+                "vec![]; #[test] fn $name() { assert_eq!(gate($v), $w); }",
+            ),
+            (
+                "an allowed assertion macro invoked beside the test",
+                "crate::debug_assert_eq!(); #[test] fn $name() { assert_eq!(gate($v), $w); }",
+            ),
+            (
+                "a nested block comment hiding a macro bang",
+                "crate::shadow /* outer /* inner */ tail */ !(); #[test] fn $name() { assert_eq!(gate($v), $w); }",
+            ),
+            (
+                "a non-ASCII macro name ending in an allowed name",
+                "crate::αassert_eq!(); #[test] fn $name() { assert_eq!(gate($v), $w); }",
+            ),
+            (
+                "a path-qualified macro nested in an assertion argument",
+                "#[test] fn $name() { assert!(crate::debug_assert!(gate($v) == $w)); }",
+            ),
+            (
+                "a nested-comment macro nested in an assertion argument",
+                "#[test] fn $name() { assert!(crate::shadow /* a /* b */ c */ !(gate($v) == $w)); }",
+            ),
+            (
+                "a non-ASCII macro nested in an assertion argument",
+                "#[test] fn $name() { assert!(crate::αassert!(gate($v) == $w)); }",
+            ),
+            (
+                "a non-assertion statement in the test",
+                "#[test] fn $name() { helper(); assert_eq!(gate($v), $w); }",
+            ),
+            (
+                "a macro from another module in the body",
+                "shadow!(); #[test] fn $name() { assert_eq!(gate($v), $w); }",
+            ),
+            (
+                "a second fn in the body",
+                "fn gate(_: u32) -> bool { true } #[test] fn $name() { assert_eq!(gate($v), $w); }",
+            ),
+        ] {
+            assert!(
+                expand_local_test_macros(&scoped(body)).is_empty(),
+                "{label}"
+            );
+        }
+        assert_eq!(
+            expand_local_test_macros(&scoped("#[test] fn $name() { assert_eq!(gate($v), $w); }"))
+                .len(),
+            1,
+            "premise: the plain arrow body expands"
+        );
+
+        // A `tt` row element can bring the scope keyword in from the
+        // invocation; the substituted row is refused the same way.
+        let supplied = |body: &str, invocation: &str| {
+            format!(
+                "macro_rules! t {{\n    ($($k:tt $name:ident => ($v:expr, $w:expr))*) => {{ $( {body} )* }};\n}}\nt! {{ {invocation} }}\n"
+            )
+        };
+        assert!(
+            expand_local_test_macros(&supplied(
+                "$k gate(_: u32) -> bool { true } #[test] fn $name() { assert_eq!(gate($v), $w); }",
+                "fn a => (1, 2)"
+            ))
+            .is_empty(),
+            "a second fn supplied by a tt"
+        );
+        assert!(
+            expand_local_test_macros(&supplied(
+                "$k scope { #[test] fn t() { assert_eq!(crate::gate($v), $w); } } fn $name() {}",
+                "mod a => (1, 2)"
+            ))
+            .is_empty(),
+            "a module supplied by a tt"
+        );
+        assert!(
+            expand_local_test_macros(&supplied(
+                "#[test] fn $name() { $k!(); assert_eq!(gate($v), $w); }",
+                "shadow a => (1, 2)"
+            ))
+            .is_empty(),
+            "a macro name supplied by a tt"
+        );
+        assert!(
+            expand_local_test_macros(&supplied(
+                "$k gate: fn(u32) -> bool = |_| true; #[test] fn $name() { assert_eq!(gate($v), $w); }",
+                "static a => (1, 2)"
+            ))
+            .is_empty(),
+            "a static supplied by a tt"
+        );
+        assert_eq!(
+            expand_local_test_macros(&supplied(
+                "#[test] fn $name() { assert!($k == $k); assert_eq!(gate($v), $w); }",
+                "x a => (1, 2)"
+            ))
+            .len(),
+            1,
+            "premise: a tt row element that is not a scope keyword expands"
+        );
+
+        // A `tt` binds one rustc token: a fused `::` is one `tt`, so the
+        // following `:` the matcher requires is absent and rustc emits
+        // nothing; `: :` is two tokens and does expand.
+        let tt = "$($name:ident $t:tt : => ($v:expr, $w:expr))*";
+        for (label, invocation) in [
+            ("a fused `::` bound as one tt", "a :: => (1, 2)"),
+            ("a fused `->` bound as one tt", "a -> : => (1, 2)"),
+            ("a fused `..=` bound as one tt", "a ..= : => (1, 2)"),
+        ] {
+            assert!(
+                expand_local_test_macros(&table(tt, invocation)).is_empty(),
+                "{label}"
+            );
+        }
+        let spaced = expand_local_test_macros(&table(tt, "a : : => (1, 2)"));
+        assert_eq!(
+            spaced.len(),
+            1,
+            "two separate puncts bind one tt each: {spaced:?}"
+        );
+
+        // A literal `:` is not the first half of rustc's one `::` token, and
+        // an `expr` may not be followed by `:` at all.
+        for (label, matcher, invocation) in [
+            (
+                "a separator colon fused to the next",
+                "$($name:ident : $v:tt , $w:expr);*",
+                "a:: , false",
+            ),
+            (
+                "a separator colon fused into an expr",
+                "$($name:ident : $v:expr , $w:expr);*",
+                "a:::MAXX, false",
+            ),
+            (
+                "an expr followed by a colon",
+                "$($name:ident : $v:expr : $w:expr);*",
+                "a : 9 : false",
+            ),
+        ] {
+            assert!(
+                expand_local_test_macros(&table(matcher, invocation)).is_empty(),
+                "{label}"
+            );
+        }
+        for (label, matcher, invocation) in [
+            (
+                "a matcher `::` against spaced colons",
+                "$($name:ident :: => ($v:expr, $w:expr))*",
+                "a : : => (1, 2)",
+            ),
+            (
+                "a matcher `::` against the same token",
+                "$($name:ident :: => ($v:expr, $w:expr))*",
+                "a :: => (1, 2)",
+            ),
+        ] {
+            assert!(
+                expand_local_test_macros(&table(matcher, invocation)).is_empty(),
+                "{label}"
+            );
+        }
+        let colon = expand_local_test_macros(&table(
+            "$($name:ident : $v:tt , $w:expr);*",
+            "a : 1 , false",
+        ));
+        assert_eq!(
+            colon.len(),
+            1,
+            "premise: a plain colon separator expands: {colon:?}"
+        );
+
+        // `=>` is the whole token or nothing: every near miss registers no
+        // test, so no neighbouring arm or layout is credited by accident.
+        for (label, matcher, invocation) in [
+            ("a thin arrow", group, "a -> (1, 2)"),
+            ("a comma for the arrow", group, "a , (1, 2)"),
+            ("no separator", group, "a (1, 2)"),
+            ("a spaced arrow", group, "a = > (1, 2)"),
+            ("a doubled arrow", group, "a => => (1, 2)"),
+            ("an equals before the arrow", group, "a ==> (1, 2)"),
+            (
+                "a compound assignment before the arrow",
+                group,
+                "a += > (1, 2)",
+            ),
+            ("a comparison in place of the arrow", group, "a >= (1, 2)"),
+            ("a trailing arrow", group, "a => (1, 2) b =>"),
+            ("a leftover arrow", group, "a => (1, 2) =>"),
+            ("a wrong group arity", group, "a => (1, 2) b => (3)"),
+            (
+                "an arrow the matcher lacks",
+                "$($name:ident($v:expr, $w:expr))*",
+                "a => (1, 2)",
+            ),
+            (
+                "an arrow as the row separator",
+                "$($name:ident($v:expr, $w:expr)) => *",
+                "a(1, 2) => b(3, 4)",
+            ),
+            (
+                "an expr with no separator after it",
+                "$($name:ident => $v:expr)*",
+                "a => 1 b => 2",
+            ),
+            (
+                "an expr followed by the wrong separator",
+                expr,
+                "a : 1 + 1 , 2 ;",
+            ),
+            // `1 ..` is an expression, but rustc lexes `..=` then `>`.
+            (
+                "an arrow that is the tail of a longer punct",
+                expr,
+                "a : 1 ..=> 2 ;",
+            ),
+        ] {
+            assert!(
+                expand_local_test_macros(&table(matcher, invocation)).is_empty(),
                 "{label}"
             );
         }

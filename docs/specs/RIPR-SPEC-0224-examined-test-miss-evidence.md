@@ -156,7 +156,7 @@ unsupported state as unknown and fabricates no reason conforms.
 | `assertion_not_observing` | yes | no (credit-only alignment; withheld pending #5491) | no (withheld pending #5495) | no (#3223) |
 | `assertion_not_credited` | yes, unsplit until #5446 | no (#5446) | no (#5446) | no |
 | `weak_assertion` | yes | yes (weak and smoke only) | yes (weak and smoke only) | no |
-| `missing_input` | yes | yes (predicate boundary, row-owned) | no (no producer; the renderer already words a TypeScript or JavaScript row as "seen", #10040) | no (#4061, perl-lsp-swarm#17237, #5562) |
+| `missing_input` | yes | yes (predicate boundary, row-owned) | yes (row-owned `MissedBoundary` fact only, hedged "seen" wording, #10040) | no (#4061, perl-lsp-swarm#17237, #5562) |
 | `missing_exact_assertion` | yes | no (no row-owned fact) | no (no row-owned fact) | no |
 | `observation_unconfirmed` | yes | yes (strong assertion not credited by its own row) | yes | yes |
 
@@ -169,17 +169,28 @@ and per-row predicate activation (#5527). `weak_assertion` is a row whose own se
 snapshot or mock oracle keeps no miss). `observation_unconfirmed` covers a
 mocked or spied owner call with an admitted assertion (an
 unanchored or unresolved-alias call keeps no miss: its identity is unproved), a
-strong assertion of another behavior family, and a strong row whose own
-boundary input misses the pinned boundary or whose changed-sink observation is
-unproven. Four reasons are withheld on purpose. The renderer already words a TypeScript or JavaScript `missing_input` row as "no input this test passes was seen ...", so a future producer cannot over-claim by prose (#10040). The four are: `no_call_path` (a single-file
-reading cannot prove a call path absent: a heuristic-only row may reach the
-owner through an alias, callback or table, and a shadow or unrelated-import
-rejection refutes only the apparent call, not hooks, helpers or re-exports),
-`assertion_not_observing` (withheld pending #5495; row eligibility is the
-explicit role, not this value), `no_assertion` (the single-file admission scan cannot see project setup
-files or runner plugins) and `missing_input` (its shared prose says no test
-input reaches the boundary, stronger than a single-file reading supports). Rows
-with unresolved admission, static-limited findings, `exposed`, `static_unknown`
+strong assertion of another behavior family, and a strong row whose
+changed-sink observation is unproven. `missing_input` (#10040) is emitted from
+the row-owned `MissedBoundary` activation only: a direct, alias or imported
+owner-call relation with a trusted import, the owner named exactly once in its
+own module and only in test bodies in the test file, every owner reference a
+plain call, closed body constants, and literal integer arguments that all miss
+the pinned boundary. The renderer words a TypeScript or JavaScript row as "no
+input this test passes was seen ...", naming the finding's boundary from the row's `miss_support` when the finding has one. Residuals that stay invisible: runner
+config the test never names (`setupFiles`, `moduleNameMapper`, global setup)
+and import-time effects of imported modules. Three reasons are withheld on
+purpose: `no_call_path` (a single-file reading cannot prove a call path
+absent: a heuristic-only row may reach the owner through an alias, callback or
+table, and a shadow or unrelated-import rejection refutes only the apparent
+call, not hooks, helpers or re-exports; a sound fact needs a reach mode of the
+admission scan that treats production imports, barrel and `export *`
+re-exports, side-effect imports, `jest.mock`/`vi.mock` factories, `it.each`
+tables, dynamic `import()`/`require`, class and instance owners, hook bodies
+and runner config as reaching), `assertion_not_observing` (withheld pending
+#5495; row eligibility is the explicit role, not this value) and
+`no_assertion` (the single-file admission scan cannot see project setup files
+or runner plugins). Rows with unresolved admission, static-limited findings,
+`exposed`, `static_unknown`
 and Bun bridge findings keep `miss: null`.
 
 "Pending" means the producer has not mapped that reason yet; the row-evidence

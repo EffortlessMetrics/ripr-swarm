@@ -135,6 +135,11 @@ Current how-to docs:
   candidate local-wheelhouse pip/uv rehearsal with a fail-closed aggregate
 - [Termination qualification](TERMINATION_QUALIFICATION.md) - exact-binary
   adversarial corpus for Rust and Python nesting
+- [Size scaling gate](SIZE_SCALING.md) - exact-binary check that cost grows
+  no faster than input size for Rust, Python and TypeScript files
+- [Per-probe incremental analysis](PER_PROBE_INCREMENTAL_ANALYSIS.md) - design
+  note: what a probe classification reads and how a stored result is
+  validated, fail-closed on any unrecorded read
 - [First successful PR workflow](FIRST_PR_WORKFLOW.md)
 - [First successful PR demo](demo/first-successful-pr.md)
 - [Start-here convergence receipts](handoffs/2026-05-22-start-here-surface-convergence-receipts.md)
@@ -167,6 +172,7 @@ Current reference docs:
 - [Configuration](CONFIGURATION.md)
 - [Exit codes](EXIT_CODES.md)
 - [Terminology](TERMINOLOGY.md)
+- [User text glossary](USER_TEXT_GLOSSARY.md)
 - [Repair attempt identity](REPAIR_ATTEMPT.md)
 - [MCP workspace status server](interop/mcp.md)
 - [Support tiers](status/SUPPORT_TIERS.md)

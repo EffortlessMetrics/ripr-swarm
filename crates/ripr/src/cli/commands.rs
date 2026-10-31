@@ -9,6 +9,7 @@ use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::config::CONFIG_FILE_NAME;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
 use crate::output;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use crate::cli::commands_options::*;
@@ -146,6 +147,7 @@ pub(super) use capabilities::capabilities;
 
 #[path = "commands/doctor.rs"]
 mod doctor;
+pub(crate) use doctor::detect_languages;
 pub(super) use doctor::doctor;
 
 #[path = "commands/gate.rs"]
@@ -167,6 +169,8 @@ use init_workflow::generated_github_actions_workflow;
 
 #[path = "commands/pilot.rs"]
 mod pilot;
+#[path = "commands/pilot_timings.rs"]
+mod pilot_timings;
 pub(super) use pilot::pilot;
 
 pub(super) fn outcome(args: &[String]) -> Result<(), String> {
@@ -3069,8 +3073,12 @@ fn parse_diff_format(value: &str) -> Result<DiffReportFormat, String> {
     match value {
         "human" | "text" | "md" | "markdown" => Ok(DiffReportFormat::Human),
         "json" => Ok(DiffReportFormat::Json),
-        _ => Err(format!(
-            "unknown diff format {value:?}; expected `human`, `text`, `md`, `markdown`, or `json`"
+        // Share the enum-value diagnostic and near-miss suggestion with
+        // pilot and outcome without changing diff's accepted aliases.
+        _ => Err(unknown_value(
+            "diff format",
+            value,
+            &["human", "text", "md", "markdown", "json"],
         )),
     }
 }
@@ -3464,7 +3472,26 @@ pub(super) fn drill_in_scope_conflict(
 }
 
 pub(super) fn lsp(args: &[String]) -> Result<(), String> {
-    lsp_with_serve(args, crate::lsp::serve)
+    lsp_with_serve(args, || {
+        write_lsp_terminal_hint(
+            std::io::stdin().is_terminal(),
+            &mut std::io::stderr().lock(),
+        );
+        crate::lsp::serve()
+    })
+}
+
+/// A person who typed `ripr lsp --stdio` at a prompt would otherwise see a
+/// silent hang; an editor pipes stdin, so the hint never reaches one. stderr
+/// only (stdout carries LSP framing), and best effort so an unwritable stderr
+/// cannot keep the server from starting (issue #10347).
+fn write_lsp_terminal_hint(stdin_is_terminal: bool, stderr: &mut impl std::io::Write) {
+    if stdin_is_terminal {
+        let _ = writeln!(
+            stderr,
+            "ripr lsp: waiting for an editor on stdin (this is a language server, not an interactive command); start it from your editor, or press Ctrl-D to exit."
+        );
+    }
 }
 
 /// Argument dispatch for `ripr lsp`, separated from the blocking stdio
@@ -3715,6 +3742,9 @@ mod tests {
                 // CodeQL flake must not fail a gate the analysis passed.
                 "Upload RIPR diff findings",
                 "Upload RIPR repo seams",
+                // #11145: continue-on-error hides a failed upload, so this
+                // step says why and what to change.
+                "Explain failed SARIF upload",
             ],
             forbidden_fragments: &[
                 "fail-on-new-warning",
@@ -6335,6 +6365,12 @@ language = "rust"
                     .to_string()
             )
         );
+        // #11146: an empty mode is named as empty (not as an unknown value
+        // `""`) and says how to publish nothing.
+        assert_eq!(
+            parse_pr_comments_plan_options(&args(&["--mode", ""])),
+            Err("pr-comments plan mode is empty; expected `off`, `plan`, or `inline` (leave `--mode` out, or pass `off`, to publish no comments)".to_string())
+        );
         assert_eq!(
             parse_pr_comments_plan_options(&args(&["--pr-guidance", ""])),
             Err("pr-comments plan --pr-guidance requires a non-empty value".to_string())
@@ -6361,7 +6397,7 @@ language = "rust"
         let out_md = dir.join("comment-publish-plan.md");
         std::fs::write(
             &comments,
-            r#"{"comments":[{"id":"ripr-review-a","dedupe_key":"ripr:a","placement":{"path":"src/lib.rs","line":7,"side":"RIGHT","mode":"exact_seam_line"},"reason":"add focused assertion"}],"summary_only":[],"suppressed":[]}"#,
+            r#"{"comments":[{"id":"ripr-review-a","dedupe_key":"ripr:a","gap_state":"actionable","placement":{"path":"src/lib.rs","line":7,"side":"RIGHT","mode":"exact_seam_line"},"reason":"add focused assertion"}],"summary_only":[],"suppressed":[]}"#,
         )
         .map_err(|err| format!("write comments: {err}"))?;
 
@@ -8488,8 +8524,8 @@ language = "rust"
         // The DX bar from #5409: a workflow an adopter can read in one sitting.
         let line_count = workflow.lines().count();
         assert!(
-            line_count <= 175,
-            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, and #4452 added step env bindings"
+            line_count <= 181,
+            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, #4452 added step env bindings, and #11145 added the failed-SARIF-upload explanation"
         );
 
         assert!(workflow.contains("RIPR_UPLOAD_SARIF: \"true\""));
@@ -8662,6 +8698,49 @@ language = "rust"
                 "`{step}` must stay gated by RIPR_UPLOAD_SARIF"
             );
         }
+        // #11145: `continue-on-error` turns a rejected upload (private
+        // repository without Code Security, code scanning off, read-only fork
+        // token) into a green step. The explanation fires on the upload
+        // steps' own outcome, so it names both ids, names the fix, and does
+        // not fire when no upload ran.
+        let upload_ids = [
+            ("Upload RIPR diff findings", "id: sarif_findings"),
+            ("Upload RIPR repo seams", "id: sarif_seams"),
+        ];
+        for (step, id) in upload_ids {
+            assert!(
+                workflow_step(&workflow, step).contains(id),
+                "`{step}` needs `{id}`"
+            );
+        }
+        let explain = workflow_step(&workflow, "Explain failed SARIF upload");
+        assert!(
+            explain.contains("steps.sarif_findings.outcome == 'failure'")
+                && explain.contains("steps.sarif_seams.outcome == 'failure'"),
+            "{explain}"
+        );
+        assert!(explain.contains("always()"), "{explain}");
+        assert!(explain.contains("continue-on-error: true"), "{explain}");
+        assert!(
+            explain.contains("set RIPR_UPLOAD_SARIF to false")
+                && explain.contains("GitHub Code Security"),
+            "{explain}"
+        );
+        // Failure only: the whole `if:` is exactly this condition, so no
+        // success/skipped/`!=` branch can be added without failing here. The
+        // behavior (failure runs it; success, skipped, cancelled do not) is
+        // pinned by `explain_failed_sarif_upload_condition_follows_the_upload_outcomes`.
+        assert!(
+            explain.contains(
+                "if: always() && (steps.sarif_findings.outcome == 'failure' || steps.sarif_seams.outcome == 'failure')\n"
+            ),
+            "{explain}"
+        );
+        assert!(
+            explain.contains("Usual causes include")
+                && explain.contains("log of the failed upload step"),
+            "the warning must hedge the cause and point at the failed step's log: {explain}"
+        );
         // The SARIF renders stay gated by RIPR_UPLOAD_SARIF inside the packet.
         assert!(packet.contains("--format sarif"));
         assert!(packet.contains("--format repo-sarif"));
@@ -8985,6 +9064,37 @@ language = "rust"
             lsp_with_serve(&args(&["--stdio"]), || Err("transport down".to_string())),
             Err("transport down".to_string())
         );
+    }
+
+    #[test]
+    fn lsp_terminal_hint_is_written_only_for_terminal_stdin() {
+        let mut shown = Vec::new();
+        write_lsp_terminal_hint(true, &mut shown);
+        let text = String::from_utf8_lossy(&shown);
+        assert!(
+            text.starts_with("ripr lsp: waiting for an editor on stdin"),
+            "{text}"
+        );
+        assert!(text.contains("Ctrl-D"), "{text}");
+        assert_eq!(text.matches('\n').count(), 1, "single line: {text}");
+
+        let mut piped = Vec::new();
+        write_lsp_terminal_hint(false, &mut piped);
+        assert!(piped.is_empty());
+    }
+
+    #[test]
+    fn lsp_terminal_hint_survives_an_unwritable_stderr() {
+        struct Closed;
+        impl std::io::Write for Closed {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::ErrorKind::BrokenPipe.into())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Err(std::io::ErrorKind::BrokenPipe.into())
+            }
+        }
+        write_lsp_terminal_hint(true, &mut Closed);
     }
 
     #[test]

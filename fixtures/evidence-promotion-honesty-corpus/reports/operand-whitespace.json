@@ -1,0 +1,44 @@
+{
+  "kind": "operand_whitespace_expected_test_projection",
+  "summary": {
+    "findings": 4
+  },
+  "findings": [
+    {
+      "id": "subtotal + shipping",
+      "classification": "weakly_exposed",
+      "probe": {
+        "family": "field_construction"
+      },
+      "discriminate": "weak",
+      "operand_pin": true
+    },
+    {
+      "id": "subtotal+shipping",
+      "classification": "weakly_exposed",
+      "probe": {
+        "family": "field_construction"
+      },
+      "discriminate": "weak",
+      "operand_pin": true
+    },
+    {
+      "id": "subtotal+ shipping",
+      "classification": "weakly_exposed",
+      "probe": {
+        "family": "field_construction"
+      },
+      "discriminate": "weak",
+      "operand_pin": true
+    },
+    {
+      "id": "subtotal +shipping",
+      "classification": "weakly_exposed",
+      "probe": {
+        "family": "field_construction"
+      },
+      "discriminate": "weak",
+      "operand_pin": true
+    }
+  ]
+}

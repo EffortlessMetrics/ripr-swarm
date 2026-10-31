@@ -1,0 +1,12 @@
+[[extend]]
+id = "RIPR-SPEC-0211"
+tests = [
+  "crates/ripr/tests/support/mcp_worktree_recovery.rs::worktree_failed_base_recovery_preserves_saved_edits_and_last_good",
+  "crates/ripr/tests/support/mcp_worktree_recovery.rs::config_failure_literal_retry_preserves_requested_worktree_and_nondefault_base",
+  "crates/ripr/src/mcp/source_recovery_tests.rs::captured_source_recovery_covers_raw_tool_and_resource_envelope_overflow",
+  "crates/ripr/src/mcp/source_recovery_tests.rs::escaped_long_root_recovery_refuses_without_truncating_a_command",
+  "crates/ripr/src/mcp/workspace.rs::oversized_gap_item_recovery_leaves_mcp",
+  "crates/ripr/src/mcp/workspace.rs::generic_check_failure_recovery_binds_requested_root_base_and_source",
+  "crates/ripr/src/mcp/workspace.rs::refused_output_recovery_preserves_root_base_and_source",
+]
+outputs = ["docs/interop/mcp.md"]

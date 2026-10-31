@@ -1,0 +1,7 @@
+pub fn big() -> u32 {
+    15
+}
+
+pub fn small() -> u32 {
+    14
+}

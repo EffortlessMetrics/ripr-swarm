@@ -27,6 +27,7 @@ pub(super) struct McpServer {
     resource_templates: ListResourceTemplatesResult,
     status: WorkspaceStatus,
     profile: workspace::SessionProfile,
+    text_mode: protocol::TextContentMode,
     analysis_root: Option<PathBuf>,
     root_identity: Option<String>,
     session: Arc<Mutex<workspace::WorkspaceSession>>,
@@ -51,6 +52,7 @@ impl McpServer {
             resources: typed(protocol::resources_list_result())?,
             resource_templates: typed(protocol::resource_templates_list_result())?,
             profile,
+            text_mode: protocol::TextContentMode::from_env(),
             root_identity: status.root.identity.clone(),
             analysis_root,
             status,
@@ -82,6 +84,7 @@ impl McpServer {
             super::MAX_MESSAGE_BYTES,
             super::MAX_RESPONSE_BYTES,
             max_envelope_bytes,
+            self.text_mode,
         ) {
             Ok(envelope) => envelope,
             // The envelope builder fails closed when the structured
@@ -113,8 +116,9 @@ impl McpServer {
         arguments: Option<serde_json::Map<String, Value>>,
         max_envelope_bytes: usize,
     ) -> Result<CallToolResponse, ErrorData> {
-        reject_unknown_arguments(&arguments, &["base"])?;
+        reject_unknown_arguments(&arguments, &["base", "source"])?;
         let base = optional_nonempty_string_argument(&arguments, "base")?;
+        let source = refresh_source_argument(&arguments)?;
         if let Some(base) = &base
             && base.len() > MAX_BASE_REVISION_BYTES
         {
@@ -146,10 +150,11 @@ impl McpServer {
             }
             session.in_flight = true;
             session.desired_base = base.clone();
+            session.desired_source = source;
         }
         let mut attempt = workspace::InFlightAttempt::new(session.clone());
         let worker = tokio::task::spawn_blocking(move || {
-            workspace::run_check(&root, root_identity.as_deref(), base.as_deref())
+            workspace::run_check(&root, root_identity.as_deref(), base.as_deref(), source)
         });
         let outcome = match worker.await {
             Ok(outcome) => outcome,
@@ -195,6 +200,7 @@ impl McpServer {
             &[
                 "snapshot_id",
                 "offset",
+                "omitted_offset",
                 "limit",
                 "file",
                 "class",
@@ -204,6 +210,7 @@ impl McpServer {
         )?;
         let requested = optional_string_argument(&arguments, "snapshot_id")?;
         let offset = optional_nonnegative_argument(&arguments, "offset")?;
+        let omitted_offset = optional_nonnegative_argument(&arguments, "omitted_offset")?;
         let limit = optional_positive_argument(&arguments, "limit")?;
         let file = optional_nonempty_string_argument(&arguments, "file")?;
         let class = optional_nonempty_string_argument(&arguments, "class")?;
@@ -256,6 +263,7 @@ impl McpServer {
             workspace::GapListWindow {
                 offset: offset.unwrap_or(0),
                 limit,
+                omitted_offset: omitted_offset.unwrap_or(0),
             },
             &workspace::GapListFilter {
                 file,
@@ -285,15 +293,34 @@ impl McpServer {
         let canonical_id = required_string_argument(&arguments, "canonical_id")?;
         let requested = optional_string_argument(&arguments, "snapshot_id")?;
         let session = self.session.lock().await;
-        match session.get_gap(&canonical_id, requested.as_deref()) {
-            Ok(document) => self.bounded_tool_result(
+        match session.get_gap_with_recovery(&canonical_id, requested.as_deref()) {
+            Ok((document, recovery)) => self.bounded_tool_result(
                 document,
                 gaps::GAP_SCHEMA_VERSION,
                 "serialize gap evidence",
-                workspace::RECOVERY_GAP_ITEM_TOO_LARGE,
+                &recovery,
                 max_envelope_bytes,
             ),
             Err(failure) => self.typed_failure(failure, gaps::GAP_SCHEMA_VERSION),
+        }
+    }
+
+    /// The gap resource and tool capture both evidence and its fallback while
+    /// holding one session read; a refresh cannot switch source between them.
+    async fn get_gap_resource(
+        &self,
+        uri: &str,
+        canonical_id: &str,
+        max_envelope_bytes: usize,
+    ) -> Result<ReadResourceResponse, ErrorData> {
+        let session = self.session.lock().await;
+        let result =
+            resource_id_document(canonical_id, |id| session.get_gap_with_recovery(id, None));
+        match result {
+            Ok((document, recovery)) => {
+                self.resource_result(document, uri, &recovery, max_envelope_bytes)
+            }
+            Err(failure) => Err(resource_failure("gap", &failure, None)),
         }
     }
 
@@ -502,20 +529,21 @@ impl McpServer {
         document: Value,
         failure_version: &'static str,
         serialize_context: &'static str,
-        recovery: &'static str,
+        recovery: &str,
         max_envelope_bytes: usize,
     ) -> Result<CallToolResponse, ErrorData> {
-        let envelope = match protocol::tool_result(document, max_envelope_bytes) {
-            Ok(envelope) => envelope,
-            Err(detail) => {
-                let failure = workspace::AttemptFailure::new(
-                    workspace::CODE_RESULT_TOO_LARGE,
-                    format!("{serialize_context}: {detail}"),
-                    recovery,
-                );
-                return self.typed_failure(failure, failure_version);
-            }
-        };
+        let envelope =
+            match protocol::tool_result_with(document, max_envelope_bytes, self.text_mode) {
+                Ok(envelope) => envelope,
+                Err(detail) => {
+                    let failure = workspace::AttemptFailure::new(
+                        workspace::CODE_RESULT_TOO_LARGE,
+                        format!("{serialize_context}: {detail}"),
+                        recovery,
+                    );
+                    return self.typed_failure(failure, failure_version);
+                }
+            };
         self.bounded_tool_envelope(
             envelope,
             failure_version,
@@ -527,7 +555,7 @@ impl McpServer {
 
     /// The shared response bound for an already-built tool envelope, used
     /// by tools whose envelope comes from the protocol layer instead of
-    /// [`tool_result`](protocol::tool_result). The budget is the caller's
+    /// [`tool_result_with`](protocol::tool_result_with). The budget is the caller's
     /// id-aware envelope budget (#7768), so the final re-measurement after
     /// a wrapper added text (the status recovery sentence) still cannot
     /// pass an envelope the wire would have to replace.
@@ -536,7 +564,7 @@ impl McpServer {
         envelope: Value,
         failure_version: &'static str,
         serialize_context: &'static str,
-        recovery: &'static str,
+        recovery: &str,
         max_envelope_bytes: usize,
     ) -> Result<CallToolResponse, ErrorData> {
         let bytes = serde_json::to_vec(&envelope)
@@ -572,6 +600,30 @@ fn optional_string_argument(
         Some(_other) => Err(ErrorData::invalid_params(
             format!("{name} must be a string"),
             Some(serde_json::json!({ "argument": name, "expected": "string" })),
+        )),
+    }
+}
+
+/// The `ripr_refresh` `source` selector (#7357): `committed` (also the
+/// meaning of omission) or `worktree`. Any other value, including an empty
+/// string, wrong case or a non-string, is invalid params; nothing coerces.
+fn refresh_source_argument(
+    arguments: &Option<serde_json::Map<String, Value>>,
+) -> Result<workspace::RefreshSource, ErrorData> {
+    match optional_string_argument(arguments, "source")?.as_deref() {
+        None | Some(workspace::RefreshSource::COMMITTED_NAME) => {
+            Ok(workspace::RefreshSource::Committed)
+        }
+        Some(workspace::RefreshSource::WORKTREE_NAME) => Ok(workspace::RefreshSource::Worktree),
+        Some(_other) => Err(ErrorData::invalid_params(
+            "source must be one of: committed, worktree",
+            Some(serde_json::json!({
+                "argument": "source",
+                "expected": [
+                    workspace::RefreshSource::COMMITTED_NAME,
+                    workspace::RefreshSource::WORKTREE_NAME,
+                ],
+            })),
         )),
     }
 }
@@ -816,10 +868,10 @@ fn optional_capped_page_limit(
 /// Recovery for every ambiguous or unresolved read names the equivalent
 /// tool route, which takes the canonical id as a plain JSON string with no
 /// URI encoding.
-fn resource_id_document(
+fn resource_id_document<T>(
     captured: &str,
-    lookup: impl Fn(&str) -> Result<Value, workspace::AttemptFailure>,
-) -> Result<Value, workspace::AttemptFailure> {
+    lookup: impl Fn(&str) -> Result<T, workspace::AttemptFailure>,
+) -> Result<T, workspace::AttemptFailure> {
     match lookup(captured) {
         Ok(document) => {
             if let Some(decoded) = gaps::percent_decode_resource_id(captured)
@@ -1149,17 +1201,9 @@ impl ServerHandler for McpServer {
             };
         }
         if let Some(canonical_id) = gaps::gap_resource_id(&request.uri) {
-            let session = self.session.lock().await;
-            let result = resource_id_document(canonical_id, |id| session.get_gap(id, None));
-            return match result {
-                Ok(document) => self.resource_result(
-                    document,
-                    &request.uri,
-                    workspace::RECOVERY_GAP_ITEM_TOO_LARGE,
-                    max_envelope_bytes,
-                ),
-                Err(failure) => Err(resource_failure("gap", &failure, None)),
-            };
+            return self
+                .get_gap_resource(&request.uri, canonical_id, max_envelope_bytes)
+                .await;
         }
         if let Some(attempt_id) = repair::repair_attempt_resource_id(&request.uri) {
             return match self.repair_read_document(attempt_id, false).await {
@@ -1225,7 +1269,7 @@ impl McpServer {
         &self,
         document: Value,
         uri: &str,
-        recovery: &'static str,
+        recovery: &str,
         max_envelope_bytes: usize,
     ) -> Result<ReadResourceResponse, ErrorData> {
         // Resources pretty-print their document text while tool payloads
@@ -1254,11 +1298,7 @@ impl McpServer {
 /// id-aware response budget (#7768): the same `result_too_large` code and
 /// per-surface recovery the tool path returns, rendered through the
 /// standard resource failure shape.
-fn resource_budget_failure(
-    bytes: usize,
-    max_envelope_bytes: usize,
-    recovery: &'static str,
-) -> ErrorData {
+fn resource_budget_failure(bytes: usize, max_envelope_bytes: usize, recovery: &str) -> ErrorData {
     let failure = workspace::AttemptFailure::new(
         workspace::CODE_RESULT_TOO_LARGE,
         format!(
@@ -1414,3 +1454,7 @@ const ALREADY_INITIALIZED_MESSAGE: &str = "session already initialized: `initial
 #[cfg(test)]
 #[path = "server_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "source_recovery_tests.rs"]
+mod source_recovery_tests;

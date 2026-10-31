@@ -6,6 +6,7 @@ mod oracles;
 pub(crate) mod property_macros;
 mod returns;
 mod shadow;
+mod test_case_arrow;
 mod text;
 
 pub(crate) use calls::{
@@ -20,10 +21,8 @@ pub(crate) use mask::{
     mask_comments_and_strings, mask_with_char_literals, mask_with_string_delimiter_quotes,
     rust_identity_spans, string_literal_spans,
 };
-#[cfg(test)]
-pub(crate) use oracles::contains_macro_invocation;
 pub(crate) use oracles::{
-    OracleTextShape, assertion_oracle_text, classify_assertion, classify_assertion_in,
+    LazyDecls, OracleTextShape, assertion_oracle_text, classify_assertion, classify_assertion_with,
     equality_assertion_arguments, err_return_guard_oracles, err_return_guard_twin,
     extract_assertions, extract_assertions_in, extract_line_scanned_oracles,
     guarded_result_match_scan_with_shadow_authority, has_oracle_text_shape,
@@ -31,9 +30,12 @@ pub(crate) use oracles::{
     retain_reached_oracles, terminal_err_return_guard_oracle, uncompared_unwrap_err,
     unwrap_err_bound_variables,
 };
+#[cfg(test)]
+pub(crate) use oracles::{contains_macro_invocation, table_builds};
 pub(crate) use returns::extract_return_facts;
 pub(crate) use shadow::{
     ShadowAuthority, extract_pattern_words, fact_body_defines_callee_fn, fact_body_let_shadow_line,
     test_body_defines_callee_fn, test_body_let_shadow_line,
 };
+pub(crate) use test_case_arrow::{arrow_row_is_read, arrow_row_oracles, arrow_row_oracles_for_fn};
 pub(crate) use text::extract_identifier_tokens;

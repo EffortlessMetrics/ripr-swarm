@@ -13,6 +13,139 @@ fn invoked(helper: &str) -> Result<Vec<(usize, String)>, String> {
         .collect())
 }
 
+fn run_positions(helper: &str) -> Result<Vec<usize>, String> {
+    Ok(unconditionally_invoked_param_positions(helper)
+        .ok_or_else(|| format!("premise: parses and is a sync free fn: {helper}"))?
+        .into_iter()
+        .collect())
+}
+
+#[test]
+fn unconditional_invocation_admits_only_calls_every_call_of_the_helper_runs() -> Result<(), String>
+{
+    for (shape, helper, want) in [
+        ("statement", "fn h(f: fn()) { f(); }", vec![0]),
+        ("tail", "fn h(f: fn() -> u8) -> u8 { f() }", vec![0]),
+        (
+            "let",
+            "fn h(f: fn() -> u8) { let got = f(); drop(got); }",
+            vec![0],
+        ),
+        (
+            "assert_eq operand",
+            "fn h(f: fn(u8) -> u8, w: u8) { assert_eq!(f(1), w); }",
+            vec![0],
+        ),
+        (
+            "assert operand compared",
+            "fn h(w: u8, f: fn(u8) -> u8) { assert!(f(1) == w); }",
+            vec![1],
+        ),
+        (
+            "argument of another call",
+            "fn h(f: fn() -> u8) { drop(f()); }",
+            vec![0],
+        ),
+        (
+            "left side of a short circuit",
+            "fn h(f: fn() -> bool, g: bool) { assert!(f() && g); }",
+            vec![0],
+        ),
+        (
+            "nested field read",
+            "fn h(f: fn() -> (u8, u8)) { assert_eq!(f().0, 1); }",
+            vec![0],
+        ),
+        (
+            "right side of a short circuit",
+            "fn h(f: fn() -> bool, g: bool) { assert!(g && f()); }",
+            vec![],
+        ),
+        (
+            "message argument is not an operand",
+            "fn h(f: fn() -> u8) { assert!(true, \"{}\", f()); }",
+            vec![],
+        ),
+        ("branch", "fn h(f: fn(), g: bool) { if g { f(); } }", vec![]),
+        (
+            "match arm",
+            "fn h(f: fn(), g: bool) { match g { true => f(), false => {} } }",
+            vec![],
+        ),
+        ("loop", "fn h(f: fn()) { for _ in 0..0 { f(); } }", vec![]),
+        (
+            "closure body",
+            "fn h(f: fn() -> u8) { let _c = || f(); }",
+            vec![],
+        ),
+        (
+            "async block",
+            "fn h(f: fn() -> u8) { let _c = async { f() }; }",
+            vec![],
+        ),
+        (
+            "nested fn",
+            "fn h(f: fn() -> u8) { fn inner(f: fn() -> u8) -> u8 { f() } }",
+            vec![],
+        ),
+        (
+            "after an early return",
+            "fn h(f: fn(), g: bool) { if g { return; } f(); }",
+            vec![],
+        ),
+        (
+            "after a try",
+            "fn h(f: fn(), g: Result<u8, u8>) -> Result<(), u8> { g?; f(); Ok(()) }",
+            vec![],
+        ),
+        (
+            "shadowing let",
+            "fn h(f: fn() -> u8) { let f = || 1u8; f(); }",
+            vec![],
+        ),
+        ("mut binding", "fn h(mut f: fn()) { f(); }", vec![]),
+        (
+            "mutably borrowed",
+            "fn h(f: fn()) { let _r = &mut f; f(); }",
+            vec![],
+        ),
+        ("stored only", "fn h(f: fn()) { let _k = f; }", vec![]),
+        ("forwarded only", "fn h(f: fn()) { run(f); }", vec![]),
+        (
+            "method call named like the parameter",
+            "fn h(f: fn(), x: X) { x.f(); }",
+            vec![],
+        ),
+        (
+            "qualified call named like the parameter",
+            "fn h(f: fn()) { m::f(); }",
+            vec![],
+        ),
+        (
+            "unknown macro operand",
+            "fn h(f: fn() -> u8) { custom!(f()); }",
+            vec![],
+        ),
+    ] {
+        assert_eq!(run_positions(helper)?, want, "{shape}");
+    }
+    assert_eq!(
+        unconditionally_invoked_param_positions("async fn h(f: fn()) { f(); }"),
+        None,
+        "an async fn does not run its body when called"
+    );
+    assert_eq!(
+        unconditionally_invoked_param_positions("fn h(&self, f: fn()) { f(); }"),
+        None,
+        "a method is not a free helper"
+    );
+    assert_eq!(
+        unconditionally_invoked_param_positions("fn h(f: fn() {"),
+        None
+    );
+    Ok(())
+}
+
 #[test]
 fn closure_literal_positions_require_a_call_that_runs_with_the_closure()
 -> Result<(), Box<dyn Error>> {

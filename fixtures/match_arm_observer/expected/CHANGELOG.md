@@ -359,3 +359,39 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — match_arm_observer (18)
+
+Reason:
+RIPR-SPEC-0122: state that no seam binds the finding and name the Next step instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless match_arm_observer --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — match_arm_observer (19)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless match_arm_observer --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — match_arm_observer (20)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless match_arm_observer --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

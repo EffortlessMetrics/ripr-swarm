@@ -14,8 +14,8 @@ pub(crate) use super::super::{
 // can call `probes::expected_sinks` / `probes::required_oracles` via `super::probes`.
 use super::read_limit_disclosure::bounded_read_limit_limitations;
 pub(crate) use super::{
-    LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, RepoCapFired,
-    RepoFileAccounting, RepoLimitingStage, route,
+    LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, PreviewFactCacheStats,
+    RepoCapFired, RepoFileAccounting, RepoLimitingStage, route,
 };
 pub(super) use crate::analysis::probes;
 pub(crate) use crate::analysis_outcome::{
@@ -62,6 +62,9 @@ mod boundary_input;
 mod boundary_input_tests;
 mod bounded_read;
 mod bun_bridge;
+mod call_removal_guard;
+#[cfg(test)]
+mod call_removal_tests;
 #[cfg(test)]
 mod capability_disposition_tests;
 mod catch_arm_guard;
@@ -79,7 +82,13 @@ mod dropped_term_guard;
 mod enum_member_guard;
 mod error_payload_guard;
 mod extraction_cache;
+mod fact_store;
+pub(crate) use fact_store::TypeScriptFileFactStore;
+#[cfg(test)]
+mod fact_store_tests;
 mod field_update_guard;
+mod fixture_receivers;
+mod gap_reach;
 mod guard_entry_guard;
 mod helper_inline;
 #[cfg(test)]
@@ -87,12 +96,19 @@ mod helper_inline_tests;
 mod hook_owner_guard;
 #[cfg(test)]
 mod identifier_write_scale_tests;
+mod infection_shape;
+#[cfg(test)]
+mod infection_shape_tests;
 mod instance_class_guard;
+mod instance_factories;
 #[cfg(test)]
 mod line_index_tests;
 mod literal_eval;
 mod literal_mask;
 mod literal_matcher_guard;
+mod local_constant;
+#[cfg(test)]
+mod local_constant_tests;
 mod lookup_table_guard;
 mod loop_bound_guard;
 mod match_object_guard;
@@ -139,6 +155,7 @@ mod row_miss;
 mod row_miss_tests;
 #[cfg(test)]
 mod self_comparing_assertion_tests;
+mod shadow_index;
 mod spread_override_guard;
 mod static_limit;
 mod table_loop_rows;
@@ -146,9 +163,13 @@ mod table_rows;
 mod ternary_arm_guard;
 #[cfg(test)]
 mod tests;
+mod typeof_kind;
+#[cfg(test)]
+mod typeof_kind_tests;
 // Declared here, not in `tests.rs`, so #7813/#7815 do not collide with #8476.
 mod assertion_helper;
 mod boolean_pin_guard;
+mod close_to_guard;
 #[cfg(test)]
 #[path = "tests/issue7813_alias_member_tests.rs"]
 mod issue7813_alias_member_tests;
@@ -169,7 +190,9 @@ mod workspace_packages;
 // submodule's `use super::*;` resolves, and so that `tests.rs` which
 // uses `use super::*;` can access all items.
 pub(crate) use actionability::*;
-pub(crate) use admission::{TypeScriptAdmissionContext, TypeScriptAssertionAdmission};
+pub(crate) use admission::{
+    RegistrationNames, TypeScriptAdmissionContext, TypeScriptAssertionAdmission,
+};
 pub(crate) use annotation_only::*;
 pub(crate) use assertion_selection::{
     TypeScriptAssertionSelection, row_projection_move, select_family_relevant_assertion,
@@ -180,6 +203,7 @@ pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
 pub(crate) use class_entries::*;
 pub(crate) use classifier::*;
+pub(crate) use close_to_guard::*;
 pub(crate) use committed_snapshot::*;
 pub(crate) use comparison_edit_guard::*;
 pub(crate) use custom_matcher_guard::*;
@@ -189,6 +213,7 @@ pub(crate) use dropped_term_guard::*;
 pub(crate) use error_payload_guard::*;
 pub(crate) use field_update_guard::*;
 pub(crate) use instance_class_guard::*;
+pub(crate) use instance_factories::*;
 pub(crate) use literal_matcher_guard::*;
 pub(crate) use lookup_table_guard::*;
 pub(crate) use loop_bound_guard::*;
@@ -229,6 +254,21 @@ pub(crate) use value_hiding_guard::*;
 pub(crate) struct TypeScriptAdapter;
 
 pub(crate) fn source_type_for(path: &Path) -> SourceType {
+    let source_type = source_type_for_extension(path);
+    // `*.d.ts` / `*.d.mts` / `*.d.cts` are declaration files: every top-level
+    // declaration is ambient, so `export const x: T;` is valid there and a
+    // parse error only when read as ordinary TypeScript (#10812).
+    let declaration_file = matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("ts" | "mts" | "cts")
+    ) && path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .is_some_and(|stem| stem.ends_with(".d"));
+    source_type.with_typescript_definition(declaration_file)
+}
+
+fn source_type_for_extension(path: &Path) -> SourceType {
     match path.extension().and_then(|ext| ext.to_str()) {
         Some("tsx") => SourceType::tsx(),
         Some("ts") => SourceType::ts(),
@@ -476,6 +516,26 @@ impl TypeScriptAdapter {
         // mapping (#4551) are memoized for this run only (#4638 and #4800
         // reviews); the scope drops the cache when the run returns.
         let _directory_modules = DirectoryModuleCacheScope::open();
+        // A diff that changes nothing this adapter would analyze needs no
+        // workspace index, and the workspace-wide limitations below describe
+        // files the diff never consulted. Return the empty complete result
+        // before the walk instead of parsing every file for no finding.
+        if !diff_needs_typescript_workspace(changed_files, handwritten) {
+            return Ok(LanguageDiffResult {
+                value_origins: Default::default(),
+                findings: Vec::new(),
+                harness_projections: Vec::new(),
+                changed_files: 0,
+                candidate_line_count: 0,
+                changed_files_by_language: Vec::new(),
+                partial_scope: None,
+                skipped_files: 0,
+                limitations: Vec::new(),
+                rust_diagnostic_origins: Default::default(),
+                rust_consumed_sources: Default::default(),
+                preview_fact_cache: Default::default(),
+            });
+        }
         // Phase 1: discover and index every accepted file in the workspace
         // so we can find related tests for any owner regardless of whether
         // the test file itself changed in this diff.
@@ -495,6 +555,9 @@ impl TypeScriptAdapter {
         // evaluate (#8714): the credit stands, the disclosure carries the
         // "may never execute" caveat.
         let mut conditional_credit_gaps: Vec<TypeScriptConditionalCreditGap> = Vec::new();
+        // Tests registered under an unevaluated `if` (#10438): indexed for
+        // reach, never credited; one gap per test file.
+        let mut conditional_registration_gaps: Vec<TypeScriptConditionalCreditGap> = Vec::new();
         // Owner shapes the extractor does not index, detected on CHANGED
         // production files only (#4104-A): their changed lines produce no
         // finding today, so the disclosure is the only honest signal.
@@ -563,10 +626,96 @@ impl TypeScriptAdapter {
         };
         let alias_map_ref: Option<&TsAliasMap> = alias_map.as_ref();
 
+        // #10725: persistent per-file fact store. One content-keyed lookup
+        // per workspace file; a hit rehydrates the process-lifetime caches
+        // below (so the loop body is unchanged), a miss or a corrupt entry
+        // recomputes and queues the facts for storing after the loop.
+        // Counts are real admissions only — the `-v` line renders them.
+        let fact_store = fact_store::TypeScriptFileFactStore::at(&options.root);
+        let mut fact_cache_stats = PreviewFactCacheStats::zero_work();
+        // An unusable base is reported once; nothing is read or stored.
+        fact_cache_stats.unusable_base = fact_store.unusable_base_reason().map(str::to_owned);
+        let fact_store_usable = fact_cache_stats.unusable_base.is_none();
+        // `(key, approx bytes, facts, extraction)` for every file this run
+        // recomputed. Deferred so storing never interleaves with parsing;
+        // worker-refusal files never reach here, exactly like the memory
+        // cache, and are not persisted.
+        let mut pending_fact_stores: Vec<(
+            fact_store::TypeScriptFileFactKey,
+            std::rc::Rc<extraction_cache::FileFacts>,
+            Option<extraction_cache::TestExtraction>,
+        )> = Vec::new();
+
         for relative in &workspace_files {
             let Some(source) = source_cache.get(relative) else {
                 continue;
             };
+            let fact_key = fact_store::TypeScriptFileFactKey::new(
+                relative,
+                source,
+                &options.root,
+                alias_map_ref,
+            );
+            let mut recomputed_facts = false;
+            // A process that already holds this file's facts (an LSP refresh)
+            // neither reads nor rewrites the envelope.
+            let in_memory = extraction_cache::file_facts_in_memory(
+                relative,
+                source,
+                &options.root,
+                alias_map_ref,
+            ) && (!is_test_file(relative)
+                || extraction_cache::test_extraction_in_memory(relative, source));
+            // An envelope is named by the normalized path, but a test
+            // extraction embeds the exact one; a Unix filename with a literal
+            // backslash (or a non-UTF-8 name) would share an envelope with its
+            // folded twin, so such a file is neither read nor persisted
+            // (#10725 review). On Windows the backslash is the separator, so
+            // folding it loses nothing.
+            let path_is_lossless = relative
+                .to_str()
+                .is_some_and(|path| cfg!(windows) || !path.contains('\\'));
+            let lookup = if fact_store_usable && path_is_lossless && !in_memory {
+                Some(fact_store.load(&fact_key))
+            } else {
+                None
+            };
+            match lookup {
+                None => {}
+                Some(crate::analysis::seam_cache::CacheLoad::Hit(persisted)) => {
+                    fact_cache_stats.hits += 1;
+                    extraction_cache::seed_file_facts(
+                        relative,
+                        source,
+                        &options.root,
+                        alias_map_ref,
+                        std::rc::Rc::new(persisted.file_facts),
+                    );
+                    if let Some(test_extraction) = persisted.test_extraction {
+                        extraction_cache::seed_test_extraction(
+                            relative,
+                            source,
+                            std::rc::Rc::new(test_extraction),
+                        );
+                    }
+                }
+                Some(crate::analysis::seam_cache::CacheLoad::Miss) => {
+                    fact_cache_stats.misses += 1;
+                    recomputed_facts = true;
+                    // A miss against a snapshot entry means the file's
+                    // content changed under a persisted envelope — the
+                    // content-invalidation signal (#2175: a stat tuple is
+                    // never consulted).
+                    if fact_store.knows_file(&normalized_path(relative)) {
+                        fact_cache_stats.invalidated_files.insert(relative.clone());
+                    }
+                }
+                Some(crate::analysis::seam_cache::CacheLoad::CorruptIgnored { .. }) => {
+                    fact_cache_stats.corrupt_ignored += 1;
+                    fact_cache_stats.misses += 1;
+                    recomputed_facts = true;
+                }
+            }
             // #10071: ONE combined parse per file yields the parse status
             // plus owners, export facts, and phase-2 facts; the re-export
             // index and phase 2 then reuse the cached entry instead of
@@ -612,6 +761,12 @@ impl TypeScriptAdapter {
                         reason: reason.clone(),
                     });
                 }
+                // Parse-error facts persist like clean ones: the envelope is
+                // content-keyed, so the cached default facts are as honest as
+                // the in-memory cache's.
+                if recomputed_facts {
+                    pending_fact_stores.push((fact_key, std::rc::Rc::clone(&facts), None));
+                }
                 continue;
             }
             if is_test_file(relative) {
@@ -619,7 +774,36 @@ impl TypeScriptAdapter {
                 // is served from the content-keyed cache; the clone below is
                 // what snapshot promotion mutates, so promotion still reads
                 // the filesystem on every run.
-                let extraction = extraction_cache::test_extraction_cached(relative, source);
+                let (extraction, extraction_failure) =
+                    extraction_cache::test_extraction_cached_disclosing(relative, source);
+                // #11132: a parse-worker failure during test extraction
+                // serves an empty extraction. That must not read as "this
+                // file registers no tests" (a false `no_static_path`), so it
+                // is disclosed through the same typed partial-extraction
+                // limitation as an unindexed registration shape.
+                if let Some(reason) = extraction_failure {
+                    extraction_gaps.push(TypeScriptTestExtractionGap {
+                        file: relative.clone(),
+                        sample_line: 1,
+                        shape: "test extraction unavailable (parse worker failed)",
+                        snippet: reason,
+                    });
+                }
+                // A worker failure serves an empty extraction it never caches;
+                // only a cached extraction is a function of the bytes.
+                if recomputed_facts
+                    && fact_store::export_facts_are_disk_independent(&facts)
+                    && extraction_cache::test_extraction_in_memory(relative, source)
+                {
+                    // Persist the raw cached extraction (pre-promotion), so a
+                    // warm run re-applies snapshot promotion from disk facts
+                    // exactly like a memory hit does.
+                    pending_fact_stores.push((
+                        fact_key,
+                        std::rc::Rc::clone(&facts),
+                        Some((*extraction).clone()),
+                    ));
+                }
                 let (mut tests, conditional_credit_gap, expansion) = (
                     extraction.0.clone(),
                     extraction.1.clone(),
@@ -659,6 +843,19 @@ impl TypeScriptAdapter {
                 if let Some(gap) = conditional_credit_gap {
                     conditional_credit_gaps.push(gap);
                 }
+                // One gap per guarded test, so a finding is marked partial only
+                // by the guarded tests it actually relates to (review on #10456).
+                for test in tests
+                    .iter()
+                    .filter(|test| test.conditional_registration.is_some())
+                {
+                    conditional_registration_gaps.push(TypeScriptConditionalCreditGap {
+                        file: relative.to_path_buf(),
+                        sample_line: test.line,
+                        condition: test.conditional_registration.clone().unwrap_or_default(),
+                        sites: Vec::new(),
+                    });
+                }
                 all_tests.extend(tests);
             } else {
                 // #10071/#10044: owners came out of the same single parse as
@@ -666,7 +863,21 @@ impl TypeScriptAdapter {
                 // session re-save without re-parsing the whole workspace.
                 // Test extraction is cached separately (#10017): only its
                 // pure step, never snapshot promotion.
+                if recomputed_facts && fact_store::export_facts_are_disk_independent(&facts) {
+                    pending_fact_stores.push((fact_key, std::rc::Rc::clone(&facts), None));
+                }
                 all_owners.extend(facts.owners.clone());
+            }
+        }
+
+        // #10725: flush the envelopes this run recomputed — one content-keyed
+        // envelope per file, after parsing so the writes never interleave
+        // with it. Store failures disclose as counters, never as a failed run.
+        for (key, facts, test_extraction) in pending_fact_stores {
+            match fact_store.store(&key, &facts, test_extraction.as_ref()) {
+                Ok(true) => fact_cache_stats.stores += 1,
+                Ok(false) => {}
+                Err(_) => fact_cache_stats.store_errors += 1,
             }
         }
 
@@ -682,6 +893,14 @@ impl TypeScriptAdapter {
             is_test_file,
         );
 
+        // A named import of `export * as ns from` reads as the namespace import
+        // it binds (RIPR-SPEC-0095).
+        reexport_index.rewrite_namespace_reexport_imports(
+            &mut all_tests,
+            alias_map_ref,
+            Some(&options.root),
+        );
+
         // #10028: invert the test corpus once so each owner's relation scans
         // (pass-1 candidates, module-entry union, the two named-limitation
         // passes) pre-filter by body-name / import-shape / re-export-exposure
@@ -691,6 +910,9 @@ impl TypeScriptAdapter {
         // Phase 2: for each accepted changed file, classify each changed
         // line that falls inside an owner.
         let mut findings: Vec<Finding> = Vec::new();
+        // Enum-member findings carry no probe owner, but their id was minted
+        // over an `Enum::Member` identity; collision ranking needs it (#10349).
+        let mut minted_owners: std::collections::HashMap<usize, String> = Default::default();
         let mut changed_count: usize = 0;
         // Per-output-language tally (#2103 review): this adapter covers
         // typescript (.ts/.tsx/.mts/.cts) and javascript (.js/.jsx/.mjs/.cjs),
@@ -703,6 +925,10 @@ impl TypeScriptAdapter {
         // then (#4261); an ownerless, import-only or deletion-only TS change
         // never reads the index.
         let mut test_index_consumed = false;
+        // A Rust change related to TypeScript tests through the Bun bridge is
+        // not reachable by TypeScript imports, so it keeps the workspace-wide
+        // partial-extraction disclosure (#10436).
+        let mut cross_language_consumed = false;
         for changed in changed_files {
             for added in &changed.added_lines {
                 if let Some(finding) = bun_cross_language_finding_for_changed_rust_line(
@@ -712,6 +938,7 @@ impl TypeScriptAdapter {
                     &all_tests,
                 ) {
                     test_index_consumed = true;
+                    cross_language_consumed = true;
                     findings.push(finding);
                 }
             }
@@ -920,14 +1147,19 @@ impl TypeScriptAdapter {
                         // index: unique within this changed file, so the key
                         // needs no cloned Strings.
                         let context = owner_contexts.entry(owner_idx).or_insert_with(|| {
-                            owner_line_context(
+                            let mut context = owner_line_context(
                                 owner,
                                 &all_tests,
                                 Some(&options.root),
                                 &reexport_index,
                                 &relation_index,
                                 alias_map_ref,
-                            )
+                            );
+                            context.single_line_replacement = matches!(
+                                (changed.added_lines.as_slice(), changed.removed_lines.as_slice()),
+                                ([added], [removed]) if added.line == removed.new_side_line
+                            );
+                            context
                         });
                         classify_resolved_owner(
                             &changed.path,
@@ -999,6 +1231,7 @@ impl TypeScriptAdapter {
                     let mut finding =
                         enum_member_finding(&changed.path, added.line, &added.text, identity);
                     finding.evidence.extend(discovery_evidence.clone());
+                    minted_owners.insert(findings.len(), identity.to_string());
                     findings.push(finding);
                 }
             }
@@ -1147,11 +1380,35 @@ impl TypeScriptAdapter {
         // The index is workspace-wide, so a diff that classified nothing
         // against it (Rust-only, or TS test edits only) is not made partial by
         // test shapes it never consulted (#4261).
-        let consulted_gaps: &[_] = if test_index_consumed {
-            &extraction_gaps
+        // #10436: a dropped registration matters only when a test in its file
+        // could be related to code this diff changed. `GapReach` answers that
+        // from the file's local import closure and keeps the gap whenever it
+        // cannot prove otherwise.
+        let scoped_gaps: Vec<TypeScriptTestExtractionGap> = if test_index_consumed {
+            let owner_names = all_owners
+                .iter()
+                .filter(|owner| changed_paths.contains(&normalized_path(&owner.file)))
+                .flat_map(|owner| {
+                    std::iter::once(owner.name.clone()).chain(owner.class_name.clone())
+                })
+                .collect::<Vec<_>>();
+            let reach = gap_reach::GapReach::new(
+                &source_by_normalized,
+                &changed_paths,
+                owner_names,
+                alias_map_ref,
+                &options.root,
+                cross_language_consumed,
+            );
+            extraction_gaps
+                .iter()
+                .filter(|gap| reach.may_reach(&gap.file))
+                .cloned()
+                .collect()
         } else {
-            &[]
+            Vec::new()
         };
+        let consulted_gaps: &[_] = &scoped_gaps;
         // One summary limitation for the whole workspace-wide index, not one
         // line per unrelated test file: the gaps are not in the diff, so a
         // per-file list buried the changed-file result.
@@ -1170,12 +1427,41 @@ impl TypeScriptAdapter {
             .flat_map(|finding| finding.related_tests.iter())
             .map(|related| normalized_path(&related.file))
             .collect();
-        let consulted_credit_gaps: Vec<&TypeScriptConditionalCreditGap> = if test_index_consumed {
-            consulted_credit_gaps(&conditional_credit_gaps, &consulted_test_files)
+        let consulted_test_lines: std::collections::BTreeSet<(String, usize)> = findings
+            .iter()
+            .flat_map(|finding| finding.related_tests.iter())
+            .map(|related| (normalized_path(&related.file), related.line))
+            .collect();
+        let consulted_credit_gaps: Vec<TypeScriptConditionalCreditGap> = if test_index_consumed {
+            credit_gaps_in_consulted_tests(
+                &consulted_credit_gaps(&conditional_credit_gaps, &consulted_test_files),
+                &all_tests,
+                &consulted_test_lines,
+            )
         } else {
             Vec::new()
         };
+        let consulted_credit_gaps: Vec<&TypeScriptConditionalCreditGap> =
+            consulted_credit_gaps.iter().collect();
         if let Some(limitation) = conditional_assertion_credit_summary(&consulted_credit_gaps)? {
+            limitations.push(limitation);
+        }
+        let consulted_registration_gaps: Vec<&TypeScriptConditionalCreditGap> =
+            if test_index_consumed {
+                conditional_registration_gaps
+                    .iter()
+                    .filter(|gap| {
+                        consulted_test_lines
+                            .contains(&(normalized_path(&gap.file), gap.sample_line))
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+        if let Some(limitation) = conditional_gap_summary(
+            &consulted_registration_gaps,
+            ConditionalGapKind::Registration,
+        )? {
             limitations.push(limitation);
         }
         // Partial owner extraction (#4104-A): changed lines inside owner
@@ -1302,7 +1588,7 @@ impl TypeScriptAdapter {
         // owner share a content-addressed probe id (path/family/owner/
         // expression, no line number); the ordinal pass keeps them
         // distinct (mirror of the Rust path's `dedup_probe_ids`).
-        dedup_typescript_probe_ids(&mut findings);
+        dedup_typescript_probe_ids(&mut findings, &minted_owners);
         Ok(LanguageDiffResult {
             value_origins: Default::default(),
             findings,
@@ -1315,8 +1601,30 @@ impl TypeScriptAdapter {
             limitations,
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
+            preview_fact_cache: fact_cache_stats,
         })
     }
+}
+
+/// Whether any changed file reaches Phase 2: a TypeScript/JavaScript file the
+/// loop below counts (accepted, not generated, not in an excluded directory
+/// unless declared hand-written), or a Rust file a Bun bridge profile reads
+/// against the TypeScript test index. Mirrors that loop's own skip conditions
+/// so the early return cannot hide a file the loop would have analyzed.
+fn diff_needs_typescript_workspace(changed_files: &[ChangedFile], handwritten: &[String]) -> bool {
+    changed_files.iter().any(|changed| {
+        let normalized = normalized_path(&changed.path);
+        let bridge_file = BUN_RUST_CROSS_LANGUAGE_BRIDGE_PROFILES
+            .iter()
+            .any(|profile| normalized == profile.rust_file);
+        let excluded = is_detectable_generated_typescript_path(&changed.path)
+            || (is_detectable_excluded_typescript_path(&changed.path)
+                && !crate::config::is_declared_handwritten_typescript_path(
+                    handwritten,
+                    &changed.path,
+                ));
+        bridge_file || (TypeScriptAdapter.accepts_path(&changed.path) && !excluded)
+    })
 }
 
 /// Recovery for partial test extraction. Re-running cannot change the
@@ -1416,6 +1724,48 @@ const CONDITIONAL_ASSERTION_CREDIT_SAMPLES: usize = 3;
 fn conditional_assertion_credit_summary(
     gaps: &[&TypeScriptConditionalCreditGap],
 ) -> Result<Option<AnalysisLimitation>, String> {
+    conditional_gap_summary(gaps, ConditionalGapKind::AssertionCredit)
+}
+
+/// Which unevaluated-condition disclosure a gap summary is for.
+#[derive(Clone, Copy)]
+enum ConditionalGapKind {
+    /// An assertion sits under the condition and keeps its credit (#8714).
+    AssertionCredit,
+    /// A test registration sits under the condition and earns no credit
+    /// (#10438).
+    Registration,
+}
+
+impl ConditionalGapKind {
+    fn name(self) -> &'static str {
+        match self {
+            Self::AssertionCredit => "typescript_conditional_assertion_credit",
+            Self::Registration => "typescript_conditional_registration",
+        }
+    }
+
+    fn plural_subject(self) -> &'static str {
+        match self {
+            Self::AssertionCredit => {
+                "credit assertions under conditions static analysis cannot evaluate"
+            }
+            Self::Registration => "register tests under conditions static analysis cannot evaluate",
+        }
+    }
+
+    fn limitation(self, gap: &TypeScriptConditionalCreditGap) -> TypeScriptNamedLimitation {
+        match self {
+            Self::AssertionCredit => conditional_assertion_credit_limitation(gap),
+            Self::Registration => conditional_registration_limitation(gap),
+        }
+    }
+}
+
+fn conditional_gap_summary(
+    gaps: &[&TypeScriptConditionalCreditGap],
+    kind: ConditionalGapKind,
+) -> Result<Option<AnalysisLimitation>, String> {
     let recovery = || {
         AnalysisRecovery::new(
             AnalysisRecoveryKind::InspectFailure,
@@ -1426,7 +1776,7 @@ fn conditional_assertion_credit_summary(
         [] => Ok(None),
         [gap] => {
             let gap = *gap;
-            let limitation = conditional_assertion_credit_limitation(gap);
+            let limitation = kind.limitation(gap);
             Ok(Some(
                 AnalysisLimitation::new(
                     AnalysisLimitationKind::UnevaluatedCondition,
@@ -1436,8 +1786,10 @@ fn conditional_assertion_credit_summary(
                 .with_path(gap.file.to_string_lossy())?
                 .with_affected_items(1)?
                 .with_detail(format!(
-                    "typescript_conditional_assertion_credit: `{}` at {}",
-                    gap.condition, limitation.sample_source
+                    "{}: `{}` at {}",
+                    kind.name(),
+                    gap.condition,
+                    limitation.sample_source
                 ))?,
             ))
         }
@@ -1453,14 +1805,16 @@ fn conditional_assertion_credit_summary(
                     format!(
                         "`{}` at {}",
                         gap.condition,
-                        conditional_assertion_credit_limitation(gap).sample_source
+                        kind.limitation(gap).sample_source
                     )
                 })
                 .collect::<Vec<_>>();
             let remainder = gaps.len().saturating_sub(samples.len());
             let head = format!(
-                "typescript_conditional_assertion_credit: {} test file(s) credit assertions under conditions static analysis cannot evaluate",
-                files.len()
+                "{}: {} test file(s) {}",
+                kind.name(),
+                files.len(),
+                kind.plural_subject()
             );
             let mut detail = format!("{head}; e.g. {}", samples.join("; "));
             if remainder > 0 {
@@ -1490,6 +1844,62 @@ fn conditional_assertion_credit_summary(
 /// touch; a gap in a test file no finding relates to must not mark this
 /// analysis partial. Normalization matches the related-test path
 /// convention so separator spelling cannot split a match.
+/// Narrow file-scoped credit gaps to the tests the findings consulted
+/// (RIPR-SPEC-0243 rule 11). A conditional assertion sits inside one test's
+/// registration call; it cannot hide the oracle of a different test that
+/// the findings consulted in the same file, so a site enclosed only by
+/// other registered tests is dropped. Fail-closed: a site no registered
+/// test encloses (a hook, a helper, a describe-level branch), a gap without
+/// recorded sites, and any file whose tests come from an expanded suite
+/// factory (reported lines are not the walked source's) keep the whole
+/// file's disclosure.
+fn credit_gaps_in_consulted_tests(
+    gaps: &[&TypeScriptConditionalCreditGap],
+    all_tests: &[TypeScriptTest],
+    consulted_test_lines: &std::collections::BTreeSet<(String, usize)>,
+) -> Vec<TypeScriptConditionalCreditGap> {
+    gaps.iter()
+        .filter_map(|gap| {
+            let file = normalized_path(&gap.file);
+            let file_tests: Vec<&TypeScriptTest> = all_tests
+                .iter()
+                .filter(|test| normalized_path(&test.file) == file)
+                .collect();
+            if gap.sites.is_empty()
+                || file_tests
+                    .iter()
+                    .any(|test| test.factory_call_line.is_some())
+            {
+                return Some((*gap).clone());
+            }
+            let test_lines: std::collections::BTreeSet<usize> =
+                file_tests.iter().map(|test| test.line).collect();
+            let relevant: Vec<TypeScriptCreditSite> = gap
+                .sites
+                .iter()
+                .filter(|site| {
+                    let mut enclosing = site
+                        .enclosing_call_lines
+                        .iter()
+                        .filter(|line| test_lines.contains(line))
+                        .peekable();
+                    enclosing.peek().is_none()
+                        || enclosing
+                            .any(|line| consulted_test_lines.contains(&(file.clone(), *line)))
+                })
+                .cloned()
+                .collect();
+            let first = relevant.first()?;
+            Some(TypeScriptConditionalCreditGap {
+                file: gap.file.clone(),
+                sample_line: first.line,
+                condition: first.condition.clone(),
+                sites: relevant,
+            })
+        })
+        .collect()
+}
+
 fn consulted_credit_gaps<'a>(
     gaps: &'a [TypeScriptConditionalCreditGap],
     consulted_test_files: &std::collections::BTreeSet<String>,

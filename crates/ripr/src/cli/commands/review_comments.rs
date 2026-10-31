@@ -647,6 +647,8 @@ fn review_comments_with_admission(
                 }),
         )
         .collect::<Vec<_>>();
+    receipt.step("corpus_admission");
+    receipt.write_atomic(&receipt_path)?;
     let corpus_payload = analysis::cancellation::with_token(&cancellation, || {
         analysis::analyzable_corpus_payload_size(&input.root, &config, &owner_files)
     })
@@ -670,6 +672,8 @@ fn review_comments_with_admission(
             error,
         ));
     }
+    receipt.step("test_change_detection");
+    receipt.write_atomic(&receipt_path)?;
     let changed_tests = analysis::cancellation::with_token(&cancellation, || {
         analysis::diff_test_changes(
             &input.root,
@@ -694,6 +698,8 @@ fn review_comments_with_admission(
     // under the same token as the other analysis phases so a large diff
     // cannot spend the budget here with no interior checkpoint to stop it
     // (#1604); an expiry inside it surfaces at the deadline check below.
+    receipt.step("owner_attribution");
+    receipt.write_atomic(&receipt_path)?;
     let (changed_owners, enclosing_owners) =
         analysis::cancellation::with_token(&cancellation, || {
             attribute_owners(&input.root, &changed_lines)
@@ -739,11 +745,13 @@ fn review_comments_with_admission(
         if cancellation.observed_abort()
             == Some(analysis::cancellation::AnalysisAbortKind::DeadlineExceeded)
         {
+            receipt.canonical_analysis_progress(selection_builder.observed_seams());
             record_review_comments_timeout(&mut receipt, &receipt_path, "canonical_analysis")
         } else {
             record_review_comments_error(&mut receipt, &receipt_path, "canonical_analysis", error)
         }
     })?;
+    receipt.canonical_analysis_progress(selection_builder.observed_seams());
     enforce_review_comments_deadline(
         &mut receipt,
         &receipt_path,
@@ -2176,6 +2184,15 @@ mod tests {
         if result.is_ok() {
             return Err("run completed after its budget expired in attribution".to_string());
         }
+        if receipt
+            .get("active_step")
+            .and_then(serde_json::Value::as_str)
+            != Some("owner_attribution")
+        {
+            return Err(format!(
+                "timeout receipt must name the owner_attribution pass: {receipt}"
+            ));
+        }
         if out.exists() || out.with_extension("md").exists() {
             return Err("expired attribution published review artifacts".to_string());
         }
@@ -2270,6 +2287,23 @@ mod tests {
         }
         if result != Err("review-comments timed out during canonical_analysis".to_string()) {
             return Err(format!("unexpected canonical timeout result: {result:?}"));
+        }
+        // Work done is disclosed (none: the budget expired at the first
+        // interior checkpoint) and the receipt says nothing was kept (#11107).
+        if receipt.get("canonical_analysis_evaluated_seams") != Some(&serde_json::json!(0)) {
+            return Err(format!(
+                "canonical timeout must report evaluated seams: {receipt}"
+            ));
+        }
+        let kept_nothing = receipt["non_claims"].as_array().is_some_and(|claims| {
+            claims.iter().any(|claim| {
+                claim == output::review_comments_receipt::CANONICAL_ANALYSIS_NOT_RESUMABLE_NON_CLAIM
+            })
+        });
+        if !kept_nothing {
+            return Err(format!(
+                "canonical timeout must disclose that nothing is persisted: {receipt}"
+            ));
         }
         if out.exists() || out.with_extension("md").exists() {
             return Err("cancelled inventory published review artifacts".to_string());
@@ -2416,6 +2450,20 @@ mod tests {
         if repair_route != error {
             return Err(format!(
                 "returned error and receipt repair_route diverged: {error} vs {repair_route}"
+            ));
+        }
+        // A failure is not a timeout: it must not claim the timeout-only
+        // retry disclosure or timeout progress field (#11107).
+        if receipt.get("canonical_analysis_evaluated_seams").is_some()
+            || receipt["non_claims"].as_array().is_some_and(|claims| {
+                claims.iter().any(|claim| {
+                    claim
+                        == output::review_comments_receipt::CANONICAL_ANALYSIS_NOT_RESUMABLE_NON_CLAIM
+                })
+            })
+        {
+            return Err(format!(
+                "ordinary failure must not carry the timeout retry disclosure: {receipt}"
             ));
         }
         if out.exists() || out.with_extension("md").exists() {
@@ -3041,6 +3089,7 @@ mod tests {
         assert_eq!(receipt["status"], "failed");
         assert_eq!(receipt["active_phase"], "language_facts");
         assert_eq!(receipt["last_completed_phase"], "diff_discovery");
+        assert_eq!(receipt["active_step"], "corpus_admission");
         assert_eq!(
             receipt["limitations"][0]["category"],
             "review_guidance_oversized"

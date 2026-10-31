@@ -46,6 +46,10 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::ModuleHealth(args) => super::reports::module_health(&args),
         XtaskCommand::WindowsAdvisorySummary(args) => super::windows_advisory::run(&args),
         XtaskCommand::WindowsAdvisoryRun(args) => super::windows_advisory_run::run(&args),
+        XtaskCommand::WindowsAdvisoryAclEvidence(args) => {
+            super::windows_advisory_acl_evidence::run(&args)
+        }
+        XtaskCommand::VerifyTestShards(args) => super::verify_test_shards::run(&args),
         XtaskCommand::WindowsAdvisoryIsolatedSummary(args) => {
             super::windows_advisory::run_isolated(&args)
         }
@@ -250,11 +254,13 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckCiLaneWhitelist => super::check_ci_lane_whitelist(),
         XtaskCommand::CheckProofPacks => super::check_proof_packs(),
         XtaskCommand::CheckProductCopy => super::check_product_copy(),
+        XtaskCommand::CheckUserText(args) => super::policy::check_user_text_with_args(&args),
         XtaskCommand::CheckPackagedReadme => super::check_packaged_readme(),
         XtaskCommand::CheckPositioningLanguage => super::check_positioning_language(),
         XtaskCommand::CheckDocRoles => super::check_doc_roles(),
         XtaskCommand::CheckReleaseTargets => super::check_release_targets(),
         XtaskCommand::PackageQualificationGate(args) => super::package_qualification::run(&args),
+        XtaskCommand::SizeScaling(args) => super::size_scaling::run(&args),
         XtaskCommand::TerminationQualification(args) => {
             super::termination_qualification::run(&args)
         }

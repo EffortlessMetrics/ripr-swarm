@@ -469,3 +469,39 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — source_role_harness_suppression (31)
+
+Reason:
+RIPR-SPEC-0122: state that no seam binds the finding and name the Next step instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless source_role_harness_suppression --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — source_role_harness_suppression (32)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless source_role_harness_suppression --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — source_role_harness_suppression (33)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless source_role_harness_suppression --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -30,6 +30,9 @@ The configuration layer should:
   config fingerprinting share that presence rule);
 - reject malformed config with actionable errors;
 - reject unknown keys so typos do not silently change policy;
+- derive misplaced or retired-key recovery hints from the complete parser
+  reason, so comments, values, syntax failures, and quoted key prefixes cannot
+  fabricate or redirect the hint;
 - keep explicit CLI options ahead of repository config;
 - keep explicit LSP initialization options ahead of repository config;
 - allow repository config to set the default analysis mode;
@@ -101,6 +104,17 @@ uses `!` and the completed run exits 3 (#5102). An advisory never changes the ex
 artifact root not covered by git ignore rules, the artifact root tracked by
 git, and an unwritable cache each use `~`. `ripr doctor --help` documents both
 marks. This obligation does not change JSON fields or output schemas.
+
+When a repository has a `.mcp.json`, doctor also checks that it registers a
+`ripr` server whose command is `ripr` and whose args are exactly `mcp`,
+`--stdio` (what `ripr init --mcp` writes). A missing entry, a mismatched entry
+or an unparseable file is an advisory `~` line and an advisory `mcp_config`
+check in JSON; it never changes the exit status. The repair advice follows
+what `ripr init --mcp` can do: run it when the entry is missing (including a
+missing `mcpServers` key), add `--force` to replace a customized `ripr` entry,
+and fix or remove the file first when it is not a JSON object or `mcpServers`
+is not an object, which init refuses. A `.mcp.json` that is a symlink is not
+verified; one over 1 MiB is reported as unreadable.
 
 ### Suppression manifest declarations
 
@@ -370,6 +384,15 @@ Operational failures before a report exists stay exit 2.
 `ripr help --json` projects this as the `doctor_findings` exit kind for
 `cmd:doctor`.
 
+The `git_head` diagnosis shares RIPR-SPEC-0084's HEAD discriminator. A quiet
+failed lookup alone is not an unborn branch: corrupt packed/loose refs,
+recursive ref cycles and inaccessible refs retain Git's reason and a repair
+for the metadata or its read access. Doctor records a failed `git_head` check,
+renders `!`, exits 3, and emits a `doctor_recovery` canonical action naming
+`git_head`; it recommends neither a first commit nor a check command. A
+genuine unborn branch retains the advisory and first-commit guidance, with
+exit 0 when the other checks pass. An unanswered probe never claims unborn.
+
 ### Doctor separates analysis readiness from source-build prerequisites
 
 ```text
@@ -489,6 +512,13 @@ not the symlink spelling.
 
 ## Test Mapping
 
+- `hostile_repos::doctor_distinguishes_healthy_and_unborn_heads`
+- `hostile_repos::corrupt_packed_refs_without_base_is_not_reported_as_unborn`
+- `hostile_repos::corrupt_loose_refs_without_base_are_not_reported_as_unborn`
+- `hostile_repos::looping_ref_without_base_is_not_reported_as_unborn`
+- `hostile_repos::unreadable_ref_without_base_is_not_reported_as_unborn`
+- `output::doctor::tests::unborn_head_verdict_claims_nothing_when_the_probe_never_answered`
+
 - `crates/ripr/src/analysis/diff/path.rs::tests::artifact_root_gitignore_entry_escapes_patterns_separately_from_paths`
   pins literal rule escaping and unchanged raw path spelling.
 - `crates/ripr/src/cli/commands/doctor.rs::tests::ripr_artifact_tracking_untrack_names_only_indexed_roots`
@@ -580,6 +610,7 @@ Current tests:
 - `crates/ripr/src/config.rs::tests::explicit_cli_mode_wins_over_config_mode`
 - `crates/ripr/src/config.rs::tests::config_mode_applies_when_cli_mode_is_not_explicit`
 - `crates/ripr/src/config.rs::tests::malformed_or_unknown_config_is_actionable`
+- `crates/ripr/tests/cli_smoke.rs::config_validate_hints_follow_the_parser_reason_not_source_text`
 - `crates/ripr/src/config.rs::tests::config_rejects_unsafe_suppression_paths`
 - `crates/ripr/src/config.rs::tests::relative_config_paths_reject_nul_before_filesystem_use`
 - `crates/ripr/src/config.rs::tests::relative_config_paths_preserve_normalization_spaces_and_unicode`

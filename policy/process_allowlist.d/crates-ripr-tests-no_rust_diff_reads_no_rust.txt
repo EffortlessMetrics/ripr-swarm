@@ -1,0 +1,1 @@
+crates/ripr/tests/no_rust_diff_reads_no_rust.rs|Command::new|1|cli-tests|Runs the built ripr binary (`check --diff`) against an isolated temp workspace with a private RIPR_CACHE_DIR to prove a docs-only diff reads no workspace Rust. No shell, network, or user-repository mutation.

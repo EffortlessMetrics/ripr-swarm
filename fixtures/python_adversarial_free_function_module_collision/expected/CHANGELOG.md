@@ -566,3 +566,42 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_adversarial_free_function_module_collision (29)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless python_adversarial_free_function_module_collision --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_free_function_module_collision (30)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless python_adversarial_free_function_module_collision --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_free_function_module_collision (31)
+
+Reason:
+RIPR-SPEC-0028: #10708 untested Python owner gains honest add-test/native-verifier/refresh guidance
+
+Command:
+`cargo xtask goldens bless python_adversarial_free_function_module_collision --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

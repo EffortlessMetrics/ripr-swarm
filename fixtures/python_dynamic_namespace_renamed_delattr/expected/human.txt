@@ -3,40 +3,43 @@ mode: fast
 root: fixtures/python_dynamic_namespace_renamed_delattr/input
 config: <cwd>/fixtures/python_dynamic_namespace_renamed_delattr/input/ripr.toml
 
-Summary: 2 probes (0 exposed, 1 weak, 0 unrevealed, 0 no path, 1 unknown); 2 of 2 findings unsuppressed
+Summary: 2 changed behaviors checked: 0 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test path, 1 unclear. 2 found, 0 suppressed by your settings
 
 Changed file(s) by language: python = 2
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 2 changed file(s), 4 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 2 changed file(s), 4 changed line(s), 2 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: this Python preview finding has no repair card (static evidence names no concrete missing discriminator), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
+  Safe next action: this Python preview finding has no repair card (static evidence cannot bind `DISCOUNT_THRESHOLD` to a test input, so the boundary equality cannot become a repair target), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
   File: shop/pricing.py:5
   Language: python
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
-  Canonical gap: gap:python:shop/pricing.py:discounted_total:predicate_boundary:predicate:amount>=discount_threshold
+  Gap ID (for scripts): gap:python:shop/pricing.py:discounted_total:predicate_boundary:predicate:amount>=discount_threshold
   Changed behavior: if amount >= DISCOUNT_THRESHOLD:
-  Missing discriminator: A strong Python oracle reaches `discounted_total`, but static evidence does
-    not place a related test input at the changed predicate boundary. No strong related test call
-    places amount equal to DISCOUNT_THRESHOLD; observed amount values: 20000; observed
-    DISCOUNT_THRESHOLD values: unresolved
+  Missing check: A strong Python oracle reaches `discounted_total`, but static evidence does not
+    place a related test input at the changed predicate boundary. No strong related test call places
+    amount equal to DISCOUNT_THRESHOLD; observed amount values: 20000; observed DISCOUNT_THRESHOLD
+    values: unresolved
   Related test: tests/test_pricing.py:6 test_discount
   Suggested test file: tests/test_pricing.py
   Suggested test: test_discount
   Test node: tests/test_pricing.py::test_discount
-  Verify command: python -m pytest tests/test_pricing.py::test_discount (high)
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_dynamic_namespace_renamed_delattr/input && python -m pytest tests/test_pricing.py::test_discount) (high)
   Evidence: reach yes · infection weak · propagation weak · observation yes · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
-    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
-      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: 1 related Python test(s) found for owner `discounted_total`
     - infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary
     - 6 more detail line(s) in --format human-full
@@ -48,7 +51,7 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (Python preview: 1).
-    - shop/route.py:7 (unknown)
+    - shop/route.py:7 (unknown); kind: field_construction; reason: A mocked module replaces the real implementation, so a passing test may not observe the actual changed behavior.
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

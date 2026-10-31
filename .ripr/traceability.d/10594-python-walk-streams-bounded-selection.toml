@@ -1,0 +1,10 @@
+# Registers the streaming, order-independent Python walk selection (#10594) under RIPR-SPEC-0028.
+[[extend]]
+id = "RIPR-SPEC-0028"
+tests = [
+  "crates/ripr/src/analysis/language/python/bounded_read.rs::workspace_file_selection_is_order_independent_and_holds_at_most_the_cap",
+]
+code = [
+  "crates/ripr/src/analysis/language/python/bounded_read.rs",
+  "crates/ripr/src/analysis/language/python/workspace.rs",
+]

@@ -1,0 +1,28 @@
+[[extend]]
+id = "RIPR-SPEC-0095"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/reexport_chain_tests.rs::unavailable_star_sibling_cannot_supply_negative_export_evidence",
+  "crates/ripr/src/analysis/language/typescript/tests/namespace_reexport_tests.rs::unavailable_star_sibling_prevents_namespace_import_rewrite",
+  "crates/ripr/tests/cli_smoke/typescript_partial_star.rs::typescript_partial_star_index_never_retains_positive_credit",
+]
+fixtures = ["fixtures/typescript_reexport_unparsed_star"]
+code = ["crates/ripr/src/analysis/language/typescript/extraction_cache.rs"]
+outputs = ["fixtures/typescript_reexport_unparsed_star/expected/check.json"]
+
+[[extend]]
+id = "RIPR-SPEC-0108"
+fixtures = ["fixtures/typescript_reexport_unparsed_star"]
+
+[[extend]]
+id = "RIPR-SPEC-0113"
+tests = ["crates/ripr/tests/cli_smoke/typescript_partial_star.rs::typescript_partial_star_index_never_retains_positive_credit"]
+fixtures = ["fixtures/typescript_reexport_unparsed_star"]
+code = [
+  "crates/ripr/src/analysis/language/typescript/classifier.rs",
+  "crates/ripr/src/output/human/triage.rs",
+]
+outputs = [
+  "fixtures/typescript_reexport_unparsed_star/expected/check.json",
+  "fixtures/typescript_reexport_unparsed_star/expected/human.txt",
+  "fixtures/typescript_reexport_unparsed_star/expected/human-full.txt",
+]

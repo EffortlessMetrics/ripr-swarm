@@ -68,7 +68,10 @@ link is established from syntax:
    argument exactly; width/precision arguments (`$`, `*`) refuse.
 5. The argument is built as the type by a struct literal, tuple struct, enum
    variant, the bare type name, or a `let` initialized that way or annotated
-   with the type. Associated consts and factory functions are not typed.
+   with the type. Associated consts and factory functions are not typed,
+   except a path call `Type::name(..)` (bare or `crate`/`self`/`super`
+   prefix, nothing chained) to an inherent associated fn the index declares
+   once, without `self`, synchronously, returning exactly `Self` or the type.
    Path prefixes before the type must be lowercase module segments, so a
    variant named like the type (`Error::DecodeError(..)`,
    `crate::Error::DecodeError(..)`) is not the type.
@@ -105,15 +108,82 @@ all are required:
   `use std::fmt;` does not defeat the pin, because a test never calls `fmt` by
   that bare name.
 
-- Stimulus. The change must be to string-literal text only (the probe's before
-  and after differ only inside string literals). A literal fragment is written
-  whatever the test passes in, so an exact pin sees it. A changed argument
-  (`self.0 * 2`) can leave the output equal for the one value the test chose, so
-  it keeps its prior verdict.
+- Stimulus (#9836). The original lexical literal-edit boundary stays the
+  withholding ceiling for placeholder, argument and cancelling-fragment edits;
+  the syntax-backed reader can also admit a fixed-fragment edit the lexical
+  scanner mis-parsed (a quote-bearing character-literal argument), which keeps
+  its credit because an exact whole-output pin observes a real fixed-fragment
+  change. Ordinary string tokens must validate and decode. The template
+  retains identical ordered placeholder groups after Unicode/ASCII decoding;
+  doubled braces form fixed output; a brace may be the fill character before an
+  alignment marker. Groups and fixed fragments compare by their written source.
+  Exactly one fixed fragment differs and all other source tokens, including
+  arguments and placeholder groups, stay unchanged; re-spelling fixed text prints
+  the same output and keeps the pin (corpus row `idiom-display-string-pin`),
+  while re-spelling a placeholder is a group edit and withholds.
+  Cancelling edits across multiple fragments, argument-string edits
+  that precision can hide, malformed literals/groups and raw strings withhold
+  credit. Nested argument replacements in a width or precision (`{:{}}`,
+  `{:.{}}`) are valid format syntax this reader does not interpret: they
+  withhold credit as a named conservative gap, not as malformed input.
+  This is withhold-only and does not interpret the full format-specifier
+  grammar. Public API controls and the real-producer honesty fixture discriminate
+  the original placeholder false-credit case.
 
-A `format!` or `{}` side, a computed expected string, a weaker assertion such as
-`ends_with`, and `Debug` owners are not read here and keep their prior verdict.
-This credits only; it widens no actionability.
+A `format!` or `{}` side, a computed expected string and a weaker assertion
+such as `ends_with` gain no display-string pin support here. Unsafe edits in a
+Display write tail also cannot recover discriminator credit through generic
+token overlap, and no owner-pin route (helper-chain entry, field projection or
+fallible receipt) confirms such an edit without an admitted output pin. Existing assertion provenance stays intact: the missing evidence
+is observation of the changed output, not execution or macro binding. Debug
+owners retain their prior handling. No actionability widens.
+
+### A helper whose one caller is a `fmt` (#8999)
+
+A changed helper (`sanitize_label`) that `writeln!(f, "{}", sanitize_label(l))`
+calls from a `Display`/`Debug` `fmt` is reached by the same dispatch, one hop
+up. `assert_eq!(\n    merge.to_string(),\n    "a b\n"\n)` never names `fmt` or the
+helper, so name matching reported "no test is seen calling sanitize_label".
+
+The helper-transfer chain already resolves the helper's unique caller (a helper
+with a second caller declines, and a hop through a local macro carries reach
+only). When a resolved hop's caller is a `Display`/`Debug` `fmt` owner, a test
+that satisfies every link of Behavior items 1-6 for that `fmt` is related to the
+helper as `helper_owner_call`, the same relation a test calling a tested
+wrapper earns. It is judged separately from a direct call of the entry, so it
+rides none of that route's cross-package bypasses: only an in-package test
+qualifies.
+
+This is reach only. The helper's result is not shown to be forwarded into the
+pinned output, so the finding reads `propagation_unknown`
+(`helper_result_not_forwarded`) instead of `weakly_exposed` with "no test is
+seen calling", and never `exposed`. A type annotation must be bare or
+prefixed only by `crate`, `self` or `super` (`other_crate::Merge` may be a
+foreign type that shares the name), and a struct literal or tuple-struct
+initializer (`let merge = other_crate::Merge { .. };`) names the local type
+under the same prefix rule (bare, `crate`, `self` or `super`; #8999). A factory receiver without a type
+annotation (`let merge = Merge::new(..)`) is typed only through that
+unique-return rule (#8999); a `Result`/`Option` wrapper, another return
+type, a chained `.unwrap()`, a missing or doubled declaration and a trait-only
+constructor stay unrelated. The other trait's placeholder, a
+different type and a type declared twice stay unrelated.
+
+The route applies the direct route's entity-identity refusals to the `fmt`
+caller's type: a `use other::Type as Merge` rename, a same-named type in the
+test's module scope or an out-of-line parent module, and a shadowing trait all
+refuse. Every hop from the helper up through the `fmt` caller must be a direct
+call; a macro-argument hop anywhere on that path carries no formatting reach.
+It is evaluated independently of a name-only call: an unrelated same-named
+method call (`other.sanitize_label()`) in the test neither blocks nor
+downgrades it.
+
+Named limit: the route does not look at how `fmt` uses the helper. A helper
+whose result is dropped (`let _ = sanitize_label(l);`) or called only in a
+conditional branch or loop body still reads as reached, because the existing
+helper-transfer chain records one call site and no control-flow condition. This
+is acceptable only because the route credits reach and nothing else: such a
+finding stays `propagation_unknown`, never `exposed`. A hop through a local
+`macro_rules!` identifier argument carries no formatting reach.
 
 ## Required Evidence
 
@@ -124,6 +194,11 @@ This credits only; it widens no actionability.
   macros, associated const/factory, inherent `to_string`, turbofish/closure
   comma argument shifts.
 - Discriminator: Display and Debug impls of one type are told apart.
+- Helper entry (#8999): positive for `to_string()` in a multi-line
+  `assert_eq!` on an annotated or struct-literal receiver; negative for an
+  unproven factory receiver (positive for an indexed `Self`-returning inherent constructor), another type, the other trait, a doubly declared
+  type, a path-qualified foreign annotation or initializer, a macro-argument hop, a test in a
+  separate file (positive), a second caller of the helper, and a non-Display/Debug `fmt` entry.
 
 ## Non-Goals
 
@@ -145,11 +220,16 @@ This credits only; it widens no actionability.
 
 ## Test Mapping
 
+- `crates/ripr/tests/fmt_helper_entry_dispatch.rs`: public-API controls for
+  the helper-entry route, asserting the rendered `propagation_unknown` class.
 - `crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs`: the
   `tests` module, one test per Required Evidence bullet, plus the Display
   string pin tests.
 - `crates/ripr/src/analysis/classify/propagation_witness.rs`:
   `fmt_owner_tail_line_reads_only_a_write_into_the_formatter_parameter`.
+- `fixtures/rust-verdict-corpus` case `spec0236-seam-boundary-via-display-impl`
+  (helper `suffix` called only by `Display::fmt`; verdict `gap` -> `limited`,
+  inside its acceptable set).
 - `fixtures/rust-verdict-corpus` case `idiom-display-string-pin` (runtime
   truth `discriminated`, verdict `credited`).
 
@@ -158,6 +238,9 @@ This credits only; it widens no actionability.
 - `crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs`:
   `FmtContext`, `test_dispatches_to_fmt`, `macro_dispatch`, `args_dispatch`,
   `expr_has_type`.
+- `crates/ripr/src/analysis/classify/related_tests.rs`: `fmt_entry_hops` and
+  `dispatches_to_helper_fmt_entry` (helper-entry route) and the candidate
+  prefilter for a hop whose caller is a `fmt` owner.
 - `crates/ripr/src/analysis/classify/related_tests.rs`: candidate prefilter,
   `calls_owner` and `owner_call_relation_reason` wiring.
 - `crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs`:

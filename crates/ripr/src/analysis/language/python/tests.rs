@@ -1100,6 +1100,62 @@ class TestTwice:
     );
 }
 
+/// #10685: a mark held by a module name (`@cases`) parametrizes the test as
+/// much as the spelled decorator, so literal-instance fixture credit, which
+/// skips parametrized tests, cannot treat its argname as a fixture. A name
+/// bound to anything else, or rebound, does not.
+#[test]
+fn a_module_name_holding_a_parametrize_mark_parametrizes_the_test() {
+    let flags = |source: &str| -> Vec<(String, bool, Vec<String>)> {
+        extract_tests(Path::new("tests/test_account.py"), source)
+            .into_iter()
+            .map(|test| (test.name, test.parametrized, test.direct_parametrized))
+            .collect()
+    };
+    assert_eq!(
+        flags(
+            "import pytest as pt\n\ncases = pt.mark.parametrize(\"account\", [1])\n\n@cases\ndef test_a(account):\n    pass\n"
+        ),
+        vec![("test_a".to_string(), true, vec!["account".to_string()])]
+    );
+    for source in [
+        "import pytest\n\ncases = pytest.mark.slow\n\n@cases\ndef test_a(account):\n    pass\n",
+        "import pytest\n\ncases = pytest.mark.parametrize(\"account\", [1])\ncases = pytest.mark.slow\n\n@cases\ndef test_a(account):\n    pass\n",
+    ] {
+        assert_eq!(
+            flags(source),
+            vec![("test_a".to_string(), false, Vec::new())],
+            "{source}"
+        );
+    }
+}
+
+/// #10867: the literal cases come from the same pytest mark the routing read
+/// accepts. A spelled mark whose root may be another library's records no
+/// rows; pytest's mark reached through an alias does.
+#[test]
+fn parametrize_cases_follow_the_routing_read_of_the_mark() {
+    let cases = |import: &str| -> Vec<Option<usize>> {
+        let source = format!(
+            "{import}\n\n@{root}.mark.parametrize(\"account\", [1, 2])\ndef test_a(account):\n    pass\n",
+            root = if import.contains(" as pt") {
+                "pt"
+            } else {
+                "pytest"
+            }
+        );
+        extract_tests(Path::new("tests/test_account.py"), &source)
+            .into_iter()
+            .map(|test| test.parametrize.map(|found| found.cases.len()))
+            .collect()
+    };
+    assert_eq!(cases("import pytest"), vec![Some(2)]);
+    assert_eq!(cases("import pytest as pt"), vec![Some(2)]);
+    for import in ["import mylib as pytest", "import pytest\nimport pytest"] {
+        assert_eq!(cases(import), vec![None], "{import}");
+    }
+}
+
 #[test]
 fn extract_tests_recognizes_pytest_parametrize_and_unittest() {
     let tests = extract_tests(
@@ -4540,6 +4596,71 @@ fn caplog_text_the_edit_removes_is_credited_and_one_it_keeps_is_a_gap() -> Resul
 }
 
 #[test]
+fn a_caplog_that_is_not_the_builtin_fixture_keeps_abstaining() -> Result<(), String> {
+    // #9546: a test that does not request `caplog`, or whose module or
+    // conftest redefines the fixture, reads some other object.
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    let classify = |mut tests: Vec<PythonTest>| {
+        if let Some(test) = tests.first_mut() {
+            test.fixture_defs.push(PythonFixtureDef {
+                name: "caplog".to_string(),
+                binding: "caplog".to_string(),
+                file: PathBuf::from("tests/conftest.py"),
+                body_text: "def caplog():\n    return Recorder()\n".to_string(),
+                imports: Vec::new(),
+                literal_construction: None,
+                inert_tool: None,
+                literal_params: None,
+                isolated: false,
+                scope_imports: Vec::new(),
+            });
+        }
+        tests
+    };
+    let build = || {
+        extract_tests(
+            Path::new("tests/test_audit.py"),
+            &format!("import logging\nfrom src.audit import check_balance\n\n{PINNED_TEST}"),
+        )
+    };
+    let finding = |tests: &[PythonTest]| {
+        classify_change_with_source(
+            Path::new("src/audit.py"),
+            6,
+            &format!("        {removed}"),
+            Some("        log.warning(\"low balance: %s\", balance)"),
+            &extract_owners(Path::new("src/audit.py"), AUDIT_OWNER),
+            tests,
+            Some(AUDIT_OWNER),
+        )
+        .map(|finding| (finding.class, finding.static_limit_kind))
+    };
+    // Positive control: the builtin fixture is credited.
+    assert_eq!(finding(&build()), Some((ExposureClass::Exposed, None)));
+    // A redefined fixture abstains.
+    assert_eq!(
+        finding(&classify(build())),
+        Some((
+            ExposureClass::StaticUnknown,
+            Some(StaticLimitKind::UnsupportedSyntax)
+        ))
+    );
+    // A test that never requests `caplog` abstains.
+    let mut tests = build();
+    if let Some(test) = tests.first_mut() {
+        test.fixtures.clear();
+    }
+    assert_eq!(
+        finding(&tests),
+        Some((
+            ExposureClass::StaticUnknown,
+            Some(StaticLimitKind::UnsupportedSyntax)
+        ))
+    );
+    Ok(())
+}
+
+#[test]
 fn caplog_text_outside_the_bounded_shape_keeps_abstaining() -> Result<(), String> {
     let unread = (
         ExposureClass::StaticUnknown,
@@ -5193,7 +5314,14 @@ fn classify_change_suppresses_repair_guidance_for_non_actionable_python_cases() 
     .ok_or_else(|| "unrelated return change should classify".to_string())?;
     assert_eq!(no_static_path.class, ExposureClass::NoStaticPath);
     assert!(no_static_path.activation.missing_discriminators.is_empty());
-    assert!(no_static_path.recommended_next_step.is_none());
+    // #10708: the directly resolvable owner with no static link now carries
+    // the honest generic add-test / native-verifier / refresh route.
+    assert!(
+        no_static_path
+            .recommended_next_step
+            .as_deref()
+            .is_some_and(|step| step.contains("no statically linked test calls `apply_discount(`"))
+    );
 
     Ok(())
 }
@@ -5332,6 +5460,80 @@ fn find_related_tests_matches_import_alias_call() {
     assert_eq!(related[0].name, "test_discount_alias");
     assert_eq!(related[0].oracle_kind, OracleKind::ExactValue);
     assert_eq!(related[0].oracle_strength, OracleStrength::Strong);
+}
+
+/// #10750: a large test set is scanned on the rayon workers. The candidates
+/// and their order must equal the sequential scan's, including the
+/// alternation of related and unrelated tests in the input.
+#[test]
+fn related_test_candidates_parallel_scan_matches_sequential_order() {
+    let owners = extract_owners(
+        Path::new("src/pricing.py"),
+        "def apply_discount(amount):\n    return amount - 10\n",
+    );
+    let mut source = "from src.pricing import apply_discount\n\n".to_string();
+    for index in 0..700 {
+        if index % 3 == 0 {
+            source.push_str(&format!(
+                "def test_other_{index}():\n    assert other({index}) == {index}\n\n"
+            ));
+        } else if index % 3 == 1 {
+            source.push_str(&format!(
+                "def test_discount_{index}():\n    assert apply_discount({index}) == {}\n\n",
+                index - 10
+            ));
+        } else {
+            source.push_str(&format!(
+                "def test_discount_weak_{index}():\n    assert apply_discount({index})\n\n"
+            ));
+        }
+    }
+    let tests = extract_tests(Path::new("tests/test_pricing.py"), &source);
+    assert_eq!(tests.len(), 700, "every generated test is extracted");
+
+    let related = related_test_candidates(&owners[0], &tests);
+
+    let sequential: Vec<_> = tests
+        .iter()
+        .filter_map(|test| related_test_relation(test, &owners[0]).map(|relation| (test, relation)))
+        .collect();
+    assert_eq!(sequential.len(), related.len());
+    assert!(
+        related
+            .iter()
+            .all(|candidate| sequential.iter().any(|(test, relation)| {
+                std::ptr::eq(*test, candidate.test) && *relation == candidate.relation
+            })),
+        "every candidate keeps its sequentially computed relation kind"
+    );
+    let strong_first = related
+        .iter()
+        .position(|candidate| candidate.test.name.starts_with("test_discount_weak_"));
+    assert_eq!(
+        related.len(),
+        466,
+        "two of every three tests call the owner"
+    );
+    assert_eq!(
+        strong_first,
+        Some(233),
+        "every strong exact-value test ranks before every weak truthiness test"
+    );
+    let names: Vec<&str> = related.iter().map(|c| c.test.name.as_str()).collect();
+    let mut strong: Vec<&str> = sequential
+        .iter()
+        .map(|(test, _)| test.name.as_str())
+        .filter(|name| !name.starts_with("test_discount_weak_"))
+        .collect();
+    strong.sort_unstable();
+    let mut weak: Vec<&str> = sequential
+        .iter()
+        .map(|(test, _)| test.name.as_str())
+        .filter(|name| name.starts_with("test_discount_weak_"))
+        .collect();
+    weak.sort_unstable();
+    let expected: Vec<&str> = strong.into_iter().chain(weak).collect();
+    assert_eq!(names, expected, "parallel order equals the sequential sort");
 }
 
 #[test]
@@ -5788,6 +5990,132 @@ fn classify_change_unresolved_pytest_fixture_fails_closed() -> Result<(), String
             .iter()
             .any(|entry| entry.contains("Static limit `unresolved_pytest_fixture`"))
     );
+    // The blocker is named so the reader knows which fixture to open (#10979).
+    assert!(
+        finding.evidence.iter().any(|entry| entry
+            == "unresolved_fixtures: discount_case (test_apply_discount_fixture_case)"),
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+/// Classify the changed predicate against a parametrized pytest test whose
+/// module text is `module_text` (#10979).
+fn classify_parametrized_module(module_text: &str) -> Result<Finding, String> {
+    let owners = extract_owners(
+        Path::new("src/pricing.py"),
+        "def apply_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
+    );
+    let tests = extract_tests(Path::new("tests/test_pricing.py"), module_text);
+    assert_eq!(
+        tests.len(),
+        1,
+        "fixture must parse exactly one test: {tests:?}"
+    );
+    assert_eq!(
+        tests[0].direct_parametrized,
+        vec!["amount".to_string(), "expected".to_string()],
+        "fixture must read both parametrize argnames"
+    );
+    classify_change(
+        Path::new("src/pricing.py"),
+        2,
+        "    if amount >= threshold:",
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "changed predicate inside owner should classify".to_string())
+}
+
+const PARAMETRIZED_TEST: &str = "@pytest.mark.parametrize((\"amount\", \"expected\"), [(5, 5), (50, 40)])\ndef test_apply_discount(amount, expected):\n    assert apply_discount(amount, 10) == expected\n";
+
+#[test]
+fn classify_change_parametrize_argnames_survive_prose_that_names_dynamic_writers()
+-> Result<(), String> {
+    // Words such as `vars` and `reload` in a docstring or a comment write
+    // nothing (#10979): the parametrize argnames are still values pytest
+    // passes to the test, not fixtures.
+    let module_text = format!(
+        "import pytest\nfrom src.pricing import apply_discount\n\n# Flask --reload/--no-reload and setattr are only prose here.\n{PARAMETRIZED_TEST}\ndef helper_other():\n    \"\"\"Env vars are plain strings; globals() and exec are not called.\"\"\"\n    assert apply_discount(5, 10) == 5\n"
+    );
+    let finding = classify_parametrized_module(&module_text)?;
+    assert_ne!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::UnresolvedPytestFixture),
+        "{:?}",
+        finding.evidence
+    );
+    assert_ne!(finding.class, ExposureClass::StaticUnknown);
+    Ok(())
+}
+
+#[test]
+fn classify_change_parametrize_argnames_stay_unsettled_when_code_writes_the_namespace()
+-> Result<(), String> {
+    // The discriminating negative: the same module with a real dynamic
+    // writer in code, an f-string expression, or `sys.modules` keeps the
+    // fail-closed fixture limit.
+    for writer in [
+        "vars()\n",
+        "globals()[\"pytest\"] = object()\n",
+        "label = f\"{globals()}\"\n",
+        "import sys\nsys . modules[\"pytest\"] = object()\n",
+        "setattr(object(), \"x\", 1)\n",
+        "eval(\"globals().update(x=1)\")\n",
+        "import pydoc\npydoc.locate(\"importlib.reload\")(object())\n",
+        "getattr(object(), \"__setattr__\")(\"x\", 1)\n",
+    ] {
+        let module_text = format!(
+            "import pytest\nfrom src.pricing import apply_discount\n\n{writer}\n{PARAMETRIZED_TEST}"
+        );
+        let finding = classify_parametrized_module(&module_text)?;
+        assert_eq!(
+            finding.static_limit_kind,
+            Some(StaticLimitKind::UnresolvedPytestFixture),
+            "writer {writer:?} must keep the limit: {:?}",
+            finding.evidence
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn classify_change_names_unsettled_indirect_values_apart_from_known_fixtures() -> Result<(), String>
+{
+    let owners = extract_owners(
+        Path::new("src/pricing.py"),
+        "def apply_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
+    );
+    // `indirect=` is a call ripr cannot read: `amount` is a parametrize value
+    // that may or may not pass through a fixture, while `rate` is a plain
+    // fixture the test takes (#10979).
+    let tests = extract_tests(
+        Path::new("tests/test_pricing.py"),
+        "import pytest\nfrom src.pricing import apply_discount\n\n@pytest.mark.parametrize(\"amount\", [5], indirect=flag())\ndef test_apply_discount(amount, rate):\n    assert apply_discount(amount, rate) == 5\n",
+    );
+    let finding = classify_change(
+        Path::new("src/pricing.py"),
+        2,
+        "    if amount >= threshold:",
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "changed predicate inside owner should classify".to_string())?;
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::UnresolvedPytestFixture)
+    );
+    for expected in [
+        "unresolved_fixtures: rate (test_apply_discount)",
+        "unsettled_indirect_params: amount (test_apply_discount)",
+    ] {
+        assert!(
+            finding.evidence.iter().any(|entry| entry == expected),
+            "{expected} missing from {:?}",
+            finding.evidence
+        );
+    }
     Ok(())
 }
 
@@ -5901,7 +6229,49 @@ fn classify_change_returns_no_static_path_without_related_test() -> Result<(), S
     assert_eq!(finding.ripr.reach.state, StageState::No);
     assert_eq!(finding.ripr.infect.state, StageState::Yes);
     assert_eq!(finding.ripr.propagate.state, StageState::Yes);
-    assert!(finding.recommended_next_step.is_none());
+    // #10708: the directly resolvable owner with no static link gains honest
+    // generic guidance — the ordered add-test / native-verifier / refresh
+    // route — while classification, confidence, and related-test evidence
+    // stay put.
+    assert!(
+        (finding.confidence - 0.4).abs() < f32::EPSILON,
+        "no-static-path confidence stays 0.4; got {}",
+        finding.confidence
+    );
+    assert!(finding.static_limit_kind.is_none());
+    assert!(finding.related_tests.is_empty());
+    let step = finding
+        .recommended_next_step
+        .as_deref()
+        .ok_or_else(|| "owner with no static link must carry guidance".to_string())?;
+    for expected in [
+        "no statically linked test calls `apply_discount(`",
+        "add a test that calls the changed owner",
+        "an exact return-value assertion",
+        "run the project's native Python test command",
+        "rerun `ripr check`",
+    ] {
+        assert!(
+            step.contains(expected),
+            "next step must contain {expected:?}; got: {step}"
+        );
+    }
+    for forbidden in [
+        "python -m pytest",
+        "pytest",
+        "unittest",
+        "tests/test_",
+        "test_pricing",
+    ] {
+        assert!(
+            !step.contains(forbidden),
+            "no invented exact file/command may appear; found {forbidden:?} in: {step}"
+        );
+    }
+    assert!(
+        !step.contains("no test "),
+        "must not claim universal test absence; got: {step}"
+    );
     Ok(())
 }
 
@@ -5928,6 +6298,120 @@ fn classify_change_ignores_unrelated_text_mentions() -> Result<(), String> {
 
     assert_eq!(finding.class, ExposureClass::NoStaticPath);
     assert!(finding.related_tests.is_empty());
+    // #10708 negative: a text-only mention is not a related test, reach,
+    // oracle, or repair credit — but the owner with no static link keeps the
+    // same honest generic guidance as the no-link case, not silence.
+    assert_eq!(finding.ripr.reach.state, StageState::No);
+    assert!(finding.static_limit_kind.is_none());
+    let step = finding
+        .recommended_next_step
+        .as_deref()
+        .ok_or_else(|| "text-only mention must not silence guidance".to_string())?;
+    assert!(
+        step.contains("no statically linked test calls `apply_discount(`"),
+        "guidance must keep the statically-linked wording; got: {step}"
+    );
+    assert!(
+        step.contains("add a test that calls the changed owner"),
+        "guidance must keep the ordered add-test route; got: {step}"
+    );
+    Ok(())
+}
+
+#[test]
+fn transitive_reach_witness_silences_with_no_link_guidance() -> Result<(), String> {
+    // TABLE_SOURCE in transitive_reach.rs: _get_padding_width reachable via
+    // render; the test constructs Table but never calls the changed method.
+    // #10708 requires the stale direct-call advice to not survive the
+    // witness: class, evidence, and readiness stay, guidance goes silent.
+    let source = "class Table:\n    def __init__(self):\n        self.columns = [1, 2]\n\n    def __rich_console__(self, console, options):\n        return self._calculate_column_widths()\n\n    def _calculate_column_widths(self):\n        return self._get_padding_width(0)\n\n    def _get_padding_width(self, column_index):\n        if column_index == len(self.columns) - 1:\n            return 0\n        return 1\n";
+    let changed = "        if column_index == len(self.columns) - 1:";
+    let line = source
+        .lines()
+        .position(|line| line == changed)
+        .ok_or_else(|| "fixture source must contain the changed line".to_string())?
+        + 1;
+    let owners = extract_owners(Path::new("src/table.py"), source);
+    let tests = extract_tests(
+        Path::new("tests/test_table.py"),
+        "from src.table import Table\n\ndef test_print_table():\n    table = Table()\n    assert table is not None\n",
+    );
+    let Some(finding) = classify_change(Path::new("src/table.py"), line, changed, &owners, &tests)
+    else {
+        return Err("changed line inside owner should classify".to_string());
+    };
+    assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    assert!(finding.related_tests.is_empty());
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::PythonTransitiveReachUnresolved)
+    );
+    assert!(finding.recommended_next_step.is_none());
+    assert!(
+        finding
+            .missing
+            .iter()
+            .all(|line| !line.contains("No Python test references")),
+        "witnessed limitation must not claim no tests were found: {:?}",
+        finding.missing
+    );
+    Ok(())
+}
+
+#[test]
+fn typer_sibling_helper_keeps_guidance_but_registered_command_stays_silent() -> Result<(), String> {
+    // #10708 Devin thread 1 (executable-confirmed): a Typer app elsewhere in
+    // the module must not silence an unrelated plain helper; a function the
+    // decorator registers as a command stays silent.
+    let source = "import typer\n\napp = typer.Typer()\n\ndef calculate_total(x):\n    return x + 2\n\n@app.command()\ndef serve(port):\n    return port\n";
+    let owners = extract_owners(Path::new("src/billing.py"), source);
+    let tests = extract_tests(
+        Path::new("tests/test_other.py"),
+        "def test_other():\n    assert True\n",
+    );
+    let helper_changed = "    return x + 2";
+    let helper_line = source
+        .lines()
+        .position(|line| line == helper_changed)
+        .ok_or_else(|| "fixture source must contain the helper line".to_string())?
+        + 1;
+    let Some(helper) = classify_change(
+        Path::new("src/billing.py"),
+        helper_line,
+        helper_changed,
+        &owners,
+        &tests,
+    ) else {
+        return Err("helper change should classify".to_string());
+    };
+    assert_eq!(helper.class, ExposureClass::NoStaticPath);
+    assert!(helper.related_tests.is_empty());
+    assert!(helper.static_limit_kind.is_none());
+    let step = helper
+        .recommended_next_step
+        .as_deref()
+        .ok_or_else(|| "plain helper beside a Typer app must carry guidance".to_string())?;
+    assert!(
+        step.contains("no statically linked test calls `calculate_total(`"),
+        "guidance must name the helper; got: {step}"
+    );
+    let command_changed = "    return port";
+    let command_line = source
+        .lines()
+        .position(|line| line == command_changed)
+        .ok_or_else(|| "fixture source must contain the command line".to_string())?
+        + 1;
+    let Some(command) = classify_change(
+        Path::new("src/billing.py"),
+        command_line,
+        command_changed,
+        &owners,
+        &tests,
+    ) else {
+        return Err("command change should classify".to_string());
+    };
+    assert_eq!(command.class, ExposureClass::NoStaticPath);
+    assert!(command.recommended_next_step.is_none());
     Ok(())
 }
 
@@ -5985,18 +6469,33 @@ fn generous_walk_limits() -> PythonDiffWalkLimits {
     }
 }
 
+/// Past the cap, a refused file that names what the diff changes keeps the
+/// run partial (#10785): `b.py` calls the changed `a`, and the changed file
+/// takes the only slot.
 #[test]
 fn analyze_diff_discloses_workspace_file_count_cap() -> Result<(), String> {
     let root = unique_test_root("diff-walk-count-cap");
     std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
     write_repo_file(&root.join("a.py"), "def a():\n    return 1\n")?;
-    write_repo_file(&root.join("b.py"), "def b():\n    return 2\n")?;
+    write_repo_file(
+        &root.join("b.py"),
+        "from a import a\n\n\ndef b():\n    return a()\n",
+    )?;
     let options = repo_options(&root);
     let limits = PythonDiffWalkLimits {
         max_workspace_files: 1,
         ..generous_walk_limits()
     };
-    let result = PythonAdapter::analyze_diff_with_limits(&options, &[], limits)?;
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("a.py"),
+        added_lines: vec![ChangedLine {
+            line: 2,
+            text: "    return 1".to_string(),
+            new_side_line: 2,
+        }],
+        removed_lines: Vec::new(),
+    }];
+    let result = PythonAdapter::analyze_diff_with_limits(&options, &changed_files, limits)?;
     assert_eq!(
         result.limitations.len(),
         1,
@@ -6012,8 +6511,8 @@ fn analyze_diff_discloses_workspace_file_count_cap() -> Result<(), String> {
     assert_eq!(limitation.affected_items, Some(1));
     let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
     assert!(
-        detail.contains("1 discovered .py file(s) were not analyzed"),
-        "refused count missing from detail: {detail}"
+        detail.contains("1 of the 1 discovered .py file(s) that may reach the diff"),
+        "refused reaching count missing from detail: {detail}"
     );
     assert!(
         detail.contains("RIPR_PYTHON_MAX_WORKSPACE_FILES"),
@@ -6194,6 +6693,593 @@ fn declared_handwritten_file_under_build_dir_is_analyzed() -> Result<(), String>
             declared.changed_files
         ));
     }
+    Ok(())
+}
+
+/// #10461: a changed file that sorts past the workspace cap is still read and
+/// classified; the cap refuses only unchanged context, and says so.
+#[test]
+fn analyze_diff_keeps_a_late_sorting_changed_file_past_the_cap() -> Result<(), String> {
+    let root = unique_test_root("diff-walk-cap-keeps-changed");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    write_repo_file(
+        &root.join("a.py"),
+        "from zz_changed import price\n\n\ndef a():\n    return price(1)\n",
+    )?;
+    write_repo_file(&root.join("b.py"), "def b():\n    return 2\n")?;
+    write_repo_file(
+        &root.join("zz_changed.py"),
+        "def price(amount):\n    return amount + 1\n",
+    )?;
+    let options = repo_options(&root);
+    let limits = PythonDiffWalkLimits {
+        max_workspace_files: 1,
+        ..generous_walk_limits()
+    };
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("zz_changed.py"),
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            new_side_line: 2,
+            text: "    return amount + 1".to_string(),
+        }],
+        removed_lines: Vec::new(),
+    }];
+    let result = PythonAdapter::analyze_diff_with_limits(&options, &changed_files, limits)?;
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    assert!(
+        result
+            .findings
+            .iter()
+            .any(|finding| finding.probe.location.file == Path::new("zz_changed.py")),
+        "the changed file past the cap must still be classified, got {:?}",
+        result.findings
+    );
+    let [limitation] = result.limitations.as_slice() else {
+        return Err(format!(
+            "exactly the count-cap disclosure is expected, got {:?}",
+            result.limitations
+        ));
+    };
+    assert_eq!(limitation.kind, AnalysisLimitationKind::DiffScopeOversized);
+    assert_eq!(
+        limitation.affected_items,
+        Some(1),
+        "the changed file takes the only slot, so `a.py`, which calls `price`, is refused; \
+         `b.py` names nothing the diff changes and is not counted"
+    );
+    let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
+    assert!(
+        detail.contains("changed .py files are kept past this cap"),
+        "disclosure must say changed files were kept: {detail}"
+    );
+    Ok(())
+}
+
+/// #10785: past the cap, the files that name the changed owner and the helper
+/// module their test imports are admitted first. When every refused file
+/// names nothing the diff changes, the run is complete and its findings equal
+/// the uncapped run's, related tests and helper-backed oracle included.
+#[test]
+fn analyze_diff_over_cap_matches_uncapped_when_no_refused_file_can_reach() -> Result<(), String> {
+    let root = unique_test_root("diff-walk-cap-reach-differential");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    write_repo_file(
+        &root.join("pricing.py"),
+        "def discount(amount):\n    if amount > 100:\n        return amount - 10\n    return amount\n",
+    )?;
+    write_repo_file(
+        &root.join("tests/test_pricing.py"),
+        "from pricing import discount\nfrom tests.helpers import assert_price\n\n\ndef test_discount_applies():\n    assert discount(150) == 140\n\n\ndef test_no_discount_at_boundary():\n    assert_price(discount(100), 100)\n",
+    )?;
+    write_repo_file(
+        &root.join("tests/helpers.py"),
+        "def assert_price(actual, expected):\n    assert actual == expected\n",
+    )?;
+    // Unrelated modules that sort ahead of `tests/`: the earliest-path cap
+    // used to keep these and refuse the test.
+    for index in 0..30 {
+        write_repo_file(
+            &root.join(format!("filler/m{index:02}.py")),
+            &format!("def f{index}(value):\n    return value + {index}\n"),
+        )?;
+    }
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("pricing.py"),
+        added_lines: vec![ChangedLine {
+            line: 2,
+            text: "    if amount > 100:".to_string(),
+            new_side_line: 2,
+        }],
+        removed_lines: vec![ChangedLine {
+            line: 2,
+            text: "    if amount >= 100:".to_string(),
+            new_side_line: 2,
+        }],
+    }];
+    let options = repo_options(&root);
+    let capped = PythonAdapter::analyze_diff_with_limits(
+        &options,
+        &changed_files,
+        PythonDiffWalkLimits {
+            max_workspace_files: 3,
+            ..generous_walk_limits()
+        },
+    )?;
+    let uncapped =
+        PythonAdapter::analyze_diff_with_limits(&options, &changed_files, generous_walk_limits())?;
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    assert!(
+        uncapped.limitations.is_empty(),
+        "the uncapped reference must be complete: {:?}",
+        uncapped.limitations
+    );
+    let related: Vec<usize> = uncapped
+        .findings
+        .iter()
+        .map(|finding| finding.related_tests.len())
+        .collect();
+    assert!(
+        related.contains(&2),
+        "fixture must relate both tests in the uncapped run, got {related:?}"
+    );
+    assert!(
+        capped.limitations.is_empty(),
+        "only files that name nothing the diff changes were refused, so the run is complete: {:?}",
+        capped
+            .limitations
+            .iter()
+            .map(|limitation| limitation.bounded_detail.clone())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(capped.findings, uncapped.findings);
+    Ok(())
+}
+
+/// #10785: a test that reaches the changed owner only through a `conftest.py`
+/// fixture names neither the owner nor its module, yet the adapter relates it
+/// (`fixture_owner_call`). The reach scan follows the fixture, so the capped
+/// run keeps the test and matches the uncapped run.
+#[test]
+fn analyze_diff_over_cap_keeps_a_test_reaching_the_owner_through_a_fixture() -> Result<(), String> {
+    let root = unique_test_root("diff-walk-cap-reach-fixture");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    write_repo_file(
+        &root.join("orders.py"),
+        "def make_order(count):\n    if count > 2:\n        return count * 3\n    return count\n",
+    )?;
+    write_repo_file(
+        &root.join("tests/conftest.py"),
+        "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture\ndef order():\n    return make_order(3)\n",
+    )?;
+    write_repo_file(
+        &root.join("tests/test_totals.py"),
+        "def test_total(order):\n    assert order == 9\n",
+    )?;
+    for index in 0..10 {
+        write_repo_file(
+            &root.join(format!("filler/m{index:02}.py")),
+            &format!("def f{index}(value):\n    return value + {index}\n"),
+        )?;
+    }
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("orders.py"),
+        added_lines: vec![ChangedLine {
+            line: 2,
+            text: "    if count > 2:".to_string(),
+            new_side_line: 2,
+        }],
+        removed_lines: Vec::new(),
+    }];
+    let options = repo_options(&root);
+    let capped = PythonAdapter::analyze_diff_with_limits(
+        &options,
+        &changed_files,
+        PythonDiffWalkLimits {
+            max_workspace_files: 3,
+            ..generous_walk_limits()
+        },
+    )?;
+    let uncapped =
+        PythonAdapter::analyze_diff_with_limits(&options, &changed_files, generous_walk_limits())?;
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    let related: Vec<usize> = uncapped
+        .findings
+        .iter()
+        .map(|finding| finding.related_tests.len())
+        .collect();
+    assert!(
+        related.iter().any(|count| *count > 0),
+        "fixture must relate the test in the uncapped run, got {related:?}"
+    );
+    assert!(
+        capped.limitations.is_empty(),
+        "only unrelated files were refused: {:?}",
+        capped.limitations
+    );
+    assert_eq!(capped.findings, uncapped.findings);
+    Ok(())
+}
+
+/// #10785: the fixture relation the analysis supports holds when the
+/// conftest spells the decorator or the owner through an import alias, so
+/// reach admission must keep the test that only takes the fixture.
+fn assert_capped_fixture_test_matches_uncapped(label: &str, conftest: &str) -> Result<(), String> {
+    let root = unique_test_root(label);
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    write_repo_file(
+        &root.join("orders.py"),
+        "def make_order(count):\n    if count > 2:\n        return count * 3\n    return count\n",
+    )?;
+    write_repo_file(&root.join("tests/conftest.py"), conftest)?;
+    write_repo_file(
+        &root.join("tests/test_totals.py"),
+        "def test_total(order):\n    assert order == 9\n",
+    )?;
+    for index in 0..10 {
+        write_repo_file(
+            &root.join(format!("filler/m{index:02}.py")),
+            &format!("def f{index}(value):\n    return value + {index}\n"),
+        )?;
+    }
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("orders.py"),
+        added_lines: vec![ChangedLine {
+            line: 2,
+            text: "    if count > 2:".to_string(),
+            new_side_line: 2,
+        }],
+        removed_lines: Vec::new(),
+    }];
+    let options = repo_options(&root);
+    let capped = PythonAdapter::analyze_diff_with_limits(
+        &options,
+        &changed_files,
+        PythonDiffWalkLimits {
+            max_workspace_files: 3,
+            ..generous_walk_limits()
+        },
+    )?;
+    let uncapped =
+        PythonAdapter::analyze_diff_with_limits(&options, &changed_files, generous_walk_limits())?;
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    let related: Vec<usize> = uncapped
+        .findings
+        .iter()
+        .map(|finding| finding.related_tests.len())
+        .collect();
+    assert!(
+        related.iter().any(|count| *count > 0),
+        "{label}: the fixture must relate the test in the uncapped run, got {related:?}"
+    );
+    assert!(
+        capped.limitations.is_empty(),
+        "{label}: only unrelated files were refused: {:?}",
+        capped.limitations
+    );
+    assert_eq!(capped.findings, uncapped.findings, "{label}");
+    // Equal findings could still both miss the route under test; the capped
+    // run must relate the fixture-only test itself.
+    assert!(
+        capped
+            .findings
+            .iter()
+            .flat_map(|finding| &finding.related_tests)
+            .any(|test| test.name.ends_with("test_total")
+                && test.file.ends_with("tests/test_totals.py")),
+        "{label}: the capped run must relate test_total"
+    );
+    Ok(())
+}
+
+#[test]
+fn analyze_diff_over_cap_keeps_a_test_through_an_aliased_fixture_decorator() -> Result<(), String> {
+    assert_capped_fixture_test_matches_uncapped(
+        "diff-walk-cap-reach-fixture-decorator-alias",
+        "from pytest import fixture as fx\n\nfrom orders import make_order\n\n\n@fx\ndef order():\n    return make_order(3)\n",
+    )
+}
+
+#[test]
+fn analyze_diff_over_cap_keeps_a_test_through_a_fixture_calling_an_import_alias()
+-> Result<(), String> {
+    assert_capped_fixture_test_matches_uncapped(
+        "diff-walk-cap-reach-fixture-import-alias",
+        "import pytest\n\nfrom orders import make_order as build\n\n\n@pytest.fixture\ndef order():\n    return build(3)\n",
+    )
+}
+
+/// #10785: Python accepts any whitespace, parentheses and `;` in an import,
+/// so the alias routes above must hold for every spelling, not only a
+/// single space.
+#[test]
+fn analyze_diff_over_cap_keeps_fixture_alias_tests_for_every_import_spelling() -> Result<(), String>
+{
+    for (label, conftest) in [
+        (
+            "diff-walk-cap-reach-fixture-decorator-alias-tab",
+            "from pytest\timport fixture as fx\n\nfrom orders import make_order\n\n\n@fx\ndef order():\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-decorator-alias-parens",
+            "from pytest import(fixture as fx)\n\nfrom orders import make_order\n\n\n@fx\ndef order():\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-decorator-alias-comment",
+            "from pytest import (\n    # decorator\n    fixture as fx,\n)\n\nfrom orders import make_order\n\n\n@fx\ndef order():\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-import-alias-comment",
+            "import pytest\n\nfrom orders import (  # owners (see #1)\n    make_order as build,  # alias\n)\n\n\n@pytest.fixture\ndef order():\n    return build(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-decorator-alias-after-pass",
+            "pass; from pytest import fixture as fx\n\nfrom orders import make_order\n\n\n@fx\ndef order():\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-decorator-alias-after-hash-string",
+            "import os; '#'; from pytest import fixture as fx\n\nfrom orders import make_order\n\n\n@fx\ndef order():\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-decorator-alias-crlf-continuation",
+            "from pytest import \\\r\n    fixture as fx\r\n\r\nfrom orders import make_order\r\n\r\n\r\n@fx\r\ndef order():\r\n    return make_order(3)\r\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-import-alias-crlf-continuation",
+            "import pytest\r\n\r\nfrom orders import \\\r\n    make_order as build\r\n\r\n\r\n@pytest.fixture\r\ndef order():\r\n    return build(3)\r\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-import-alias-tab",
+            "import pytest\n\nfrom orders\timport make_order\tas\tbuild\n\n\n@pytest.fixture\ndef order():\n    return build(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-import-alias-semicolon",
+            "import pytest; from orders import make_order as build\n\n\n@pytest.fixture\ndef order():\n    return build(3)\n",
+        ),
+    ] {
+        assert_capped_fixture_test_matches_uncapped(label, conftest)?;
+    }
+    Ok(())
+}
+
+/// #10785: a fixture's body ends at its logical header and body, not at the
+/// first column-0 physical line, so a header split over lines (Black's
+/// `def order(\n):`), an `async def`, a header comment or string holding a
+/// bracket, a bracketed decorator, or a column-0 docstring line must not
+/// drop the fixture's owner call before the cap.
+#[test]
+fn analyze_diff_over_cap_keeps_fixture_tests_for_every_header_shape() -> Result<(), String> {
+    for (label, conftest) in [
+        (
+            "diff-walk-cap-reach-fixture-header-multiline",
+            "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture\ndef order(\n):\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-header-async",
+            "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture\nasync def order(\nrequest,\n):\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-header-comment",
+            "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture\ndef order(  # )\nrequest,  # )\n):\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-header-string",
+            "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture\ndef order(label=\")\",\nrequest=None):\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-header-decorator-arguments",
+            "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture(\nscope=\"module\",\n)\ndef order(\n):\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-body-column-zero-docstring",
+            "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture\ndef order():\n    \"\"\"Build an order.\n\nColumn zero.\n    \"\"\"\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-header-backslash",
+            "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture\ndef order() \\\n:\n    return make_order(3)\n",
+        ),
+    ] {
+        assert_capped_fixture_test_matches_uncapped(label, conftest)?;
+    }
+    Ok(())
+}
+
+/// #10785: routes by which a test relates to a changed owner without naming
+/// it in its own body (a star import, a module alias, a conftest fixture in a
+/// parent directory, a fixture taken by a test-class method, a fixture over a
+/// module attribute, a fixture defined in the test module itself). Under a
+/// cap that only fits the changed file and the files on the route, each run
+/// must stay complete and match the uncapped findings.
+#[test]
+fn analyze_diff_over_cap_keeps_every_supported_relation_route() -> Result<(), String> {
+    let fixture = "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture\ndef order():\n    return make_order(3)\n";
+    // (label, files beside orders.py, cap)
+    type Route<'a> = (&'a str, &'a [(&'a str, &'a str)], usize);
+    let routes: &[Route] = &[
+        (
+            "star-import",
+            &[
+                ("helpers.py", "from orders import *\n"),
+                (
+                    "tests/test_a.py",
+                    "from helpers import *\n\n\ndef test_a():\n    assert make_order(3) == 9\n",
+                ),
+            ],
+            3,
+        ),
+        (
+            "module-alias",
+            &[(
+                "tests/test_a.py",
+                "import orders as o\n\n\ndef test_a():\n    assert o.make_order(3) == 9\n",
+            )],
+            2,
+        ),
+        (
+            "parent-conftest",
+            &[
+                ("conftest.py", fixture),
+                (
+                    "tests/unit/deep/test_a.py",
+                    "def test_a(order):\n    assert order == 9\n",
+                ),
+            ],
+            3,
+        ),
+        (
+            "test-class-fixture",
+            &[
+                ("tests/conftest.py", fixture),
+                (
+                    "tests/test_a.py",
+                    "class TestA:\n    def test_a(self, order):\n        assert order == 9\n",
+                ),
+            ],
+            3,
+        ),
+        (
+            "module-attribute-fixture",
+            &[
+                (
+                    "tests/conftest.py",
+                    "import pytest\nimport orders\n\n\n@pytest.fixture\ndef order():\n    yield orders.make_order(3)\n",
+                ),
+                (
+                    "tests/test_a.py",
+                    "def test_a(order):\n    assert order == 9\n",
+                ),
+            ],
+            3,
+        ),
+        (
+            "fixture-in-test-module",
+            &[(
+                "tests/test_a.py",
+                "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture\ndef order():\n    return make_order(3)\n\n\ndef test_a(order):\n    assert order == 9\n",
+            )],
+            2,
+        ),
+    ];
+    for (label, files, cap) in routes {
+        let root = unique_test_root(&format!("diff-walk-cap-route-{label}"));
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        write_repo_file(
+            &root.join("orders.py"),
+            "def make_order(count):\n    if count > 2:\n        return count * 3\n    return count\n",
+        )?;
+        for (path, text) in *files {
+            write_repo_file(&root.join(path), text)?;
+        }
+        for index in 0..10 {
+            write_repo_file(
+                &root.join(format!("filler/m{index:02}.py")),
+                &format!("def f{index}(value):\n    return value + {index}\n"),
+            )?;
+        }
+        let changed_files = vec![ChangedFile {
+            path: PathBuf::from("orders.py"),
+            added_lines: vec![ChangedLine {
+                line: 2,
+                text: "    if count > 2:".to_string(),
+                new_side_line: 2,
+            }],
+            removed_lines: Vec::new(),
+        }];
+        let options = repo_options(&root);
+        let capped = PythonAdapter::analyze_diff_with_limits(
+            &options,
+            &changed_files,
+            PythonDiffWalkLimits {
+                max_workspace_files: *cap,
+                ..generous_walk_limits()
+            },
+        )?;
+        let uncapped = PythonAdapter::analyze_diff_with_limits(
+            &options,
+            &changed_files,
+            generous_walk_limits(),
+        )?;
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        assert!(
+            uncapped
+                .findings
+                .iter()
+                .any(|finding| !finding.related_tests.is_empty()),
+            "{label}: the route must relate the test in the uncapped run"
+        );
+        assert!(
+            capped.limitations.is_empty(),
+            "{label}: only unrelated files were refused: {:?}",
+            capped.limitations
+        );
+        assert_eq!(capped.findings, uncapped.findings, "{label}");
+        assert!(
+            capped
+                .findings
+                .iter()
+                .flat_map(|finding| &finding.related_tests)
+                .any(|test| test.name.ends_with("test_a") && test.file.ends_with("test_a.py")),
+            "{label}: the capped run must relate test_a through this route"
+        );
+    }
+    Ok(())
+}
+
+/// #10785 negative control: the same workspace with a cap too small for the
+/// reaching set (the changed file plus one slot) refuses the helper module
+/// the test imports, so the run stays partial and names one refused file.
+#[test]
+fn analyze_diff_over_cap_stays_partial_when_a_reaching_file_is_refused() -> Result<(), String> {
+    let root = unique_test_root("diff-walk-cap-reach-refused");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    write_repo_file(
+        &root.join("pricing.py"),
+        "def discount(amount):\n    if amount > 100:\n        return amount - 10\n    return amount\n",
+    )?;
+    write_repo_file(
+        &root.join("tests/test_pricing.py"),
+        "from pricing import discount\nfrom tests.helpers import assert_price\n\n\ndef test_no_discount_at_boundary():\n    assert_price(discount(100), 100)\n",
+    )?;
+    write_repo_file(
+        &root.join("tests/helpers.py"),
+        "def assert_price(actual, expected):\n    assert actual == expected\n",
+    )?;
+    write_repo_file(
+        &root.join("filler/m.py"),
+        "def f(value):\n    return value\n",
+    )?;
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("pricing.py"),
+        added_lines: vec![ChangedLine {
+            line: 2,
+            text: "    if amount > 100:".to_string(),
+            new_side_line: 2,
+        }],
+        removed_lines: Vec::new(),
+    }];
+    let result = PythonAdapter::analyze_diff_with_limits(
+        &repo_options(&root),
+        &changed_files,
+        PythonDiffWalkLimits {
+            max_workspace_files: 2,
+            ..generous_walk_limits()
+        },
+    )?;
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    let [limitation] = result.limitations.as_slice() else {
+        return Err(format!(
+            "exactly the count-cap disclosure is expected, got {:?}",
+            result.limitations
+        ));
+    };
+    assert_eq!(limitation.kind, AnalysisLimitationKind::DiffScopeOversized);
+    assert_eq!(limitation.affected_items, Some(1));
+    let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
+    assert!(
+        detail.contains("1 of the 2 discovered .py file(s) that may reach the diff")
+            && detail.contains("1 that name nothing it changes were skipped"),
+        "detail must split reaching and unrelated refusals: {detail}"
+    );
     Ok(())
 }
 
@@ -7945,6 +9031,9 @@ fn builtin_protocol_entry_credits_the_dunder_owner() -> Result<(), String> {
 fn protocol_entry_receiver_read_in_bracketed_call_arguments_is_still_credited() -> Result<(), String>
 {
     for test_src in [
+        // A bracketed RHS or subscript target reads the bound receiver.
+        "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    other = (0, (r))\n    assert list(reversed(r)) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    values = {}\n    (x, values[(r)]) = 1, 0\n    assert list(reversed(r)) == []\n",
         "import unittest\nfrom src.nr import numeric_range\n\n\nclass T(unittest.TestCase):\n    def test_reads(self):\n        r = numeric_range(0)\n        self.assertEqual(len(r), 0)\n        self.assertEqual(list(reversed(r)), [])\n",
         "import unittest\nfrom src.nr import numeric_range\n\n\nclass T(unittest.TestCase):\n    def test_reads(self):\n        r = numeric_range(0)\n        self.assertEqual(len( r ), 0)\n        self.assertEqual(list(reversed(r)), [])\n",
         "import unittest\nfrom src.nr import numeric_range\n\n\nclass T(unittest.TestCase):\n    def test_reads(self):\n        r = numeric_range(0)\n        self.assertEqual(max((r), 0), 0)\n        self.assertEqual(list(reversed(r)), [])\n",
@@ -7978,8 +9067,125 @@ fn protocol_entry_receiver_read_in_bracketed_call_arguments_is_still_credited() 
 }
 
 #[test]
+fn protocol_entry_quoted_for_membership_reads_keep_receiver_credit() -> Result<(), String> {
+    for literal in [
+        "'word'",
+        "'for'",
+        r#""for""#,
+        "r'for'",
+        "u'for'",
+        "b'for'",
+        "f'for'",
+        "'''for'''",
+        r#""""for""""#,
+        "rf'''for'''",
+        "\"\"\"prefix\nfor\"\"\"",
+        "r'''prefix\nfor'''",
+        // The extra quote makes the receiver visible to the line-local mask;
+        // only full-prefix masking can identify `for` as literal text here.
+        "\"\"\"prefix\nfor\" \"\"\"",
+        "r'''prefix\nfor' '''",
+        "\"\"\"é prefix\nfor for\" \"\"\"",
+        "'é for for'",
+        "'foré'",
+    ] {
+        let test_src = format!(
+            "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(1)\n    assert {literal} and ((r)) in [r]\n    assert list(reversed(r)) == [0]\n"
+        );
+        let (finding, relations) = classify_reversed_guard(&test_src)?;
+        assert_eq!(
+            relations,
+            vec![("test_reads".to_string(), "protocol_entry_call")],
+            "{test_src}"
+        );
+        assert_eq!(finding.class, ExposureClass::Exposed, "{test_src}");
+        assert_eq!(finding.oracle_alignment.as_deref(), Some("direct"));
+    }
+    Ok(())
+}
+
+#[test]
+fn protocol_entry_real_for_targets_still_withhold_receiver_credit() -> Result<(), String> {
+    for (target, items) in [
+        ("(r)", "[[1]]"),
+        ("((r))", "[[1]]"),
+        ("(( r ))", "[[1]]"),
+        ("[r]", "[[[1]]]"),
+        ("(\n        (r)\n    )", "[[1]]"),
+        ("[\n        r\n    ]", "[[[1]]]"),
+    ] {
+        let test_src = format!(
+            "from src.nr import numeric_range\n\n\ndef test_rebound():\n    r = numeric_range(0)\n    note = 'for'\n    for {target} in {items}:\n        pass\n    assert list(reversed(r)) == [1]\n"
+        );
+        let (finding, relations) = classify_reversed_guard(&test_src)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{test_src}");
+        assert!(
+            relations
+                .iter()
+                .all(|(_, kind)| *kind != "protocol_entry_call"),
+            "{test_src}: {relations:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn protocol_entry_unterminated_literals_do_not_invent_receiver_credit() -> Result<(), String> {
+    for delimiter in ["\"\"\"", "'''", "r\"\"\"", "rf'''"] {
+        let source = format!(
+            "from src.nr import numeric_range\n\ndef test_unterminated():\n    r = numeric_range(1)\n    note = {delimiter}prefix\nfor ((r)) in [[1]]:\n    assert list(reversed(r)) == [0]\n"
+        );
+        for needle in ["for ((r))", "r)) in", "reversed(r)"] {
+            let at = source
+                .find(needle)
+                .ok_or_else(|| format!("missing {needle}"))?;
+            assert!(super::related_tests::python_text_hides_code(&source, at));
+        }
+        let facts =
+            super::source_facts::extract_source_facts(Path::new("tests/test_nr.py"), &source);
+        assert!(super::source_facts::source_facts_syntax_parse_error(&facts).is_some());
+        assert!(
+            facts.tests.is_empty(),
+            "malformed source must retain no test facts"
+        );
+        let file = Path::new("src/nr.py");
+        let owners = extract_owners(file, REVERSED_OWNER);
+        let owner = owners
+            .iter()
+            .find(|owner| owner.name == "__reversed__")
+            .ok_or_else(|| "missing __reversed__ owner".to_string())?;
+        assert!(candidate_relations(owner, &facts.tests).is_empty());
+        let finding = classify_change_with_old(
+            file,
+            6,
+            "        if not self.stop:",
+            Some("        if self.stop:"),
+            &owners,
+            &facts.tests,
+        )
+        .ok_or_else(|| "missing reversed guard finding".to_string())?;
+        assert_ne!(finding.class, ExposureClass::Exposed);
+    }
+    Ok(())
+}
+
+#[test]
 fn protocol_entry_stays_uncredited_without_a_bound_owner_receiver() -> Result<(), String> {
     for test_src in [
+        // Review controls: unbracketed/chained outer targets and inline suites.
+        "from src.nr import numeric_range\n\n\ndef test_unbracketed_outer():\n    r = numeric_range(0)\n    x, (y, (r)) = 1, (2, [1])\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_chained_outer():\n    r = numeric_range(0)\n    x = (y, (r)) = 2, [1]\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_inline_loop():\n    r = numeric_range(0)\n    for (x, (r)) in [(2, [1])]: pass\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_inline_with():\n    r = numeric_range(0)\n    with manager() as (x, (r)): pass\n    assert list(reversed(r)) == [1]\n",
+        // Non-adjacent bracket targets replace the constructed receiver (#9531).
+        "from src.nr import numeric_range\n\n\ndef test_nonadjacent_tuple():\n    r = numeric_range(0)\n    (x, (r)) = 2, [1]\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_nonadjacent_list():\n    r = numeric_range(0)\n    [a, [r]] = [2, [[1]]]\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_nonadjacent_loop():\n    r = numeric_range(0)\n    for (x, (r)) in [(2, [1])]:\n        pass\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_nonadjacent_with():\n    r = numeric_range(0)\n    with manager() as (x, (r)):\n        pass\n    assert list(reversed(r)) == [1]\n",
+        // Async headers reach the same fallback arms; a dropped arm or a parse
+        // failure leaves the receiver credited and fails this loop.
+        "from src.nr import numeric_range\n\n\ndef test_async_inline_loop():\n    r = numeric_range(0)\n    async for (x, (r)) in [(2, [1])]: pass\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_async_inline_with():\n    r = numeric_range(0)\n    async with manager() as (x, (r)): pass\n    assert list(reversed(r)) == [1]\n",
         // Another dunder's entry point does not reach `__reversed__`.
         "from src.nr import numeric_range\n\n\ndef test_len():\n    assert len(numeric_range(0)) == 0\n",
         // An unrelated receiver.
@@ -8169,6 +9375,7 @@ fn classify_price_boundary_with_test_body_and_origins(
         PythonNoBehaviorContext::default(),
         None,
         &mut origins,
+        None,
     )
     .ok_or_else(|| "changed predicate should classify".to_string())?;
     Ok((finding, origins))
@@ -8208,6 +9415,7 @@ fn boundary_value_facts_preserve_identical_calls_from_two_files() -> Result<(), 
             PythonNoBehaviorContext::default(),
             None,
             &mut origins,
+            None,
         )
         .ok_or_else(|| "changed predicate should classify".to_string())?;
         let files = origins
@@ -8394,6 +9602,168 @@ fn boundary_call_row_window_keeps_a_call_that_fits_whole() -> Result<(), String>
             .any(|fact| fact.text.contains(&call)),
         "the excerpt keeps the whole call"
     );
+    Ok(())
+}
+
+/// Classifies the `visible >= limit` -> `visible > limit` change (line 3 of
+/// `owner_source`) against a strong exact-value test whose body is
+/// `test_body`, with the owner source threaded in so the length-local
+/// derivation can read the owner body (#11103).
+fn classify_len_local_boundary(
+    owner_source: &str,
+    test_body: &str,
+) -> Result<crate::domain::Finding, String> {
+    let owners = extract_owners(Path::new("src/tw.py"), owner_source);
+    let tests = extract_tests(
+        Path::new("tests/test_tw.py"),
+        &format!("from src.tw import truncate\n\n\ndef test_truncate():\n{test_body}\n"),
+    );
+    assert_eq!(tests.len(), 1, "fixture must parse exactly one pytest test");
+    let changed = owner_source
+        .lines()
+        .position(|line| line.trim() == "if visible > limit:")
+        .ok_or_else(|| "fixture owner must carry the changed predicate".to_string())?;
+    classify_change_with_source(
+        Path::new("src/tw.py"),
+        changed + 1,
+        owner_source.lines().nth(changed).unwrap_or_default(),
+        Some("    if visible >= limit:"),
+        &owners,
+        &tests,
+        Some(owner_source),
+    )
+    .ok_or_else(|| "len-local boundary change should classify".to_string())
+}
+
+const LEN_LOCAL_OWNER: &str = "def truncate(s, limit):\n    visible = len(s)\n    if visible > limit:\n        return s[:limit]\n    return s\n";
+
+fn missing_boundary_discriminators(finding: &crate::domain::Finding) -> Vec<String> {
+    finding
+        .activation
+        .missing_discriminators
+        .iter()
+        .map(|missing| missing.value.clone())
+        .collect()
+}
+
+/// #11103: a once-bound `visible = len(s)` over a literal string argument is a
+/// derivable operand, so the boundary gate names the equality input shape.
+#[test]
+fn a_len_local_over_a_literal_argument_names_the_boundary_equality() -> Result<(), String> {
+    // Lengths 6 and 2 against limits 3 and 5: nothing sits on the boundary.
+    let finding = classify_len_local_boundary(
+        LEN_LOCAL_OWNER,
+        "    assert truncate(\"abcdef\", 3) == \"abc\"\n    assert truncate(\"ab\", 5) == \"ab\"",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(
+        missing_boundary_discriminators(&finding),
+        vec!["visible == limit".to_string()]
+    );
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|line| line.contains("observed visible values: 2, 6")),
+        "{:?}",
+        finding.missing
+    );
+    // The derived length is not a call argument and is never reported as one.
+    assert!(
+        finding
+            .activation
+            .observed_values
+            .iter()
+            .all(|fact| !fact.value.starts_with("visible")),
+        "{:?}",
+        finding.activation.observed_values
+    );
+    Ok(())
+}
+
+/// An annotated local and spacing before the call paren read like the plain
+/// form (#11103 review).
+#[test]
+fn an_annotated_len_local_names_the_boundary_equality() -> Result<(), String> {
+    let owner = "def truncate(s, limit):\n    visible: int = len (s)\n    if visible > limit:\n        return s[:limit]\n    return s\n";
+    let finding = classify_len_local_boundary(
+        owner,
+        "    assert truncate(\"abcdef\", 3) == \"abc\"\n    assert truncate(\"ab\", 5) == \"ab\"",
+    )?;
+    assert_eq!(
+        missing_boundary_discriminators(&finding),
+        vec!["visible == limit".to_string()]
+    );
+    Ok(())
+}
+
+/// Discriminating positive: a call whose string length equals the limit
+/// places the operands on the boundary, so nothing is missing.
+#[test]
+fn a_len_local_call_on_the_boundary_is_observed() -> Result<(), String> {
+    let finding = classify_len_local_boundary(
+        LEN_LOCAL_OWNER,
+        "    assert truncate(\"abc\", 3) == \"abc\"",
+    )?;
+    assert!(
+        missing_boundary_discriminators(&finding).is_empty(),
+        "{:?}",
+        finding.activation.missing_discriminators
+    );
+    Ok(())
+}
+
+/// Fail-closed negatives: any shape the derivation cannot prove stays
+/// unresolved, hands out no equality target, and never reads as observed.
+#[test]
+fn a_len_local_that_is_not_derivable_stays_unresolved() -> Result<(), String> {
+    let literal_calls =
+        "    assert truncate(\"abcdef\", 3) == \"abc\"\n    assert truncate(\"ab\", 5) == \"ab\"";
+    for (label, owner, test_body) in [
+        (
+            "bound twice",
+            "def truncate(s, limit):\n    visible = len(s)\n    visible = visible + 1\n    if visible > limit:\n        return s[:limit]\n    return s\n",
+            literal_calls,
+        ),
+        (
+            "loop-carried",
+            "def truncate(s, limit):\n    visible = len(s)\n    while True:\n        visible -= 1\n        if visible > limit:\n            return s[:limit]\n",
+            literal_calls,
+        ),
+        (
+            "parameter rebound",
+            "def truncate(s, limit):\n    s = s.strip()\n    visible = len(s)\n    if visible > limit:\n        return s[:limit]\n    return s\n",
+            literal_calls,
+        ),
+        (
+            "bound after the predicate",
+            "def truncate(s, limit):\n    if visible > limit:\n        return s[:limit]\n    visible = len(s)\n    return s\n",
+            literal_calls,
+        ),
+        (
+            "computed argument",
+            "def truncate(s, limit):\n    visible = len(s.strip())\n    if visible > limit:\n        return s[:limit]\n    return s\n",
+            literal_calls,
+        ),
+        (
+            "non-literal call argument",
+            LEN_LOCAL_OWNER,
+            "    text = make_text()\n    assert truncate(text, 3) == \"abc\"\n    assert truncate(\"ab\", 5) == \"ab\"",
+        ),
+        (
+            "escaped literal",
+            LEN_LOCAL_OWNER,
+            "    assert truncate(\"a\\n\", 2) == \"a\\n\"\n    assert truncate(\"abcdef\", 3) == \"abc\"",
+        ),
+    ] {
+        let finding = classify_len_local_boundary(owner, test_body)?;
+        assert!(
+            !missing_boundary_discriminators(&finding).contains(&"visible == limit".to_string()),
+            "{label}: {:?}",
+            finding.activation.missing_discriminators
+        );
+        assert_ne!(finding.class, ExposureClass::Exposed, "{label}");
+    }
     Ok(())
 }
 
@@ -8880,20 +10250,134 @@ fn a_straight_line_alias_of_a_captured_log_read_is_evaluated() -> Result<(), Str
 }
 
 #[test]
-fn alias_replacement_skips_string_literals_and_longer_names() {
-    use super::caplog_text::replace_identifier;
+fn overlapping_alias_names_do_not_corrupt_the_read() -> Result<(), String> {
+    // #10282 review: `msgs = caplog.text` then `text = caplog.messages` made
+    // the second replacement rewrite the first's inserted `caplog.text`.
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    let test = "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = caplog.text\n    text = caplog.messages\n    assert \"low balance: 5\" in msgs\n";
     assert_eq!(
-        replace_identifier(
-            "assert \"msgs\" in msgs and 'msgs' in msgs and msgs2 and x.msgs",
-            "msgs",
-            "caplog.messages"
+        classify_log_text_edit(AUDIT_OWNER, removed, test)?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_wrapped_assertion_using_an_alias_is_evaluated() -> Result<(), String> {
+    // #10282 review: the alias use on a continuation line is part of the
+    // assertion statement, not an extra use.
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    let test = "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = caplog.messages\n    assert (\n        \"low balance: 5\" in msgs\n    )\n";
+    assert_eq!(
+        classify_log_text_edit(AUDIT_OWNER, removed, test)?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn an_alias_inside_a_triple_quoted_literal_is_not_substituted() -> Result<(), String> {
+    // Post-landing #10282 receipt: a plain quote toggle read
+    // `"""prefix "msgs" : 5"""` as alternating open and closed strings, so the
+    // `msgs` inside it was replaced and the evaluator read `caplog.text`.
+    use super::caplog_text::replace_identifiers;
+    assert_eq!(
+        replace_identifiers(
+            "\"\"\"prefix \"msgs\" : 5\"\"\" in msgs",
+            &[("msgs", "caplog.text")]
         ),
-        "assert \"msgs\" in caplog.messages and 'msgs' in caplog.messages and msgs2 and x.msgs"
-            .replace("x.msgs", "x.caplog.messages")
+        "\"\"\"prefix \"msgs\" : 5\"\"\" in caplog.text"
     );
     assert_eq!(
-        replace_identifier("\"a\\\"msgs\" in msgs", "msgs", "R"),
+        replace_identifiers("\'\'\'a \'msgs\' b\'\'\' in msgs", &[("msgs", "R")]),
+        "\'\'\'a \'msgs\' b\'\'\' in R"
+    );
+    let owner = AUDIT_OWNER.replace(
+        "low balance: %s\", balance",
+        "prefix \\\"msgs\\\" : 5 | prefix \\\"caplog.text\\\" : 5\"",
+    );
+    for quote in ["\"\"\"", "\'\'\'"] {
+        let test = format!(
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = caplog.text\n    assert {quote}prefix \"msgs\" : 5{quote} in msgs\n"
+        );
+        assert_eq!(
+            classify_log_text_edit_from(
+                &owner,
+                "log.warning(\"prefix \\\"msgs\\\" : 5 | prefix \\\"caplog.text\\\" : 5\")",
+                "log.warning(\"prefix \\\"msgs\\\" : 5\")",
+                &test
+            )?,
+            (ExposureClass::WeaklyExposed, None),
+            "{quote}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn two_aliases_whose_names_are_read_attributes_are_both_evaluated() -> Result<(), String> {
+    // Exact-successor review (P2): the local `text` was counted inside the
+    // other alias's `caplog.text`, so a two-alias assertion abstained.
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    let test = "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = caplog.text\n    text = caplog.messages\n    assert \"low balance: 5\" in msgs and \"low balance: 5\" in text\n";
+    assert_eq!(
+        classify_log_text_edit(AUDIT_OWNER, removed, test)?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_direct_read_beside_a_same_named_alias_stays_a_required_condition() -> Result<(), String> {
+    // Review of #10309: replacing the attribute in `caplog.text` turned a
+    // direct check into `caplog.caplog.text`, which the evaluator dropped.
+    let owner_edit = "log.warning(\"balance: %s low\", balance)";
+    let test = "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = caplog.text\n    text = caplog.text\n    assert \"low balance: 5\" in caplog.text and \"balance: 5\" in text\n";
+    assert_eq!(
+        classify_log_text_edit(AUDIT_OWNER, owner_edit, test)?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_comment_ending_in_a_backslash_does_not_extend_the_assertion() -> Result<(), String> {
+    // #10309 review: the comment's trailing backslash is not a continuation,
+    // so the `del` on the next line is an extra use and keeps the abstention.
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    let test = "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = caplog.messages\n    assert \"low balance: 5\" in msgs  # see notes\\\n    del msgs\n";
+    assert_eq!(
+        classify_log_text_edit(AUDIT_OWNER, removed, test)?,
+        (
+            ExposureClass::StaticUnknown,
+            Some(StaticLimitKind::UnsupportedSyntax)
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn alias_replacement_skips_string_literals_and_longer_names() {
+    use super::caplog_text::replace_identifiers;
+    assert_eq!(
+        replace_identifiers(
+            "assert \"msgs\" in msgs and 'msgs' in msgs and msgs2 and x.msgs",
+            &[("msgs", "caplog.messages")]
+        ),
+        "assert \"msgs\" in caplog.messages and 'msgs' in caplog.messages and msgs2 and x.msgs"
+    );
+    assert_eq!(
+        replace_identifiers("\"a\\\"msgs\" in msgs", &[("msgs", "R")]),
         "\"a\\\"msgs\" in R"
+    );
+    // One pass: a read inserted for one alias is not rescanned as another
+    // alias named `text` (#10282 review).
+    assert_eq!(
+        replace_identifiers(
+            "\"x\" in msgs and text",
+            &[("msgs", "caplog.text"), ("text", "caplog.messages")]
+        ),
+        "\"x\" in caplog.text and caplog.messages"
     );
 }
 
@@ -9516,4 +11000,415 @@ fn tuple_valued_display_still_counts_as_a_whole_collection_compare() {
 fn comma_in_a_literal_comment_declines_the_joined_literal() {
     let source = "def f():\n    return [\n        10,\n        # note, note\n        21,\n    ]\n";
     assert!(enclosing_literal_pair(source, 5, "        21,", Some("        20,")).is_none());
+}
+
+/// A protocol-entry test whose body is `r = numeric_range(0)`, then `middle`,
+/// then `list(reversed(r))`; every `middle` below was checked with CPython's
+/// `ast.parse` (with `items`, `z`, `y` and `a` bound by the first lines).
+fn reversed_receiver_src(middle: &str) -> String {
+    format!(
+        "from src.nr import numeric_range\n\n\ndef test_x():\n    r = numeric_range(0)\n    items = [r]\n    z = 0\n    y = [[1]]\n    a = open_it\n{middle}    assert list(reversed(r)) == [1]\n"
+    )
+}
+
+#[test]
+fn protocol_entry_receiver_rebound_by_a_spelling_the_scan_missed_is_not_credited()
+-> Result<(), String> {
+    for middle in [
+        // An augmented assignment or annotation on a bracketed target.
+        "    (r) += [1]\n",
+        "    ((r)) += [1]\n",
+        "    (r): list = [1]\n",
+        // A comment inside the brackets, before or after the name.
+        "    (  # note\n        r\n    ) = [1]\n",
+        "    (\n        r  # note\n    ) = [1]\n",
+        // A backslash continuation before the `=` or after a target comma.
+        "    r \\\n        = [1]\n",
+        "    (r)\\\n        = [1]\n",
+        "    r \\\n        += [1]\n",
+        // A continuation before a later opener of the peel, LF and CRLF.
+        "    (\\\n        (r)) = [1]\n",
+        "    [\\\n        [r]] = [1]\n",
+        "    (\\\r\n        (r)) = [1]\n",
+        // An augmented assignment after a header, `else` or `;`.
+        "    if z: r += [1]\n",
+        "    if z == 1:\n        pass\n    else: r += [1]\n",
+        "    z = 1; r += [1]\n",
+        "    for x in y: r += 1\n",
+        // A walrus split inside brackets, and a tab before `as`.
+        "    (r\n     := [1])\n",
+        "    with (a\tas (r)): pass\n",
+        "    with a as\tr : pass\n",
+        // An import or `nonlocal` declaration names the receiver too.
+        "    import os as\tr\n",
+        "    import r\n",
+        "    def inner():\n        nonlocal r\n",
+        "    for \\\n        r in [[1]]:\n        pass\n",
+        // `in` directly after the closing bracket, and blank runs after a keyword.
+        "    for (r)in [[1]]:\n        pass\n",
+        "    for (r)in[[1]]:\n        pass\n",
+        "    for  r  in [[1]]:\n        pass\n",
+        "    for\tr in [[1]]:\n        pass\n",
+        "    def  r():\n        pass\n",
+        // Headers whose string spells prefixes, f-string braces or triple quotes.
+        "    if rb\")\": ( r), x = [1], 2\n",
+        "    if f\"{z}(\": ( r), x = [1], 2\n",
+        "    if z == '''it's''': ( r), x = [1], 2\n",
+        "    if z == \"\"\"it's\"\"\": ( r), x = [1], 2\n",
+        "    if z == 1: # note\n        ( r), x = [1], 2\n",
+    ] {
+        let src = reversed_receiver_src(middle);
+        let (finding, relations) = classify_reversed_guard(&src)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{middle:?}");
+        assert!(
+            relations
+                .iter()
+                .all(|(_, kind)| *kind != "protocol_entry_call"),
+            "{middle:?}: {relations:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn protocol_entry_receiver_reads_that_resemble_a_rebind_stay_credited() -> Result<(), String> {
+    for middle in [
+        // Comparisons are not augmented assignments.
+        "    assert (r) >= 0 and (r) <= 1\n",
+        // A bracketed condition, dict key or call argument is a read.
+        "    if (r):\n        pass\n",
+        "    d = {(r): 1}\n",
+        "    f(  # note\n        r\n    )\n",
+        "    f(r) \\\n        == 1\n    w = 1 \\\n        + len(r)\n",
+        // `in` after a bracket is a membership test outside a `for` target.
+        "    assert (r)in items\n",
+        "    for x in y: assert ((r)) in items\n",
+        // A quoted or commented `for` / `as` is text, not a keyword (#9992).
+        "    assert \"for\" and ((r)) in [r]\n",
+        "    assert 'for' and ((r))in items\n",
+        "    # for ((r)) in z\n    assert (r) in items\n",
+        "    assert (r) in items  # for\n",
+        "    assert 'as  r' and 'for  r in'\n",
+        "    # as  r\n",
+        // A header whose condition holds a string with a bracket is a read.
+        "    if z == \"(\": pass\n",
+        "    if z == '''it's''': pass\n",
+    ] {
+        let src = reversed_receiver_src(middle);
+        let (finding, relations) = classify_reversed_guard(&src)?;
+        assert_eq!(
+            relations,
+            vec![("test_x".to_string(), "protocol_entry_call")],
+            "{middle:?}"
+        );
+        assert_eq!(finding.class, ExposureClass::Exposed, "{middle:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn match_case_capture_of_the_receiver_counts_as_a_binding_target() {
+    use super::related_tests::binds_in_target_list;
+    for body in [
+        "r = make()\ncase (r):\n    pass\n",
+        "r = make()\ncase [r]:\n    pass\n",
+        "r = make()\n    case (r):\n        pass\n",
+        "r = make()\ncase {\"k\": r}:\n    pass\n",
+        "r = make()\ncase Foo(x=r):\n    pass\n",
+        "r = make()\ncase (1 | r):\n    pass\n",
+        "r = make()\ncase Foo(a=1, b=(r)):\n    pass\n",
+    ] {
+        assert!(binds_in_target_list(body, "r"), "{body:?}");
+    }
+    for body in [
+        "r = make()\nif (r):\n    pass\n",
+        "r = make()\nif [r]:\n    pass\n",
+        "r = make()\ncase_count = (r)\n",
+        "r = make()\ncase r.A:\n    pass\n",
+        "r = make()\ncase r(1):\n    pass\n",
+        "r = make()\ncase other:\n    pass\n",
+    ] {
+        assert!(!binds_in_target_list(body, "r"), "{body:?}");
+    }
+}
+
+const ORDER_SOURCE: &str = "def make_order(qty):\n    return {\"qty\": qty, \"total\": qty * 3}\n";
+
+#[test]
+fn name_prefilter_skips_a_test_that_never_spells_the_owner() {
+    // The name prefilter returns None without scanning a test that spells the
+    // owner nowhere; the debug cross-check runs the full scan to confirm it.
+    let owners = extract_owners(Path::new("src/orders.py"), ORDER_SOURCE);
+    let tests = extract_tests(
+        Path::new("tests/test_orders.py"),
+        "from src.orders import cancel_order\n\n\ndef test_cancel():\n    assert cancel_order(1) is None\n",
+    );
+    assert_eq!(owners[0].name, "make_order");
+    assert_eq!(tests.len(), 1);
+    assert_eq!(related_test_relation(&tests[0], &owners[0]), None);
+}
+
+#[test]
+fn name_prefilter_keeps_a_fixture_only_mention() {
+    // Only the conftest fixture the test requests spells `make_order`; the
+    // prefilter must read fixture bodies and imports and still relate it.
+    let owners = extract_owners(Path::new("src/orders.py"), ORDER_SOURCE);
+    let conftest_imports = extract_tests(
+        Path::new("tests/conftest.py"),
+        "from src.orders import make_order\n\n\ndef test_probe():\n    pass\n",
+    )
+    .first()
+    .map(|test| test.imports.clone())
+    .unwrap_or_default();
+    let mut tests = extract_tests(
+        Path::new("tests/test_orders.py"),
+        "def test_total(order):\n    assert order[\"total\"] == 3\n",
+    );
+    for test in &mut tests {
+        test.fixture_defs.push(PythonFixtureDef {
+            name: "order".to_string(),
+            binding: "order".to_string(),
+            file: PathBuf::from("tests/conftest.py"),
+            body_text: "def order():\n    return make_order(1)\n".to_string(),
+            imports: conftest_imports.clone(),
+            literal_construction: None,
+            inert_tool: None,
+            literal_params: None,
+            isolated: false,
+            scope_imports: Vec::new(),
+        });
+    }
+    assert_eq!(owners[0].name, "make_order");
+    assert!(!conftest_imports.is_empty());
+    assert_eq!(tests.len(), 1);
+    assert!(!tests[0].body_text.contains("make_order"));
+    assert!(tests[0].imports.is_empty());
+    assert_eq!(
+        related_test_relation(&tests[0], &owners[0]),
+        Some(PythonRelationKind::FixtureOwnerCall)
+    );
+}
+
+#[test]
+fn comprehension_boundary_values_retain_each_test_file() -> Result<(), String> {
+    let owner_file = Path::new("src/agg.py");
+    let owners = extract_owners(owner_file, FILTER_BOUNDARY_OWNER);
+    let source = "import asyncio\nfrom src.agg import fetch_total\n\ndef test_total():\n    assert asyncio.run(fetch_total([3, 1, 4])) == 7\n";
+    let classify = |paths: &[&str]| -> Result<Vec<(Option<std::path::PathBuf>, usize)>, String> {
+        let tests: Vec<_> = paths
+            .iter()
+            .flat_map(|file| extract_tests(Path::new(file), source))
+            .collect();
+        assert_eq!(tests.len(), 2);
+        let mut origins = crate::value_origins::ValueOrigins::default();
+        let finding = classify::classify_change_with_value_origins(
+            owner_file,
+            6,
+            "    return sum(p for p in prices if p > 1)",
+            None,
+            &owners,
+            &tests,
+            PythonNoBehaviorContext::default(),
+            Some(FILTER_BOUNDARY_OWNER),
+            &mut origins,
+            None,
+        )
+        .ok_or_else(|| "filter change should classify".to_string())?;
+        assert_eq!(finding.class, ExposureClass::Exposed);
+        let files = origins
+            .files(&finding)
+            .ok_or_else(|| "missing value origins".to_string())?;
+        let element_files: Vec<_> = finding
+            .activation
+            .observed_values
+            .iter()
+            .zip(files)
+            .filter(|(fact, _)| fact.value == "prices = [3, 1, 4]")
+            .map(|(fact, file)| (file.clone(), fact.line))
+            .collect();
+        Ok(element_files)
+    };
+    let expected = vec![
+        (Some("tests/a.py".into()), 5),
+        (Some("tests/b.py".into()), 5),
+    ];
+    assert_eq!(classify(&["tests/a.py", "tests/b.py"])?, expected);
+    assert_eq!(classify(&["tests/b.py", "tests/a.py"])?, expected);
+    Ok(())
+}
+
+#[test]
+fn caplog_snapshot_same_line_list_mutation_abstains() -> Result<(), String> {
+    let test = captured_records_test(
+        "msgs = caplog.messages\n    msgs[0] = \"low balance: 5\"; assert \"low balance: 5\" in msgs",
+    );
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            "log.warning(\"balance low: %s\", balance)",
+            &test
+        )?,
+        (
+            ExposureClass::StaticUnknown,
+            Some(StaticLimitKind::UnsupportedSyntax)
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn caplog_snapshot_same_line_text_rebinding_abstains() -> Result<(), String> {
+    let test = captured_records_test(
+        "msgs = caplog.text\n    msgs = \"low balance: 5\"; assert \"low balance: 5\" in msgs",
+    );
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            "log.warning(\"balance low: %s\", balance)",
+            &test
+        )?,
+        (
+            ExposureClass::StaticUnknown,
+            Some(StaticLimitKind::UnsupportedSyntax)
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn caplog_snapshot_binding_after_assertion_abstains() -> Result<(), String> {
+    for read in ["messages", "text"] {
+        let test = captured_records_test(&format!(
+            "assert \"low balance: 5\" in msgs\n    msgs = caplog.{read}",
+        ));
+        assert_eq!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                "log.warning(\"balance low: %s\", balance)",
+                &test
+            )?,
+            (
+                ExposureClass::StaticUnknown,
+                Some(StaticLimitKind::UnsupportedSyntax)
+            ),
+            "{read}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_snapshot_stores_in_assertions_abstain() -> Result<(), String> {
+    for tail in [
+        "assert (msgs := [\"low balance: 5\"]) and \"low balance: 5\" in msgs",
+        "assert f'{(msgs := [\"low balance: 5\"])}' != \"\" and \"low balance: 5\" in msgs",
+    ] {
+        let test = captured_records_test(&format!("msgs = caplog.messages\n    {tail}"));
+        assert_eq!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                "log.warning(\"balance low: %s\", balance)",
+                &test
+            )?,
+            (
+                ExposureClass::StaticUnknown,
+                Some(StaticLimitKind::UnsupportedSyntax)
+            ),
+            "{tail}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_snapshot_native_statement_bounds_reject_extra_uses() -> Result<(), String> {
+    for tail in [
+        "msgs[0] = \"low balance: 5\"; assert (\n        \"low balance: 5\" in msgs\n    )",
+        "tag = \"é\"; msgs[0] = \"low balance: 5\"; assert \"low balance: 5\" in msgs",
+        "assert \"low balance: 5\" in msgs; del msgs",
+        "assert \"low balance: 5\" in msgs; assert \"low balance: 5\" in msgs",
+        "match [\"low balance: 5\"]:\n        case msgs:\n            pass\n    assert \"low balance: 5\" in msgs",
+        "import logging as msgs\n    assert \"low balance: 5\" in msgs",
+        "try:\n        pass\n    except Exception as msgs:\n        pass\n    assert \"low balance: 5\" in msgs",
+        "assert [msgs := [\"low balance: 5\"] for _ in [0]] and \"low balance: 5\" in msgs",
+        "assert [True for msgs[0] in [\"low balance: 5\"]] and \"low balance: 5\" in msgs",
+    ] {
+        let test = captured_records_test(&format!("msgs = caplog.messages\n    {tail}"));
+        assert_eq!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                "log.warning(\"balance low: %s\", balance)",
+                &test
+            )?,
+            (
+                ExposureClass::StaticUnknown,
+                Some(StaticLimitKind::UnsupportedSyntax)
+            ),
+            "{tail}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_snapshot_valid_reads_keep_levels_absence_and_membership_semantics() -> Result<(), String>
+{
+    for read in ["messages", "text"] {
+        let test = captured_records_test(&format!(
+            "msgs = caplog.{read}\n    tag = \"é\"; assert (\n        \"low balance: 5\" in msgs\n    ), \"capture\""
+        ));
+        for body in [test.clone(), test.replace('\n', "\r\n"), test.replace(
+            "    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False",
+            "    caplog.set_level(logging.WARNING)\n    assert check_balance(5) is False",
+        )] {
+            for changed in [
+                "log.warning(\"balance low: %s\", balance)",
+                "log.info(\"low balance: %s\", balance)",
+            ] {
+                assert_eq!(classify_log_text_edit(AUDIT_OWNER, changed, &body)?, (ExposureClass::Exposed, None), "{read}: {body}");
+            }
+            let suffix = if read == "messages" { ExposureClass::Exposed } else { ExposureClass::WeaklyExposed };
+            assert_eq!(classify_log_text_edit(AUDIT_OWNER, "log.warning(\"low balance: %s (retry)\", balance)", &body)?, (suffix, None), "{read}: {body}");
+        }
+        let absence = captured_records_test(&format!(
+            "msgs = caplog.{read}\n    assert \"deprecated warning\" not in msgs"
+        ));
+        assert_eq!(
+            classify_log_text_edit(AUDIT_OWNER, "log.warning(\"deprecated warning\")", &absence)?,
+            (ExposureClass::Exposed, None),
+            "{read} absence"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_snapshot_record_aliases_keep_native_comprehension_reads() -> Result<(), String> {
+    for assertion in [
+        "assert any(\"low balance\" in r.message for r in msgs)",
+        "assert any(r.getMessage() == \"low balance: 5\" for r in msgs)",
+        "assert \"low balance: 5\" in [r.message for r in msgs]",
+    ] {
+        // Select the records assertion, rather than a competing return oracle.
+        let test = captured_records_test(&format!("msgs = caplog.records\n    {assertion}"))
+            .replace("assert check_balance(5) is False", "check_balance(5)");
+        assert_eq!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                "log.warning(\"balance low: %s\", balance)",
+                &test
+            )?,
+            (ExposureClass::Exposed, None),
+            "{assertion}"
+        );
+    }
+    let test = captured_records_test(
+        "msgs = caplog.records\n    assert not any(r.message == \"deprecated warning\" for r in msgs)",
+    )
+    .replace("assert check_balance(5) is False", "check_balance(5)");
+    assert_eq!(
+        classify_log_text_edit(AUDIT_OWNER, "log.warning(\"deprecated warning\")", &test)?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
 }

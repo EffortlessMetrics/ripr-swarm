@@ -1,0 +1,10 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -19,6 +19,6 @@ impl RequestBuilder {
+     }
+ 
+     pub fn build(self) -> Request {
+-        Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(30_000) }
++        Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }
+     }
+ }

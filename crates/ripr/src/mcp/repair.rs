@@ -675,6 +675,7 @@ impl WorkspaceSession {
         let readiness = &item.repair_readiness;
         if !readiness.ready {
             let reason = readiness.ineligibility.unwrap_or("repair_not_established");
+            let finding_guidance = super::gaps::finding_guidance(item);
             let document = json!({
                 "schema_version": REPAIR_PACKET_SCHEMA_VERSION,
                 "snapshot_id": snapshot_id,
@@ -689,8 +690,9 @@ impl WorkspaceSession {
                     "detail": readiness.detail(),
                 },
                 "attempt": Value::Null,
+                "finding_guidance": finding_guidance,
                 "recovery": if reason.starts_with("seam_") {
-                    "the shared repair gate refused this seam; ripr_prepare_repair does not override it. Change the code or tests, then re-run ripr_refresh"
+                    "the shared repair gate refused this seam; ripr_prepare_repair does not override it. Change the code or tests as `finding_guidance` (the item's `missing` and `recommended_next_step`) describes, then re-run ripr_refresh"
                 } else {
                     "re-run ripr_refresh after the producer establishes the missing fact; ripr_prepare_repair never guesses a missing field"
                 },
@@ -1056,6 +1058,7 @@ mod tests {
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
+            desired_source: Default::default(),
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -1072,6 +1075,7 @@ mod tests {
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
+            desired_source: Default::default(),
             superseded_order: std::collections::VecDeque::new(),
         };
         for index in 0..MAX_SUPERSEDED_TOMBSTONES + 10 {
@@ -1104,6 +1108,7 @@ mod tests {
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
+            desired_source: Default::default(),
             superseded_order: std::collections::VecDeque::new(),
         };
         let total = MAX_SUPERSEDED_TOMBSTONES + 10;
@@ -1299,6 +1304,26 @@ mod tests {
             return Err(format!(
                 "a producer-named missing discriminator must stay the typed refusal: {document}"
             ));
+        }
+        // #11213: the refusal carries the finding's own guidance (the fields
+        // ripr_get_gap serves) so no second call is needed to learn the fix.
+        let guidance = document
+            .get("finding_guidance")
+            .ok_or_else(|| format!("refusal lost finding_guidance: {document}"))?;
+        if guidance.pointer("/gap_route/tool").and_then(Value::as_str) != Some("ripr_get_gap")
+            || guidance
+                .pointer("/gap_route/arguments/canonical_id")
+                .is_none()
+            || guidance.get("missing").is_none()
+            || guidance.get("recommended_next_step").is_none()
+        {
+            return Err(format!("guidance incomplete: {guidance}"));
+        }
+        if !document["recovery"]
+            .as_str()
+            .is_some_and(|r| r.contains("finding_guidance") || r.contains("producer"))
+        {
+            return Err(format!("recovery must point at the guidance: {document}"));
         }
         Ok(())
     }

@@ -23,7 +23,7 @@ pub struct DiagnosticWitness {
     pub suggested_assertion: Option<String>,
     pub explain_command: String,
     pub confidence: DiagnosticConfidence,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub limitations: Vec<DiagnosticWitnessLimitation>,
 }
 
@@ -51,6 +51,20 @@ pub struct DiagnosticConfidence {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<f32>,
     pub basis: String,
+}
+
+/// A confidence at the two-decimal precision of the output contract
+/// (`docs/OUTPUT_SCHEMA.md`), as the `f64` a JSON value carries.
+///
+/// `check` JSON and human output print `{:.2}`; widening the stored `f32`
+/// straight to `f64` would serialize `0.4` as `0.4000000059604645`. The LSP
+/// diagnostic payload applies this to the values it builds (#10717). Other
+/// serializers of `DiagnosticConfidence` (for example the context packet)
+/// are deliberately unchanged here.
+pub(crate) fn contract_confidence(value: f32) -> f64 {
+    format!("{value:.2}")
+        .parse()
+        .unwrap_or_else(|_| f64::from(value))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -707,6 +721,7 @@ mod tests {
     fn sample_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:pricing:88:error_path".to_string(),
             canonical_gap: None,
             probe: Probe {

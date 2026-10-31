@@ -16,7 +16,7 @@ use crate::domain::{
 };
 use crate::output::next_step::reconcile_next_step;
 use crate::output::observed_values::{bounded_observed_values, elided_observed_values_total};
-use crate::output::path::{display_path_text, repository_relative_path};
+use crate::output::path::{display_path_text, path_display_lossy, repository_relative_path};
 use crate::output::perl_preview_card::perl_preview_card_json;
 use crate::output::preview_actionability::{
     preview_actionability_for, preview_actionability_json_value,
@@ -75,6 +75,7 @@ pub(crate) fn render_findings_sarif(
         .filter(|finding| finding.is_candidate_actionable())
         .filter_map(|finding| finding_result(&output.root, finding, config, suppressions, &today))
         .collect::<Vec<_>>();
+    let (results, folded_same_line) = fold_same_line_results(results);
     sarif_document(
         "finding",
         rules,
@@ -82,7 +83,86 @@ pub(crate) fn render_findings_sarif(
         output.analysis_outcome.as_ref(),
         output.analyzed_revisions.as_ref(),
         omitted_not_current,
+        folded_same_line,
     )
+}
+
+/// One alert per changed line and class (#11219): two probes of the same
+/// class on one line (for example an `error_path` and a `return_value`
+/// probe) read as one edit to the author, yet code scanning opens one alert
+/// for each. The kept result is the one with the smallest fingerprint, so a
+/// reorder of the findings never changes which alert survives; it keeps its
+/// message, fingerprint and location. The others are named, sorted by
+/// fingerprint, in its `properties.folded_results` and counted for the run,
+/// so nothing is dropped silently. Results with different classes or
+/// different suppression metadata, and results without a line, stay
+/// separate: a weaker class never hides a stronger one and a suppressed
+/// result never hides an active one. Returns the kept results, in the order
+/// their groups first appear, and how many were folded.
+fn fold_same_line_results(results: Vec<Value>) -> (Vec<Value>, usize) {
+    type Key = (String, String, u64, String);
+    let mut groups: Vec<Vec<Value>> = Vec::new();
+    let mut index: std::collections::HashMap<Key, usize> = std::collections::HashMap::new();
+    for result in results {
+        let region = &result["locations"][0]["physicalLocation"];
+        let key = region["region"]["startLine"].as_u64().map(|line| {
+            (
+                result["ruleId"].as_str().unwrap_or_default().to_string(),
+                region["artifactLocation"]["uri"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+                line,
+                result
+                    .get("suppressions")
+                    .map(Value::to_string)
+                    .unwrap_or_default(),
+            )
+        });
+        match key {
+            Some(key) => match index.get(&key) {
+                Some(&at) => groups[at].push(result),
+                None => {
+                    index.insert(key, groups.len());
+                    groups.push(vec![result]);
+                }
+            },
+            None => groups.push(vec![result]),
+        }
+    }
+    let fingerprint = |result: &Value| -> String {
+        result["partialFingerprints"]["riprFingerprintV1"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string()
+    };
+    let mut folded = 0usize;
+    let mut kept = Vec::with_capacity(groups.len());
+    for mut group in groups {
+        group.sort_by_key(|result| fingerprint(result));
+        let mut rest = group.split_off(1).into_iter();
+        let Some(mut keeper) = group.pop() else {
+            continue;
+        };
+        let notes: Vec<Value> = rest
+            .by_ref()
+            .map(|result| {
+                json!({
+                    "finding_id": result["properties"]["finding_id"],
+                    "probe_id": result["properties"]["probe_id"],
+                    "probe_family": result["properties"]["probe_family"],
+                })
+            })
+            .collect();
+        folded += notes.len();
+        if !notes.is_empty()
+            && let Some(Value::Object(properties)) = keeper.get_mut("properties")
+        {
+            properties.insert("folded_results".to_string(), Value::Array(notes));
+        }
+        kept.push(keeper);
+    }
+    (kept, folded)
 }
 
 /// Render repo-scoped classified seams as SARIF.
@@ -156,6 +236,7 @@ fn sarif_document(
     analysis_outcome: Option<&AnalysisOutcome>,
     revisions: Option<&crate::analysis::AnalyzedRevisions>,
     omitted_not_current: usize,
+    folded_same_line: usize,
 ) -> String {
     let mut properties = Map::new();
     properties.insert("tool".to_string(), json!("ripr"));
@@ -212,6 +293,12 @@ fn sarif_document(
         properties.insert(
             "omitted_not_current".to_string(),
             json!(omitted_not_current),
+        );
+    }
+    if folded_same_line > 0 {
+        properties.insert(
+            "folded_same_line_results".to_string(),
+            json!(folded_same_line),
         );
     }
     let document = json!({
@@ -277,7 +364,10 @@ pub(crate) fn render_refusal_sarif(
     properties.insert("run_status".to_string(), json!("refused"));
     properties.insert("refusal_identity".to_string(), json!(notice.identity));
     properties.insert("repair_route".to_string(), json!(notice.repair_route));
-    properties.insert("root".to_string(), json!(root.display().to_string()));
+    properties.insert(
+        "root".to_string(),
+        json!(crate::output::path::display_path(root)),
+    );
     if let Some(base) = base {
         properties.insert("base".to_string(), json!(base));
     }
@@ -907,15 +997,30 @@ fn suppression_metadata(entry: &SuppressionEntry) -> Value {
 }
 
 fn finding_message(finding: &Finding) -> String {
-    let mut message = format!(
+    let mut message = String::new();
+    // #11219: lead with the missing check when the analyzer named one, so the
+    // length bound can never cut it; the full list stays in
+    // `properties.missing_discriminators`.
+    if let Some(missing) = finding.activation.missing_discriminators.first() {
+        let reason = missing.reason.trim();
+        if !reason.is_empty() {
+            message.push_str("Missing check: ");
+            message.push_str(reason.trim_end_matches('.'));
+            message.push_str(". ");
+        }
+    }
+    message.push_str(&format!(
         "{} static exposure for {} probe",
         finding.class.as_str(),
         finding.probe.family.as_str()
-    );
+    ));
     if !finding.probe.expression.is_empty() {
         message.push_str(": ");
         message.push_str(&finding.probe.expression);
     }
+    // Bound the evidence head only; the reconciled next step below is
+    // appended whole so it keeps agreeing with the other surfaces.
+    let mut message = bound_message(message);
     // RIPR-SPEC-0088 §PR8: the SARIF message text is a machine-consumed surface.
     // Use the shared reconciliation fn (not the raw field) so the embedded
     // "Next step" agrees with suggested_next_action and the other surfaces.
@@ -924,6 +1029,20 @@ fn finding_message(finding: &Finding) -> String {
         message.push_str(&reconcile_next_step(finding));
     }
     message
+}
+
+/// Longest evidence head (missing check, class, probe, expression) a finding
+/// message carries (#11219). The reconciled next step is appended whole
+/// (RIPR-SPEC-0088); the complete evidence stays in `properties`.
+const MAX_MESSAGE_CHARS: usize = 240;
+
+fn bound_message(message: String) -> String {
+    if message.chars().count() <= MAX_MESSAGE_CHARS {
+        return message;
+    }
+    let mut bounded: String = message.chars().take(MAX_MESSAGE_CHARS - 3).collect();
+    bounded.push_str("...");
+    bounded
 }
 
 fn seam_message(entry: &ClassifiedSeam) -> String {
@@ -962,7 +1081,7 @@ fn finding_rules() -> Vec<Value> {
             rule(
                 finding_rule_id(class),
                 format!("ripr {}", class.as_str()),
-                format!("Static exposure finding classified as {}", class.as_str()),
+                finding_class_title(class).to_string(),
                 full_description,
                 help,
                 STATIC_EXPOSURE_MODEL_URI,
@@ -979,13 +1098,61 @@ fn seam_rules() -> Vec<Value> {
             rule(
                 seam_rule_id(*class),
                 format!("ripr seam {}", class.as_str()),
-                format!("Repo seam grip evidence classified as {}", class.as_str()),
+                seam_class_title(class).to_string(),
                 full_description,
                 help,
                 SEAM_GRIP_SPEC_URI,
             )
         })
         .collect()
+}
+
+/// Author-facing alert titles (#11219): what the Security tab lists. They say
+/// what the static evidence suggests and avoid runtime verdicts.
+fn finding_class_title(class: &ExposureClass) -> &'static str {
+    match class {
+        ExposureClass::Exposed => "Changed behavior appears covered by a strong test oracle",
+        ExposureClass::WeaklyExposed => "Changed behavior may not be caught by the current tests",
+        ExposureClass::ReachableUnrevealed => {
+            "Tests reach the changed code but no assertion appears to check it"
+        }
+        ExposureClass::NoStaticPath => "No test appears to reach the changed code",
+        ExposureClass::InfectionUnknown => {
+            "Tests may reach the change but their inputs are not visible to static analysis"
+        }
+        ExposureClass::PropagationUnknown => {
+            "Static analysis cannot tell whether a wrong result would reach an assertion"
+        }
+        ExposureClass::StaticUnknown => "Static analysis could not judge this change",
+    }
+}
+
+fn seam_class_title(class: &SeamGripClass) -> &'static str {
+    match class {
+        SeamGripClass::StronglyGripped => "Tests appear to grip this code strongly",
+        SeamGripClass::WeaklyGripped => "Tests only weakly grip this code",
+        SeamGripClass::Ungripped => "No test appears to grip this code",
+        SeamGripClass::ReachableUnrevealed => {
+            "Tests reach this code but no assertion appears to check it"
+        }
+        SeamGripClass::ActivationUnknown => {
+            "Static analysis cannot tell whether tests activate this code"
+        }
+        SeamGripClass::PropagationUnknown => {
+            "Static analysis cannot tell whether a wrong result here would be observed"
+        }
+        SeamGripClass::ObservationUnknown => {
+            "Static analysis cannot tell where a wrong result here would be observed"
+        }
+        SeamGripClass::DiscriminationUnknown => {
+            "An assertion observes this code but may not discriminate a wrong result"
+        }
+        SeamGripClass::Opaque => {
+            "This code sits behind a boundary static analysis cannot see through"
+        }
+        SeamGripClass::Intentional => "Project records no discriminating test here by choice",
+        SeamGripClass::Suppressed => "Exposure gap waived by project policy",
+    }
 }
 
 /// Per-class rule metadata for someone who has never seen ripr (#7371): one
@@ -1136,7 +1303,7 @@ fn sarif_uri_reference(path: &str) -> String {
 }
 
 fn normalize_path(path: &Path) -> String {
-    let raw = path.to_string_lossy().replace('\\', "/");
+    let raw = path_display_lossy(path);
     raw.strip_prefix("./").unwrap_or(&raw).to_string()
 }
 
@@ -1401,6 +1568,7 @@ mod tests {
             base_ref: "origin/main".to_string(),
             base_commit: Some("1a2b3c4d5e6f".to_string()),
             merge_base_commit: Some("9f8e7d6c5b4a".to_string()),
+            loaded_diff_origin: None,
             head_commit: Some("5d6e7f8a9b0c".to_string()),
             working_tree: true,
         });
@@ -2169,6 +2337,47 @@ weakly_gripped = "note"
     /// #7371: every rule carries a real per-class fullDescription, help, and
     /// a helpUri worth clicking — not the class name rearranged and one
     /// shared spec link.
+    /// #11219: the Security-tab title says what to do, not just the class, and
+    /// the message is bounded and leads with the missing check.
+    #[test]
+    fn rule_titles_are_author_facing_and_messages_are_bounded() -> Result<(), String> {
+        for rule in finding_rules().iter().chain(seam_rules().iter()) {
+            let id = rule["id"].as_str().unwrap_or_default();
+            let title = rule["shortDescription"]["text"]
+                .as_str()
+                .unwrap_or_default();
+            let class = id.rsplit('.').next().unwrap_or_default();
+            if title.is_empty() || title.contains(class) || title.starts_with("Static exposure") {
+                return Err(format!("rule {id} title is not author-facing: {title}"));
+            }
+        }
+        let message = finding_message(&sample_finding());
+        assert!(
+            message.starts_with("Missing check: no related test calls the equality boundary. "),
+            "{message}"
+        );
+        assert!(message.contains("Next step:"), "{message}");
+
+        // The next step is never cut: it stays whole after the bounded head.
+        let mut long = sample_finding();
+        long.recommended_next_step = Some("word ".repeat(100));
+        let message = finding_message(&long);
+        assert!(message.ends_with(&reconcile_next_step(&long)), "{message}");
+        // A long expression is cut by the bound, never the leading missing check.
+        let mut wide = sample_finding();
+        wide.probe.expression = "x".repeat(2000);
+        let message = finding_message(&wide);
+        assert!(message.starts_with("Missing check: no related test calls the equality boundary"));
+        let head = message.split(". Next step:").next().unwrap_or_default();
+        assert_eq!(head.chars().count(), MAX_MESSAGE_CHARS);
+        assert!(head.ends_with("..."));
+        // Control: without a missing discriminator no "Missing check" is invented.
+        let mut none = sample_finding();
+        none.activation.missing_discriminators.clear();
+        assert!(!finding_message(&none).contains("Missing check"));
+        Ok(())
+    }
+
     #[test]
     fn rules_carry_per_class_help_and_meaningful_help_uri() -> Result<(), String> {
         let finding = finding_rules();
@@ -2460,6 +2669,7 @@ weakly_gripped = "note"
     fn sample_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "finding:discount".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -2808,6 +3018,173 @@ weakly_gripped = "note"
             props["omitted_not_current"], 1,
             "the not-current sibling still counts: {props}"
         );
+        Ok(())
+    }
+
+    fn sibling_probe(id: &str, family: ProbeFamily) -> Finding {
+        let mut finding = sample_finding();
+        finding.id = format!("finding:{id}");
+        finding.probe.id = ProbeId(format!("probe:src/pricing.rs:88:{id}"));
+        finding.probe.family = family;
+        finding
+    }
+
+    #[test]
+    fn same_line_same_class_findings_fold_into_one_alert_that_names_the_rest() -> Result<(), String>
+    {
+        // #11219: an error_path and a return_value probe on one line are one
+        // edit to the author, so one code-scanning alert.
+        let mut output = sample_output();
+        output.findings = vec![
+            sibling_probe("first", ProbeFamily::ErrorPath),
+            sibling_probe("second", ProbeFamily::ReturnValue),
+        ];
+        let sarif = parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))?;
+        let results = results(&sarif)?;
+        assert_eq!(results.len(), 1, "{sarif}");
+        assert_eq!(results[0]["properties"]["finding_id"], "finding:first");
+        assert_eq!(
+            results[0]["partialFingerprints"]["riprFingerprintV1"],
+            "ripr.finding.weakly_exposed|finding:first|probe:src/pricing.rs:88:first|src/pricing.rs|88",
+            "the kept result keeps its own fingerprint"
+        );
+        let folded = &results[0]["properties"]["folded_results"];
+        assert_eq!(folded.as_array().map(Vec::len), Some(1), "{folded}");
+        assert_eq!(folded[0]["finding_id"], "finding:second");
+        assert_eq!(folded[0]["probe_family"], "return_value");
+        assert_eq!(
+            sarif["runs"][0]["properties"]["folded_same_line_results"], 1,
+            "the run discloses the fold"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn the_kept_alert_does_not_depend_on_input_order() -> Result<(), String> {
+        let render = |order: [&str; 2]| -> Result<Value, String> {
+            let mut output = sample_output();
+            output.findings = order
+                .iter()
+                .map(|id| sibling_probe(id, ProbeFamily::ErrorPath))
+                .collect();
+            parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))
+        };
+        let forward = render(["alpha", "beta"])?;
+        let reversed = render(["beta", "alpha"])?;
+        assert_eq!(
+            forward["runs"][0]["results"],
+            reversed["runs"][0]["results"]
+        );
+        let kept = first_result(&forward)?;
+        assert_eq!(kept["properties"]["finding_id"], "finding:alpha");
+        assert_eq!(
+            kept["properties"]["folded_results"][0]["finding_id"],
+            "finding:beta"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_suppressed_finding_is_not_folded_into_an_active_one() -> Result<(), String> {
+        let suppression = SuppressionEntry {
+            kind: SuppressionKind::ExposureGap,
+            finding_id: Some("finding:first".to_string()),
+            test: None,
+            path: None,
+            reason: "tracked".to_string(),
+            owner: "team-ripr".to_string(),
+            expires: Some("2099-01-01".to_string()),
+            scope: None,
+            created_at: None,
+            last_seen: None,
+            review_by: None,
+            expected_visibility: None,
+            static_class: None,
+            language: None,
+            language_status: None,
+            block_line: 4,
+        };
+        let mut output = sample_output();
+        output.findings = vec![
+            sibling_probe("first", ProbeFamily::ErrorPath),
+            sibling_probe("second", ProbeFamily::ReturnValue),
+        ];
+        let sarif = parse_json(&render_findings_sarif(
+            &output,
+            &RiprConfig::default(),
+            &[suppression],
+        ))?;
+        let results = results(&sarif)?;
+        assert_eq!(results.len(), 2, "{sarif}");
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| result.get("suppressions").is_some())
+                .count(),
+            1
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn findings_without_a_line_are_never_folded() -> Result<(), String> {
+        let mut first = sibling_probe("first", ProbeFamily::ErrorPath);
+        first.probe.location = SourceLocation::new("src/pricing.rs", 0, 0);
+        let mut second = sibling_probe("second", ProbeFamily::ReturnValue);
+        second.probe.location = SourceLocation::new("src/pricing.rs", 0, 0);
+        let mut output = sample_output();
+        output.findings = vec![first, second];
+        let sarif = parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))?;
+        assert_eq!(results(&sarif)?.len(), 2, "{sarif}");
+        Ok(())
+    }
+
+    #[test]
+    fn findings_that_differ_in_class_or_line_stay_separate() -> Result<(), String> {
+        let mut other_class = sibling_probe("class", ProbeFamily::ReturnValue);
+        other_class.class = ExposureClass::InfectionUnknown;
+        let mut other_line = sibling_probe("line", ProbeFamily::ReturnValue);
+        other_line.probe.location = SourceLocation::new("src/pricing.rs", 89, 9);
+        let mut output = sample_output();
+        output.findings = vec![
+            sibling_probe("first", ProbeFamily::ErrorPath),
+            other_class,
+            other_line,
+        ];
+        let sarif = parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))?;
+        assert_eq!(results(&sarif)?.len(), 3, "{sarif}");
+        assert!(
+            sarif["runs"][0]["properties"]
+                .get("folded_same_line_results")
+                .is_none(),
+            "nothing folded, nothing disclosed"
+        );
+        assert!(
+            results(&sarif)?[0]["properties"]
+                .get("folded_results")
+                .is_none()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn refusal_sarif_root_renders_through_display_path() -> Result<(), String> {
+        // #9806: `properties.root` uses the check-JSON renderer, which escapes
+        // `%` on every host, so the raw `display()` spelling fails here.
+        let notice = crate::core_error::CoreError::base_unresolvable(
+            "the base `deadbeef` does not resolve to a commit",
+        )
+        .refusal_notice();
+        let rendered = render_refusal_sarif(&notice, std::path::Path::new("repo%41"), None);
+        let sarif = parse_json(&rendered)?;
+        let root = sarif
+            .pointer("/runs/0/properties/root")
+            .and_then(Value::as_str);
+        if root != Some("repo%2541") {
+            return Err(format!(
+                "refusal SARIF root must use display_path spelling, got {root:?}"
+            ));
+        }
         Ok(())
     }
 }
