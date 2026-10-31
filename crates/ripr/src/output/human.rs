@@ -2694,10 +2694,13 @@ mod tests {
             ),
             "{with_route}"
         );
+        // `--base` is quoted for the host shell (single quotes on Unix,
+        // double quotes on the Windows console).
+        let base = crate::agent::loop_commands::shell_arg("HEAD~1");
         assert!(
-            with_route.contains(
-                "Recommended follow-through (start the repair):\n  ripr agent repair --gap-id gap:typescript:typescript_preview:abcd1234 --base 'HEAD~1' --phase before"
-            ),
+            with_route.contains(&format!(
+                "Recommended follow-through (start the repair):\n  ripr agent repair --gap-id gap:typescript:typescript_preview:abcd1234 --base {base} --phase before"
+            )),
             "{with_route}"
         );
         assert_eq!(with_route.matches("Recommended").count(), 2, "{with_route}");

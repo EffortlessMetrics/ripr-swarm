@@ -164,18 +164,24 @@ impl CustodyRefusal {
             }
             Self::FindingsUnobserved(path) => format!(
                 "the findings producer has no captured observation of `{}`",
-                path.display()
+                shown(path)
             ),
             Self::InventoryUnobserved(path) => format!(
                 "the seam inventory has no captured observation of `{}`",
-                path.display()
+                shown(path)
             ),
             Self::Moved(path) => format!(
                 "`{}` changed between the findings pass and the seam inventory pass",
-                path.display()
+                shown(path)
             ),
         }
     }
+}
+
+/// Repo-relative paths read with `/` separators in every user-facing reason,
+/// on Windows too, matching how the rest of the output names files.
+fn shown(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 fn is_normal_relative_path(path: &Path) -> bool {

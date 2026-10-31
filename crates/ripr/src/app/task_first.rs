@@ -2841,12 +2841,24 @@ pub(crate) mod tests {
         second.command = format!("ripr repair bbb --root {}", shell_arg(root));
         let text = render_repair_choice(&[first, second], 2, root);
         for seam in ["aaa", "bbb"] {
-            assert!(
-                text.contains(&format!(
-                    "     (PowerShell) ripr repair {seam} --root '/home/o''neil/proj'\n"
-                )),
-                "{text}"
-            );
+            if cfg!(windows) {
+                // The Windows console form is already double-quoted, which
+                // PowerShell reads unchanged, so no second form is printed.
+                assert!(
+                    text.contains(&format!(
+                        "     ripr repair {seam} --root \"/home/o'neil/proj\"\n"
+                    )),
+                    "{text}"
+                );
+                assert!(!text.contains("PowerShell"), "{text}");
+            } else {
+                assert!(
+                    text.contains(&format!(
+                        "     (PowerShell) ripr repair {seam} --root '/home/o''neil/proj'\n"
+                    )),
+                    "{text}"
+                );
+            }
         }
         assert!(
             !render_repair_choice(&[note("src/lib.rs:2", "a >= b", "aaa")], 1, ".")

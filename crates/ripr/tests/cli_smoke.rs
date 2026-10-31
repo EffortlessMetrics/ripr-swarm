@@ -9537,7 +9537,8 @@ fn after_phase_redirect_scenario(
     // Build the argument vectors from the known root and seam instead of
     // splitting the printed text (a quoted root may contain spaces), and
     // check the message prints those commands with the rendered root.
-    let root_arg = root.display().to_string();
+    // The printed commands render the root with `/` separators on Windows.
+    let root_arg = rendered_path(&root.display().to_string());
     assert!(
         refusal.contains(&format!("`ripr agent status --root {root_arg}"))
             && refusal.contains(&format!("`ripr agent repair --root {root_arg}"))
