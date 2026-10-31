@@ -578,15 +578,15 @@ async function sha256File(filePath: string): Promise<string> {
 }
 
 /**
- * Rejects extracted archives that carry symlink or hard-link entries or paths
- * that resolve outside the extraction root (#11477 item 5).
+ * Rejects extracted trees that contain symlink or multiply-linked regular-file
+ * entries (#11477 item 5). This runs after extraction, so it cannot detect or
+ * undo writes made outside the extraction root.
  */
 export async function assertExtractedTreeContained(extractDir: string): Promise<void> {
-  const canonicalRoot = path.resolve(extractDir);
-  await walkExtractedEntries(canonicalRoot, canonicalRoot);
+  await walkExtractedEntries(path.resolve(extractDir));
 }
 
-async function walkExtractedEntries(currentDir: string, root: string): Promise<void> {
+async function walkExtractedEntries(currentDir: string): Promise<void> {
   const entries = await fs.promises.readdir(currentDir, { withFileTypes: true });
   for (const entry of entries) {
     const fullPath = path.join(currentDir, entry.name);
@@ -597,9 +597,8 @@ async function walkExtractedEntries(currentDir: string, root: string): Promise<v
     if (stat.isFile() && stat.nlink > 1) {
       throw new Error(`Refusing extracted hard link at ${fullPath}.`);
     }
-    assertDescendantPath(root, fullPath, 'Extracted archive entry');
     if (stat.isDirectory()) {
-      await walkExtractedEntries(fullPath, root);
+      await walkExtractedEntries(fullPath);
     }
   }
 }

@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as https from 'https';
 import * as os from 'os';
 import * as path from 'path';
+import { rootCertificates } from 'tls';
 import {
   ARCHIVE_MAX_BYTES,
   MANIFEST_MAX_BYTES,
@@ -139,21 +140,17 @@ function run(command: string, args: string[]): Promise<void> {
 }
 
 suite('VS Code download hardening (#11477 item 5)', () => {
-  let previousTlsReject: string | undefined;
+  let previousCa: typeof https.globalAgent.options.ca;
   let tls: { readonly key: Buffer; readonly cert: Buffer };
 
   suiteSetup(async () => {
-    previousTlsReject = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
     tls = await fixtureTlsMaterial();
+    previousCa = https.globalAgent.options.ca;
+    https.globalAgent.options.ca = [...rootCertificates, tls.cert];
   });
 
   suiteTeardown(() => {
-    if (previousTlsReject === undefined) {
-      delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-    } else {
-      process.env.NODE_TLS_REJECT_UNAUTHORIZED = previousTlsReject;
-    }
+    https.globalAgent.options.ca = previousCa;
   });
 
   test('isAllowedHttpsRedirect permits same host and GitHub release hosts', () => {
