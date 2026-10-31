@@ -295,7 +295,7 @@ fn evidence_promotion_semantic_assertions_reject_contradictory_packet_messaging(
                 },
                 "evidence": [
                     "owner: applyDiscount",
-                    "gap_state: advisory",
+                    "gap_state: unknown",
                     "actionability_category: incomplete_repair_packet",
                     "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract",
                     "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",

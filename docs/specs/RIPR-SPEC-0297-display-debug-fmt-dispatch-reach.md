@@ -185,6 +185,14 @@ is acceptable only because the route credits reach and nothing else: such a
 finding stays `propagation_unknown`, never `exposed`. A hop through a local
 `macro_rules!` identifier argument carries no formatting reach.
 
+Package scope (#8999). The helper-entry route is in-package only, with the same
+rule as the plain inherent method entry: a member-package owner admits only a
+test under its package prefix, and a root-package owner admits only a test
+outside every member package (a dependent member's test that formats the
+re-exported type is not credited). A same-named type with the same `Display`
+impl in another package makes the formatted type declared twice, so no test
+relates in either package.
+
 ## Required Evidence
 
 - Positive: Debug and Display via `format!`, `write!`, `println!`,
@@ -194,6 +202,11 @@ finding stays `propagation_unknown`, never `exposed`. A hop through a local
   macros, associated const/factory, inherent `to_string`, turbofish/closure
   comma argument shifts.
 - Discriminator: Display and Debug impls of one type are told apart.
+- Package scope (#8999): positive for the owner's own package test (root
+  unit and integration tests, member tests); negative for a dependent member
+  package's test of a root owner, the root package's test of a member owner,
+  and a same-named twin type in an unrelated package
+  (`crates/ripr/tests/fmt_helper_entry_package_scope.rs`).
 - Helper entry (#8999): positive for `to_string()` in a multi-line
   `assert_eq!` on an annotated or struct-literal receiver; negative for an
   unproven factory receiver (positive for an indexed `Self`-returning inherent constructor), another type, the other trait, a doubly declared
@@ -220,6 +233,8 @@ finding stays `propagation_unknown`, never `exposed`. A hop through a local
 
 ## Test Mapping
 
+- `crates/ripr/tests/fmt_helper_entry_package_scope.rs`: multi-package
+  workspaces for the in-package rule.
 - `crates/ripr/tests/fmt_helper_entry_dispatch.rs`: public-API controls for
   the helper-entry route, asserting the rendered `propagation_unknown` class.
 - `crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs`: the

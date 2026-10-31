@@ -31,10 +31,10 @@ ripr check \
 
 The TypeScript preview findings stay advisory and fail closed:
 
-- weak direct evidence emits `gap_state: advisory` with
+- weak direct evidence emits `gap_state: unknown` with
   `actionability_category: incomplete_repair_packet`;
 - strong related evidence emits `gap_state: already_observed`;
-- missing related evidence emits `gap_state: advisory` with
+- missing related evidence emits `gap_state: unknown` with
   `actionability_category: missing_context`;
 - each finding carries `why_not_actionable`, `repair_route`, and a raw
   preview evidence reference.
