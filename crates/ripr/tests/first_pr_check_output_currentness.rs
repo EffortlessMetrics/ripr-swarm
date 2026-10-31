@@ -334,7 +334,11 @@ fn zero_record_foreign_check_preserves_the_input() -> Result<(), String> {
     );
     assert_eq!(other["selected"]["output_state"], "wrong_root", "{other}");
     assert_eq!(other_ledger["input_root"], printed(&a)?);
-    assert_eq!(other_ledger["root"], printed(&b)?);
+    // The ledger records the root as given, which is the native spelling.
+    assert_eq!(
+        other_ledger["root"].as_str().map(|root| root.replace('\\', "/")),
+        Some(printed(&b)?)
+    );
     assert!(
         other["commands"].get("regenerate_gap_ledger").is_none(),
         "{other}"

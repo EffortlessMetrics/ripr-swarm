@@ -1422,9 +1422,14 @@ mod tests {
         write_repo_file(&repo, "base.txt", "base\n")?;
         fixture_git(&repo, &["add", "."])?;
         fixture_git(&repo, &["commit", "--no-gpg-sign", "-m", "initial"])?;
-        write_repo_file(&repo, "a\nb", "one\n")?;
+        // NTFS cannot hold a newline in a file name, so the newline entry is
+        // staged through the index rather than the worktree; `changed_paths`
+        // still reads it from real git.
         write_repo_file(&repo, "c", "two\n")?;
-        fixture_git(&repo, &["add", "-A"])?;
+        let blob = super::run_git(&repo, &["hash-object", "-w", "c"])?;
+        let cacheinfo = format!("100644,{},a\nb", blob.stdout.trim());
+        fixture_git(&repo, &["update-index", "--add", "--cacheinfo", &cacheinfo])?;
+        fixture_git(&repo, &["add", "c"])?;
         fixture_git(&repo, &["commit", "--no-gpg-sign", "-m", "newline"])?;
         let paths = changed_paths(&repo, "HEAD~1", "HEAD");
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
