@@ -110,10 +110,10 @@ fn variant_guard_child() -> Result<(), String> {
     }
     let verdict = unchanged_binary(&shared, before);
     if mode == "redirected" {
-        assert_eq!(
-            verdict.unwrap_err(),
-            format!("variant build rewrote {}", shared.display())
-        );
+        let error = verdict
+            .err()
+            .ok_or("redirected variant did not rewrite shared binary")?;
+        assert_eq!(error, format!("variant build rewrote {}", shared.display()));
     } else {
         verdict?;
     }
