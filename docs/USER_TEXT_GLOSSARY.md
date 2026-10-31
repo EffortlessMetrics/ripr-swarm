@@ -72,9 +72,8 @@ and its baseline scans the goldens only (`precommit`). Hosted CI (`ci-policy`,
 
 `main` still contains some banned terms in default output. They are recorded by
 `policy/user-text-baseline.toml`, one ceiling per surface and term: the number
-of output lines containing the term today (for `golden-human`, the most lines any
-single golden may hold; total growth across goldens is deliberately not bounded,
-each golden is).
+of output lines containing the term when last lowered (for `golden-human`, the
+most lines any single golden may hold).
 
 - Golden rows (`golden-human`) gate each PR on its own delta (#11374), per
   file. The check scans the `expected/human.txt` goldens at the merge-base with
@@ -94,14 +93,16 @@ each golden is).
   lines is rejected as a new path.
 - Inputs are recorded. The report names the merge-base commit, the base source
   and sha, and HEAD, and says when the head side is the working tree.
-- CI binds both sides to commits. For `pull_request` the base is the event's
-  base sha and the checkout must be the integration commit whose two parents are
-  exactly that base and the PR head (`GITHUB_SHA` must match HEAD); for
+- CI binds both sides to commits. For `pull_request` the checkout must be the
+  integration commit (`GITHUB_SHA` must match HEAD) whose second parent is the
+  event's PR head and whose first parent is the compared base; the event's base
+  sha, which can be older when the base branch moved after the event, must be
+  that parent or one of its ancestors; for
   `merge_group` HEAD must be the event head and the event base its ancestor.
   Mismatched or missing identities fail the check, as do uncommitted or ignored
-  golden files; the head side is read from HEAD's committed blobs. Selected goldens must be regular files: symlinks and other
-  non-regular entries fail rather than being read as output text. An empty or
-  malformed `GITHUB_EVENT_NAME` under GitHub Actions fails closed. Other CI
+  golden files; the head side is read from HEAD's committed blobs. Selected
+  goldens must be regular files: symlinks and other nonregular entries fail
+  rather than being treated as output text. Other CI
   events (for example `push`) use the `origin/main` ref. Locally the base is the
   `origin/main` ref and the head is the working tree, so a local comparison is
   advisory when that ref is stale; the report records where each side came from.

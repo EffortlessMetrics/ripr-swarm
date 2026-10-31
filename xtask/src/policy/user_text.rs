@@ -310,15 +310,16 @@ pub(crate) fn parse_baseline(text: &str) -> Result<Baseline, String> {
 fn render_baseline(baseline: &Baseline) -> String {
     let mut out = String::from(
         "# Ceilings for banned plain-language terms in default human output (#10697).\n\
-         # Each number is the count of output lines containing the term on `main`; for\n\
-         # `golden-human` it is the most lines any single golden may hold (one golden is\n\
-         # one subject, so landing goldens never races on a shared total). Golden rows\n\
-         # also gate each PR on its own per-file delta against the merge-base, so a PR\n\
-         # never edits this file to pass; a golden above its ceiling is only a warning.\n\
-         # Live-surface rows fail above their ceiling (raising one needs an explicit\n\
-         # reviewed reason), as do golden rows when the merge-base is unreadable.\n\
-         # Lower a ceiling with `cargo xtask check-user-text --ratchet`; never raise one\n\
-         # without a reviewed reason in the PR. A term with no row has a ceiling of 0.\n\
+         # Each number is a ceiling on output lines containing the term; for `golden-human`\n\
+         # it is the most lines any single golden may hold. `main` above a ceiling is\n\
+         # reported as a warning.\n\
+         # Golden rows gate each PR on its own per-file delta against the merge-base, so\n\
+         # a PR never edits this file to pass; a golden over its ceiling is only a\n\
+         # warning. Live-surface rows fail above their ceiling (raising one needs an\n\
+         # explicit reviewed reason), as do golden rows when the merge-base is\n\
+         # unreadable (shallow clone).\n\
+         # Lower ceilings with `cargo xtask check-user-text --ratchet` (lowering only);\n\
+         # never raise one. A term with no row has a ceiling of 0.\n\
          # See docs/USER_TEXT_GLOSSARY.md.\n\
          schema_version = \"1.0\"\n",
     );
@@ -471,7 +472,7 @@ fn git_run(root: &Path, args: &[&str], stdin: Option<Vec<u8>>) -> Result<Vec<u8>
     if let Some(writer) = writer {
         writer
             .join()
-            .map_err(|_panic| "git stdin writer panicked".to_string())?
+            .map_err(|err| format!("git stdin writer panicked: {err:?}"))?
             .map_err(|err| format!("git {} stdin: {err}", args.join(" ")))?;
     }
     if !output.status.success() {
@@ -493,13 +494,33 @@ pub(crate) fn is_golden_human_path(path: &str) -> bool {
     path.starts_with("fixtures/") && path.ends_with("/expected/human.txt")
 }
 
-/// Paths from `git ls-tree -r -z --name-only` output (NUL-separated, so quoted
-/// or non-ASCII names are neither escaped nor dropped), kept to default goldens.
-pub(crate) fn golden_paths_from_ls_tree_z(listing: &str) -> Vec<&str> {
-    listing
-        .split('\0')
-        .filter(|path| is_golden_human_path(path))
-        .collect()
+/// Parse NUL-separated `ls-tree` records and accept only regular-file goldens.
+/// Git symlinks are blobs containing target paths, not the output they point at.
+pub(crate) fn golden_paths_from_ls_tree_z(listing: &str) -> Result<Vec<&str>, String> {
+    let mut paths = Vec::new();
+    for entry in listing.split('\0').filter(|entry| !entry.is_empty()) {
+        let (metadata, path) = entry
+            .split_once('\t')
+            .ok_or("git ls-tree: malformed record")?;
+        if !is_golden_human_path(path) {
+            continue;
+        }
+        let mut fields = metadata.split_whitespace();
+        let mode = fields.next();
+        let kind = fields.next();
+        let object = fields.next();
+        if !matches!(mode, Some("100644" | "100755"))
+            || kind != Some("blob")
+            || object.is_none()
+            || fields.next().is_some()
+        {
+            return Err(format!(
+                "golden {path} is not a regular Git blob ({metadata})"
+            ));
+        }
+        paths.push(path);
+    }
+    Ok(paths)
 }
 
 /// Scan `git cat-file --batch` output for `paths` (in request order) into
@@ -579,29 +600,11 @@ fn resolve_sha(root: &Path, args: &[&str]) -> Result<String, String> {
     Ok(sha)
 }
 
-/// A golden entry that is not a regular file (symlink, submodule): blob reads
-/// would see link text while the working tree follows the link, so fail closed.
-fn irregular_golden_entry(ls_tree_z: &str) -> Option<String> {
-    ls_tree_z.split('\0').find_map(|entry| {
-        let (meta, path) = entry.split_once('\t')?;
-        let mode = meta.split_whitespace().next()?;
-        (is_golden_human_path(path) && mode != "100644" && mode != "100755")
-            .then(|| format!("golden {path} has git mode {mode}; only regular files are supported"))
-    })
-}
-
 /// Golden counts per `(path, term)` and the set of golden paths in the tree of
 /// the commit `sha`, read through Git objects only.
 fn golden_counts_at(root: &Path, sha: &str) -> Result<(Counts, BTreeSet<String>), String> {
-    let listing = git_text(
-        root,
-        &["ls-tree", "-r", "-z", "--name-only", sha, "--", "fixtures"],
-    )?;
-    let paths = golden_paths_from_ls_tree_z(&listing);
-    let modes = git_text(root, &["ls-tree", "-r", "-z", sha, "--", "fixtures"])?;
-    if let Some(odd) = irregular_golden_entry(&modes) {
-        return Err(odd);
-    }
+    let listing = git_text(root, &["ls-tree", "-r", "-z", sha, "--", "fixtures"])?;
+    let paths = golden_paths_from_ls_tree_z(&listing)?;
     if paths.is_empty() {
         return Err(format!("no default human.txt goldens found at {sha}"));
     }
@@ -731,16 +734,28 @@ fn event_base(root: &Path, event: &CiEvent, dirty: bool) -> Result<Option<String
         ));
     }
     if name == "pull_request" {
-        let base = sha("/pull_request/base/sha")?;
+        let event_base = sha("/pull_request/base/sha")?;
         let subject = sha("/pull_request/head/sha")?;
         let line = git_text(root, &["rev-list", "--parents", "-n", "1", &head])?;
         let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.as_slice() != [head.as_str(), base.as_str(), subject.as_str()] {
-            return Err(
-                "PR checkout does not have the event base and PR head as its two parents".into(),
-            );
+        // The payload's base sha can be older than the base tip GitHub merged
+        // into (the base branch moved after the event was created), so the
+        // compared base is the integration commit's actual first parent; the
+        // event base only has to be that parent or one of its ancestors.
+        let [_, first, second] = parts.as_slice() else {
+            return Err("PR checkout is not a two-parent integration commit".into());
+        };
+        if *second != subject {
+            return Err("PR checkout's second parent is not the event PR head".into());
         }
-        Ok(Some(base))
+        if !is_full_sha(first) {
+            return Err("PR checkout has an invalid first parent".into());
+        }
+        let first = first.to_ascii_lowercase();
+        if resolve_sha(root, &["merge-base", &event_base, &first])? != event_base {
+            return Err("event base is not the PR checkout's first parent or an ancestor".into());
+        }
+        Ok(Some(first))
     } else {
         let base = sha("/merge_group/base_sha")?;
         let subject = sha("/merge_group/head_sha")?;
@@ -1642,14 +1657,25 @@ mod tests {
     }
 
     #[test]
-    fn ls_tree_z_listing_keeps_quoted_and_non_ascii_golden_paths() {
-        let listing = "fixtures/a/expected/human.txt\0fixtures/caf\u{e9} \"q\"/expected/human.txt\0fixtures/a/expected/human-full.txt\0fixtures/a/input.rs\0";
+    fn ls_tree_z_listing_keeps_quoted_and_non_ascii_golden_paths() -> Result<(), String> {
+        let listing = "100644 blob abc\tfixtures/a/expected/human.txt\x00100755 blob def\tfixtures/caf\u{e9} \"q\"/expected/human.txt\x00120000 blob ghi\tfixtures/a/expected/human-full.txt\x00100644 blob jkl\tfixtures/a/input.rs\0";
         assert_eq!(
-            golden_paths_from_ls_tree_z(listing),
+            golden_paths_from_ls_tree_z(listing)?,
             vec![
                 "fixtures/a/expected/human.txt",
                 "fixtures/caf\u{e9} \"q\"/expected/human.txt"
             ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ls_tree_rejects_nonregular_selected_goldens() {
+        assert!(
+            matches!(golden_paths_from_ls_tree_z("120000 blob abc\tfixtures/a/expected/human.txt\0"), Err(ref e) if e.contains("not a regular Git blob"))
+        );
+        assert!(
+            matches!(golden_paths_from_ls_tree_z("160000 commit abc\tfixtures/a/expected/human.txt\0"), Err(ref e) if e.contains("not a regular Git blob"))
         );
     }
 
@@ -1671,17 +1697,14 @@ mod tests {
 
         let missing = format!("{}:{A} missing\n", "a".repeat(40));
         assert!(
-            rejected(scan_cat_file_batch(missing.as_bytes(), &[A]))
-                .is_some_and(|reason| reason.contains("not a blob"))
+            matches!(scan_cat_file_batch(missing.as_bytes(), &[A]), Err(ref e) if e.contains("not a blob"))
         );
         assert!(
-            rejected(scan_cat_file_batch(b"", &[A]))
-                .is_some_and(|reason| reason.contains("truncated header"))
+            matches!(scan_cat_file_batch(b"", &[A]), Err(ref e) if e.contains("truncated header"))
         );
         let truncated = format!("{} blob 99\nshort\n", "a".repeat(40));
         assert!(
-            rejected(scan_cat_file_batch(truncated.as_bytes(), &[A]))
-                .is_some_and(|reason| reason.contains("truncated body"))
+            matches!(scan_cat_file_batch(truncated.as_bytes(), &[A]), Err(ref e) if e.contains("truncated body"))
         );
         Ok(())
     }
@@ -1873,22 +1896,24 @@ mod tests {
 
     #[test]
     fn github_event_name_requires_nonempty_valid_name() {
-        assert!(rejected(ci_event_name(true, None)).is_some());
-        assert!(rejected(ci_event_name(true, Some(String::new()))).is_some());
-        assert!(rejected(ci_event_name(true, Some("  ".into()))).is_some());
-        assert!(rejected(ci_event_name(true, Some("pull-request".into()))).is_some());
+        assert!(
+            matches!(ci_event_name(true, None), Err(ref e) if e.contains("missing or invalid"))
+        );
+        assert!(
+            matches!(ci_event_name(true, Some(String::new())), Err(ref e) if e.contains("missing or invalid"))
+        );
+        assert!(
+            matches!(ci_event_name(true, Some("  ".into())), Err(ref e) if e.contains("missing or invalid"))
+        );
+        assert!(
+            matches!(ci_event_name(true, Some("pull-request".into())), Err(ref e) if e.contains("missing or invalid"))
+        );
         assert_eq!(ci_event_name(true, Some("push".into())), Ok("push".into()));
         assert_eq!(
             ci_event_name(true, Some("workflow_dispatch".into())),
             Ok("workflow_dispatch".into())
         );
         assert_eq!(ci_event_name(false, None), Ok(String::new()));
-    }
-
-    /// The error text of a failed result, `None` when it succeeded; keeps
-    /// negative assertions free of unwrap-family calls.
-    fn rejected<T>(result: Result<T, String>) -> Option<String> {
-        result.err()
     }
 
     /// CI run with no pull_request/merge_group identity (for example `push`).
@@ -1935,6 +1960,49 @@ mod tests {
         }
     }
 
+    /// A committed symlink is not golden output: its blob is only a target path.
+    #[cfg(unix)]
+    #[test]
+    fn ci_rejects_a_committed_symlink_golden() -> Result<(), String> {
+        use std::os::unix::fs::symlink;
+        let root = golden_repo("ci-symlink", &[(A, "plain\n")], &[(A, "plain\n")])?;
+        let base = git_text(&root, &["rev-parse", "main"])?.trim().to_string();
+        fs::remove_file(root.join(A)).map_err(|e| e.to_string())?;
+        write_file(&root.join("fixtures/a/target.txt"), "added seam\n")?;
+        symlink("../target.txt", root.join(A)).map_err(|e| e.to_string())?;
+        run_git(&root, &["add", "-A"])?;
+        run_git(&root, &["commit", "-q", "-m", "symlink golden"])?;
+        let pr = git_text(&root, &["rev-parse", "HEAD"])?.trim().to_string();
+        run_git(&root, &["checkout", "-q", "main"])?;
+        run_git(
+            &root,
+            &["merge", "-q", "--no-ff", "pr", "-m", "integration"],
+        )?;
+        let merge = git_text(&root, &["rev-parse", "HEAD"])?.trim().to_string();
+        let mode = pr_mode(&base, &pr, &merge);
+        let result = merge_base_golden_counts(&root, "main", &mode);
+        assert!(
+            matches!(result, Err(ref reason) if reason.contains("not a regular Git blob")),
+            "a committed symlink must not be scanned as its target-path blob"
+        );
+        let (evaluation, _) = gate_goldens(
+            &root,
+            "main",
+            &mode,
+            &Counts::new(),
+            &Counts::new(),
+            &Baseline::new(),
+        );
+        assert!(!evaluation.violations.is_empty(), "CI must fail closed");
+        let mut counts = Counts::new();
+        assert!(
+            matches!(scan_goldens(&root, &mut counts), Err(ref e) if e.contains("not a regular file")),
+            "local scans must reject selected symlinks too"
+        );
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
     /// Negative: a ref moved onto the candidate hides growth locally, but under
     /// CI the base is the event sha, so the same input still fails.
     #[test]
@@ -1952,39 +2020,6 @@ mod tests {
         assert_eq!(ci.violations.len(), 1, "{ci:?}");
         assert!(note.contains("HEAD's committed blobs"), "{note}");
         assert!(note.contains("verified GitHub event identity"), "{note}");
-        Ok(())
-    }
-
-    /// Negative: a symlinked golden would read as link text from blobs but follow
-    /// the link in the working tree, so CI rejects it.
-    #[test]
-    fn ci_rejects_a_symlinked_golden() -> Result<(), String> {
-        let (root, base, pr, _) = pr_event_repo("ci-link", &[(A, "plain\n")], &[(A, "plain\n")])?;
-        run_git(&root, &["checkout", "-q", "--detach", &pr])?;
-        write_file(&root.join("fixtures/a/expected/real.txt"), "a seam\n")?;
-        let link = root.join(A);
-        fs::remove_file(&link).map_err(|err| format!("rm: {err}"))?;
-        std::os::unix::fs::symlink("real.txt", &link).map_err(|err| format!("link: {err}"))?;
-        run_git(&root, &["add", "-A"])?;
-        run_git(&root, &["commit", "-q", "-m", "link"])?;
-        let head = git_text(&root, &["rev-parse", "HEAD"])?.trim().to_string();
-        let (evaluation, note) = gate_goldens(
-            &root,
-            "main",
-            &mg_mode(&base, &head, &head),
-            &Counts::new(),
-            &Counts::new(),
-            &Baseline::new(),
-        );
-        let mut local = Counts::new();
-        let local_reason = rejected(scan_goldens(&root, &mut local));
-        let _ = fs::remove_dir_all(&root);
-        assert_eq!(evaluation.violations.len(), 1, "{evaluation:?}");
-        assert!(note.contains("git mode 120000"), "{note}");
-        assert!(
-            local_reason.is_some_and(|reason| reason.contains("not a regular file")),
-            "local scans must reject a symlinked golden too"
-        );
         Ok(())
     }
 
@@ -2024,8 +2059,12 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         assert!(good.violations.is_empty(), "{good:?}");
         for (label, (evaluation, note), reason) in [
-            ("wrong base", wrong_base, "two parents"),
-            ("wrong head", wrong_head, "two parents"),
+            ("wrong base", wrong_base, "first parent or an ancestor"),
+            (
+                "wrong head",
+                wrong_head,
+                "second parent is not the event PR head",
+            ),
             (
                 "wrong checkout",
                 wrong_checkout,
@@ -2036,6 +2075,35 @@ mod tests {
             assert_eq!(evaluation.violations.len(), 1, "{label}: {evaluation:?}");
             assert!(note.contains(reason), "{label}: {note}");
         }
+        Ok(())
+    }
+
+    /// The payload base can be older than the base tip GitHub merged into; the
+    /// compared base is then the checkout's first parent, so main's own movement
+    /// is not charged to the PR.
+    #[test]
+    fn ci_pull_request_accepts_a_stale_event_base_and_compares_to_the_first_parent()
+    -> Result<(), String> {
+        let root = golden_repo("ci-stale", &[(A, "plain\n")], &[(A, "plain\n")])?;
+        let pr = git_text(&root, &["rev-parse", "HEAD"])?.trim().to_string();
+        let old_base = git_text(&root, &["rev-parse", "main"])?.trim().to_string();
+        run_git(&root, &["checkout", "-q", "main"])?;
+        write_file(&root.join(B), "a seam\n")?;
+        run_git(&root, &["add", "-A"])?;
+        run_git(
+            &root,
+            &["commit", "-q", "-m", "main moved: new banned golden"],
+        )?;
+        run_git(
+            &root,
+            &["merge", "-q", "--no-ff", "pr", "-m", "integration"],
+        )?;
+        let merge = git_text(&root, &["rev-parse", "HEAD"])?.trim().to_string();
+        run_git(&root, &["checkout", "-q", "--detach"])?;
+        let (stale, note) = gate_in_ci(&root, "main", &pr_mode(&old_base, &pr, &merge))?;
+        let _ = fs::remove_dir_all(&root);
+        assert!(stale.violations.is_empty(), "{stale:?} {note}");
+        assert!(note.contains("verified GitHub event identity"), "{note}");
         Ok(())
     }
 
@@ -2073,10 +2141,7 @@ mod tests {
             good.1.contains("verified GitHub event identity"),
             "{good:?}"
         );
-        assert!(
-            !good.1.contains("unavailable"),
-            "growth must come from the delta, not a fallback: {good:?}"
-        );
+        assert!(!good.1.contains("unavailable"), "{good:?}");
         assert_eq!(wrong_head.0.violations.len(), 1, "{wrong_head:?}");
         assert!(
             wrong_head.1.contains("does not match event head"),
@@ -2117,6 +2182,9 @@ mod tests {
 
     #[test]
     fn mode_from_lookup_covers_every_environment_branch() -> Result<(), String> {
+        let missing_name = Mode::Ci {
+            event: Err("GITHUB_EVENT_NAME is missing or invalid under GitHub Actions".into()),
+        };
         assert_eq!(Mode::from_lookup(&lookup_of(&[])), Mode::Local);
         assert_eq!(
             Mode::from_lookup(&lookup_of(&[("GITHUB_ACTIONS", "")])),
@@ -2124,28 +2192,18 @@ mod tests {
         );
         assert_eq!(
             Mode::from_lookup(&lookup_of(&[("GITHUB_ACTIONS", "true")])),
-            Mode::Ci {
-                event: Err("GITHUB_EVENT_NAME is missing or invalid under GitHub Actions".into())
-            }
+            missing_name
         );
         assert_eq!(
             Mode::from_lookup(&lookup_of(&[
                 ("GITHUB_ACTIONS", "true"),
                 ("GITHUB_EVENT_NAME", "")
             ])),
-            Mode::Ci {
-                event: Err("GITHUB_EVENT_NAME is missing or invalid under GitHub Actions".into())
-            }
+            missing_name
         );
         assert_eq!(
             Mode::from_lookup(&lookup_of(&[("CI", "true"), ("GITHUB_EVENT_NAME", "push")])),
-            Mode::Ci {
-                event: Ok(CiEvent {
-                    name: "push".into(),
-                    payload: String::new(),
-                    checkout: String::new(),
-                })
-            }
+            ci_other()
         );
         assert_eq!(
             Mode::from_lookup(&lookup_of(&[("CI", "true")])),
@@ -2157,12 +2215,11 @@ mod tests {
                 })
             }
         );
-        let no_path = Mode::from_lookup(&lookup_of(&[
-            ("GITHUB_ACTIONS", "true"),
-            ("GITHUB_EVENT_NAME", "pull_request"),
-        ]));
         assert_eq!(
-            no_path,
+            Mode::from_lookup(&lookup_of(&[
+                ("GITHUB_ACTIONS", "true"),
+                ("GITHUB_EVENT_NAME", "pull_request"),
+            ])),
             Mode::Ci {
                 event: Err("GITHUB_EVENT_PATH is missing".into())
             }
@@ -2544,31 +2601,5 @@ mod tests {
             "committed goldens scanned to zero banned lines"
         );
         Ok(())
-    }
-
-    /// The committed goldens must already sit within the committed per-file
-    /// ceilings (#11372), so a stale baseline cannot hide growth.
-    #[test]
-    fn committed_goldens_stay_within_the_committed_baseline() -> Result<(), String> {
-        let root = repo_root()?;
-        let baseline = parse_baseline(
-            &fs::read_to_string(root.join(BASELINE_PATH))
-                .map_err(|err| format!("read baseline: {err}"))?,
-        )?;
-        let mut counts = Counts::new();
-        let scanned = scan_goldens(&root, &mut counts)?;
-        if scanned == 0 {
-            return Err("no default human.txt goldens were scanned".into());
-        }
-        let golden_only: Baseline = baseline
-            .into_iter()
-            .filter(|((surface, _), _)| surface == GOLDEN_SURFACE)
-            .collect();
-        let evaluation = evaluate(&counts, &golden_only);
-        if evaluation.violations.is_empty() {
-            Ok(())
-        } else {
-            Err(evaluation.violations.join("\n"))
-        }
     }
 }
