@@ -156,6 +156,7 @@ impl SeamAdmission {
         candidate_seams: &[ClassifiedSeam],
         policy: AgentBriefPolicy<'_>,
         completeness: &InventoryCompleteness,
+        root: &std::path::Path,
     ) -> Self {
         // The CLI checks inventory truncation before it resolves any item, so
         // a truncated or unverifiable inventory refuses every finding first.
@@ -168,14 +169,38 @@ impl SeamAdmission {
                         code: SEAM_INVENTORY_TRUNCATED,
                         detail: detail.clone(),
                     },
-                    None => verdict_for(
+                    None => {
                         // The server's verdicts are consumed relative to its
                         // own workspace root, so no `--root` is worded into an
                         // emitted next command here.
-                        resolve_repair_subject_in(candidate_seams, policy, &finding.id, None),
-                        candidate_seams,
-                        &finding.id,
-                    ),
+                        let outcome =
+                            resolve_repair_subject_in(candidate_seams, policy, &finding.id, None);
+                        // #11397: `ripr repair` also holds a start whose
+                        // inline test target has uncommitted changes. Ask the
+                        // same predicate so MCP names the CLI's cause instead
+                        // of a producer-side fix-site gate.
+                        let held = match &outcome {
+                            RepairSubjectOutcome::Seam(seam_id) => {
+                                crate::app::task_first::held_inline_start_file(
+                                    root,
+                                    seam_id,
+                                    candidate_seams,
+                                )
+                                .map(|file| (seam_id.clone(), file))
+                            }
+                            _ => None,
+                        };
+                        match held {
+                            Some((seam_id, file)) => SeamVerdict::Refused {
+                                code: SEAM_GATE_REFUSED,
+                                detail: format!(
+                                    "the shared repair gate (`ripr repair`) names seam `{seam_id}` for this item and refuses it: {}",
+                                    crate::app::task_first::held_inline_reason(&file)
+                                ),
+                            },
+                            None => verdict_for(outcome, candidate_seams, &finding.id),
+                        }
+                    }
                 };
                 (finding.id.clone(), verdict)
             })

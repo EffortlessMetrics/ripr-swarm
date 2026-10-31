@@ -22,6 +22,7 @@
 use crate::analysis;
 use crate::app::agent_brief::AgentBriefPolicy;
 use crate::app::repair_card_handoff::AgentCardError;
+use crate::app::task_first::CardStartHold;
 use crate::cli::CommandError;
 use crate::cli::agent::AgentCardOptions;
 use crate::cli::commands_context::{ensure_command_root, write_stdout_refusal_json};
@@ -56,7 +57,7 @@ pub(super) fn run_agent_card(options: AgentCardOptions) -> Result<(), CommandErr
 /// to what [`run_agent_card`] writes on success.
 pub(super) fn agent_card_stdout(options: AgentCardOptions) -> Result<String, CommandError> {
     ensure_command_root(&options.root, "agent card")?;
-    let card = match render_agent_card(&options) {
+    let (card, hold) = match render_agent_card(&options) {
         Ok(card) => card,
         Err(AgentCardError::Refusal { kind, message }) => {
             // A deliberate named refusal maps to the decision exit code 3,
@@ -94,9 +95,15 @@ pub(super) fn agent_card_stdout(options: AgentCardOptions) -> Result<String, Com
     // Default: the short plain brief. `--verbose` keeps the full field ledger
     // (producer, subject, non-claim, detail routes); `--json` is the contract.
     let lines = if crate::is_verbose() {
-        agent_card_prose_lines(&card, &packet_command, Some(&options.root))
+        let mut lines = agent_card_prose_lines(&card, &packet_command, Some(&options.root));
+        // #11397: the card's own readiness is evidence readiness; the start
+        // gate `ripr repair` applies is a separate fact, so name it here.
+        if let Some(hold) = &hold {
+            lines.insert(1, format!("  repair start: held ({})", hold.reason));
+        }
+        lines
     } else {
-        agent_card_plain_lines(&card, &packet_command, Some(&options.root))
+        agent_card_plain_lines(&card, &packet_command, Some(&options.root), hold.as_ref())
     };
     for line in lines {
         rendered.push_str(&line);
@@ -159,7 +166,9 @@ fn refusal_remedy_route(
     }
 }
 
-fn render_agent_card(options: &AgentCardOptions) -> Result<RepairCardV1, AgentCardError> {
+fn render_agent_card(
+    options: &AgentCardOptions,
+) -> Result<(RepairCardV1, Option<CardStartHold>), AgentCardError> {
     let config = load_for_root(&options.root).map_err(AgentCardError::operational)?;
     let (classified, limit_info) =
         analysis::inventory_classified_seams_at_with_config(&options.root, &config)
@@ -202,12 +211,16 @@ fn render_agent_card(options: &AgentCardOptions) -> Result<RepairCardV1, AgentCa
         ));
     }
 
-    crate::app::repair_card_handoff::repair_card_for_entry(
+    let card = crate::app::repair_card_handoff::repair_card_for_entry(
         entry,
         &options.root,
         &config,
         &classified,
-    )
+    )?;
+    // #11397: the start gate `ripr repair` applies, asked once here, so the
+    // plain brief never says "ready" for a gap the repair command refuses.
+    let hold = crate::app::task_first::card_start_hold(&options.root, entry, policy);
+    Ok((card, hold))
 }
 
 /// The typed refusal for a truncated seam candidate inventory: `Some` only
@@ -453,10 +466,22 @@ pub(crate) fn agent_card_plain_lines(
     card: &RepairCardV1,
     packet_command: &str,
     paste_root: Option<&std::path::Path>,
+    hold: Option<&CardStartHold>,
 ) -> Vec<String> {
     let mut lines = vec![format!("Repair brief for gap {}", card.subject.seam_id)];
     lines.push(format!("  Changed behavior: {}", card.changed_behavior));
-    if card.readiness.repair_ready {
+    // One verdict: the shared start gate (`hold`) outranks the card's own
+    // evidence readiness, so "ready" is only printed when `ripr repair`
+    // would also start (#11397, #11381).
+    let started = card.attempt.is_some();
+    let ready = card.readiness.repair_ready && hold.is_none();
+    if let Some(hold) = hold {
+        lines.push(format!("  Not ready to repair yet: {}.", hold.reason));
+    } else if started {
+        lines.push(
+            "  Ready to repair. The repair has started and is waiting for your test.".to_string(),
+        );
+    } else if ready {
         lines.push("  Ready to repair.".to_string());
     } else {
         let missing = card
@@ -485,6 +510,11 @@ pub(crate) fn agent_card_plain_lines(
             card.instruction.has_suggested_assertion
         ) {
             (Some(detail), true) => detail.clone(),
+            // A repair that can start or has started has a route, so the
+            // "no bounded repair route" wording would contradict it.
+            _ if ready || started => {
+                "none; ripr has no exact assertion to suggest for this gap.".to_string()
+            }
             _ => instruction_plain_words(card.instruction.state).to_string(),
         }
     ));
@@ -497,7 +527,50 @@ pub(crate) fn agent_card_plain_lines(
         }
         None => {}
     }
+    let own_route = card
+        .canonical_next_action
+        .as_ref()
+        .is_some_and(|action| action.command().is_some());
+    let root_arg = || {
+        crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+            &paste_root.map_or_else(|| ".".to_string(), |r| r.to_string_lossy().into_owned()),
+        ))
+    };
+    let start_command = || {
+        format!(
+            "ripr repair {} --root {}",
+            crate::agent::loop_commands::shell_arg(&card.subject.seam_id),
+            root_arg()
+        )
+    };
     match &card.canonical_next_action {
+        _ if hold.is_some() => match hold.and_then(|hold| hold.next.as_ref()) {
+            Some(next) => lines.push(format!("  Next: {next}")),
+            None => lines.push("  Next: ripr cannot start a repair for this gap yet.".to_string()),
+        },
+        // No runnable command of the card's own, a repair not yet started,
+        // and the start gate holds nothing: the one next step is the repair
+        // start itself (#11397), the command the pilot printed.
+        _ if ready && !started && !own_route => {
+            lines.push(format!("  Next: {}", start_command()));
+        }
+        // A started attempt with no stop of its own: the next step is the
+        // attempt's, not "no ready command" (#11381).
+        Some(action)
+            if started
+                && !own_route
+                && action.stop().is_none_or(|stop| {
+                    matches!(stop, crate::domain::NextActionStop::Unsupported { .. })
+                }) =>
+        {
+            if let Some(attempt) = &card.attempt {
+                lines.push(format!(
+                    "  Next: write the test, then run `ripr continue --root {} --attempt {}`",
+                    root_arg(),
+                    crate::agent::loop_commands::shell_arg(&attempt.attempt_id)
+                ));
+            }
+        }
         Some(action) => {
             lines.extend(
                 crate::output::next_action::render_next_action_plain_at_root(action, paste_root),
@@ -1116,7 +1189,8 @@ mod tests {
         card.allowed_files = vec!["tests/t.rs".to_string()];
         card.forbidden_files = vec!["src/lib.rs".to_string()];
         card.limitations = (0..6).map(|i| format!("limit {i}")).collect();
-        let lines = agent_card_plain_lines(&card, "ripr agent packet --root 'a b' --json", None);
+        let lines =
+            agent_card_plain_lines(&card, "ripr agent packet --root 'a b' --json", None, None);
         let text = lines.join("\n");
         if !text.contains("Not ready to repair yet: a test assertion that pins the changed boundary value exactly") {
             return Err(format!("not-ready reason not plain:\n{text}"));
@@ -1135,8 +1209,12 @@ mod tests {
         let mut card = prose_test_card();
         card.allowed_files = vec!["tests/t.rs".to_string()];
         card.forbidden_files = vec!["src/lib.rs".to_string()];
-        let lines =
-            agent_card_plain_lines(&card, "ripr agent packet --seam-id seam:demo --json", None);
+        let lines = agent_card_plain_lines(
+            &card,
+            "ripr agent packet --seam-id seam:demo --json",
+            None,
+            None,
+        );
         let text = lines.join("\n");
         for needle in [
             "Repair brief for gap ",

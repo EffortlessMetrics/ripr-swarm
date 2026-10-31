@@ -1371,6 +1371,42 @@ pub(crate) fn uncommitted_start_refusal_message(root: &Path, seam_id: &str, file
     )
 }
 
+/// The one sentence for a start held by an uncommitted test target, shared by
+/// `ripr repair`, the agent card and the MCP admission so every surface names
+/// the same cause (#11397).
+pub(crate) fn held_inline_reason(file: &str) -> String {
+    format!("the inline test target `{file}` has uncommitted changes; commit or stash them first")
+}
+
+/// What the human agent card says when the shared start gate holds a seam
+/// back: the plain cause and, when the gate's remedy is a command, the one
+/// next step. Derived from [`repair_start_refusal_for_entry`] only; the card
+/// keeps no gate of its own (#11397).
+pub(crate) struct CardStartHold {
+    pub(crate) reason: String,
+    pub(crate) next: Option<String>,
+}
+
+pub(crate) fn card_start_hold(
+    root: &Path,
+    entry: &crate::analysis::ClassifiedSeam,
+    policy: AgentBriefPolicy<'_>,
+) -> Option<CardStartHold> {
+    let refusal = repair_start_refusal_for_entry(root, entry, policy)?;
+    let seam_id = entry.seam.id().as_str();
+    let next = held_inline_target(root, &repair_packet_eligibility(entry).readiness).map(|file| {
+        format!(
+            "commit or stash `{file}`, then run `ripr repair {} --root {}`",
+            shell_arg(seam_id),
+            shell_arg(&bound_root(&root.to_string_lossy()))
+        )
+    });
+    Some(CardStartHold {
+        reason: refusal.reason,
+        next,
+    })
+}
+
 /// The gate applied to one classified seam: [`repair_refusal`], the
 /// edit-target predicate and the held inline target, plus the related test
 /// the by-hand work targets.
@@ -1391,12 +1427,7 @@ pub(crate) fn repair_start_refusal_for_entry(
         })
         .or_else(|| {
             held_inline_target(root, &repair_packet_eligibility(entry).readiness).map(|file| {
-                (
-                    RefusalKind::Other,
-                    format!(
-                        "the inline test target `{file}` has uncommitted changes; commit or stash them first"
-                    ),
-                )
+                (RefusalKind::Other, held_inline_reason(&file))
             })
         })?;
     let related = entry
