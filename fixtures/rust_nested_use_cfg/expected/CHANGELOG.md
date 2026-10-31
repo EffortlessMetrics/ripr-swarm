@@ -106,7 +106,7 @@ Updated:
 ## Pending — rust_nested_use_cfg (9)
 
 Reason:
-RIPR-SPEC-0152: base-side findings (base_deleted, moved_or_renamed) carry the not-a-candidate-edit-target refusal as their next step instead of test advice (#11905)
+RIPR-SPEC-0122: plain wording for seam and state token in the check digest
 
 Command:
 `cargo xtask goldens bless rust_nested_use_cfg --reason "..."`
