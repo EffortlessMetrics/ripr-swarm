@@ -3528,6 +3528,9 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::non_file_level_scope_binding_blocks_the_module_constant",
   "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::lowercase_local_constant_witnesses_the_boundary",
   "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::local_constant_that_is_rebound_or_off_value_does_not_witness",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::boundary_discriminator_is_faithful_or_withheld",
+  "crates/ripr/src/analysis/language/typescript/tests/derived_operand_tests.rs::a_call_derived_local_operand_names_its_limitation",
+  "crates/ripr/src/analysis/language/typescript/tests/derived_operand_tests.rs::parameters_and_input_steered_locals_keep_their_reading",
   "crates/ripr/src/analysis/language/typescript/typeof_kind_tests.rs::typeof_guard_names_the_kind_test_not_the_type_name_string",
   "crates/ripr/src/analysis/language/typescript/typeof_kind_tests.rs::typeof_guard_never_names_the_bare_operand_as_the_literal",
   "crates/ripr/src/analysis/language/typescript/typeof_kind_tests.rs::non_typeof_comparisons_keep_their_discriminator",
@@ -18193,6 +18196,9 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs::match_object_refused_readings_keep_their_parsed_subject",
   "crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs::match_object_pin_looks_through_a_test_local_identity_helper",
   "crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs::match_object_pin_reads_a_test_body_object_const",
+  "crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs::match_object_with_a_scalar_literal_reads_unknown_while_containers_keep_their_grade",
+  "crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs::match_object_scalar_names_its_own_limitation_and_withholds_the_packet",
+  "crates/ripr/src/output/typescript_packet_projection.rs::tests::match_object_scalar_limitation_withholds_the_start_with_its_own_wording",
 ]
 fixtures = [
   "fixtures/typescript-verdict-corpus",
@@ -18763,6 +18769,12 @@ tests = [
   "crates/ripr/src/output/perl_composition_tests.rs::perl_composition_real_sparse_packet_stays_advisory",
   "crates/ripr/src/analysis/language/perl/tests.rs::h2_aligned_sink_on_another_tests_oracle_does_not_promote",
   "crates/ripr/src/analysis/language/perl/tests.rs::perl_isnt_is_a_smoke_oracle_not_an_exact_one",
+  "crates/ripr/src/analysis/language/perl/tests.rs::h2_changed_ordering_comparison_is_not_observed_by_equal_sink_text",
+  "crates/ripr/src/analysis/language/perl/boundary_input.rs::tests::a_call_inside_a_regex_or_heredoc_is_not_an_input",
+  "crates/ripr/src/analysis/language/perl/boundary_input.rs::tests::a_call_inside_a_string_or_comment_is_not_an_input",
+  "crates/ripr/src/analysis/language/perl/boundary_input.rs::tests::a_literal_inside_a_larger_operand_is_not_a_threshold",
+  "crates/ripr/src/analysis/language/perl/boundary_input.rs::tests::a_minus_after_an_operand_is_subtraction_not_a_sign",
+  "crates/ripr/src/analysis/language/perl/boundary_input.rs::tests::a_second_ordering_comparison_withholds_every_threshold",
 ]
 fixtures = [
   "fixtures/perl_cpan_alpha/recommendation-controls",
@@ -18770,6 +18782,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/analysis/language/perl/mod.rs",
+  "crates/ripr/src/analysis/language/perl/boundary_input.rs",
   "crates/ripr/src/analysis/language/perl/static_limit.rs",
   "crates/ripr/src/domain/diagnostic_witness.rs",
   "crates/ripr/src/output/perl_gap_record_projection.rs",
