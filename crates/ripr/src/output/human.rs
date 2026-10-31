@@ -5483,7 +5483,7 @@ mod tests {
         finding.probe.location = SourceLocation::new("src/lib.ts", 2, 1);
         finding.evidence = vec![
             "owner: applyDiscount".to_string(),
-            "gap_state: advisory".to_string(),
+            "gap_state: unknown".to_string(),
             "actionability_category: incomplete_repair_packet".to_string(),
             "why_not_actionable: TypeScript preview lacks a complete repair packet contract"
                 .to_string(),
@@ -7328,7 +7328,7 @@ mod tests {
         finding.owner_kind = Some(crate::domain::OwnerKind::Function);
         finding.evidence = vec![
             "owner: discountedTotal".to_string(),
-            "gap_state: advisory".to_string(),
+            "gap_state: unknown".to_string(),
             "actionability_category: incomplete_repair_packet".to_string(),
             "why_not_actionable: TypeScript preview lacks a complete repair packet contract"
                 .to_string(),
@@ -7338,19 +7338,19 @@ mod tests {
             "raw_evidence_ref: file=src/lib.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_lib.ts:2:typescript_preview;owner=discountedTotal".to_string(),
         ];
         finding.missing = vec![
-            "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: duplicate summary".to_string(),
+            "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: duplicate summary".to_string(),
         ];
 
         let rendered = render_finding(&finding);
 
         assert!(rendered.contains("Preview actionability\n"));
         assert!(rendered.contains("  authority: preview_advisory_only\n"));
-        assert!(rendered.contains("  gap state: advisory\n"));
+        assert!(rendered.contains("  gap state: unknown\n"));
         assert!(rendered.contains("  category: incomplete_repair_packet\n"));
         assert!(rendered.contains("  repair packet ready: false\n"));
         assert!(rendered.contains("  raw evidence: src/lib.ts:2 (typescript_preview_probe)"));
         assert!(rendered.contains("  - owner: discountedTotal\n"));
-        assert!(!rendered.contains("  - gap_state: advisory\n"));
+        assert!(!rendered.contains("  - gap_state: unknown\n"));
         assert!(!rendered.contains("duplicate summary"));
     }
 

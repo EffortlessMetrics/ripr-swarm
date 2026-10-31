@@ -1805,7 +1805,7 @@ mod tests {
             confidence: 0.4,
             evidence: vec![
                 "owner: discountedTotal".to_string(),
-                "gap_state: advisory".to_string(),
+                "gap_state: unknown".to_string(),
                 "actionability_category: incomplete_repair_packet".to_string(),
                 "why_not_actionable: TypeScript preview lacks a complete repair packet contract"
                     .to_string(),
