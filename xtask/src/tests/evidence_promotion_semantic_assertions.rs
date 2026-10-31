@@ -3,8 +3,6 @@
 //! from the module path; `super::` references to the xtask crate root
 //! became `crate::`.
 
-use super::*;
-
 #[test]
 fn evidence_promotion_semantic_assertions_reject_human_missing_class_projection() {
     let assertions = vec![crate::EvidencePromotionSemanticAssertion::ExpectedClass {
