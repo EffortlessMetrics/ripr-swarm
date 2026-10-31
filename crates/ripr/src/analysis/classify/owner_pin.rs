@@ -2884,10 +2884,7 @@ fn module_declaration_resolved(
     let Some(name) = cfg_if_module_name(declaration) else {
         return resolved.contains(&(file.to_path_buf(), line, declaration.to_string()));
     };
-    if !matches!(
-        file.file_name().and_then(|name| name.to_str()),
-        Some("lib.rs" | "main.rs" | "mod.rs")
-    ) {
+    if !cfg_if_layout_file(file) {
         return false;
     }
     let directory = file.parent().unwrap_or(Path::new(""));
@@ -2896,6 +2893,21 @@ fn module_declaration_resolved(
     let nested = files.get(&directory.join(name).join("mod.rs")).is_some();
     // Both layouts present is a rustc error (E0761), never one module.
     flat != nested
+}
+
+/// Whether `file` places its child modules in its own directory: `mod.rs`,
+/// or a `lib.rs`/`main.rs` that is an actual crate root (`src/lib.rs`,
+/// `src/main.rs`, `src/bin/NAME/main.rs`). A `lib.rs` or `main.rs` declared by
+/// `mod lib;` nests children under `lib/`, so file name alone is not enough.
+fn cfg_if_layout_file(file: &Path) -> bool {
+    let parts: Vec<&str> = file
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .collect();
+    matches!(
+        parts.as_slice(),
+        [.., "mod.rs"] | [.., "src", "lib.rs" | "main.rs"] | [.., "src", "bin", _, "main.rs"]
+    )
 }
 
 /// A definition or `use` of the name: a real rebinding, not one that only

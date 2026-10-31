@@ -1,6 +1,30 @@
 mod json_construction;
 mod module_local_glob;
 mod retention_parity;
+/// A `lib.rs`/`main.rs` that a `mod lib;` declaration reaches nests its
+/// children under `lib/`, so only an actual crate root (or `mod.rs`) may
+/// resolve a `cfg_if!` module beside itself.
+#[test]
+fn cfg_if_layout_file_rejects_non_root_lib_and_main() {
+    for accepted in [
+        "src/lib.rs",
+        "crates/a/src/main.rs",
+        "src/bin/tool/main.rs",
+        "src/util/mod.rs",
+    ] {
+        assert!(cfg_if_layout_file(Path::new(accepted)), "{accepted}");
+    }
+    for refused in [
+        "src/util/lib.rs",
+        "src/util/main.rs",
+        "src/bin/tool/lib.rs",
+        "lib.rs",
+        "src/util.rs",
+    ] {
+        assert!(!cfg_if_layout_file(Path::new(refused)), "{refused}");
+    }
+}
+
 #[test]
 fn module_shadow_exempts_only_the_owners_nearest_module() -> Result<(), String> {
     // The owner's nearest enclosing module is the production declaration's
@@ -5574,6 +5598,8 @@ fn cfg_if_macro_use_module_is_admitted_only_as_the_plain_item() {
         "cfg_if::cfg_if! { if #[cfg(unix)] { mod a; #[macro_use] mod macros; mod b; } }",
         // A glob scoped to an inline module cannot bind the top-level name.
         "cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }\nmod tests { use super::*; }",
+        // Another plain block never names `cfg_if` itself.
+        "cfg_if::cfg_if! { if #[cfg(unix)] { fn f() {} } }\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
         // No `macro_use` at all was never an argument attribute.
         "cfg_if::cfg_if! { if #[cfg(unix)] { mod macros; } }",
     ] {
@@ -5622,6 +5648,13 @@ fn cfg_if_macro_use_module_is_admitted_only_as_the_plain_item() {
         "use crate::compat::{self, *};\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
         "use crate::{compat::cfg_if};\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
         "include!(\"shadow.rs\");\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        // A user macro invoked at item position may expand to a `cfg_if`
+        // import or module that exists only as tokens here.
+        "macro_rules! rebind { () => { use crate::compat::cfg_if; }; }\nrebind!();\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        "macro_rules! rebind { () => { mod cfg_if {} }; }\nrebind!();\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        "mod inner { other!(); }\nother!();\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        // A second block that itself names `cfg_if` may rebind it.
+        "cfg_if::cfg_if! { if #[cfg(unix)] { use crate::compat::cfg_if; } }\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
         // Not the `if #[cfg(..)] { .. } else { .. }` shape.
         "cfg_if::cfg_if! { #[macro_use] mod macros; }",
         "cfg_if::cfg_if! { if cfg!(unix) { #[macro_use] mod macros; } }",

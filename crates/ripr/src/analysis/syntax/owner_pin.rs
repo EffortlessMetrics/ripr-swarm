@@ -1095,6 +1095,40 @@ fn macro_binding_sites_in_tree(
                             .and_then(|path| path.segment())
                             .and_then(|segment| segment.name_ref())
                             .is_some_and(|name| name.text() == "include")
+                    })
+                    // A user macro invoked at item position (top level or in
+                    // a module) can expand to `use ..::cfg_if;` or `mod
+                    // cfg_if`, which exist only as token trees here. Any
+                    // such invocation other than a `cfg_if::cfg_if!` block
+                    // that never names `cfg_if` itself keeps the attribute
+                    // ambiguous.
+                    || binding_free.calls.iter().any(|other| {
+                        let item_position = other.syntax().parent().is_some_and(|parent| {
+                            matches!(
+                                parent.kind(),
+                                ra_ap_syntax::SyntaxKind::SOURCE_FILE
+                                    | ra_ap_syntax::SyntaxKind::ITEM_LIST
+                            )
+                        });
+                        if !item_position {
+                            return false;
+                        }
+                        let path: String = other
+                            .path()
+                            .map(|path| path.syntax().text().to_string())
+                            .unwrap_or_default()
+                            .chars()
+                            .filter(|c| !c.is_whitespace())
+                            .collect();
+                        let is_cfg_if_call =
+                            matches!(path.trim_start_matches("::"), "cfg_if::cfg_if");
+                        !is_cfg_if_call
+                            || other.token_tree().is_some_and(|tree| {
+                                tree.syntax()
+                                    .descendants_with_tokens()
+                                    .filter_map(|element| element.into_token())
+                                    .any(|token| token.text().trim_start_matches("r#") == "cfg_if")
+                            })
                     });
                 let cfg_if_admitted = matches!(wrapper.trim_start_matches("::"), "cfg_if::cfg_if")
                     && top_level
