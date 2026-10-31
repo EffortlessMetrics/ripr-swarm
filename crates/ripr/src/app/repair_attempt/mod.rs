@@ -4675,14 +4675,23 @@ fn dirty_path_cannot_be_repair_target(root: &Path, path: &str) -> bool {
     // inline test module is the allowed edit region, so any file containing
     // the marker falls through for the exact check to admit or refuse.
     let candidate_path = root.join(candidate);
-    if std::fs::metadata(&candidate_path)
-        .map(|metadata| metadata.len() > DIRTY_PREMISE_PREFLIGHT_MAX_SNIFF_BYTES)
+    // A symlink or other non-regular entry is not content this sniff may
+    // follow: defer it to the later checks, which can name the more specific
+    // cause (for example unavailable analysis context) instead of reporting
+    // it as a dirty production edit. `symlink_metadata` does not follow links.
+    if std::fs::symlink_metadata(&candidate_path)
+        .map(|metadata| {
+            !metadata.file_type().is_file()
+                || metadata.len() > DIRTY_PREMISE_PREFLIGHT_MAX_SNIFF_BYTES
+        })
         .unwrap_or(true)
     {
         return false;
     }
     match std::fs::read_to_string(&candidate_path) {
-        Ok(content) => !content.contains("#[cfg(test)]"),
+        Ok(content) => !content
+            .lines()
+            .any(|line| crate::analysis::attribute_is_plain_test_gate(line.trim())),
         Err(_) => false,
     }
 }
@@ -6186,6 +6195,17 @@ mod tests {
             std::fs::write(&big, "x\n".repeat(300 * 1024)).map_err(|e| e.to_string())?;
             if dirty_path_cannot_be_repair_target(&root, "src/big.rs") {
                 return Err("preflight must not name src/big.rs".to_string());
+            }
+            // A symlinked production path is not followed by the sniff: the
+            // later checks name the more specific cause (decision recorded
+            // on #11734).
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(root.join("src/main.py"), root.join("src/linked.py"))
+                    .map_err(|e| e.to_string())?;
+                if dirty_path_cannot_be_repair_target(&root, "src/linked.py") {
+                    return Err("preflight must not name symlinked src/linked.py".to_string());
+                }
             }
             // The inline `#[cfg(test)]` module reads as a test target even
             // though the file itself is production-shaped (#5210).
