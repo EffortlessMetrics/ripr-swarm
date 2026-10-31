@@ -1,3 +1,4 @@
+use super::capabilities::WorkspaceRootResolution;
 use super::component_outcome::ComponentOutcome;
 use super::gap_artifacts::{GapArtifactRejection, ValidatedGapArtifact};
 use super::input_identity::LspAnalysisInputIdentity;
@@ -90,6 +91,39 @@ impl WorkspaceRootAuthority {
             detail: Some(
                 "the selected workspace root was removed; select a root and restart".into(),
             ),
+        }
+    }
+
+    pub(super) fn from_resolution(resolution: WorkspaceRootResolution) -> Self {
+        match resolution {
+            WorkspaceRootResolution::Selected(root) => {
+                if !root.is_absolute() {
+                    Self::unavailable(format!(
+                        "workspace root is not absolute: {}",
+                        root.display()
+                    ))
+                } else if !root.is_dir() {
+                    Self::unavailable(format!(
+                        "workspace root is inaccessible or not a directory: {}",
+                        root.display()
+                    ))
+                } else {
+                    Self::selected(root)
+                }
+            }
+            WorkspaceRootResolution::Ambiguous(candidates) => {
+                if candidates
+                    .iter()
+                    .any(|root| !root.is_absolute() || !root.is_dir())
+                {
+                    Self::unavailable(
+                        "one or more workspace folders are inaccessible or not directories",
+                    )
+                } else {
+                    Self::ambiguous(candidates)
+                }
+            }
+            WorkspaceRootResolution::Unavailable(detail) => Self::unavailable(detail),
         }
     }
 
@@ -4038,5 +4072,51 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    #[test]
+    fn root_authority_from_resolution_selects_only_an_absolute_directory() {
+        let dir = std::env::temp_dir();
+        let selected =
+            WorkspaceRootAuthority::from_resolution(WorkspaceRootResolution::Selected(dir.clone()));
+        assert_eq!(selected.state, WorkspaceRootState::SelectedSingleRoot);
+        assert_eq!(selected.effective_root, Some(dir.clone()));
+
+        let relative = WorkspaceRootAuthority::from_resolution(WorkspaceRootResolution::Selected(
+            PathBuf::from("relative/root"),
+        ));
+        assert_eq!(relative.state, WorkspaceRootState::RootUnavailable);
+        assert!(relative.effective_root.is_none());
+
+        let missing = WorkspaceRootAuthority::from_resolution(WorkspaceRootResolution::Selected(
+            dir.join("ripr-state-missing-root-3020"),
+        ));
+        assert_eq!(missing.state, WorkspaceRootState::RootUnavailable);
+        assert!(!missing.allows_analysis());
+    }
+
+    #[test]
+    fn root_authority_from_resolution_keeps_ambiguity_only_for_valid_candidates() {
+        let dir = std::env::temp_dir();
+        let ambiguous =
+            WorkspaceRootAuthority::from_resolution(WorkspaceRootResolution::Ambiguous(vec![
+                dir.clone(),
+                dir.clone(),
+            ]));
+        assert_eq!(ambiguous.state, WorkspaceRootState::WorkspaceAmbiguous);
+        assert_eq!(ambiguous.candidate_roots.len(), 2);
+
+        let invalid =
+            WorkspaceRootAuthority::from_resolution(WorkspaceRootResolution::Ambiguous(vec![
+                dir,
+                PathBuf::from("relative"),
+            ]));
+        assert_eq!(invalid.state, WorkspaceRootState::RootUnavailable);
+        assert!(invalid.candidate_roots.is_empty());
+
+        let unavailable = WorkspaceRootAuthority::from_resolution(
+            WorkspaceRootResolution::Unavailable("no folders".to_string()),
+        );
+        assert_eq!(unavailable.detail.as_deref(), Some("no folders"));
     }
 }
