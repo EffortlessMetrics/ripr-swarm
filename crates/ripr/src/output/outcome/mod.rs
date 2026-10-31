@@ -3574,6 +3574,35 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn agent_verify_json_discloses_after_produced_from_dirty_independently() -> Result<(), String> {
+        let report = build_targeted_test_outcome_report(
+            &[],
+            &[],
+            "before.json".to_string(),
+            "after.json".to_string(),
+            OutcomeHeadIdentity::default(),
+        )?;
+        let render = |before: bool, after: bool| -> Result<Value, String> {
+            let mut binding = test_agent_verify_binding();
+            binding.before_produced_from_dirty = before;
+            binding.after_produced_from_dirty = after;
+            let json = render_json::render_agent_verify_json_with_currentness(
+                &report,
+                Some("historical_noncurrent"),
+                &binding,
+            )?;
+            serde_json::from_str(&json).map_err(|err| err.to_string())
+        };
+        let after_only = render(false, true)?;
+        assert_eq!(after_only["after_produced_from_dirty"], true);
+        assert!(after_only.get("before_produced_from_dirty").is_none());
+        let both = render(true, true)?;
+        assert_eq!(both["before_produced_from_dirty"], true);
+        assert_eq!(both["after_produced_from_dirty"], true);
+        Ok(())
+    }
+
     fn test_agent_verify_binding() -> AgentVerifyArtifactBinding {
         AgentVerifyArtifactBinding {
             before_content_sha256: format!("sha256:{}", "b".repeat(64)),
