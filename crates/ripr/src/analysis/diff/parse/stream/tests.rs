@@ -608,7 +608,13 @@ fn exact_limit_single_file_succeeds_with_exact_coordinates() -> Result<(), Strin
     assert_eq!(file.added_lines[2].line, 6);
     assert_eq!(file.added_lines[2].text, "three");
     // One line fewer of headroom fails: the boundary is exact.
-    assert!(parse_with_line_limit(input.lines(), 3).is_err());
+    let Err(error) = parse_with_line_limit(input.lines(), 3) else {
+        return Err("one line over the ceiling must fail".to_string());
+    };
+    assert!(
+        error.starts_with("diff_scope_oversized: at least 4 changed lines"),
+        "{error}"
+    );
     Ok(())
 }
 
@@ -690,4 +696,18 @@ fn changed_line_limit_env_fails_closed_instead_of_disabling_the_bound() {
         super::super::diff_changed_line_limit_from_env()
     });
     assert_eq!(result, Ok(7));
+}
+
+#[test]
+fn non_unicode_changed_line_limit_env_fails_closed() {
+    let name = super::DIFF_CHANGED_LINE_LIMIT_ENV;
+    let result = crate::analysis::language::positive_limit_from_env(
+        name,
+        super::DEFAULT_DIFF_CHANGED_LINE_LIMIT,
+        Err(std::env::VarError::NotUnicode(std::ffi::OsString::new())),
+    );
+    assert!(
+        result.as_ref().is_err_and(|e| e.contains(name)),
+        "got {result:?}"
+    );
 }

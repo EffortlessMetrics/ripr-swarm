@@ -3,10 +3,13 @@ use std::convert::Infallible;
 use std::path::{Path, PathBuf};
 
 use super::{
-    ChangedFile, DEFAULT_DIFF_CHANGED_LINE_LIMIT, DIFF_CHANGED_LINE_LIMIT_ENV, DIFF_FILE_LIMIT_ENV,
-    MAX_DIFF_PATH_COMPONENTS, ParsedDiff, is_new_path_marker, parse_old_path_marker, parser_state,
+    ChangedFile, DIFF_CHANGED_LINE_LIMIT_ENV, DIFF_FILE_LIMIT_ENV, MAX_DIFF_PATH_COMPONENTS,
+    ParsedDiff, is_new_path_marker, parse_old_path_marker, parser_state,
     path_marker_exceeds_depth_bound,
 };
+
+#[cfg(test)]
+use super::DEFAULT_DIFF_CHANGED_LINE_LIMIT;
 
 /// How many scoped-out paths the parse keeps by name for the disclosure; the
 /// total comes from the distinct-path set.
@@ -52,6 +55,7 @@ pub(super) fn parse_unbounded(input: &str) -> ParsedDiff {
     }
 }
 
+#[cfg(test)]
 pub(super) fn parse_bounded_lines<'a>(
     lines: impl Iterator<Item = &'a str>,
     limit: usize,
