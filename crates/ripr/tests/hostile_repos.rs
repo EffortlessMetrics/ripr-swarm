@@ -667,6 +667,69 @@ fn symlink_loops_and_dangling_links_complete() -> Result<(), String> {
     assert_sane(&ran, "symlink loop pilot")
 }
 
+/// #11563: a `ripr.toml` of newlines needs ~27x its size once the `toml` lexer
+/// tokenizes it, so a file well under the general 256 MiB input cap aborted
+/// the process on allocation. Metadata TOML has its own small cap and a typed
+/// refusal that names the file.
+#[test]
+fn oversized_config_is_a_typed_refusal_not_an_allocation_abort() -> Result<(), String> {
+    let scratch = Scratch::new("bigconfig")?;
+    let root = scratch.path.join("r");
+    repo(&root, |root| {
+        change_lib(root)?;
+        let newlines = vec![b'\n'; 3 * 1024 * 1024];
+        fs::write(root.join("ripr.toml"), newlines).map_err(|e| format!("write failed: {e}"))
+    })?;
+    let ran = ripr(&root, &["check"], &[])?;
+    assert_no_panic(&ran, "oversized ripr.toml")?;
+    if ran.code != Some(2)
+        || !ran.stderr.contains("ripr.toml")
+        || !ran.stderr.contains("metadata limit")
+    {
+        return Err(format!(
+            "expected an exit-2 refusal naming ripr.toml and the metadata limit\n{:?}\n{}",
+            ran.code, ran.stderr
+        ));
+    }
+    Ok(())
+}
+
+/// #11563: a FIFO named `ripr.toml` or `Cargo.toml` blocked `open` forever.
+#[cfg(unix)]
+#[test]
+fn fifo_metadata_files_are_refused_instead_of_blocking() -> Result<(), String> {
+    let scratch = Scratch::new("fifometa")?;
+    let root = scratch.path.join("r");
+    repo(&root, change_lib)?;
+    let fifo = |name: &str| -> Result<(), String> {
+        let path = root.join(name);
+        let _ = fs::remove_file(&path);
+        let made = Command::new("mkfifo")
+            .arg(&path)
+            .status()
+            .map_err(|e| format!("mkfifo failed: {e}"))?;
+        if made.success() {
+            Ok(())
+        } else {
+            Err(format!("mkfifo {name} failed"))
+        }
+    };
+    fifo("ripr.toml")?;
+    let ran = ripr(&root, &["check"], &[])?;
+    assert_no_panic(&ran, "fifo ripr.toml")?;
+    if ran.code != Some(2) || !ran.stderr.contains("not a regular file") {
+        return Err(format!(
+            "expected an exit-2 refusal for a FIFO ripr.toml\n{:?}\n{}",
+            ran.code, ran.stderr
+        ));
+    }
+    fs::remove_file(root.join("ripr.toml")).map_err(|e| format!("remove failed: {e}"))?;
+    fs::remove_file(root.join("Cargo.toml")).map_err(|e| format!("remove failed: {e}"))?;
+    fifo("Cargo.toml")?;
+    let ran = ripr(&root, &["check"], &[])?;
+    assert_no_panic(&ran, "fifo Cargo.toml")
+}
+
 #[test]
 fn oversized_diff_is_refused_with_a_repair_route() -> Result<(), String> {
     let scratch = Scratch::new("huge")?;
