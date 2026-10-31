@@ -118,7 +118,8 @@ this repository's license, one per test library or library feature:
   edit, so it is a gap: a `setUp` attribute, class attribute, module constant or
   local bound to the owner's call, a forwarder that returns the owner, the owner
   minus itself, and a pytest assert against a local. A literal expectation and an
-  independent reference function pin the value and are credited. Labeled under
+  independent reference function pin the value and are credited, as is an
+  input both sides read (`n = make_input()`; `scale_input(n) == n * 2`). Labeled under
   Python 3.13.18 and pytest 9.2.0.
 - `authored-py-pytest-bands`: RIPR-SPEC-0238 rule 21's `approx` band
   abstentions (positional band within and outside the band, spread band,

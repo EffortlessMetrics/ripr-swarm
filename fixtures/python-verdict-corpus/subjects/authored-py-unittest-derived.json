@@ -11,7 +11,7 @@
     },
     {
       "path": "derived/core.py",
-      "sha256": "bff4a6291a4315fce831a26bf9c053e88295f54ce313aec1b360ae9febc9734e"
+      "sha256": "1497aa98c4550c2157213fdce6a5b2a8634c8672b3ea2fa9644647260d382004"
     },
     {
       "path": "pyproject.toml",
@@ -32,6 +32,10 @@
     {
       "path": "tests/test_forwarder.py",
       "sha256": "6a703ea4877b15ae785a27f7496218c410d8834ea8c11a65b2ab244b4cdfad28"
+    },
+    {
+      "path": "tests/test_input.py",
+      "sha256": "41160233432f5780c13c355ec7b582e39cd901f073cae54efd24d708ce691f1d"
     },
     {
       "path": "tests/test_literal.py",

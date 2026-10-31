@@ -229,7 +229,7 @@ as strong for one credit branch only; its table row is unchanged.
    An expectation computed from the code under test is the same emptiness
    behind a binding or a rewrite (#11531). Once workspace owners and tests are
    known, an exact comparison of two operands is also weak when the workspace
-   owners called on one side (after reading the test's local assignments, the
+   owners at the root of one side's value (after reading the test's local assignments, the
    `setUp`/`setUpClass`/`setup_method` attributes and class attributes of its
    class and same-file bases, module constants and fixture bodies) are reached
    by the other side's calls, closed over the owners' own bodies (a forwarder
@@ -240,7 +240,18 @@ as strong for one credit branch only; its table row is unchanged.
    divided by, or xor-ed with the same call (`f(2) - f(2)`). The read is over
    the expression text, not a form allow-list, so an unrecognized expression
    that mentions the owner demotes; a literal, an independent name, or a call
-   of a function unrelated to the other side keeps its credit. The pass is
+   of a function unrelated to the other side keeps its credit. Only a call at
+   the root of a side's value counts: a call inside the arguments of an owner
+   call is an input of that call, neither a root nor expanded through bindings,
+   so an input both sides read (`n = make_n()` then `f(n) == n * 2`,
+   `parse(t) == reference_parse(t)`) keeps its credit. A dotted call resolves
+   to an owner only through an imported name, `self`/`cls`, or a receiver the
+   test built from an owner call; `d.get('k')`, `''.join(..)` and `f(x).get(..)`
+   do not match a same-named owner. Known limits, all keeping credit rather
+   than demoting: bindings and forwarder bodies are followed to a fixed depth
+   of four; a test file that does not parse contributes no bindings; owner
+   matching is by name, so same-named methods of different classes reached
+   through an imported or `self` receiver are not told apart. The pass is
    `derived_expectation.rs`, pinned by `derived_expectation_tests.rs` and the
    `py-derived-*` corpus cases.
 2. **A trivial message pattern is a broad error.** A `pytest.raises`

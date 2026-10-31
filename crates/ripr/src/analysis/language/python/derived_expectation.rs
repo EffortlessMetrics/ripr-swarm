@@ -96,7 +96,7 @@ fn is_exact_comparison(assertion: &PythonAssertion) -> bool {
     assertion.oracle_kind == OracleKind::ExactValue
         && assertion.oracle_strength == OracleStrength::Strong
         && assertion.observed_operands.len() >= 2
-        && assertion.observed_operands.len() % 2 == 0
+        && assertion.observed_operands.len().is_multiple_of(2)
 }
 
 /// Whether every compared pair of the assertion relates the owner to itself.
@@ -179,15 +179,6 @@ impl OwnerIndex {
         Self { callees }
     }
 
-    /// The owner names `text` calls.
-    fn owner_calls(&self, text: &str, imports: &BTreeMap<String, String>) -> BTreeSet<String> {
-        called_names(text)
-            .into_iter()
-            .map(|name| imports.get(&name).cloned().unwrap_or(name))
-            .filter(|name| self.callees.contains_key(name))
-            .collect()
-    }
-
     /// `names` and every owner they call, transitively.
     fn closure(&self, names: &BTreeSet<String>) -> BTreeSet<String> {
         let mut reached = names.clone();
@@ -215,7 +206,7 @@ impl OwnerIndex {
 fn called_names(text: &str) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
     for token in tokens(text) {
-        if let Token::Ident { name, called } = token
+        if let Token::Ident { name, called, .. } = token
             && called
         {
             names.insert(name);
@@ -230,8 +221,19 @@ enum Token {
     Ident {
         name: String,
         called: bool,
+        /// The whole dotted path the name ends.
+        chain: String,
+        /// The chain follows a `.` on something that is not a name (a string,
+        /// call or subscript result), so its receiver is unknown.
+        attr: bool,
     },
     Chain(String),
+    /// A bracket opens; `call` is the chain (and its `attr` flag) it directly
+    /// calls.
+    Open {
+        call: Option<(String, bool)>,
+    },
+    Close,
 }
 
 /// Identifier tokens of `text` (and dotted chains), skipping strings and
@@ -240,6 +242,7 @@ fn tokens(text: &str) -> Vec<Token> {
     let chars: Vec<char> = text.chars().collect();
     let mut out = Vec::new();
     let mut index = 0;
+    let mut pending_call: Option<(String, bool)> = None;
     let is_start = |ch: char| ch.is_alphabetic() || ch == '_';
     let is_part = |ch: char| ch.is_alphanumeric() || ch == '_';
     while index < chars.len() {
@@ -276,6 +279,11 @@ fn tokens(text: &str) -> Vec<Token> {
                 }
             }
         } else if is_start(ch) && (index == 0 || !is_part(chars[index - 1])) {
+            let attr = chars[..index]
+                .iter()
+                .rev()
+                .find(|prev| !prev.is_whitespace())
+                == Some(&'.');
             let mut chain = String::new();
             let last = loop {
                 let start = index;
@@ -302,9 +310,25 @@ fn tokens(text: &str) -> Vec<Token> {
                 look += 1;
             }
             let called = chars.get(look) == Some(&'(');
-            out.push(Token::Chain(chain));
-            out.push(Token::Ident { name: last, called });
+            pending_call = called.then(|| (chain.clone(), attr));
+            out.push(Token::Chain(chain.clone()));
+            out.push(Token::Ident {
+                name: last,
+                called,
+                chain,
+                attr,
+            });
         } else {
+            if matches!(ch, '(' | '[' | '{') {
+                out.push(Token::Open {
+                    call: if ch == '(' { pending_call.take() } else { None },
+                });
+            } else if matches!(ch, ')' | ']' | '}') {
+                out.push(Token::Close);
+            }
+            if !ch.is_whitespace() {
+                pending_call = None;
+            }
             index += 1;
         }
     }
@@ -571,28 +595,26 @@ impl<'a> TestScope<'a> {
         !left_calls.is_disjoint(&right_reach) || !right_calls.is_disjoint(&left_reach)
     }
 
-    /// The owner names the operand calls, directly or through any binding it
-    /// reads.
+    /// The owner calls that are the root of the operand's value, directly or
+    /// through any binding the value reads. A call inside the arguments of an
+    /// owner call is an input of that call, not part of the value: it is
+    /// neither a root nor expanded through bindings, so an input both sides
+    /// read (`n = make_n(); assert f(n) == n * 2`) does not relate them.
     fn owner_calls_of(
         &self,
         operand: &str,
         imports: &BTreeMap<String, String>,
         index: &OwnerIndex,
     ) -> BTreeSet<String> {
-        let mut texts = vec![operand.to_string()];
+        let mut roots = BTreeSet::new();
         let mut seen: BTreeSet<String> = BTreeSet::new();
         let mut frontier = vec![operand.to_string()];
-        for _ in 0..MAX_EXPANSION_DEPTH {
+        for _ in 0..=MAX_EXPANSION_DEPTH {
             let mut next = Vec::new();
             for text in &frontier {
-                for token in tokens(text) {
-                    let Token::Chain(chain) = token else {
-                        continue;
-                    };
-                    for expansion in self.expansions(&chain, &mut seen) {
-                        texts.push(expansion.clone());
-                        next.push(expansion);
-                    }
+                let chains = self.scan(text, imports, index, &mut roots);
+                for chain in chains {
+                    next.extend(self.expansions(&chain, &mut seen));
                 }
             }
             if next.is_empty() {
@@ -600,10 +622,92 @@ impl<'a> TestScope<'a> {
             }
             frontier = next;
         }
-        texts
-            .iter()
-            .flat_map(|text| index.owner_calls(text, imports))
-            .collect()
+        roots
+    }
+
+    /// Add the owner calls at the root of `text` to `roots`; return the
+    /// dotted chains read outside every owner call's arguments.
+    fn scan(
+        &self,
+        text: &str,
+        imports: &BTreeMap<String, String>,
+        index: &OwnerIndex,
+        roots: &mut BTreeSet<String>,
+    ) -> Vec<String> {
+        let mut chains = Vec::new();
+        // One entry per open bracket: whether it opened an owner call's args.
+        let mut stack: Vec<bool> = Vec::new();
+        let mut hidden = 0usize;
+        for token in tokens(text) {
+            match token {
+                Token::Chain(chain) if hidden == 0 => chains.push(chain),
+                Token::Ident {
+                    name,
+                    called: true,
+                    chain,
+                    attr,
+                } if hidden == 0 => {
+                    if let Some(owner) = self.owner_of(&name, &chain, attr, imports, index) {
+                        roots.insert(owner);
+                    }
+                }
+                Token::Open { call } => {
+                    let owner_args = hidden == 0
+                        && call.is_some_and(|(chain, attr)| {
+                            let name = chain.rsplit('.').next().unwrap_or(&chain).to_string();
+                            self.owner_of(&name, &chain, attr, imports, index).is_some()
+                        });
+                    hidden += usize::from(owner_args);
+                    stack.push(owner_args);
+                }
+                Token::Close => {
+                    if stack.pop() == Some(true) {
+                        hidden -= 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        chains
+    }
+
+    /// The workspace owner a call names, receiver-aware: a bare name or an
+    /// imported/`self`/`cls` receiver resolves; a receiver of unknown type
+    /// (`d.get(..)`, `''.join(..)`, `f(x).get(..)`) does not, unless the
+    /// receiver was itself built by an owner call.
+    fn owner_of(
+        &self,
+        name: &str,
+        chain: &str,
+        attr: bool,
+        imports: &BTreeMap<String, String>,
+        index: &OwnerIndex,
+    ) -> Option<String> {
+        if attr {
+            return None;
+        }
+        let first = chain.split('.').next().unwrap_or(chain);
+        if chain.contains('.')
+            && !imports.contains_key(first)
+            && !matches!(first, "self" | "cls")
+            && !self.built_by_owner(first, index)
+        {
+            return None;
+        }
+        let resolved = imports
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| name.to_string());
+        index.callees.contains_key(&resolved).then_some(resolved)
+    }
+
+    /// Whether a name the test binds is assigned from a call of an owner.
+    fn built_by_owner(&self, name: &str, index: &OwnerIndex) -> bool {
+        self.bound(name).iter().any(|text| {
+            called_names(text)
+                .iter()
+                .any(|called| index.callees.contains_key(called))
+        })
     }
 
     /// The binding texts a dotted chain reads, longest bound prefix first.

@@ -6,8 +6,7 @@ use std::path::Path;
 
 const OWNERS: &str = "src/m.py";
 const TESTS: &str = "tests/test_m.py";
-const SOURCE: &str =
-    "def f(x):\n    return x * 3\n\ndef g(x):\n    return f(x)\n\ndef ref(x):\n    return x + x\n";
+const SOURCE: &str = "def f(x):\n    return x * 3\n\ndef g(x):\n    return f(x)\n\ndef ref(x):\n    return x + x\n\ndef get(x):\n    return f(x)\n\ndef join(x):\n    return f(x)\n";
 
 fn strengths(tests_source: &str) -> Vec<OracleStrength> {
     let owners = extract_owners(Path::new(OWNERS), SOURCE);
@@ -124,4 +123,48 @@ fn given_a_binding_that_names_the_owner_only_in_a_string_then_the_credit_stays()
 fn given_an_unrelated_call_on_each_side_then_the_credit_stays() {
     let source = "from src.m import f\n\ndef test_a():\n    assert str(f(2)) == str(6)\n";
     assert!(credited(source));
+}
+
+#[test]
+fn given_an_input_both_sides_read_then_the_credit_stays() {
+    for source in [
+        "from src.m import f, ref\n\ndef test_a():\n    n = ref(2)\n    assert f(n) == n * 2\n",
+        "from src.m import f, ref\n\ndef test_a():\n    t = ref(2)\n    assert f(t) == ref(t)\n",
+        "from src.m import f, ref\n\ndef test_a():\n    sq = ref(3)\n    assert f(sq) == sq.side ** 2\n",
+        "import unittest\nfrom src.m import f, ref\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        n = ref(2)\n        self.assertEqual(f(n), n * 2)\n",
+    ] {
+        assert!(credited(source), "{source}");
+    }
+}
+
+#[test]
+fn given_a_value_rooted_in_the_other_sides_call_then_it_is_still_demoted() {
+    for source in [
+        "from src.m import f\n\ndef test_a():\n    e = f(2)\n    assert f(2) == e + 0\n",
+        "from src.m import f, g\n\ndef test_a():\n    e = g(2)\n    assert f(2) == e\n",
+        "from src.m import f\n\ndef test_a():\n    assert abs(f(2)) == f(2)\n",
+    ] {
+        assert!(demoted(source), "{source}");
+    }
+}
+
+#[test]
+fn given_a_receiver_of_unknown_type_then_a_same_named_owner_is_not_matched() {
+    for source in [
+        "from src.m import g\n\ndef test_a():\n    d = {}\n    assert g(2) == d.get('k')\n",
+        "from src.m import g\n\ndef test_a():\n    assert g(2) == ''.join(['a'])\n",
+        "from src.m import g\n\ndef test_a():\n    assert g(2) == [6].index(6).get(1)\n",
+    ] {
+        assert!(credited(source), "{source}");
+    }
+}
+
+#[test]
+fn given_an_imported_or_owner_built_receiver_then_the_owner_is_matched() {
+    for source in [
+        "import src.m as m\n\ndef test_a():\n    assert m.f(2) == m.g(2)\n",
+        "from src.m import f\nimport src.m as m\n\ndef test_a():\n    assert f(2) == m.get(2)\n",
+    ] {
+        assert!(demoted(source), "{source}");
+    }
 }

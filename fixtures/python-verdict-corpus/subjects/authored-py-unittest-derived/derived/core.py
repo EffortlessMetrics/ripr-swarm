@@ -40,3 +40,11 @@ def relay_forward(x):
 
 def reference_double(x):
     return x + x
+
+
+def make_input():
+    return 3
+
+
+def scale_input(x):
+    return x * 2
