@@ -1010,13 +1010,14 @@ fn refusal_input_error_requires_explicit_consumable_false() -> Result<(), String
 }
 
 #[test]
-fn producer_refusal_names_status_message_and_repair_route() {
+fn producer_refusal_names_status_message_and_repair_route() -> Result<(), String> {
     // #11161: the shared refusal reader names the typed run status when the
     // document carries a known one, the producer's own first limitation
     // message, and its repair route. It fires only for an explicit
     // non-consumable record — a complete, absent, or malformed document, or
     // a consumable envelope without an outcome, yields `None` and keeps its
-    // downstream generic handling.
+    // downstream generic handling. Literals only (no mutation helpers) so
+    // the test stays off the panic-family allowlist.
     let refusal = json!({
         "analysis_scope": {
             "scope": "diff",
@@ -1032,7 +1033,7 @@ fn producer_refusal_names_status_message_and_repair_route() {
             "repair_route": "analysis/diff-scope-budget"
         }]
     });
-    let named = producer_refusal(&refusal).expect("refusal must be named");
+    let named = producer_refusal(&refusal).ok_or_else(|| "refusal must be named".to_string())?;
     assert_eq!(named.status.as_deref(), Some("diff_scope_oversized"));
     assert!(
         named.message.contains("2878 changed Rust lines"),
@@ -1041,20 +1042,20 @@ fn producer_refusal_names_status_message_and_repair_route() {
     );
     assert_eq!(named.repair_route, "analysis/diff-scope-budget");
     // An untyped refusal still yields the message and route with no status.
-    let mut untyped = refusal.clone();
-    untyped["analysis_scope"]
-        .as_object_mut()
-        .unwrap()
-        .remove("run_status");
-    untyped["run_limitations"][0]
-        .as_object_mut()
-        .unwrap()
-        .remove("run_status");
-    untyped["run_limitations"][0]
-        .as_object_mut()
-        .unwrap()
-        .remove("category");
-    let untyped = producer_refusal(&untyped).expect("untyped refusal must be named");
+    let untyped = json!({
+        "analysis_scope": {
+            "scope": "diff",
+            "downstream_consumable": false,
+            "repair_route": "analysis/diff-scope-budget"
+        },
+        "run_limitations": [{
+            "downstream_consumable": false,
+            "message": "diff_scope_oversized: 2878 changed Rust lines across 11 Rust files exceed the limit (2000); analysis was not run.",
+            "repair_route": "analysis/diff-scope-budget"
+        }]
+    });
+    let untyped =
+        producer_refusal(&untyped).ok_or_else(|| "untyped refusal must be named".to_string())?;
     assert_eq!(untyped.status, None);
     assert!(untyped.message.contains("2878 changed Rust lines"));
     assert_eq!(untyped.repair_route, "analysis/diff-scope-budget");
@@ -1079,6 +1080,7 @@ fn producer_refusal_names_status_message_and_repair_route() {
         })),
         None
     );
+    Ok(())
 }
 
 #[test]
@@ -5538,7 +5540,70 @@ fn e2e_delta_and_update(
 }
 
 fn e2e_gate_json(pr_guidance: Option<&str>, gap_ledger: Option<&str>) -> Result<String, String> {
-    let dir = temp_dir("gate-e2e-9301")?;
+    e2e_gate_json_in(pr_guidance, gap_ledger, None)
+}
+
+/// The two Rust files `e2e_real_ledger` analyzes, so a gate run can sit on the
+/// same (fresh) or a different (stale) tree than the ledger it reads.
+fn e2e_write_project(root: &std::path::Path, lib_source: &str) -> Result<(), String> {
+    for (path, text) in [
+        ("src/lib.rs", lib_source),
+        (
+            "tests/boundary.rs",
+            "#[test] fn boundary() { assert!(early(10)); }\n",
+        ),
+    ] {
+        let full = root.join(path);
+        if let Some(parent) = full.parent() {
+            fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+        }
+        fs::write(&full, text).map_err(|err| err.to_string())?;
+    }
+    Ok(())
+}
+
+fn e2e_gate_json_in(
+    pr_guidance: Option<&str>,
+    gap_ledger: Option<&str>,
+    project_lib_source: Option<&str>,
+) -> Result<String, String> {
+    e2e_gate_json_with_files(pr_guidance, gap_ledger, project_lib_source, &[])
+}
+
+/// A per-test, recreated project root. The ledger's Cargo-configuration
+/// identity is bound to the checkout path, so a ledger and the gate that reads
+/// it must see the same absolute root (as one CI job does).
+fn e2e_fixed_root() -> Result<PathBuf, String> {
+    let tag = format!("{:?}", std::thread::current().id())
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .collect::<String>();
+    // Stable within one process (the producer and gate must see the same
+    // absolute root) but unique across the per-test processes nextest runs.
+    let path =
+        std::env::temp_dir().join(format!("ripr-gate-e2e-fixed-{}-{tag}", std::process::id()));
+    ignore_remove_dir_all(path.clone());
+    fs::create_dir_all(&path).map_err(|err| err.to_string())?;
+    Ok(path)
+}
+
+fn e2e_gate_json_with_files(
+    pr_guidance: Option<&str>,
+    gap_ledger: Option<&str>,
+    project_lib_source: Option<&str>,
+    extra_files: &[(&str, &str)],
+) -> Result<String, String> {
+    let dir = if project_lib_source.is_some() {
+        e2e_fixed_root()?
+    } else {
+        temp_dir("gate-e2e-9301")?
+    };
+    if let Some(lib_source) = project_lib_source {
+        e2e_write_project(&dir, lib_source)?;
+    }
+    for (path, text) in extra_files {
+        fs::write(dir.join(path), text).map_err(|err| err.to_string())?;
+    }
     let rel = |name: &str, body: &str| -> Result<PathBuf, String> {
         let path = write_temp_json(&dir, name, body)?;
         Ok(path
@@ -5574,7 +5639,16 @@ fn e2e_delta_and_update_with(
     gap_ledger: Option<&str>,
     baseline_template: &str,
 ) -> Result<(Value, usize, String), String> {
-    let gate_json = e2e_gate_json(pr_guidance, gap_ledger)?;
+    e2e_delta_and_update_in(pr_guidance, gap_ledger, baseline_template, None)
+}
+
+fn e2e_delta_and_update_in(
+    pr_guidance: Option<&str>,
+    gap_ledger: Option<&str>,
+    baseline_template: &str,
+    project_lib_source: Option<&str>,
+) -> Result<(Value, usize, String), String> {
+    let gate_json = e2e_gate_json_in(pr_guidance, gap_ledger, project_lib_source)?;
 
     // Stamp the baseline with the producing build so the same-build rule
     // applies and only scope decides resolved vs not_evaluated.
@@ -5800,6 +5874,10 @@ fn e2e_policy_omitted_seams_keep_in_scope_gap_not_evaluated() -> Result<(), Stri
 /// one-file project, then gate evaluate, baseline delta and update against a
 /// baseline holding one reviewed gap at `src/lib.rs:2`.
 fn e2e_real_review_doc(lib_source: &str) -> Result<String, String> {
+    e2e_real_review_render(lib_source, false)
+}
+
+fn e2e_real_review_render(lib_source: &str, markdown: bool) -> Result<String, String> {
     use crate::app::agent_brief::{
         AgentBriefLine, AgentBriefPolicy, AgentBriefResolvedWorkingSet, select_agent_brief_seams,
     };
@@ -5846,8 +5924,17 @@ fn e2e_real_review_doc(lib_source: &str) -> Result<String, String> {
         mode: &crate::app::Mode::Draft,
         config: &config,
     };
-    let doc =
-        render_review_comments_json_with_scope(&context, &working_set, &selection, &scope, None)?;
+    let doc = if markdown {
+        crate::output::review_comments::render_review_comments_markdown_with_scope(
+            &context,
+            &working_set,
+            &selection,
+            &scope,
+            None,
+        )
+    } else {
+        render_review_comments_json_with_scope(&context, &working_set, &selection, &scope, None)?
+    };
     ignore_remove_dir_all(root);
     Ok(doc)
 }
@@ -5925,6 +6012,752 @@ fn e2e_real_pipeline_parser_declined_file_keeps_unchanged_baseline_debt() -> Res
         .as_str()
         .unwrap_or_default();
     assert!(reason.contains("not parsed"), "{reason}");
+    Ok(())
+}
+
+/// #9734: the real review-comments Markdown names a parser-declined file, and
+/// stays silent when every changed file parsed.
+#[test]
+fn e2e_real_markdown_lists_parser_declined_files() -> Result<(), String> {
+    let declined = format!(
+        "pub fn early(n: i32) -> bool {{ n >= 10 }}\npub fn deep() {{ {}{} }}\n",
+        "{".repeat(400),
+        "}".repeat(400)
+    );
+    let markdown = e2e_real_review_render(&declined, true)?;
+    assert!(
+        markdown.contains(
+            "- limitation: `parser_declined_files`; no seams were extracted from: `src/lib.rs`"
+        ),
+        "{markdown}"
+    );
+    let clean = e2e_real_review_render("pub fn unrelated() {}\n", true)?;
+    assert!(!clean.contains("parser_declined_files"), "{clean}");
+    Ok(())
+}
+
+// ---- #9599: gap-ledger path with a producer coverage disclosure ----
+
+/// Real chain for one project: full Rust inventory -> repo-exposure JSON
+/// (production writer) -> gap decision ledger (production builder/renderer).
+fn e2e_real_ledger(lib_source: &str) -> Result<String, String> {
+    let root = e2e_fixed_root()?;
+    e2e_write_project(&root, lib_source)?;
+    let rendered = e2e_real_ledger_at(&root, &crate::config::RiprConfig::default())?;
+    ignore_remove_dir_all(root);
+    Ok(rendered)
+}
+
+fn e2e_real_ledger_at(root: &Path, config: &crate::config::RiprConfig) -> Result<String, String> {
+    use crate::output::gap_decision_ledger::{
+        GapDecisionLedgerInput, GapDecisionLedgerSourceKind, build_gap_decision_ledger_report,
+        render_gap_decision_ledger_json,
+    };
+    let report = crate::analysis::inventory_classified_seams_report_at_with_config(root, config)?;
+    let generated_skip = crate::output::repo_exposure::GeneratedRustSkip::from_parts(
+        report.skipped_generated.clone(),
+        report.naming_only_skips.clone(),
+        report.declined_rust_files.clone(),
+    );
+    let context = crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
+        root.to_path_buf(),
+        "draft".to_string(),
+        None,
+        config,
+    )?
+    .with_rust_inventory(
+        report.corpus_key.as_ref(),
+        &report.analyzed_production_files,
+    );
+    let mut bytes = Vec::new();
+    crate::output::repo_exposure::write_repo_exposure_json_with_context(
+        &report.classified,
+        report.limit_info.as_ref(),
+        None,
+        None,
+        generated_skip.as_ref(),
+        &context,
+        &mut bytes,
+    )?;
+    let exposure = String::from_utf8(bytes).map_err(|err| err.to_string())?;
+    let ledger = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+        root: root.to_string_lossy().to_string(),
+        generated_at: "2026-01-01T00:00:00Z".to_string(),
+        source_kind: GapDecisionLedgerSourceKind::RepoExposure,
+        records_path: "repo-exposure.json".to_string(),
+        records_json: Ok(exposure),
+    });
+    render_gap_decision_ledger_json(&ledger)
+}
+
+fn e2e_real_gate_from_ledger_at(root: &Path, ledger: &str) -> Result<String, String> {
+    fs::write(root.join("ledger.json"), ledger).map_err(|err| err.to_string())?;
+    let input = GateEvaluateInput {
+        root: root.to_path_buf(),
+        repo_exposure: None,
+        pr_guidance: None,
+        gap_ledger: Some(PathBuf::from("ledger.json")),
+        sarif_policy: None,
+        labels_json: None,
+        labels: Vec::new(),
+        agent_verify: None,
+        agent_receipt: None,
+        recommendation_calibration: None,
+        mutation_calibration: None,
+        baseline: None,
+        mode: GateMode::Acknowledgeable,
+        acknowledgement_labels: Vec::new(),
+        exception_policy: None,
+    };
+    render_gate_decision_json(&build_gate_decision_report(&input)?)
+}
+
+#[test]
+fn e2e_ledger_coverage_rejects_role_only_source_changes() -> Result<(), String> {
+    let root = temp_dir("gate-e2e-ledger-roles-9599")?;
+    e2e_write_project(&root, "pub fn unrelated() {}\n")?;
+    fs::write(root.join("tests/tool.rs"), "pub fn helper() {}\n").map_err(|err| err.to_string())?;
+    fs::write(
+        root.join("ripr.toml"),
+        "[analysis]\nproduction_like_targets = [\"tests/tool.rs\"]\n",
+    )
+    .map_err(|err| err.to_string())?;
+    let config = crate::config::load_for_root(&root).map_err(|err| err.to_string())?;
+    let ledger = e2e_real_ledger_at(&root, &config)?;
+    let captured: Value = serde_json::from_str(&ledger).map_err(|err| err.to_string())?;
+    assert!(
+        captured["analysis_coverage"]["corpus"]["analyzed_production_files"]
+            .as_array()
+            .is_some_and(|files| files.contains(&json!("tests/tool.rs"))),
+        "{captured}",
+    );
+    let gate: Value = serde_json::from_str(&e2e_real_gate_from_ledger_at(&root, &ledger)?)
+        .map_err(|err| err.to_string())?;
+    assert_eq!(
+        gate["analysis_scope"]["scope"], "rust_workspace_complete",
+        "{gate}"
+    );
+    fs::remove_file(root.join("ripr.toml")).map_err(|err| err.to_string())?;
+    let config = crate::config::load_for_root(&root).map_err(|err| err.to_string())?;
+    let current = e2e_real_ledger_at(&root, &config)?;
+    let current: Value = serde_json::from_str(&current).map_err(|err| err.to_string())?;
+    assert_eq!(
+        current["analysis_coverage"]["corpus"]["files_content_hash"],
+        captured["analysis_coverage"]["corpus"]["files_content_hash"],
+        "the Rust corpus bytes are unchanged; only source-role policy changed",
+    );
+    assert!(
+        !current["analysis_coverage"]["corpus"]["analyzed_production_files"]
+            .as_array()
+            .is_some_and(|files| files.contains(&json!("tests/tool.rs"))),
+        "{current}",
+    );
+    let gate: Value = serde_json::from_str(&e2e_real_gate_from_ledger_at(&root, &ledger)?)
+        .map_err(|err| err.to_string())?;
+    assert_eq!(
+        gate["analysis_scope"]["scope"], "gap_ledger_artifact",
+        "{gate}"
+    );
+    ignore_remove_dir_all(root);
+    Ok(())
+}
+
+/// #9599: a ledger produced under one set of non-Rust analysis inputs (config,
+/// test intent, suppressions, build-feature environment) does not earn
+/// coverage when gated under different ones, even with identical Rust bytes
+/// and production-file membership.
+#[test]
+fn e2e_ledger_coverage_requires_matching_non_rust_analysis_inputs() -> Result<(), String> {
+    let root = temp_dir("gate-e2e-ledger-inputs-9599")?;
+    e2e_write_project(&root, "pub fn unrelated() {}\n")?;
+    let config = crate::config::load_for_root(&root).map_err(|err| err.to_string())?;
+    let ledger = e2e_real_ledger_at(&root, &config)?;
+    let captured: Value = serde_json::from_str(&ledger).map_err(|err| err.to_string())?;
+    assert_eq!(
+        captured["analysis_coverage"]["corpus"]["analysis_inputs"]
+            .as_object()
+            .map(|inputs| inputs.len()),
+        Some(8),
+        "{captured}"
+    );
+    let scope_of = |root: &Path, ledger: &str| -> Result<Value, String> {
+        let gate: Value = serde_json::from_str(&e2e_real_gate_from_ledger_at(root, ledger)?)
+            .map_err(|err| err.to_string())?;
+        Ok(gate["analysis_scope"].clone())
+    };
+    let scope = scope_of(&root, &ledger)?;
+    assert_eq!(scope["scope"], "rust_workspace_complete");
+    assert!(scope.get("coverage_refused").is_none());
+
+    let intent = root.join(".ripr").join("test_intent.toml");
+    let suppressions = root.join(config.suppressions().path());
+    for (name, class, path, text) in [
+        (
+            "config",
+            "config",
+            root.join("ripr.toml"),
+            "[analysis]\n# changed\n",
+        ),
+        ("test_intent", "test_intent", intent, "# changed\n"),
+        ("suppressions", "suppressions", suppressions, "# changed\n"),
+        (
+            "manifest harness",
+            "workspace_manifests",
+            root.join("Cargo.toml"),
+            "[package]\nname = \"p\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[[test]]\nname = \"boundary\"\npath = \"tests/boundary.rs\"\nharness = false\n",
+        ),
+        (
+            "lockfile",
+            "lockfile",
+            root.join("Cargo.lock"),
+            "# changed\n",
+        ),
+    ] {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+        }
+        fs::write(&path, text).map_err(|err| err.to_string())?;
+        let scope = scope_of(&root, &ledger)?;
+        assert_eq!(scope["scope"], "gap_ledger_artifact", "{name}");
+        assert!(
+            scope["coverage_refused"]
+                .as_array()
+                .is_some_and(|classes| classes.contains(&json!(class))),
+            "{name}: {scope}"
+        );
+        fs::remove_file(&path).map_err(|err| err.to_string())?;
+        assert_eq!(
+            scope_of(&root, &ledger)?["scope"],
+            "rust_workspace_complete",
+            "{name} restored"
+        );
+    }
+
+    // A ledger produced under other build features / toolchain / analyzer
+    // inputs (disclosed hashes differ from the gate's recomputation) is
+    // refused, naming the class; a removed or blanked identity establishes
+    // nothing.
+    for (key, class) in [
+        ("cfg_features_hash", "cfg_features"),
+        ("toolchain_hash", "toolchain"),
+        ("analyzer_version", "analyzer_version"),
+    ] {
+        let mut other = captured.clone();
+        other["analysis_coverage"]["corpus"]["analysis_inputs"][key] = json!("different");
+        let other = serde_json::to_string(&other).map_err(|err| err.to_string())?;
+        let scope = scope_of(&root, &other)?;
+        assert_eq!(scope["scope"], "gap_ledger_artifact", "{key}");
+        assert_eq!(scope["coverage_refused"], json!([class]), "{key}");
+    }
+    for patch in [None, Some("cfg_features_hash")] {
+        let mut stripped = captured.clone();
+        match patch {
+            None => {
+                if let Some(corpus) = stripped["analysis_coverage"]["corpus"].as_object_mut() {
+                    corpus.remove("analysis_inputs");
+                }
+            }
+            Some(key) => {
+                stripped["analysis_coverage"]["corpus"]["analysis_inputs"][key] = json!("");
+            }
+        }
+        let stripped = serde_json::to_string(&stripped).map_err(|err| err.to_string())?;
+        assert_eq!(scope_of(&root, &stripped)?["scope"], "gap_ledger_artifact");
+    }
+    ignore_remove_dir_all(root);
+    Ok(())
+}
+
+#[test]
+fn e2e_ledger_workspace_coverage_resolves_only_in_scope_rust_gaps() -> Result<(), String> {
+    let shallow = "pub fn early(n: i32) -> bool { n >= 10 }\n";
+    let ledger0 = e2e_real_ledger(shallow)?;
+    let ledger0_value: Value = serde_json::from_str(&ledger0).map_err(|err| err.to_string())?;
+    let records = ledger0_value["records"]
+        .as_array()
+        .ok_or("records missing")?;
+    assert!(!records.is_empty(), "{ledger0}");
+    assert_eq!(
+        ledger0_value["analysis_coverage"]["scope"], "rust_workspace",
+        "{ledger0}"
+    );
+
+    // Baseline entries derived from the real gate decision over this ledger
+    // (repo-scoped records are not gate candidates, so `baseline create`
+    // would skip them; the identity fields are copied, not authored).
+    let gate0 = e2e_gate_json_in(None, Some(&ledger0), Some(shallow))?;
+    let gate0_value: Value = serde_json::from_str(&gate0).map_err(|err| err.to_string())?;
+    let entries = gate0_value["decisions"]
+        .as_array()
+        .ok_or("decisions missing")?
+        .iter()
+        .map(|decision| {
+            json!({
+                "identity": {"canonical_gap_id": decision["canonical_gap_id"].clone()},
+                "path": decision["placement"]["path"].clone(),
+                "line": decision["placement"]["line"].clone(),
+                "static_class": decision["static_class"].clone(),
+                "decision": "advisory",
+            })
+        })
+        .collect::<Vec<_>>();
+    let captured = entries.len();
+    assert!(captured >= 1, "{gate0}");
+    assert_eq!(entries[0]["path"], "src/lib.rs");
+    let baseline = serde_json::to_string(&json!({
+        "schema_version": "0.1",
+        "kind": "gate_baseline",
+        "entries": entries,
+    }))
+    .map_err(|err| err.to_string())?;
+
+    // Analyzed fixed gap: the file is gone from the records but the producer
+    // disclosed whole-workspace coverage, so every captured entry resolves.
+    let fixed = e2e_real_ledger("pub fn unrelated() {}\n")?;
+    let unrelated = "pub fn unrelated() {}\n";
+    let (delta, after, updated) =
+        e2e_delta_and_update_in(None, Some(&fixed), &baseline, Some(unrelated))?;
+    assert_eq!(
+        delta["analysis_scope"]["scope"], "rust_workspace_complete",
+        "{delta}"
+    );
+    assert_eq!(delta["delta"]["resolved"], captured as u64, "{delta}");
+    assert_eq!(after, 0, "{updated}");
+
+    // Filtered ledger, same file: the surviving record set no longer matches
+    // the coverage digest, so absence proves nothing and nothing is removed.
+    let mut filtered: Value = serde_json::from_str(&ledger0).map_err(|err| err.to_string())?;
+    filtered["records"] = json!([]);
+    let filtered = serde_json::to_string(&filtered).map_err(|err| err.to_string())?;
+    let (delta, after, _) =
+        e2e_delta_and_update_in(None, Some(&filtered), &baseline, Some(shallow))?;
+    assert_eq!(
+        delta["analysis_scope"]["scope"], "gap_ledger_artifact",
+        "{delta}"
+    );
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(after, captured);
+
+    // Parser-declined file: the producer run is not complete, so there is no
+    // coverage disclosure and the same baseline stays not_evaluated.
+    let declined = format!(
+        "{shallow}pub fn deep() {{ {}{} }}\n",
+        "{".repeat(400),
+        "}".repeat(400)
+    );
+    let declined_ledger = e2e_real_ledger(&declined)?;
+    let declined_value: Value =
+        serde_json::from_str(&declined_ledger).map_err(|err| err.to_string())?;
+    assert!(declined_value.get("analysis_coverage").is_none());
+    let (delta, after, _) =
+        e2e_delta_and_update_in(None, Some(&declined_ledger), &baseline, Some(&declined))?;
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(after, captured);
+
+    // A non-Rust baseline path is outside what the Rust workspace run read.
+    let mut python_baseline: Value =
+        serde_json::from_str(&baseline).map_err(|err| err.to_string())?;
+    if let Some(entries) = python_baseline["entries"].as_array_mut() {
+        for entry in entries {
+            entry["path"] = json!("scripts/tool.py");
+        }
+    }
+    let python_baseline = serde_json::to_string(&python_baseline).map_err(|err| err.to_string())?;
+    let (delta, after, _) =
+        e2e_delta_and_update_in(None, Some(&fixed), &python_baseline, Some(unrelated))?;
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(after, captured);
+
+    // Rust-looking paths the producer's walk never read, or that name a
+    // different file than the run saw, are not evaluated either.
+    for path in [
+        "../outside/x.rs",
+        "/abs/y.rs",
+        "target/debug/build/gen.rs",
+        "fixtures/case/src/lib.rs",
+        "src/lib.rs ",
+        "src/./lib.rs",
+    ] {
+        let mut odd: Value = serde_json::from_str(&baseline).map_err(|err| err.to_string())?;
+        if let Some(entries) = odd["entries"].as_array_mut() {
+            for entry in entries {
+                entry["path"] = json!(path);
+            }
+        }
+        let odd = serde_json::to_string(&odd).map_err(|err| err.to_string())?;
+        let (delta, after, _) = e2e_delta_and_update_in(None, Some(&fixed), &odd, Some(unrelated))?;
+        assert_eq!(delta["delta"]["resolved"], 0, "{path}: {delta}");
+        assert_eq!(after, captured, "{path}");
+    }
+
+    // Stale corpus: the ledger describes an older tree than the one being
+    // gated, so the disclosure is not upgraded and nothing resolves.
+    let (delta, after, _) = e2e_delta_and_update_in(None, Some(&fixed), &baseline, Some(shallow))?;
+    assert_eq!(
+        delta["analysis_scope"]["scope"], "gap_ledger_artifact",
+        "{delta}"
+    );
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(after, captured);
+
+    // A tampered digest loses its coverage even on the matching tree.
+    let mut tampered: Value = serde_json::from_str(&fixed).map_err(|err| err.to_string())?;
+    tampered["analysis_coverage"]["records_digest"] = json!("sha256:00");
+    let tampered = serde_json::to_string(&tampered).map_err(|err| err.to_string())?;
+    let (delta, after, _) =
+        e2e_delta_and_update_in(None, Some(&tampered), &baseline, Some(unrelated))?;
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(after, captured);
+
+    // Missing, malformed or unverified membership cannot establish coverage,
+    // even when the unchanged record digest and Rust bytes still match.
+    for files in [
+        Value::Null,
+        json!("src/lib.rs"),
+        json!([7]),
+        json!(["src/lib.rs", "src/lib.rs"]),
+        json!(["src/../lib.rs"]),
+        json!(["src/not-admitted.rs"]),
+        json!([]),
+    ] {
+        let mut malformed: Value = serde_json::from_str(&fixed).map_err(|err| err.to_string())?;
+        malformed["analysis_coverage"]["corpus"]["analyzed_production_files"] = files;
+        let malformed = serde_json::to_string(&malformed).map_err(|err| err.to_string())?;
+        let (delta, after, _) =
+            e2e_delta_and_update_in(None, Some(&malformed), &baseline, Some(unrelated))?;
+        assert_eq!(
+            delta["analysis_scope"]["scope"], "gap_ledger_artifact",
+            "{delta}"
+        );
+        assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+        assert_eq!(after, captured);
+    }
+    let mut missing: Value = serde_json::from_str(&fixed).map_err(|err| err.to_string())?;
+    if let Some(corpus) = missing["analysis_coverage"]["corpus"].as_object_mut() {
+        corpus.remove("analyzed_production_files");
+    }
+    let missing = serde_json::to_string(&missing).map_err(|err| err.to_string())?;
+    let (delta, after, _) =
+        e2e_delta_and_update_in(None, Some(&missing), &baseline, Some(unrelated))?;
+    assert_eq!(
+        delta["analysis_scope"]["scope"], "gap_ledger_artifact",
+        "{delta}"
+    );
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(after, captured);
+
+    // A real record edited in place (same ids and count) while the original
+    // digest is kept: the full-record digest no longer matches.
+    let mut edited: Value = serde_json::from_str(&ledger0).map_err(|err| err.to_string())?;
+    edited["records"][0]["gap_state"] = json!("edited_after_coverage");
+    let edited = serde_json::to_string(&edited).map_err(|err| err.to_string())?;
+    let (delta, after, _) = e2e_delta_and_update_in(None, Some(&edited), &baseline, Some(shallow))?;
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(after, captured);
+
+    // A pr-guidance document cannot carry the workspace scope: a hand-written
+    // `rust_workspace_complete` is dropped and the baseline stays retained.
+    let guidance = e2e_real_review_doc(unrelated)?;
+    let mut forged: Value = serde_json::from_str(&guidance).map_err(|err| err.to_string())?;
+    forged["analysis_scope"] = json!({
+        "scope": "rust_workspace_complete",
+        "run_status": "complete",
+        "basis": "repo_exposure_complete_run",
+        "corpus": {"scope": "rust_workspace", "cache_schema_version": "1.93", "files_content_hash": "0123456789abcdef"},
+        "records_total": 0,
+        "records_digest": "sha256:00",
+        "downstream_consumable": true,
+    });
+    let forged = serde_json::to_string(&forged).map_err(|err| err.to_string())?;
+    let (delta, after, _) = e2e_delta_and_update_in(Some(&forged), None, &baseline, None)?;
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(after, captured);
+    assert_ne!(
+        delta["analysis_scope"]["scope"], "rust_workspace_complete",
+        "{delta}"
+    );
+    Ok(())
+}
+
+/// #9599: a `ripr.toml` that fails to load means the gated tree's corpus cannot
+/// be established, so a coverage disclosure that is otherwise current is not
+/// upgraded.
+#[test]
+fn e2e_unloadable_config_keeps_gap_ledger_artifact_scope() -> Result<(), String> {
+    let unrelated = "pub fn unrelated() {}\n";
+    let ledger = e2e_real_ledger(unrelated)?;
+    let fresh: Value = serde_json::from_str(&e2e_gate_json_with_files(
+        None,
+        Some(&ledger),
+        Some(unrelated),
+        &[],
+    )?)
+    .map_err(|err| err.to_string())?;
+    assert_eq!(fresh["analysis_scope"]["scope"], "rust_workspace_complete");
+    let broken: Value = serde_json::from_str(&e2e_gate_json_with_files(
+        None,
+        Some(&ledger),
+        Some(unrelated),
+        &[("ripr.toml", "this is = = not toml [")],
+    )?)
+    .map_err(|err| err.to_string())?;
+    assert_eq!(broken["analysis_scope"]["scope"], "gap_ledger_artifact");
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn e2e_real_ledger_symlink_file_keeps_baseline_debt() -> Result<(), String> {
+    e2e_real_ledger_symlink_keeps_baseline_debt(false)
+}
+
+#[cfg(unix)]
+#[test]
+fn e2e_real_ledger_symlink_parent_keeps_baseline_debt() -> Result<(), String> {
+    e2e_real_ledger_symlink_keeps_baseline_debt(true)
+}
+
+#[cfg(unix)]
+fn e2e_real_ledger_symlink_keeps_baseline_debt(parent: bool) -> Result<(), String> {
+    // Retained review 5623869444: identities originate in the actual
+    // guidance -> gate -> baseline-create chain, never an authored scope.
+    let shallow = "pub fn early(n: i32) -> bool { n >= 10 }\n";
+    let original_gate = e2e_gate_json(Some(&e2e_real_review_doc(shallow)?), None)?;
+    let captured = crate::output::baseline::baseline_create_report_from_gate_decision_json(
+        "gate.json",
+        "unix_ms:1",
+        &original_gate,
+    )?;
+    let before = crate::output::baseline::baseline_entry_count(&captured);
+    assert!(
+        before > 0,
+        "real production pipeline must produce baseline debt"
+    );
+    let baseline = crate::output::baseline::render_baseline_create_json(&captured)?;
+    let root = temp_dir("gate-e2e-ledger-symlink-9599")?;
+    e2e_write_project(&root, shallow)?;
+    if parent {
+        fs::create_dir_all(root.join("real")).map_err(|err| err.to_string())?;
+        fs::rename(root.join("src"), root.join("real/src")).map_err(|err| err.to_string())?;
+        std::os::unix::fs::symlink("real/src", root.join("src")).map_err(|err| err.to_string())?;
+    } else {
+        fs::rename(root.join("src/lib.rs"), root.join("src/lib.source"))
+            .map_err(|err| err.to_string())?;
+        std::os::unix::fs::symlink("lib.source", root.join("src/lib.rs"))
+            .map_err(|err| err.to_string())?;
+    }
+    assert_eq!(
+        fs::read_to_string(root.join("src/lib.rs")).map_err(|err| err.to_string())?,
+        shallow,
+    );
+    let config = crate::config::RiprConfig::default();
+    // Both cold and warm producer paths must retain the captured path's debt.
+    for warm in [false, true] {
+        let ledger = e2e_real_ledger_at(&root, &config)?;
+        let value: Value = serde_json::from_str(&ledger).map_err(|err| err.to_string())?;
+        let files = &value["analysis_coverage"]["corpus"]["analyzed_production_files"];
+        assert!(
+            !files
+                .as_array()
+                .is_some_and(|files| files.contains(&json!("src/lib.rs"))),
+            "{value}",
+        );
+        // The parent alias is unanalysed even when the same bytes really
+        // seed seams at a different admitted production path.
+        if parent {
+            assert!(
+                files
+                    .as_array()
+                    .is_some_and(|files| { files.contains(&json!("real/src/lib.rs")) }),
+                "{value}"
+            );
+            assert!(
+                value["records"]
+                    .as_array()
+                    .is_some_and(|records| { !records.is_empty() }),
+                "{value}"
+            );
+        } else {
+            assert_eq!(value["records"], json!([]), "{value}");
+        }
+        let gate = e2e_real_gate_from_ledger_at(&root, &ledger)?;
+        let delta = crate::output::baseline_delta::build_baseline_delta_report(
+            crate::output::baseline_delta::BaselineDeltaInput {
+                root: root.to_string_lossy().to_string(),
+                baseline_path: "baseline.json".to_string(),
+                current_gate_decision_path: "gate.json".to_string(),
+                baseline_json: Ok(baseline.clone()),
+                current_gate_decision_json: Ok(gate.clone()),
+            },
+        );
+        let delta: Value = serde_json::from_str(
+            &crate::output::baseline_delta::render_baseline_delta_json(&delta)?,
+        )
+        .map_err(|err| err.to_string())?;
+        let update = crate::output::baseline_update::build_baseline_update_remove_resolved(
+            crate::output::baseline_update::BaselineUpdateInput {
+                baseline_path: "baseline.json".to_string(),
+                current_gate_decision_path: "gate.json".to_string(),
+                baseline_json: baseline.clone(),
+                current_gate_decision_json: gate,
+                remove_resolved: true,
+                migrate_legacy_identities: false,
+            },
+        )?;
+        assert_eq!(
+            delta["delta"]["resolved"], 0,
+            "parent={parent}, warm={warm}: {delta}"
+        );
+        assert_eq!(
+            delta["delta"]["stale_baseline_entry"], before as u64,
+            "{delta}"
+        );
+        assert_eq!(
+            delta["items"].as_array().map(|items| {
+                items
+                    .iter()
+                    .filter(|item| item["evaluation"] == "not_evaluated")
+                    .count()
+            }),
+            Some(before),
+            "{delta}",
+        );
+        assert_eq!(
+            crate::output::baseline_update::baseline_update_after_entry_count(&update),
+            before,
+            "an unchanged source reached by a skipped symlink must retain its real baseline debt",
+        );
+    }
+    ignore_remove_dir_all(root);
+    Ok(())
+}
+
+/// #11101: the aliased-path refusal must run on every host, including the
+/// Windows evidence lane where the `#[cfg(unix)]` symlink tests cannot. Every
+/// forged spelling below is refused by membership-set equality against the
+/// discovered (component-normalized) membership; this test does not isolate
+/// the path shape owner, which is pinned directly by
+/// `rust_workspace_path_gap_refuses_aliased_spellings` in `corpus.rs`. It
+/// injects aliased spellings into the membership of a real, otherwise-current
+/// coverage ledger instead of creating a link.
+#[test]
+fn e2e_aliased_path_in_forged_membership_keeps_baseline_debt() -> Result<(), String> {
+    let shallow = "pub fn early(n: i32) -> bool { n >= 10 }\n";
+    let fixed = "pub fn unrelated() {}\n";
+    let original_gate = e2e_gate_json(Some(&e2e_real_review_doc(shallow)?), None)?;
+    let captured = crate::output::baseline::baseline_create_report_from_gate_decision_json(
+        "gate.json",
+        "unix_ms:1",
+        &original_gate,
+    )?;
+    let before = crate::output::baseline::baseline_entry_count(&captured);
+    assert!(
+        before > 0,
+        "real production pipeline must produce baseline debt"
+    );
+    let baseline = crate::output::baseline::render_baseline_create_json(&captured)?;
+
+    let root = temp_dir("gate-e2e-ledger-forged-alias-11101")?;
+    e2e_write_project(&root, fixed)?;
+    let ledger = e2e_real_ledger_at(&root, &crate::config::RiprConfig::default())?;
+    let genuine: Value = serde_json::from_str(&ledger).map_err(|err| err.to_string())?;
+    // Fixture construction: a genuine membership names exactly the real file,
+    // so none of the aliased spellings below is already in it.
+    let members = genuine["analysis_coverage"]["corpus"]["analyzed_production_files"]
+        .as_array()
+        .cloned()
+        .ok_or_else(|| format!("no disclosed membership: {genuine}"))?;
+    assert_eq!(members, vec![json!("src/lib.rs")], "{genuine}");
+
+    let evaluate = |ledger: &str| -> Result<(Value, Value, usize), String> {
+        let gate = e2e_real_gate_from_ledger_at(&root, ledger)?;
+        let gate_value: Value = serde_json::from_str(&gate).map_err(|err| err.to_string())?;
+        let delta = crate::output::baseline_delta::build_baseline_delta_report(
+            crate::output::baseline_delta::BaselineDeltaInput {
+                root: root.to_string_lossy().to_string(),
+                baseline_path: "baseline.json".to_string(),
+                current_gate_decision_path: "gate.json".to_string(),
+                baseline_json: Ok(baseline.clone()),
+                current_gate_decision_json: Ok(gate.clone()),
+            },
+        );
+        let delta: Value = serde_json::from_str(
+            &crate::output::baseline_delta::render_baseline_delta_json(&delta)?,
+        )
+        .map_err(|err| err.to_string())?;
+        let update = crate::output::baseline_update::build_baseline_update_remove_resolved(
+            crate::output::baseline_update::BaselineUpdateInput {
+                baseline_path: "baseline.json".to_string(),
+                current_gate_decision_path: "gate.json".to_string(),
+                baseline_json: baseline.clone(),
+                current_gate_decision_json: gate,
+                remove_resolved: true,
+                migrate_legacy_identities: false,
+            },
+        )?;
+        Ok((
+            gate_value,
+            delta,
+            crate::output::baseline_update::baseline_update_after_entry_count(&update),
+        ))
+    };
+
+    // Discriminating positive: the unforged ledger earns complete coverage and
+    // resolves the fixed debt, so a retained debt below is attributable to the
+    // injected path and not to a broken fixture.
+    let (gate, delta, after) = evaluate(&ledger)?;
+    assert_eq!(
+        gate["analysis_scope"]["scope"], "rust_workspace_complete",
+        "{gate}"
+    );
+    assert_eq!(delta["delta"]["resolved"], before as u64, "{delta}");
+    assert_eq!(after, 0, "{delta}");
+
+    // Negative: each aliased membership must keep the debt unresolved, whatever
+    // the host's link support. Same bytes at a different path (the parent-alias
+    // shape), an alias beside the real file, non-normalized spellings, and the
+    // real path dropped (an empty membership, not an alias).
+    let aliased: [(&str, Vec<&str>); 6] = [
+        (
+            "parent alias replaces the real path",
+            vec!["real/src/lib.rs"],
+        ),
+        (
+            "alias added beside the real path",
+            vec!["src/lib.rs", "real/src/lib.rs"],
+        ),
+        ("dot-dot spelling", vec!["src/lib.rs", "src/../src/lib.rs"]),
+        ("dot-slash spelling", vec!["./src/lib.rs"]),
+        ("backslash spelling", vec!["src\\lib.rs"]),
+        ("real path dropped", vec![]),
+    ];
+    for (label, files) in aliased {
+        let mut forged = genuine.clone();
+        forged["analysis_coverage"]["corpus"]["analyzed_production_files"] = json!(files);
+        let forged = serde_json::to_string(&forged).map_err(|err| err.to_string())?;
+        let (gate, delta, after) = evaluate(&forged)?;
+        assert_ne!(
+            gate["analysis_scope"]["scope"], "rust_workspace_complete",
+            "{label}: {gate}"
+        );
+        assert_eq!(delta["delta"]["resolved"], 0, "{label}: {delta}");
+        assert_eq!(
+            delta["delta"]["stale_baseline_entry"], before as u64,
+            "{label}: {delta}"
+        );
+        assert_eq!(
+            delta["items"].as_array().map(|items| {
+                items
+                    .iter()
+                    .filter(|item| item["evaluation"] == "not_evaluated")
+                    .count()
+            }),
+            Some(before),
+            "{label}: {delta}",
+        );
+        assert_eq!(after, before, "{label}: debt must be retained");
+    }
+    ignore_remove_dir_all(root);
     Ok(())
 }
 

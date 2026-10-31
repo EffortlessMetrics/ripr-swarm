@@ -33,10 +33,11 @@ use super::guard_activation::{condition_holds, leading_whitespace};
 use super::no_behavior::split_top_level_args;
 use super::related_tests::PythonRelatedCandidate;
 use super::static_limits::{CaplogRead, caplog_required_literals};
-use super::{PythonOwner, PythonTest, expr_full_name};
+use super::{PythonAssertion, PythonOwner, PythonTest, expr_full_name};
 use crate::domain::{OwnerKind, ValueContext};
 use crate::value_origins::LocatedValueFact;
-use rustpython_parser::ast::{self, Expr};
+use rustpython_parser::ast::{self, Expr, ExprContext, Fold};
+use rustpython_parser::text_size::TextRange;
 
 /// Module text that reconfigures a logger and so changes which records reach
 /// the test's handler.
@@ -130,12 +131,7 @@ pub(super) fn python_log_evidence(
         if rows.iter().any(|row| row.file != candidate.test.file) {
             return None;
         }
-        let gate = snapshot_alias_gate(
-            candidate.test,
-            assertion.line,
-            &assertion.gate_text,
-            rows.iter().map(|row| row.line),
-        )?;
+        let gate = snapshot_alias_gate(candidate.test, assertion, rows.iter().map(|row| row.line))?;
         let literals = caplog_required_literals(&gate);
         if literals.is_empty() {
             // Another assertion may catch the edit too; this reading only
@@ -728,71 +724,40 @@ pub(super) fn substitute_caplog_aliases(test: &PythonTest, gate_text: &str) -> S
     replace_identifiers(gate_text, &replacements)
 }
 
-/// Lines of the statement starting at `start`: through the line that closes
-/// its brackets, so `assert (` / `"..." in msgs` / `)` is one assertion.
-fn statement_lines(lines: &[&str], start: usize) -> std::ops::Range<usize> {
-    let mut depth = 0i32;
-    let mut scan = StringScan::default();
-    for (offset, line) in lines.iter().skip(start).enumerate() {
-        let mut in_comment = false;
-        let mut index = 0;
-        while index < line.len() {
-            let consumed = scan.step(&line[index..]);
-            if consumed > 0 {
-                index += consumed;
-                continue;
-            }
-            let Some(ch) = line[index..].chars().next() else {
-                break;
-            };
-            match ch {
-                '#' => {
-                    in_comment = true;
-                    break;
-                }
-                '(' | '[' | '{' => depth += 1,
-                ')' | ']' | '}' => depth -= 1,
-                _ => {}
-            }
-            index += ch.len_utf8();
-        }
-        // A backslash ending a comment is comment text, not a continuation.
-        let continued = !in_comment && line.trim_end().ends_with('\\');
-        if depth <= 0 && scan.open.is_none() && !continued {
-            return start..start + offset + 1;
-        }
-    }
-    start..lines.len()
-}
-
 /// Whether `text` uses the local name `name`: a whole word that is not an
 /// attribute (`caplog.text` does not use a local called `text`).
 fn mentions_local_name(text: &str, name: &str) -> bool {
+    local_name_offsets(text, name).next().is_some()
+}
+
+fn local_name_offsets<'a>(text: &'a str, name: &'a str) -> impl Iterator<Item = usize> + 'a {
     let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
-    text.match_indices(name).any(|(start, _)| {
+    text.match_indices(name).filter_map(move |(start, _)| {
         let before = text[..start].trim_end();
-        !before.ends_with('.')
+        (!before.ends_with('.')
             && !text[..start].chars().next_back().is_some_and(is_word)
             && !text[start + name.len()..]
                 .chars()
                 .next()
-                .is_some_and(is_word)
+                .is_some_and(is_word))
+        .then_some(start)
     })
 }
 
 /// The assertion text with its aliases of captured-log reads replaced by the
 /// reads, or None when an alias is not provably a plain snapshot: the name is
 /// bound once, to the read, at the assertion's own indentation after every
-/// owner call, and appears nowhere else in the test (a mutation, rebinding,
-/// deletion, nested use or other read keeps the abstention). `caplog.text`,
-/// `.messages` and `.records` are rebuilt on each access, so an alias taken
-/// before the call would hold the earlier records.
+/// owner call and before the assertion, and appears nowhere else in the test
+/// (a mutation, rebinding, deletion, nested use or other read keeps the abstention).
+/// `caplog.text` and `.messages` are rebuilt on each access, so an alias taken
+/// before the call would hold earlier records. `.records` uses the same bounded
+/// eligibility policy, though it exposes the handler's record list.
 fn snapshot_alias_gate(
     test: &PythonTest,
-    assertion_line: usize,
-    gate_text: &str,
+    assertion: &PythonAssertion,
     owner_call_lines: impl Iterator<Item = usize>,
 ) -> Option<String> {
+    let gate_text = &assertion.gate_text;
     let aliases = caplog_aliases(&test.body_text);
     let mentioned: Vec<_> = aliases
         .iter()
@@ -802,8 +767,16 @@ fn snapshot_alias_gate(
         return Some(gate_text.to_string());
     }
     let lines: Vec<&str> = test.body_text.lines().collect();
-    let assertion_index = assertion_line.checked_sub(test.line)?;
-    let assertion_lines = statement_lines(&lines, assertion_index);
+    let assertion_index = assertion.line.checked_sub(test.line)?;
+    let assertion_range = assertion.source_range?;
+    let module = super::source_facts::parse_module_result(&test.file, &test.body_text).ok()?;
+    let line_starts: Vec<_> = std::iter::once(0)
+        .chain(
+            test.body_text
+                .match_indices('\n')
+                .map(|(offset, _)| offset + 1),
+        )
+        .collect();
     let last_call = owner_call_lines.max()?;
     let mut replacements = Vec::new();
     for alias in mentioned {
@@ -812,21 +785,101 @@ fn snapshot_alias_gate(
             .filter(|other| other.name == alias.name)
             .count()
             == 1;
-        let only_uses = lines.iter().enumerate().all(|(index, line)| {
-            !mentions_local_name(line, alias.name)
-                || index == alias.index
-                || assertion_lines.contains(&index)
-        });
         let indent = leading_whitespace(lines.get(alias.index)?);
         let level = lines
             .get(assertion_index)
             .is_some_and(|line| leading_whitespace(line) == indent);
-        if !(bound_once && only_uses && level && test.line + alias.index > last_call) {
+        if !(bound_once
+            && level
+            && test.line + alias.index > last_call
+            && alias.index < assertion_index)
+        {
+            return None;
+        }
+        let binding_line = lines.get(alias.index)?;
+        let binding_start =
+            line_starts.get(alias.index)? + binding_line.len() - binding_line.trim_start().len();
+        // Keep the conservative extra-use gate for names stored outside ExprName,
+        // such as match captures, imports and exception targets. Native statement
+        // bounds exclude same-line prefix/suffix uses from the assertion allowance.
+        let only_uses = lines.iter().enumerate().all(|(index, line)| {
+            index == alias.index
+                || local_name_offsets(line, alias.name).all(|offset| {
+                    let start = line_starts[index] + offset;
+                    start >= usize::from(assertion_range.start())
+                        && start + alias.name.len() <= usize::from(assertion_range.end())
+                })
+        });
+        if !only_uses {
+            return None;
+        }
+        let mut uses = SnapshotAliasUses {
+            name: alias.name,
+            binding_start,
+            assertion_range,
+            binding_seen: false,
+            in_store: false,
+        };
+        uses.fold_mod(module.clone()).ok()?;
+        if !uses.binding_seen {
             return None;
         }
         replacements.push((alias.name, alias.read));
     }
     Some(replace_identifiers(gate_text, &replacements))
+}
+
+/// Native names distinguish a read in the assertion from a same-line prefix
+/// or suffix statement. Store contexts also reject walrus/comprehension writes,
+/// including writes hidden inside f-string expressions (#10595).
+struct SnapshotAliasUses<'a> {
+    name: &'a str,
+    binding_start: usize,
+    assertion_range: TextRange,
+    binding_seen: bool,
+    in_store: bool,
+}
+
+impl Fold<TextRange> for SnapshotAliasUses<'_> {
+    type TargetU = TextRange;
+    type Error = ();
+    type UserContext = ();
+
+    fn will_map_user(&mut self, _: &TextRange) {}
+
+    fn map_user(&mut self, range: TextRange, _: ()) -> Result<TextRange, ()> {
+        Ok(range)
+    }
+
+    fn fold_expr(&mut self, node: Expr) -> Result<Expr, ()> {
+        let previous = self.in_store;
+        self.in_store |= match &node {
+            Expr::Attribute(value) => value.ctx != ExprContext::Load,
+            Expr::Subscript(value) => value.ctx != ExprContext::Load,
+            _ => false,
+        };
+        let result = ast::fold::fold_expr(self, node);
+        self.in_store = previous;
+        result
+    }
+
+    fn fold_expr_name(&mut self, node: ast::ExprName) -> Result<ast::ExprName, ()> {
+        if node.id.as_str() == self.name {
+            if node.ctx == ExprContext::Store
+                && usize::from(node.range.start()) == self.binding_start
+                && !self.binding_seen
+            {
+                self.binding_seen = true;
+            } else if node.ctx != ExprContext::Load
+                || self.in_store
+                || node.range.start() < self.assertion_range.start()
+                || node.range.end() > self.assertion_range.end()
+            {
+                return Err(());
+            }
+        }
+        Ok(node)
+    }
 }
 
 /// The `if <condition>:` lines, outermost first, between the owner's `def`

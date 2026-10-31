@@ -25,7 +25,7 @@ Start here:
   Related test: tests/test_notifications.py:7 test_warn_coupon_output_message (assertion too weak to tell the old behavior from the new)
   Suggested test file: tests/test_notifications.py
   Suggested test: test_warn_coupon_output_message
-  Verify command: python -m unittest tests.test_notifications.NotificationTests.test_warn_coupon_output_message (high)
+  Suggested command (unverified; inspect and run from the selected root): python -m unittest tests.test_notifications.NotificationTests.test_warn_coupon_output_message
   Next step — Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `return value == "coupon expired"`
   Evidence: reach yes · infection yes · propagation yes · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

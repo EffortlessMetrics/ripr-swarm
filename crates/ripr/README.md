@@ -100,9 +100,11 @@ for JSON, GitHub annotations, SARIF, and report formats.
 Rust analysis and bounded repair are `usable alpha`. A valid repair route is
 required; ordinary real-repository route yield and success remain unestablished.
 Python analysis is `preview`, with selected pytest/unittest repair routes at
-`usable alpha`. TypeScript and JavaScript are opt-in previews. Perl requires a
-`lang-perl` build and the unpublished `perl-ripr-facts` exporter; it is not usable
-from a released build/exporter combination.
+`usable alpha`. TypeScript and JavaScript are `preview` analysis, auto-enabled
+for detected TypeScript projects when no `ripr.toml` exists (opt out with
+`enabled = ["rust"]`). Perl requires a `lang-perl` build and the unpublished
+`perl-ripr-facts` exporter; it is not usable from a released build/exporter
+combination.
 
 No findings does not mean the tests are complete. Opaque fixtures, generated
 code, and unsupported flows can limit static analysis. See

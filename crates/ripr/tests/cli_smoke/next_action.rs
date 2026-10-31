@@ -112,6 +112,7 @@ fn agent_card_json_embeds_the_canonical_decision() -> Result<(), Box<dyn std::er
         let human = run_ripr(&[
             "agent",
             "card",
+            "--verbose",
             "--root",
             &root_arg,
             "--seam-id",

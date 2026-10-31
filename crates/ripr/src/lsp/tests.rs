@@ -27,8 +27,8 @@ use super::gap_artifacts::{
     GapArtifactIdentity, GapArtifactKind, GapArtifactRejection, ValidatedGapArtifact,
 };
 use super::hover::{
-    classified_seam_hover_response, diagnostic_covers_position, hover_response_without_evidence,
-    hover_with_snapshot_status,
+    NoEvidenceState, classified_seam_hover_response, diagnostic_covers_position,
+    hover_response_without_evidence, hover_with_snapshot_status,
 };
 use super::input_identity::LspAnalysisInputIdentity;
 use super::lens::{code_lens_response, lens_title_is_static_language_clean, lens_view_identity};
@@ -2409,7 +2409,7 @@ fn published_seam_diagnostic(
 #[test]
 fn hover_response_keeps_current_guidance_text() -> Result<(), String> {
     // The analyzed, Rust-only workspace renders the exact legacy generic text.
-    let hover = hover_response_without_evidence(true, &["Rust".to_string()]);
+    let hover = hover_response_without_evidence(NoEvidenceState::Analyzed, &["Rust".to_string()]);
 
     match hover.contents {
         HoverContents::Markup(markup) => {
@@ -2421,11 +2421,37 @@ fn hover_response_keeps_current_guidance_text() -> Result<(), String> {
 }
 
 #[test]
+fn hover_without_evidence_states_are_distinct_and_static() -> Result<(), String> {
+    // #11253: each state renders its own wording.
+    let rust = ["Rust".to_string()];
+    let text = |state| match hover_response_without_evidence(state, &rust).contents {
+        HoverContents::Markup(markup) => Ok(markup.value),
+        _ => Err("expected markup hover".to_string()),
+    };
+    let analyzing = text(NoEvidenceState::Analyzing)?;
+    let clean = text(NoEvidenceState::AnalyzedNoChanges { base: None })?;
+    let not_analyzed = text(NoEvidenceState::NotAnalyzed)?;
+    assert!(analyzing.contains("analysis is in progress"));
+    assert!(analyzing.contains("will appear"));
+    assert!(!analyzing.contains("ripr.refresh"));
+    assert!(clean.contains("found no changed lines against the base ref at its last analysis, so"));
+    assert!(clean.contains("nothing to grade"));
+    assert!(not_analyzed.contains("has not analyzed this workspace yet"));
+    assert!(!not_analyzed.contains("in progress"));
+    assert_ne!(analyzing, not_analyzed);
+    assert_ne!(clean, text(NoEvidenceState::Analyzed)?);
+    Ok(())
+}
+
+#[test]
 fn hover_without_evidence_before_analysis_points_at_refresh() -> Result<(), String> {
     // #9604 finding 32: before the first analysis the generic "run the CLI"
     // pointer names the wrong recovery — the `ripr.refresh` editor command
     // populates this server — and the languages come from configuration.
-    let hover = hover_response_without_evidence(false, &["Rust".to_string(), "Python".to_string()]);
+    let hover = hover_response_without_evidence(
+        NoEvidenceState::NotAnalyzed,
+        &["Rust".to_string(), "Python".to_string()],
+    );
 
     match hover.contents {
         HoverContents::Markup(markup) => {
@@ -2459,8 +2485,10 @@ fn hover_without_evidence_before_analysis_points_at_refresh() -> Result<(), Stri
 fn hover_without_evidence_after_analysis_keeps_cli_pointer() -> Result<(), String> {
     // #9604 finding 32: after analysis the CLI pointer stays, with the
     // configured language list instead of a hardcoded "Rust".
-    let hover =
-        hover_response_without_evidence(true, &["Rust".to_string(), "TypeScript".to_string()]);
+    let hover = hover_response_without_evidence(
+        NoEvidenceState::Analyzed,
+        &["Rust".to_string(), "TypeScript".to_string()],
+    );
 
     match hover.contents {
         HoverContents::Markup(markup) => {
@@ -2498,9 +2526,13 @@ fn hover_language_list_reads_naturally() {
             .map(|value| value.to_string())
             .collect::<Vec<_>>()
     };
-    let one = hover_response_without_evidence(false, &labels(&["Python"]));
-    let two = hover_response_without_evidence(false, &labels(&["Rust", "Python"]));
-    let three = hover_response_without_evidence(false, &labels(&["Rust", "Python", "TypeScript"]));
+    let one = hover_response_without_evidence(NoEvidenceState::NotAnalyzed, &labels(&["Python"]));
+    let two =
+        hover_response_without_evidence(NoEvidenceState::NotAnalyzed, &labels(&["Rust", "Python"]));
+    let three = hover_response_without_evidence(
+        NoEvidenceState::NotAnalyzed,
+        &labels(&["Rust", "Python", "TypeScript"]),
+    );
     let text = |hover: &tower_lsp_server::ls_types::Hover| -> String {
         match &hover.contents {
             HoverContents::Markup(markup) => markup.value.clone(),
@@ -3162,7 +3194,7 @@ fn hover_for_position_returns_none_when_no_diagnostic_matches() -> Result<(), St
         "expected None when no diagnostic matches position"
     );
 
-    let generic = hover_response_without_evidence(true, &["Rust".to_string()]);
+    let generic = hover_response_without_evidence(NoEvidenceState::Analyzed, &["Rust".to_string()]);
     match generic.contents {
         HoverContents::Markup(markup) => {
             assert_eq!(markup.value, HOVER_TEXT);
@@ -14513,6 +14545,73 @@ fn boundary_gap_workspace_diagnostics_include_live_seam_diagnostic() -> Result<(
     Ok(())
 }
 
+/// #11132: a panic inside a language adapter during an editor refresh is a
+/// typed failure of that refresh, not an unwind through the sidecar. The next
+/// refresh on the same workspace runs normally, and the failed one published
+/// no finding (so nothing actionable) for the code it could not analyze.
+#[test]
+fn lsp_refresh_contains_a_language_adapter_panic() -> Result<(), String> {
+    let root = unique_lsp_test_root("adapter-panic-containment")?;
+    write_lsp_scope_fixture(root.path())?;
+    run_lsp_scope_git(root.path(), &["init"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &["config", "user.email", "ripr@example.invalid"],
+    )?;
+    run_lsp_scope_git(root.path(), &["config", "user.name", "RIPR Test"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &["add", "Cargo.toml", "src/lib.rs", "tests/end_to_end.rs"],
+    )?;
+    run_lsp_scope_git(root.path(), &["commit", "-m", "base"])?;
+    fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
+    )
+    .map_err(|err| format!("persist saved tracked source edit failed: {err}"))?;
+    let config = LspAnalysisConfig {
+        base_ref: Some("HEAD".to_string()),
+        mode: Mode::Instant,
+        diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
+        ..LspAnalysisConfig::default()
+    };
+
+    // Control: the unarmed refresh analyzes the edit.
+    let control = workspace_diagnostics_with_config(root.path(), &config, true)?;
+    if control.snapshot.findings.is_empty() {
+        return Err("control refresh produced no findings; the fixture is not exercised".into());
+    }
+
+    {
+        let _armed = crate::analysis::injected_adapter_panic::arm(
+            root.path(),
+            crate::analysis::language::LanguageId::Rust,
+        );
+        match workspace_diagnostics_with_config(root.path(), &config, true) {
+            Err(failure) => {
+                let message = failure.to_string();
+                if !message.contains("adapter_panicked") {
+                    return Err(format!(
+                        "failure must be the typed adapter panic: {message}"
+                    ));
+                }
+            }
+            Ok(diagnostics) => {
+                if !diagnostics.snapshot.findings.is_empty() {
+                    return Err("a contained adapter panic must publish no findings".into());
+                }
+            }
+        }
+    }
+
+    // The sidecar keeps serving: the very next refresh succeeds again.
+    let recovered = workspace_diagnostics_with_config(root.path(), &config, true)?;
+    if recovered.snapshot.findings.is_empty() {
+        return Err("the refresh after a contained panic must analyze normally".into());
+    }
+    Ok(())
+}
+
 fn write_lsp_scope_fixture(root: &Path) -> Result<(), String> {
     fs::create_dir_all(root.join("src"))
         .map_err(|err| format!("create fixture src failed: {err}"))?;
@@ -22830,6 +22929,149 @@ async fn hover_without_evidence_names_an_unsaved_buffer() -> Result<(), String> 
         return Err(format!(
             "clean document hover must not report a pause: {clean}"
         ));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn code_lens_is_withdrawn_for_an_unsaved_buffer_and_restored_when_buffer_matches_analyzed_content()
+-> Result<(), String> {
+    // Lenses anchor at the analyzed saved file's line. Diagnostics and hover
+    // already pause for a divergent buffer; a lens that stayed would sit on
+    // the wrong line after any edit that shifts lines.
+    let fixture = quarantine_fixture("dirty-lens")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .initialize(initialize_params(
+            None,
+            Some(
+                file_uri_for_path(&fixture.root)
+                    .map_err(|err| format!("root URI failed: {err}"))?,
+            ),
+        ))
+        .await
+        .map_err(|err| format!("initialize failed: {err}"))?;
+    backend
+        .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
+        .await;
+    backend
+        .did_open(quarantine_open_params(&fixture.uri_b, QUARANTINE_TEXT_B))
+        .await;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
+    let lens_count = |uri: &tower_lsp_server::ls_types::Uri| {
+        let params = tower_lsp_server::ls_types::CodeLensParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            work_done_progress_params: Default::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+        async move {
+            backend
+                .code_lens(params)
+                .await
+                .map_err(|err| format!("code lens failed: {err}"))
+                .map(|lenses| lenses.map_or(0, |lenses| lenses.len()))
+        }
+    };
+    if lens_count(&fixture.uri_a).await? == 0 {
+        return Err("a clean document must keep its lens".to_string());
+    }
+
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.uri_a,
+            2,
+            QUARANTINE_TEXT_A_DIRTY,
+        ))
+        .await;
+    if lens_count(&fixture.uri_a).await? != 0 {
+        return Err("a divergent buffer must not keep a lens on stale lines".to_string());
+    }
+    if lens_count(&fixture.uri_b).await? == 0 {
+        return Err("a clean sibling document must keep its lens".to_string());
+    }
+
+    // Reverting the buffer to the analyzed saved content lifts the pause.
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.uri_a,
+            3,
+            QUARANTINE_TEXT_A,
+        ))
+        .await;
+    if lens_count(&fixture.uri_a).await? == 0 {
+        return Err("a buffer matching the analyzed content must restore its lens".to_string());
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn external_rewrite_reloaded_into_a_buffer_is_analyzed_without_a_save() -> Result<(), String>
+{
+    // A formatter, `git checkout` or coding agent rewrites an open file and the
+    // client reloads the buffer with a change, never a save. The buffer then
+    // equals the file on disk, so "save the file" cannot help; ripr must treat
+    // it as saved content and schedule analysis. A buffer that is merely ahead
+    // of disk (typing) must still wait for a real save.
+    let fixture = quarantine_fixture("external-rewrite")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .initialize(initialize_params(
+            None,
+            Some(
+                file_uri_for_path(&fixture.root)
+                    .map_err(|err| format!("root URI failed: {err}"))?,
+            ),
+        ))
+        .await
+        .map_err(|err| format!("initialize failed: {err}"))?;
+    backend
+        .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
+        .await;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
+    let before = backend.workspace_revision();
+
+    // Typing: the buffer is ahead of disk, so no analysis input changed.
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.uri_a,
+            2,
+            QUARANTINE_TEXT_A_DIRTY,
+        ))
+        .await;
+    if backend.workspace_revision() != before {
+        return Err("a buffer ahead of disk must not schedule analysis".to_string());
+    }
+
+    // External rewrite: disk now holds the same bytes as the reloaded buffer.
+    std::fs::write(&fixture.path_a, QUARANTINE_TEXT_A_DIRTY)
+        .map_err(|err| format!("rewrite a.rs failed: {err}"))?;
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.uri_a,
+            3,
+            QUARANTINE_TEXT_A_DIRTY,
+        ))
+        .await;
+    if backend.workspace_revision() != before + 1 {
+        return Err(format!(
+            "a buffer equal to disk must be recorded as saved content: {before} -> {}",
+            backend.workspace_revision()
+        ));
+    }
+    // The same bytes again are the same input: no second analysis.
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.uri_a,
+            4,
+            QUARANTINE_TEXT_A_DIRTY,
+        ))
+        .await;
+    if backend.workspace_revision() != before + 1 {
+        return Err("an unchanged reload must deduplicate".to_string());
     }
     Ok(())
 }

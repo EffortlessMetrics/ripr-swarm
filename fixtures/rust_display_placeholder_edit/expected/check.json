@@ -32,20 +32,20 @@
         "delta": "value",
         "file": "./src/display.rs",
         "line": 7,
-        "expression": "write!(f, \"/u{7b}:?/u{7d}°C\", self.0)"
+        "expression": "write!(f, \"\\u{7b}:?\\u{7d}°C\", self.0)"
        },
       "ripr": {
         "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach fmt: exact_display_pin"},
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
-        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: write!(f, \"/u{7b}:?/u{7d}°C\", self.0)"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: write!(f, \"\\u{7b}:?\\u{7d}°C\", self.0)"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach fmt: exact_display_pin", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: write!(f, \"/u{7b}:?/u{7d}°C\", self.0)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: write!(f, \"/u{7b}:?/u{7d}°C\", self.0) (line 7)", "related test src/display.rs:16 exact_display_pin uses strong exact value oracle: assert_eq!(Temp(21).to_string(), \"21°C\");", "source assertion argument value \"21°C\" at line 17", "source assertion argument value 21 at line 17"],
+      "evidence_path": ["reach yes: Related tests appear to reach fmt: exact_display_pin", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: write!(f, \"\\u{7b}:?\\u{7d}°C\", self.0)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: write!(f, \"\\u{7b}:?\\u{7d}°C\", self.0) (line 7)", "related test src/display.rs:16 exact_display_pin uses strong exact value oracle: assert_eq!(Temp(21).to_string(), \"21°C\");", "source assertion argument value \"21°C\" at line 17", "source assertion argument value 21 at line 17"],
       "flow_sinks": [
-        {"kind":"return_value","text":"write!(f, \"/u{7b}:?/u{7d}°C\", self.0)","line":7}
+        {"kind":"return_value","text":"write!(f, \"\\u{7b}:?\\u{7d}°C\", self.0)","line":7}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: write!(f, \"/u{7b}:?/u{7d}°C\", self.0)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach fmt: exact_display_pin"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: write!(f, \"\\u{7b}:?\\u{7d}°C\", self.0)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach fmt: exact_display_pin"],
       "missing": ["No strong discriminator was detected"],
       "assertion_texts": {
         "17": "assert_eq!(Temp(21).to_string(), \"21°C\");"

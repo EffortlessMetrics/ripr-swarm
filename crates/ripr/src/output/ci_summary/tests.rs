@@ -395,6 +395,107 @@ fn empty_root_names_every_missing_artifact_and_its_regeneration() -> TestResult 
     Ok(())
 }
 
+const PILOT_SUMMARY_JSON: &str = "target/ripr/pilot/pilot-summary.json";
+
+/// The First-run status block, which the pilot deadline notice belongs to.
+fn first_run_block(summary: &str) -> &str {
+    summary
+        .split("#### First-run status\n")
+        .nth(1)
+        .and_then(|rest| rest.split("\n### ").next())
+        .unwrap_or_default()
+}
+
+/// #11205: a pilot that stopped at its deadline is named as the cause where
+/// the `missing_artifact` state is reported, with the effect and a next step
+/// that names the control the packet actually reads.
+#[test]
+fn a_pilot_deadline_is_named_as_the_cause_of_the_missing_artifacts() -> TestResult {
+    let fixture = Fixture::new("pilot-deadline")?;
+    fixture.write(
+        PILOT_SUMMARY_JSON,
+        r#"{"status":"partial","reason":"timeout","timeout_ms":270000}"#,
+    )?;
+    let summary = fixture.render(&[])?;
+    let block = first_run_block(&summary);
+    for line in [
+        "- Pilot deadline: `ripr pilot` stopped at its deadline after `270000` ms and wrote a partial packet.",
+        "- Cause: the pilot deadline, not a missing setup step.",
+        "- Effect: repo exposure and agent seam packets were not written",
+        "- Next step: set `RIPR_PILOT_TIMEOUT_MS` in the workflow `env:` to at least `540000`",
+        "`target/ripr/cache`",
+    ] {
+        assert!(block.contains(line), "missing {line:?} in:\n{block}");
+    }
+    // One explanation per summary: the pilot report embedded further down is
+    // the producer's own text and does not repeat this notice.
+    assert_eq!(summary.matches("- Pilot deadline:").count(), 1, "{summary}");
+    // The cause leads the downstream `missing_artifact` state it explains.
+    let deadline = block.find("- Pilot deadline:").ok_or("no deadline line")?;
+    let missing = block
+        .find("- State: `missing_artifact`")
+        .ok_or("no missing_artifact line")?;
+    assert!(deadline < missing, "{block}");
+
+    // A timeout summary without a readable budget still names the deadline.
+    fixture.write(
+        PILOT_SUMMARY_JSON,
+        r#"{"status":"partial","reason":"timeout"}"#,
+    )?;
+    let block_text = fixture.render(&[])?;
+    let block = first_run_block(&block_text);
+    assert!(
+        block.contains("- Pilot deadline: `ripr pilot` stopped at its deadline and wrote"),
+        "{block}"
+    );
+    assert!(
+        block.contains("- Next step: raise `RIPR_PILOT_TIMEOUT_MS` in the workflow `env:`"),
+        "{block}"
+    );
+    Ok(())
+}
+
+/// Controls for #11205: the notice never names a cause the pilot artifacts do
+/// not show, so each of these stays silent.
+#[test]
+fn the_pilot_deadline_notice_stays_silent_without_a_timeout_partial() -> TestResult {
+    for (label, pilot) in [
+        (
+            "complete",
+            Some(r#"{"status":"complete","timeout_ms":30000}"#),
+        ),
+        (
+            "other-partial",
+            Some(r#"{"status":"partial","reason":"inventory_failed","timeout_ms":30000}"#),
+        ),
+        (
+            "reason-without-partial",
+            Some(r#"{"status":"complete","reason":"timeout"}"#),
+        ),
+        ("malformed", Some("{ not json")),
+        ("absent", None),
+    ] {
+        let fixture = Fixture::new(&format!("pilot-quiet-{label}"))?;
+        if let Some(pilot) = pilot {
+            fixture.write(PILOT_SUMMARY_JSON, pilot)?;
+        }
+        let summary = fixture.render(&[])?;
+        assert!(
+            !summary.contains("Pilot deadline") && !summary.contains("RIPR_PILOT_TIMEOUT_MS"),
+            "{label}: unexpected deadline notice:\n{summary}"
+        );
+        // The downstream state is unchanged, so the notice only adds a cause.
+        assert!(summary.contains("- State: `missing_artifact`"), "{label}");
+    }
+    let complete = Fixture::complete("pilot-quiet-complete-packet")?;
+    assert!(
+        !complete
+            .render(&["rust"])?
+            .contains("RIPR_PILOT_TIMEOUT_MS")
+    );
+    Ok(())
+}
+
 /// #3906 (F60-3, F60-14): a carried repair start leads each block with its
 /// after phase, and the low-level verify and receipt become the manual
 /// alternative.
@@ -897,21 +998,24 @@ fn producer_refusal_check_document_is_named_while_others_add_nothing() -> TestRe
         "a non-refusal envelope must add no refusal block"
     );
     // An unknown-status refusal still names the refusal with a fallback.
+    // Built as a literal (no mutation helpers) so the test stays off the
+    // panic-family allowlist.
     let fixture = Fixture::new("refusal-unknown-status")?;
-    let mut unknown = refusal();
-    unknown["analysis_scope"]
-        .as_object_mut()
-        .unwrap()
-        .remove("run_status");
-    unknown["run_limitations"][0]
-        .as_object_mut()
-        .unwrap()
-        .remove("run_status");
-    unknown["run_limitations"][0]
-        .as_object_mut()
-        .unwrap()
-        .remove("category");
-    fixture.json("target/ripr/pr/check.json", &unknown)?;
+    fixture.json(
+        "target/ripr/pr/check.json",
+        &json!({
+            "analysis_scope": {
+                "scope": "diff",
+                "downstream_consumable": false,
+                "repair_route": "analysis/diff-scope-budget"
+            },
+            "run_limitations": [{
+                "downstream_consumable": false,
+                "message": "diff_scope_oversized: 2878 changed Rust lines exceed the limit (2000); analysis was not run.",
+                "repair_route": "analysis/diff-scope-budget"
+            }]
+        }),
+    )?;
     let summary = fixture.render(&[])?;
     assert!(
         summary.contains("#### PR analysis did not run"),
@@ -920,6 +1024,65 @@ fn producer_refusal_check_document_is_named_while_others_add_nothing() -> TestRe
     assert!(
         summary.contains("producer refusal"),
         "fallback status:\n{summary}"
+    );
+    // A mixed bounded-plus-refusal document keeps the bounded handling: the
+    // bounded guard runs before the refusal reader, so no refusal block
+    // renders. The legacy limitations-only shape trips only the bounded
+    // guard (no `analysis_outcome`, so the incomplete guard stays quiet):
+    // removing the bounded guard would name the refusal here — the document
+    // carries an explicit non-consumable record — and fail this assertion.
+    // (The producer never emits this mix; it pins guard order.)
+    let fixture = Fixture::new("refusal-mixed-bounded")?;
+    let mut mixed = refusal();
+    mixed["run_limitations"] = json!([
+        {
+            "category": "limited_findings_bound",
+            "run_status": "limited_findings_bound",
+            "downstream_consumable": false,
+            "message": "findings array was cut by the byte budget",
+            "repair_route": "analysis/findings-budget"
+        },
+        {
+            "category": "diff_scope_oversized",
+            "run_status": "diff_scope_oversized",
+            "downstream_consumable": false,
+            "message": "diff_scope_oversized: 2878 changed Rust lines exceed the limit (2000); analysis was not run.",
+            "repair_route": "analysis/diff-scope-budget"
+        }
+    ]);
+    fixture.json("target/ripr/pr/check.json", &mixed)?;
+    assert!(
+        !fixture
+            .render(&[])?
+            .contains("#### PR analysis did not run"),
+        "a bounded document that also discloses a refusal must keep the bounded handling"
+    );
+    // A mixed partial-plus-refusal document keeps the partial handling: the
+    // partial guard runs before the refusal reader. Removing that guard
+    // would name the refusal here and fail this assertion.
+    let fixture = Fixture::new("refusal-mixed-partial")?;
+    let mut mixed = refusal();
+    mixed["language_runs"] = json!([{ "status": "partial" }]);
+    fixture.json("target/ripr/pr/check.json", &mixed)?;
+    assert!(
+        !fixture
+            .render(&[])?
+            .contains("#### PR analysis did not run"),
+        "a partial document that also discloses a refusal must keep the partial handling"
+    );
+    // A mixed incomplete-plus-refusal document keeps the incomplete
+    // handling: the incomplete guard runs before the refusal reader.
+    // Removing that guard would name the refusal here and fail this
+    // assertion.
+    let fixture = Fixture::new("refusal-mixed-incomplete")?;
+    let mut mixed = refusal();
+    mixed["analysis_outcome"] = json!({ "analysis_complete": false });
+    fixture.json("target/ripr/pr/check.json", &mixed)?;
+    assert!(
+        !fixture
+            .render(&[])?
+            .contains("#### PR analysis did not run"),
+        "an incomplete document that also discloses a refusal must keep the incomplete handling"
     );
     Ok(())
 }

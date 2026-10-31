@@ -858,6 +858,22 @@ mod tests {
         print_help_all();
     }
 
+    /// Agents reading `ripr check --json` look at the one-screen help first:
+    /// it must name the stderr-silencing flag and the lean per-finding route,
+    /// without overstating that `--json` alone silences progress.
+    #[test]
+    fn check_short_help_advertises_quiet_json_and_lean_route() {
+        let short = super::CHECK_HELP_SHORT;
+        assert!(short.contains("--json --quiet"));
+        assert!(short.contains("--json alone still prints progress"));
+        let full = CHECK_HELP.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(full.contains("agents and scripts reading json should pass it"));
+        assert!(
+            !short.contains("--json alone silences"),
+            "short help must not claim --json disables progress"
+        );
+    }
+
     #[test]
     fn check_help_mentions_repo_badge_formats_and_examples() {
         assert!(CHECK_HELP.contains("repo-badge-plus-shields"));

@@ -303,8 +303,215 @@ fn exposed_boolean_tail_is_gripped_for_both_check_and_repair() -> Result<(), Str
         "repair must not start on a change check reads as exposed:\n{repair}"
     );
     assert!(
-        repair.contains("already grip it (exposed)") && !repair.contains("repair_ready=true"),
+        repair.contains("already grip it (exposed)") && !repair.contains("Ready to repair."),
         "repair must agree that no gap remains:\n{repair}"
+    );
+    Ok(())
+}
+
+const CONST_OLD: &str = "pub const GREETING: &str = \"hello\";\n\npub fn greet(name: &str) -> String {\n    format!(\"{GREETING}, {name}\")\n}\n\npub fn shout(name: &str) -> String {\n    format!(\"{name}!\")\n}\n";
+const CONST_NEW: &str = "pub const GREETING: &str = \"howdy\";\n\npub fn greet(name: &str) -> String {\n    format!(\"{GREETING}, {name}\")\n}\n\npub fn shout(name: &str) -> String {\n    format!(\"{name}!\")\n}\n";
+const CONST_TEST: &str = "use ar::{greet, shout};\n\n#[test]\nfn greets() {\n    assert!(greet(\"a\").contains(\"a\"));\n    assert!(!shout(\"a\").is_empty());\n}\n";
+
+/// #11111 (group 2): a changed string constant has no seam of its own, so
+/// `ripr check` offers no repair start for it ("no gap ID"). Bare repair must
+/// not start, or offer to choose, a repair on the unchanged functions that
+/// merely sit in the same file: that is a different change than the one
+/// check reported.
+#[test]
+fn changed_constant_with_no_seam_does_not_start_repair_elsewhere() -> Result<(), String> {
+    let repo = Repo::create_uncommitted(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    let check = repo.ripr(&["check", "--base", "HEAD"])?;
+    assert!(
+        check.contains("Changed behavior: pub const GREETING")
+            && check.contains("no repair start offered: this finding has no gap ID"),
+        "precondition, check offers no repair start for the constant:\n{check}"
+    );
+    let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    assert_eq!(
+        code,
+        Some(3),
+        "repair must not start a repair the changed finding does not have:\n{repair}"
+    );
+    assert!(
+        !repair.contains("choose the change to repair")
+            && !repair.contains("different repairs")
+            && !repair.contains("repair_ready=true")
+            && !repair.contains("Repair prepared"),
+        "repair must not offer unrelated seams as the change's repair:\n{repair}"
+    );
+    assert!(
+        repair.contains("your changed lines (src/lib.rs:1)")
+            && repair.contains("not offered")
+            && repair.contains("`ripr repair <seam-id>`"),
+        "repair must say why nothing is offered and how to name a seam:\n{repair}"
+    );
+    Ok(())
+}
+
+/// The scoping applies only when the diff changes Rust production lines:
+/// a diff that touches nothing but a test file keeps bare repair's
+/// whole-repository selection, since nothing says which seam is "the change".
+#[test]
+fn test_only_diff_keeps_the_whole_repository_selection() -> Result<(), String> {
+    let repo = Repo::create_uncommitted(CONST_OLD, CONST_OLD, CONST_TEST)?;
+    repo.write("tests/t.rs", &format!("{CONST_TEST}\n// touched\n"))?;
+    let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    assert_eq!(
+        code,
+        Some(3),
+        "several seams still need a choice:\n{repair}"
+    );
+    assert!(
+        repair.contains("ripr can start 2 different repairs")
+            && !repair.contains("your changed lines")
+            && !repair.contains("not offered"),
+        "a test-only diff must not scope the selection:\n{repair}"
+    );
+    Ok(())
+}
+
+/// #11111 (review note on the return-value widening): only a tail that is
+/// exactly the one boundary comparison shares the predicate seam's verdict.
+/// With `age >= 18 && age < 65` the assertions pin the lower boundary but not
+/// the upper operand, so check does not read the change as exposed and repair
+/// must keep the whole-tail return-value seam as a repair candidate rather
+/// than refusing it as gripped.
+#[test]
+fn compound_boolean_tail_is_not_read_as_exposed_by_repair() -> Result<(), String> {
+    let repo = Repo::create(
+        "pub fn is_adult(age: u32) -> bool {\n    age > 18 && age < 65\n}\n",
+        "pub fn is_adult(age: u32) -> bool {\n    age >= 18 && age < 65\n}\n",
+        "use ar::is_adult;\n\n#[test]\nfn adult() {\n    assert!(is_adult(19));\n    assert!(!is_adult(18));\n}\n",
+    )?;
+    let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
+    assert!(
+        !check.contains("nothing to repair here"),
+        "precondition, check does not read the compound change as exposed:\n{check}"
+    );
+    let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    assert_eq!(code, Some(3), "several candidates need a choice:\n{repair}");
+    assert!(
+        repair.contains("`age >= 18 && age < 65`") && !repair.contains("already grip it (exposed)"),
+        "the whole-tail seam must stay a candidate, not read as gripped:\n{repair}"
+    );
+    Ok(())
+}
+
+const GUARD_OLD: &str = "pub fn check_age(age: u32) -> u32 {\n    if age > 150 {\n        panic!(\"too old\");\n    }\n    age\n}\n";
+const GUARD_NEW: &str = "pub fn check_age(age: u32) -> u32 {\n    if age > 120 {\n        panic!(\"too old\");\n    }\n    age\n}\n";
+const GUARD_TEST: &str =
+    "use ar::check_age;\n\n#[test]\n#[should_panic]\nfn too_old() {\n    check_age(200);\n}\n";
+
+/// #11111 (group 4, panic-guard): the changed guard is a named static
+/// limitation, while the unchanged `age` tail is a separate seam that is not
+/// ready. Repair used to print both reasons unlabelled, so one change read as
+/// "no gap here" and "missing assertion" at once. With the diff available the
+/// unchanged seam is counted, not listed, and the changed seam's reason names
+/// its seam.
+#[test]
+fn bare_repair_does_not_list_an_unchanged_seams_missing_evidence_for_the_change()
+-> Result<(), String> {
+    let repo = Repo::create_uncommitted(GUARD_OLD, GUARD_NEW, GUARD_TEST)?;
+    let check = repo.ripr(&["check", "--base", "HEAD"])?;
+    assert!(
+        check.contains("ripr does not report a gap here"),
+        "precondition, check names the static limitation:\n{check}"
+    );
+    let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    assert_eq!(code, Some(3), "repair must not start:\n{repair}");
+    assert!(
+        repair.contains("seam src/lib.rs:2 `age > 120`: ripr does not report a gap here"),
+        "the changed seam's reason must name its seam:\n{repair}"
+    );
+    assert!(
+        !repair.contains("a test assertion that checks the changed return value"),
+        "the unchanged tail's missing evidence must not read as the change's verdict:\n{repair}"
+    );
+    assert!(
+        repair.contains("outside your changed lines cannot start a repair either"),
+        "the unchanged blocked seam must be counted, not hidden:\n{repair}"
+    );
+    Ok(())
+}
+
+/// The same shape with the change committed: no diff is available, so repair
+/// keeps the whole-repository view, and each reason names the seam it is
+/// about instead of sitting beside the other as a second verdict.
+#[test]
+fn whole_repository_refusals_name_the_seam_each_reason_is_about() -> Result<(), String> {
+    let repo = Repo::create(GUARD_OLD, GUARD_NEW, GUARD_TEST)?;
+    let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    assert_eq!(code, Some(3), "repair must not start:\n{repair}");
+    assert!(
+        repair.contains("seam src/lib.rs:2 `age > 120`: ripr does not report a gap here")
+            && repair.contains("seam src/lib.rs:5 `age`: repair route not ready"),
+        "each refusal must name its own seam:\n{repair}"
+    );
+    assert!(
+        !repair.contains("outside your changed lines"),
+        "without a diff nothing is scoped:\n{repair}"
+    );
+    Ok(())
+}
+
+const ERR_OLD: &str = "#[derive(Debug, PartialEq)]\npub enum E {\n    Neg,\n    Bad,\n}\n\npub fn fail(x: i32) -> Result<i32, E> {\n    return Err(E::Neg);\n}\n";
+const ERR_NEW: &str = "#[derive(Debug, PartialEq)]\npub enum E {\n    Neg,\n    Bad,\n}\n\npub fn fail(x: i32) -> Result<i32, E> {\n    return Err(E::Bad);\n}\n";
+
+/// A changed `return Err(E::Bad)` whose test pins exactly `E::Bad`: the
+/// error-variant seam is strongly gripped and check reads the change as
+/// exposed, so repair must grade the return-value seam over the same
+/// expression as gripped too, not as "missing evidence" (#11111,
+/// error-variant-strong).
+#[test]
+fn exact_err_variant_pin_grips_the_return_value_seam_for_check_and_repair() -> Result<(), String> {
+    let repo = Repo::create(
+        ERR_OLD,
+        ERR_NEW,
+        "use ar::{fail, E};\n\n#[test]\nfn fails_bad() {\n    assert!(matches!(fail(1), Err(E::Bad)));\n}\n",
+    )?;
+    let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
+    assert!(
+        check.contains("Static exposure: exposed")
+            && check.contains("no repair start offered: nothing to repair here"),
+        "precondition, check reads the change as exposed:\n{check}"
+    );
+    let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    assert_eq!(
+        code,
+        Some(3),
+        "repair must not start on a change check reads as exposed:\n{repair}"
+    );
+    assert!(
+        repair.contains(
+            "seam src/lib.rs:8 `return Err(E::Bad)`: its existing tests already grip it (exposed)"
+        ) && !repair.contains("missing evidence")
+            && !repair.contains("repair_ready=true"),
+        "repair must agree that no gap remains on the return-value seam:\n{repair}"
+    );
+    Ok(())
+}
+
+/// Discriminating negative: a pin on the sibling variant does not grip the
+/// changed `Err(E::Bad)`, so the return-value seam keeps its missing-evidence
+/// refusal exactly as before and no start is added.
+#[test]
+fn sibling_err_variant_pin_leaves_the_return_value_seam_weak() -> Result<(), String> {
+    let repo = Repo::create(
+        ERR_OLD,
+        ERR_NEW,
+        "use ar::{fail, E};\n\n#[test]\nfn fails_neg() {\n    assert!(matches!(fail(1), Err(E::Neg)));\n}\n",
+    )?;
+    let (_, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    assert!(
+        repair.contains(
+            "seam src/lib.rs:8 `return Err(E::Bad)`: repair route not ready (missing evidence: a test assertion that checks the changed return value)"
+        ),
+        "a sibling-variant pin must not grip the changed return value:\n{repair}"
+    );
+    assert!(
+        !repair.contains("repair_ready=true"),
+        "no start is added:\n{repair}"
     );
     Ok(())
 }

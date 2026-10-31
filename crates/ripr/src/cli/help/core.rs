@@ -190,7 +190,7 @@ findings. `unsupported_input` reports exit 2, as do usage errors. Do not build
 a CI gate on check's exit code; run `ripr gate evaluate` (exit 3 on `blocked`).
 Examples:
   ripr check
-  ripr check --base origin/main --json
+  ripr check --base origin/main --json --quiet   (--json alone still prints progress)
 More:
   ripr check --help --all   Every option (--path/--exclude too), format, and env var.
 "#;
@@ -251,6 +251,11 @@ Options:
                            output then notes that those edits were not
                            analyzed. Cannot be combined with --worktree,
                            --diff, --candidate-tree, or repo-scope formats.
+  --legend                 Print the Evidence stage and summary definitions in
+                           the human output (a lookup: it does not record the
+                           first run). They are shown on the first run in a
+                           build tree; later runs keep one pointer line. No
+                           effect on other formats.
   --mode MODE              How much of the workspace is indexed: instant
                            (changed files only, cheapest), draft (packages the
                            diff touches; the default), fast (same as draft for
@@ -384,7 +389,8 @@ Progress:
   Machine formats (json, sarif, github) keep stdout byte-clean;
   they do not disable stderr progress. Unknown totals never become a
   percentage or ETA. Progress does not mean analysis is faster or
-  that the command will succeed. `--quiet` turns this stream off.
+  that the command will succeed. `--quiet` turns this stream off; agents
+  and scripts reading json should pass it.
 
 Environment variables:
   RIPR_MAX_DIFF_CHANGED_RUST_LINES        Maximum added plus removed Rust diff lines

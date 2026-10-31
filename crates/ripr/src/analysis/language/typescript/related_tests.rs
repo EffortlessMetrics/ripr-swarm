@@ -1717,6 +1717,11 @@ fn module_entry_relation(
         return None;
     }
     for entry in &owner.module_entries {
+        // An instance factory is reached by reading the getter on its product,
+        // not by calling it (`factory_built_getter_read`).
+        if entry.instance_factory {
+            continue;
+        }
         let entry_owner = module_entry_owner(owner, entry);
         if owner_call_relation(
             test,
@@ -1972,9 +1977,334 @@ pub(crate) fn receiver_owner_call_relation(
     if owner.method_kind == TypeScriptMethodKind::Getter {
         return receiver_names
             .iter()
-            .any(|receiver| contains_member_read_name(&test.body_text, receiver, &owner.name));
+            .any(|receiver| contains_member_read_name(&test.body_text, receiver, &owner.name))
+            || factory_built_getter_read(test, owner, alias_map, workspace_root);
     }
     false
+}
+
+/// Getter owner reached through an exported factory that returns a fresh
+/// instance of the owner's class (`instance_factories`, #10402): the test
+/// binds `const box = factory(...)` once and reads `box.<getter>`.
+///
+/// Fail-closed identity gates: the factory is one the owner's module establishes
+/// (`TypeScriptModuleEntry::instance_factory`) and the test reaches it through
+/// a resolved named, renamed or default import or a resolved namespace import;
+/// the callee is not rebound; the receiver is bound once in the test body, is
+/// never written again, is not a catch, function, arrow or loop binding, and
+/// is mentioned only inside the block that declares it; the whole initializer
+/// is the factory call (no member access, index or operator applied to its
+/// result); the read is the subject of an `expect(...)`; no spy, mock,
+/// `defineProperty`, `setPrototypeOf`, `__proto__` or member assignment
+/// anywhere in the test file names the getter or the factory; and the owner
+/// module is not mocked. Computed access (`box["value"]`), receivers declared
+/// outside the test body and reads outside an `expect(...)` subject stay
+/// uncredited.
+fn factory_built_getter_read(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    let factories: Vec<&TypeScriptModuleEntry> = owner
+        .module_entries
+        .iter()
+        .filter(|entry| entry.instance_factory)
+        .collect();
+    if factories.is_empty() || !is_safe_javascript_identifier(&owner.name) {
+        return false;
+    }
+    let masked = super::classifier::ts_mask_literals_and_comments(&test.body_text);
+    let body = masked.as_str();
+    // Whole-file replacement facts: a spy, mock, redefinition or member
+    // assignment anywhere in the test file (a `beforeEach`, a top-level
+    // `Object.defineProperty(Class.prototype, ...)`) may replace the getter or
+    // the factory, and `__proto__` can rewire any instance.
+    let replaced = |name: &str| test.member_replacements_in_file.iter().any(|n| n == name);
+    if replaced(super::tests_extract::MEMBER_REPLACEMENT_ANY)
+        || replaced(&owner.name)
+        || test_spies_owner_with_fabrication_for_owner(test, &owner.name, false)
+        || class_entries::assigns_member_named(body, &owner.name)
+        || spies_on_member_named(&test.body_text, &owner.name)
+    {
+        return false;
+    }
+    let mut callees: Vec<String> = Vec::new();
+    for factory in &factories {
+        // Any spy, mock or assignment naming the factory refuses it, not only
+        // the fabrication shapes (`mockReturnValueOnce` and kin replace the
+        // product as well).
+        if replaced(&factory.name)
+            || spies_on_member_named(&test.body_text, &factory.name)
+            || test_spies_owner_with_fabrication_for_owner(
+                test,
+                &factory.name,
+                factory.exported_as_default,
+            )
+            || class_entries::assigns_member_named(body, &factory.name)
+        {
+            continue;
+        }
+        for import in &test.imports_in_file {
+            if !import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root) {
+                continue;
+            }
+            if import.namespace {
+                if !factory.exported_as_default {
+                    push_unique_string(&mut callees, format!("{}.{}", import.local, factory.name));
+                }
+            } else if import.imported.as_deref() == Some(factory.name.as_str())
+                || (factory.exported_as_default && import.imported.as_deref() == Some("default"))
+            {
+                push_unique_string(&mut callees, import.local.clone());
+            }
+        }
+    }
+    // A callee root the test scope or body rebinds names something else.
+    callees.retain(|callee| {
+        let root = callee.split('.').next().unwrap_or(callee);
+        !test
+            .scope_bindings
+            .iter()
+            .any(|binding| binding.name == root)
+            && !local_identifier_declared_in_test_body(&test.body_text, root)
+    });
+    if callees.is_empty() {
+        return false;
+    }
+    factory_receiver_names(body, &callees)
+        .iter()
+        .any(|receiver| {
+            !enclosing_scope_shadows(test, receiver)
+                && !body_binds_shadow_identifier(&test.body_text, receiver)
+                && !method_parameter_binds(body, receiver)
+                && expect_actual_references_member(body, receiver, &owner.name)
+        })
+}
+
+/// `true` when any `spyOn(` call (call-through included, accessor spies such as
+/// `spyOn(obj, 'name', 'get')` included) names `name` as a quoted argument in
+/// its opening window: the getter may then be replaced or observed through
+/// the spy rather than run as written. Fail-closed on the raw text, strings
+/// included.
+fn spies_on_member_named(body_text: &str, name: &str) -> bool {
+    body_text.match_indices("spyOn(").any(|(idx, _)| {
+        let window: String = body_text[idx..].chars().take(160).collect();
+        ['\'', '"', '`']
+            .iter()
+            .any(|quote| window.contains(&format!("{quote}{name}{quote}")))
+    })
+}
+
+/// Locals the body binds exactly once to a bare factory call: `const box =
+/// callee(...)` where nothing follows the call's closing parenthesis on its
+/// statement, and the local is never written again or declared twice.
+fn factory_receiver_names(body: &str, callees: &[String]) -> Vec<String> {
+    let writes = super::tests_extract::strict_identifier_writes(body);
+    let mut receivers = Vec::new();
+    for keyword in ["const", "let", "var"] {
+        for (idx, _) in body.match_indices(keyword) {
+            let before = body[..idx].chars().next_back();
+            if before.is_some_and(|ch| is_javascript_identifier_char(ch) || ch == '.') {
+                continue;
+            }
+            let Some(after) = body[idx + keyword.len()..].strip_prefix(char::is_whitespace) else {
+                continue;
+            };
+            let after = after.trim_start();
+            let name_len: usize = after
+                .chars()
+                .take_while(|ch| is_javascript_identifier_char(*ch))
+                .map(char::len_utf8)
+                .sum();
+            let name = &after[..name_len];
+            let Some(initializer) = after[name_len..].trim_start().strip_prefix('=') else {
+                continue;
+            };
+            if !is_safe_javascript_identifier(name)
+                || initializer.starts_with(['=', '>'])
+                || !initializer_is_bare_factory_call(initializer, callees)
+            {
+                continue;
+            }
+            if !mentioned_only_in_declaring_block(body, body.len() - after.len(), name) {
+                continue;
+            }
+            let declarations = ["const", "let", "var"]
+                .iter()
+                .map(|kw| word_declaration_count(body, kw, name))
+                .sum::<usize>();
+            let written = writes.iter().filter(|(written, _)| written == name).count();
+            if declarations == 1 && written == 1 {
+                push_unique_string(&mut receivers, name.to_string());
+            }
+        }
+    }
+    receivers
+}
+
+/// `true` when a method definition inside `body` (an object-literal or class
+/// method `m(box) { ... }`, with an optional return type) takes `name` among
+/// its parameters, so a read inside it is another binding. Control statements
+/// (`if (...) {`) and `function`/`catch` heads are not methods.
+fn method_parameter_binds(body: &str, name: &str) -> bool {
+    const NOT_METHODS: [&str; 8] = [
+        "if", "for", "while", "switch", "catch", "with", "function", "return",
+    ];
+    body.match_indices(')').any(|(close, _)| {
+        let rest = &body[close + 1..];
+        let Some(brace) = rest.find('{') else {
+            return false;
+        };
+        let between = rest[..brace].trim();
+        if !(between.is_empty()
+            || (between.starts_with(':') && !between.replace("=>", "->").contains([';', '='])))
+        {
+            return false;
+        }
+        let mut depth = 0usize;
+        let mut open = None;
+        for (at, ch) in body[..=close].char_indices().rev() {
+            match ch {
+                ')' => depth += 1,
+                '(' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        open = Some(at);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(open) = open else {
+            return true;
+        };
+        let head = body[..open].trim_end();
+        let word: String = head
+            .chars()
+            .rev()
+            .take_while(|ch| is_javascript_identifier_char(*ch))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        if NOT_METHODS.contains(&word.as_str()) {
+            return false;
+        }
+        let params = &body[open + 1..close];
+        params.match_indices(name).any(|(idx, _)| {
+            params[..idx]
+                .chars()
+                .next_back()
+                .is_none_or(|ch| !is_javascript_identifier_char(ch) && ch != '.')
+                && params[idx + name.len()..]
+                    .chars()
+                    .next()
+                    .is_none_or(|ch| !is_javascript_identifier_char(ch))
+        })
+    })
+}
+
+/// `true` when every mention of `name` in `body` lies inside the innermost
+/// `{ }` block that holds the declaration at byte `declared_at`: a block-scoped
+/// declaration never reaches a later mention outside its block, where the name
+/// is another binding.
+fn mentioned_only_in_declaring_block(body: &str, declared_at: usize, name: &str) -> bool {
+    let mut open: Vec<usize> = Vec::new();
+    for (idx, ch) in body.char_indices() {
+        if idx >= declared_at {
+            break;
+        }
+        match ch {
+            '{' => open.push(idx),
+            '}' => {
+                open.pop();
+            }
+            _ => {}
+        }
+    }
+    let start = open.last().copied().unwrap_or(0);
+    let mut depth = 0usize;
+    let mut end = body.len();
+    if !open.is_empty() {
+        for (offset, ch) in body[start..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        end = start + offset;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    body.match_indices(name).all(|(idx, _)| {
+        let before = body[..idx].chars().next_back();
+        let after = body[idx + name.len()..].chars().next();
+        let mention = before.is_none_or(|ch| !is_javascript_identifier_char(ch) && ch != '.')
+            && after.is_none_or(|ch| !is_javascript_identifier_char(ch));
+        !mention || (idx >= start && idx < end)
+    })
+}
+
+/// Occurrences of `keyword name` as a declaration head in `body`.
+fn word_declaration_count(body: &str, keyword: &str, name: &str) -> usize {
+    body.match_indices(keyword)
+        .filter(|(idx, _)| {
+            body[..*idx]
+                .chars()
+                .next_back()
+                .is_none_or(|ch| !is_javascript_identifier_char(ch) && ch != '.')
+        })
+        .filter(|(idx, _)| {
+            body[idx + keyword.len()..]
+                .strip_prefix(char::is_whitespace)
+                .map(str::trim_start)
+                .and_then(|rest| rest.strip_prefix(name))
+                .is_some_and(|rest| {
+                    rest.chars()
+                        .next()
+                        .is_none_or(|ch| !is_javascript_identifier_char(ch))
+                })
+        })
+        .count()
+}
+
+/// `true` when `initializer` (the text after `=`) is exactly one call to one
+/// of `callees`, with nothing chained or combined after the call.
+fn initializer_is_bare_factory_call(initializer: &str, callees: &[String]) -> bool {
+    let initializer = initializer.trim_start();
+    callees.iter().any(|callee| {
+        let Some(rest) = initializer.strip_prefix(callee.as_str()) else {
+            return false;
+        };
+        let Some(args) = rest.trim_start().strip_prefix('(') else {
+            return false;
+        };
+        let Some(close) = super::classifier::balanced_close_offset(args) else {
+            return false;
+        };
+        let tail = &args[close + 1..];
+        let trimmed = tail.trim_start();
+        let crossed_newline = tail[..tail.len() - trimmed.len()].contains('\n');
+        match trimmed.chars().next() {
+            None | Some(';' | '}') => true,
+            // ASI ends the statement at a newline unless the next line
+            // continues the expression.
+            Some(next) => {
+                crossed_newline
+                    && !".?[(`+-*/%<>=&|,:!^".contains(next)
+                    && !trimmed.starts_with("as ")
+                    && !trimmed.starts_with("satisfies ")
+                    && !trimmed.starts_with("instanceof ")
+                    && !trimmed.starts_with("in ")
+            }
+        }
+    })
 }
 
 /// The receivers the test authenticates for a method owner: locals built from
@@ -4136,6 +4466,13 @@ pub(crate) struct BodyLexicalScan {
     pub(crate) uses: Vec<usize>,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Count of full lexical shadow scans (#10925): the absent-name early-out
+    /// must leave it untouched.
+    pub(crate) static SHADOW_SCAN_RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Lexical states for the shadow-check walk.
 #[derive(Clone, Copy)]
 enum BodyScanState {
@@ -4167,6 +4504,27 @@ enum BodyScanState {
 /// a same-function use outside that block stays unshadowed (over-credit
 /// direction, retained under the cross-block interval rules).
 pub(crate) fn local_identifier_declared_in_test_body(body_text: &str, identifier: &str) -> bool {
+    // #10925: every shadow shape below (line-start declarator, catch / arrow /
+    // function parameter, loop header) needs `identifier`'s exact bytes in the
+    // body: the lexer matches `starts_with(identifier)` or a declarator part
+    // equal to it, and the masked scans (the mask only keeps original
+    // characters or blanks them) search for the identifier text. A body that
+    // never spells the name is therefore never shadowing it, so skip the
+    // lexer walk and the OXC-backed literal mask. Candidate names that a body
+    // never mentions are the bulk of the per-identifier calls.
+    if !body_text.contains(identifier) {
+        return false;
+    }
+    local_identifier_declared_in_test_body_scanned(body_text, identifier)
+}
+
+/// The full lexical shadow decision, run only for bodies that spell the name.
+pub(crate) fn local_identifier_declared_in_test_body_scanned(
+    body_text: &str,
+    identifier: &str,
+) -> bool {
+    #[cfg(test)]
+    SHADOW_SCAN_RUNS.with(|runs| runs.set(runs.get() + 1));
     let scan = scan_body_lexical_facts(body_text, identifier);
     if scan.uses.iter().any(|use_offset| {
         scan.declarations.iter().any(|declaration| {

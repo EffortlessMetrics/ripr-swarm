@@ -5,6 +5,18 @@
 # with a reason; an entry whose row credits again fails `verdict-corpus check` until the entry is deleted (#10341).
 
 [[entry]]
+case = "assoc-generic-caller"
+reason = "Discriminated at runtime, abstained on purpose: the test reaches Tall::MAX only through `limited::<Tall>`, so `Self` is not statically named at the call (RIPR-SPEC-0048 associated-constant must-not-claim). Delete this entry when generic-caller binding credits it."
+
+[[entry]]
+case = "assoc-generic-impl"
+reason = "Discriminated at runtime, abstained on purpose: `impl<T> Limits for Wrap<T>` is a generic impl, which the RIPR-SPEC-0048 associated-constant extension does not bind. Delete this entry if generic impls are later bound."
+
+[[entry]]
+case = "assoc-unevaluable-condition"
+reason = "Discriminated at runtime, abstained on purpose: the default method's `if` condition calls `is_big`, which the evaluator cannot run (RIPR-SPEC-0048 associated-constant must-not-claim). Delete this entry if helper calls become evaluable."
+
+[[entry]]
 case = "bytesize-format-unit-first-run"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
@@ -293,10 +305,6 @@ case = "serde-format-u8-tens"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
-case = "shape-assoc-const-value"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
 case = "shape-drop-impl-side-effect"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
@@ -502,10 +510,6 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 
 [[entry]]
 case = "spec0114-test-calls-owner-macro"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
-case = "spec0117-external-std-macro"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
