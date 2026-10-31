@@ -21101,9 +21101,131 @@ fn arm_call_reader_admits_only_plain_top_level_call_shapes() {
             "    let _a = rate(9, \"gold\");\n    let r = rate(9, \"silver\");",
         ),
         ("method form", "    assert!(x.rate(9, \"silver\") < 100);"),
+        (
+            "else alone",
+            "    let _v = if ok { 1 } else { 2 };\n    assert!(rate(9, \"silver\") < 100);",
+        ),
+        (
+            "panic alone",
+            "    let _ = ok || panic!(\"x\");\n    assert!(rate(9, \"silver\") < 100);",
+        ),
+        (
+            "macro wrapper",
+            "    let r = keep!(rate(9, \"silver\"));\n    assert!(r < 100);",
+        ),
+        (
+            "debug assert",
+            "    debug_assert!(rate(9, \"silver\") < 100);",
+        ),
     ] {
         assert_eq!(read(refused), None, "{shape}");
     }
+    // The single-word controls: the same bodies without the exit word or the
+    // wrapper are admitted, so only that word refuses.
+    for admitted in [
+        "    let _v = if ok { 1 } else_ { 2 };\n    assert!(rate(9, \"silver\") < 100);",
+        "    let _ = ok || abort(\"x\");\n    assert!(rate(9, \"silver\") < 100);",
+        "    let r = keep(rate(9, \"silver\"));\n    assert!(r < 100);",
+    ] {
+        assert_eq!(read(admitted).as_deref(), Some("\"silver\""), "{admitted}");
+    }
+}
+
+/// The owner's parameters are read only from a plain signature: a generic
+/// type's commas or `pub(crate)` cannot shift or invent a parameter name.
+#[test]
+fn arm_owner_signature_reads_only_plain_parameter_lists() -> Result<(), String> {
+    for (signature, expected) in [
+        (
+            "pub fn rate(t: u32, kind: &str, tier: &str) -> u32",
+            Some((false, vec!["t", "kind", "tier"])),
+        ),
+        (
+            "pub(crate) fn rate(kind: &str) -> u32",
+            Some((false, vec!["kind"])),
+        ),
+        (
+            "pub fn rate(&'a mut self, kind: &str) -> u32",
+            Some((true, vec!["kind"])),
+        ),
+        (
+            "pub fn rate(t: HashMap<u32, std::string::String>, kind: &str, tier: &str) -> u32",
+            None,
+        ),
+        (
+            "pub fn rate(t: Result<u8, io::Error>, kind: &str) -> u32",
+            None,
+        ),
+        ("pub fn rate<T>(t: T, kind: &str) -> u32", None),
+        ("pub fn rate((a, b): (u32, u32), kind: &str) -> u32", None),
+        ("pub fn rate(self: Box<Self>, kind: &str) -> u32", None),
+    ] {
+        let source = format!(
+            "pub struct W;\nimpl W {{\n    {signature} {{\n        match kind {{\n            \"a\" => 1,\n            _ => 0,\n        }}\n    }}\n}}\n"
+        );
+        let index = index_from_files(&[(PathBuf::from("src/lib.rs"), source.as_str())])?;
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "rate")
+            .ok_or_else(|| format!("fixture must hold `rate`: {signature}"))?;
+        let read = arm_owner_signature(owner);
+        let expected = expected.map(|(takes_self, names)| {
+            (
+                takes_self,
+                names.into_iter().map(str::to_string).collect::<Vec<_>>(),
+            )
+        });
+        assert_eq!(read, expected, "{signature}");
+    }
+    Ok(())
+}
+
+/// The changed arm `1` after an earlier `01` (or `0` after `-0`) never runs;
+/// read through the arm reader itself, so text equality would not pass.
+#[test]
+fn earlier_arm_with_the_same_integer_value_refuses_the_arm() -> Result<(), String> {
+    for (first, changed, refused) in [("01", "1", true), ("-0", "0", true), ("2", "1", false)] {
+        let source = format!(
+            "pub fn rate(n: i32) -> u32 {{\n    match n {{\n        {first} => 1,\n        {changed} => 5,\n        _ => 0,\n    }}\n}}\n"
+        );
+        let prod = PathBuf::from("src/lib.rs");
+        let index = index_from_files(&[(prod.clone(), source.as_str())])?;
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "rate")
+            .ok_or("fixture must hold `rate`")?;
+        let seam = inventory_seams_from_index(std::slice::from_ref(&prod), &index)
+            .into_iter()
+            .find(|seam| seam.kind() == SeamKind::MatchArm && seam.display_line() == 4)
+            .ok_or_else(|| format!("{first}/{changed}: expected a match-arm seam on line 4"))?;
+        let read = arm_scrutinee_argument(&seam, owner);
+        assert_eq!(read.is_none(), refused, "{first}/{changed}: {read:?}");
+        if !refused {
+            assert_eq!(read, Some((0, changed.to_string())));
+        }
+    }
+    Ok(())
+}
+
+/// A quote inside a comment does not hide an arm from the arm reader.
+#[test]
+fn whole_body_match_reads_arms_past_quotes_in_comments() -> Result<(), String> {
+    let source = "pub fn rate(kind: &str) -> u32 {\n    match kind {\n        \"gold\" => 1 /* \" */,\n        s if s.len() == 6 => 2 /* \" */,\n        \"silver\" => 5,\n        _ => 0,\n    }\n}\n";
+    let index = index_from_files(&[(PathBuf::from("src/lib.rs"), source)])?;
+    let owner = index
+        .functions()
+        .iter()
+        .find(|function| function.name == "rate")
+        .ok_or("fixture must hold `rate`")?;
+    let (_, arms) = whole_body_match_arms(owner).ok_or("the match must be read")?;
+    let patterns: Vec<&str> = arms.iter().map(|(pattern, _)| pattern.trim()).collect();
+    assert_eq!(
+        patterns,
+        vec!["\"gold\"", "s if s.len() == 6", "\"silver\"", "_"]
+    );
+    Ok(())
 }
 
 /// Earlier-arm duplicates compare integer values, not spellings.

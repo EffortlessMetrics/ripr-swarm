@@ -1381,6 +1381,97 @@ fn compiled_out_message_only_or_skippable_call_is_not_a_match_arm_start() -> Res
     Ok(())
 }
 
+const PLAIN_PARAM_OLD: &str = "pub fn rate(t: u32, kind: &str, tier: &str) -> u32 {\n    match kind {\n        \"gold\" => 10,\n        \"silver\" => 5,\n        _ => t + tier.len() as u32,\n    }\n}\n";
+
+fn arm_new(old: &str) -> String {
+    old.replace("\"silver\" => 5", "\"silver\" => 7")
+}
+
+/// A generic parameter type holds its own commas (`HashMap<u32, a::B>`), so
+/// a comma-split parameter list would read a fake parameter and shift `kind`
+/// onto the `tier` argument: an owner with a generic parameter type refuses,
+/// while the plain-type twin passing `"silver"` as `kind` starts.
+#[test]
+fn generic_parameter_type_is_not_a_match_arm_start() -> Result<(), String> {
+    assert_repair_ready(
+        "arm-plain-parameter",
+        PLAIN_PARAM_OLD,
+        &arm_new(PLAIN_PARAM_OLD),
+        &rate_test("    let t = 9;\n    assert!(rate(t, \"silver\", \"gold\") < 100);\n"),
+    )?;
+    for (case, kind) in [
+        ("arm-generic-path", "HashMap<u32, std::string::String>"),
+        ("arm-generic-result", "Result<u8, std::io::Error>"),
+    ] {
+        let old = format!(
+            "use std::collections::HashMap;\n\npub fn rate(t: {kind}, kind: &str, tier: &str) -> u32 {{\n    match kind {{\n        \"gold\" => 10,\n        \"silver\" => 5,\n        _ => tier.len() as u32,\n    }}\n}}\n"
+        );
+        assert_no_start_at(
+            case,
+            &old,
+            &arm_new(&old),
+            "use ar::rate;\n\n#[test]\nfn runs() {\n    let t = Default::default();\n    assert!(rate(t, \"gold\", \"silver\") < 100);\n}\n",
+            "src/lib.rs:6",
+        )?;
+    }
+    Ok(())
+}
+
+/// A quote inside a comment must not hide an arm: the guard arm between
+/// `"gold"` and `"silver"` takes six-letter input first, so no start; the
+/// twin with a literal arm in its place (same comments) starts.
+#[test]
+fn quote_in_a_comment_does_not_hide_an_earlier_guard_arm() -> Result<(), String> {
+    let lib = |second: &str| {
+        format!(
+            "pub fn rate(kind: &str) -> u32 {{\n    match kind {{\n        \"gold\" => 1 /* \" */,\n        {second} => 2 /* \" */,\n        \"silver\" => 5,\n        _ => 0,\n    }}\n}}\n"
+        )
+    };
+    let test = rate_test("    assert!(rate(\"silver\") < 100);\n");
+    let twin = lib("\"bronze\"");
+    assert_repair_ready("arm-comment-twin", &twin, &arm_new(&twin), &test)?;
+    let guarded = lib("s if s.len() == 6");
+    assert_no_start_at(
+        "arm-comment-quote-guard",
+        &guarded,
+        &arm_new(&guarded),
+        &test,
+        "src/lib.rs:5",
+    )
+}
+
+/// A macro around the owner call may drop it, and `debug_assert!` is compiled
+/// out of release test builds: each refuses, while the twin reading the call
+/// result outside the macro, or through `assert!`, starts.
+#[test]
+fn macro_wrapped_call_or_debug_assert_is_not_a_match_arm_start() -> Result<(), String> {
+    let with_macro = |body: &str| {
+        format!(
+            "use ar::rate;\n\nmacro_rules! keep {{\n    ($e:expr) => {{\n        $e\n    }};\n}}\n\n#[test]\nfn runs() {{\n{body}}}\n"
+        )
+    };
+    assert_repair_ready(
+        "arm-macro-twin",
+        ARM_OLD,
+        ARM_NEW,
+        &with_macro("    let r = rate(\"silver\");\n    assert!(keep!(r) < 100);\n"),
+    )?;
+    assert_no_start_at(
+        "arm-macro-wrapper",
+        ARM_OLD,
+        ARM_NEW,
+        &with_macro("    let r = keep!(rate(\"silver\"));\n    assert!(r < 100);\n"),
+        "src/lib.rs:4",
+    )?;
+    assert_no_start_at(
+        "arm-debug-assert",
+        ARM_OLD,
+        ARM_NEW,
+        &rate_test("    debug_assert!(rate(\"silver\") < 100);\n"),
+        "src/lib.rs:4",
+    )
+}
+
 /// An earlier arm naming the same literal, alone or in a `|` alternation,
 /// takes the input first; the twin without it starts.
 #[test]

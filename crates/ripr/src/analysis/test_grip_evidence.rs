@@ -1172,9 +1172,8 @@ fn arm_scrutinee_argument(seam: &RepoSeam, owner: &FunctionSummary) -> Option<(u
         return None;
     }
     let (scrutinee, arms) = whole_body_match_arms(owner)?;
-    let parameter = function_parameters(owner)
-        .iter()
-        .position(|name| *name == scrutinee)?;
+    let (_, parameters) = arm_owner_signature(owner)?;
+    let parameter = parameters.iter().position(|name| *name == scrutinee)?;
     for (pattern, line) in arms {
         if line == seam.display_line() && pattern.trim() == target {
             return Some((parameter, target.to_string()));
@@ -1241,43 +1240,80 @@ fn arm_owner_call_argument(
     if name.is_empty() || test.calls.iter().filter(|call| call.name == name).count() > 1 {
         return None;
     }
-    arm_call_argument_in_body(&test.body, name, owner_takes_self(owner)?, parameter)
+    let (takes_self, _) = arm_owner_signature(owner)?;
+    arm_call_argument_in_body(&test.body, name, takes_self, parameter)
 }
 
-/// Whether the owner's signature (its first line) takes a `self` receiver;
-/// `None` when the parameter list cannot be read.
-fn owner_takes_self(owner: &FunctionSummary) -> Option<bool> {
+/// The owner's parameter list read strictly from its first line: whether it
+/// takes a `self` receiver, and the other parameters' names in order. `None`
+/// (refuse) unless the line holds `fn <name>(..)` with no generics, and
+/// every parameter is `name: Type` (or `mut name: Type`) whose type is plain
+/// words, paths, references and lifetimes: a `<`, bracket, tuple or pattern
+/// could hold commas that would shift the parameter positions, and a
+/// visibility like `pub(crate)` is skipped by anchoring on the name.
+fn arm_owner_signature(owner: &FunctionSummary) -> Option<(bool, Vec<String>)> {
     let signature = owner.body.lines().next()?;
-    let open = signature.find('(')?;
-    let close = open + signature[open..].find(')')?;
-    let first = signature[open + 1..close].split(',').next()?;
-    let receiver = first
-        .split(':')
-        .next()?
-        .trim()
-        .trim_start_matches('&')
-        .trim();
-    let receiver = match receiver.strip_prefix('\'') {
-        Some(lifetime) => lifetime
-            .trim_start_matches(|ch: char| ch.is_alphanumeric() || ch == '_')
-            .trim(),
-        None => receiver,
-    };
-    let receiver = receiver.strip_prefix("mut ").unwrap_or(receiver).trim();
-    Some(receiver == "self")
+    let part = |ch: Option<char>| ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
+    let header = format!("fn {}", owner.name);
+    let at = signature
+        .match_indices(header.as_str())
+        .find(|(at, _)| {
+            !part(signature[..*at].chars().next_back())
+                && !part(signature[at + header.len()..].chars().next())
+        })
+        .map(|(at, _)| at + header.len())?;
+    let rest = signature[at..].trim_start().strip_prefix('(')?;
+    let list = &rest[..rest.find(')')?];
+    let mut takes_self = false;
+    let mut names = Vec::new();
+    for (position, parameter) in list.split(',').enumerate() {
+        let parameter = parameter.trim();
+        if parameter.is_empty() {
+            continue;
+        }
+        let (name, kind) = match parameter.split_once(':') {
+            Some((name, kind)) => (name.trim(), Some(kind.trim())),
+            None => (parameter, None),
+        };
+        let receiver = name.trim_start_matches('&').trim_start();
+        let receiver = match receiver.strip_prefix('\'') {
+            Some(lifetime) => lifetime
+                .trim_start_matches(|ch: char| ch.is_alphanumeric() || ch == '_')
+                .trim_start(),
+            None => receiver,
+        };
+        let receiver = receiver.strip_prefix("mut ").unwrap_or(receiver).trim();
+        if receiver == "self" {
+            if position != 0 || kind.is_some() {
+                return None;
+            }
+            takes_self = true;
+            continue;
+        }
+        let name = name.strip_prefix("mut ").unwrap_or(name).trim();
+        let kind = kind?;
+        let plain_type = !kind.is_empty()
+            && kind
+                .chars()
+                .all(|ch| ch.is_alphanumeric() || ch.is_whitespace() || "_&':".contains(ch));
+        if !plain_type
+            || name.is_empty()
+            || name.starts_with(|ch: char| ch.is_ascii_digit())
+            || !name.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
+        {
+            return None;
+        }
+        names.push(name.to_string());
+    }
+    Some((takes_self, names))
 }
 
 /// The assertion macros whose condition operands an arm call may sit in, and
 /// how many leading arguments are operands (the rest is the failure message,
 /// which runs only when the assertion fails).
-const ARM_CALL_ASSERTIONS: [(&str, usize); 6] = [
-    ("assert", 1),
-    ("debug_assert", 1),
-    ("assert_eq", 2),
-    ("assert_ne", 2),
-    ("debug_assert_eq", 2),
-    ("debug_assert_ne", 2),
-];
+/// The `debug_assert` forms are left out: they are compiled out of release
+/// test builds.
+const ARM_CALL_ASSERTIONS: [(&str, usize); 3] = [("assert", 1), ("assert_eq", 2), ("assert_ne", 2)];
 
 /// Words that let a statement end the test early or skip code.
 const ARM_EARLY_EXIT_WORDS: [&str; 10] = [
@@ -1478,9 +1514,22 @@ fn is_plain_operand_text(text: &str) -> bool {
     text.chars()
         .all(|ch| ch.is_alphanumeric() || ch.is_whitespace() || "_.<>=!+-*/%()&:\"'".contains(ch))
         && !text.contains("&&")
+        && !invokes_macro(text)
         && !["return", "break", "continue", "async", "move", "await"]
             .iter()
             .any(|word| mentions_identifier(text, word))
+}
+
+/// Whether `text` invokes a macro (`name!(`, `name![`, `name!{`): a macro
+/// around the owner call may drop its argument or never evaluate it.
+fn invokes_macro(text: &str) -> bool {
+    text.match_indices('!').any(|(at, _)| {
+        text[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+            && text[at + 1..].trim_start().starts_with(['(', '[', '{'])
+    })
 }
 
 /// A call argument that is one simple token: a plain literal, or a name,
@@ -1498,10 +1547,16 @@ fn is_simple_call_argument(argument: &str) -> bool {
 }
 
 /// The scrutinee and top-level arms (pattern text, 1-based file line) of an
-/// owner whose body is exactly one `match <identifier> { .. }`. Strings and
-/// chars are skipped while scanning; any shape it cannot read is `None`.
+/// owner whose body is exactly one `match <identifier> { .. }`. Comments,
+/// strings and chars are masked while scanning; any shape it cannot read is
+/// `None`.
 fn whole_body_match_arms(owner: &FunctionSummary) -> Option<(String, Vec<(String, usize)>)> {
-    let body = owner.body.as_str();
+    // The structure is read on masked text, so a quote or bracket inside a
+    // comment or string cannot hide an arm; pattern text is read from the
+    // original at the same offsets (masking keeps the byte layout).
+    let original = owner.body.as_str();
+    let masked = crate::analysis::extract::mask_comments_and_strings(original);
+    let body = masked.as_str();
     let params_open = body.find('(')?;
     let body_open = params_open + body[params_open..].find('{')?;
     let body_close = body.rfind('}')?;
@@ -1530,16 +1585,17 @@ fn whole_body_match_arms(owner: &FunctionSummary) -> Option<(String, Vec<(String
     let mut arms = Vec::new();
     let mut at = arms_open + 1;
     loop {
-        while at < arms_close
-            && (body[at..].starts_with(char::is_whitespace) || body[at..].starts_with(','))
-        {
+        // Skip separators only where the original has them too: a masked
+        // string pattern is blank in `body` but is the arm's pattern.
+        let separator = |text: &str| text.starts_with(char::is_whitespace) || text.starts_with(',');
+        while at < arms_close && separator(&body[at..]) && separator(original.get(at..)?) {
             at += body[at..].chars().next()?.len_utf8();
         }
         if at >= arms_close {
             break;
         }
         let arrow = find_top_level(body, at, arms_close, "=>")?;
-        arms.push((body[at..arrow].to_string(), line_of(at)));
+        arms.push((original.get(at..arrow)?.to_string(), line_of(at)));
         let mut end = arrow + 2;
         while let Some(ch) = body[end..].chars().next().filter(|ch| ch.is_whitespace()) {
             end += ch.len_utf8();
