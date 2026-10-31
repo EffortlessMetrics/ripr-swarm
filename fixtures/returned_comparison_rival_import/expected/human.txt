@@ -49,7 +49,9 @@ Write a test for it:
 
 Hidden:
   2 finding(s) omitted: 1 lower-priority, 1 base-side evidence (not candidate edit targets).
-    - ./src/lib.rs:2 (unknown, base-side); kind: predicate; reason: Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown
-    - ./src/lib.rs:2 (unknown, lower-priority candidate); kind: return_value; reason: Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown
+    - ./src/lib.rs:2 (unknown: infection unclear, base-side); kind: predicate; reason: Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown
+    - ./src/lib.rs:2 (unknown: infection unclear, lower-priority candidate); kind: return_value; reason: Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown
+  Hidden classes:
+    unknown: infection unclear = ripr could not tell what input makes the change take effect
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

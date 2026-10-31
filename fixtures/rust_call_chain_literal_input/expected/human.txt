@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_call_chain_literal_input/input
 
-Summary: 2 changed behaviors checked: 1 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 1 unclear. 2 found, 0 suppressed by your settings
+Summary: 2 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 2 unclear. 2 found, 0 suppressed by your settings
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
@@ -50,8 +50,8 @@ Write a test for it:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:2 (exposed); kind: return_value; reason: Strong oracle found: exact value or pattern assertion
+    - ./src/lib.rs:2 (unknown: infection unclear); kind: return_value; reason: Changed boundary input is unresolved: a related test passes `age` the result of a call (`age_from_env(18)`), whose value ripr does not evaluate statically, so it cannot tell which…
   Hidden classes:
-    exposed = tests appear to notice the change
+    unknown: infection unclear = ripr could not tell what input makes the change take effect
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

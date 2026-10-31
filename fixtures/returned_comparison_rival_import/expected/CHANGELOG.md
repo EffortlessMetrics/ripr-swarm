@@ -89,3 +89,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — returned_comparison_rival_import (8)
+
+Reason:
+RIPR-SPEC-0197: #10046 refused call identity (a rival, namesake or generated-glob owner) now reads infection_unknown with an explicit unresolved-input reason instead of static_unknown/propagation_unknown; no missing discriminator or equality is invented
+
+Command:
+`cargo xtask goldens bless returned_comparison_rival_import --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

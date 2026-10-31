@@ -26,7 +26,6 @@ Shared evidence and guidance
   E11 [findings 1, 3]: source function argument value x = 500 at line 10
   E12 [findings 1, 3]: source function argument value x = 101 at line 13
   E13 [findings 1, 3]: source function argument value x = 101 at line 20
-  N1 [findings 1, 3]: Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
 
 Finding 1: WARNING ./src/lib.rs:2
   id: probe:src_lib.rs:predicate:2ea8a95f
@@ -53,7 +52,7 @@ Stop reasons:
   - ripr could not tell whether a test input reaches a value that makes the change matter (infection_evidence_unknown)
     Next: Add a test input that reaches the changed value, such as a boundary value, then assert on the result.
 Next step
-  shared guidance: N1
+  - Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
 Drill in:
   ripr explain --root <cwd>/fixtures/returned_comparison_rival_import/input --diff <cwd>/fixtures/returned_comparison_rival_import/diff.patch --mode fast probe:src_lib.rs:predicate:2ea8a95f
   ripr context --root <cwd>/fixtures/returned_comparison_rival_import/input --diff <cwd>/fixtures/returned_comparison_rival_import/diff.patch --mode fast --at probe:src_lib.rs:predicate:2ea8a95f
@@ -123,7 +122,7 @@ Stop reasons:
   - ripr could not tell whether a test input reaches a value that makes the change matter (infection_evidence_unknown)
     Next: Add a test input that reaches the changed value, such as a boundary value, then assert on the result.
 Next step
-  shared guidance: N1
+  - Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
 Drill in:
   ripr explain --root <cwd>/fixtures/returned_comparison_rival_import/input --diff <cwd>/fixtures/returned_comparison_rival_import/diff.patch --mode fast probe:src_lib.rs:return_value:567f7842
   ripr context --root <cwd>/fixtures/returned_comparison_rival_import/input --diff <cwd>/fixtures/returned_comparison_rival_import/diff.patch --mode fast --at probe:src_lib.rs:return_value:567f7842
