@@ -1,0 +1,53 @@
+{
+  "case_id": "spec-b-0153-registered-harness-helper",
+  "subject_id": "authored-spec-b-configured",
+  "diff": "cases/spec-b-0153-registered-harness-helper.diff",
+  "anchor": {
+    "file": "src/custom_runner.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "registered_harness_helper",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test --locked",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "9",
+        "mutated_line": "9",
+        "outcome": "tests_failed",
+        "failing_test": "registered_base_is_ten",
+        "equivalence_review": "not equivalent: registered_base_is_ten expects 10, not 9"
+      },
+      {
+        "replacement": "11",
+        "mutated_line": "11",
+        "outcome": "tests_failed",
+        "failing_test": "registered_base_is_ten",
+        "equivalence_review": "not equivalent: registered_base_is_ten expects 10, not 11"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The exact custom path is a declared harness=false test target and has a retained libtest-mimic registration. The helper is test evidence; the real registered Trial pins its result. Existing direct registry tests retain typed provenance/refusal coverage beyond the projected verdict row.",
+  "spec_examples": [
+    "RIPR-SPEC-0153#7"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "5abb7591b0510f2fe563c086b42c381d8b4a2164",
+    "full_checkout_verdict": "silent",
+    "full_checkout_classifications": [],
+    "excerpt_parity": "matched"
+  }
+}
