@@ -252,6 +252,74 @@ fn is_ident(text: &str) -> bool {
         && text.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
 }
 
+/// Whether the owner-name mentions inside `oracle_text`, as it appears in the
+/// test body `source`, are item shadows or declarations rather than the owner
+/// passed as a value — the bare-name fold's per-assertion premise
+/// (RIPR-SPEC-0240, #10162 review). The shadow reading is the same scoped
+/// item reading the mention gate uses: a same-name `fn` binds another item
+/// only inside its own block, and an explicit import binds another definition
+/// only where the shared call-identity resolver reads it as one.
+/// `Some(true)` refuses the fold for this assertion, `Some(false)` admits it,
+/// and `None` — the oracle text is not a body substring, the body is
+/// unreadable, or the assertion carries no owner mention — keeps the
+/// caller's prior answer.
+pub(in crate::analysis) fn oracle_owner_call_is_shadowed(
+    source: &str,
+    oracle_text: &str,
+    owner: &FunctionFact,
+    test: &TestFact,
+    index: &RustIndex,
+) -> Option<bool> {
+    use super::call_identity::{CallTarget, shared_owner_call_identity};
+    let name = owner.name.as_str();
+    let identity = shared_owner_call_identity(index, owner);
+    let import_is_other = |path: &[String]| {
+        let Some((leaf, qualifier)) = path.split_last() else {
+            return false;
+        };
+        leaf == name
+            && identity.as_ref().is_some_and(|identity| {
+                identity.resolve_call(test, index, qualifier) == CallTarget::Other
+            })
+    };
+    let items = ItemBindings::read(source, name, import_is_other);
+    if items.unreadable {
+        return None;
+    }
+    let anchor = oracle_text.trim();
+    if anchor.is_empty() {
+        return None;
+    }
+    // The assertion fact's text is a trimmed statement of the body; locate it
+    // (or its first line) to read the mentions in their real lexical scope.
+    let at = source.find(anchor).or_else(|| {
+        let first = anchor.split('\n').next()?.trim();
+        if first.is_empty() {
+            None
+        } else {
+            source.find(first)
+        }
+    })?;
+    let span = &source[at..at + anchor.len()];
+    let mut mentions = 0usize;
+    for offset in identifier_offsets(span, name) {
+        let at = at + offset;
+        let before = source[..at].trim_end();
+        mentions += 1;
+        let shadowed =
+            items.declaration_at(at) || (!before.ends_with("::") && items.shadows_at(at));
+        if !shadowed {
+            // A mention that is neither a proven declaration nor a proven
+            // shadow grounds the fold's owner-call premise.
+            return Some(false);
+        }
+    }
+    if mentions == 0 {
+        return None;
+    }
+    Some(true)
+}
+
 fn is_path(text: &str) -> bool {
     !text.is_empty() && text.split("::").all(is_ident)
 }
