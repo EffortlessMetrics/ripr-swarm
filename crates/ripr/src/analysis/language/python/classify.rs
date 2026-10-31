@@ -18,7 +18,8 @@ use super::module_value::{ModuleEdit, module_constant_credits};
 use super::no_behavior::{
     changed_default_overridden_params, format_param_name_list, is_annotation_only_def_change,
     is_annotation_only_var_change, is_comment_or_whitespace_only_change,
-    is_new_def_header_without_defaults, is_python_no_behavior_line, is_structural_def_header_text,
+    is_new_def_header_without_defaults, is_noop_class_header_change, is_python_no_behavior_line,
+    is_structural_def_header_text,
 };
 use super::probe_shape::{
     canonical_python_gap_for, classify_probe_shape_with_old, python_flow_sink_for,
@@ -292,6 +293,14 @@ fn classify_change_full<'a>(
     if let Some(old) = old_line_text
         && same_indentation(old, line_text)
         && is_annotation_only_def_change(old, line_text)
+    {
+        return None;
+    }
+    // Python 3 no-op class-header guard (#11888): `class X(object):` <-> `class X:`
+    // changes no behavior; withhold the probe instead of crediting `exposed`.
+    if let Some(old) = old_line_text
+        && same_indentation(old, line_text)
+        && is_noop_class_header_change(old, line_text)
     {
         return None;
     }

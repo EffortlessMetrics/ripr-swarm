@@ -3304,6 +3304,89 @@ fn default_value_change_in_def_still_classifies() -> Result<(), String> {
 }
 
 #[test]
+fn noop_class_header_object_base_emits_no_probe() -> Result<(), String> {
+    // #11888: `class Box(object):` -> `class Box:` is a Python 3 no-op.
+    let source = "class Box:\n    def __init__(self, value):\n        self.value = value\n\n    def double(self):\n        return self.value * 2\n";
+    let owners = extract_owners(Path::new("src/box.py"), source);
+    let tests = extract_tests(
+        Path::new("tests/test_box.py"),
+        "from src.box import Box\n\n\ndef test_double():\n    assert Box(2).double() == 4\n",
+    );
+    let finding = classify_change_with_old(
+        Path::new("src/box.py"),
+        1,
+        "class Box:",
+        Some("class Box(object):"),
+        &owners,
+        &tests,
+    );
+    assert!(
+        finding.is_none(),
+        "dropping a sole `object` base carries no behavior delta and must emit no probe"
+    );
+    Ok(())
+}
+
+#[test]
+fn changed_class_base_still_gets_a_probe() -> Result<(), String> {
+    // #11888 negative control: a real base change keeps its probe.
+    let source = "class Box(Other):\n    def double(self):\n        return 2\n";
+    let owners = extract_owners(Path::new("src/box.py"), source);
+    let tests = extract_tests(
+        Path::new("tests/test_box.py"),
+        "from src.box import Box\n\n\ndef test_double():\n    assert Box().double() == 2\n",
+    );
+    let finding = classify_change_with_old(
+        Path::new("src/box.py"),
+        1,
+        "class Box(Other):",
+        Some("class Box(Base):"),
+        &owners,
+        &tests,
+    );
+    assert!(
+        finding.is_some(),
+        "a changed base class is behavioral and must still classify"
+    );
+    Ok(())
+}
+
+#[test]
+fn noop_class_header_detection_is_conservative() {
+    assert!(is_noop_class_header_change("class X(object):", "class X:"));
+    assert!(is_noop_class_header_change(
+        "class X:",
+        "class X( object ):"
+    ));
+    assert!(!is_noop_class_header_change(
+        "class X(object, Base):",
+        "class X(Base):"
+    ));
+    assert!(!is_noop_class_header_change(
+        "class X(Base, object):",
+        "class X(Base):"
+    ));
+    assert!(!is_noop_class_header_change(
+        "class X(object):",
+        "class X(Base):"
+    ));
+    assert!(!is_noop_class_header_change("class X(object):", "class Y:"));
+    assert!(!is_noop_class_header_change(
+        "class X(object, metaclass=M):",
+        "class X(metaclass=M):"
+    ));
+    assert!(!is_noop_class_header_change(
+        "class X(object):",
+        "class X(object):"
+    ));
+    assert!(!is_noop_class_header_change(
+        "class X(object):",
+        "class X(metaclass=M):"
+    ));
+    assert!(!is_noop_class_header_change("class X(object", "class X:"));
+}
+
+#[test]
 fn annotation_only_detection_is_conservative() {
     // Annotation-only (suppress):
     assert!(is_annotation_only_def_change(

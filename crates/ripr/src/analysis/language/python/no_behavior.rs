@@ -280,6 +280,45 @@ pub(super) fn is_annotation_only_def_change(old_line: &str, new_line: &str) -> b
     }
 }
 
+/// Single-line `class Name(...)` / `class Name:` header split into its name and
+/// the trimmed base-list text (empty when there is no parenthesised list).
+/// Returns `None` for anything that is not a plain one-line header ending in `:`.
+fn class_header_parts(line: &str) -> Option<(&str, &str)> {
+    let rest = line.trim().strip_prefix("class ")?.trim_start();
+    let rest = rest.strip_suffix(':')?.trim_end();
+    let name_end = rest
+        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .unwrap_or(rest.len());
+    let (name, tail) = rest.split_at(name_end);
+    if name.is_empty() || name.starts_with(|c: char| c.is_ascii_digit()) {
+        return None;
+    }
+    let tail = tail.trim();
+    if tail.is_empty() {
+        return Some((name, ""));
+    }
+    let inner = tail.strip_prefix('(')?.strip_suffix(')')?.trim();
+    // Reject nested or odd syntax: the allow-list only needs a bare `object`.
+    if inner.contains(['(', ')', '#', '"', '\'']) {
+        return None;
+    }
+    Some((name, inner))
+}
+
+/// Whether a `class` header change is the Python 3 no-op `class X(object):` <->
+/// `class X:` (#11888). Closed allow-list: both sides are single-line headers
+/// with the same name, and one side has a sole bare `object` base while the
+/// other has no bases. `object` among several bases, any other base change, or
+/// keywords (metaclass) keep their probe. Fails closed on anything unparsed.
+pub(super) fn is_noop_class_header_change(old_line: &str, new_line: &str) -> bool {
+    let (Some((old_name, old_bases)), Some((new_name, new_bases))) =
+        (class_header_parts(old_line), class_header_parts(new_line))
+    else {
+        return false;
+    };
+    old_name == new_name && matches!((old_bases, new_bases), ("object", "") | ("", "object"))
+}
+
 /// Whether `line` (1-based) sits inside the multi-line `def` header that
 /// starts at or after `owner_start_line` in `source`, and its text only names
 /// parameters or opens/closes the header: `self,`, `key: int,`, `*args,`,

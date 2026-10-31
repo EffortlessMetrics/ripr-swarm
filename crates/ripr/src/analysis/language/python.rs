@@ -146,7 +146,7 @@ use discriminators::{
 #[cfg(test)]
 use no_behavior::{
     analyze_call_args, changed_default_value_params, free_function_call_arglists,
-    is_annotation_only_def_change, is_annotation_only_var_change,
+    is_annotation_only_def_change, is_annotation_only_var_change, is_noop_class_header_change,
 };
 use no_behavior::{
     header_param_line_defaults, is_python_import_line, is_python_no_behavior_line,
