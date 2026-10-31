@@ -1099,8 +1099,9 @@ Tests in `crates/ripr/src/analysis/classify/framework_oracle.rs` and
   `a_fixture_receiver_shape_that_differs_keeps_the_finding` and
   `fixture_receiver_credit_requires_readable_carried_data`,
   `fixture_receiver_projection_edit_needs_distinct_literal_totals`,
-  `fixture_receiver_unread_old_pipeline_supplies_no_pin` and
-  `fixture_receiver_equivalent_binding_edits_keep_degenerate_literals`
+  `fixture_receiver_unread_old_pipeline_supplies_no_pin`,
+  `fixture_receiver_equivalent_binding_edits_keep_degenerate_literals` and
+  `fixture_receiver_gate_does_not_lend_propagation_to_a_forwarding_entry_pin`
 - `a_hand_written_recorder_compared_by_field_is_withheld`,
   `a_recorder_shape_that_differs_keeps_the_finding` and
   `a_vec_pushed_into_by_the_changed_call_keeps_the_gap`
