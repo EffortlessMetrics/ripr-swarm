@@ -396,7 +396,11 @@ fn route_not_ready_reason(
             ": write the test by hand, or run `ripr agent stub{root_flag} --at {at} --kind {kind}` for a fill-in skeleton{module_note}, then rerun `ripr repair`"
         ));
     }
-    if let Some(guidance) = owner_call_absent_guidance(entry, root) {
+    // A named stub route already answers "no test calls this"; a second
+    // suffix would read as competing advice.
+    if !label.contains("ripr agent stub")
+        && let Some(guidance) = owner_call_absent_guidance(entry, root)
+    {
         label.push_str(&format!(": {guidance}"));
     }
     label
@@ -3314,6 +3318,17 @@ pub(crate) mod tests {
         assert!(
             reason.contains("--at src/pricing.rs:88 --kind predicate")
                 && reason.contains("a test input that reaches the changed code"),
+            "{reason}"
+        );
+
+        // With the guidance trigger set too, only the stub route is printed.
+        let mut both = gate_entry(SeamGripClass::ActivationUnknown, vec![weak_related_test()]);
+        both.evidence.activate.summary =
+            "No direct owner call observed for value-insensitive seam".to_string();
+        both.evidence.related_tests = Vec::new();
+        let reason = route_not_ready_reason(&both, "repair route not ready", &missing, root);
+        assert!(
+            reason.contains("--kind predicate") && !reason.contains("closest related test"),
             "{reason}"
         );
 
