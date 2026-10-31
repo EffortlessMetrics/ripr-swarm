@@ -347,7 +347,7 @@ fn route_not_ready_reason(
             ": write the test by hand, or run `ripr agent stub{root_flag} --at {at} --kind {kind}` for a fill-in skeleton{module_note}, then rerun `ripr repair`"
         ));
     }
-    if let Some(guidance) = owner_call_absent_guidance(entry) {
+    if let Some(guidance) = owner_call_absent_guidance(entry, root) {
         label.push_str(&format!(": {guidance}"));
     }
     label
@@ -358,8 +358,10 @@ fn route_not_ready_reason(
 /// activation is unknown. Name the closest related test so the reader has a
 /// place to look; ripr cannot show that test runs the code, so the wording
 /// stays a by-hand check. Refusal text only; eligibility is unchanged.
-fn owner_call_absent_guidance(entry: &crate::analysis::ClassifiedSeam) -> Option<String> {
-    use crate::domain::RelationReason;
+fn owner_call_absent_guidance(
+    entry: &crate::analysis::ClassifiedSeam,
+    root: Option<&Path>,
+) -> Option<String> {
     if entry.class != crate::analysis::seams::SeamGripClass::ActivationUnknown
         || !entry
             .evidence
@@ -370,14 +372,17 @@ fn owner_call_absent_guidance(entry: &crate::analysis::ClassifiedSeam) -> Option
         return None;
     }
     let related = &entry.evidence.related_tests;
-    let test = related
-        .iter()
-        .find(|test| test.relation_reason == RelationReason::AssertionTargetAffinity)
-        .or_else(|| related.first())?;
+    // Same pick as `RepairStartRefusal::related_test` (no direct owner call
+    // exists here, so that is the first related test), so one refusal never
+    // names two different tests.
+    let test = related.first()?;
+    let file = root
+        .and_then(|root| test.file.strip_prefix(root).ok())
+        .unwrap_or(&test.file);
     Some(format!(
-        "no test calls this code directly; the closest related test is `{}` ({}:{}). If it runs the changed code through a public call, add the assertion there, otherwise write a new test",
+        "ripr observed no direct test call of this code; the closest related test is `{}` ({}:{}). If it runs the changed code through a public call, add the assertion there, otherwise write a new test",
         test.test_name,
-        crate::analysis::stable_path_text(&test.file),
+        crate::analysis::stable_path_text(file),
         test.line
     ))
 }
