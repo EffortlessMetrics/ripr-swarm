@@ -377,8 +377,8 @@ pub struct MissingDiscriminatorFact {
 /// that writes it and the miss renderer that reads it agree.
 pub(crate) const ARM_UNSELECTED_REASON_PREFIX: &str = "No related test call selects arm";
 
-/// Opens the reason of a side-effect or call-deletion missing discriminator
-/// that names an enclosing `if` no related test's input enters
+/// Opens the reason of a side-effect, call-deletion, error-path or
+/// error-variant return-value missing discriminator that names an enclosing `if` no related test's input enters
 /// (RIPR-SPEC-0263). Shared like [`ARM_UNSELECTED_REASON_PREFIX`].
 pub(crate) const GUARD_UNENTERED_REASON_PREFIX: &str = "No related test call enters guard";
 
@@ -393,8 +393,9 @@ pub(crate) fn is_unselected_input_reason(reason: &str) -> bool {
 /// The missing discriminator that names an input no test supplies: for a
 /// predicate probe the boundary `left == right` it never reaches
 /// (`classify::activation::missing_boundary_discriminator`), for a match-arm
-/// probe the arm no test input selects, and for a side-effect or
-/// call-deletion probe the enclosing `if` no test input enters. Error-variant and field facts name
+/// probe the arm no test input selects, and for a side-effect,
+/// call-deletion, error-path or error-variant return-value probe the
+/// enclosing `if` no test input enters. Error-variant and field facts name
 /// an assertion that is missing instead.
 pub(crate) fn input_boundary_fact<'a>(
     facts: &'a [MissingDiscriminatorFact],
@@ -403,13 +404,21 @@ pub(crate) fn input_boundary_fact<'a>(
     match family {
         // A returned bare comparison reads the same boundary (#9094); no
         // other return-value fact is spelled `left == right`.
-        ProbeFamily::Predicate | ProbeFamily::ReturnValue => {
-            facts.iter().find(|fact| fact.value.contains(" == "))
-        }
+        ProbeFamily::Predicate => facts.iter().find(|fact| fact.value.contains(" == ")),
+        // A returned error variant under an unentered `if` reads the guard
+        // (#11147), after the bare-comparison reading above.
+        ProbeFamily::ReturnValue => facts
+            .iter()
+            .find(|fact| fact.value.contains(" == "))
+            .or_else(|| {
+                facts
+                    .iter()
+                    .find(|fact| fact.reason.starts_with(GUARD_UNENTERED_REASON_PREFIX))
+            }),
         ProbeFamily::MatchArm => facts
             .iter()
             .find(|fact| fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX)),
-        ProbeFamily::SideEffect | ProbeFamily::CallDeletion => facts
+        ProbeFamily::SideEffect | ProbeFamily::CallDeletion | ProbeFamily::ErrorPath => facts
             .iter()
             .find(|fact| fact.reason.starts_with(GUARD_UNENTERED_REASON_PREFIX)),
         _ => None,
