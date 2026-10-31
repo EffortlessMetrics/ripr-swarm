@@ -168,7 +168,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
                     None => return Err("missing value for --root; pass the workspace directory after --root (`ripr mcp --help` shows usage)".to_string()),
                 };
                 if explicit_root.is_some() {
-                    return Err("--root may be passed only once".to_string());
+                    return Err("--root may be passed only once; remove the extra --root".to_string());
                 }
                 explicit_root = Some(PathBuf::from(value));
                 index += 1;
@@ -304,7 +304,7 @@ mod tests {
         );
         assert_eq!(
             run(&args(&["--root", ".", "--root", "."])),
-            Err("--root may be passed only once".to_string())
+            Err("--root may be passed only once; remove the extra --root".to_string())
         );
     }
 }
