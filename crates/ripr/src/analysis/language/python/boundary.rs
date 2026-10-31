@@ -2103,6 +2103,10 @@ pub(super) fn literals_equal(left: &str, right: &str) -> Option<bool> {
     }
     match (canonical_decimal(left), canonical_decimal(right)) {
         (Some(left), Some(right)) => return Some(left == right),
+        // `None` is a singleton that never equals a number, so the pair is
+        // definitely unequal; any other unreadable side stays unknown.
+        (Some(_), None) if right == "None" => return Some(false),
+        (None, Some(_)) if left == "None" => return Some(false),
         (Some(_), None) | (None, Some(_)) => return None,
         (None, None) => {}
     }
@@ -2235,6 +2239,9 @@ mod literals_equal_tests {
         assert_eq!(literals_equal("0", "False"), Some(true));
         assert_eq!(literals_equal("True", "2"), Some(false));
         assert_eq!(literals_equal("2", "True"), Some(false));
+        assert_eq!(literals_equal("None", "0"), Some(false));
+        assert_eq!(literals_equal("1", "None"), Some(false));
+        assert_eq!(literals_equal("x", "0"), None);
     }
 }
 
