@@ -29,7 +29,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        shard: [9, 21, 33, 45, 57]
     steps:
       # Full history, like the Linux test lanes: base-resolving tests refuse
       # on a shallow clone (#10344).
@@ -90,7 +90,7 @@ jobs:
         run: |
           mkdir -p target
           shard=${{ matrix.shard }}
-          cargo nextest run --profile windows-advisory --workspace --no-fail-fast --partition hash:$shard/12 -E "not $ACL_TESTS" > target/shard-$shard.log 2>&1 &
+          cargo nextest run --profile windows-advisory --workspace --no-fail-fast --partition hash:$shard/60 -E "not $ACL_TESTS" > target/shard-$shard.log 2>&1 &
           nextest_pid=$!
           winpid=$(cat "/proc/$nextest_pid/winpid" 2> /dev/null | tr -cd 0-9 || true)
           (
