@@ -266,6 +266,39 @@ enum Expect {
     Refused(&'static str),
 }
 
+/// The written stub test function must sit inside the named inline `mod`.
+fn stub_lands_in(written: &str, module: &str, test_name: &str, needle: &str) -> Result<(), String> {
+    let module_start = written
+        .find(&format!("mod {module} {{"))
+        .ok_or_else(|| format!("{needle}: `mod {module}` is kept"))?;
+    let stub = written
+        .find(&format!("fn {test_name}("))
+        .ok_or_else(|| format!("{needle}: the stub is written"))?;
+    let open = module_start + format!("mod {module} ").len();
+    let mut depth = 0usize;
+    let close = written[open..]
+        .char_indices()
+        .find_map(|(offset, ch)| {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(open + offset);
+                    }
+                }
+                _ => {}
+            }
+            None
+        })
+        .ok_or_else(|| format!("{needle}: `mod {module}` closes"))?;
+    assert!(
+        open < stub && stub < close,
+        "{needle}: the stub goes in `{module}`:\n{written}"
+    );
+    Ok(())
+}
+
 #[test]
 fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
     let cases = [
@@ -309,19 +342,27 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
         // Two plain inline test modules: the nearest one after the owner.
         // The nearer `cfg(all(test, feature = "slow"))` module is skipped;
         // a stub there would not run in this plain test build.
-        ("x > 40", Expect::StopsAtRiprTodo),
+        ("x > 40", Expect::StopsAtRiprTodo, Some("tests")),
         // `impl<'a> Parser<'a>` with a `&mut self` method.
-        ("end > start", Expect::StopsAtRiprTodo),
+        ("end > start", Expect::StopsAtRiprTodo, Some("more_tests")),
         // `impl FromStr for Unit` returning `Result<Self, Self::Err>`.
-        ("\"m\" =>", Expect::StopsAtRiprTodo),
+        ("\"m\" =>", Expect::StopsAtRiprTodo, Some("more_tests")),
         // A field of the struct literal the owner returns.
-        ("minor: self.minor + 1", Expect::StopsAtRiprTodo),
-        ("n > 3 { n }", Expect::Refused("owner_generic_impl")),
+        (
+            "minor: self.minor + 1",
+            Expect::StopsAtRiprTodo,
+            Some("more_tests"),
+        ),
+        ("n > 3 { n }", Expect::Refused("owner_generic_impl"), None),
         // An impl inside a `const _` block cannot be named from a test module.
-        ("n > 11", Expect::Refused("owner_unsupported")),
+        ("n > 11", Expect::Refused("owner_unsupported"), None),
     ]
-    .map(|(needle, expect)| (FIXTURE_5471, needle, expect));
-    for (fixture, needle, expect) in cases.into_iter().chain(cases_5471) {
+    .map(|(needle, expect, module)| (FIXTURE_5471, needle, expect, module));
+    for (fixture, needle, expect, module) in cases
+        .into_iter()
+        .map(|(fixture, needle, expect)| (fixture, needle, expect, None))
+        .chain(cases_5471)
+    {
         let line = fixture
             .lines()
             .position(|text| text.contains(needle))
@@ -365,54 +406,21 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
                 let document: serde_json::Value = serde_json::from_str(&stdout)
                     .map_err(|error| format!("{needle}: stub JSON: {error}: {stdout}"))?;
                 assert_eq!(document["written"], true, "{needle}");
+                let test_name = document["test_name"]
+                    .as_str()
+                    .ok_or_else(|| format!("{needle}: test_name"))?
+                    .to_string();
                 if fixture == FIXTURE_5471 {
                     // Two inline test modules: one is picked, not refused.
                     assert_eq!(
                         document["placement"]["kind"], "existing_inline_module",
                         "{needle}"
                     );
-                }
-                let test_name = document["test_name"]
-                    .as_str()
-                    .ok_or_else(|| format!("{needle}: test_name"))?
-                    .to_string();
-                if needle == "x > 40" {
-                    // The stub lands in `tests`, the nearest plain module
-                    // after `early`, not the gated one or `more_tests`.
-                    let written = std::fs::read_to_string(root.join("src/lib.rs"))
-                        .map_err(|error| error.to_string())?;
-                    let module = |name: &str| {
-                        written
-                            .find(&format!("mod {name} {{"))
-                            .ok_or_else(|| format!("{needle}: `mod {name}` is kept"))
-                    };
-                    let stub = written
-                        .find(&format!("fn {test_name}("))
-                        .ok_or_else(|| format!("{needle}: the stub is written"))?;
-                    // The closing brace of `mod tests`, so a top-level test
-                    // written between the two modules does not pass.
-                    let open = module("tests")? + "mod tests ".len();
-                    let mut depth = 0usize;
-                    let close = written[open..]
-                        .char_indices()
-                        .find_map(|(offset, ch)| {
-                            match ch {
-                                '{' => depth += 1,
-                                '}' => {
-                                    depth -= 1;
-                                    if depth == 0 {
-                                        return Some(open + offset);
-                                    }
-                                }
-                                _ => {}
-                            }
-                            None
-                        })
-                        .ok_or_else(|| format!("{needle}: `mod tests` closes"))?;
-                    assert!(
-                        open < stub && stub < close && close < module("more_tests")?,
-                        "{needle}: the stub goes in `tests`:\n{written}"
-                    );
+                    if let Some(module) = module {
+                        let written = std::fs::read_to_string(root.join("src/lib.rs"))
+                            .map_err(|error| error.to_string())?;
+                        stub_lands_in(&written, module, &test_name, needle)?;
+                    }
                 }
                 let binary = root.join(format!("stub_oracle{}", std::env::consts::EXE_SUFFIX));
                 let mut rustc = Command::new("rustc");
