@@ -172,9 +172,33 @@ fn contains_needle(haystack_lower: &str, needle: &str) -> bool {
     false
 }
 
+/// The Evidence stage vocabulary the digest defines for the reader in its own
+/// legend: the fifth stage name in the `Evidence:` chain and the legend's
+/// definitions of it (`HUMAN_EVIDENCE_LEGEND`). These phrases are exempt because
+/// the output glosses the word in plain language where it introduces it. Every
+/// other use of the word, including prose such as "No strong discriminator",
+/// stays counted.
+const STAGE_VOCABULARY: &[&str] = &[
+    "discriminator = assertion distinguishes intended from wrong behavior",
+    "named discriminator absent from tests",
+    "discriminator unconfirmed",
+];
+
+/// Remove the digest's stage vocabulary (see `STAGE_VOCABULARY`) before matching.
+fn strip_stage_vocabulary(line: &str) -> String {
+    let mut out = line.to_string();
+    for phrase in STAGE_VOCABULARY {
+        out = out.replace(phrase, " ");
+    }
+    if out.trim_start().starts_with("Evidence:") {
+        out = out.replace(" · discriminator ", " · ");
+    }
+    out
+}
+
 /// Banned term ids found on one line of output.
 pub(crate) fn banned_terms_in_line(line: &str) -> Vec<&'static str> {
-    let lower = strip_identifiers(line).to_ascii_lowercase();
+    let lower = strip_identifiers(&strip_stage_vocabulary(line)).to_ascii_lowercase();
     BANNED
         .iter()
         .filter(|banned| banned.needles.iter().any(|n| contains_needle(&lower, n)))
@@ -2606,6 +2630,35 @@ mod tests {
             assert!(
                 banned_terms_in_line(exempt).is_empty(),
                 "should be exempt: {exempt}"
+            );
+        }
+    }
+
+    /// The digest's Evidence line and legend introduce the stage name with its
+    /// own gloss (#10261); exempt exactly that, nothing around it.
+    #[test]
+    fn the_digest_stage_vocabulary_is_exempt_and_nothing_around_it() {
+        for exempt in [
+            "  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak",
+            "Evidence: reach no · infection unknown · propagation yes · observation no · discriminator no",
+            "      discriminator = assertion distinguishes intended from wrong behavior",
+            "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused",
+        ] {
+            assert!(
+                banned_terms_in_line(exempt).is_empty(),
+                "should be exempt: {exempt}"
+            );
+        }
+        for flagged in [
+            "Missing check: No strong discriminator was detected",
+            "Next step: add a discriminator for this input",
+            "Note: observation yes · discriminator weak",
+            "Evidence: reach yes · seam weak · discriminator weak",
+            "discriminator = something else entirely",
+        ] {
+            assert!(
+                !banned_terms_in_line(flagged).is_empty(),
+                "should be flagged: {flagged}"
             );
         }
     }
