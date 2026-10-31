@@ -404,10 +404,11 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[
                 ".github/workflows/ripr.yml with --ci github",
                 ".mcp.json with --mcp",
+                "CLAUDE.md, AGENTS.md and .cursor/rules/ripr.mdc (marked ripr section) with --agents; .cursor/mcp.json with --agents cursor --mcp",
             ],
         },
         state_target: Some(
-            "ripr.toml, plus the repository's GitHub Actions workflow set with --ci and .mcp.json with --mcp",
+            "ripr.toml, plus the repository's GitHub Actions workflow set with --ci, .mcp.json with --mcp, and a marked ripr section in the agent instruction files with --agents",
         ),
         json_support: false,
         example: "ripr init",

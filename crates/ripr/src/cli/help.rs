@@ -645,7 +645,7 @@ mod tests {
     fn help_overview_fits_one_screen() {
         let lines = HELP.lines().count();
         assert!(
-            lines <= 48,
+            lines <= 49,
             "the default help screen is {lines} lines; keep it under one screen and put \
              reference material in HELP_ALL (ripr help --all)"
         );
@@ -1017,7 +1017,7 @@ mod tests {
         // --force resets ripr.toml only for plain `ripr init`; with --ci/--mcp
         // the plan keeps it. The option line must not claim otherwise.
         assert!(
-            INIT_HELP.contains("With --ci or --mcp, ripr.toml is"),
+            INIT_HELP.contains("With --ci, --mcp or --agents, ripr.toml is"),
             "init --force help must state it never resets ripr.toml alongside --ci/--mcp"
         );
         assert!(!INIT_HELP.contains("Overwrite an existing ripr.toml, generated workflow"));
