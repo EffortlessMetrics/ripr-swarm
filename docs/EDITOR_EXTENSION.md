@@ -316,6 +316,7 @@ quieter.
 - `ripr: Inspect Test Gap - Copy Context`
 - `ripr: Write Targeted Test - Copy Suggested Assertion`
 - `ripr: Write Targeted Test - Copy Brief`
+- `ripr: Start Repair - Copy Repair Command`
 - `ripr: Agent Handoff - Copy Packet Command`
 - `ripr: Agent Handoff - Copy Brief Command`
 - `ripr: Verify After Test - Copy After Snapshot Command`
@@ -329,6 +330,7 @@ quieter.
 - `ripr: Open Report`
 - `ripr: Show Top Limitation`
 - `ripr: Show Receipt Status`
+- `ripr: Show Repair Attempt Status`
 - `ripr: Copy Receipt Command (Receipt Status)`
 - `ripr: Open Attempt Ledger`
 - `ripr: Show Route Quality`
