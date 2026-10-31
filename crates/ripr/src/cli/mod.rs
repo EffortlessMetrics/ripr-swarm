@@ -9,6 +9,8 @@ mod commands_numeric;
 mod commands_options;
 mod commands_timestamps;
 mod execute;
+#[cfg(kani)]
+mod exit_kani;
 pub(crate) mod help;
 mod help_json;
 pub(crate) mod interrupt;
