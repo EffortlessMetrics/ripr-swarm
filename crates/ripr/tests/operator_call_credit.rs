@@ -834,8 +834,28 @@ fn a_qualified_call_spelling_trait_arguments_must_match_the_impl_header() -> Res
         ..ADD
     };
     assert_eq!(classes(&spelled)?, [ExposureClass::WeaklyExposed]);
-    // Negative: a second `Add<i64>` impl exists and the call selects it, so
-    // the call is not a call of the `Add<Money>` owner and nothing is credited.
+    // An explicit `impl Add<Money> for Money` header takes the declared-arguments
+    // branch; the fixture must parse as intended before the credit claim.
+    let explicit = Case {
+        label: "spelled_trait_args_explicit_header",
+        trait_name: "Add<Money>",
+        ..spelled
+    };
+    assert!(source(&explicit).contains("impl Add<Money> for Money {"));
+    assert!(direct_tests(&explicit)?.contains(&"named_call".to_string()));
+    assert_eq!(classes(&explicit)?, [ExposureClass::WeaklyExposed]);
+    // Negative that exercises the argument check itself: the only `Add` impl
+    // is `Add<Money>` (so the trait is unique) and the call spells `Add<i64>`.
+    let mismatched = Case {
+        label: "spelled_trait_args_mismatch",
+        extra_items: "#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let sum = <Money as Add<i64>>::add(Money(1), 1); assert_eq!(sum.0, 2); } }",
+        ..spelled
+    };
+    assert_eq!(classes(&mismatched)?, [ExposureClass::StaticUnknown]);
+    // Negative guarded by `trait_unique` rather than the argument check: a
+    // second `Add<i64>` impl exists, so the owner's trait is ambiguous. The
+    // argument-mismatch rejection is covered by the mismatch case above and
+    // the `type_path_calls` unit test.
     let other_impl = Case {
         label: "spelled_trait_args_other_impl",
         extra_items: "impl Add<i64> for Money { type Output = Money; fn add(self, other: i64) -> Money { Money(self.0 + other) } }\n#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let sum = <Money as Add<i64>>::add(Money(1), 1); assert_eq!(sum.0, 2); } }",

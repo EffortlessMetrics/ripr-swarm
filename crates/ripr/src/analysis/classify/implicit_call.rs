@@ -1450,6 +1450,11 @@ fn trait_path_names_owner(trait_path: &str, owner: &TypePathOwner) -> bool {
         && !args.is_empty()
         && match owner.trait_args.as_deref() {
             Some(declared) => declared == args,
+            // An omitted right-hand side reads as the self type. This holds
+            // for every trait, not only operators; for a non-operator trait
+            // with a different default it relies on `trait_unique` (checked by
+            // the caller) and on the call compiling. `rebinds_type_name` is
+            // not applied to the argument types.
             None => args == owner.self_type,
         }
 }
