@@ -376,8 +376,19 @@ fn route_not_ready_reason(
     }
     // #10701: a changed return value or error with no test ripr can
     // safely strengthen has a working manual route too.
-    if let [missing] = missing_evidence
-        && let Some(kind) = crate::analysis::repair_route::stub_kind_for_missing_evidence(missing)
+    // Once the module blocker is routed and nothing else is missing (#11466),
+    // only the test home is absent and the stub adds it, so the seam kind
+    // alone picks the stub kind.
+    let manual_stub_kind = match missing_evidence {
+        [missing] => crate::analysis::repair_route::stub_kind_for_missing_evidence(missing),
+        [] if adds_module => match entry.seam.kind() {
+            crate::analysis::seams::SeamKind::ReturnValue => Some("return_value"),
+            crate::analysis::seams::SeamKind::ErrorVariant => Some("error_path"),
+            _ => None,
+        },
+        _ => None,
+    };
+    if let Some(kind) = manual_stub_kind
         && matches!(
             (entry.seam.kind(), kind),
             (
@@ -3528,6 +3539,90 @@ pub(crate) mod tests {
         let plain = gate_entry(SeamGripClass::Ungripped, Vec::new());
         let reason = route_not_ready_reason(&plain, "repair route not ready", &[], root);
         assert!(!reason.contains("--kind predicate"), "{reason}");
+        Ok(())
+    }
+
+    /// #11466: a return-value or error-path seam whose only blocker is the
+    /// missing test module names its stub route too (the stub adds the module);
+    /// a seam kind with no stub kind stays bare.
+    #[test]
+    fn module_only_blocker_names_the_return_and_error_stub_routes() -> Result<(), String> {
+        use crate::analysis::new_test_target::{NewTestProposalBlocker, NewTestTargetAdmission};
+        use crate::analysis::seams::{
+            ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
+        };
+        let root = Some(Path::new("/repo"));
+        let build = |kind, required| {
+            let mut entry = gate_entry(SeamGripClass::Ungripped, Vec::new());
+            entry.seam = RepoSeam::new(
+                "src/pricing.rs",
+                "pricing::discounted_total",
+                kind,
+                42,
+                88,
+                "changed value",
+                required,
+                ExpectedSink::ReturnValue,
+            );
+            entry.evidence.new_test_target = Some(NewTestTargetAdmission {
+                blocker: Some(NewTestProposalBlocker::NoTestModule),
+                ..NewTestTargetAdmission::default()
+            });
+            entry
+        };
+        let only_target = |entry: &crate::analysis::ClassifiedSeam| -> Result<Vec<String>, String> {
+            let blocked = entry
+                .evidence
+                .new_test_target
+                .as_ref()
+                .and_then(|admission| admission.missing_reason())
+                .ok_or("the module blocker must name a missing reason")?;
+            Ok(vec![
+                crate::analysis::repair_route::SAFE_TEST_TARGET_EVIDENCE.to_string(),
+                blocked,
+            ])
+        };
+
+        let ret = build(
+            SeamKind::ReturnValue,
+            RequiredDiscriminator::ReturnValue {
+                description: "changed value".to_string(),
+            },
+        );
+        let missing = only_target(&ret)?;
+        let reason = route_not_ready_reason(&ret, "repair route not ready", &missing, root);
+        assert!(
+            reason.contains("--at src/pricing.rs:88 --kind return_value")
+                && reason.contains("no test module yet"),
+            "{reason}"
+        );
+
+        let err = build(
+            SeamKind::ErrorVariant,
+            RequiredDiscriminator::ErrorVariant {
+                variant: "Bad".to_string(),
+            },
+        );
+        let missing = only_target(&err)?;
+        let reason = route_not_ready_reason(&err, "repair route not ready", &missing, root);
+        assert!(reason.contains("--kind error_path"), "{reason}");
+
+        // Negatives: another missing fact keeps the bare label, and a seam
+        // kind without a stub kind names no route.
+        let mut more = only_target(&ret)?;
+        more.push("incomplete evidence stage: propagation".to_string());
+        let reason = route_not_ready_reason(&ret, "repair route not ready", &more, root);
+        assert!(!reason.contains("ripr agent stub"), "{reason}");
+        let field = build(
+            SeamKind::SideEffect,
+            RequiredDiscriminator::Effect {
+                sink: "log".to_string(),
+            },
+        );
+        let missing = only_target(&field)?;
+        let reason = route_not_ready_reason(&field, "repair route not ready", &missing, root);
+        assert!(!reason.contains("--kind return_value"), "{reason}");
+        assert!(!reason.contains("--kind error_path"), "{reason}");
         Ok(())
     }
 
