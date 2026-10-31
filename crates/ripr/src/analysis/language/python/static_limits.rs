@@ -1650,7 +1650,6 @@ fn edits_lookup_fallback(tokens: &[String], start: usize) -> bool {
     }
     false
 }
-}
 
 /// Whether `token` is a string literal, with or without a `r`/`b`/`f`/`u`
 /// prefix (the alphabet `edit_tokens` merges onto one token).
