@@ -194,6 +194,24 @@ jobs:
           cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
           cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
 
+      - name: User-text goldens judged by the merge-base matcher
+        # The PR's goldens are judged once more by the matcher the merge-base
+        # compiled, so a PR that weakens the user-text matcher cannot qualify its
+        # own change (#11385). A merge-base that predates `--tree` cannot do this
+        # yet and is skipped with a notice; any other failure fails the job.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        run: |
+          set -euo pipefail
+          base_sha="$(git rev-parse HEAD^1)"
+          base_tree="$RUNNER_TEMP/user-text-base"
+          git worktree add --detach "$base_tree" "$base_sha"
+          if ! grep -q -- '"--tree"' "$base_tree/xtask/src/policy/user_text.rs"; then
+            echo "::notice::merge-base $base_sha cannot judge another tree yet; matcher pin only"
+            exit 0
+          fi
+          cd "$base_tree"
+          cargo xtask check-user-text --tree "$GITHUB_WORKSPACE"
+
       - name: Repository policy preflight
         id: precommit
         env:
