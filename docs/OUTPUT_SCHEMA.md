@@ -16646,6 +16646,24 @@ Field contract:
   When both fire, the pilot cut's total is the already-capped inventory; its
   route describes lifting only the pilot budget. Full recovery requires
   disabling every active cap. Uncapped output has no stale cap limitation.
+- Pilot packet bound (#11951) — the `ripr pilot` copy of this document
+  (`target/ripr/pilot/agent-seam-packets.json`) carries at most
+  `RIPR_PILOT_PACKET_BUDGET` packets (default 3; `0` writes all). The kept
+  packets are the first `write_targeted_test` packets followed by
+  `inspect_static_limitation` packets, each group in its existing order, and
+  every kept packet is the packet the uncut document carries for that seam. A
+  cut adds a `limitations[]` object `{category: "pilot_packet_bound_applied",
+  packets_emitted, packets_eligible, limit_source, control:
+  "RIPR_PILOT_PACKET_BUDGET", repair_route}`. When no seam cap and no
+  declined file already owns `run_status`, a cut sets it to
+  `"packet_bound_applied"`; otherwise `seam_limit_applied` or
+  `limited_declined_files` is kept and the bound is an additional
+  `limitations[]` entry. A bound at or above the eligible count changes
+  nothing, and the document is the unbounded one. `packets_total` stays the
+  rendered `packets` length; `packets_eligible` is the packet-eligible count.
+  The `next` block, packet eligibility, `task` and classification are
+  unchanged by the bound. `ripr check --format agent-seam-packets-json` is
+  not bounded.
 - `analysis_outcome_status` — the producer outcome projection state. It is
   `"complete"` or `"incomplete"` when a typed diff outcome is present,
   `"missing"` or `"invalid"` when a required producer artifact cannot be
