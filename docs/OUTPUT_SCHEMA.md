@@ -2301,7 +2301,7 @@ JSON fields:
       "risk_class": "mock interaction payload gap",
       "evidence_kind": "mock_interaction",
       "disposition": "candidate_future_support",
-      "gap_state": "advisory",
+      "gap_state": "unknown",
       "actionability_category": "incomplete_repair_packet",
       "repair_packet_ready": false,
       "must_remain_non_actionable": true,
