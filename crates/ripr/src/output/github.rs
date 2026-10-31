@@ -322,8 +322,17 @@ fn incomplete_outcome_warning(
     outcome: &crate::analysis_outcome::AnalysisOutcome,
     no_findings: bool,
 ) -> String {
+    let finding_only = outcome.limitations.iter().all(|limitation| {
+        limitation.kind == crate::analysis_outcome::AnalysisLimitationKind::EolOnlyChurn
+            || limitation.is_unresolved_rust_macro()
+    }) && outcome
+        .limitations
+        .iter()
+        .any(|limitation| limitation.is_unresolved_rust_macro());
     let scope = if no_findings {
         "Zero findings is not a clean result because the analyzed scope is incomplete."
+    } else if finding_only {
+        "Some findings depend on assertion semantics that could not be resolved."
     } else {
         "The findings cover only the analyzed scope; behavior outside it has no finding."
     };

@@ -1001,6 +1001,12 @@ this kind still marks the outcome incomplete — consumers gating on
 `analysis_complete` see these runs as partial; letting it ride a complete
 outcome is a separate, consumer-visible design decision (#8714 review).
 
+A finding with `rust_macro_wrapped_assertion_unresolved` also makes the
+outcome partial. Its `language_scope_unsupported` limitation names the finding
+limitation in `bounded_detail` and counts affected findings before output
+budgeting; it does not claim that changed files were skipped. Inspect the macro
+and run the existing test before treating an absent canonical gap as resolved.
+
 When an *unchanged* Rust test file is indexed by lexical fallback after the
 reference parser refuses it, and a classified owner consults that file for
 related-test evidence (a related test came from it, or the file source calls

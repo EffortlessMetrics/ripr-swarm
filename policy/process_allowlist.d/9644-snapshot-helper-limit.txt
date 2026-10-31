@@ -1,0 +1,1 @@
+crates/ripr/tests/local_snapshot_helper_limit.rs|Command::new|1|snapshot-helper-limit-tests|#9644: one bounded helper runs git and the built ripr binary over a scratch repository to prove a capped macro-limited snapshot is refused by verify; each child is waited through Command::output before the scratch directory is removed.

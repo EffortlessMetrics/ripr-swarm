@@ -2150,6 +2150,34 @@ fn run_pipeline_for_diff_text_with_language_config(
         }
     }
 
+    // A finding whose assertion semantics could not be resolved is not a
+    // complete analysis of that finding, even though classification finished.
+    // Count before any output budget can omit findings from the document.
+    let macro_limited_findings = findings
+        .iter()
+        .filter(|finding| {
+            finding.static_limit_kind
+                == Some(crate::domain::StaticLimitKind::RustMacroWrappedAssertionUnresolved)
+        })
+        .count();
+    if macro_limited_findings > 0 {
+        limitations.push(
+            AnalysisLimitation::new(
+                AnalysisLimitationKind::LanguageScopeUnsupported,
+                AnalysisStage::FindingClassification,
+                AnalysisRecovery::new(
+                    AnalysisRecoveryKind::InspectFailure,
+                    "Inspect the custom assertion macro definition and run the existing test.",
+                )?,
+            )
+            .with_affected_items(macro_limited_findings as u64)?
+            .with_detail(format!(
+                "{} assertion semantics could not be resolved for one or more findings.",
+                crate::analysis_outcome::RUST_MACRO_LIMITATION_DETAIL_PREFIX
+            ))?,
+        );
+    }
+
     limitations.extend(limitations_from_language_runs(&language_runs)?);
     if let Some(scope) = &partial_scope {
         limitations.push(partial_scope_limitation(scope)?);

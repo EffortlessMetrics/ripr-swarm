@@ -9,8 +9,9 @@ Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach
   could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
   unsuppressed = not hidden by your suppression policy
 
-Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+Analysis outcome: limitations below (analysis incomplete; partial_with_limitations)
+  Some findings depend on assertion semantics that could not be resolved.
+  Limitation: assertion semantics could not be resolved for some findings during finding classification (language_scope_unsupported at finding_classification); affected items: 1; recovery: inspect the failure (inspect_failure) — Inspect the custom assertion macro definition and run the existing test.
 
 WARNING ./src/internal.rs:2
   id: probe:src_internal.rs:predicate:114f2322

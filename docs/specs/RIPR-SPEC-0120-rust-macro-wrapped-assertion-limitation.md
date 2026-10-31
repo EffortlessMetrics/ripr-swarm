@@ -197,6 +197,7 @@ arguments (`!x`, `a != b`) do not change this grade.
 | `static_limit_kind` | `rust_macro_wrapped_assertion_unresolved` |
 | `related_tests` | preserved from direct reach classification |
 | `static_limitation.analyzer_route` | `analysis/rust-macro-assertion-oracle` |
+| `analysis_outcome` | `partial_with_limitations`, with a `language_scope_unsupported` finding-classification limitation naming `rust_macro_wrapped_assertion_unresolved` in bounded detail and counting affected findings |
 
 ## Acceptance Examples
 
@@ -289,6 +290,7 @@ arguments (`!x`, `a != b`) do not change this grade.
 - `cargo test -p ripr macro_wrapped_assertion_limit`
 - `cargo test -p ripr static_limit_kind`
 - `cargo test -p ripr validation_accepts_rust_macro_wrapped_assertion_static_limit_kind`
+- `cargo test -p ripr --test local_snapshot_helper_limit`
 - `cargo xtask fixtures rust_macro_wrapped_assertion_limitation`
 - `cargo xtask check-evidence-promotion-honesty`
 - `cargo xtask goldens check`

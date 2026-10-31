@@ -695,7 +695,18 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
         limitation.kind != crate::analysis_outcome::AnalysisLimitationKind::EolOnlyChurn
     });
     if scoped_down {
-        if output.findings.is_empty() {
+        let finding_only = outcome.limitations.iter().all(|limitation| {
+            limitation.kind == crate::analysis_outcome::AnalysisLimitationKind::EolOnlyChurn
+                || limitation.is_unresolved_rust_macro()
+        }) && outcome
+            .limitations
+            .iter()
+            .any(|limitation| limitation.is_unresolved_rust_macro());
+        if finding_only && !output.findings.is_empty() {
+            out.push_str(
+                "  Some findings depend on assertion semantics that could not be resolved.\n",
+            );
+        } else if output.findings.is_empty() {
             out.push_str(
                 "  Zero findings is not a clean result because the analyzed scope is incomplete.\n",
             );
@@ -730,13 +741,13 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
         if plain {
             out.push_str(&format!(
                 "  Limitation: {} during {}",
-                limitation.kind.plain_label(),
+                limitation.plain_label(),
                 limitation.producer_stage.plain_label(),
             ));
         } else {
             out.push_str(&format!(
                 "  Limitation: {} during {} ({} at {})",
-                limitation.kind.plain_label(),
+                limitation.plain_label(),
                 limitation.producer_stage.plain_label(),
                 limitation.kind.as_str(),
                 limitation.producer_stage.as_str()

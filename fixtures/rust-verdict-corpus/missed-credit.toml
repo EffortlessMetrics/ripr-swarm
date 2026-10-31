@@ -209,6 +209,10 @@ case = "mined-snapshot-helper-document-separator"
 reason = "Tests discriminate the change but ripr abstains (#9619). Delete this entry when the row credits."
 
 [[entry]]
+case = "mined-snapshot-helper-negative-zero"
+reason = "Tests discriminate the change but ripr abstains with a named macro-assertion limitation instead of reporting a gap (#9644, #9619). Delete this entry when the row credits."
+
+[[entry]]
 case = "mined-token-table-pinned-range"
 reason = "Tests discriminate the change but ripr abstains (#9619). Delete this entry when the row credits."
 

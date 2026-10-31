@@ -4,8 +4,9 @@ root: fixtures/rust_macro_wrapped_assertion_limitation/input
 
 Summary: 1 changed behavior checked: 0 appear noticed by tests, 0 partly noticed, 1 reached but not noticed, 0 no test path. 1 found, 0 suppressed by your settings
 
-Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+Analysis outcome: limitations below (analysis incomplete)
+  Some findings depend on assertion semantics that could not be resolved.
+  Limitation: assertion semantics could not be resolved for some findings during finding classification; affected items: 1; recovery: inspect the failure — Inspect the custom assertion macro definition and run the existing test.
 
 Start here:
   State: ripr cannot tell from reading the code whether tests would notice this

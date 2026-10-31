@@ -321,7 +321,28 @@ pub(crate) struct AnalysisLimitation {
     pub(crate) recovery: AnalysisRecovery,
 }
 
+pub(crate) const RUST_MACRO_LIMITATION_DETAIL_PREFIX: &str =
+    "rust_macro_wrapped_assertion_unresolved:";
+
 impl AnalysisLimitation {
+    /// Render a named limitation in words without implying that source files
+    /// were skipped when the unresolved evidence belongs to a finding.
+    pub(crate) fn plain_label(&self) -> &'static str {
+        if self.is_unresolved_rust_macro() {
+            "assertion semantics could not be resolved for some findings"
+        } else {
+            self.kind.plain_label()
+        }
+    }
+
+    pub(crate) fn is_unresolved_rust_macro(&self) -> bool {
+        self.kind == AnalysisLimitationKind::LanguageScopeUnsupported
+            && self
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.starts_with(RUST_MACRO_LIMITATION_DETAIL_PREFIX))
+    }
+
     pub(crate) fn new(
         kind: AnalysisLimitationKind,
         producer_stage: AnalysisStage,

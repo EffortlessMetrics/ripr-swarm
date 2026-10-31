@@ -140,6 +140,20 @@ fn limited(source: &str) -> Result<(), String> {
     let json: serde_json::Value =
         serde_json::from_str(&render_check(&output, &OutputFormat::Json)?)
             .map_err(|error| error.to_string())?;
+    assert_eq!(json["analysis_outcome"]["analysis_complete"], false);
+    assert_eq!(
+        json["analysis_outcome"]["outcome"]["kind"],
+        "partial_with_limitations"
+    );
+    assert!(
+        json["analysis_outcome"]["outcome"]["limitations"]
+            .as_array()
+            .ok_or("outcome limitations must be an array")?
+            .iter()
+            .any(|item| item["bounded_detail"]
+                .as_str()
+                .is_some_and(|detail| detail.contains("rust_macro_wrapped_assertion_unresolved")))
+    );
     assert_eq!(json["findings"][0]["recommended_next_step"], next_step);
     assert_eq!(json["findings"][0]["suggested_next_action"], next_step);
     assert_eq!(
@@ -149,6 +163,17 @@ fn limited(source: &str) -> Result<(), String> {
     assert!(json["findings"][0]["canonical_gap"].is_null());
     let human = render_check(&output, &OutputFormat::HumanFull)?;
     assert!(human.contains(next_step.trim_end_matches('.')));
+    assert!(human.contains("assertion semantics could not be resolved for some findings"));
+    assert!(!human.contains("some changed files were not analyzed"));
+    assert!(
+        human.contains("Some findings depend on assertion semantics that could not be resolved")
+    );
+    assert!(!human.contains("behavior outside it has no finding"));
+    let github = render_check(&output, &OutputFormat::Github)?;
+    assert!(
+        github.contains("Some findings depend on assertion semantics that could not be resolved.")
+    );
+    assert!(!github.contains("behavior outside it has no finding"));
     assert!(!human.contains("Replace broad assertions"));
     Ok(())
 }
@@ -159,8 +184,12 @@ fn keeps_gap(body: &str) -> Result<(), String> {
         "assert_data_eq!(render_float(-0.0), snap_str![[\"-0.0\"]]);",
         body,
     );
-    let finding = Fixture::new(&source)?.finding()?;
-    assert_eq!(finding.static_limit_kind, None);
+    let output = Fixture::new(&source)?.checked_output()?;
+    assert_eq!(output.findings[0].static_limit_kind, None);
+    let json: serde_json::Value =
+        serde_json::from_str(&render_check(&output, &OutputFormat::Json)?)
+            .map_err(|error| error.to_string())?;
+    assert_eq!(json["analysis_outcome"]["analysis_complete"], true);
     Ok(())
 }
 
@@ -238,5 +267,194 @@ fn complete_proximity_evidence_survives_the_display_cap() -> Result<(), String> 
         assert!(finding.related_tests_total() > finding.related_tests.len());
         assert_eq!(finding.static_limit_kind, None);
     }
+    Ok(())
+}
+
+#[test]
+fn capped_cli_and_verify_refuse_an_incomplete_after_snapshot() -> Result<(), String> {
+    use std::process::{Command, Output};
+
+    fn run(root: &std::path::Path, program: &str, args: &[&str]) -> Result<Output, String> {
+        Command::new(program)
+            .current_dir(root)
+            .args(args)
+            .output()
+            .map_err(|e| e.to_string())
+    }
+    fn success(output: Output) -> Result<Output, String> {
+        if output.status.success() {
+            Ok(output)
+        } else {
+            Err(format!(
+                "command failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ))
+        }
+    }
+    fn commit(root: &std::path::Path, message: &str) -> Result<(), String> {
+        success(run(
+            root,
+            "git",
+            &["add", "Cargo.toml", "src/lib.rs", "diff.patch"],
+        )?)?;
+        success(run(
+            root,
+            "git",
+            &[
+                "-c",
+                "user.name=RIPR test",
+                "-c",
+                "user.email=ripr@example.invalid",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                message,
+            ],
+        )?)?;
+        Ok(())
+    }
+    let assertions = (0..12)
+        .map(|n| format!("assert_eq!(separate_owner(), 7, \"oracle {n}\");"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let limited = replace_once(SOURCE, "assert_eq!(separate_owner(), 7);", &assertions);
+    let control = replace_once(
+        &limited,
+        "assert_data_eq!(render_float(-0.0), snap_str![[\"-0.0\"]]);",
+        "let _ = render_float(-0.0); assert_data_eq!(separate_float(-0.0), snap_str![[\"-0.0\"]]);",
+    );
+    let fixture = Fixture::new(&control)?;
+    let root = &fixture.0;
+    success(run(root, "git", &["init", "-q"])?)?;
+    commit(root, "control before")?;
+    let check = |format| {
+        run(
+            root,
+            env!("CARGO_BIN_EXE_ripr"),
+            &[
+                "check",
+                "--root",
+                ".",
+                "--diff",
+                "diff.patch",
+                "--mode",
+                "ready",
+                "--format",
+                format,
+                "--quiet",
+            ],
+        )
+    };
+    let before = success(check("check-findings-json")?)?;
+    let before_json: serde_json::Value =
+        serde_json::from_slice(&before.stdout).map_err(|e| e.to_string())?;
+    assert_eq!(before_json["analysis_outcome"]["analysis_complete"], true);
+    assert!(
+        before_json["findings"][0]["canonical_gap_id"]
+            .as_str()
+            .is_some()
+    );
+    std::fs::create_dir_all(root.join("target/ripr")).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("target/ripr/before.json"), before.stdout)
+        .map_err(|e| e.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), &limited).map_err(|e| e.to_string())?;
+    commit(root, "limited after")?;
+    let json: serde_json::Value =
+        serde_json::from_slice(&success(check("json")?)?.stdout).map_err(|e| e.to_string())?;
+    assert_eq!(json["analysis_outcome"]["analysis_complete"], false);
+    assert_eq!(
+        json["analysis_outcome"]["outcome"]["kind"],
+        "partial_with_limitations"
+    );
+    assert_eq!(
+        json["findings"][0]["static_limitation"]["kind"],
+        "rust_macro_wrapped_assertion_unresolved"
+    );
+    let finding = &json["findings"][0];
+    assert!(
+        finding["related_tests_total"]
+            .as_u64()
+            .ok_or("missing related total")?
+            > finding["related_tests"]
+                .as_array()
+                .ok_or("missing related rows")?
+                .len() as u64
+    );
+    let after = success(check("check-findings-json")?)?;
+    std::fs::write(root.join("target/ripr/after.json"), after.stdout).map_err(|e| e.to_string())?;
+    let verify = |after| {
+        run(
+            root,
+            env!("CARGO_BIN_EXE_ripr"),
+            &[
+                "agent",
+                "verify",
+                "--root",
+                ".",
+                "--before",
+                "target/ripr/before.json",
+                "--after",
+                after,
+                "--json",
+            ],
+        )
+    };
+    let refused = verify("target/ripr/after.json")?;
+    assert_eq!(refused.status.code(), Some(2));
+    assert!(refused.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("after artifact is incomplete"));
+    std::fs::write(root.join("src/lib.rs"), &control).map_err(|e| e.to_string())?;
+    commit(root, "control after")?;
+    let control_after = success(check("check-findings-json")?)?;
+    std::fs::write(
+        root.join("target/ripr/control-after.json"),
+        control_after.stdout,
+    )
+    .map_err(|e| e.to_string())?;
+    success(verify("target/ripr/control-after.json")?)?;
+    Ok(())
+}
+
+#[test]
+fn github_keeps_scope_warning_when_macro_limit_is_mixed_with_missing_file() -> Result<(), String> {
+    let fixture = Fixture::new(SOURCE)?;
+    let diff_path = fixture.0.join("diff.patch");
+    let mut diff = std::fs::read_to_string(&diff_path).map_err(|e| e.to_string())?;
+    diff.push_str("diff --git a/src/missing.rs b/src/missing.rs\n--- a/src/missing.rs\n+++ b/src/missing.rs\n@@ -1 +1 @@\n-old\n+new\n");
+    std::fs::write(&diff_path, diff).map_err(|e| e.to_string())?;
+    let output = fixture.checked_output()?;
+    assert_eq!(
+        output.findings[0]
+            .static_limit_kind
+            .map(|kind| kind.as_str()),
+        Some("rust_macro_wrapped_assertion_unresolved")
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&render_check(&output, &OutputFormat::Json)?)
+            .map_err(|e| e.to_string())?;
+    let limitations = json["analysis_outcome"]["outcome"]["limitations"]
+        .as_array()
+        .ok_or("missing limitations")?;
+    assert!(
+        limitations
+            .iter()
+            .any(|item| item["kind"] == "changed_file_absent_from_worktree")
+    );
+    assert!(limitations.iter().any(|item| {
+        item["bounded_detail"]
+            .as_str()
+            .is_some_and(|s| s.contains("rust_macro_wrapped_assertion_unresolved"))
+    }));
+    let github = render_check(&output, &OutputFormat::Github)?;
+    assert!(
+        github.contains(
+            "The findings cover only the analyzed scope; behavior outside it has no finding."
+        ),
+        "{github}"
+    );
+    assert!(
+        !github.contains("Some findings depend on assertion semantics"),
+        "{github}"
+    );
     Ok(())
 }
