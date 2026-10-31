@@ -329,6 +329,62 @@ fn pilot_ranking_takes_one_seam_per_owner_before_a_second() {
 }
 
 #[test]
+fn pilot_ranking_puts_clone_and_default_plumbing_last_in_its_bucket() {
+    // #11485: dtolnay/semver's headline gap was `impl Clone for
+    // Identifier::clone`. A hand-written Clone/Default impl ranks after every
+    // other seam of its bucket, even one of a lower class, and stays listed.
+    let entries = [
+        classified_in_owner(
+            SeamGripClass::WeaklyGripped,
+            "src/a.rs",
+            "impl Clone for Identifier::clone",
+            10,
+        ),
+        classified_in_owner(
+            SeamGripClass::WeaklyGripped,
+            "src/b.rs",
+            "impl core::default::Default for Config<T>::default",
+            10,
+        ),
+        classified_in_owner(SeamGripClass::Ungripped, "src/c.rs", "c::parse", 5),
+    ];
+    let ranked = ranked_places(&top_actionable_seams(&entries, 5, None));
+    assert_eq!(ranked[0].0, "c::parse", "{ranked:?}");
+    assert_eq!(ranked.len(), 3, "plumbing stays listed: {ranked:?}");
+    assert!(ranked[1].0.starts_with("impl "), "{ranked:?}");
+    assert!(ranked[2].0.starts_with("impl "), "{ranked:?}");
+}
+
+#[test]
+fn pilot_ranking_keeps_comparison_trait_impls_at_their_normal_rank() {
+    // Negative control for #11485: `PartialEq`/`Ord` impls carry real
+    // comparison behavior and are not plumbing; neither is a method named
+    // `clone` outside an `impl Clone`.
+    let entries = [
+        classified_in_owner(
+            SeamGripClass::WeaklyGripped,
+            "src/a.rs",
+            "impl PartialEq for Version::eq",
+            10,
+        ),
+        classified_in_owner(SeamGripClass::Ungripped, "src/b.rs", "b::clone", 5),
+        classified_in_owner(
+            SeamGripClass::WeaklyGripped,
+            "src/c.rs",
+            "impl Clone for Identifier::clone",
+            1,
+        ),
+    ];
+    let ranked = ranked_places(&top_actionable_seams(&entries, 5, None));
+    assert_eq!(ranked[0].0, "impl PartialEq for Version::eq", "{ranked:?}");
+    assert_eq!(ranked[1].0, "b::clone", "{ranked:?}");
+    assert_eq!(
+        ranked[2].0, "impl Clone for Identifier::clone",
+        "{ranked:?}"
+    );
+}
+
+#[test]
 fn pilot_ranking_spreads_owners_without_crossing_class_order() {
     // The same owner name in another file is another function.
     let entries = [

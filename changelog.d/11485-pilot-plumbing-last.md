@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr pilot` no longer leads with a hand-written `Clone`, `Default` or `Hash` impl when other gaps exist. On `dtolnay/semver` the headline gap was `impl Clone for Identifier::clone`, which the output itself said had no repair route. Those impls rank after the other seams of their bucket and stay listed and counted; `PartialEq`/`Ord` impls keep their normal rank (#11485, RIPR-SPEC-0237).

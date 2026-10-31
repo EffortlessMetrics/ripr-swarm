@@ -265,11 +265,28 @@ of the gaps pilot found has a route to a repair attempt, ...`, that names
 the by-hand remedy. The Markdown ranked list already says "None of these
 seams can start a repair attempt". JSON gains no field.
 
+### Trait-plumbing demotion
+
+Inside a (current change, repair route) bucket, a seam whose owner is a
+hand-written `Clone`, `Default` or `Hash` impl (`impl Clone for T::clone`,
+`impl Default for T::default`, `impl Hash for T::hash`, matched on the trait's last path segment)
+ranks after every other seam of that bucket (#11485). The sort key becomes
+((in change, no route, trait plumbing), class rank, round). The seam stays
+ranked, listed and counted; it is never excluded or reclassified. `PartialEq`,
+`Eq`, `PartialOrd` and `Ord` impls carry comparison behavior and keep
+their normal rank, as does `Debug`/`Display` output.
+
+The reason is a user-facing one: on `dtolnay/semver` no gap had a repair route
+and the headline gap was `impl Clone for Identifier::clone` (then, once that
+was demoted, `impl Hash for Identifier::hash`), trait plumbing a
+new user will not write a test for. When every seam of a bucket is plumbing
+the order inside it is unchanged.
+
 ### Composition with other rankings
 
 A later ranking bucket that must lead the class (for example #5480's
 change-first bucket and #11292's repair-route bucket) goes in front of the
-spread key: ((change bucket, route bucket), class rank, round). Rounds still count per owner across the whole
+spread key: ((change bucket, route bucket, plumbing bucket), class rank, round). Rounds still count per owner across the whole
 walk. Putting the bucket after the round would lose the bucket order.
 
 ### What the mutant measurements establish
@@ -502,10 +519,22 @@ unless stated. Output lists `file:line` in final order. "today" is main
     `  repair route: none of the gaps pilot found has a route to a repair
     attempt, ...`; the order is unchanged. If a routable seam exists but the
     current change puts an unroutable one on top, no note is printed.
+29. Trait plumbing last. `W src/a.rs impl Clone for Identifier::clone 10`,
+    `W src/b.rs impl Default for Config::default 10`, `U src/c.rs c::parse 5`;
+    N = 3: `src/c.rs:5`, then the two impls in rank-key order. Without the
+    plumbing bucket the weak `Clone` impl led (class order).
+30. Comparison impls are not plumbing. `W impl PartialEq for Version::eq 10`,
+    `U b::clone 5` (a method named `clone` outside an `impl Clone`),
+    `W impl Clone for Identifier::clone 1`; N = 3: the `PartialEq` impl, then
+    `b::clone`, then the `Clone` impl.
 
 ## Test Mapping
 
 - Existing (main): `crates/ripr/src/output/pilot/tests.rs`
+  - `pilot_ranking_puts_clone_and_default_plumbing_last_in_its_bucket`
+    (example 29)
+  - `pilot_ranking_keeps_comparison_trait_impls_at_their_normal_rank`
+    (example 30)
   - `pilot_ranking_prefers_actionable_class_order_before_tie_breakers`
     (example 1)
   - `pilot_ranking_uses_evidence_tie_breakers_then_stable_location`

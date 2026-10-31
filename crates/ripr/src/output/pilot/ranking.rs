@@ -9,7 +9,8 @@ use std::path::Path;
 
 /// Rank actionable seams. Seams on lines the current change touches come
 /// first; inside each of those groups a seam with a repair route leads one
-/// without (#11292), then the class/evidence/location order holds, with the
+/// without (#11292), a seam outside `Clone`/`Default`/`Hash` plumbing leads one
+/// inside it (#11485), then the class/evidence/location order holds, with the
 /// owner spread below.
 pub(crate) fn top_actionable_seams<'a>(
     classified: &'a [ClassifiedSeam],
@@ -33,6 +34,7 @@ pub(crate) fn top_actionable_seams<'a>(
                 (
                     bool_rank(in_change(entry)),
                     bool_rank(has_repair_route(entry)),
+                    u8::from(is_trait_plumbing(entry.seam.owner())),
                 ),
                 entry,
             )
@@ -47,6 +49,23 @@ pub(crate) fn top_actionable_seams<'a>(
     spread_across_owners(&mut actionable);
     actionable.truncate(max_seams);
     actionable.into_iter().map(|(_, entry)| entry).collect()
+}
+
+/// Whether the owner is a hand-written `Clone`, `Default` or `Hash` impl: code a
+/// reader rarely means to test, so it must not be the first thing a new user
+/// is shown. It ranks after every other seam of its bucket but stays listed
+/// and counted (#11485); `PartialEq`/`Ord` carry real comparison
+/// behavior and keep their normal rank.
+fn is_trait_plumbing(owner: &str) -> bool {
+    let Some((_, after_impl)) = owner.rsplit_once("impl ") else {
+        return false;
+    };
+    let Some((trait_path, _)) = after_impl.split_once(" for ") else {
+        return false;
+    };
+    let trait_path = trait_path.split('<').next().unwrap_or(trait_path).trim();
+    let name = trait_path.rsplit("::").next().unwrap_or(trait_path);
+    matches!(name, "Clone" | "Default" | "Hash")
 }
 
 /// Actionable seams on lines the current change touches.
@@ -73,7 +92,8 @@ pub(super) fn actionable_in_change(
 /// one function cannot claim a slot per class.
 ///
 /// The current-change bucket still leads (#5480) and the repair-route bucket
-/// follows it (#11292): the key is `((in_change, no_route), class, round)`,
+/// follows it (#11292), then trait plumbing last (#11485): the key is
+/// `((in_change, no_route, plumbing), class, round)`,
 /// so spreading never lifts an unchanged seam above a changed one, or an
 /// unroutable seam above a routable one of the same change bucket. Rounds
 /// walk in that route-then-`RankKey` order.
