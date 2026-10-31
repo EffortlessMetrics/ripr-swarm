@@ -1,0 +1,12 @@
+diff --git a/trapkit/core.py b/trapkit/core.py
+--- a/trapkit/core.py
++++ b/trapkit/core.py
+@@ -138,7 +138,7 @@
+ 
+ 
+ def shadowed_test(a, b):
+-    return a * b
++    return b * a
+ 
+ 
+ def exit_before_assert(a, b):
