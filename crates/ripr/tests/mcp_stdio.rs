@@ -4282,6 +4282,48 @@ fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
         ));
     }
 
+    // Limitation pair (#1898): the tool and the `/limitation` resource return
+    // one document, the `/limitation` suffix does not shadow the plain gap
+    // route (the gap resource above still returned the gap document), and the
+    // typed limitation block is present rather than `null`.
+    let limitation_tool = session.call_tool(
+        "limitation-tool",
+        "ripr_get_top_limitation",
+        json!({ "canonical_id": canonical_id }),
+        REPLY_TIMEOUT,
+    )?;
+    let limitation_tool = structured_tool_success(&limitation_tool, "ripr_get_top_limitation")?;
+    let limitation_resource = read_resource_document(
+        &mut session,
+        "limitation-resource",
+        &format!("ripr://gap/{canonical_id}/limitation"),
+        REPLY_TIMEOUT,
+    )?;
+    if limitation_tool != limitation_resource {
+        return Err(format!(
+            "limitation tool and resource diverged:\ntool={limitation_tool}\nresource={limitation_resource}"
+        ));
+    }
+    if limitation_tool
+        .pointer("/schema_version")
+        .and_then(Value::as_str)
+        != Some("ripr-mcp-gap-limitation-v1")
+        || limitation_tool
+            .pointer("/canonical_id")
+            .and_then(Value::as_str)
+            != Some(canonical_id.as_str())
+        || limitation_tool
+            .pointer("/limitation/kind")
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)
+        || limitation_tool.pointer("/limitation/stage").is_none()
+        || limitation_tool == gap_tool
+    {
+        return Err(format!(
+            "limitation document lost its typed contract: {limitation_tool}"
+        ));
+    }
+
     // Card pair.
     let card_tool = session.call_tool(
         "card-tool",
