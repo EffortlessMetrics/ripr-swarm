@@ -88,14 +88,16 @@ fn literal_concat_return_and_forwarding() -> Result<(), String> {
 #[test]
 fn opaque_and_shadowed_concat_remain_uncredited() -> Result<(), String> {
     for (prefix, expression) in [
-        ("", "concat!(env!(\"X\"), \"pr\")"),
+        ("", "concat!(\"ri\", env!(\"RIPR_PART\"))"),
         (
             "macro_rules! concat { ($($t:tt)*) => { \"wrong\" }; }",
             "concat!(\"ri\", \"pr\")",
         ),
         ("", "other!(\"ri\", \"pr\")"),
-        ("const PART: &str = \"ri\";", "concat!(PART, \"pr\")"),
         ("", "concat!(\"ri\", 1)"),
+        ("", "concat![\"ri\", \"pr\"]"),
+        ("", "concat!{\"ri\", \"pr\"}"),
+        ("", "concat!()"),
         ("", "std::concat!(\"ri\", \"pr\")"),
     ] {
         assert_ne!(

@@ -292,10 +292,11 @@ can only hint that a caller "may lead here" without changing anything.
   (`format!("{}", base() & 1)`), the callee nested in its own arguments, a
   parameter that shares a method's name and a user `Display`/`From` impl keep
   the abstention. The free-call chain identity rule and the owner-call entry
-  pin still apply. A whole-body bare `concat!` of readable string literals
-  is evaluated only if the workspace cannot rebind the macro; its exact
+  pin still apply. A whole-body bare parenthesized `concat!(...)` with one or more readable
+  string literals, totaling at most 512 decoded bytes, is evaluated only if the workspace cannot rebind the macro; its exact
   return receives a direct witness. Nested macros, nonliteral and non-string
-  operands, qualified calls and ambiguous bindings stay opaque.
+  operands, empty, bracketed or braced calls, qualified calls and ambiguous
+  bindings stay opaque.
   Corpus: `spec0117-external-std-macro`, `format-forward-to-string-credits`
   and `old-title-through-format-macro` credit;
   `format-forward-precision-hides-value` and

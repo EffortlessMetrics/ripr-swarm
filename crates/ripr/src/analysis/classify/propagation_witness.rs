@@ -385,8 +385,9 @@ pub(in crate::analysis) fn constant_tail_witness(
 }
 
 /// Evaluate only an unshadowed bare `concat!` whose whole owner body is a
-/// single call with string-literal operands. Other literals and nested macros
-/// remain opaque. The parser validates both the call and all operands.
+/// single parenthesized call with one or more string-literal operands totaling
+/// at most 512 decoded bytes. Other forms and nested macros remain opaque.
+/// The parser validates both the call and all operands.
 pub(in crate::analysis) fn concat_literal_tail(
     owner: &crate::analysis::facts::FunctionSummary,
     index: &crate::analysis::rust_index::RustIndex,
