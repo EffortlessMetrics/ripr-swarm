@@ -1,17 +1,13 @@
 name: RIPR 10864 temporary source preparation
-
 on:
   push:
     branches: [agents/10864-guidance-preparation]
     paths: [.github/workflows/10864-source-preparation.yml]
-
 permissions:
   contents: read
-
 concurrency:
   group: ripr-10864-source-preparation
   cancel-in-progress: false
-
 jobs:
   prepare:
     if: github.repository == 'EffortlessMetrics/ripr-swarm' && github.event.deleted == false
@@ -30,242 +26,27 @@ jobs:
       - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591
         with:
           components: rustfmt
-      - name: Assemble guarded source and create candidate branch
+      - name: Execute exact reviewed preparation block
         id: publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python - <<'PY_PREP'
-          import base64
-          import gzip
-          import hashlib
-          import json
-          import os
-          from pathlib import Path, PurePosixPath
-          import subprocess
-          import urllib.error
-          import urllib.request
-
-          REPO = 'EffortlessMetrics/ripr-swarm'
-          BASE = 'a561a2777b614091cc5fa4e13464645e31e42b20'
-          DEST = 'agents/10864-provider-guidance'
-          CHUNKS = ['885ee85099e996d9dfd1f590f20a9203c9e84cf7', '84084c53a464475d009405edb2cd38227d72bedf', '3c5d6e5e21f2371d433e727adc42a14438cd08b7', '426030e60ebb2d15826deaf72c36bfed3d8f1b9b', 'dc7ade389eeab306013c25fc1ff639dabae04ae2']
-          COMPRESSED = 'cabdd6168568adc4505ced438c6992cae3a795679f44d8c7aa2fdd6efdf43a01'
-          DECODED = '38c49e1763e32e817b54fba72846eeb0e581af421ddfef678f9785cb4cd9eec1'
-          MOD = 'crates/ripr/src/analysis/workspace/mod.rs'
-          ALLOWED = {
-           'crates/ripr/src/analysis/workspace/assertion_dependency.rs', MOD,
-           'crates/ripr/src/analysis/workspace/assertion_dependency/registry.rs',
-           'crates/ripr/src/analysis/facts/index.rs',
-           'crates/ripr/src/analysis/facts/proptest.rs',
-           'crates/ripr/src/analysis/language/rust/oracles.rs',
-           'crates/ripr/tests/registered_proptest_profile.rs',
-           'crates/ripr/tests/fixtures/proptest_singleton/SPEC.md',
-           'crates/ripr/src/analysis/language/rust/oracles/provider_metadata.rs',
-           'crates/ripr/src/analysis/workspace/assertion_dependency/registry/metadata_diagnostic_tests.rs',
-           'crates/ripr/tests/registered_proptest_profile/provider_diagnostics.rs',
-           'changelog.d/10864-offline-provider-guidance.md',
-           'crates/ripr/src/analysis/facts/proptest/metadata_failure_tests.rs',
-          }
-
-          def git(*args):
-           return subprocess.check_output(['git', *args])
-
-          def digest(data):
-           return hashlib.sha256(data).hexdigest()
-
-          def blob(data):
-           return hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
-
-          def api(path, data=None):
-           request = urllib.request.Request(
-            f'https://api.github.com/repos/{REPO}/{path}',
-            data=None if data is None else json.dumps(data).encode(),
-            headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
-                     'Accept':'application/vnd.github+json',
-                     'X-GitHub-Api-Version':'2022-11-28',
-                     'Content-Type':'application/json'},
-            method='GET' if data is None else 'POST')
-           with urllib.request.urlopen(request, timeout=45) as response:
-            raw = response.read(2_000_001)
-            if len(raw) > 2_000_000:
-             raise RuntimeError('GitHub response exceeded bounded capture')
-            return json.loads(raw)
-
-          def replace_once(text, old, new):
-           if text.count(old) != 1:
-            raise RuntimeError('sibling control anchor is not unique')
-           return text.replace(old, new, 1)
-
-          def strengthen(plans):
-           path = 'crates/ripr/src/analysis/language/rust/oracles.rs'
-           old = '''    let Some(PropertyMacroLocation {
-                  file,
-                  witness,
-                  metadata_failure,
-              }) = locations.iter().find(|location| {
-                  match (owner_package, mentions.known_package(location.file)) {
-                      (Some(owner), Some(mentioned)) => owner == mentioned,
-                      // An unresolved package identity cannot prove unrelatedness.
-                      _ => true,
-                  }
-              }) else {'''
-           new = '''    // Prefer a relevant invocation whose actual verification failed over an
-              // earlier opaque sibling. The diagnostic stays attached to its own witness;
-              // it must never be copied onto the unsupported sibling's source pointer.
-              let Some(PropertyMacroLocation {
-                  file,
-                  witness,
-                  metadata_failure,
-              }) = locations
-                  .iter()
-                  .filter(|location| {
-                      match (owner_package, mentions.known_package(location.file)) {
-                          (Some(owner), Some(mentioned)) => owner == mentioned,
-                          // An unresolved package identity cannot prove unrelatedness.
-                          _ => true,
-                      }
-                  })
-                  .min_by_key(|location| location.metadata_failure.is_none())
-              else {'''
-           plans[path] = replace_once(plans[path], old, new)
-           path = 'crates/ripr/tests/registered_proptest_profile/provider_diagnostics.rs'
-           anchor = '    // Same failing environment, unsupported syntax: no borrowed diagnosis.\n'
-           supplement = '''    // A lexically earlier unsupported sibling must not hide the supported
-              // invocation's observed failure or borrow its invocation pointer.
-              let opaque_sibling = PROPERTY.replace("100i32", "100");
-              assert_ne!(opaque_sibling, PROPERTY);
-              fixture.write("tests/a_opaque.rs", &opaque_sibling)?;
-              let siblings = finding(&fixture, "provider-opaque-sibling-first", None)?;
-              require_withheld(&siblings);
-              assert!(action(&siblings)?.contains(METADATA_COMMAND), "{siblings}");
-              let pointers = siblings["evidence"]
-                  .as_array()
-                  .ok_or("missing sibling evidence")?
-                  .iter()
-                  .filter_map(Value::as_str)
-                  .filter(|line| line.starts_with("limitation_last_established_edge:"))
-                  .collect::<Vec<_>>();
-              assert_eq!(pointers.len(), 1, "{siblings}");
-              assert!(pointers[0].contains("tests/boundary.rs:"), "{siblings}");
-              assert!(!pointers[0].contains("tests/a_opaque.rs:"), "{siblings}");
-              std::fs::remove_file(fixture.0.join("tests/boundary.rs"))
-                  .map_err(|error| error.to_string())?;
-              let only_opaque = finding(&fixture, "provider-only-opaque-sibling", None)?;
-              require_withheld(&only_opaque);
-              assert!(!action(&only_opaque)?.contains(METADATA_COMMAND), "{only_opaque}");
-              fixture.write("tests/boundary.rs", PROPERTY)?;
-              std::fs::remove_file(fixture.0.join("tests/a_opaque.rs"))
-                  .map_err(|error| error.to_string())?;
-
-          '''
-           plans[path] = replace_once(plans[path], anchor, supplement + anchor)
-           return plans
-
-          def main():
-           if os.environ['GITHUB_REPOSITORY'] != REPO:
-            raise RuntimeError('wrong repository')
-           if git('rev-parse','HEAD').decode().strip() != BASE:
-            raise RuntimeError('unexpected checkout')
-           if git('status','--porcelain'):
-            raise RuntimeError('checkout must be pristine')
-           try:
-            api('git/ref/heads/' + DEST)
-           except urllib.error.HTTPError as e:
-            if e.code != 404:
-             raise
-           else:
-            raise RuntimeError('candidate branch already exists; do not overwrite another writer')
-           compressed = b''
-           for sha in CHUNKS:
-            item = api('git/blobs/' + sha)
-            data = base64.b64decode(item['content'])
-            if item['sha'] != sha or blob(data) != sha:
-             raise RuntimeError('source chunk identity mismatch')
-            compressed += data
-           if len(compressed) != 10745 or digest(compressed) != COMPRESSED:
-            raise RuntimeError('compressed input mismatch')
-           raw = gzip.decompress(compressed)
-           if len(raw) != 43289 or digest(raw) != DECODED:
-            raise RuntimeError('decoded input mismatch')
-           recipe = json.loads(raw)
-           if recipe['base_commit'] != 'd0032cb45c8952ecc78855afc40c6896d64a08b6':
-            raise RuntimeError('unexpected proposal basis')
-           paths = {e['path'] for e in recipe['edits']} | {e['path'] for e in recipe['new_files']}
-           if paths != ALLOWED:
-            raise RuntimeError('unexpected source surface')
-           plans = {}
-           initial_blobs = {}
-           for edit in recipe['edits']:
-            path = edit['path']
-            if path not in plans:
-             data = git('show', BASE + ':' + path)
-             observed = blob(data)
-             expected = edit['expected_blob']
-             if path == MOD:
-              expected = '75bccfa4ecdaac4f493e62f3d5e33d21322d6f24'
-             if observed != expected or Path(path).is_symlink() or Path(path).read_bytes() != data:
-              raise RuntimeError('base surface changed: ' + path)
-             initial_blobs[path] = observed
-             plans[path] = data.decode()
-            text = plans[path]
-            if text.count(edit['old']) != edit['expected_occurrences']:
-             raise RuntimeError('edit cardinality mismatch: ' + path)
-            plans[path] = text.replace(edit['old'], edit['new'])
-           for entry in recipe['new_files']:
-            path = entry['path']
-            if Path(path).exists() or Path(path).is_symlink():
-             raise RuntimeError('new path already exists: ' + path)
-            content = recipe['new_file_contents'][path]
-            if digest(content.encode()) != entry['sha256']:
-             raise RuntimeError('new file content mismatch: ' + path)
-            plans[path] = content
-           plans = strengthen(plans)
-           for path in plans:
-            pure = PurePosixPath(path)
-            if pure.is_absolute() or '..' in pure.parts:
-             raise RuntimeError('unsafe path')
-            for parent in Path(path).parents:
-             if parent.is_symlink():
-              raise RuntimeError('symlink parent')
-           for path, text in plans.items():
-            Path(path).parent.mkdir(parents=True, exist_ok=True)
-            Path(path).write_bytes(text.encode())
-           rust_paths = sorted(p for p in plans if p.endswith('.rs'))
-           subprocess.run(['rustfmt','--edition','2024','--config','skip_children=true', *rust_paths], check=True)
-           subprocess.run(['git','diff','--check'], check=True)
-           subprocess.run(['git','add','--', *sorted(plans)], check=True)
-           actual = set(git('diff','--cached','--name-only','-z').decode().strip('\0').split('\0'))
-           if actual != ALLOWED:
-            raise RuntimeError('assembled diff has unexpected paths')
-           tree = git('write-tree').decode().strip()
-           out = Path(os.environ['RUNNER_TEMP']) / 'ripr-10864-preparation'
-           out.mkdir()
-           (out/'source.patch').write_bytes(git('diff','--cached','--binary'))
-           entries = [{'path':p, 'mode':'100644', 'type':'blob', 'content':Path(p).read_text()} for p in sorted(plans)]
-           base_tree = api('git/commits/' + BASE)['tree']['sha']
-           remote_tree = api('git/trees', {'base_tree':base_tree,'tree':entries})['sha']
-           if remote_tree != tree:
-            raise RuntimeError('remote/local complete tree disagreement')
-           commit = api('git/commits', {
-            'message':'feat(rust): explain unavailable offline property metadata (#10864)\n\nCarry typed failures from existing provider verification to exact syntax-supported invocations and existing Finding guidance without granting evidence. Preserve admission, process and raw-cache boundaries; prefer an actual relevant failure over an earlier opaque sibling.\n\nSource prepared and rustfmt-checked on pinned main. Native focused proof and full parent acceptance remain pending.',
-            'tree':tree, 'parents':[BASE]})['sha']
-           ref = api('git/refs', {'ref':'refs/heads/' + DEST,'sha':commit})
-           if ref['object']['sha'] != commit:
-            raise RuntimeError('branch publication readback mismatch')
-           record = {'repository':REPO,'base':BASE,'head':commit,'tree':tree,'branch':DEST,
-                     'input_sha256':DECODED,'original_blobs':initial_blobs,
-                     'changed_blobs':{p:blob(Path(p).read_bytes()) for p in sorted(plans)},
-                     'rustfmt':'passed on changed Rust files', 'whitespace':'passed',
-                     'native_tests':'NOT_ESTABLISHED', 'required_qualification':'NOT_REQUESTED'}
-           (out/'preparation.json').write_text(json.dumps(record,indent=2)+'\n')
-           with open(os.environ['GITHUB_OUTPUT'],'a') as stream:
-            stream.write('head=' + commit + '\n')
-           print(json.dumps(record,indent=2))
-
-          if __name__ == '__main__':
-           main()
-          PY_PREP
+          python - <<'PY'
+          import base64, hashlib, json, os, urllib.request
+          sha = '64e484313b35b19bd7cc9a4bc09b76d91727ad48'
+          request = urllib.request.Request(
+              'https://api.github.com/repos/EffortlessMetrics/ripr-swarm/git/blobs/' + sha,
+              headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'], 'Accept':'application/vnd.github+json'})
+          with urllib.request.urlopen(request,timeout=45) as response:
+              document=json.load(response)
+          data=base64.b64decode(document['content'])
+          assert hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()==sha
+          text=data.decode()
+          block=text.split("          python - <<'PY_PREP'\n",1)[1].split('\n          PY_PREP',1)[0]
+          assert all(not line or line.startswith('          ') for line in block.splitlines())
+          code='\n'.join(line[10:] if line else '' for line in block.splitlines())
+          exec(compile(code,'reviewed-10864-preparation','exec'), {'__name__':'__main__'})
+          PY
       - name: Retain exact source preparation
         if: always()
         uses: actions/upload-artifact@v7
@@ -274,7 +55,6 @@ jobs:
           path: ${{ runner.temp }}/ripr-10864-preparation/
           retention-days: 7
           if-no-files-found: warn
-
   focused-proof:
     needs: prepare
     runs-on: ubuntu-latest
@@ -287,7 +67,6 @@ jobs:
       CARGO_INCREMENTAL: '0'
       CARGO_PROFILE_DEV_DEBUG: '0'
       CARGO_PROFILE_TEST_DEBUG: '0'
-      CARGO_TARGET_DIR: ${{ runner.temp }}/ripr-10864-target
     steps:
       - uses: actions/checkout@v6
         with:
@@ -297,75 +76,27 @@ jobs:
       - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591
         with:
           components: rustfmt, clippy
-      - name: Run bounded baseline and focused candidate proof
+      - name: Run exact reviewed focused proof block
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CARGO_TARGET_DIR: ${{ runner.temp }}/ripr-10864-target
         run: |
-          python - <<'PY_PROOF'
-          import json
-          import os
-          from pathlib import Path
-          import re
-          import shutil
-          import subprocess
-          import sys
-
-          BASE = 'a561a2777b614091cc5fa4e13464645e31e42b20'
-          root = Path.cwd()
-          out = Path(os.environ['RUNNER_TEMP']) / 'ripr-10864-proof'
-          out.mkdir(exist_ok=True)
-          records = []
-          head = subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip()
-          if head != os.environ['CANDIDATE_SHA']:
-           raise RuntimeError('proof checkout does not match published candidate')
-
-          def run(name, cmd, *, cwd=root, limit=600, expected_tests=None):
-           path = out / (name + '.log')
-           subject = subprocess.check_output(['git','rev-parse','HEAD'], cwd=cwd, text=True).strip()
-           with path.open('wb') as stream:
-            process = subprocess.run(['timeout','--signal=TERM','--kill-after=30s',str(limit)+'s',*cmd],
-                                     cwd=cwd, stdout=stream, stderr=subprocess.STDOUT)
-           text = path.read_text(errors='replace')
-           record = {'name':name,'command':cmd,'cwd':str(cwd),'subject':subject,
-                     'exit_code':process.returncode,'log':path.name}
-           if expected_tests is not None:
-            results = re.findall(r'test result: ok\. (\d+) passed; (\d+) failed; (\d+) ignored;',text)
-            record['reported_results'] = results
-            record['expected_selected_tests'] = expected_tests
-            record['nonempty_expected_result'] = any(tuple(map(int,r))==(expected_tests,0,0) for r in results)
-           records.append(record)
-           (out/'results.json').write_text(json.dumps({'head':head,'base':BASE,'commands':records},indent=2)+'\n')
-           print(json.dumps(record),flush=True)
-           print(text[-14000:],flush=True)
-           if process.returncode != 0 or (expected_tests is not None and not record['nonempty_expected_result']):
-            raise RuntimeError(name + ': native proof failed or selected test inventory mismatch')
-
-          subprocess.run(['rustc','--version'],check=True)
-          subprocess.run(['cargo','--version'],check=True)
-          free=shutil.disk_usage(root).free
-          available=int(next(line.split()[1] for line in Path('/proc/meminfo').read_text().splitlines() if line.startswith('MemAvailable:')))*1024
-          print(json.dumps({'disk_available':free,'memory_available':available,'target_growth_budget':8*1024**3,'disk_reserve':4*1024**3}),flush=True)
-          if free < 12*1024**3 or available < 10*1024**3:
-           raise RuntimeError('focused proof did not fit the declared resource admission')
-          base_dir=Path(os.environ['RUNNER_TEMP'])/'ripr-10864-baseline'
-          subprocess.run(['git','worktree','add','--detach',str(base_dir),BASE],check=True)
-          try:
-           run('baseline-owner-check',['cargo','check','--locked','-p','ripr','--lib','--no-default-features','--features','lang-rust'],cwd=base_dir,limit=480)
-           run('candidate-format',['cargo','fmt','--all','--','--check'],limit=120)
-           run('prepare-exact-locked-property-fixture',['cargo','fetch','--locked','--manifest-path','crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml'],limit=180)
-           common=['cargo','test','--locked','-p','ripr','--no-default-features','--features','lang-rust']
-           for name, selector, count in [
-            ('metadata-transport','metadata_probe_tests',10),
-            ('registry-diagnostic','analysis::workspace::assertion_dependency::registry::metadata_diagnostic_tests',2),
-            ('invocation-lifetime','analysis::facts::proptest::metadata_failure_tests',3),
-            ('recovery-guidance','analysis::language::rust::oracles::provider_metadata::tests',2),
-           ]:
-            run(name,common+['--lib',selector,'--','--nocapture'],expected_tests=count)
-           run('public-cli-diagnostic',common+['--test','registered_proptest_profile','provider_diagnostics::offline_metadata_diagnosis_is_scoped_and_recovers_without_purging_diff_cache','--','--exact','--nocapture'],expected_tests=1)
-           run('focused-clippy',['cargo','clippy','--locked','-p','ripr','--lib','--test','registered_proptest_profile','--no-default-features','--features','lang-rust','--','-D','warnings'],limit=480)
-           run('candidate-whitespace',['git','diff','--check',BASE,'HEAD'],limit=30)
-          finally:
-           subprocess.run(['git','worktree','remove',str(base_dir)],check=False)
-           print(json.dumps({'target_bytes':subprocess.check_output(['du','-sb',os.environ['CARGO_TARGET_DIR']],text=True).split()[0]}) if Path(os.environ['CARGO_TARGET_DIR']).exists() else '{}',flush=True)
-          PY_PROOF
+          python - <<'PY'
+          import base64, hashlib, json, os, urllib.request
+          sha = '64e484313b35b19bd7cc9a4bc09b76d91727ad48'
+          request = urllib.request.Request(
+              'https://api.github.com/repos/EffortlessMetrics/ripr-swarm/git/blobs/' + sha,
+              headers={'Authorization':'Bearer '+os.environ.pop('GH_TOKEN'), 'Accept':'application/vnd.github+json'})
+          with urllib.request.urlopen(request,timeout=45) as response:
+              document=json.load(response)
+          data=base64.b64decode(document['content'])
+          assert hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()==sha
+          text=data.decode()
+          block=text.split("          python - <<'PY_PROOF'\n",1)[1].split('\n          PY_PROOF',1)[0]
+          assert all(not line or line.startswith('          ') for line in block.splitlines())
+          code='\n'.join(line[10:] if line else '' for line in block.splitlines())
+          exec(compile(code,'reviewed-10864-proof','exec'), {'__name__':'__main__'})
+          PY
       - name: Retain native command identities and logs
         if: always()
         uses: actions/upload-artifact@v7
