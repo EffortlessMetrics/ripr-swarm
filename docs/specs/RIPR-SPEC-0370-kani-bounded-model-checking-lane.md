@@ -29,7 +29,8 @@ Linked PRs:
 Support-tier impact:
 
 - None. Kani proofs are an internal engineering check on `ripr`'s own code.
-  They add no user-visible claim and change no finding vocabulary or tier.
+  They add no user-visible claim and change no finding vocabulary or tier
+  (see [support tiers](../status/SUPPORT_TIERS.md)).
 
 Policy impact:
 
