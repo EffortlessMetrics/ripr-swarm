@@ -82,7 +82,7 @@
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",
       "gap_state": "unknown",
-      "actionability_category": "incomplete_repair_packet",
+      "actionability_category": "missing_target_shape",
       "static_limit_kind": null,
       "repair_packet_ready": false,
       "authority_boundary": "preview_advisory_only",

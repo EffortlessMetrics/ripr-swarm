@@ -138,7 +138,7 @@
       "evidence_kind": "smoke_only",
       "oracle_kind": "smoke_only",
       "gap_state": "unknown",
-      "actionability_category": "incomplete_repair_packet",
+      "actionability_category": "missing_target_shape",
       "static_limit_kind": null,
       "disposition": "safe_advisory",
       "repair_packet_ready": false,
