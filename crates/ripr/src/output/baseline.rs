@@ -153,14 +153,14 @@ fn check_findings_as_decisions(check: &Value) -> Result<Vec<Value>, String> {
     let schema = check
         .get("schema_version")
         .and_then(Value::as_str)
-        .ok_or_else(|| format!("check JSON missing schema_version; run `ripr check --candidate-tree HEAD^{{tree}} --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file"))?;
+        .ok_or_else(|| "check JSON missing schema_version; run `ripr check --candidate-tree HEAD^{tree} --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file".to_string())?;
     if check.get("tool").and_then(Value::as_str) != Some("ripr") {
         return Err(format!(
             "input is not a `ripr check` JSON artifact (schema_version `{schema}`); run `ripr check --candidate-tree HEAD^{{tree}} --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file"
         ));
     }
     let outcome = check.pointer("/analysis_outcome").ok_or_else(|| {
-        format!("check JSON carries no analysis_outcome, so completeness is not established; run `ripr check --candidate-tree HEAD^{{tree}} --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file")
+        "check JSON carries no analysis_outcome, so completeness is not established; run `ripr check --candidate-tree HEAD^{tree} --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file".to_string()
     })?;
     let kind = outcome.pointer("/outcome/kind").and_then(Value::as_str);
     let complete = outcome.get("analysis_complete").and_then(Value::as_bool) == Some(true);
@@ -188,9 +188,9 @@ fn check_findings_as_decisions(check: &Value) -> Result<Vec<Value>, String> {
     // A partial-scope run is the same incomplete denominator the gate refuses
     // as an input in every position the run state is disclosed.
     if crate::output::gate::discloses_limited_partial_scope(check) {
-        return Err(format!(
-            "check artifact discloses a partial-scope run (limited_partial_scope), so a baseline from it would cover only part of the repository; run `ripr check --candidate-tree HEAD^{{tree}} --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file"
-        ));
+        return Err(
+            "check artifact discloses a partial-scope run (limited_partial_scope), so a baseline from it would cover only part of the repository; run `ripr check --candidate-tree HEAD^{tree} --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file"
+        .to_string());
     }
     let base_tree = outcome
         .pointer("/outcome/identity/git_candidate_subject/base_tree")
@@ -204,7 +204,7 @@ fn check_findings_as_decisions(check: &Value) -> Result<Vec<Value>, String> {
     let findings = check
         .get("findings")
         .and_then(Value::as_array)
-        .ok_or_else(|| format!("check JSON missing findings array; run `ripr check --candidate-tree HEAD^{{tree}} --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file"))?;
+        .ok_or_else(|| "check JSON missing findings array; run `ripr check --candidate-tree HEAD^{tree} --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file".to_string())?;
     Ok(findings.iter().map(check_finding_as_decision).collect())
 }
 
