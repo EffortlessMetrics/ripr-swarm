@@ -3529,6 +3529,8 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::lowercase_local_constant_witnesses_the_boundary",
   "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::local_constant_that_is_rebound_or_off_value_does_not_witness",
   "crates/ripr/src/analysis/language/typescript/tests.rs::boundary_discriminator_is_faithful_or_withheld",
+  "crates/ripr/src/analysis/language/typescript/tests/derived_operand_tests.rs::a_call_derived_local_operand_names_its_limitation",
+  "crates/ripr/src/analysis/language/typescript/tests/derived_operand_tests.rs::parameters_and_input_steered_locals_keep_their_reading",
   "crates/ripr/src/analysis/language/typescript/typeof_kind_tests.rs::typeof_guard_names_the_kind_test_not_the_type_name_string",
   "crates/ripr/src/analysis/language/typescript/typeof_kind_tests.rs::typeof_guard_never_names_the_bare_operand_as_the_literal",
   "crates/ripr/src/analysis/language/typescript/typeof_kind_tests.rs::non_typeof_comparisons_keep_their_discriminator",

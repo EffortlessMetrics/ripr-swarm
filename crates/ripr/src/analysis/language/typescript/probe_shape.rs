@@ -324,14 +324,17 @@ pub(crate) fn typescript_boundary_discriminator_with_shape(
     // path for it would credit a `null` argument through a boundary that
     // never reads a nullish side (#4213 thread PRRT_kwDOSiSx0c6mUnSc).
     let (expression, nullish) = normalize_ts_comparison_operands(&expression);
-    // A condition that holds two comparisons (`type !== "boolean" && typeof
-    // value === "string"`) does not say which one the diff changed, and naming
-    // either could name the unchanged one (#11256). Name no boundary rather
-    // than a possibly unchanged one. The one comparison is read in code spans
-    // only, so an operator inside a string literal is never the boundary.
-    let &[(idx, operator)] = comparison_operators_in_code(&expression).as_slice() else {
-        return None;
-    };
+    // Read the comparison in code spans only: an operator inside a string
+    // literal (`kind === "a>=b"`) is never the boundary (#11256). Which
+    // comparison of a compound condition changed is chosen from the old and
+    // new line by `typescript_changed_boundary_text` (#10399), not here.
+    let operators = comparison_operators_in_code(&expression);
+    let (idx, operator) = COMPARISON_OPERATORS.iter().find_map(|operator| {
+        operators
+            .iter()
+            .find(|(_, found)| found == operator)
+            .copied()
+    })?;
     let left_raw = expression.get(..idx)?.trim();
     let right_raw = expression.get(idx + operator.len()..)?.trim();
     if operand_looks_like_call(left_raw) || operand_looks_like_call(right_raw) {

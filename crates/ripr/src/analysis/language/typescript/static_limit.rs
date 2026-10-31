@@ -1368,3 +1368,100 @@ pub(crate) fn namespace_tail_has_call(tail: &str) -> bool {
     }
     false
 }
+
+/// #11256: a predicate comparing a local the owner computes from a call whose
+/// arguments mention no owner parameter (`const type = getType(key);` ...
+/// `type === "boolean"`) reads a value no call into the owner can set, so a
+/// repair asking for "an input on the boundary" cannot be followed and the
+/// existing tests may already notice the change through the result. Names the
+/// local, or nothing: every other shape keeps its previous reading.
+pub(crate) fn derived_boundary_operand_limitation(
+    owner: &TypeScriptOwner,
+    boundary: &TsPredicateBoundary,
+) -> Option<TypeScriptNamedLimitation> {
+    let TsPredicateBoundary::Parsed {
+        left,
+        right,
+        nullish: false,
+    } = boundary
+    else {
+        return None;
+    };
+    let is_identifier = |text: &str| {
+        text.chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_' || ch == '$')
+            && text
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+            && !matches!(text, "true" | "false" | "null" | "undefined")
+    };
+    let is_literal = |text: &str| {
+        text.starts_with(['"', '\'', '-'])
+            || text.starts_with(|ch: char| ch.is_ascii_digit())
+            || matches!(text, "true" | "false" | "null")
+    };
+    let operand = match (left.as_str(), right.as_str()) {
+        (name, literal) if is_identifier(name) && is_literal(literal) => name,
+        (literal, name) if is_identifier(name) && is_literal(literal) => name,
+        _ => return None,
+    };
+    // Fixed positional signature only: otherwise "no parameter" is unknown.
+    owner.arity?;
+    if owner.params.iter().any(|param| param == operand) {
+        return None;
+    }
+    let source = owner.source_text.as_deref()?;
+    let bindings: Vec<(usize, &str)> = source
+        .lines()
+        .enumerate()
+        .filter_map(|(offset, line)| {
+            let text = line.trim();
+            let rest = text
+                .strip_prefix("const ")
+                .or_else(|| text.strip_prefix("let "))?
+                .strip_prefix(operand)?
+                .strip_prefix(" = ")?;
+            Some((offset, rest.trim_end_matches(';').trim()))
+        })
+        .collect();
+    // Every binding of the name (a scoped redeclaration is another binding)
+    // must be a call that mentions no owner parameter.
+    let mut callees = Vec::new();
+    for (_, initializer) in &bindings {
+        // `callee(args)` with nothing after the closing parenthesis.
+        let open = initializer.find('(')?;
+        let callee = initializer.get(..open)?;
+        let args = initializer.get(open + 1..)?.strip_suffix(')')?;
+        if callee.is_empty()
+            || !callee
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$' || ch == '.')
+            || args.contains(['(', ')', '`'])
+            || args.contains("...")
+        {
+            return None;
+        }
+        let mentions_parameter = args
+            .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'))
+            .any(|token| owner.params.iter().any(|param| param == token));
+        if mentions_parameter {
+            return None;
+        }
+        callees.push(callee);
+    }
+    let (offset, _) = *bindings.first()?;
+    let callee = callees.first()?;
+    Some(TypeScriptNamedLimitation {
+        name: "typescript_boundary_operand_derived_unresolved",
+        sample_source: format!(
+            "{}:{}",
+            normalized_path(&owner.file),
+            owner.start_line + offset
+        ),
+        why_not_actionable: format!(
+            "the changed comparison reads `{operand}`, which the owner computes with `{callee}(...)` instead of receiving it as a parameter; a test call cannot set it directly, so the adapter cannot tell whether an existing test already notices the change"
+        ),
+        repair_route: "analysis/typescript-derived-boundary-operand",
+    })
+}

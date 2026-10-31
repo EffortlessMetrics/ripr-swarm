@@ -6751,8 +6751,8 @@ fn classify_probe_shape_reads_a_returned_ternary_as_its_condition_boundary() {
     }
 }
 
-/// #11256: a quoted operand is one operand, and a condition with two
-/// comparisons does not say which one changed.
+/// #11256: a quoted operand is one operand, and an operator inside a string
+/// literal is no comparison.
 #[test]
 fn boundary_discriminator_is_faithful_or_withheld() {
     // A plain quoted literal is named whole.
@@ -6774,21 +6774,8 @@ fn boundary_discriminator_is_faithful_or_withheld() {
     ] {
         assert_eq!(typescript_boundary_discriminator(line), None, "{line}");
     }
-    // Two comparisons: operator priority named the unchanged `typeof` test.
-    for line in [
-        "  if (type !== \"boolean\" && typeof value === \"string\") {",
-        "  if (a > 1 || b < 2) {",
-        "  if (x >= 0 && x <= 10) {",
-    ] {
-        assert_eq!(typescript_boundary_discriminator(line), None, "{line}");
-    }
     // A comparison-looking operator inside a string, or an arrow, is not a
     // second comparison.
-    assert_eq!(
-        typescript_boundary_discriminator("  if (total >= 100 && label !== \"a\") {"),
-        None,
-        "two real comparisons"
-    );
     assert_eq!(
         typescript_boundary_discriminator("  if (total >= 100 && ready) {").as_deref(),
         Some("total == 100")
@@ -6801,6 +6788,33 @@ fn boundary_discriminator_is_faithful_or_withheld() {
     assert_eq!(
         typescript_boundary_discriminator("  if (kind === \"ab\" && ok) {").as_deref(),
         Some("kind == \"ab\"")
+    );
+    // Through the changed-comparison selection the production path uses: the
+    // `--` edit names no discriminator (it was `arg == "`), and the compound
+    // edit names its own comparison, not the neighbouring `typeof` test.
+    let narrowed = |old: &str, new: &str| {
+        typescript_boundary_discriminator(&typescript_changed_boundary_text(
+            Path::new("src/_parser.ts"),
+            &ProbeFamily::Predicate,
+            Some(old),
+            new,
+        ))
+    };
+    assert_eq!(
+        narrowed("    if (arg === \"--\") {", "    if (arg !== \"--\") {"),
+        None
+    );
+    assert_eq!(
+        narrowed("    if (arg === \"stop\") {", "    if (arg !== \"stop\") {").as_deref(),
+        Some("arg == \"stop\"")
+    );
+    assert_eq!(
+        narrowed(
+            "    if (type === \"boolean\" && typeof value === \"string\") {",
+            "    if (type !== \"boolean\" && typeof value === \"string\") {"
+        )
+        .as_deref(),
+        Some("type == \"boolean\"")
     );
 }
 
@@ -19940,6 +19954,7 @@ mod comparison_edit_tests;
 mod custom_matcher_tests;
 mod decorated_reach_tests;
 mod default_object_member_tests;
+mod derived_operand_tests;
 mod directory_specifier_tests;
 mod dropped_term_tests;
 mod enum_member_tests;
