@@ -9069,27 +9069,20 @@ mod tests {
         if bounded_refusal_reason("  spaced out \n") != "spaced out" {
             return Err("reason was not trimmed".to_string());
         }
-        let exact = "a".repeat(REPAIR_ATTEMPT_REFUSAL_MAX_BYTES);
+        // The 4096-byte bound is pinned literally, not through the constant.
+        let exact = "a".repeat(4096);
         if bounded_refusal_reason(&exact) != exact {
             return Err("a reason at the bound was altered".to_string());
         }
-        let over = "a".repeat(REPAIR_ATTEMPT_REFUSAL_MAX_BYTES + 1);
+        let over = "a".repeat(4097);
         let cut = bounded_refusal_reason(&over);
-        if cut
-            != format!(
-                "{} [truncated]",
-                "a".repeat(REPAIR_ATTEMPT_REFUSAL_MAX_BYTES)
-            )
-        {
+        if cut != format!("{} [truncated]", "a".repeat(4096)) {
             return Err(format!("over-bound reason cut wrong: {} bytes", cut.len()));
         }
         // 'é' is two bytes; the bound lands inside the last one.
-        let multibyte = format!("{}é", "a".repeat(REPAIR_ATTEMPT_REFUSAL_MAX_BYTES - 1));
+        let multibyte = format!("{}é", "a".repeat(4095));
         let cut = bounded_refusal_reason(&multibyte);
-        let expected = format!(
-            "{} [truncated]",
-            "a".repeat(REPAIR_ATTEMPT_REFUSAL_MAX_BYTES - 1)
-        );
+        let expected = format!("{} [truncated]", "a".repeat(4095));
         if cut != expected {
             return Err(format!(
                 "multibyte cut was not on a boundary: {} bytes",
