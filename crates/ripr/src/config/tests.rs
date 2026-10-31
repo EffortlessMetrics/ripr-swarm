@@ -1045,7 +1045,7 @@ fn generated_init_config_banner_discloses_defaults_and_language_pin() -> Result<
     let generated = generated_init_config();
     for needle in [
         "every value below is a built-in",
-        "this file pins to [\"rust\"]",
+        "which starts at [\"rust\"] plus any Python or",
         "enables languages it detects from project markers",
         "deleting this file is not identical",
         "ripr config validate",
