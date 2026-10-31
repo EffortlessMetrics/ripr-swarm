@@ -295,6 +295,36 @@ If those deltas cannot be shown, the implementation must keep the cases in
 `static_limitation` and report the missing proof instead of widening the
 supported scope.
 
+#### Returned-reader retarget (#11400)
+
+When the value-flow evaluation above cannot read a changed constant, a
+changed `const` whose every same-file reader returns it is described as the
+change to those readers' return values. The diff probe for the declaration is
+replaced by one return-value probe per reader, on the reader's returned line,
+only when all of these hold:
+
+- the changed line declares a `const` (never a `static`), and the file
+  declares that name exactly once;
+- one to six production functions of the same file read the name (shadowing
+  and other-path reads are not reads), and no code outside a function reads
+  it (another constant's initializer, a compile-time `assert!`, an array
+  length); `use` imports are not reads;
+- every reader has a one-line returned value inside that reader (not a nested
+  function), none of those lines is itself changed, and the returned value
+  carries the whole constant: the bare name (or `Self::`/`self::` path),
+  optionally `.to_string()`, `.to_owned()` or `.into()`, or one `format!`
+  whose only reads are plain `{NAME}` arguments. Such a return differs
+  whenever the constant does, for the same inputs, so an exact check of it is
+  a check of the constant. A comparison (`x > LIMIT`), arithmetic, a format
+  spec or any other use can hide the change for some inputs; it keeps the
+  declaration's probe, and the value-flow evaluation above keeps deciding it.
+
+Any failure keeps the declaration's `static_unknown` probe, with no repair
+start. `ripr repair` scopes to the same returned lines by running the same
+probe pipeline over the change, so `ripr check` and `ripr repair` offer the
+same start or neither does. A returned value that a test checks exactly is
+reported as checked; a weak check gets the ordinary return-value repair.
+
 #### Associated-constant extension (selected by `shape-assoc-const-value`)
 
 The value-flow evaluation above refuses a constant declared more than once in

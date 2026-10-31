@@ -1254,6 +1254,50 @@ pub(crate) fn changed_line_ownership_for_lines(
     })
 }
 
+/// #11400: the returned expressions a changed `const` reaches, as
+/// `(file, line)`. Read from the diff probe pipeline `ripr check` runs (the
+/// probes `retarget_changed_const_readers` marks), so `ripr repair` counts
+/// exactly the code `ripr check` names as the change. Only Rust files whose
+/// added lines declare a constant are indexed; an index that does not build
+/// reads as none.
+pub(crate) fn changed_const_reader_return_lines(
+    root: &Path,
+    files: &[ChangedFile],
+    test_harnesses: &[crate::config::TestHarnessRegistration],
+) -> Vec<(PathBuf, usize)> {
+    let declaring = files
+        .iter()
+        .filter(|file| file.path.extension().is_some_and(|ext| ext == "rs"))
+        .filter(|file| {
+            file.added_lines
+                .iter()
+                .any(|line| crate::domain::declared_const_name(&line.text).is_some())
+        })
+        .collect::<Vec<_>>();
+    if declaring.is_empty() {
+        return Vec::new();
+    }
+    let paths = declaring
+        .iter()
+        .map(|file| file.path.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let Ok(index) = rust_index::build_index(root, &paths) else {
+        return Vec::new();
+    };
+    declaring
+        .into_iter()
+        .flat_map(|file| {
+            probes::probes_for_file_with_relations(root, file, &index, test_harnesses)
+                .into_iter()
+                .filter(|seeded| seeded.const_reader)
+                .map(|seeded| (file.path.clone(), seeded.probe.location.line))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
 fn sorted_owners(mut owners: Vec<ChangedLineOwner>) -> Vec<ChangedLineOwner> {
     owners.sort_by(|left, right| {
         left.file

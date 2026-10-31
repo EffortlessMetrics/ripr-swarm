@@ -8,7 +8,9 @@
 //! `static_unknown`, so nothing here can promote a verdict.
 
 use crate::analysis::extract::mask_comments_and_strings;
-use crate::analysis::facts::{FunctionSourceRole, FunctionSummary, RustIndex};
+use crate::analysis::facts::{
+    FunctionSourceRole, FunctionSummary, ProbeShapeFact, ProbeShapeKind, RustIndex,
+};
 use crate::analysis::rust_index::find_file_facts;
 use crate::domain::Probe;
 use std::path::Path;
@@ -42,6 +44,152 @@ pub(in crate::analysis) fn same_file_const_readers<'a>(
         .filter(|function| function_reads(&function.body, name))
         .take(READER_LIMIT)
         .collect()
+}
+
+/// #11400: the one-line returned expressions through which a changed `const`
+/// item reaches its readers' return values. `changed`
+/// is the changed declaration line (`pub const GREETING: &str = "hi";`).
+///
+/// The one rule the diff probe (`ripr check`) and the repair scope
+/// (`ripr repair`) both read, so they tie the same code to the change.
+/// Fail closed (empty) unless all of these hold:
+/// - the line declares a `const` (not a `static`, whose value may change at
+///   run time) whose name is declared once in the file;
+/// - the file has at most [`READER_LIMIT`] production readers
+///   ([`function_reads`]: shadows, other-path qualifiers and escaped
+///   `{{NAME}}` are not reads), at least one;
+/// - every reader has a one-line return-value shape whose own text reads the
+///   name and whose innermost function is that reader. A reader that uses the
+///   name only elsewhere (a guard, a loop bound, a nested closure) keeps the
+///   whole change unknown, so no reader is chosen over another.
+pub(in crate::analysis) fn const_reader_returns<'a>(
+    changed: &str,
+    file: &Path,
+    index: &'a RustIndex,
+) -> Vec<&'a ProbeShapeFact> {
+    let trimmed = changed.trim_start();
+    let declares_const = trimmed.starts_with("const ")
+        || trimmed
+            .strip_prefix("pub")
+            .is_some_and(|rest| rest.contains("const ") && !rest.contains("static "));
+    let Some(name) = crate::domain::declared_const_name(changed).filter(|_| declares_const) else {
+        return Vec::new();
+    };
+    let Some(facts) = find_file_facts(index, file) else {
+        return Vec::new();
+    };
+    let masked = mask_comments_and_strings(&facts.source);
+    let spans: Vec<(usize, usize)> = facts
+        .functions
+        .iter()
+        .map(|function| (function.start_line, function.end_line))
+        .collect();
+    if declaration_count(&masked, name) != 1 || item_level_read(&masked, name, &spans) {
+        return Vec::new();
+    }
+    let readers = facts
+        .functions
+        .iter()
+        .filter(|function| function.source_role == FunctionSourceRole::Production)
+        .filter(|function| function_reads(&function.body, name))
+        .collect::<Vec<_>>();
+    if readers.is_empty() || readers.len() > READER_LIMIT {
+        return Vec::new();
+    }
+    let innermost = |line: usize| {
+        facts
+            .functions
+            .iter()
+            .filter(|function| function.start_line <= line && line <= function.end_line)
+            .min_by_key(|function| function.end_line - function.start_line)
+    };
+    let mut found = Vec::new();
+    for owner in readers {
+        let before = found.len();
+        for shape in &facts.data().probe_shapes {
+            if shape.kind == ProbeShapeKind::ReturnValue
+                && shape.start_line == shape.end_line
+                && owner.start_line <= shape.start_line
+                && shape.end_line <= owner.end_line
+                && innermost(shape.start_line).is_some_and(|inner| inner.id == owner.id)
+                && returns_constant_whole(&shape.text, name)
+            {
+                found.push(shape);
+            }
+        }
+        if found.len() == before {
+            return Vec::new();
+        }
+    }
+    found
+}
+
+/// Whether code outside every function reads `name`: another constant's
+/// initializer, a compile-time `assert!`, an array length or a `static`. Such
+/// a read is not a returned value, so the change is not described through the
+/// readers. The declaration line and `use` imports are not reads.
+fn item_level_read(masked: &str, name: &str, functions: &[(usize, usize)]) -> bool {
+    masked.lines().enumerate().any(|(at, line)| {
+        let number = at + 1;
+        let trimmed = line.trim_start();
+        !functions
+            .iter()
+            .any(|&(start, end)| start <= number && number <= end)
+            && !trimmed.starts_with("use ")
+            && !trimmed.starts_with("pub use ")
+            && crate::domain::declared_const_name(line) != Some(name)
+            && code_reads(line, name)
+    })
+}
+
+/// Whether the returned expression `text` changes whenever the constant
+/// `name` does, for the same inputs: the bare name (or `Self::`/`self::`
+/// path), optionally converted with `.to_string()`, `.to_owned()` or
+/// `.into()`, or one `format!` whose only reads are plain `{NAME}` inline
+/// arguments. A comparison (`x > NAME`), arithmetic, a format spec
+/// (`{NAME:.3}`) or any other use may hide the change for some input, so it is
+/// not followed: the value-flow evaluation or the unknown answer stays.
+fn returns_constant_whole(text: &str, name: &str) -> bool {
+    let text = text
+        .trim()
+        .trim_start_matches("return ")
+        .trim_end_matches(';')
+        .trim();
+    let bare = ["", "Self::", "self::"]
+        .iter()
+        .flat_map(|prefix| {
+            ["", ".to_string()", ".to_owned()", ".into()"]
+                .map(move |suffix| format!("{prefix}{name}{suffix}"))
+        })
+        .any(|candidate| candidate == text);
+    if bare {
+        return true;
+    }
+    let Some(inner) = text
+        .strip_prefix("format!(")
+        .and_then(|rest| rest.strip_suffix(')'))
+    else {
+        return false;
+    };
+    // One string literal, then only plain arguments that are not the name.
+    let Some(literal_end) = inner
+        .strip_prefix('"')
+        .and_then(|rest| rest.find('"'))
+        .map(|end| end + 2)
+    else {
+        return false;
+    };
+    let literal = &inner[..literal_end];
+    if literal.contains('\\') {
+        return false;
+    }
+    let plain = format!("{{{name}}}");
+    let arguments = &inner[literal_end..];
+    literal.contains(&plain)
+        && !literal.replace(&plain, "").contains(&format!("{{{name}"))
+        && !literal.contains("{{")
+        && !code_reads(&mask_comments_and_strings(arguments), name)
+        && !arguments.contains(['"', '('])
 }
 
 /// Whether `body` reads the constant `name`: a bare identifier, `Self::NAME`
@@ -329,7 +477,35 @@ fn declaration_count(masked_source: &str, name: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{declaration_count, function_reads};
+    use super::{declaration_count, function_reads, returns_constant_whole};
+
+    #[test]
+    fn only_a_return_that_carries_the_whole_constant_is_followed() {
+        for text in [
+            "GREETING",
+            "Self::GREETING",
+            "GREETING.to_string()",
+            "return GREETING;",
+            "format!(\"{GREETING}, {name}\")",
+            "format!(\"{GREETING}{GREETING}\")",
+        ] {
+            assert!(returns_constant_whole(text, "GREETING"), "{text}");
+        }
+        for text in [
+            "x > GREETING",
+            "GREETING + 1",
+            "GREETING.len()",
+            "format!(\"{GREETING:.3}\")",
+            "format!(\"{}\", GREETING)",
+            "format!(\"{GREETING}\").len()",
+            "format!(\"{{GREETING}}\")",
+            "format!(\"\\\"{GREETING}\")",
+            "format!(\"{GREETING}{n}\", n = f(1))",
+            "Other::GREETING",
+        ] {
+            assert!(!returns_constant_whole(text, "GREETING"), "{text}");
+        }
+    }
 
     #[test]
     fn reads_accept_bare_self_and_inline_format_captures() {

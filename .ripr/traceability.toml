@@ -5686,6 +5686,10 @@ tests = [
   "crates/ripr/src/output/json/finding_alignment.rs::tests::opaque_report_helper_names_without_supported_lookup_signal_stay_limited",
   "crates/ripr/src/output/json/finding_alignment.rs::tests::rendered_policy_label_without_observer_is_actionable",
   "xtask/src/main.rs::tests::dogfood_finding_alignment_scenarios_have_checked_receipts",
+  "crates/ripr/tests/const_reader_repair_start.rs::weakly_checked_reader_of_a_changed_constant_starts_in_both_commands",
+  "crates/ripr/tests/const_reader_repair_start.rs::constant_the_value_evaluation_reads_keeps_its_evaluated_answer",
+  "crates/ripr/tests/const_reader_repair_start.rs::a_second_reader_without_a_returned_read_keeps_the_constant_unknown",
+  "crates/ripr/tests/const_reader_repair_start.rs",
   "crates/ripr/src/output/json/finding_alignment.rs",
   "crates/ripr/src/output/json/mod.rs",
   "xtask/src/main.rs",
@@ -5698,6 +5702,9 @@ fixtures = [
 code = [
   "crates/ripr/src/output/json/finding_alignment.rs",
   "crates/ripr/src/output/json/mod.rs",
+  "crates/ripr/src/analysis/classify/const_readers.rs",
+  "crates/ripr/src/analysis/probes/diff.rs",
+  "crates/ripr/src/app/task_first.rs",
   "xtask/src/main.rs",
 ]
 outputs = [
