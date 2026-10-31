@@ -15,6 +15,10 @@ use serde_json::Value;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+#[cfg(all(test, feature = "perl-identity"))]
+#[path = "sarif_identity_tests.rs"]
+mod identity_tests;
+
 #[derive(Clone, Debug)]
 pub(crate) struct SarifPolicyArgs {
     pub(crate) current: PathBuf,

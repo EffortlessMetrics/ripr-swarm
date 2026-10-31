@@ -4749,7 +4749,7 @@ fn diff_adding(path: &str, lines: &[usize]) -> crate::analysis::diff::ChangedFil
 
 /// The real producer's change sits on zero-based line 8; the diff adds
 /// one-based line 9. The finding moves from the owner's declaration to the
-/// changed line, and its probe id keeps the owner-based identity.
+/// changed line, and its probe id keeps the named-owner semantic identity.
 #[test]
 fn perl_finding_lands_on_the_changed_line_the_diff_confirms() -> Result<(), String> {
     let packet = real_producer_packet()?;

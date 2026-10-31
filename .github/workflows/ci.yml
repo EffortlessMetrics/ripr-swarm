@@ -126,6 +126,8 @@ jobs:
         run: cargo check -p ripr --features lang-perl
       - name: Test Perl language analysis
         run: cargo test -p ripr --features lang-perl --lib analysis::language::perl
+      - name: Test SARIF identity producer-to-policy controls
+        run: cargo test -p xtask --features perl-identity reports::sarif::identity_tests
 
       - name: Package list (release surface)
         if: contains(toJSON(inputs), '"subject_sha"') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')

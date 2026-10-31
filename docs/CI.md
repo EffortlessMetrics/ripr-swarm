@@ -963,6 +963,7 @@ only the proof unique to it, the non-default `lang-perl` feature:
 ```bash
 cargo check -p ripr --features lang-perl
 cargo test -p ripr --features lang-perl --lib analysis::language::perl
+cargo test -p xtask --features perl-identity reports::sarif::identity_tests
 ```
 
 On pushes to `main` or `master` and on pull requests labeled `release-check`
