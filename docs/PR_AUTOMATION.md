@@ -138,9 +138,11 @@ exercise both proceed and hold decisions without claiming actual CI or merge.
 Several autonomous actors can converge on the same PR from the same review
 corpus. The merge-flow one-writer rule
 ([who owns the change](MERGE_FLOW.md#who-owns-the-change)) names the owner;
-this section makes that ownership discoverable across actor boundaries.
-Racing is the dominant waste: the campaign logs record one 14-lane wave in
-which 11 lanes were raced mid-flight by another actor implementing the same
+this section makes that ownership discoverable across actor boundaries, and
+[the PR convergence runbook](agent-context/convergence-runbook.md) carries the
+matching merge mechanics and push guards. Racing is the dominant waste: the
+campaign logs — and the runbook's ownership section — record one 14-lane wave
+in which 11 lanes were raced mid-flight by another actor implementing the same
 repair. Racing also destroys candidate identity. The #10297 branch carries
 another lane's TypeScript fix (`a3baa97f53`, merged in through
 `1ad5cd8111`), and its `2d7762b549` push admits in its own commit message:
@@ -164,6 +166,8 @@ actor records its claim:
 - A claim alone does not keep ownership. Judge liveness from actual activity
   (next subsection), and record a stale-claim takeover in the claim comment
   you edit in.
+- Before every push, run the runbook's writer guard: `git ls-remote` the head
+  branch and reconcile a mismatch instead of pushing over it.
 
 ### Judging activity
 
