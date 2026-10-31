@@ -542,6 +542,61 @@ mod tests {
     }
 
     #[test]
+    fn shadow_miss_computes_without_holding_memo_lock() -> Result<(), String> {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let index = index("fn subject() {}");
+        let snapshot = snapshot(&index)?;
+        let key =
+            |name: &str| -> ShadowKey { (name.to_owned(), 1, 1, name.to_owned(), false, None) };
+        let (entered_tx, entered_rx) = mpsc::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let first_snapshot = Arc::clone(&snapshot);
+        let first = std::thread::spawn(move || {
+            first_snapshot.shadow_answer(key("first"), || {
+                // A failed send or recv only means the test already gave up.
+                let _ = entered_tx.send(());
+                let _ = release_rx.recv();
+                true
+            })
+        });
+        let entered = entered_rx.recv_timeout(Duration::from_secs(5));
+        let (done_tx, done_rx) = mpsc::channel::<bool>();
+        let second_snapshot = Arc::clone(&snapshot);
+        let second = std::thread::spawn(move || {
+            let answer = second_snapshot.shadow_answer(key("second"), || false);
+            let _ = done_tx.send(answer);
+        });
+        // A different key must finish while the first computation is blocked.
+        let while_first_blocked = if entered.is_ok() {
+            done_rx.recv_timeout(Duration::from_secs(5))
+        } else {
+            Err(mpsc::RecvTimeoutError::Timeout)
+        };
+        // Always release the first worker, including on timeout, so a
+        // lock-held regression fails instead of deadlocking the suite.
+        let _ = release_tx.send(());
+        let first_answer = first.join().map_err(|_| "first worker panicked")?;
+        second.join().map_err(|_| "second worker panicked")?;
+        entered.map_err(|e| format!("first computation never started: {e}"))?;
+        let second_answer = while_first_blocked
+            .map_err(|e| format!("a different key stalled behind the first compute: {e}"))?;
+        assert!(first_answer);
+        assert!(!second_answer);
+        // Both answers are now cached: a recompute would return the opposite.
+        assert!(snapshot.shadow_answer(key("first"), || false));
+        assert!(!snapshot.shadow_answer(key("second"), || true));
+        assert_eq!(
+            snapshot
+                .shadow_computations
+                .load(std::sync::atomic::Ordering::Relaxed),
+            2
+        );
+        Ok(())
+    }
+
+    #[test]
     fn source_snapshot_reuses_parse_and_scopes_across_threads_and_owners() -> Result<(), String> {
         let index =
             index("fn first() {} fn second() {}\n#[test] fn subject() { first(); second(); }");
