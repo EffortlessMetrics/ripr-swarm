@@ -1925,6 +1925,19 @@ impl Backend {
     }
 
     #[cfg(test)]
+    pub(super) fn set_interactive_debounce_open_for_test(&self, open: bool) {
+        self.interactive_debounce_window_open
+            .store(open, Ordering::Release);
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_pending_attempt_for_test(&self, id: Option<u64>) {
+        if let Ok(mut health) = self.analysis_health.lock() {
+            health.pending_attempt_id = id;
+        }
+    }
+
+    #[cfg(test)]
     pub(super) fn set_snapshot_run_status_for_test(&self, run_status: &str) {
         if let Ok(mut health) = self.analysis_health.lock() {
             health.snapshot_run_status = Some(run_status.to_string());
@@ -10045,7 +10058,10 @@ impl Backend {
             // The reason stays `analysis_snapshot_stale` and the packet stays
             // withheld; the added fields only tell a client whether to retry
             // or recover (#4427).
-            let (refresh_state, recovery) = health.repair_block_guidance();
+            let (refresh_state, recovery) = health.repair_block_guidance(
+                self.interactive_debounce_window_open
+                    .load(Ordering::Acquire),
+            );
             let mut sentinel = repair_packet_sentinel("analysis_snapshot_stale");
             sentinel["refresh_state"] = serde_json::json!(refresh_state);
             sentinel["attempt_state"] = serde_json::json!(health.state.as_str());

@@ -586,29 +586,50 @@ impl AnalysisHealth {
     }
 
     /// Why `allows_current_repairs` is false, as `(refresh_state, recovery)`
-    /// (#4427). `in_flight` means a refresh is queued or running and a retry
-    /// shortly should succeed; `terminal` means the latest attempt ended
-    /// without a result and the client must check status or refresh again;
-    /// `stale_snapshot` means the attempt succeeded but the retained
-    /// snapshot is absent or marked stale. Every case still fails closed.
-    pub(super) fn repair_block_guidance(&self) -> (&'static str, &'static str) {
-        match self.state {
-            AnalysisAttemptState::Queued | AnalysisAttemptState::Running => (
+    /// (#4427). `in_flight`: a refresh is queued, running, pending or inside
+    /// the interactive debounce window (`refresh_debounced`), so a retry
+    /// shortly should succeed. `no_snapshot`: nothing has been analyzed yet
+    /// (or the input was invalidated) and nothing failed. `terminal`: the
+    /// latest attempt failed, was cancelled or was superseded without a
+    /// result. `stale_snapshot`: a snapshot is retained but is not current.
+    /// Every case still fails closed.
+    pub(super) fn repair_block_guidance(
+        &self,
+        refresh_debounced: bool,
+    ) -> (&'static str, &'static str) {
+        if refresh_debounced
+            || self.pending()
+            || matches!(
+                self.state,
+                AnalysisAttemptState::Queued | AnalysisAttemptState::Running
+            )
+        {
+            return (
                 "in_flight",
                 "A refresh is in progress; retry the repair packet shortly.",
-            ),
+            );
+        }
+        if matches!(
+            self.state,
             AnalysisAttemptState::Failed
-            | AnalysisAttemptState::Cancelled
-            | AnalysisAttemptState::Superseded
-            | AnalysisAttemptState::Stopped => (
+                | AnalysisAttemptState::Cancelled
+                | AnalysisAttemptState::Superseded
+        ) {
+            return (
                 "terminal",
                 "The latest refresh did not produce a result; check ripr status and run a refresh to recover.",
-            ),
-            AnalysisAttemptState::Succeeded => (
-                "stale_snapshot",
-                "The retained snapshot is not current; run a refresh, then retry the repair packet.",
-            ),
+            );
         }
+        if self.snapshot_id.is_none() {
+            return (
+                "no_snapshot",
+                "No analysis snapshot exists yet; open or save a Rust file or run a refresh, then retry the repair packet.",
+            );
+        }
+        (
+            "stale_snapshot",
+            "The retained snapshot is not current; run a refresh, then retry the repair packet.",
+        )
     }
 }
 

@@ -20766,7 +20766,7 @@ fn execute_command_collect_repair_packet_distinguishes_in_flight_from_terminal()
             (AnalysisAttemptState::Failed, "terminal", "failed"),
             (AnalysisAttemptState::Cancelled, "terminal", "cancelled"),
             (AnalysisAttemptState::Superseded, "terminal", "superseded"),
-            (AnalysisAttemptState::Stopped, "terminal", "stopped"),
+            (AnalysisAttemptState::Stopped, "stale_snapshot", "stopped"),
         ] {
             backend.set_analysis_attempt_state_for_test(state);
             let result = backend
@@ -20785,8 +20785,69 @@ fn execute_command_collect_repair_packet_distinguishes_in_flight_from_terminal()
             assert_eq!(result["attempt_state"], attempt_state);
             let recovery = result["recovery"].as_str().unwrap_or_default();
             assert!(!recovery.is_empty(), "{attempt_state} needs guidance");
-            assert_eq!(recovery.contains("retry"), refresh_state == "in_flight");
+            assert_eq!(
+                recovery.contains("in progress"),
+                refresh_state == "in_flight"
+            );
         }
+        Ok(())
+    })
+}
+
+async fn repair_packet_sentinel_for(backend: &Backend) -> Result<serde_json::Value, String> {
+    backend
+        .execute_command(ExecuteCommandParams {
+            command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
+            arguments: vec![],
+            work_done_progress_params: Default::default(),
+        })
+        .await
+        .map_err(|err| format!("execute_command failed: {err}"))?
+        .ok_or_else(|| "expected sentinel".to_string())
+}
+
+#[test]
+fn execute_command_collect_repair_packet_guidance_covers_stale_no_snapshot_and_pending()
+-> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        // Default state: Stopped with no snapshot and nothing failed.
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        let result = repair_packet_sentinel_for(backend).await?;
+        assert_eq!(result["reason"], "analysis_snapshot_stale");
+        assert_eq!(result["refresh_state"], "no_snapshot");
+        assert_eq!(result["attempt_state"], "stopped");
+        let no_snapshot = result["recovery"].as_str().unwrap_or_default().to_string();
+        assert!(
+            no_snapshot.contains("No analysis snapshot"),
+            "{no_snapshot}"
+        );
+
+        // Succeeded but the retained snapshot is stale.
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        backend.set_snapshot_run_status_for_test("stale");
+        let result = repair_packet_sentinel_for(backend).await?;
+        assert_eq!(result["reason"], "analysis_snapshot_stale");
+        assert_eq!(result["refresh_state"], "stale_snapshot");
+        assert_eq!(result["attempt_state"], "succeeded");
+        assert_ne!(result["recovery"].as_str().unwrap_or_default(), no_snapshot);
+
+        // Succeeded with a refresh pending, or inside the debounce window.
+        backend.set_pending_attempt_for_test(Some(7));
+        let result = repair_packet_sentinel_for(backend).await?;
+        assert_eq!(result["refresh_state"], "in_flight");
+        assert_eq!(result["attempt_state"], "succeeded");
+        backend.set_pending_attempt_for_test(None);
+        backend.set_interactive_debounce_open_for_test(true);
+        let result = repair_packet_sentinel_for(backend).await?;
+        assert_eq!(result["refresh_state"], "in_flight");
+        assert_eq!(result["reason"], "analysis_snapshot_stale");
         Ok(())
     })
 }
