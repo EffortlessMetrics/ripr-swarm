@@ -3797,12 +3797,13 @@ mod tests {
                 .as_str()
                 .is_some_and(|command| command.contains("ripr reports gap-ledger"))
         );
-        assert!(summary.contains(
-            "Also missing: Gap decision ledger at `target/ripr/reports/gap-decision-ledger.json`"
-        ));
-        assert!(summary.contains("Then run: `ripr reports gap-ledger"));
-        // #3905: the third step of the chain is disclosed in the same run,
-        // after the ledger, with its conditional need and literal command.
+        // #11298: the human output carries one command; the later chain steps
+        // are named without commands, in dependency order, and the packet
+        // JSON keeps the full chain with literal commands.
+        assert!(!summary.contains("Also missing:"), "{summary}");
+        assert!(!summary.contains("Then run:"), "{summary}");
+        assert!(!summary.contains("ripr reports gap-ledger"), "{summary}");
+        assert!(!summary.contains("ripr review-comments"), "{summary}");
         assert_eq!(
             packet["selected"]["also_missing"][1]["id"],
             "review_comments"
@@ -3820,32 +3821,25 @@ mod tests {
             packet["selected"]["also_missing"].as_array().map(Vec::len),
             Some(2)
         );
-        assert!(summary.contains(
-            "Also missing: PR repair cards at `target/ripr/review/comments.json` (needed when the gap ledger names no repair start)"
-        ));
-        assert!(summary.contains("Then run: `ripr review-comments"));
-        let ledger_at = summary
-            .find("Also missing: Gap decision ledger")
+        let later_line = summary
+            .lines()
+            .find(|line| line.starts_with("Later steps"))
             .ok_or_else(|| summary.clone())?;
-        let cards_at = summary
-            .find("Also missing: PR repair cards")
-            .ok_or_else(|| summary.clone())?;
-        assert!(ledger_at < cards_at, "ledger precedes cards: {summary}");
-        // Resolve both positions: the recovery command carries a `(Bash)`
-        // label once a PowerShell variant exists, so an unlabeled `find`
-        // returns `None` and `None < Some(_)` would pass vacuously.
+        let ledger_at = later_line
+            .find("Gap decision ledger")
+            .ok_or_else(|| later_line.to_string())?;
+        let cards_at = later_line
+            .find("PR repair cards (needed when the gap ledger names no repair start)")
+            .ok_or_else(|| later_line.to_string())?;
+        assert!(ledger_at < cards_at, "ledger precedes cards: {later_line}");
         let regen_at = summary
             .find("Regeneration command (Bash):")
             .ok_or_else(|| summary.clone())?;
-        let also_missing_at = summary
-            .find("Also missing:")
-            .ok_or_else(|| summary.clone())?;
-        assert!(
-            regen_at < also_missing_at,
-            "repo exposure recovery must precede the dependent ledger: {summary}"
-        );
+        let later_at = summary.find("Later steps").ok_or_else(|| summary.clone())?;
+        assert!(regen_at < later_at, "{summary}");
         let markdown = render_start_here_markdown(&packet);
-        assert!(markdown.contains("- Also missing: Gap decision ledger"));
+        assert!(markdown.contains("- Later steps (rerun `ripr first-pr`"));
+        assert!(!markdown.contains("Also missing"), "{markdown}");
         check_blocked_packet_is_current(&repo, &options)?;
         cleanup(&repo)
     }
