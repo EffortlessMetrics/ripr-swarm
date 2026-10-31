@@ -103,9 +103,21 @@ fn free_relation_in(top: &str, tests: &str, harness: Harness) -> Result<Option<S
 }
 
 fn predicate_finding_of(source: &str, diff: &str) -> Result<Value, String> {
+    predicate_finding_in_files(source, diff, &[])
+}
+
+fn predicate_finding_in_files(
+    source: &str,
+    diff: &str,
+    extra: &[(&str, &str)],
+) -> Result<Value, String> {
     let scratch = Scratch::create()?;
     std::fs::write(scratch.0.join("Cargo.toml"), MANIFEST).map_err(|error| error.to_string())?;
     std::fs::write(scratch.0.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
+    for (name, text) in extra {
+        std::fs::write(scratch.0.join("src").join(name), text)
+            .map_err(|error| error.to_string())?;
+    }
     let diff_file = scratch.0.join("change.diff");
     std::fs::write(&diff_file, diff).map_err(|error| error.to_string())?;
     let report = check_workspace(CheckInput {
@@ -662,7 +674,10 @@ fn only_the_hop_that_calls_the_owner_may_discard_it_in_a_two_hop_chain() -> Resu
 }
 
 #[test]
-fn a_same_named_method_on_another_type_is_not_the_hop_call() -> Result<(), String> {
+fn a_same_named_method_on_another_type_is_refused_by_the_workspace_unique_callee_rule()
+-> Result<(), String> {
+    // Upstream-uniqueness pin only: the duplicate `inner` makes the callee name
+    // non-unique, so the chain never forms. It does not exercise the hop scan.
     let test = "        assert_eq!(load(10).await, true);";
     let other = "pub struct Other;\nimpl Other {\n    pub async fn inner(&self, _qty: u32) -> bool {\n        true\n    }\n}\n";
     let got = both_owner_kinds(
@@ -675,6 +690,81 @@ fn a_same_named_method_on_another_type_is_not_the_hop_call() -> Result<(), Strin
         test,
         Harness::AsyncTest,
     )?;
-    assert_both("method of another type awaited", got, "same_test_file");
+    assert_both(
+        "duplicate callee name, method awaited",
+        got,
+        "same_test_file",
+    );
+    Ok(())
+}
+
+#[test]
+fn any_glob_import_in_the_hop_file_refuses_except_in_an_unrelated_test_module() -> Result<(), String>
+{
+    let test = "        assert_eq!(load(10).await, true);";
+    let inner_in = |owner_call: &str| {
+        format!(
+            "mod a {{\n    pub async fn inner(qty: u32) -> bool {{\n        {owner_call}\n    }}\n}}\n"
+        )
+    };
+    let inherent_call = "Meter { limit: 10 }.over(qty)";
+    let free_call = "over(qty)";
+    // E1: the callee is defined in this file, the hop sits in a module with a
+    // glob import.
+    let hop_with_glob = "mod b {\n    use ext::*;\n    pub async fn load(qty: u32) -> bool {\n        inner(qty).await\n    }\n}\n";
+    let got = both_owner_kinds(
+        &format!("{}{hop_with_glob}", inner_in(inherent_call)),
+        &format!("{}{hop_with_glob}", inner_in(free_call)),
+        test,
+        Harness::AsyncTest,
+    )?;
+    assert_both("E1: glob in the hop's module", got, "same_test_file");
+    // E2: a file-level glob, the callee defined only inside `mod a`, the hop at
+    // the file root.
+    let root_hop = "pub async fn load(qty: u32) -> bool {\n    inner(qty).await\n}\n";
+    let got = both_owner_kinds(
+        &format!("use ext::*;\n{}{root_hop}", inner_in(inherent_call)),
+        &format!("use ext::*;\n{}{root_hop}", inner_in(free_call)),
+        test,
+        Harness::AsyncTest,
+    )?;
+    assert_both("E2: file-level glob", got, "same_test_file");
+    // Control: the same shapes with no glob outside the test module are
+    // credited (the harness' `mod tests { use super::*; }` is exempt).
+    let got = both_owner_kinds(
+        &format!("{}{root_hop}", inner_in(inherent_call)),
+        &format!("{}{root_hop}", inner_in(free_call)),
+        test,
+        Harness::AsyncTest,
+    )?;
+    assert_both("no glob outside the test module", got, "helper_owner_call");
+    Ok(())
+}
+
+#[test]
+fn a_test_module_glob_does_not_refuse_a_hop_whose_callee_is_in_another_file() -> Result<(), String>
+{
+    let test = "        assert_eq!(load(10).await, true);";
+    let hop = "async fn load(qty: u32) -> bool {\n    inner(qty).await\n}\nmod callee;\n";
+    let callee = |owner_call: &str| {
+        format!("use super::*;\npub async fn inner(qty: u32) -> bool {{\n    {owner_call}\n}}\n")
+    };
+    let relation = |owner: &str, diff: &str, call: &str| -> Result<Option<String>, String> {
+        let finding = predicate_finding_in_files(
+            &source_in(owner, hop, test, Harness::AsyncTest),
+            diff,
+            &[("callee.rs", &callee(call))],
+        )?;
+        Ok(relation_of(&finding, "subject").map(str::to_string))
+    };
+    let got = (
+        relation(INHERENT_OWNER, DIFF, "Meter { limit: 10 }.over(qty)")?,
+        relation(FREE_OWNER, FREE_DIFF, "over(qty)")?,
+    );
+    assert_both(
+        "in-file test glob, callee in another file",
+        got,
+        "helper_owner_call",
+    );
     Ok(())
 }

@@ -27,13 +27,20 @@
 //! declaration, and a plain `fn` whose return type names `Future` or `Pin` or
 //! whose body holds an `async` block or closure (`fn f() -> impl Future { async
 //! move { .. } }` runs its changed line only when polled). A return type behind
-//! a type alias is not seen. The hop-side shadow guard is name-based: it sees
-//! local bindings, nested `fn`s and any `use` that binds the callee's name (by
-//! final segment or `as` rename) in the hop's file, so a hop that imports its callee at all (`use ext::inner;`, `use crate::inner;`)
-//! is refused by design, as is a glob import inside the hop or anywhere in its
-//! file when the callee is defined elsewhere. It does not see imports in other
-//! files, a qualified path to an external item of the same name, or a `use`
-//! inside a `macro_rules!` body.
+//! a type alias is not seen.
+//!
+//! The hop-side shadow guard is name-based and fail closed. It refuses local
+//! bindings, nested `fn`s, any `use` that binds the callee's name (by final
+//! segment or `as` rename, so a hop that imports its callee at all, such as
+//! `use ext::inner;` or `use crate::inner;`, is refused by design) and ANY
+//! glob `use` in the hop's file. Recall cost: a hop file with a glob import,
+//! including a `use crate::*;` prelude, is not credited. A glob inside a
+//! `#[cfg(test)]` module that does not contain the hop (the in-file
+//! `mod tests { use super::*; }`) is exempt. Not detected: imports in other
+//! files, a qualified path to an external item of the same name, name binders
+//! other than `use` (a const, static, tuple-struct constructor,
+//! `extern crate .. as inner`, macro-generated items) and a `use` inside a
+//! `macro_rules!` body.
 
 use super::helper_transfer::HelperChain;
 use super::owner_pin::{OwnerPinSyntax, function_declaration_is_async};
@@ -43,7 +50,7 @@ use crate::analysis::rust_index::{FunctionSummary, RustIndex, TestSummary};
 use crate::domain::{Probe, RelationReason};
 use ra_ap_syntax::{
     AstNode, SyntaxNode,
-    ast::{self, HasName},
+    ast::{self, HasAttrs, HasName},
 };
 use std::cell::OnceCell;
 use std::collections::BTreeSet;
@@ -358,45 +365,36 @@ fn hop_call_sites(caller: &FunctionSummary, callee: &str, index: &RustIndex) -> 
     // Import identity is not preserved, so any import that may bind the
     // callee's name refuses (fail closed, by design): a `use` tree whose bound
     // name is the callee, by final segment (`use ext::inner;`, which includes
-    // the callee's own `use crate::inner;`) or by `as` rename; a glob import
-    // inside the hop (a block-scoped glob shadows the enclosing module); and a
-    // glob anywhere in the hop's file when the callee is not defined in that
-    // same file. Not seen: imports in other files, a qualified path to an
-    // external item of the same name, and a `use` inside a `macro_rules!` body.
+    // the callee's own `use crate::inner;`) or by `as` rename; and ANY glob
+    // `use` in the hop's file, wherever the callee is defined. The one
+    // exemption is a glob inside a `#[cfg(test)]` module that does not contain
+    // the hop (the in-file `mod tests { use super::*; }`), which is not in
+    // scope of the hop. Not seen: imports in other files, a qualified path to
+    // an external item of the same name, name binders other than `use` (a
+    // const, static, tuple-struct constructor, `extern crate .. as inner`,
+    // macro-generated items) and a `use` inside a `macro_rules!` body.
     let imports_may_bind_callee = index
         .source_syntax
         .get(index, &caller.file)
         .and_then(|snapshot| snapshot.tree())
         .is_none_or(|tree| {
-            let binds = |tree: &ast::UseTree| {
-                tree.use_tree_list().is_none()
-                    && tree.star_token().is_none()
-                    && match tree.rename() {
-                        Some(rename) => rename.name().is_some_and(|name| name.text() == callee),
-                        None => tree
-                            .path()
-                            .and_then(|path| path.segment())
-                            .and_then(|segment| segment.name_ref())
-                            .is_some_and(|name| name.text() == callee),
-                    }
-            };
-            let is_glob = |tree: &ast::UseTree| tree.star_token().is_some();
-            let file_trees: Vec<ast::UseTree> = tree
-                .syntax()
+            tree.syntax()
                 .descendants()
                 .filter_map(ast::UseTree::cast)
-                .collect();
-            let defined_here = tree.syntax().descendants().any(|node| {
-                ast::Fn::cast(node)
-                    .is_some_and(|item| item.name().is_some_and(|name| name.text() == callee))
-            });
-            file_trees.iter().any(binds)
-                || (!defined_here && file_trees.iter().any(is_glob))
-                || function
-                    .syntax()
-                    .descendants()
-                    .filter_map(ast::UseTree::cast)
-                    .any(|tree| is_glob(&tree))
+                .any(|use_tree| {
+                    if use_tree.star_token().is_some() {
+                        return !in_unrelated_test_module(&use_tree, function.syntax());
+                    }
+                    use_tree.use_tree_list().is_none()
+                        && match use_tree.rename() {
+                            Some(rename) => rename.name().is_some_and(|name| name.text() == callee),
+                            None => use_tree
+                                .path()
+                                .and_then(|path| path.segment())
+                                .and_then(|segment| segment.name_ref())
+                                .is_some_and(|name| name.text() == callee),
+                        }
+                })
         });
     let renamed_to_callee = imports_may_bind_callee;
     if rebinds_callee || renamed_to_callee {
@@ -405,6 +403,25 @@ fn hop_call_sites(caller: &FunctionSummary, callee: &str, index: &RustIndex) -> 
     // A synchronous caller cannot `.await`, and ripr verifies no polling
     // helper from a production body.
     scan(function.syntax(), callee, &|_| false, &mut |_| Vec::new())
+}
+
+/// A glob inside a `#[cfg(test)]` module that does not contain the hop.
+fn in_unrelated_test_module(glob: &ast::UseTree, hop: &SyntaxNode) -> bool {
+    glob.syntax()
+        .ancestors()
+        .filter_map(ast::Module::cast)
+        .any(|module| {
+            module.attrs().any(|attr| {
+                attr.syntax()
+                    .text()
+                    .to_string()
+                    .replace(' ', "")
+                    .contains("cfg(test)")
+            }) && !module
+                .syntax()
+                .text_range()
+                .contains_range(hop.text_range())
+        })
 }
 
 fn test_call_sites(
