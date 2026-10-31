@@ -425,6 +425,11 @@ const REPAIR_SEAM_CEILING: usize = 4 * crate::analysis::DEFAULT_REPO_EXPOSURE_SE
 /// raised to the exact total. The rerun is complete, not partial, so the
 /// fail-closed truncation gate below is unchanged: an explicit
 /// `RIPR_REPO_EXPOSURE_SEAM_LIMIT` or a larger repository still refuses.
+///
+/// Only the one-shot CLI resolvers call this. `load_gate_state` stays on the
+/// plain inventory because MCP status reads reach it on concurrent worker
+/// threads, which must not share the process-wide cap; there a cut inventory
+/// still withholds the start with the wider-budget recovery.
 fn inventory_for_repair(
     root: &Path,
     config: &crate::config::RiprConfig,
@@ -1332,7 +1337,7 @@ fn load_gate_state(root: &Path) -> GateState {
             ));
         }
     };
-    match inventory_for_repair(root, &config) {
+    match crate::analysis::inventory_classified_seams_at_with_config(root, &config) {
         Ok((classified, limit_info)) => GateState::Loaded {
             truncated: limit_info.as_ref().is_some_and(|info| info.is_truncated()),
             config: Box::new(config),

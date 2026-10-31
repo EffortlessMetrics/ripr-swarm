@@ -109,8 +109,8 @@ impl PilotInventoryDefault {
     /// Raises the built-in inventory cap to `cap` for the guard's lifetime, so
     /// an in-process rerun can cover a repository the product default cut. An
     /// explicit `RIPR_REPO_EXPOSURE_SEAM_LIMIT` still wins. The cap is the
-    /// same process-wide static as the pilot's, so only the one-shot CLI
-    /// repair resolvers hold it.
+    /// same process-wide static as the pilot's, so only one-shot CLI code may
+    /// hold it: concurrent holders restore out of order and strand the cap.
     pub(crate) fn widen_to(cap: usize) -> Self {
         let previous = PILOT_INVENTORY_DEFAULT.swap(cap, Ordering::Relaxed);
         Self { previous }
