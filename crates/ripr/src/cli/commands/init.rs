@@ -170,8 +170,16 @@ fn detected_preview_language_warning(root: &Path, plan: &[InitTarget]) -> Option
         return None;
     }
     let shown = output::path::human_path(root);
+    let enabled = std::iter::once("\"rust\"".to_string())
+        .chain(
+            crate::config::init_detected_preview_languages(root)
+                .iter()
+                .map(|language| format!("\"{}\"", language.as_str())),
+        )
+        .collect::<Vec<_>>()
+        .join(", ");
     Some(format!(
-        "ripr: warning: the root `{shown}` looks like a Python project, but this ripr build has no `lang-python` Cargo feature, so the generated ripr.toml keeps `languages.enabled = [\"rust\"]` and Python preview analysis stays off. Use a Python-enabled ripr build to analyze it."
+        "ripr: warning: the root `{shown}` looks like a Python project, but this ripr build has no `lang-python` Cargo feature, so the generated ripr.toml sets `languages.enabled = [{enabled}]` and Python preview analysis stays off. Use a Python-enabled ripr build to analyze it."
     ))
 }
 
@@ -1224,13 +1232,47 @@ mod tests {
         Ok(())
     }
 
-    /// No markers: the generated file is exactly the built-in default text.
+    /// No markers: the generated file is the built-in template and its
+    /// language list is still exactly `["rust"]` (a literal, so a drifting
+    /// template cannot make the comparison vacuous).
     #[test]
     fn generated_config_is_unchanged_without_markers() -> Result<(), String> {
         let root = temp_root("no-markers")?;
+        let body = generated_init_config_for_root(&root);
+        assert!(body.contains("\nenabled = [\"rust\"]\n"), "{body}");
+        let parsed = crate::config::parse_config_diagnostic(&body)
+            .map_err(|err| format!("generated config must parse: {err:?}"))?;
+        assert_eq!(parsed.languages().enabled(), [LanguageId::Rust]);
         assert_eq!(
             generated_init_config_for_root(&root),
             generated_init_config()
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
+        Ok(())
+    }
+
+    /// Python and TypeScript markers in a build with only `lang-typescript`:
+    /// the warning must describe the list actually generated.
+    #[cfg(all(not(feature = "lang-python"), feature = "lang-typescript"))]
+    #[test]
+    fn warning_describes_the_generated_list_when_only_typescript_is_available() -> Result<(), String>
+    {
+        let root = temp_root("python-ts-no-python")?;
+        write(&root.join("pyproject.toml"), "[project]\nname = \"demo\"\n")?;
+        write(&root.join("tsconfig.json"), "{}\n")?;
+        assert!(
+            generated_init_config_for_root(&root).contains("enabled = [\"rust\", \"typescript\"]")
+        );
+        let plan = vec![InitTarget {
+            path: root.join(CONFIG_FILE_NAME),
+            action: InitAction::Create,
+            body: String::new(),
+        }];
+        let warning = detected_preview_language_warning(&root, &plan)
+            .ok_or_else(|| "must warn about missing Python".to_string())?;
+        assert!(
+            warning.contains("`languages.enabled = [\"rust\", \"typescript\"]`"),
+            "{warning}"
         );
         std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
         Ok(())
