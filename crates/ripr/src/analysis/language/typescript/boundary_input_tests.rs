@@ -504,6 +504,15 @@ fn whole_side_comparisons_accept_common_line_shapes() {
         ),
         ("  ok = amount > CAP; // note: amount >= LIMIT ;", false),
         ("  ok = amount > CAP; /* amount >= LIMIT ; */", false),
+        // #11628: a plain division after the comparison does not hide it,
+        // but a regex-position `/` and a keyword-led `/` still do.
+        (
+            "  if (amount >= LIMIT) { return Math.floor(amount / 10); }",
+            true,
+        ),
+        ("  if (amount >= LIMIT) { return (amount) / 10; }", true),
+        ("  if (amount >= LIMIT) { return /LIMIT >= amount/.test(s); }", false),
+        ("  if (amount >= LIMIT) { s.replace(/amount >= LIMIT/, x); }", false),
     ] {
         let operand = if line.contains("5_000") {
             "5_000"
