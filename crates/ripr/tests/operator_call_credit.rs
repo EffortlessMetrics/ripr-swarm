@@ -1808,3 +1808,52 @@ fn standalone_add_assign_keeps_typed_operand_and_unique_impl_gates() -> Result<(
     assert!(direct_tests(&add)?.is_empty());
     Ok(())
 }
+
+#[test]
+fn capped_rows_do_not_hide_a_named_operator_call() -> Result<(), String> {
+    let common = Case {
+        label: "uncapped_named_call",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "#[cfg(test)] mod extra { use super::*; #[test] fn operator_use() { let sum = Money(1) + Money(1); assert_eq!(sum.0, 2); } }",
+        test_body: "let sum = Money::add(Money(1), Money(1)); assert_ne!(sum.0, 3);",
+        ..ADD
+    };
+    assert_eq!(classes(&common)?, [ExposureClass::WeaklyExposed]);
+    let operator = Case {
+        label: "capped_operator_only",
+        test_body: "let sum = Money(1) + Money(1);\n        assert_ne!(sum.0, 3);\n        assert_ne!(sum.0, 4);\n        assert_ne!(sum.0, 5);\n        assert_ne!(sum.0, 6);\n        assert_ne!(sum.0, 7);\n        assert_ne!(sum.0, 8);\n        assert_ne!(sum.0, 9);\n        assert_ne!(sum.0, 10);\n        assert_ne!(sum.0, 11);",
+        ..common
+    };
+    let operator_findings = findings_of(&operator)?;
+    assert_eq!(operator_findings.len(), 1);
+    assert!(
+        operator_findings[0]
+            .related_tests_matched_total
+            .is_some_and(|total| total > 8)
+    );
+    assert_eq!(operator_findings[0].related_tests.len(), 8);
+    assert_eq!(operator_findings[0].class, ExposureClass::StaticUnknown);
+    let named = Case {
+        label: "capped_named_call",
+        test_body: "let sum = Money::add(Money(1), Money(1));\n        assert_ne!(sum.0, 3);\n        assert_ne!(sum.0, 4);\n        assert_ne!(sum.0, 5);\n        assert_ne!(sum.0, 6);\n        assert_ne!(sum.0, 7);\n        assert_ne!(sum.0, 8);\n        assert_ne!(sum.0, 9);\n        assert_ne!(sum.0, 10);\n        assert_ne!(sum.0, 11);",
+        ..common
+    };
+    let named_findings = findings_of(&named)?;
+    assert_eq!(named_findings.len(), 1);
+    assert!(
+        named_findings[0]
+            .related_tests_matched_total
+            .is_some_and(|total| total > 8)
+    );
+    assert_eq!(named_findings[0].related_tests.len(), 8);
+    assert!(
+        named_findings[0]
+            .related_tests
+            .iter()
+            .any(|test| test.name == "operator_under_test"
+                && test.relation_reason == Some(RelationReason::DirectOwnerCall))
+    );
+    assert_eq!(named_findings[0].class, ExposureClass::WeaklyExposed);
+    Ok(())
+}
