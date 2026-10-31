@@ -165,3 +165,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — owner_return_pin_fallible_literal (14)
+
+Reason:
+RIPR-SPEC-0122: use generated plain wording in default human output
+
+Command:
+`cargo xtask goldens bless owner_return_pin_fallible_literal --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
