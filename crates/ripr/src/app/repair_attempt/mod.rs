@@ -1340,8 +1340,8 @@ fn recorded_workflow_path_matches(
             Ok(path) => path,
             Err(_) => return Ok(false),
         };
-        // `canonicalize` yields a verbatim (`\\?\D:\...`) path on Windows, which
-        // never equals a plain `D:\...` root. Compare canonical forms on
+        // `canonicalize` yields a verbatim-prefix path on Windows, which
+        // never equals a plain drive-letter root. Compare canonical forms on
         // both sides so only a genuinely different directory is refused.
         let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
         if canonical != canonical_root {
