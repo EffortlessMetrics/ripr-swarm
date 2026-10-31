@@ -4022,6 +4022,68 @@ mod tests {
     }
 
     #[test]
+    fn automation_guide_bless_example_passes_the_installed_reason_contract() -> Result<(), String> {
+        let _cwd_guard = crate::acquire_test_cwd_read_guard();
+        let doc = include_str!("../../../docs/PR_AUTOMATION.md");
+        let (_, section) = doc
+            .split_once("### Mutating Shape Commands\n")
+            .ok_or("automation guide lost the mutating command examples")?;
+        let section = section.split("\n### ").next().ok_or("missing section")?;
+        let examples = section
+            .lines()
+            .filter(|line| line.starts_with("cargo xtask goldens bless "))
+            .collect::<Vec<_>>();
+        if examples.len() != 1 {
+            return Err(format!(
+                "expected one golden-bless example, got {examples:?}"
+            ));
+        }
+        let reason = bless_reason_quoted_in_step4(examples[0])?;
+        if reason.contains("...") {
+            return Err("guide still documents an ellipsis bless reason".to_string());
+        }
+        if parse_reason(&["--reason".to_string(), reason.clone()]).is_ok() {
+            return Err(
+                "unfilled template reason must fail parse_reason before substitution".to_string(),
+            );
+        }
+        let resolved = reason.replace("RIPR-SPEC-NNNN", "RIPR-SPEC-0001").replace(
+            "<reviewed change>",
+            "reviewed expected output for the fixture",
+        );
+        let parsed = parse_reason(&["--reason".to_string(), resolved.clone()])?;
+        validate_bless_reason(&parsed)?;
+
+        let absent = "__automation_guide_bless_smoke_absent__";
+        if fixture_dir_for_name(absent)?.exists() {
+            return Err("smoke requires its fixture name to be absent".to_string());
+        }
+        let invoke = |reason: &str| {
+            goldens_impl(&[
+                "bless".to_string(),
+                absent.to_string(),
+                "--reason".to_string(),
+                reason.to_string(),
+            ])
+        };
+        let error = invoke(&resolved)
+            .err()
+            .ok_or("absent fixture was accepted after valid reason")?;
+        if !error.starts_with("fixture does not exist:") {
+            return Err(format!(
+                "documented reason failed before fixture lookup: {error}"
+            ));
+        }
+        for invalid in ["...", "RIPR-SPEC-9999: unknown spec control"] {
+            let error = invoke(invalid).err().ok_or("invalid reason was accepted")?;
+            if !error.contains("spec id") {
+                return Err(format!("invalid reason reached fixture lookup: {error}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn fixtures_new_printed_bless_reason_passes_the_reason_validator() -> Result<(), String> {
         // #7398: the scaffold used to print `--reason "initial scaffold"`, which
         // `validate_bless_reason` / `parse_reason` reject because they require a
