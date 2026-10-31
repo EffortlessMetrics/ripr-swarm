@@ -5115,8 +5115,12 @@ pub(crate) fn scan_body_lexical_facts(body_text: &str, identifier: &str) -> Body
 
 /// An identifier-independent event from [`walk_body_lexical`].
 pub(super) enum BodyWalkEvent<'a> {
-    /// A line-leading `const|let|var|function` declaration line.
-    /// `name_start` is the first non-blank offset after the keyword.
+    /// A `const|let|var|function` declaration at a statement position: the
+    /// start of the body or the first token after a `{`, `}` or `;`. `line`
+    /// is the remainder of the physical line from the keyword, so it may span
+    /// several statements (`const a = 1; const f = 2;`); a consumer reads only
+    /// its leading declarator. `name_start` is the first non-blank offset
+    /// after the keyword.
     DeclarationLine {
         line: &'a str,
         name_start: usize,
@@ -5129,7 +5133,8 @@ pub(super) enum BodyWalkEvent<'a> {
 
 /// The conservative lexer shared by the per-identifier scan and the
 /// per-body shadow index (#10925): one definition of comments, strings,
-/// templates, brace scopes and line-start declarations, with the identifier
+/// templates, brace scopes and statement-position declarations (after `{`, `}`
+/// or `;`, not only at a line start), with the identifier
 /// left to the visitor. `DeclarationLine` fires before `CodePosition` for the
 /// same offset. Returns the scope table (see [`BodyLexicalScan::scopes`]).
 pub(super) fn walk_body_lexical<'a>(

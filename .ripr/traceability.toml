@@ -3548,6 +3548,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/related_tests.rs::spy_binding_unicode_tests::a_non_ascii_qualifier_before_the_spy_call_does_not_split_a_char",
   "crates/ripr/src/analysis/language/typescript/related_tests.rs::same_line_shadow_tests::same_line_declarations_shadow_like_multiline_ones",
   "crates/ripr/src/analysis/language/typescript/related_tests.rs::same_line_shadow_tests::same_line_declaration_in_another_block_or_name_does_not_shadow",
+  "crates/ripr/src/analysis/language/typescript/predicate_activation_tests.rs::same_line_body_local_shadow_is_not_owner_activation",
   "crates/ripr/src/analysis/language/typescript/tests.rs::analyze_diff_scopes_extraction_partial_to_test_files_that_reach_the_diff",
   "crates/ripr/src/analysis/language/typescript/gap_reach.rs::tests::an_unrelated_gap_file_cannot_reach_the_diff",
   "crates/ripr/src/analysis/language/typescript/gap_reach.rs::tests::a_direct_or_transitive_import_of_a_changed_file_reaches",
