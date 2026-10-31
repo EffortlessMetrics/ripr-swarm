@@ -1846,36 +1846,71 @@ fn normalize_fixture_human_output_for_host(value: &str, windows: bool) -> String
     output
 }
 
-/// Fold `\` to `/` only where the human renderer prints a path: the
-/// `LEVEL path:line` header token, `root:`/`owner:` lines, the `related test
-/// path:line` token, and `ripr ...` drill-in command lines. Everything else
-/// (assertion text, before/after code, evidence prose) is source text.
+/// Fold `\` to `/` only where the human renderer prints a path: whole
+/// `root:`/`owner:` lines and `ripr ...` drill-in command lines, plus
+/// path-shaped tokens elsewhere. Everything else (assertion text,
+/// before/after code, evidence prose) is source text.
 fn fold_human_path_separators(line: &str) -> String {
     let trimmed = line.trim_start();
     if trimmed.starts_with("root:") || trimmed.starts_with("owner:") || trimmed.starts_with("ripr ")
     {
         return normalize_separators(line);
     }
-    let is_header = line.split_once(' ').is_some_and(|(level, rest)| {
-        !level.is_empty()
-            && level.chars().all(|c| c.is_ascii_uppercase())
-            && !rest.contains(' ')
-            && rest.contains(':')
-    });
-    if is_header {
-        return normalize_separators(line);
+    let mut out = String::with_capacity(line.len());
+    let mut token = String::new();
+    for c in line.chars() {
+        if c.is_whitespace() {
+            out.push_str(&fold_human_token(&token));
+            token.clear();
+            out.push(c);
+        } else {
+            token.push(c);
+        }
     }
-    if let Some(at) = line.find("related test ") {
-        let start = at + "related test ".len();
-        let end = line[start..].find(' ').map_or(line.len(), |n| start + n);
-        return format!(
-            "{}{}{}",
-            &line[..start],
-            normalize_separators(&line[start..end]),
-            &line[end..]
-        );
+    out.push_str(&fold_human_token(&token));
+    out
+}
+
+/// Fold one whitespace-delimited token when it is shaped like a path
+/// (`WARNING .\src\x.rs:5`, `Fix:`/`Related test:` targets, `- path:line`
+/// list lines, several per line) or is a `gap:<lang>:<path>:...` id.
+fn fold_human_token(token: &str) -> String {
+    if !token.contains('\\') {
+        return token.to_string();
     }
-    line.to_string()
+    if let Some(rest) = token.strip_prefix("gap:") {
+        let mut parts = rest.splitn(3, ':');
+        if let (Some(lang), Some(path), Some(tail)) = (parts.next(), parts.next(), parts.next())
+            && is_human_path_segment(path)
+        {
+            return format!("gap:{lang}:{}:{tail}", path.replace('\\', "/"));
+        }
+        return token.to_string();
+    }
+    let core = token.trim_matches(|c: char| matches!(c, '(' | ')' | ',' | ';' | '\'' | '`'));
+    let mut parts = core.split(':');
+    let path = parts.next().unwrap_or_default();
+    let numeric_rest = parts.all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+    if numeric_rest && is_human_path_segment(path) {
+        token.replacen(core, &core.replace('\\', "/"), 1)
+    } else {
+        token.to_string()
+    }
+}
+
+/// `dir\file.ext`, optionally `.\`-anchored; components are plain filename
+/// characters, so quotes, braces and escapes (`\"`, `\u{7b}`, `\n`) never match.
+fn is_human_path_segment(path: &str) -> bool {
+    let body = path.strip_prefix(".\\").unwrap_or(path);
+    let comps: Vec<&str> = body.split(['\\', '/']).collect();
+    path.contains('\\')
+        && comps.len() >= 2
+        && comps.iter().all(|c| {
+            !c.is_empty()
+                && c.chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '-'))
+        })
+        && comps.last().is_some_and(|f| f.contains('.'))
 }
 
 /// Turn Windows separators into `/` while keeping the shell's `'\''`
@@ -3371,6 +3406,37 @@ mod tests {
         assert!(win.contains("--root <cwd>/fixtures --diff d"));
         let host = normalize_fixture_human_output_for_host(human, false);
         assert!(host.contains("\\u{7b}") && host.contains("fixtures\\x"));
+    }
+
+    #[test]
+    fn human_normalizer_folds_every_path_shaped_token_but_no_source_text() {
+        let lines = [
+            ("Fix: .\\src\\x.rs:7", "Fix: ./src/x.rs:7"),
+            ("Related test: src\\x.rs:9", "Related test: src/x.rs:9"),
+            (
+                "First finding: WARNING .\\src\\x.rs:5",
+                "First finding: WARNING ./src/x.rs:5",
+            ),
+            ("- .\\src\\x.rs:5 (weak)", "- ./src/x.rs:5 (weak)"),
+            (
+                "tests src\\a.rs:1 and src\\b.rs:2 both",
+                "tests src/a.rs:1 and src/b.rs:2 both",
+            ),
+            (
+                "  Gap ID: gap:rust:src\\lib.rs:f:error_variant:x",
+                "  Gap ID: gap:rust:src/lib.rs:f:error_variant:x",
+            ),
+        ];
+        for (input, want) in lines {
+            assert_eq!(fold_human_path_separators(input), want, "{input}");
+        }
+        for source in [
+            r#"  Changed behavior: write!(f, "\u{7b}:?\u{7d}", 1)"#,
+            r#"  - source assertion argument value "read \"error\"" at line 18"#,
+            r#"  before: let s = "a\nb.rs:3";"#,
+        ] {
+            assert_eq!(fold_human_path_separators(source), source);
+        }
     }
 
     /// Unique per process and per call. Fixed names under the shared temp
