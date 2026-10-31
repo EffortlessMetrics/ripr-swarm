@@ -671,6 +671,7 @@ fn check_inner(
     // diff (`<base>...HEAD`) even when the working tree is dirty. Without it
     // or `--worktree`, a dirty tree is analyzed as a working tree.
     let mut committed_explicitly_provided = false;
+    let mut legend_requested = false;
     // #4535: the output selection that argv made, spelled as the user wrote
     // it, so a second selection that disagrees is refused by name instead of
     // silently winning.
@@ -737,6 +738,8 @@ fn check_inner(
                 scope_explicitly_provided = true;
                 worktree_explicitly_provided = true;
             }
+            // #10481: print the Evidence legend even after the first run.
+            "--legend" => legend_requested = true,
             "--committed" => {
                 // Not a scope provider: it picks how the default or explicit
                 // base is diffed, not what the base is.
@@ -1553,7 +1556,10 @@ fn check_inner(
                         input.base.clone(),
                         &config,
                     )?
-                    .with_rust_corpus_key(report.corpus_key.as_ref());
+                    .with_rust_inventory(
+                        report.corpus_key.as_ref(),
+                        &report.analyzed_production_files,
+                    );
                 analysis::cancellation::begin_cli_publication()?;
                 let stdout = std::io::stdout();
                 let mut handle = stdout.lock();
@@ -1943,26 +1949,25 @@ fn check_inner(
         }
         return Ok(());
     }
-    write_stdout_chunked(
-        &app::render_check_with_config_and_navigation_and_progress(
-            &output,
-            &format,
-            &config,
-            Some(&drill_in),
-            progress_sink,
-            provenance,
-        )
-        .map_err(|err| {
-            super::check_fanout::refuse(
-                super::check_fanout::refusal_destination(
-                    fanout_custody.as_ref(),
-                    output_dir.as_deref(),
-                ),
-                &envelope_input,
-                effective_format,
-                err,
-            )
-        })?,
+    // #10481: the ten-line Evidence legend explains the digest to a first-time
+    // reader; later runs keep one pointer line. "Seen" is a marker beside the
+    // reports, so a clean build tree sees the legend again.
+    let legend_marker = matches!(format, OutputFormat::Human)
+        .then(|| human_legend_marker(&limited_check_input.root))
+        .flatten();
+    let legend_seen = legend_marker
+        .as_ref()
+        .is_some_and(|marker| marker.is_file());
+    if legend_seen && !legend_requested {
+        config.reports.human_legend = crate::config::HumanLegend::Pointer;
+    }
+    let rendered = app::render_check_with_config_and_navigation_and_progress(
+        &output,
+        &format,
+        &config,
+        Some(&drill_in),
+        progress_sink,
+        provenance,
     )
     .map_err(|err| {
         super::check_fanout::refuse(
@@ -1975,6 +1980,28 @@ fn check_inner(
             err,
         )
     })?;
+    write_stdout_chunked(&rendered).map_err(|err| {
+        super::check_fanout::refuse(
+            super::check_fanout::refusal_destination(
+                fanout_custody.as_ref(),
+                output_dir.as_deref(),
+            ),
+            &envelope_input,
+            effective_format,
+            err,
+        )
+    })?;
+    // Record only a legend that was actually printed: a root whose name echoes
+    // a legend line must not count, so match the renderer's whole block.
+    // An explicit `--legend` is a lookup, not a first run: it must not write
+    // state, which also keeps pinned fixture workspaces free of `target/`.
+    if !legend_seen
+        && !legend_requested
+        && rendered.contains(crate::output::human::HUMAN_EVIDENCE_LEGEND)
+        && let Some(marker) = legend_marker.as_ref()
+    {
+        record_human_legend_seen(&limited_check_input.root, marker);
+    }
     // The producer's unsupported result is already on stdout. Keep that
     // report, including retained findings and coverage identity; appending a
     // refusal here would corrupt machine output. Genuine partial reports
@@ -1986,6 +2013,21 @@ fn check_inner(
         sink.commit_success();
     }
     Ok(())
+}
+
+/// Where `check` records that the Evidence legend was shown. `None` when the
+/// workspace output tree is not safe to write (a link resolving outside it).
+fn human_legend_marker(root: &Path) -> Option<PathBuf> {
+    crate::atomic_file::ensure_report_output_contained(root).ok()?;
+    Some(root.join("target/ripr/legend-seen"))
+}
+
+/// Best effort: a read-only tree just shows the legend again.
+fn record_human_legend_seen(root: &Path, marker: &Path) {
+    if crate::atomic_file::ensure_report_output_contained(root).is_err() {
+        return;
+    }
+    let _ = crate::atomic_file::write(marker, b"1\n", "legend marker");
 }
 
 /// The stderr warning for an empty default-base result when the default base

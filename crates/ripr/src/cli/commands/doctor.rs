@@ -306,8 +306,9 @@ fn detected_language_entries(
             language: id.as_str().to_string(),
             status: language_status(*id),
             adapter_available: id.is_available(),
-            // JavaScript has no config entry of its own: the `typescript`
-            // entry analyzes it, so enablement is read through the same
+            // JavaScript is analyzed by the `typescript` entry (and
+            // `javascript` is accepted as its alias), so enablement is read
+            // through the same
             // mapping the gaps path uses. `None` (no loaded configuration)
             // stays unknown rather than reading as disabled.
             enabled: enabled.map(|list| list.contains(&config_entry(*id))),
@@ -493,6 +494,16 @@ fn tool_probe_renderer_fix(evidence: &str) -> Option<&'static str> {
     })
 }
 
+/// The shared reason of a skipped Rust check whose root is not a Rust
+/// project (`<tool> check skipped: Rust not detected ...` or `Rust is not
+/// enabled ...`), so the printer can say it once. Other skip reasons (an
+/// unusable root) keep their per-check lines.
+fn rust_scope_skip_reason(evidence: &str) -> Option<&str> {
+    let (_, reason) = evidence.split_once(" check skipped: ")?;
+    (reason.starts_with("Rust not detected") || reason.starts_with("Rust is not enabled"))
+        .then_some(reason)
+}
+
 /// Plain wording for the analysis-profile cargo/rustc notes on the compact
 /// screen (#10696). The JSON evidence keeps the producer string; this only
 /// rewrites the two known `<state>; <effect>; project verification ...`
@@ -534,6 +545,11 @@ fn runtime_failure_block(probe: &output::doctor::DoctorRuntimeProbe) -> Vec<Stri
 
 fn primary_runtime_probe(probe: &output::doctor::DoctorRuntimeProbe) -> bool {
     primary_runtime(&probe.language).is_some_and(|(tool, _)| tool == probe.tool)
+}
+
+/// The pytest probe, which only exists when Python is in scope.
+fn pytest_runtime_probe(probe: &output::doctor::DoctorRuntimeProbe) -> bool {
+    probe.language == "python" && probe.tool == "pytest"
 }
 
 fn join_compact(label: &str, parts: &[String]) -> Option<String> {
@@ -664,6 +680,9 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
     // and SPEC-0007 still name by their evidence text.
     let mut workspace = Vec::new();
     let mut toolchains = Vec::new();
+    // One line for the Rust checks a non-Rust root skips (Cargo.toml, cargo,
+    // rustc, ...), instead of one near-identical line per check.
+    let mut rust_skip_emitted = false;
     for name in ["root_directory", "cargo_toml", "git_repository"] {
         if let Some(check) = check_named(report, name) {
             match check.status {
@@ -673,10 +692,15 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
                     ));
                 }
                 output::doctor::DoctorCheckStatus::Skipped => {
-                    lines.push(format!(
-                        "- {}",
-                        display_text(check.evidence.as_deref().unwrap_or(check.name.as_str()))
-                    ));
+                    let evidence = check.evidence.as_deref().unwrap_or(check.name.as_str());
+                    if let Some(reason) = rust_scope_skip_reason(evidence) {
+                        if !rust_skip_emitted {
+                            rust_skip_emitted = true;
+                            lines.push(format!("- Rust checks skipped: {}", display_text(reason)));
+                        }
+                    } else {
+                        lines.push(format!("- {}", display_text(evidence)));
+                    }
                 }
                 _ => {}
             }
@@ -726,6 +750,16 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
                 }
                 output::doctor::DoctorCheckStatus::Skipped
                 | output::doctor::DoctorCheckStatus::Advisory => {
+                    if check.status == output::doctor::DoctorCheckStatus::Skipped
+                        && let Some(reason) =
+                            check.evidence.as_deref().and_then(rust_scope_skip_reason)
+                    {
+                        if !rust_skip_emitted {
+                            rust_skip_emitted = true;
+                            lines.push(format!("- Rust checks skipped: {}", display_text(reason)));
+                        }
+                        continue;
+                    }
                     lines.push(format!(
                         "{} {}",
                         if check.status == output::doctor::DoctorCheckStatus::Advisory {
@@ -833,10 +867,12 @@ Point RIPR_CACHE_DIR at a writable directory.",
         }
         // Compact keeps enabled primary runtimes visible so source-build
         // still reports them as advisory (RIPR-SPEC-0007). Optional extras
-        // (pnpm, pytest, …) stay behind `-v`.
+        // (pnpm, …) stay behind `-v`; pytest is the Python verify command, so
+        // its found/missing state stays visible whenever it is probed.
         if verbose
             || (probe.required && probe.status == output::doctor::DoctorStatus::Pass)
             || primary_runtime_probe(probe)
+            || pytest_runtime_probe(probe)
         {
             lines.push(language_runtime_probe_display_line(probe));
         }
@@ -1254,7 +1290,7 @@ fn shallow_has_file(root: &Path, name: &str) -> bool {
 /// Detect which languages have concrete file markers in this workspace.
 /// Returns detected `LanguageId`s in a stable order (Rust first, then
 /// TypeScript, JavaScript, Python, Perl).
-fn detect_languages(root: &Path) -> Vec<LanguageId> {
+pub(crate) fn detect_languages(root: &Path) -> Vec<LanguageId> {
     let mut found = Vec::new();
 
     // Rust: Cargo.toml at root OR .rs files in root/src (shared with the
@@ -1621,10 +1657,10 @@ fn preview_languages_to_enable(
     detected: &[LanguageId],
     config: &Result<RiprConfig, String>,
 ) -> Option<PreviewEnablement> {
-    // JavaScript is analyzed by the TypeScript adapter and has no config
-    // entry of its own (`parse_languages_enabled` accepts only `typescript`),
-    // so a detected JavaScript source maps to the `typescript` entry. Using
-    // the scanner id would print `"javascript"`, which config loading rejects.
+    // JavaScript is analyzed by the TypeScript adapter, so a detected
+    // JavaScript source maps to the `typescript` entry. The tip prints the
+    // canonical `typescript` name even though `javascript` is also accepted
+    // as an alias, so one spelling owns the suggestion.
     let mut preview_detected: Vec<LanguageId> = Vec::new();
     for id in detected
         .iter()
@@ -3695,6 +3731,42 @@ mod tests {
     use super::super::tests::{args, unique_command_test_dir};
     use super::*;
 
+    #[test]
+    fn rust_scope_skip_reason_matches_only_non_rust_scope_reasons() {
+        let reason =
+            "Rust not detected at this root (no Cargo.toml or .rs files); in scope: python";
+        assert_eq!(
+            rust_scope_skip_reason(&format!("cargo check skipped: {reason}")),
+            Some(reason)
+        );
+        assert_eq!(
+            rust_scope_skip_reason("Cargo.toml check skipped: Rust is not enabled in [languages]"),
+            Some("Rust is not enabled in [languages]")
+        );
+        // An unusable root keeps its per-check lines.
+        assert_eq!(
+            rust_scope_skip_reason("cargo check skipped: the root directory does not exist"),
+            None
+        );
+        assert_eq!(rust_scope_skip_reason("git version 2.43.0"), None);
+    }
+
+    #[test]
+    fn pytest_probe_is_visible_on_the_compact_screen() {
+        let probe = |language: &str, tool: &str| output::doctor::DoctorRuntimeProbe {
+            language: language.to_string(),
+            tool: tool.to_string(),
+            status: output::doctor::DoctorStatus::Pass,
+            evidence: "pytest 9.1.1".to_string(),
+            required: false,
+            hint: String::new(),
+            elapsed_ms: None,
+        };
+        assert!(pytest_runtime_probe(&probe("python", "pytest")));
+        assert!(!pytest_runtime_probe(&probe("python", "python3")));
+        assert!(!pytest_runtime_probe(&probe("typescript", "pnpm")));
+    }
+
     fn quiet_binary() -> output::doctor_binary::DoctorBinaryIdentity {
         output::doctor_binary::DoctorBinaryIdentity {
             version: "ripr 0.11.0".to_string(),
@@ -3803,6 +3875,25 @@ mod tests {
             verbose,
             passed,
         })
+    }
+
+    #[test]
+    fn header_keeps_the_build_msrv_off_the_first_screen() {
+        // #11114 / #10696: ripr's own build MSRV stays in the JSON report; the
+        // header line beside the analyzed root must not read as the
+        // workspace's MSRV.
+        let report = passing_report();
+        let environment = empty_environment();
+        let lines = render_screen(&report, &environment, false, true);
+        assert_eq!(
+            lines.get(1).map(String::as_str),
+            Some("Root: ."),
+            "{lines:?}"
+        );
+        assert!(
+            !lines.iter().take(3).any(|line| line.contains("MSRV")),
+            "{lines:?}"
+        );
     }
 
     #[test]

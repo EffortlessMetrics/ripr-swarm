@@ -45,13 +45,15 @@ pub(crate) use classification::{
     LIMITATION_HELPER_BOUNDARY_PREFIX, LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX,
     LIMITATION_NON_CLAIM_PREFIX, NO_STATIC_PATH_NEXT_STEP, TRANSITIVE_REACH_WITNESS_PREFIX,
 };
-pub(crate) use command_spec::command_tokens;
 pub use command_spec::{
     CancellationPolicy, CommandAuthorityBoundary, CommandCostClass, CommandExecutionMode,
     CommandPlatform, CommandRole, CommandSpec, CommandSpecValidationError, EnvironmentAssignment,
     EnvironmentPolicy, ExpectedResultParser, NetworkPolicy, StdinPolicy,
     actionable_verify_source_is_supported,
     verify_command_is_unbounded_repo_exposure_snapshot_compare,
+};
+pub(crate) use command_spec::{
+    command_tokens, python_pytest_verify_display, python_unittest_verify_display,
 };
 pub use confidence_basis::ConfidenceCap;
 pub(crate) use confidence_basis::{
@@ -61,7 +63,9 @@ pub use diagnostic_witness::{
     DiagnosticConfidence, DiagnosticFixSite, DiagnosticSourceLocation, DiagnosticWitness,
     DiagnosticWitnessLimitation,
 };
-pub(crate) use diagnostic_witness::{perl_suggested_related_test, python_suggested_related_test};
+pub(crate) use diagnostic_witness::{
+    contract_confidence, perl_suggested_related_test, python_suggested_related_test,
+};
 pub(crate) use evidence::BOUNDARY_INPUT_OBSERVED_SUMMARY;
 pub(crate) use evidence::indefinite_article;
 pub use evidence::{

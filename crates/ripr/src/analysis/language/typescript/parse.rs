@@ -336,6 +336,8 @@ where
         .name("ripr-ts-oxc-parse".to_string())
         .stack_size(PARSE_WORKER_STACK_BYTES)
         .spawn(move || {
+            #[cfg(test)]
+            injected_worker_panic::fire(&owned_file);
             let allocator = Allocator::default();
             analyze(&owned_file, &owned_source, &allocator)
         });
@@ -344,6 +346,57 @@ where
             .join()
             .map_err(|_join_error| PARSE_WORKER_FAILED.to_string()),
         Err(err) => Err(format!("{PARSE_WORKER_UNAVAILABLE}: {err}")),
+    }
+}
+
+/// Test-only fault injection (#11132): a panic on the parse worker for an
+/// armed file path, raised before the caller's analysis closure runs, so a
+/// test drives the production join-and-disclose path with the same thread
+/// death an oxc or AST-consumer panic produces. Keyed by path so concurrent
+/// tests never observe each other's arming.
+#[cfg(test)]
+pub(crate) mod injected_worker_panic {
+    use std::collections::BTreeMap;
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+
+    /// Armed path -> number of parses of that path allowed to succeed first.
+    static ARMED: Mutex<BTreeMap<PathBuf, usize>> = Mutex::new(BTreeMap::new());
+
+    /// Disarms the path when dropped.
+    pub(crate) struct Armed(PathBuf);
+
+    impl Drop for Armed {
+        fn drop(&mut self) {
+            if let Ok(mut armed) = ARMED.lock() {
+                armed.remove(&self.0);
+            }
+        }
+    }
+
+    /// Panic on the worker for every parse of `path` after `allow` successes.
+    pub(crate) fn arm(path: &Path, allow: usize) -> Armed {
+        if let Ok(mut armed) = ARMED.lock() {
+            armed.insert(path.to_path_buf(), allow);
+        }
+        Armed(path.to_path_buf())
+    }
+
+    pub(super) fn fire(path: &Path) {
+        let due = match ARMED.lock() {
+            Ok(mut armed) => match armed.get_mut(path) {
+                Some(0) => true,
+                Some(remaining) => {
+                    *remaining -= 1;
+                    false
+                }
+                None => false,
+            },
+            Err(_) => false,
+        };
+        if due {
+            std::panic::resume_unwind(Box::new("injected TypeScript parse worker panic (#11132)"));
+        }
     }
 }
 

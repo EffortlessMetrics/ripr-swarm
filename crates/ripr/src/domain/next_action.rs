@@ -154,7 +154,7 @@ impl NextActionClass {
 
 /// The exact diff-source mode the producer analyzed. The mode is always
 /// bound; base/head identities ride along when the producer binds them.
-/// [`select_canonical_next_action`] copies the mode verbatim and never
+/// `select_canonical_next_action` copies the mode verbatim and never
 /// substitutes one mode for another (control 3).
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -498,8 +498,8 @@ pub(crate) struct NextActionInput<'a> {
 }
 
 /// The one canonical next action for the bound state. Fields are private so
-/// the selection law is structural: [`select_canonical_next_action`] and
-/// [`Self::new`] are the only constructors, and renderers cannot strengthen
+/// the selection law is structural: `select_canonical_next_action` and
+/// `Self::new` are the only constructors, and renderers cannot strengthen
 /// a non-executable state by rebuilding one.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CanonicalNextActionV1 {

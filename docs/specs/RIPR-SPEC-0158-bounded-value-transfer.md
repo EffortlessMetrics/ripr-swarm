@@ -70,8 +70,10 @@ exercised boundary from a missing one.
   precedence and parentheses, failing closed on a leading sign,
   overflow, underflow, division by zero, or an operand or result at or
   above `i32::MAX`),
-  `split_whitespace().count()` and
-  `chars().count()` are credit-only families (#9637): a chain that
+  `split_whitespace().count()`, `chars().count()` and the text normalizers
+  `trim`/`trim_start`/`trim_end`/`to_lowercase`/`to_uppercase` (#10838, so a
+  trimmed local resolves to the value an equality compares) are credit-only
+  families (#9637): a chain that
   uses one may close a boundary through an observed equality row but
   never names a missing input, so no row on the boundary leaves the
   stage unknown. A comparison operand that is itself such a chain over

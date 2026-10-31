@@ -87,7 +87,15 @@ Swarm now owns a typed package-qualification receipt and aggregate gate
 (`cargo xtask package-qualification-gate --receipt <path>`; #4630). That
 command parses one versioned DTO and fails closed on missing, zero-subject,
 stale, mismatched, or substituted required rows. It does not install a
-wheel or npm package, open a workflow, or publish.
+wheel or npm package, open a workflow, or publish. Receipt schema 1.0 carries
+one package channel and one payload target. A required row for a different
+channel or target fails;
+therefore a declared matrix spanning multiple targets cannot pass this schema.
+Multi-target qualification needs a receipt that binds each target's own payload.
+The gate's required-row `disposition` is `passed`, `missing`, `zero_subject`,
+`channel_mismatch` for a passed row whose channel differs from the package,
+`target_mismatch` for a passed row whose channel matches but target differs, or
+the non-passing row status (`failed`, `not_run`, or `unsupported_by_contract`).
 Source PRs
 [`ripr#1783`](https://github.com/EffortlessMetrics/ripr/pull/1783) and
 [`ripr#1785`](https://github.com/EffortlessMetrics/ripr/pull/1785) establish the
