@@ -35,7 +35,10 @@ pub(crate) fn table_row_assertions(
     let Expression::CallExpression(each_call) = &call.callee else {
         return None;
     };
-    let rows = literal_table_rows(each_call, source)?;
+    let Some(rows) = literal_table_rows(each_call, source) else {
+        // Object rows (`{ input, out }`) read through `row.key` (#11196).
+        return object_each_assertions(each_call, callback, source, bindings);
+    };
     callback_case_assertions(callback, &rows, source, bindings, true)
 }
 
@@ -199,6 +202,8 @@ pub(crate) fn substitute_row(body: &str, params: &[String], row: &[String]) -> O
     let bytes = body.as_bytes();
     let mut out = String::with_capacity(body.len());
     let mut brackets: Vec<u8> = Vec::new();
+    let mut opens: Vec<usize> = Vec::new();
+    let mut container_seen: Vec<usize> = Vec::new();
     let mut idx = 0;
     let mut copied = 0;
     while idx < bytes.len() {
@@ -213,10 +218,12 @@ pub(crate) fn substitute_row(body: &str, params: &[String], row: &[String]) -> O
             b'"' | b'\'' | b'`' => idx = skip_quoted(bytes, idx)?,
             b'(' | b'[' | b'{' => {
                 brackets.push(byte);
+                opens.push(idx);
                 idx += 1;
             }
             b')' | b']' | b'}' => {
                 brackets.pop();
+                opens.pop();
                 idx += 1;
             }
             _ if is_identifier_start(byte) => {
@@ -230,11 +237,30 @@ pub(crate) fn substitute_row(body: &str, params: &[String], row: &[String]) -> O
                     return None;
                 }
                 if let Some(position) = params.iter().position(|param| param == token) {
-                    if !plain_read(body, idx, end, brackets.last().copied()) {
+                    let cell = row.get(position)?;
+                    // A container cell is read only as a bare value
+                    // (argument or element), never through a further
+                    // member that could mutate the shared row.
+                    let container = cell.starts_with(['[', '{']);
+                    // (see `container_read_is_direct`: one direct read only)
+                    if !plain_read_with(body, idx, end, brackets.last().copied(), container)
+                        || (container
+                            && (container_seen.contains(&position)
+                                || !super::object_rows::single_expect_statement(body)
+                                || !super::object_rows::container_read_is_direct(
+                                    body,
+                                    idx,
+                                    end,
+                                    opens.last().copied(),
+                                )))
+                    {
                         return None;
                     }
+                    if container {
+                        container_seen.push(position);
+                    }
                     out.push_str(&body[copied..idx]);
-                    out.push_str(row.get(position)?);
+                    out.push_str(cell);
                     copied = end;
                 }
                 idx = end;
@@ -254,7 +280,7 @@ pub(crate) fn substitute_row(body: &str, params: &[String], row: &[String]) -> O
 
 /// The offset after a quoted string or a substitution-free template that
 /// starts at `start`; `None` for an unterminated one or a `${` substitution.
-fn skip_quoted(bytes: &[u8], start: usize) -> Option<usize> {
+pub(crate) fn skip_quoted(bytes: &[u8], start: usize) -> Option<usize> {
     let quote = bytes[start];
     let mut idx = start + 1;
     while idx < bytes.len() {
@@ -272,12 +298,24 @@ fn skip_quoted(bytes: &[u8], start: usize) -> Option<usize> {
 /// A parameter occurrence at `start..end` is a plain read: inside `(` or
 /// `[`, not a member name, not an object key, not assigned, not an arrow
 /// parameter and not a declaration.
-fn plain_read(body: &str, start: usize, end: usize, innermost: Option<u8>) -> bool {
+/// Optionally accepting a spread (`f(...cell)`): only a container cell,
+/// whose spread reads the same elements as the literal.
+pub(crate) fn plain_read_with(
+    body: &str,
+    start: usize,
+    end: usize,
+    innermost: Option<u8>,
+    allow_spread: bool,
+) -> bool {
     if !matches!(innermost, Some(b'(' | b'[')) {
         return false;
     }
     let before = body[..start].trim_end();
-    if before.ends_with('.') || before.ends_with("...") {
+    if before.ends_with("...") {
+        if !allow_spread {
+            return false;
+        }
+    } else if before.ends_with('.') {
         return false;
     }
     let previous_word = before
