@@ -1,4 +1,5 @@
 mod json_construction;
+mod module_local_glob;
 mod retention_parity;
 #[test]
 fn module_shadow_exempts_only_the_owners_nearest_module() -> Result<(), String> {
@@ -8012,6 +8013,7 @@ fn binding_refusal(kind: Option<MacroBindingKind>) -> AssertionRefusal {
                     kind,
                     scope: None,
                     crate_local: false,
+                    module_local: false,
                 },
             )
         }),
@@ -13032,6 +13034,50 @@ fn comparison_macro_imports_must_name_the_macro_as_a_direct_item_of_its_crate() 
     assert!(!imported("use float_cmp::approx_eq::other;\n"));
     assert!(!imported("use float_cmp::{inner::approx_eq};\n"));
     assert!(!imported("use float_cmp::{inner::{x, approx_eq, y}};\n"));
+}
+
+#[test]
+fn matches_admission_preserves_source_assertion_cardinality() {
+    for attributes in [
+        "",
+        "#[ignore]",
+        "#[ignore = \"slow\"]",
+        "#[should_panic]",
+        "#[should_panic(expected = \"oracle mismatch\")]",
+    ] {
+        let source = format!(
+            "enum Fault {{ Bad, Other }}\nfn parse(_: &str) -> Result<(), Fault> {{ Err(Fault::Bad) }}\n#[test]\n{attributes}\nfn parse_checks_bad() {{ assert!(matches!(parse(\"bad\"), Err(Fault::Other)), \"oracle mismatch\"); }}\n"
+        );
+        let index = index(&[(LIB, &source)]);
+        assert_eq!(index.tests().len(), 1, "{attributes}");
+        let test = index.tests().at(0);
+        assert_eq!(test.assertions.len(), 1, "{attributes}");
+        assert!(test.assertions[0].text.starts_with("assert!(matches!"));
+        let qualified = source.replace("assert!(matches!", "std::assert!(std::matches!");
+        let qualified_index = index_for_assertion_cardinality(&qualified);
+        assert_eq!(qualified_index, 1, "{attributes}");
+        let fallback = source.replace("; }", "; panic!(\"fallback\"); }");
+        assert_eq!(
+            index_for_assertion_cardinality(&fallback),
+            1,
+            "{attributes}"
+        );
+        let duplicate = source.replace(
+            "; }",
+            "; assert!(matches!(parse(\"bad\"), Err(Fault::Other))); }",
+        );
+        assert_eq!(
+            index_for_assertion_cardinality(&duplicate),
+            2,
+            "{attributes}"
+        );
+    }
+}
+
+fn index_for_assertion_cardinality(source: &str) -> usize {
+    let indexed = index(&[(LIB, source)]);
+    assert_eq!(indexed.tests().len(), 1);
+    indexed.tests().at(0).assertions.len()
 }
 
 /// The memoized rename answer must equal the direct scan for every spelling,

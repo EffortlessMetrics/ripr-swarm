@@ -108,8 +108,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
-      "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "recommended_next_step": "Add a test that calls the changed code with an input that selects the arm `Kind::Beta =>` and asserts its result.",
+      "suggested_next_action": "Add a test that calls the changed code with an input that selects the arm `Kind::Beta =>` and asserts its result.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }
