@@ -27,6 +27,7 @@ pub(super) struct McpServer {
     resource_templates: ListResourceTemplatesResult,
     status: WorkspaceStatus,
     profile: workspace::SessionProfile,
+    text_mode: protocol::TextContentMode,
     analysis_root: Option<PathBuf>,
     root_identity: Option<String>,
     session: Arc<Mutex<workspace::WorkspaceSession>>,
@@ -51,6 +52,7 @@ impl McpServer {
             resources: typed(protocol::resources_list_result())?,
             resource_templates: typed(protocol::resource_templates_list_result())?,
             profile,
+            text_mode: protocol::TextContentMode::from_env(),
             root_identity: status.root.identity.clone(),
             analysis_root,
             status,
@@ -82,6 +84,7 @@ impl McpServer {
             super::MAX_MESSAGE_BYTES,
             super::MAX_RESPONSE_BYTES,
             max_envelope_bytes,
+            self.text_mode,
         ) {
             Ok(envelope) => envelope,
             // The envelope builder fails closed when the structured
@@ -529,17 +532,18 @@ impl McpServer {
         recovery: &str,
         max_envelope_bytes: usize,
     ) -> Result<CallToolResponse, ErrorData> {
-        let envelope = match protocol::tool_result(document, max_envelope_bytes) {
-            Ok(envelope) => envelope,
-            Err(detail) => {
-                let failure = workspace::AttemptFailure::new(
-                    workspace::CODE_RESULT_TOO_LARGE,
-                    format!("{serialize_context}: {detail}"),
-                    recovery,
-                );
-                return self.typed_failure(failure, failure_version);
-            }
-        };
+        let envelope =
+            match protocol::tool_result_with(document, max_envelope_bytes, self.text_mode) {
+                Ok(envelope) => envelope,
+                Err(detail) => {
+                    let failure = workspace::AttemptFailure::new(
+                        workspace::CODE_RESULT_TOO_LARGE,
+                        format!("{serialize_context}: {detail}"),
+                        recovery,
+                    );
+                    return self.typed_failure(failure, failure_version);
+                }
+            };
         self.bounded_tool_envelope(
             envelope,
             failure_version,
@@ -551,7 +555,7 @@ impl McpServer {
 
     /// The shared response bound for an already-built tool envelope, used
     /// by tools whose envelope comes from the protocol layer instead of
-    /// [`tool_result`](protocol::tool_result). The budget is the caller's
+    /// [`tool_result_with`](protocol::tool_result_with). The budget is the caller's
     /// id-aware envelope budget (#7768), so the final re-measurement after
     /// a wrapper added text (the status recovery sentence) still cannot
     /// pass an envelope the wire would have to replace.

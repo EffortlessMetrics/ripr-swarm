@@ -212,6 +212,11 @@ The `Summary terms` lines define the words the `Summary:` count line prints
 no test path) in the same static vocabulary (#9244 item 4); its last lines also define
 `found`, `suppressed by your settings`, the `unclear` bucket, `base-side`
 and the Counts line's `candidate line` (#9244 item 4 leftovers, #10691). They claim no runtime mutation outcome.
+The CLI prints the legend on the first standalone human run in a build tree that
+selects a digest (a `--output-dir` fanout member always carries it and does not
+count) and records that in `target/ripr/legend-seen`; later runs replace the ten lines with one
+`Terms: ` pointer to `--legend`, which prints them again. Library
+callers and an unwritable output tree always get the full legend (#10481).
 No legend renders when there is no selected digest (empty, all-suppressed,
 base-side-only, or unresolved-currentness-only findings). The legend adds a fixed
 ten lines; it does not expand the per-stage detail window. Full human and
@@ -377,9 +382,26 @@ finding. Two equally near seams of that kind whose source spans do not nest
 the stub is placed inline (integration-file placement needs classified
 evidence and stays with `--seam-id`). The block is printed only when the
 resolver produces a stub. When it refuses, the block is replaced by one line,
-`No test stub here: <reason>`, naming the producer's refusal. When the
-function has no seam of that kind, or the location is refused as ambiguous,
-nothing is printed. The resolver reads the files on disk, so a check
+`No test stub here: <reason>`, naming the producer's refusal. When that
+finding also prints no repair start, one further line follows (#10710):
+`Write this test by hand: <what to call and assert>. ripr has no repair
+route for this kind of change yet, ...`, so a gap with neither route never ends
+without a named next step; beside a repair advisory that names its own route or
+recovery (several binding seams, a not-ready packet, the seam budget, a
+classification failure, an unavailable gap route, an unreadable config, or no
+binding seam while the file holds seams, which points at `ripr pilot`) the
+step omits the "no repair route" clause. A refusal that already names the existing test to
+strengthen (the weak-assertion pointer) gets no such line. When several seams
+share the line and exactly one is the finding's changed expression, the block
+prints the stub command for that seam (`--seam-id`) instead of listing the
+others, so every printed `ripr agent stub` command produces a stub. When the
+function has no seam of that kind, nothing is printed. When the location is
+ambiguous and ripr cannot narrow it to a validated stub (more than eight seams
+to check, an inventory that cannot be classified, or a seam missing from it),
+the block prints `No test stub here:` with a plain reason that lists no seam ID
+and no command. A seam that is not a reported gap is worded as a stub target
+that is not a gap in the seam view, with a pointer to strengthen the existing
+test, and gets no hand-written step. The resolver reads the files on disk, so a check
 that analyzed other bytes (`--candidate-tree`, or a committed-history diff
 that read HEAD content behind uncommitted edits) prints no route, and neither
 does a finding whose expression is not on disk in the function holding its
@@ -557,12 +579,15 @@ full gate's answer``. A refusal whose gate answer would only repeat it names
 its own recovery instead (#9244): a finding with no canonical gap says there
 is no seam to start a repair from and sends the reader to the Next step above
 (it makes no claim about missing discriminators, which other languages can
-name without a Rust canonical gap); an unreadable config names `ripr.toml` and
+name without a Rust canonical gap), except a TypeScript or JavaScript preview
+finding whose repair packet is blocked by an unresolved expected value or a
+moved assertion selection, which says ripr has no complete repair packet for the
+finding and names that cause in plain words (#10682, the section below); an unreadable config names `ripr.toml` and
 the `ripr check` rerun; a finding no seam binds to says ripr found no seam in
 its file to bind it to and sends the reader to the Next step above; several binding seams say `ripr repair` needs the ID of
 the chosen seam without promising a listing; a repair route that is not ready
 says ripr cannot build a repair packet for the finding yet, lists the
-producer-owned missing evidence (or says the static evidence is not complete
+producer-owned missing evidence in plain words (an `incomplete evidence stage: <stage>` code reads as the test evidence that stage still needs, #11025; or says the static evidence is not complete
 enough to name a safe test target when the list is empty; when the
 finding is a weakly exposed predicate whose infection stage detected a related
 test input at the changed boundary, whose own credited oracle is a weak one
@@ -707,9 +732,10 @@ structured finding and JSON keep the machine value (#9929).
 
 For an `infection_unknown` finding whose related-test inputs ripr cannot map to
 the changed operand, the Next step text states a concrete action: open the
-related test, trace its input through the local or computed operand (including
-default and empty cases) to see which side of the changed condition it
-exercises, then name an input that would exercise the other side. It does not
+related test, check whether it reaches the changed code and inspect other
+existing tests. Trace their inputs through the local or computed operand
+(including default and empty cases) to see which side of the changed condition
+they exercise, then name an input that would exercise the other side. It does not
 restate that the classification is unknown as the instruction, and it keeps the
 existing statement that `ripr.toml` has no fixture/builder value mappings and
 the instruction to add or strengthen a test only when the inspection finds a
@@ -737,6 +763,31 @@ Body presence includes a string or character literal even without a trailing
 comma. Comment-only text, including the producer's `/* old body unread */`
 placeholder, does not establish a body. A complete literal `after:` body is
 not a head-only row and prints no note.
+
+### Plain wording for a TypeScript/JavaScript advisory-only finding (#10682)
+
+A TypeScript or JavaScript preview finding that stays advisory-only names its
+real blocker in plain words on the bounded check screen, without raising or
+lowering any gate:
+
+1. An unresolved expected value (the `typescript_dynamic_assertion_unresolved`
+   named limitation, RIPR-SPEC-0085 §PR5) leads the `Safe next action` with the
+   test `file:line` and the matcher, says ripr cannot tell whether that test
+   covers the change because the expected value is a variable or computed value
+   rather than a literal, and says what to do (use a literal expected value or
+   check by hand). The limitation id stays in evidence only.
+2. A moved assertion selection (RIPR-SPEC-0224) puts the cause into
+   `why_not_actionable`: the named related test (`and N more`, with the verb
+   agreeing in number) asserts a different kind of behavior than the change, so
+   ripr cannot safely choose which test to edit.
+3. In both cases the repair-route advisory reads `no repair start offered: ripr
+   has no complete repair packet for this <language> finding (<cause>); ...`
+   instead of the missing-seam sentence. A TypeScript or JavaScript finding with
+   any other cause keeps the existing advisory.
+
+The wording reads existing evidence only. Readiness, `actionability_category`,
+`repair_packet_ready`, the shared validator and every eligibility guard are
+unchanged, and the lines claim no runtime outcome.
 
 ## Non-Claims
 

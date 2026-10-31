@@ -70,6 +70,7 @@ pub(super) fn collect_fixture_defs(
                     body_text: text_for_range(source, range),
                     imports: test_imports(file, module_imports, body),
                     literal_construction: None,
+                    inert_tool: None,
                     literal_params: None,
                     isolated: false,
                     scope_imports: Vec::new(),
@@ -83,7 +84,9 @@ pub(super) fn collect_fixture_defs(
             file: file.to_path_buf(),
             body_text: text_for_range(source, range),
             imports: test_imports(file, module_imports, body),
-            literal_construction: literal_construction(stmt, statements, source, &aliases),
+            literal_construction: literal_construction(stmt, statements, source, &aliases, false),
+            inert_tool: literal_construction(stmt, statements, source, &aliases, true)
+                .filter(|class| is_inert_tool_import(statements, class)),
             literal_params: super::param_fixtures::literal_params(
                 stmt,
                 statements,
@@ -237,6 +240,7 @@ fn literal_construction(
     statements: &[Stmt],
     source: &str,
     aliases: &[String],
+    allow_request_param: bool,
 ) -> Option<String> {
     let Stmt::FunctionDef(function) = stmt else {
         return None;
@@ -246,6 +250,23 @@ fn literal_construction(
     };
     let decorator_target = match decorator {
         Expr::Call(call) if call.args.is_empty() && call.keywords.is_empty() => &*call.func,
+        // The inert-tool read also takes the explicit default
+        // `scope="function"` (click's own `runner` spells it).
+        Expr::Call(call)
+            if allow_request_param
+                && call.args.is_empty()
+                && matches!(
+                    call.keywords.as_slice(),
+                    [keyword] if keyword.arg.as_ref().is_some_and(|arg| arg.as_str() == "scope")
+                        && matches!(
+                            &keyword.value,
+                            Expr::Constant(constant)
+                                if matches!(&constant.value, Constant::Str(value) if value == "function")
+                        )
+                ) =>
+        {
+            &*call.func
+        }
         Expr::Call(_) => return None,
         other => other,
     };
@@ -256,8 +277,16 @@ fn literal_construction(
         return None;
     }
     let args = &function.args;
+    // A lone unused `request` parameter (`def runner(request): return
+    // CliRunner()`): the body is only a literal-argument call, so it cannot
+    // read `request.param` or `request.node`.
+    let lone_request = allow_request_param
+        && matches!(
+            args.args.as_slice(),
+            [arg] if arg.def.arg.as_str() == "request" && arg.default.is_none()
+        );
     if !args.posonlyargs.is_empty()
-        || !args.args.is_empty()
+        || (!args.args.is_empty() && !lone_request)
         || args.vararg.is_some()
         || !args.kwonlyargs.is_empty()
         || args.kwarg.is_some()
@@ -382,6 +411,14 @@ pub(super) struct FixtureSideEffects {
     /// (`getfixturevalue`, `fixturenames`, `funcargs`, `node`), a `global`
     /// rebinding inside a def, or a module that only partly parsed.
     pub(super) opaque: bool,
+    /// Names the module uses other than to import or construct them
+    /// (`CliRunner.invoke = fake`, `setattr(CliRunner, ...)`): a class touched
+    /// this way no longer builds the object a fixture's shape suggests (#11016).
+    /// Only inert tool class names are kept: `inert_tool` is always one.
+    pub(super) class_writes: Vec<String>,
+    /// Dotted modules the file imports, plain and `from` alike, for the
+    /// transitive read of what an imported workspace module does.
+    pub(super) imported_modules: Vec<String>,
 }
 
 /// Request and item attributes through which a fixture reaches other
@@ -409,6 +446,11 @@ pub(super) fn collect_fixture_side_effects(
             })
             .cloned()
             .collect(),
+        class_writes: super::module_constants::watched_names_used_beyond_construction(
+            source,
+            &|name| INERT_TOOL_CLASSES.iter().any(|(_, class)| *class == name),
+        ),
+        imported_modules: super::module_constants::imported_module_names(statements),
         ..FixtureSideEffects::default()
     };
     for stmt in statements {
@@ -520,7 +562,10 @@ pub(super) fn mark_isolated_fixture_defs(
     for test in tests {
         let test_file = test.file.clone();
         for def in &mut test.fixture_defs {
-            if def.literal_construction.is_none() && def.literal_params.is_none() {
+            if def.literal_construction.is_none()
+                && def.inert_tool.is_none()
+                && def.literal_params.is_none()
+            {
                 continue;
             }
             let key = (test_file.clone(), def.file.clone(), def.binding.clone());
@@ -528,6 +573,7 @@ pub(super) fn mark_isolated_fixture_defs(
                 .entry(key)
                 .or_insert_with(|| {
                     let mut scope_imports = Vec::new();
+                    let mut scope_modules: Vec<String> = Vec::new();
                     let isolated = std::iter::once(test_file.clone())
                         .chain(conftest_chain(&test_file))
                         .all(|file| {
@@ -535,12 +581,17 @@ pub(super) fn mark_isolated_fixture_defs(
                                 return false;
                             }
                             if let Some(side) = side_by_file.get(&file) {
+                                scope_modules.extend(side.imported_modules.iter().cloned());
                                 scope_imports.extend(
                                     side.from_imports
                                         .iter()
                                         .map(|import| (file.clone(), import.clone())),
                                 );
                                 if side.opaque
+                                    || def
+                                        .inert_tool
+                                        .as_ref()
+                                        .is_some_and(|class| side.class_writes.contains(class))
                                     || side
                                         .texts
                                         .iter()
@@ -557,6 +608,19 @@ pub(super) fn mark_isolated_fixture_defs(
                                 })
                             })
                         });
+                    // A name imported into the scope can be an autouse fixture
+                    // defined in a workspace module that spells this one (#11016);
+                    // the tool read refuses it, unlike the owner-module rule.
+                    let isolated = isolated
+                        && def.inert_tool.as_ref().is_none_or(|class| {
+                            !imported_modules_may_touch_fixture(
+                                &scope_modules,
+                                &def.name,
+                                class,
+                                defs_by_file,
+                                side_by_file,
+                            )
+                        });
                     (isolated, scope_imports)
                 })
                 .clone();
@@ -564,6 +628,64 @@ pub(super) fn mark_isolated_fixture_defs(
             def.scope_imports = scope_imports;
         }
     }
+}
+
+/// Whether a workspace module the scope imports, directly or through the
+/// modules it imports in turn, spells `fixture` in a fixture or compound
+/// statement, touches the tool `class`, or cannot be read through (opaque).
+/// An imported autouse fixture that takes `fixture`, or an import-time patch
+/// of the class, could change what the test receives, so the scope is not
+/// isolated. A module outside the workspace is not visible to this read.
+fn imported_modules_may_touch_fixture(
+    modules: &[String],
+    fixture: &str,
+    class: &str,
+    defs_by_file: &BTreeMap<PathBuf, Vec<PythonFixtureDef>>,
+    side_by_file: &BTreeMap<PathBuf, FixtureSideEffects>,
+) -> bool {
+    let mut pending: Vec<&str> = modules.iter().map(String::as_str).collect();
+    let mut seen_modules = BTreeSet::new();
+    let mut seen_files: BTreeSet<&PathBuf> = BTreeSet::new();
+    while let Some(module) = pending.pop() {
+        // The module that defines the tool class names it everywhere (its
+        // own `class CliRunner`); it is the tool, not a patch of it.
+        if module.is_empty()
+            || INERT_TOOL_CLASSES.iter().any(|(tool_module, name)| {
+                *name == class
+                    && (module == *tool_module || module.starts_with(&format!("{tool_module}.")))
+            })
+            || !seen_modules.insert(module)
+        {
+            continue;
+        }
+        let path = module.replace('.', "/");
+        let names_module = |file: &Path| {
+            let file = super::normalized_path(file);
+            [format!("{path}.py"), format!("{path}/__init__.py")]
+                .iter()
+                .any(|suffix| file == *suffix || file.ends_with(&format!("/{suffix}")))
+        };
+        for (file, side) in side_by_file {
+            if !names_module(file) || !seen_files.insert(file) {
+                continue;
+            }
+            if side.opaque
+                || side.class_writes.iter().any(|name| name == class)
+                || side
+                    .texts
+                    .iter()
+                    .any(|text| mentions_identifier(text, fixture))
+                || defs_by_file.get(file).is_some_and(|defs| {
+                    defs.iter()
+                        .any(|def| mentions_identifier(&def.body_text, fixture))
+                })
+            {
+                return true;
+            }
+            pending.extend(side.imported_modules.iter().map(String::as_str));
+        }
+    }
+    false
 }
 
 /// A fixture that hands the test a fresh `OwnerClass(<literals>)` (#9619):
@@ -625,6 +747,76 @@ pub(super) fn literal_owner_instance_fixture(
             .scope_imports
             .iter()
             .all(|(file, import)| import_source_module_matches_owner(import, owner, file))
+}
+
+/// Test-support classes whose construction with literal arguments only
+/// builds an invoker: nothing they hold can carry the changed value or the
+/// expected one into a test (#11016). Matched structurally, by the module the
+/// fixture file imports the class from, never by fixture name.
+const INERT_TOOL_CLASSES: [(&str, &str); 2] = [
+    ("click.testing", "CliRunner"),
+    ("typer.testing", "CliRunner"),
+];
+
+/// Whether the file's last top-level binding of `class` is an absolute
+/// `from <inert tool module> import class` (no alias, no relative level: a
+/// workspace-local `click/testing.py` reached through `from ..click.testing`
+/// resolves to the same dotted path but is not click's runner).
+fn is_inert_tool_import(statements: &[Stmt], class: &str) -> bool {
+    let mut absolute = false;
+    for stmt in statements {
+        let Stmt::ImportFrom(import) = stmt else {
+            continue;
+        };
+        for alias in &import.names {
+            let bound = alias.asname.as_ref().unwrap_or(&alias.name);
+            if bound.as_str() != class {
+                continue;
+            }
+            let level = import.level.as_ref().map_or(0, |level| level.to_usize());
+            absolute = level == 0
+                && alias.asname.is_none()
+                && alias.name.as_str() == class
+                && import.module.as_ref().is_some_and(|module| {
+                    INERT_TOOL_CLASSES.iter().any(|(tool_module, name)| {
+                        *tool_module == module.as_str() && *name == class
+                    })
+                });
+        }
+    }
+    absolute
+}
+
+/// A fixture that hands the test a fresh `CliRunner()` (#11016): an isolated
+/// plain fixture whose whole body is `return CliRunner(<literals>)`. The
+/// runner only invokes commands, so it hides no discriminator or expected
+/// value. The same test-side guards as [`literal_owner_instance_fixture`]
+/// apply: a module-level pytest test that does not rebind the parameter, no
+/// decorator but pytest marks, and no module binding the name over a
+/// conftest fixture.
+pub(super) fn inert_tool_fixture(test: &PythonTest, fixture: &str) -> bool {
+    if test.framework != PythonFramework::Pytest
+        || test.qualified_name != test.name
+        || test_body_binds_local(test, fixture)
+        || !injected_parameter(test, fixture)
+    {
+        return false;
+    }
+    let Some(def) = test.fixture_defs.iter().find(|def| def.name == fixture) else {
+        return false;
+    };
+    let rebinding = &test.constant_rebinding;
+    if def.file != test.file
+        && (rebinding.module_opaque || rebinding.module_bound.iter().any(|name| name == fixture))
+    {
+        return false;
+    }
+    def.isolated
+        && def.inert_tool.is_some()
+        && test
+            .decorators
+            .iter()
+            .all(|decorator| decorator.starts_with("pytest.mark."))
 }
 
 /// Whether the test's signature takes `fixture` as a parameter pytest

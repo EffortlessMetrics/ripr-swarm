@@ -27,7 +27,7 @@ Start here:
   Suggested test file: tests/test_calc.py
   Suggested test: test_base_unchanged
   Test node: tests/test_calc.py::test_base_unchanged
-  Verify command: python -m pytest tests/test_calc.py::test_base_unchanged (high)
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_adversarial_local_assignment_operator_input/input && python -m pytest tests/test_calc.py::test_base_unchanged) (high)
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

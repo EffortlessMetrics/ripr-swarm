@@ -102,12 +102,22 @@ fn assert_partition_claims(language: &str, extension: &str, display: &str) -> Te
             .iter()
             .find(|entry| entry["language"] == language)
             .and_then(|entry| entry["files"].as_u64());
-        let count = if enabled {
-            count.ok_or("enabled preview adapter must report its analyzed file count")?
+        // An enabled adapter reports the files it analyzed; a language whose
+        // adapter is not enabled still lists the changed files the diff routed
+        // to it (#10719), so a consumer of `summary` never reads a skipped
+        // preview diff as "no files changed".
+        let (count, expected) = if enabled {
+            (
+                count.ok_or("enabled preview adapter must report its analyzed file count")?,
+                expected_preview as u64,
+            )
         } else {
-            count.unwrap_or(0)
+            (
+                count.ok_or("a disabled language must still list its changed files")?,
+                2,
+            )
         };
-        assert_eq!(count, expected_preview as u64, "{context}");
+        assert_eq!(count, expected, "{context}");
         let complete = enabled && budget == "3";
         assert_eq!(
             report["analysis_outcome"]["analysis_complete"], complete,

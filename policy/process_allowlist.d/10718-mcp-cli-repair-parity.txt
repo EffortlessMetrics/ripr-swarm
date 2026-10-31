@@ -1,0 +1,1 @@
+crates/ripr/tests/mcp_cli_repair_parity.rs|Command::new|2|cli-tests|#10718: runs git (committed-branch fixture setup) and the built ripr binary (`mcp --stdio`, `repair`, `agent card`) against isolated temp workspaces to compare refusal causes across surfaces. No shell, network, or user-repository mutation.

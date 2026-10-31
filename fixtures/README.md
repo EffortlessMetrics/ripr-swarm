@@ -93,7 +93,8 @@ surfaces are:
 
 `cargo xtask goldens bless <name> --reason "..."` is the only command that
 updates expected output. It requires an explicit reason and appends
-`expected/CHANGELOG.md`.
+`expected/CHANGELOG.md`. For wording changes to default human output, see the
+bless path in [`docs/USER_TEXT_GLOSSARY.md`](../docs/USER_TEXT_GLOSSARY.md).
 
 The current fixture baseline covers:
 

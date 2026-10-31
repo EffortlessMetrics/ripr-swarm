@@ -2,6 +2,10 @@
 
 use super::*;
 
+#[path = "tests_extract_hook_identity.rs"]
+mod hook_identity;
+use hook_identity::HookCalls;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum TestDeclarationRoot {
     Test,
@@ -222,13 +226,16 @@ fn extract_tests_expanding_suite_factories(
         let imports = extract_imports_for_test_file(&ret.program.body);
         let mocks = extract_mocks_from_statements(&ret.program.body, &imports);
         let mut tests = Vec::new();
+        let admission = TypeScriptAdmissionContext::of_program(&ret.program, &imports, file);
+        let hook_calls = HookCalls::of_program(&ret.program, &imports, &admission);
         let mut scope = TestScope {
             assertion_bindings: TypeScriptAssertionBindings::from_program(
                 &ret.program.body,
                 &imports,
             )
             .with_strict_matchers(strict_equality_matchers(&ret.program.body, source)),
-            admission: TypeScriptAdmissionContext::of_program(&ret.program, &imports, file),
+            admission,
+            hook_calls,
             ..TestScope::default()
         };
         scope.fixtures = super::fixture_receivers::PlaywrightFixtures::of_program(
@@ -308,6 +315,13 @@ fn extract_tests_expanding_suite_factories(
                 test.written_locals_in_file = rewritten.clone();
             }
         }
+        let replacements = member_replacement_names(source);
+        if !replacements.is_empty() {
+            let replacements: Shared<_> = replacements.into();
+            for test in &mut tests {
+                test.member_replacements_in_file = replacements.clone();
+            }
+        }
         let factories = mock_factories(&ret.program.body, &code);
         if !factories.is_empty() {
             let factories: Shared<_> = factories.into();
@@ -326,13 +340,9 @@ fn extract_tests_expanding_suite_factories(
         // no credited assertion means the walker cannot disclose anything.
         let conditional_credit_gap = if tests.iter().any(|test| !test.assertions.is_empty()) {
             let source_text = SourceText::new(source);
-            let mut sample = None;
+            let mut sample = CreditSites::default();
             find_conditional_assertion_credit(&ret.program.body, &source_text, source, &mut sample);
-            sample.map(|(sample_line, condition)| TypeScriptConditionalCreditGap {
-                file: file.to_path_buf(),
-                sample_line,
-                condition,
-            })
+            sample.into_gap(file)
         } else {
             None
         };
@@ -872,6 +882,38 @@ fn string_value(expression: &Expression<'_>) -> Option<String> {
     }
 }
 
+/// The registration resolution inputs of one statement list, built once per
+/// statement list (#10017): the admission's registration context, the names
+/// visible to a registration at this level, and whether `undefined` is
+/// unshadowed here. The renamed-alias gate (#10987) reads the same inputs the
+/// skip gates read, so both spellings of a registration decide identically.
+pub(crate) struct RegistrationScope {
+    context: TypeScriptAdmissionContext,
+    names: RegistrationNames,
+    unshadowed_undefined: bool,
+}
+
+impl RegistrationScope {
+    fn of(scope: &TestScope, unshadowed_undefined: bool) -> Self {
+        Self {
+            context: scope.admission.registration_context(),
+            names: RegistrationNames::new(
+                scope
+                    .levels
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(depth, level)| {
+                        level.iter().map(move |(name, _, phase)| {
+                            (name.clone(), depth == 0 && *phase == Phase::Declaration)
+                        })
+                    })
+                    .chain(scope.registration_levels.iter().flatten().cloned()),
+            ),
+            unshadowed_undefined,
+        }
+    }
+}
+
 pub(crate) fn collect_tests_from_statements<'s, 'a>(
     statements: &'s [Statement<'a>],
     file: &Path,
@@ -894,11 +936,12 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
     // level. Collected before any test so a hook written after a test still
     // counts, as it does at runtime.
     let mut level = Vec::new();
+    let mut untrusted_hook_entries = Vec::new();
     let mut sites = Vec::new();
     let mut iterables = Vec::new();
     let mut returned = false;
     let mut shared_bindings: Option<ScopeBindings> = None;
-    let mut registration_scope: Option<(TypeScriptAdmissionContext, RegistrationNames)> = None;
+    let mut registration_scope: Option<RegistrationScope> = None;
     for stmt in statements {
         if !returned {
             collect_const_iterables(stmt, &mut iterables);
@@ -910,6 +953,8 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             &mut level,
             &mut sites,
             scope.admission.block_functions_are_lexical,
+            &scope.hook_calls,
+            &mut untrusted_hook_entries,
         );
         // After a possible early `return`, a binding may never run.
         if returned {
@@ -918,6 +963,12 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
                 .for_each(|entry| entry.1 = ScopeValue::Other);
         }
         returned |= may_return(stmt, source);
+    }
+    // Keep duplicate-hook race summaries from the original collection. Only
+    // actual callback contributions receive the call-identity downgrade.
+    for index in untrusted_hook_entries {
+        level[index].1 = ScopeValue::Other;
+        level[index].2 = Phase::Interleaved;
     }
     // A destructuring or hoisted declaration can also shadow `undefined` at a
     // registration. Nested blocks contribute only names visible after them
@@ -1003,24 +1054,9 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
                 // The context and the visible bindings are the same for every
                 // registration in this statement list, so they are built once
                 // (#10017).
-                let (context, names) = registration_scope.get_or_insert_with(|| {
-                    (
-                        scope.admission.registration_context(),
-                        RegistrationNames::new(
-                            scope
-                                .levels
-                                .iter()
-                                .enumerate()
-                                .flat_map(|(depth, level)| {
-                                    level.iter().map(move |(name, _, phase)| {
-                                        (name.clone(), depth == 0 && *phase == Phase::Declaration)
-                                    })
-                                })
-                                .chain(scope.registration_levels.iter().flatten().cloned()),
-                        ),
-                    )
-                });
-                context.registration_is_known_in(
+                let resolved = registration_scope
+                    .get_or_insert_with(|| RegistrationScope::of(scope, unshadowed_undefined));
+                resolved.context.registration_is_known_in(
                     call,
                     call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
                         || call_callee_is_active_each_declaration(
@@ -1028,7 +1064,7 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
                             TestDeclarationRoot::Describe,
                         )
                         || conditional_describe_factory(call).is_some(),
-                    names,
+                    &resolved.names,
                 )
             }
         {
@@ -1048,13 +1084,19 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
         {
             continue;
         }
-        if let Some((describe_name, body, guard)) = describe_body_from_statement(stmt, source)
-            .map(|(name, body)| (name, body, None))
-            .or_else(|| {
-                conditional_describe_body(stmt, source)
-                    .map(|(name, body, guard)| (name, body, Some(guard)))
-            })
-        {
+        if let Some((describe_name, body, guard)) = {
+            // The context and the visible bindings are the same for every
+            // registration in this statement list, so they are built once
+            // (#10017); the renamed-alias gate reads the same inputs (#10987).
+            let resolved = registration_scope
+                .get_or_insert_with(|| RegistrationScope::of(scope, unshadowed_undefined));
+            describe_body_from_statement(stmt, source, Some(resolved))
+                .map(|(name, body)| (name, body, None))
+                .or_else(|| {
+                    conditional_describe_body(stmt, source)
+                        .map(|(name, body, guard)| (name, body, Some(guard)))
+                })
+        } {
             // #10629: a `describe.skipIf(cond)` / `describe.runIf(cond)` suite
             // is indexed under its factory call as the guard, like an `if`.
             let guarded = guard.is_some();
@@ -1181,6 +1223,8 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
                 .flatten()
                 .any(|(bound, _, _)| bound == name)
         });
+        let resolved = registration_scope
+            .get_or_insert_with(|| RegistrationScope::of(scope, unshadowed_undefined));
         if let Some(mut test) = test_from_statement(
             stmt,
             file,
@@ -1188,6 +1232,7 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             &scope.describe_names,
             &assertion_bindings,
             &functions,
+            Some(resolved),
         ) {
             if let Some(call) = statement_call(stmt) {
                 test.assertion_admission = scope.admission.admission_of(call, &test.assertions);
@@ -1288,7 +1333,7 @@ fn collect_mocha_setup_hooks(
             import.local == hook
                 && !(import.source == "mocha" && import.imported.as_deref() == Some(hook))
         });
-        if declared || imported_elsewhere {
+        if declared || imported_elsewhere || !scope.hook_calls.contains(call) {
             continue;
         }
         let Some(argument) = call.arguments.last() else {
@@ -1374,6 +1419,8 @@ const TEST_RUNNER_MODULES: [&str; 4] = ["vitest", "@jest/globals", "bun:test", "
 /// The enclosing scopes of the statements being walked.
 #[derive(Default)]
 pub(crate) struct TestScope {
+    /// The callable identity captured at each hook registration.
+    hook_calls: HookCalls,
     /// Describe names, outermost first.
     describe_names: Vec<String>,
     /// Name bindings of the file and each enclosing describe, outermost first.
@@ -1529,6 +1576,8 @@ fn collect_scope_bindings(
     out: &mut Vec<ScopeEntry>,
     sites: &mut Vec<usize>,
     block_functions_are_lexical: bool,
+    hook_calls: &HookCalls,
+    untrusted_hook_entries: &mut Vec<usize>,
 ) {
     match stmt {
         // `declare` forms are erased before the test runs: no runtime binding.
@@ -1609,6 +1658,8 @@ fn collect_scope_bindings(
                         &mut locals,
                         &mut Vec::new(),
                         block_functions_are_lexical,
+                        hook_calls,
+                        &mut Vec::new(),
                     );
                 }
                 locals.retain(|(_, _, phase)| *phase == Phase::Declaration);
@@ -1663,7 +1714,11 @@ fn collect_scope_bindings(
                     })
                     .map(|(name, _, _)| name.clone())
                     .collect();
+                let start = out.len();
                 out.extend(writes);
+                if phase != Phase::Interleaved && !hook_calls.contains(call) {
+                    untrusted_hook_entries.extend(start..out.len());
+                }
                 out.extend(
                     raced
                         .into_iter()
@@ -3107,14 +3162,18 @@ pub(crate) fn argument_parameter_names(argument: &oxc_ast::ast::Argument<'_>) ->
 /// The name and body of an active `describe` / `context` / `suite` statement.
 /// A title that is not a string literal (`describe(Div.name, fn)`, a template
 /// literal) is named by its bounded, single-line source text so the body is
-/// still walked (#4548).
+/// still walked (#4548). A renamed registration alias of a describe root
+/// (`const { describe: d } = runner`, #10987) is decided by the same
+/// admission authority as the skip gates.
 pub(crate) fn describe_body_from_statement<'a>(
     stmt: &'a Statement<'a>,
     source: &SourceText<'_>,
+    registration: Option<&RegistrationScope>,
 ) -> Option<(String, &'a oxc_allocator::Vec<'a, Statement<'a>>)> {
     let call = statement_call(stmt)?;
     if !call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
         && !call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe)
+        && !renamed_registration_is_known(call, registration, TestDeclarationRoot::Describe)
     {
         return None;
     }
@@ -3325,11 +3384,17 @@ pub(crate) fn test_from_statement<'s, 'a>(
     describe_stack: &[String],
     bindings: &TypeScriptAssertionBindings,
     functions: &[DeclaredFunction<'s, 'a>],
+    registration: Option<&RegistrationScope>,
 ) -> Option<TypeScriptTest> {
     let call = statement_call(stmt)?;
     let referenced = referenced_callback_function(call, functions, source);
-    let (name, assertions) =
-        test_name_and_assertions_from_registration(call, referenced, source, bindings)?;
+    let (name, assertions) = test_name_and_assertions_from_registration(
+        call,
+        referenced,
+        source,
+        bindings,
+        registration,
+    )?;
     Some(TypeScriptTest {
         name: qualified_test_name(describe_stack, &name),
         local_name: name,
@@ -3362,6 +3427,7 @@ pub(crate) fn test_from_statement<'s, 'a>(
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         // Replaced by `collect_tests_from_statements`, which has the file's
@@ -3609,19 +3675,92 @@ pub(crate) fn test_name_and_assertions_from_call(
     source: &SourceText<'_>,
     bindings: &TypeScriptAssertionBindings,
 ) -> Option<(String, Vec<TypeScriptAssertion>)> {
-    test_name_and_assertions_from_registration(call, None, source, bindings)
+    test_name_and_assertions_from_registration(call, None, source, bindings, None)
+}
+
+/// Whether `call` registers through a local the imports layer renamed to an
+/// active `root` member (`const { test: t } = runner`, `import { test as t
+/// }`, #10987). The token gate reads only the callee's spelling; the alias
+/// is the same registration target, so the admission context decides it,
+/// with the same runner-source and shadowing gates as the skip gates
+/// (`registration_is_known_in`). An alias of any other module's member
+/// (`{ test: t } = require('node:assert')`, `{ deepEqual: eq }`) resolves to
+/// no runner registration, and a local rebinding of the name shadows it.
+fn renamed_registration_is_known(
+    call: &oxc_ast::ast::CallExpression<'_>,
+    registration: Option<&RegistrationScope>,
+    root: TestDeclarationRoot,
+) -> bool {
+    let Some(resolved) = registration else {
+        return false;
+    };
+    // The renamed local is the root of the callee chain (`t(...)`,
+    // `t.only(...)`); a member read off the namespace (`runner.test(...)`)
+    // is not a renamed spelling and stays unindexed as before.
+    let Some(local) = callee_root_name(&call.callee) else {
+        return false;
+    };
+    if root.matches_identifier(local) {
+        return false;
+    }
+    // The literal spellings refuse inactive modifiers (`t.skip`, `t.todo`)
+    // before a callback can donate assertions, and an aliased `.each` would
+    // lose the empty-table and table-row fences those spellings get. An alias
+    // therefore registers only bare or through an active modifier; every
+    // other member shape stays unindexed exactly as before (#11057 review).
+    if !alias_callee_chain_is_active(&call.callee) {
+        return false;
+    }
+    // Only an alias of a member the direct spelling accepts enters the
+    // admission decision; namespace objects and other members do not.
+    resolved
+        .context
+        .binds_renamed_registration_root(local, |member| root.matches_identifier(member))
+        // The token gate reads the options object inside
+        // `call_callee_is_active_declaration`, then the statement-level fence
+        // re-reads it against a shadowed `undefined`; a renamed spelling owes
+        // the same combined skip/todo fence.
+        && declaration_options_are_active_with_undefined(call, resolved.unshadowed_undefined)
+        && resolved.context.registration_is_known_in(
+            call,
+            matches!(root, TestDeclarationRoot::Describe),
+            &resolved.names,
+        )
+}
+
+/// Whether an alias's callee chain spells an active registration: the bare
+/// alias (`t(...)`) or active modifiers over it (`t.only(...)`). An inactive
+/// modifier (`t.skip`, `t.todo`, `.fails`) and an `.each` / `.skipIf` factory
+/// are refused: the literal spellings decide those through the inactive-
+/// modifier, empty-table and table-row fences, and an alias must not read as
+/// a registration they would refuse.
+fn alias_callee_chain_is_active(callee: &Expression<'_>) -> bool {
+    match callee.get_inner_expression() {
+        Expression::Identifier(_) => true,
+        Expression::StaticMemberExpression(member) => {
+            is_active_declaration_modifier(member.property.name.as_str())
+                && alias_callee_chain_is_active(&member.object)
+        }
+        _ => false,
+    }
 }
 
 /// `referenced` is the same-file function a `test(title, name)` registration
 /// runs; its body stands in for the inline callback.
+///
+/// `registration` carries the statement list's admission context and visible
+/// bindings (#10017), so a renamed registration alias (`const { test: t } =
+/// runner`, #10987) is decided by the same authority as the skip gates.
 fn test_name_and_assertions_from_registration(
     call: &oxc_ast::ast::CallExpression<'_>,
     referenced: Option<&oxc_ast::ast::Function<'_>>,
     source: &SourceText<'_>,
     bindings: &TypeScriptAssertionBindings,
+    registration: Option<&RegistrationScope>,
 ) -> Option<(String, Vec<TypeScriptAssertion>)> {
     if !call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
         && !call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
+        && !renamed_registration_is_known(call, registration, TestDeclarationRoot::Test)
     {
         return None;
     }
@@ -5443,13 +5582,9 @@ pub(crate) fn detect_conditional_assertion_credit(
             return None;
         }
         let source = SourceText::new(source);
-        let mut sample = None;
+        let mut sample = CreditSites::default();
         find_conditional_assertion_credit(&ret.program.body, &source, &source, &mut sample);
-        sample.map(|(sample_line, condition)| TypeScriptConditionalCreditGap {
-            file: file.to_path_buf(),
-            sample_line,
-            condition,
-        })
+        sample.into_gap(file)
     }) else {
         return None;
     };
@@ -5465,6 +5600,39 @@ fn branch_statements_hold_assertion(statements: &[Statement<'_>], source: &Sourc
     statements_collect_assertion_probe(statements, source)
 }
 
+/// Every unevaluated-condition branch the walker finds in one test file, in
+/// source order, with the registration calls enclosing each (RIPR-SPEC-0243
+/// rule 11): which test a conditional assertion belongs to decides whether a
+/// finding that never consulted that test is affected by it.
+#[derive(Default)]
+struct CreditSites {
+    sites: Vec<TypeScriptCreditSite>,
+    /// Start lines of the call expressions the walker is currently inside.
+    calls: Vec<usize>,
+}
+
+impl CreditSites {
+    fn record(&mut self, line: usize, condition: String) {
+        self.sites.push(TypeScriptCreditSite {
+            line,
+            condition,
+            enclosing_call_lines: self.calls.clone(),
+        });
+    }
+
+    /// The file's gap: the first site as the displayed sample, all sites for
+    /// attribution. `None` when the file has no unevaluated branch.
+    fn into_gap(self, file: &Path) -> Option<TypeScriptConditionalCreditGap> {
+        let first = self.sites.first()?;
+        Some(TypeScriptConditionalCreditGap {
+            file: file.to_path_buf(),
+            sample_line: first.line,
+            condition: first.condition.clone(),
+            sites: self.sites,
+        })
+    }
+}
+
 /// Recursive statement walk mirroring the collection walker: blocks,
 /// `if`/`else`, loops, labels, `switch`, `try`/`catch`/`finally` and `with`.
 /// Records the first branch (in source order) whose condition is not a
@@ -5476,11 +5644,8 @@ fn find_conditional_assertion_credit(
     statements: &[Statement<'_>],
     source: &SourceText<'_>,
     raw: &str,
-    sample: &mut Option<(usize, String)>,
+    sample: &mut CreditSites,
 ) {
-    if sample.is_some() {
-        return;
-    }
     // Statements after an unconditional exit are dead; the collector withholds
     // their assertions, so no live conditional credit can sit there.
     let live_len = statements
@@ -5533,11 +5698,11 @@ fn find_conditional_assertion_credit(
                                 if_stmt.test.span().start as usize,
                                 if_stmt.test.span().end as usize,
                             );
-                            *sample = Some((
+                            sample.record(
                                 source.line_for_offset(if_stmt.span().start as usize),
                                 condition,
-                            ));
-                            return;
+                            );
+                            continue;
                         }
                         find_conditional_assertion_credit(
                             std::slice::from_ref(&if_stmt.consequent),
@@ -5577,11 +5742,11 @@ fn find_conditional_assertion_credit(
                         while_stmt.test.span().start as usize,
                         while_stmt.test.span().end as usize,
                     );
-                    *sample = Some((
+                    sample.record(
                         source.line_for_offset(while_stmt.span().start as usize),
                         condition,
-                    ));
-                    return;
+                    );
+                    continue;
                 }
                 find_conditional_assertion_credit(
                     std::slice::from_ref(&while_stmt.body),
@@ -5628,11 +5793,11 @@ fn find_conditional_assertion_credit(
                             )
                         })
                         .unwrap_or_default();
-                    *sample = Some((
+                    sample.record(
                         source.line_for_offset(for_stmt.span().start as usize),
                         condition,
-                    ));
-                    return;
+                    );
+                    continue;
                 }
                 find_conditional_assertion_credit(
                     std::slice::from_ref(&for_stmt.body),
@@ -5662,21 +5827,12 @@ fn find_conditional_assertion_credit(
             Statement::SwitchStatement(switch) => {
                 for case in &switch.cases {
                     find_conditional_assertion_credit(&case.consequent, source, raw, sample);
-                    if sample.is_some() {
-                        return;
-                    }
                 }
             }
             Statement::TryStatement(try_stmt) => {
                 find_conditional_assertion_credit(&try_stmt.block.body, source, raw, sample);
-                if sample.is_some() {
-                    return;
-                }
                 if let Some(handler) = &try_stmt.handler {
                     find_conditional_assertion_credit(&handler.body.body, source, raw, sample);
-                    if sample.is_some() {
-                        return;
-                    }
                 }
                 if let Some(finalizer) = &try_stmt.finalizer {
                     find_conditional_assertion_credit(&finalizer.body, source, raw, sample);
@@ -5697,9 +5853,6 @@ fn find_conditional_assertion_credit(
                 for declarator in &var.declarations {
                     if let Some(init) = &declarator.init {
                         find_conditional_assertion_credit_in_expression(init, source, raw, sample);
-                        if sample.is_some() {
-                            return;
-                        }
                     }
                 }
             }
@@ -5730,11 +5883,8 @@ fn find_conditional_assertion_credit_in_expression(
     expression: &Expression<'_>,
     source: &SourceText<'_>,
     raw: &str,
-    sample: &mut Option<(usize, String)>,
+    sample: &mut CreditSites,
 ) {
-    if sample.is_some() {
-        return;
-    }
     match expression {
         Expression::ArrowFunctionExpression(arrow) => {
             find_conditional_assertion_credit(&arrow.body.statements, source, raw, sample);
@@ -5745,22 +5895,22 @@ fn find_conditional_assertion_credit_in_expression(
             }
         }
         Expression::CallExpression(call) => {
+            // The call's start line is what a registered test reports as its
+            // own line, so a site records which registrations enclose it.
+            sample
+                .calls
+                .push(source.line_for_offset(call.span.start as usize));
             for argument in &call.arguments {
                 if let Some(expr) = argument.as_expression() {
                     find_conditional_assertion_credit_in_expression(expr, source, raw, sample);
                 }
-                if sample.is_some() {
-                    return;
-                }
             }
+            sample.calls.pop();
         }
         Expression::NewExpression(call) => {
             for argument in &call.arguments {
                 if let Some(expr) = argument.as_expression() {
                     find_conditional_assertion_credit_in_expression(expr, source, raw, sample);
-                }
-                if sample.is_some() {
-                    return;
                 }
             }
         }
@@ -5770,9 +5920,6 @@ fn find_conditional_assertion_credit_in_expression(
         Expression::SequenceExpression(sequence) => {
             for expr in &sequence.expressions {
                 find_conditional_assertion_credit_in_expression(expr, source, raw, sample);
-                if sample.is_some() {
-                    return;
-                }
             }
         }
         Expression::LogicalExpression(logical) => {
@@ -5805,9 +5952,6 @@ fn find_conditional_assertion_credit_in_expression(
                     if let Some(expr) = argument.as_expression() {
                         find_conditional_assertion_credit_in_expression(expr, source, raw, sample);
                     }
-                    if sample.is_some() {
-                        return;
-                    }
                 }
             }
         }
@@ -5828,9 +5972,6 @@ fn find_conditional_assertion_credit_in_expression(
                 if let Some(expr) = element.as_expression() {
                     find_conditional_assertion_credit_in_expression(expr, source, raw, sample);
                 }
-                if sample.is_some() {
-                    return;
-                }
             }
         }
         Expression::ObjectExpression(object) => {
@@ -5842,9 +5983,6 @@ fn find_conditional_assertion_credit_in_expression(
                         raw,
                         sample,
                     );
-                }
-                if sample.is_some() {
-                    return;
                 }
             }
         }
@@ -5858,4 +5996,216 @@ fn find_conditional_assertion_credit_in_expression(
         }
         _ => {}
     }
+}
+
+/// Marker in [`member_replacement_names`]: the file does something to member
+/// definitions the scan cannot attribute to a name, so every name is replaced.
+pub(crate) const MEMBER_REPLACEMENT_ANY: &str = "*";
+
+/// Names a test file may replace, for the factory-built getter relation
+/// (#10402). A closed, fail-closed rule over the raw text (whitespace before
+/// `(` is tolerated; comments, strings and templates are not skipped, which
+/// can only withhold a relation):
+///
+/// - the file mentions `defineProperty`, `defineProperties`, `setPrototypeOf`,
+///   `replaceProperty` or `__proto__` anywhere: every name is replaced
+///   ([`MEMBER_REPLACEMENT_ANY`]);
+/// - each `spyOn` must be a call whose second argument is a plain string
+///   literal, which is recorded (every identifier of the arguments is recorded
+///   too); any other `spyOn` (an alias, a variable or computed key, an
+///   unparsed call) replaces every name;
+/// - each `mocked` must be a call of a plain identifier path, which is
+///   recorded; anything else replaces every name;
+/// - `mock`, `doMock` and `stubGlobal` calls record every identifier of their
+///   arguments, and one that is not a call replaces every name;
+/// - every `.name =` target is recorded, and an index assignment
+///   (`target[key] = ...`) replaces every name;
+/// - an argument list longer than the scan bound replaces every name.
+pub(crate) fn member_replacement_names(source: &str) -> Vec<String> {
+    const ANY_MENTION: [&str; 5] = [
+        "defineProperty",
+        "defineProperties",
+        "setPrototypeOf",
+        "replaceProperty",
+        "__proto__",
+    ];
+    // Other stubbing libraries (sinon, testdouble, proxyquire, rewire).
+    const TOOL_MENTION: [&str; 5] = [
+        "replaceGetter",
+        "replaceSetter",
+        "proxyquire",
+        "rewire",
+        "createStubInstance",
+    ];
+    // Calls whose arguments are scanned for names; a bare mention is ignored.
+    const CALL_ONLY: [&str; 4] = ["stub", "replace", "mockImplementation", "mockReturnValue"];
+    const MAX_ARGUMENT_BYTES: usize = 8192;
+    let mut names = std::collections::BTreeSet::new();
+    if ANY_MENTION
+        .iter()
+        .chain(TOOL_MENTION.iter())
+        .any(|word| source.contains(word))
+    {
+        return vec![MEMBER_REPLACEMENT_ANY.to_string()];
+    }
+    let refuse_all = || vec![MEMBER_REPLACEMENT_ANY.to_string()];
+    let mut add_tokens = |text: &str| {
+        for token in text.split(|ch: char| !is_javascript_identifier_char(ch)) {
+            if !token.is_empty() {
+                names.insert(token.to_string());
+            }
+        }
+    };
+    for word in [
+        "spyOn",
+        "mocked",
+        "mock",
+        "doMock",
+        "stubGlobal",
+        "stub",
+        "replace",
+        "mockImplementation",
+        "mockReturnValue",
+    ] {
+        for (idx, _) in source.match_indices(word) {
+            let before = source[..idx].chars().next_back();
+            let after = source[idx + word.len()..].chars().next();
+            if before.is_some_and(is_javascript_identifier_char)
+                || after.is_some_and(is_javascript_identifier_char)
+            {
+                continue;
+            }
+            let rest = &source[idx + word.len()..];
+            // testdouble's `td.replace('../module')` swaps a whole module.
+            if word == "replace"
+                && (source[..idx].ends_with("td.") || source[..idx].ends_with("testdouble."))
+            {
+                return refuse_all();
+            }
+            let Some(args) = rest.trim_start().strip_prefix('(') else {
+                if CALL_ONLY.contains(&word) {
+                    continue;
+                }
+                return refuse_all();
+            };
+            let Some(end) = super::classifier::balanced_close_offset(args) else {
+                return refuse_all();
+            };
+            if end > MAX_ARGUMENT_BYTES {
+                return refuse_all();
+            }
+            let args = &args[..end];
+            match word {
+                "spyOn" => {
+                    let Some(member) = second_argument_literal(args) else {
+                        return refuse_all();
+                    };
+                    add_tokens(member);
+                }
+                "mocked" => {
+                    let path = args.trim();
+                    if path.is_empty()
+                        || !path
+                            .chars()
+                            .all(|ch| is_javascript_identifier_char(ch) || ch == '.')
+                    {
+                        return refuse_all();
+                    }
+                }
+                _ => {}
+            }
+            add_tokens(args);
+        }
+    }
+    for (idx, _) in source.match_indices('.') {
+        let rest = &source[idx + 1..];
+        let len: usize = rest
+            .chars()
+            .take_while(|ch| is_javascript_identifier_char(*ch))
+            .map(char::len_utf8)
+            .sum();
+        if len == 0 {
+            continue;
+        }
+        if assignment_follows(&rest[len..]) {
+            add_tokens(&rest[..len]);
+        }
+    }
+    for (idx, _) in source.match_indices(']') {
+        if !assignment_follows(&source[idx + 1..]) {
+            continue;
+        }
+        // `const [a] = x` destructures; `target[key] = x` assigns a member.
+        let mut depth = 0usize;
+        let mut open = None;
+        for (at, ch) in source[..=idx].char_indices().rev() {
+            match ch {
+                ']' => depth += 1,
+                '[' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        open = Some(at);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let indexes_a_value = open
+            .and_then(|at| source[..at].chars().next_back())
+            .is_none_or(|ch| is_javascript_identifier_char(ch) || ch == ')' || ch == ']');
+        if indexes_a_value {
+            return refuse_all();
+        }
+    }
+    names.into_iter().collect()
+}
+
+/// `true` when `after` (the text following a target) starts a plain or
+/// compound assignment rather than a comparison or an arrow.
+fn assignment_follows(after: &str) -> bool {
+    let after = after.trim_start();
+    let compound = [
+        "+=", "-=", "*=", "/=", "%=", "**=", "||=", "&&=", "??=", "<<=", ">>=", "&=", "|=", "^=",
+    ];
+    (after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>"))
+        || compound.iter().any(|op| after.starts_with(op))
+}
+
+/// The content of the second top-level argument of `args` when it is a plain
+/// string literal (no template interpolation), else `None`.
+fn second_argument_literal(args: &str) -> Option<&str> {
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut starts = vec![0usize];
+    for (offset, ch) in args.char_indices() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => starts.push(offset + 1),
+            _ => {}
+        }
+    }
+    let start = *starts.get(1)?;
+    let end = starts.get(2).map_or(args.len(), |next| next - 1);
+    let argument = args.get(start..end)?.trim();
+    let quote = argument
+        .chars()
+        .next()
+        .filter(|ch| matches!(ch, '"' | '\'' | '`'))?;
+    let inner = argument.strip_prefix(quote)?.strip_suffix(quote)?;
+    let interpolated = quote == '`' && inner.contains("${");
+    (!inner.contains(quote) && !inner.contains('\\') && !interpolated).then_some(inner)
 }

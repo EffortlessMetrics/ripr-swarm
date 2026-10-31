@@ -1,0 +1,6 @@
+[[extend]]
+id = "RIPR-SPEC-0311"
+tests = [
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::gap_cleanup_composes_with_exact_issued_receipt_replacement",
+]
+code = ["crates/ripr/src/app/repair_attempt/mod.rs"]

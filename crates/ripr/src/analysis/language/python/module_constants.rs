@@ -34,6 +34,7 @@ use super::source_facts::parse_module_result;
 use super::source_utils::{SourceText, line_for_range_start, text_for_range};
 use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
 use rustpython_parser::{Mode, Tok, lexer::lex};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 /// A module-scope name bound once to a scalar literal and never rebound.
@@ -50,7 +51,7 @@ pub(super) fn module_literal_constants(
     source: &SourceText<'_>,
     statements: &[Stmt],
 ) -> Vec<PythonModuleConstant> {
-    let Some(stable) = StableNames::of(source, statements) else {
+    let Some(stable) = StableNames::of(source, statements, false) else {
         return Vec::new();
     };
     statements
@@ -65,7 +66,7 @@ pub(super) fn module_literal_constants(
 /// can mutate through an attribute write that a test imports and reads back.
 /// The same no-rebinding conditions as [`module_literal_constants`] apply.
 pub(super) fn module_object_bindings(source: &SourceText<'_>, statements: &[Stmt]) -> Vec<String> {
-    let Some(stable) = StableNames::of(source, statements) else {
+    let Some(stable) = StableNames::of(source, statements, false) else {
         return Vec::new();
     };
     statements
@@ -113,7 +114,7 @@ pub(super) fn module_stable_names<'a>(
     source: &SourceText<'_>,
     statements: &'a [Stmt],
 ) -> PythonModuleNames<'a> {
-    let Some(stable) = StableNames::of(source, statements) else {
+    let Some(stable) = StableNames::of(source, statements, true) else {
         return PythonModuleNames::default();
     };
     let values = statements
@@ -160,11 +161,22 @@ struct StableNames {
 }
 
 impl StableNames {
-    /// None when the module binds names this walk cannot see.
-    fn of(source: &SourceText<'_>, statements: &[Stmt]) -> Option<Self> {
+    /// None when the module binds names this walk cannot see. `import_time`
+    /// is set only for reads a decorator makes when the module is imported;
+    /// call-time reads (constants, object and table bindings) keep the
+    /// whole-module writer scan because a test body can rewrite them.
+    fn of(source: &SourceText<'_>, statements: &[Stmt], import_time: bool) -> Option<Self> {
         let mut bindings = ScopeBindings::default();
         collect_scope_bindings(statements, &mut bindings);
-        if bindings.opaque || writes_namespace_dynamically(source) {
+        // A decorator reads these names when the module is imported; a writer
+        // inside a test body runs later, so only the rest of the module
+        // counts (#11018).
+        let scanned = if import_time {
+            without_test_bodies(source, statements)
+        } else {
+            source.to_string()
+        };
+        if bindings.opaque || writes_namespace_dynamically(&scanned) {
             return None;
         }
         let mut globals = Vec::new();
@@ -194,6 +206,170 @@ impl StableNames {
             && !self.attributes.iter().any(|attribute| attribute == name)
             && !self.walrus.iter().any(|target| target == name)
     }
+}
+
+/// `source` with the body of every `test*` function, every `test*` method of
+/// a `Test*` class and every undecorated module-level helper blanked
+/// (decorators, signatures and all other code stay). Such a body runs only when
+/// something calls it, after every decorator in the module was applied, so a
+/// namespace writer there cannot change what a decorator read at import.
+/// Module scope, class bodies, fixtures, decorated functions and decorator
+/// arguments are untouched, so those writers still count. A module that names
+/// a `test*` function outside its own `def` (called at import, aliased, used
+/// as a decorator or argument) keeps the whole-module scan (#11018). A helper
+/// named that way keeps only its own body, and so does any helper that body
+/// names in turn (#11144).
+fn without_test_bodies(source: &str, statements: &[Stmt]) -> String {
+    let mut ranges = Vec::new();
+    let mut names: Vec<&str> = Vec::new();
+    let mut helpers: Vec<(&str, (usize, usize))> = Vec::new();
+    for statement in statements {
+        match statement {
+            Stmt::FunctionDef(function)
+                if function.name.starts_with("test")
+                    && !is_fixture(source, &function.decorator_list) =>
+            {
+                ranges.extend(body_range(&function.body));
+                names.push(function.name.as_str());
+            }
+            Stmt::AsyncFunctionDef(function)
+                if function.name.starts_with("test")
+                    && !is_fixture(source, &function.decorator_list) =>
+            {
+                ranges.extend(body_range(&function.body));
+                names.push(function.name.as_str());
+            }
+            // An undecorated module-level helper runs only when something
+            // calls it. One that anything outside a blanked body names (a
+            // call at import, an alias, an argument) keeps its body (#11144).
+            Stmt::FunctionDef(function)
+                if function.decorator_list.is_empty() && !function.name.starts_with("test") =>
+            {
+                helpers.extend(
+                    body_range(&function.body).map(|range| (function.name.as_str(), range)),
+                );
+            }
+            Stmt::AsyncFunctionDef(function)
+                if function.decorator_list.is_empty() && !function.name.starts_with("test") =>
+            {
+                helpers.extend(
+                    body_range(&function.body).map(|range| (function.name.as_str(), range)),
+                );
+            }
+            Stmt::ClassDef(class) if class.name.starts_with("Test") => {
+                for member in &class.body {
+                    match member {
+                        Stmt::FunctionDef(method)
+                            if method.name.starts_with("test")
+                                && !is_fixture(source, &method.decorator_list) =>
+                        {
+                            ranges.extend(body_range(&method.body));
+                            names.push(method.name.as_str());
+                        }
+                        Stmt::AsyncFunctionDef(method)
+                            if method.name.starts_with("test")
+                                && !is_fixture(source, &method.decorator_list) =>
+                        {
+                            ranges.extend(body_range(&method.body));
+                            names.push(method.name.as_str());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if ranges.is_empty() && helpers.is_empty() {
+        return source.to_string();
+    }
+    // Whole statements are replaced byte for byte by spaces, so the text is
+    // valid UTF-8; the fallback is only a guard.
+    let blank = |helpers: &[(&str, (usize, usize))]| {
+        let mut blanked = source.as_bytes().to_vec();
+        for &(start, end) in ranges.iter().chain(helpers.iter().map(|(_, range)| range)) {
+            let end = end.min(blanked.len());
+            for byte in blanked.get_mut(start..end).unwrap_or_default() {
+                if *byte != b'\n' {
+                    *byte = b' ';
+                }
+            }
+        }
+        String::from_utf8(blanked).unwrap_or_else(|_| source.to_string())
+    };
+    // A helper named anywhere outside a blanked body keeps its body, and a
+    // kept body can name another helper. Count words once and follow the
+    // names a kept body adds, so the work stays linear in the module size.
+    let mut blanked = blank(&helpers);
+    let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for word in words(&blanked) {
+        *counts.entry(word).or_insert(0) += 1;
+    }
+    let mut by_name: std::collections::HashMap<&str, Vec<usize>> = std::collections::HashMap::new();
+    for (index, (name, _)) in helpers.iter().enumerate() {
+        by_name.entry(name).or_default().push(index);
+    }
+    let mut pending: Vec<usize> = helpers
+        .iter()
+        .enumerate()
+        .filter(|(_, (name, _))| {
+            counts.get(name).copied().unwrap_or(0) > by_name.get(name).map_or(0, Vec::len)
+        })
+        .map(|(index, _)| index)
+        .collect();
+    let mut kept = vec![false; helpers.len()];
+    while let Some(index) = pending.pop() {
+        if std::mem::replace(&mut kept[index], true) {
+            continue;
+        }
+        let (start, end) = helpers[index].1;
+        let body = source.get(start..end.min(source.len())).unwrap_or_default();
+        for word in words(body) {
+            let count = counts.entry(word).or_insert(0);
+            *count += 1;
+            // One mention per `def` of the name is the declaration itself.
+            if let Some(indices) = by_name.get(word).filter(|found| *count > found.len()) {
+                pending.extend(indices.iter().copied());
+            }
+        }
+    }
+    if kept.iter().any(|&keep| keep) {
+        let mut index = 0;
+        helpers.retain(|_| {
+            index += 1;
+            !kept[index - 1]
+        });
+        blanked = blank(&helpers);
+    }
+    // A test function named anywhere but its own `def` (called at import,
+    // used as a decorator) may run before the decorators: scan everything.
+    if names
+        .iter()
+        .any(|name| identifier_offsets(&blanked, name).count() > 1)
+    {
+        return source.to_string();
+    }
+    blanked
+}
+
+/// A `test*`-named function that a decorator spelling `fixture` makes a
+/// fixture runs when a test requests it, not as a test; it is not blanked.
+fn is_fixture(source: &str, decorators: &[Expr]) -> bool {
+    decorators.iter().any(|decorator| {
+        let range = decorator.range();
+        source
+            .get(usize::from(range.start())..usize::from(range.end()))
+            .is_none_or(|text| text.contains("fixture"))
+    })
+}
+
+fn body_range(body: &[Stmt]) -> Option<(usize, usize)> {
+    let first = body.first()?;
+    let last = body.last()?;
+    Some((
+        usize::from(first.range().start()),
+        usize::from(last.range().end()),
+    ))
 }
 
 /// How a module binds its names, for the conditional-definition and
@@ -530,13 +706,32 @@ fn contains_nested_scope(statements: &[Stmt]) -> bool {
 /// code, so its text still counts, and a module the lexer rejects falls back
 /// to the whole-text scan. A false match only leaves constants unresolved.
 fn writes_namespace_dynamically(source: &str) -> bool {
+    let mut tokens = Vec::new();
+    for result in lex(source, Mode::Module) {
+        match result {
+            Ok(pair) => tokens.push(pair),
+            Err(_) => return writes_namespace_in_text(source),
+        }
+    }
     // 0: nothing pending, 1: just read `sys`, 2: just read `sys.`.
     let mut after_sys = 0;
-    for result in lex(source, Mode::Module) {
-        let Ok((token, range)) = result else {
-            return writes_namespace_in_text(source);
-        };
-        match &token {
+    // An `import` statement binds a name; it writes nothing (#11102).
+    let mut in_import = false;
+    let mut line_start = true;
+    for (index, (token, range)) in tokens.iter().enumerate() {
+        match token {
+            Tok::Newline | Tok::Semi => {
+                in_import = false;
+                line_start = true;
+                after_sys = 0;
+                continue;
+            }
+            Tok::Indent | Tok::Dedent => continue,
+            Tok::Import | Tok::From if line_start => in_import = true,
+            // `from unittest.mock import patch` only names the writer; an
+            // alias (`import patch as p`) hides later calls, so it counts.
+            Tok::Name { .. }
+                if in_import && !matches!(tokens.get(index + 1), Some((Tok::As, _))) => {}
             Tok::Name { name } => {
                 if DYNAMIC_NAMESPACE_WRITERS.contains(&name.as_str())
                     || (after_sys == 2 && name == "modules")
@@ -544,8 +739,14 @@ fn writes_namespace_dynamically(source: &str) -> bool {
                     return true;
                 }
                 after_sys = usize::from(name == "sys");
+                line_start = false;
+                continue;
             }
-            Tok::Dot if after_sys == 1 => after_sys = 2,
+            Tok::Dot if after_sys == 1 => {
+                after_sys = 2;
+                line_start = false;
+                continue;
+            }
             // `getattr(importlib, "reload")(m)` and `locate("importlib.reload")`
             // name the writer only as a string, so a whitespace-free string
             // with a writer name among its dotted parts still counts. Prose
@@ -564,10 +765,11 @@ fn writes_namespace_dynamically(source: &str) -> bool {
                 if writes_namespace_in_text(text) {
                     return true;
                 }
-                after_sys = 0;
             }
-            _ => after_sys = 0,
+            _ => {}
         }
+        after_sys = 0;
+        line_start = false;
     }
     false
 }
@@ -604,31 +806,133 @@ pub(super) fn assigned_attributes(source: &str) -> Option<Vec<String>> {
 }
 
 pub(super) fn assigned_attribute_names(statements: &[Stmt]) -> Vec<String> {
+    assigned_attribute_targets(statements, &|attribute| Some(attribute.attr.to_string()))
+}
+
+/// The names the module uses other than to import them or to construct them
+/// (`CliRunner(...)`): `CliRunner.invoke = fake`, `setattr(CliRunner, ...)`,
+/// `Runner = CliRunner` and a string such as `"click.testing.CliRunner.invoke"`
+/// all name a class in a way that can change what it builds. A module the
+/// lexer rejects names every identifier it contains, so nothing is hidden.
+/// Only names `watched` accepts are kept, each once: the caller asks about a
+/// fixed set of classes, and every file's facts are stored and decoded.
+pub(super) fn watched_names_used_beyond_construction(
+    source: &str,
+    watched: &dyn Fn(&str) -> bool,
+) -> Vec<String> {
+    let mut names = BTreeSet::new();
+    let mut tokens = Vec::new();
+    for result in lex(source, Mode::Module) {
+        match result {
+            Ok((token, _)) => tokens.push(token),
+            Err(_) => {
+                return source
+                    .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    .filter(|word| !word.is_empty() && watched(word))
+                    .map(str::to_string)
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect();
+            }
+        }
+    }
+    let mut in_import = false;
+    let mut line_start = true;
+    for (index, token) in tokens.iter().enumerate() {
+        match token {
+            Tok::Newline => {
+                in_import = false;
+                line_start = true;
+                continue;
+            }
+            Tok::Semi => {
+                in_import = false;
+                line_start = true;
+                continue;
+            }
+            Tok::Indent | Tok::Dedent => continue,
+            Tok::Import | Tok::From if line_start => in_import = true,
+            // `def CliRunner(...)` and `class CliRunner(...)` redefine the
+            // name; only a call constructs it.
+            Tok::Name { name }
+                if !in_import
+                    && (!matches!(tokens.get(index + 1), Some(Tok::Lpar))
+                        || index
+                            .checked_sub(1)
+                            .and_then(|before| tokens.get(before))
+                            .is_some_and(|before| matches!(before, Tok::Def | Tok::Class)))
+                    && watched(name.as_str()) =>
+            {
+                names.insert(name.to_string());
+            }
+            Tok::String { value, .. } => names.extend(
+                value
+                    .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    .filter(|word| !word.is_empty() && watched(word))
+                    .map(str::to_string),
+            ),
+            _ => {}
+        }
+        line_start = false;
+    }
+    names.into_iter().collect()
+}
+
+/// The dotted modules a file imports, at any nesting depth: `import a.b` names
+/// `a.b`, `from a import b` names `a` and `a.b`. A relative import names the
+/// written module and each imported name, which only over-matches.
+pub(super) fn imported_module_names(statements: &[Stmt]) -> Vec<String> {
+    let mut modules = Vec::new();
+    visit_statements(statements, &mut |stmt| match stmt {
+        Stmt::Import(import) => {
+            modules.extend(import.names.iter().map(|alias| alias.name.to_string()));
+        }
+        Stmt::ImportFrom(import) => {
+            let module = import.module.as_ref().map(|module| module.to_string());
+            if let Some(module) = &module {
+                modules.push(module.clone());
+            }
+            for alias in &import.names {
+                modules.push(match &module {
+                    Some(module) => format!("{module}.{}", alias.name),
+                    None => alias.name.to_string(),
+                });
+            }
+        }
+        _ => {}
+    });
+    modules
+}
+
+fn assigned_attribute_targets(
+    statements: &[Stmt],
+    pick: &dyn Fn(&ast::ExprAttribute) -> Option<String>,
+) -> Vec<String> {
     let mut attributes = Vec::new();
     visit_statements(statements, &mut |stmt| match stmt {
         Stmt::Assign(assign) => {
             for target in &assign.targets {
-                attribute_target_names(target, &mut attributes);
+                attribute_target_names(target, pick, &mut attributes);
             }
         }
         Stmt::AnnAssign(assign) if assign.value.is_some() => {
-            attribute_target_names(&assign.target, &mut attributes);
+            attribute_target_names(&assign.target, pick, &mut attributes);
         }
-        Stmt::AugAssign(assign) => attribute_target_names(&assign.target, &mut attributes),
+        Stmt::AugAssign(assign) => attribute_target_names(&assign.target, pick, &mut attributes),
         Stmt::Delete(delete) => {
             for target in &delete.targets {
-                attribute_target_names(target, &mut attributes);
+                attribute_target_names(target, pick, &mut attributes);
             }
         }
-        Stmt::For(stmt) => attribute_target_names(&stmt.target, &mut attributes),
-        Stmt::AsyncFor(stmt) => attribute_target_names(&stmt.target, &mut attributes),
+        Stmt::For(stmt) => attribute_target_names(&stmt.target, pick, &mut attributes),
+        Stmt::AsyncFor(stmt) => attribute_target_names(&stmt.target, pick, &mut attributes),
         Stmt::With(stmt) => {
             for target in stmt
                 .items
                 .iter()
                 .filter_map(|item| item.optional_vars.as_deref())
             {
-                attribute_target_names(target, &mut attributes);
+                attribute_target_names(target, pick, &mut attributes);
             }
         }
         Stmt::AsyncWith(stmt) => {
@@ -637,7 +941,7 @@ pub(super) fn assigned_attribute_names(statements: &[Stmt]) -> Vec<String> {
                 .iter()
                 .filter_map(|item| item.optional_vars.as_deref())
             {
-                attribute_target_names(target, &mut attributes);
+                attribute_target_names(target, pick, &mut attributes);
             }
         }
         _ => {}
@@ -647,21 +951,25 @@ pub(super) fn assigned_attribute_names(statements: &[Stmt]) -> Vec<String> {
     attributes
 }
 
-fn attribute_target_names(target: &Expr, out: &mut Vec<String>) {
+fn attribute_target_names(
+    target: &Expr,
+    pick: &dyn Fn(&ast::ExprAttribute) -> Option<String>,
+    out: &mut Vec<String>,
+) {
     match target {
-        Expr::Attribute(attribute) => out.push(attribute.attr.to_string()),
+        Expr::Attribute(attribute) => out.extend(pick(attribute)),
         Expr::Tuple(tuple) => {
             for element in &tuple.elts {
-                attribute_target_names(element, out);
+                attribute_target_names(element, pick, out);
             }
         }
         Expr::List(list) => {
             for element in &list.elts {
-                attribute_target_names(element, out);
+                attribute_target_names(element, pick, out);
             }
         }
-        Expr::Starred(starred) => attribute_target_names(&starred.value, out),
-        Expr::Subscript(subscript) => attribute_target_names(&subscript.value, out),
+        Expr::Starred(starred) => attribute_target_names(&starred.value, pick, out),
+        Expr::Subscript(subscript) => attribute_target_names(&subscript.value, pick, out),
         _ => {}
     }
 }
@@ -697,7 +1005,7 @@ pub(super) fn module_table_binding_at(
     name: &str,
     line: usize,
 ) -> bool {
-    let Some(stable) = StableNames::of(source, statements) else {
+    let Some(stable) = StableNames::of(source, statements, false) else {
         return false;
     };
     stable.holds(name)
@@ -971,6 +1279,13 @@ fn walrus_target_names(text: &str) -> std::collections::HashSet<&str> {
 /// Whether `text` holds `identifier` as a whole word.
 pub(super) fn mentions_identifier(text: &str, identifier: &str) -> bool {
     identifier_offsets(text, identifier).next().is_some()
+}
+
+/// The identifier-like words of `text`, split on anything that is not
+/// alphanumeric or `_` (the same boundary [`identifier_offsets`] uses).
+fn words(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .filter(|word| !word.is_empty())
 }
 
 /// End offsets of every whole-word occurrence of `identifier` in `text`.

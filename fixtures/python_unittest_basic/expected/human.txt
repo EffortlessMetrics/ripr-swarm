@@ -25,7 +25,7 @@ Start here:
   Related test: tests/test_risk.py:7 test_risk_score_high (assertion too weak to tell the old behavior from the new)
   Suggested test file: tests/test_risk.py
   Suggested test: test_risk_score_high
-  Verify command: python -m unittest tests.test_risk.RiskScoreTests.test_risk_score_high (high)
+  Suggested command (unverified; inspect and run from the selected root): python -m unittest tests.test_risk.RiskScoreTests.test_risk_score_high
   Next step — Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `amount == 100`
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

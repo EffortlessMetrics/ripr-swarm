@@ -28,11 +28,14 @@ use super::{
     route,
 };
 mod admission;
+#[cfg(test)]
+mod assertion_helper_tests;
 mod assertion_selection;
 mod bounded_read;
 mod fact_serde;
 mod fact_store;
 pub(crate) use fact_store::PythonFileFactStore;
+mod teardown;
 mod workspace_reach;
 use crate::analysis::workspace::{
     changed_source_files_absent_from_worktree, limitations_for_absent_changed_files,
@@ -191,10 +194,13 @@ mod same_class_callees;
 mod static_limits;
 mod term_activation;
 mod test_activation;
+mod truthiness_swap;
 use static_limits::{
     PythonStaticLimit, has_identifier_boundary, line_prefix_before,
     python_callee_start_has_boundary, python_prefix_hides_code,
 };
+mod cli_runner;
+mod cli_subcommand;
 mod transitive_reach;
 #[cfg(test)]
 use static_limits::{
@@ -343,6 +349,10 @@ struct PythonOwner {
     foreign_writes: module_value::ForeignWrites,
     /// Owner admitted through a decided interpreter-version condition.
     version_conditional: bool,
+    /// The click group this top-level function is registered on as a
+    /// subcommand, and the name a test passes to the group to reach it
+    /// (`cli_subcommand.rs`, #9226). `None` unless the file proves it.
+    cli_subcommand: Option<cli_subcommand::CliSubcommand>,
 }
 
 /// One declared parameter of a Python function owner.
@@ -503,6 +513,10 @@ struct PythonFixtureDef {
     /// The class the fixture returns a fresh literal-built instance of
     /// (`return Account(100)`), when that is its whole shape (#9619).
     literal_construction: Option<String>,
+    /// The inert test-support class (`CliRunner`) the fixture returns a fresh
+    /// literal-built instance of, when that is its whole shape; the
+    /// fixture may take a lone unused `request` (#11016).
+    inert_tool: Option<String>,
     /// The literal `params=` rows a fixture returning `request.param` hands
     /// the test, one run per row (#9619, `param_fixtures.rs`).
     literal_params: Option<Vec<param_fixtures::FixtureParamRow>>,
@@ -525,6 +539,26 @@ struct PythonImport {
     source_module: String,
 }
 
+/// A helper's comparison is retained even when its execution/bindings cannot
+/// establish effect credit. Named states prevent fallback from laundering it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+enum PythonHelperOrigin {
+    Inline,
+    ValueHelper,
+    FieldHelperSupported,
+    FieldHelperRefused,
+}
+
+impl PythonHelperOrigin {
+    fn is_helper(self) -> bool {
+        self != Self::Inline
+    }
+
+    fn effect_only(self) -> bool {
+        matches!(self, Self::FieldHelperSupported | Self::FieldHelperRefused)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct PythonAssertion {
     text: String,
@@ -539,7 +573,7 @@ struct PythonAssertion {
     callable_call: Option<String>,
     /// The existing helper-resolution pass supplied this assertion. Its
     /// comparison alone does not establish a deferred owner's execution.
-    helper_derived: bool,
+    helper_origin: PythonHelperOrigin,
     /// Native assertion/call span, relative to the containing test body.
     #[serde(with = "fact_serde::option_range")]
     source_range: Option<rustpython_parser::text_size::TextRange>,
@@ -1045,6 +1079,9 @@ impl PythonAdapter {
         walk_limits: PythonDiffWalkLimits,
         handwritten: &[String],
     ) -> Result<LanguageDiffResult, String> {
+        // A previous run's facts are freed before this run builds its own
+        // (sequential callers; see `teardown` for concurrent ones).
+        teardown::await_previous();
         // Changed files are the subject of the diff, so the cap only ever
         // refuses context around them (#10461). The walk streams into a
         // bounded selection so discovery memory stays at the cap rather
@@ -1438,20 +1475,50 @@ impl PythonAdapter {
             .keys()
             .flat_map(|file| file.ancestors().skip(1))
             .collect();
-        for changed in &python_changed_files {
-            let mut foreign = foreign_index.excluding(&changed.path);
+        let foreign_of = |file: &Path| {
+            let mut foreign = foreign_index.excluding(file);
             if shadowed_import
-                || module_value::extension_beside(&options.root, &changed.path)
-                || module_value::compiled_package_shadow(
-                    &options.root,
-                    &import_roots,
-                    &changed.path,
-                )
+                || module_value::extension_beside(&options.root, file)
+                || module_value::compiled_package_shadow(&options.root, &import_roots, file)
                 || extension_names
                     .as_ref()
-                    .is_none_or(|names| module_value::shadowed_by_extension(names, &changed.path))
+                    .is_none_or(|names| module_value::shadowed_by_extension(names, file))
             {
                 foreign.mark_compiled_shadow();
+            }
+            foreign
+        };
+        for changed in &python_changed_files {
+            let mut foreign = foreign_of(&changed.path);
+            // A sole top-level line replacement may be a module constant a
+            // sibling module reads through a relative import of one of its
+            // readers (#9619); each such module gets its own write view.
+            if let ([added], [_]) = (
+                changed.added_lines.as_slice(),
+                changed.removed_lines.as_slice(),
+            ) && added
+                .text
+                .chars()
+                .next()
+                .is_some_and(|first| first.is_alphabetic() || first == '_')
+            {
+                foreign.set_forwarders(
+                    module_value::forwarder_candidates(
+                        &changed.path,
+                        workspace_read
+                            .sources
+                            .iter()
+                            .map(|(file, source)| (file.as_path(), source.as_str())),
+                        |file| workspace_read.sources.contains_key(file),
+                    )
+                    .into_iter()
+                    .map(|(file, source)| module_value::ForwarderModule {
+                        file: file.to_path_buf(),
+                        source: source.to_string(),
+                        foreign: foreign_of(file),
+                    })
+                    .collect(),
+                );
             }
             conditional_defs::retain_workspace_certain(&mut all_owners, &changed.path, &foreign);
             for owner in all_owners
@@ -1528,6 +1595,19 @@ impl PythonAdapter {
                     )
                 })
                 .unwrap_or_default();
+            // Lines inside a multi-line string are string content, not
+            // statements; an unreadable or unlexable file is treated as all
+            // string so the trailing-comment guard fails closed (#10706).
+            let string_line_ranges = workspace_read
+                .sources
+                .get(&changed.path)
+                .and_then(|source| no_behavior::multi_line_string_line_ranges(source));
+            // The paired old line gets the same test against the
+            // reconstructed old source, so a delimiter edit that turns old
+            // string content into code is not read as a spacing edit.
+            let old_string_line_ranges = old_source
+                .as_deref()
+                .and_then(no_behavior::multi_line_string_line_ranges);
             let import_ranges = import_ranges_by_file
                 .get(&changed.path)
                 .map(Vec::as_slice)
@@ -1601,6 +1681,14 @@ impl PythonAdapter {
                         });
                 let no_behavior = PythonNoBehaviorContext {
                     new_line_in_docstring: line_is_in_ranges(added.line, new_docstring_ranges),
+                    new_line_in_multiline_string: string_line_ranges
+                        .as_deref()
+                        .is_none_or(|ranges| line_is_in_ranges(added.line, ranges))
+                        || old_line.is_some_and(|removed| {
+                            old_string_line_ranges
+                                .as_deref()
+                                .is_none_or(|ranges| line_is_in_ranges(removed.line, ranges))
+                        }),
                     old_line_in_docstring: old_line.is_some_and(|removed| {
                         line_is_in_ranges(removed.line, &old_docstring_ranges)
                     }),
@@ -1677,6 +1765,25 @@ impl PythonAdapter {
             );
             findings.extend(deleted);
         }
+        // Freeing the run's facts takes ~0.3 s on one thread for a large
+        // workspace (#10914: pandas, ~23k tests). Nothing in the result
+        // borrows them, so they are freed off the result path (`teardown`).
+        drop(related_memo);
+        drop(foreign_index);
+        drop(import_roots);
+        let facts = (
+            all_tests,
+            all_owners,
+            workspace_read,
+            foreign_prior_by_file,
+            fixture_defs_by_file,
+            fixture_side_by_file,
+            helper_modules_by_file,
+            docstring_ranges_by_file,
+            import_ranges_by_file,
+            star_facts_by_file,
+        );
+        teardown::free_in_background(facts);
         Ok(LanguageDiffResult {
             value_origins,
             findings,
@@ -1760,6 +1867,10 @@ mod deleted_lines_tests;
 mod fixtures_tests;
 
 #[cfg(test)]
+mod import_writer_tests;
+#[cfg(test)]
+mod inert_tool_fixture_tests;
+#[cfg(test)]
 mod literal_fixture_tests;
 
 #[cfg(test)]
@@ -1785,10 +1896,22 @@ mod helper_inline_tests;
 mod literal_patch_tests;
 
 #[cfg(test)]
+mod cli_runner_tests;
+#[cfg(test)]
+mod cli_subcommand_tests;
+#[cfg(test)]
 mod helper_owner_call_tests;
+#[cfg(test)]
+mod imported_literal_tests;
+#[cfg(test)]
+mod test_body_writer_tests;
+#[cfg(test)]
+mod trailing_comment_tests;
 
 #[cfg(test)]
 mod call_chain_tests;
+#[cfg(test)]
+mod forwarder_tests;
 #[cfg(test)]
 mod imported_call_operator_tests;
 #[cfg(test)]
