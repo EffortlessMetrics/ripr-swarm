@@ -292,12 +292,15 @@ can only hint that a caller "may lead here" without changing anything.
   (`format!("{}", base() & 1)`), the callee nested in its own arguments, a
   parameter that shares a method's name and a user `Display`/`From` impl keep
   the abstention. The free-call chain identity rule and the owner-call entry
-  pin still apply, and an owner whose value is built by a macro
-  (`concat!("ri", "pr")`) is refused because its expansion is not seen.
-  Corpus: `spec0117-external-std-macro` and `format-forward-to-string-credits` credit;
-  `format-forward-precision-hides-value`,
-  `format-forward-bitand-hides-value` and
-  `old-title-through-format-macro` keep abstaining.
+  pin still apply. A whole-body bare parenthesized `concat!(...)` with one or more readable
+  string literals, totaling at most 512 decoded bytes, is evaluated only if the workspace cannot rebind the macro; its exact
+  return receives a direct witness. Nested macros, nonliteral and non-string
+  operands, empty, bracketed or braced calls, qualified calls and ambiguous
+  bindings stay opaque.
+  Corpus: `spec0117-external-std-macro`, `format-forward-to-string-credits`
+  and `old-title-through-format-macro` credit;
+  `format-forward-precision-hides-value` and
+  `format-forward-bitand-hides-value` keep abstaining.
 - Effect propagation (#6780): a `side_effect` or `call_deletion` probe
   acts on state rather than on a returned value, so it is not judged by
   result forwarding. Under the same chain-only reach and the same
@@ -749,6 +752,9 @@ Reach on that rewritten finding is `unknown` and the stop reason is
 
 ## Test Mapping
 
+`crates/ripr/tests/concat_literal_return.rs` covers direct and forwarded
+literal returns and opaque or shadowed macro refusals.
+
 `analysis/classify/helper_transfer.rs` `tests`;
 `analysis/classifier.rs` (`given_helper_chain_refused_for_non_unique_entry_when_tests_call_it_then_static_unknown`,
 `given_helper_chain_refused_for_non_unique_callee_when_tests_call_a_unique_wrapper_then_no_static_path`,
@@ -799,6 +805,10 @@ example 5) and `spec-b-0159-path-qualified-imported-module` (reject shape).
   one-hop primitive field observation described above.
 
 ## Implementation Mapping
+
+- `analysis/classify/propagation_witness.rs` — bounded literal `concat!`
+  return evaluation and direct witness; `analysis/classifier/finding.rs`
+  removes the macro opacity reason only for the admitted return.
 
 - `analysis/classify/helper_transfer.rs` — the authority.
 - `analysis/classify/related_tests.rs` — the relation branch.

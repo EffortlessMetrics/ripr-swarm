@@ -188,13 +188,10 @@ sides. A separate `normalize(normalize(x)) == normalize(x)` test retains
 the ordinary idempotence control.
 
 The three `py-nested-*-owner` cases retain these runtime labels. The outer
-owner's current gap is an explicit `known-false` record owned by #9814,
-not an accepted ideal result. Its expected row preserves the observation
-until a safe repair removes that record. Do not fix it by comparing only
-the outer and repeated callee names: that would falsely credit the inner
-owner case. A repair must resolve the oracle per finding and keep the same
-resolved assertion facts in selection, alignment and every direct strength
-consumer. Import aliases, receiver identity, owner calls nested inside the
+owner is credited because the assertion is resolved per finding: extraction
+records the outer callee and only a finding owned by that bare function reads
+the assertion as an exact pin (#9814). Comparing only the outer and repeated
+callee names would falsely credit the inner owner case. Import aliases, receiver identity, owner calls nested inside the
 repeated expression, and helper calls back into the changed owner need
 separate controls before widening credit.
 

@@ -76,12 +76,13 @@ Options:
   --version, -V Print the MCP server version.
 
 The MCP surface is read-only. It exposes tools `ripr_workspace_status`,
-`ripr_refresh`, `ripr_list_gaps`, `ripr_get_gap`, `ripr_prepare_repair`,
+`ripr_refresh`, `ripr_list_gaps`, `ripr_get_gap`, `ripr_get_top_limitation`,
+`ripr_prepare_repair`,
 `ripr_get_repair_attempt`, `ripr_get_receipt_status`,
 `ripr_get_repair_card`, and `ripr_list_repair_attempts`, the resource
 `ripr://workspace/status`, and the resource templates
 `ripr://snapshot/{snapshot_id}`, `ripr://gap/{canonical_id}`,
-`ripr://repair-attempt/{attempt_id}`, `ripr://receipt/{receipt_id}`, and
+`ripr://gap/{canonical_id}/limitation`, `ripr://repair-attempt/{attempt_id}`, `ripr://receipt/{receipt_id}`, and
 `ripr://repair-card/{canonical_id}`.
 `ripr_refresh` analyzes the committed default-branch diff by default through
 the shared check authority; its optional `base` argument selects another
