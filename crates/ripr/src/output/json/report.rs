@@ -1293,6 +1293,17 @@ fn evidence_path_values(finding: &Finding) -> Vec<String> {
 }
 
 fn strongest_related_test(finding: &Finding) -> Option<&RelatedTest> {
+    // #11228: TypeScript and JavaScript findings use the one shared selection
+    // rule (first of equal strength) so the oracle summary describes the row
+    // the headline, card and packet name. Other languages keep their existing
+    // last-of-equal-strength summary; moving them is a separate, golden-wide
+    // change.
+    if matches!(
+        finding.language,
+        Some(crate::domain::LanguageId::TypeScript | crate::domain::LanguageId::JavaScript)
+    ) {
+        return crate::output::related_test_miss::strongest_related_test(&finding.related_tests);
+    }
     finding
         .related_tests
         .iter()

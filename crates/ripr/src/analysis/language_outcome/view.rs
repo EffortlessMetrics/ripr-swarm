@@ -162,7 +162,7 @@ impl LanguageCompletenessView {
                     .any(|run| run.language == label && run.status.as_str() == status)
             {
                 return Err(format!(
-                    "language view: {label} is {status} but has no public language_runs row"
+                    "language view: {label} is {status} but has no public language_runs row; report this as a ripr bug with the command and workspace shape"
                 ));
             }
         }
@@ -171,7 +171,7 @@ impl LanguageCompletenessView {
             .find(|run| !self.rows.iter().any(|row| row.label == run.language))
         {
             return Err(format!(
-                "language view: public language_runs row {} has no aggregate child",
+                "language view: public language_runs row {} has no aggregate child; report this as a ripr bug with the command and workspace shape",
                 run.language
             ));
         }

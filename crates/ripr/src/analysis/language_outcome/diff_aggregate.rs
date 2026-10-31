@@ -247,7 +247,7 @@ impl LanguageAggregate {
             ));
         }
         if self.semantic_digest != self.compute_digest() {
-            return Err("diff language aggregate: digest does not match its children".to_string());
+            return Err("diff language aggregate: digest does not match its children; report this as a ripr bug with the command and workspace shape".to_string());
         }
         Ok(())
     }

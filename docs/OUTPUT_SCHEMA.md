@@ -1064,6 +1064,17 @@ unchanged. It is the one limitation kind that may ride on a complete outcome
 (`complete_with_findings` / `complete_no_findings`); every other kind marks the
 outcome incomplete. Human output renders it without the incomplete-scope hedge.
 
+`verification_only_change` (RIPR-SPEC-0368, #10749) is the second change-shape
+disclosure that may ride on a complete outcome. Changed lines that are
+verifier-only text (contract attributes such as `#[requires]`/`#[ensures]`,
+Creusot `#[logic]` items, `proof_assert!`/`snapshot!`/`ghost!`/`pearlite!` and
+Prusti `prusti_assert!`/`body_invariant!`) seed no probe, so they never become
+a finding or an actionable repair start. One aggregate limitation at
+`probe_generation` (human output: "change point detection") reports the changed-line count, the file count and the files
+(bounded), with the recovery to re-run the verifier. A contract-only diff stays
+`no_behavioral_candidates` but no longer reports an empty `limitations` list.
+ripr does not evaluate contracts, proofs or ghost code.
+
 `unevaluated_condition` (#8714) discloses conditional assertion credit: a
 credited test assertion sits under a branch condition static analysis cannot
 evaluate, so the credited oracle may never execute. The limitation names the
@@ -2005,6 +2016,9 @@ The evidence-first fields are additive in schema `0.2`:
   `[]`, and `authority_boundary` stays `"preview_advisory_only"` (TypeScript
   remains preview). Only `incomplete_repair_packet` is eligible to flip; all
   other categories stay non-actionable. `schema_version` is unchanged.
+  `private_member_reach_unknown` names unmodeled reach through public callers
+  into a TypeScript private method. It infers neither a related test nor a
+  missing assertion; its preview card retains the reach investigation route.
   When flipped, the actionability fields are rewritten to read as actionable
   (RIPR-SPEC-0088 §PR8) so they do not contradict the complete packet:
   `repair_route` names the actual repair action (the suggested assertion shape
@@ -2301,7 +2315,7 @@ JSON fields:
       "risk_class": "mock interaction payload gap",
       "evidence_kind": "mock_interaction",
       "disposition": "candidate_future_support",
-      "gap_state": "advisory",
+      "gap_state": "unknown",
       "actionability_category": "incomplete_repair_packet",
       "repair_packet_ready": false,
       "must_remain_non_actionable": true,
@@ -8970,7 +8984,7 @@ Field contract:
     "attempt_id": "<repair-attempt-id>",
     "attempt_state": "failed",
     "edit_cage_verdict": "violated",
-    "error": "repair attempt `<id>` is not receipt-ready: state `failed`, current true, verdict `violated`",
+    "error": "repair attempt `<id>` is not receipt-ready: state `failed`, current true, verdict `violated`; run `ripr agent status` to see why, then start a new attempt with `ripr agent repair`",
     "narration": ["<named cause>", "<recovery>"]
   }
   ```
@@ -13930,8 +13944,12 @@ stale reviews stay visible; they are not silently attributed to the new head.
 
 This attribution is advisory. It does not establish substantive or independent
 review, required approval counts, protection satisfaction, integration proof,
-or permission to merge. The retained current-head control preserves the
-existing advisory action; the command performs no PR mutation.
+or permission to merge. A CLEAN packet's `safe_next_action` is now
+`inspect final merge gates`, not `merge`; external consumers of schema `0.1`
+must handle the changed value. An empty rollup still leaves required-context
+completeness unknown. The action calls for final judgment and the normal
+server-enforced merge route when eligible, not settings discovery or an endless
+wait. The command performs no PR mutation.
 
 ## Report Packet Index
 
@@ -14203,6 +14221,12 @@ Report packet index field contract:
 
 Field contract:
 
+- `open_prs[].checks_rollup_available` is true only when GitHub returned an
+  array, including a valid empty array. A missing, null, or non-array rollup
+  is unknown, not evidence that no checks exist. `checks_summary` distinguishes
+  passed, neutral/skipped, pending, failed, and unknown entries. An unknown
+  rollup or check calls for inspection; this advisory packet does not establish
+  required-check completeness or authorize a merge.
 - `queue_disposition[].disposition` is advisory. It may be
   `merge_candidate`, `needs_integration_review`, `needs_review`, `close_duplicate`,
   `superseded`, `needs_fresh_validation`, `needs_owner_decision`, or
@@ -19135,7 +19159,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.124",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.125",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -19920,7 +19944,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.124",
+      "schema_version": "1.125",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
