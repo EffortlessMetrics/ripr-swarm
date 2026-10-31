@@ -18443,6 +18443,21 @@ fn detect_partial_none_when_every_test_extracted() {
     );
 }
 
+/// Review on #10224: type-only parameter lists (`type F = (test: T) => void`,
+/// interface method signatures, `declare function`) never create runtime
+/// bindings, so their identifiers must not shadow the runner in the enclosing
+/// scope. A skipped suite still resolves dormant and reports no gap.
+#[test]
+fn detect_partial_none_when_type_only_parameters_name_the_runner() {
+    let file = Path::new("tests/shadow.test.ts");
+    let source = "type Handler = (test: unknown) => void;\ninterface Suite {\n  run(describe: string): void;\n}\ndeclare function setup(test: unknown): void;\ndescribe.skip('legacy', () => {\n  test('works', () => {\n    expect(1).toBe(1);\n  });\n});\n";
+    let extracted = extract_tests(file, source);
+    assert!(
+        detect_partial_test_extraction(file, source, &extracted).is_none(),
+        "a skipped suite shadowed only by type-only parameters must stay silent, got {extracted:?}"
+    );
+}
+
 // ── #4104-A: owner-extraction gap disclosure ─────────────────────────────────
 
 fn changed_with_lines(path: &str, lines: &[(usize, &str)]) -> ChangedFile {

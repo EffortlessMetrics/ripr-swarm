@@ -1,0 +1,45 @@
+crates/ripr/src/app/repair_attempt/mod.rs|canonicalize retained before snapshot failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|canonicalize verify before snapshot failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|decode edit-cage baseline failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|decode retained verify failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|gap snapshot has no after verdict
+crates/ripr/src/app/repair_attempt/mod.rs|gap snapshot has no immutable base commit
+crates/ripr/src/app/repair_attempt/mod.rs|inspect workflow projection {path} failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|issued receipt pair exceeds capture limit
+crates/ripr/src/app/repair_attempt/mod.rs|issued receipt pair is missing
+crates/ripr/src/app/repair_attempt/mod.rs|missing attempt
+crates/ripr/src/app/repair_attempt/mod.rs|missing projection custody exceeds the capture budget
+crates/ripr/src/app/repair_attempt/mod.rs|missing terminal role {role}
+crates/ripr/src/app/repair_attempt/mod.rs|read staged agent packet failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|read staged edit-cage baseline failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|receipt predecessor is not a validated issued pair
+crates/ripr/src/app/repair_attempt/mod.rs|receipt requires exactly one repair attempt for seam `{seam_id}`: {detail}
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt ID must start with `{REPAIR_ATTEMPT_ID_PREFIX}`
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt ID suffix must contain {REPAIR_ATTEMPT_ID_HEX_LEN} lowercase hexadecimal characters
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt has no after-phase verdict
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt has no post-change path identity binding; currentness cannot be established
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt receipt is stale relative to repository HEAD
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt receipt movement `{}` does not match the verify verdict `{}` for seam `{}` /provenance/movement
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt receipt next-action kind `{}` does not match the verify verdict `{}` for seam `{}` /summary/nex
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt receipt records no usable analysis outcome status (got `{}`) <missing>
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt receipt seam change `{}` does not match the verify verdict `{}` for seam `{}` /seam/change <mis
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt receipt state `{}` does not match the verify verdict state `{}` for seam `{}` /summary/receipt_
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt receipt status `{}` does not match its recorded analysis outcome status `{}` /status <missing>
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt receipt {pointer} `{}` is not the attempt seam `{}` <missing>
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt verify document has unsupported schema version `{}`; expected `{}` from ripr agent verify <miss
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt verify document is malformed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt verify document is not JSON: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt {} is not receipt-ready: state `{}`, current {}{}, verdict `{}`
+crates/ripr/src/app/repair_attempt/mod.rs|repair packet is not UTF-8: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|retained gap receipt does not bind {pointer}
+crates/ripr/src/app/repair_attempt/mod.rs|retained gap snapshot does not match the verify, base or after head
+crates/ripr/src/app/repair_attempt/mod.rs|retained gap snapshot is not UTF-8: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|retained gap snapshot path, root or raw digest is not bound to the receipt
+crates/ripr/src/app/repair_attempt/mod.rs|retained gap terminal evidence is unavailable
+crates/ripr/src/app/repair_attempt/mod.rs|retained receipt has no root
+crates/ripr/src/app/repair_attempt/mod.rs|retained role {role} is too large
+crates/ripr/src/app/repair_attempt/mod.rs|retained verify path is not the workflow projection
+crates/ripr/src/app/repair_attempt/mod.rs|serialize repair delta failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|verify before snapshot digest does not match attempt {attempt_id}
+crates/ripr/src/app/repair_attempt/mod.rs|verify before snapshot digest does not match attempt {}
+crates/ripr/src/app/repair_attempt/mod.rs|verify before snapshot {} is not the retained snapshot for attempt {}
