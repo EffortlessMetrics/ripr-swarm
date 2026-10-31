@@ -1277,6 +1277,27 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
 }
 
 #[test]
+fn body_calls_owner_reaches_nested_function_through_enclosing_call() -> Result<(), String> {
+    let owners = extract_owners(
+        std::path::Path::new("hostile/nested.py"),
+        "def label(n):\n    def inner(m):\n        return f'#{m}'\n    return inner(n)\n",
+    );
+    let nested = owners
+        .iter()
+        .find(|owner| owner.qualified_name == "label.inner")
+        .ok_or_else(|| "nested owner missing".to_string())?;
+    assert!(
+        body_calls_owner("    assert label(3) == '#3'\n", nested),
+        "a test calling the enclosing function reaches its nested function"
+    );
+    assert!(
+        !body_calls_owner("    assert other(3) == '#3'\n", nested),
+        "a test calling an unrelated function does not reach the nested function"
+    );
+    Ok(())
+}
+
+#[test]
 fn has_unclosed_quote_handles_escapes_and_nested_quotes() {
     assert!(!has_unclosed_quote("\"closed\""));
     assert!(!has_unclosed_quote("'closed'"));
