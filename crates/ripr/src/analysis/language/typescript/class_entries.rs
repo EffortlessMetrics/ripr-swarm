@@ -192,6 +192,7 @@ fn class_entries_for(
                 exported_as_default: false,
                 class_member: Some(entry.method_kind),
                 decorated: None,
+                instance_factory: false,
             })
             .collect();
         entries.sort();
@@ -579,7 +580,7 @@ fn contains_word(text: &str, word: &str) -> bool {
 
 /// `true` when `source` assigns, deletes or defines `this.name`, so the
 /// instance may carry its own `name` in place of the prototype method.
-fn rebinds_this_member(source: &str, name: &str) -> bool {
+pub(crate) fn rebinds_this_member(source: &str, name: &str) -> bool {
     const COMPOUND: [&str; 14] = [
         "+=", "-=", "*=", "/=", "%=", "**=", "||=", "&&=", "??=", "<<=", ">>=", "&=", "|=", "^=",
     ];

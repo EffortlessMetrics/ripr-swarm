@@ -269,6 +269,7 @@ fn drive_before_phase_inner(
             &seam_id,
         )?);
     }
+    let _workflow_lock = lock_repair_workflow(&options.root)?;
     let _before_lock = lock_before_repair_attempt(&options.root)?;
     let seam_id = options
         .seam_id
@@ -347,6 +348,26 @@ impl GapWorkflowArtifactBackup {
             }
         }
     }
+}
+
+/// Serialize the shared repair projections across before and after phases,
+/// including explicit attempt stores. The per-worktree Git directory is not
+/// removed by ordinary workflow cleanup and is distinct for linked worktrees.
+/// Never remove this lock file: unlinking a held lock permits a second inode
+/// to be locked concurrently.
+fn lock_repair_workflow(root: &Path) -> Result<File, String> {
+    let git_dir = crate::agent::artifact::git_output(root, &["rev-parse", "--absolute-git-dir"])?;
+    let git_dir = Path::new(git_dir.trim());
+    let lock_path = git_dir.join("ripr-repair-workflow.lock");
+    let lock = crate::output::file_write::open_lock(&lock_path)
+        .map_err(|error| format!("create {} failed: {error}", lock_path.display()))?;
+    if let Err(error) = lock.try_lock() {
+        if matches!(error, std::fs::TryLockError::WouldBlock) {
+            return Err("another repair phase is using the shared workflow artifacts; retry after it finishes".to_string());
+        }
+        return Err(format!("lock {} failed: {error}", lock_path.display()));
+    }
+    Ok(lock)
 }
 
 /// Serialize before-phase execution and attempt publication per repository.
@@ -847,6 +868,26 @@ mod tests {
         })();
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        result
+    }
+
+    #[test]
+    fn repair_workflow_lock_survives_workflow_cleanup() -> Result<(), String> {
+        let root = test_root("workflow-contention")?;
+        let result = (|| -> Result<(), String> {
+            crate::testing::fixture_git::fixture_git_ok(&root, &["init", "-q"])?;
+            let workflow = root.join("target/ripr/workflow");
+            std::fs::create_dir_all(&workflow).map_err(|error| error.to_string())?;
+            let guard = lock_repair_workflow(&root)?;
+            std::fs::remove_dir_all(&workflow).map_err(|error| error.to_string())?;
+            if lock_repair_workflow(&root).is_ok() {
+                return Err("cleanup replaced the held workflow lock".to_string());
+            }
+            drop(guard);
+            drop(lock_repair_workflow(&root)?);
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
         result
     }
 

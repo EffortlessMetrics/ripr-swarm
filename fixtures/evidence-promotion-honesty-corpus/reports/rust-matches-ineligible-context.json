@@ -1,0 +1,10 @@
+{
+  "kind": "matches_eligibility_test_projection",
+  "summary": { "findings": 4 },
+  "findings": [
+    { "case": "ignored", "classification": "reachable_unrevealed", "probe": { "family": "error_path" } },
+    { "case": "ignored", "classification": "reachable_unrevealed", "probe": { "family": "return_value" } },
+    { "case": "broad_panic", "classification": "reachable_unrevealed", "probe": { "family": "error_path" } },
+    { "case": "broad_panic", "classification": "reachable_unrevealed", "probe": { "family": "return_value" } }
+  ]
+}

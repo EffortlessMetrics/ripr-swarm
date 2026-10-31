@@ -65,6 +65,30 @@ pub(crate) fn create_exclusive(path: &Path) -> io::Result<File> {
     open_new(path)
 }
 
+/// Open a persistent lock leaf without following a replacement symlink.
+/// Lock files are never truncated or removed by their owners.
+pub(crate) fn open_lock(path: &Path) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(false);
+    apply_nofollow_flags(&mut options);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        // Let another contender open the same leaf and reach try_lock;
+        // continue denying delete sharing so the locked inode cannot be
+        // replaced on Windows while the handle is held.
+        options.share_mode(0x0000_0001 | 0x0000_0002);
+    }
+    open_regular(path, &options)
+}
+
+pub(crate) fn open_regular_read(path: &Path) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    apply_nofollow_flags(&mut options);
+    open_regular(path, &options)
+}
+
 /// Rename does not follow the destination leaf, but refuse existing nonregular
 /// destinations rather than silently replacing them.
 pub(crate) fn validate_destination(path: &Path) -> io::Result<()> {
