@@ -11,18 +11,6 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:predicate:41e056ec",
-      "canonical_gap_id": "gap:rust:src/lib.rs:is_bulk:predicate_boundary:predicate:10==qty",
-      "canonical_gap_group_size": 1,
-      "canonical_gap": {
-        "id": "gap:rust:src/lib.rs:is_bulk:predicate_boundary:predicate:10==qty",
-        "language": "rust",
-        "file": "src/lib.rs",
-        "owner": "is_bulk",
-        "behavior_kind": "predicate_boundary",
-        "probe_kind": "predicate",
-        "normalized_discriminator": "10==qty"
-
-      },
       "classification": "infection_unknown",
       "severity": "warning",
       "confidence": 0.66,
@@ -45,8 +33,8 @@
       "flow_sinks": [
         {"kind":"return_value","text":"10 <= qty","line":2}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: 10 <= qty", "Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown", "No test is seen calling is_bulk; tests share only its file or a name token: discount_boundary", "Strong oracle found: exact value or pattern assertion"],
-      "missing": ["Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown", "No detected boundary input for the changed predicate"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: 10 <= qty", "Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown", "No test is seen calling is_bulk; tests share only its file or a name token: discount_boundary", "Strong oracle found: exact value or pattern assertion", "ripr saw a test reaching public API that may call toward this change through a transitive path it does not fully trace (pub to pub(crate) helper chains, macros, or generics). This is not a coverage assessment -- ripr cannot confirm or deny that the change is observed.", "For example, the test `discount_boundary` (src/lib.rs:19) calls `order_discount`, an entry point that may lead here. Inspect it to judge whether this change is observed.", "limitation_last_established_edge: test `discount_boundary` (src/lib.rs:19) -> entry `order_discount`", "limitation_first_unresolved_edge: entry `order_discount` -> owner `is_bulk` through a transitive Rust helper path", "limitation_analyzer_route: analysis/rust-public-api-transitive-reach", "limitation_non_claim: named limitation only; ripr cannot confirm or deny that this path observes the change"],
+      "missing": ["A test may reach this change through an internal helper-call chain ripr cannot fully trace (macros, generics, trait dispatch, or depth greater than 5). This is a named limitation, not a coverage claim."],
       "assertion_texts": {
         "20": "assert_eq!(order_discount(10), 5);",
         "21": "assert_eq!(order_discount(9), 4);"
@@ -128,12 +116,20 @@
           "why": "no established call path to the changed code; linked by file location only"
         }
       ],
-      "stop_reasons": ["infection_evidence_unknown"],
+      "stop_reasons": ["infection_evidence_unknown", "transitive_reach_unresolved"],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
-      "suggested_next_action": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "recommended_next_step": "Tests cannot close this static-analysis limitation: ripr cannot trace entry `order_discount` -> owner `is_bulk` through a transitive Rust helper path. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test. Route analyzer work to `analysis/rust-public-api-transitive-reach`.",
+      "suggested_next_action": "Tests cannot close this static-analysis limitation: ripr cannot trace entry `order_discount` -> owner `is_bulk` through a transitive Rust helper path. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test. Route analyzer work to `analysis/rust-public-api-transitive-reach`.",
       "language": "rust",
+      "static_limit_kind": "rust_transitive_reach_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/rust-public-api-transitive-reach",
+        "first_unresolved_edge": "entry `order_discount` -> owner `is_bulk` through a transitive Rust helper path",
+        "kind": "rust_transitive_reach_unresolved",
+        "last_established_edge": "test `discount_boundary` (src/lib.rs:19) -> entry `order_discount`",
+        "non_claim": "named limitation only; ripr cannot confirm or deny that this path observes the change"
+      },
       "source_currentness": "candidate_current"
     },
     {
