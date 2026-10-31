@@ -1809,7 +1809,7 @@ fn gap_bound_route(
 /// The named cause of an incomplete run for the withheld repair start
 /// (#11136): the first limitation the producer disclosed, in plain words with
 /// its file and recovery, or the bare fact when the run carries none.
-fn incomplete_limitation_summary(output: &super::CheckOutput) -> String {
+pub(crate) fn incomplete_limitation_summary(output: &super::CheckOutput) -> String {
     let Some(limitation) = output
         .analysis_outcome
         .as_ref()
