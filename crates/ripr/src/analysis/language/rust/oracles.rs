@@ -655,6 +655,7 @@ fn find_unresolved_assertion_macro_witness_among(
         if !finding.oracle_related_tests().any(|related| {
             related.name == test.name
                 && related.file == test.file
+                && related.line == test.start_line
                 && (!restrict_to_direct || is_direct_relation(related.relation_reason))
         }) {
             continue;
