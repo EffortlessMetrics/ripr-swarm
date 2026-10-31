@@ -4663,7 +4663,9 @@ fn dirty_path_cannot_be_repair_target(root: &Path, path: &str) -> bool {
         return false;
     }
     match std::fs::read_to_string(&candidate_path) {
-        Ok(content) => !content.contains("#[cfg(test)]"),
+        Ok(content) => !content
+            .lines()
+            .any(|line| crate::analysis::attribute_is_plain_test_gate(line.trim())),
         Err(_) => false,
     }
 }
