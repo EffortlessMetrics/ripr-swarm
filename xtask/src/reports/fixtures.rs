@@ -1726,8 +1726,34 @@ fn mask_refusal_body(body: &str) -> String {
     body.to_string()
 }
 
+/// Classification goldens pin analyzer findings, not the per-language
+/// completeness projection (#11272). The report renderer writes it as one
+/// compact member, and later adapters (`source_subject`, canonical next
+/// action) may append after it, so measure the member's own JSON value rather
+/// than assuming it is last. Dedicated schema tests own the field.
+fn strip_language_completeness_member(value: &str) -> String {
+    const MARKER: &str = ",\n  \"language_completeness\": ";
+    let Some(start) = value.find(MARKER) else {
+        return value.to_string();
+    };
+    let rest = &value[start + MARKER.len()..];
+    let mut values = serde_json::Deserializer::from_str(rest).into_iter::<serde_json::Value>();
+    if !matches!(values.next(), Some(Ok(_))) {
+        return value.to_string();
+    }
+    let end = start + MARKER.len() + values.byte_offset();
+    // The renderer's optional members follow the findings array's own newline
+    // (`]\n,\n  "member"`); drop it with the member so the root closer keeps
+    // the golden's `]\n}` shape.
+    let head = &value[..start];
+    let head = head.strip_suffix('\n').unwrap_or(head);
+    format!("{head}{}", &value[end..])
+}
+
 fn normalize_check_json_golden_document(value: &str) -> String {
-    split_compact_root_object_closer(&strip_canonical_next_action_member(value))
+    split_compact_root_object_closer(&strip_language_completeness_member(
+        &strip_canonical_next_action_member(value),
+    ))
 }
 
 /// Project the checkout's absolute path prefix to the machine-independent
@@ -3449,6 +3475,26 @@ mod tests {
             "{\"config_path\":\"<cwd>/fixtures/x/input/ripr.toml\"}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn normalize_json_strips_language_completeness_wherever_it_sits() {
+        let member = "{\"mode\":\"diff\",\"languages\":[{\"language\":\"rust\"}]}";
+        // After the findings array's own newline, ahead of later members.
+        let input = format!(
+            "{{\n  \"findings\": [\n  ]\n,\n  \"language_completeness\": {member},\n  \"source_subject\": {{\"a\":1}},\n  \"canonical_next_action\": {{\"x\":1}}\n}}\n"
+        );
+        assert_eq!(
+            normalize_fixture_json_output(&input),
+            "{\n  \"findings\": [\n  ],\n  \"source_subject\": {\"a\":1}\n}\n"
+        );
+        // Last member after a compact `]`.
+        let compact =
+            format!("{{\n  \"findings\": [\n  ],\n  \"language_completeness\": {member}}}\n");
+        assert_eq!(
+            normalize_fixture_json_output(&compact),
+            "{\n  \"findings\": [\n  ]\n}\n"
+        );
     }
 
     #[test]

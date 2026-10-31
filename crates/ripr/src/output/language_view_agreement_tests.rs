@@ -318,6 +318,8 @@ fn every_surface_discloses_what_the_view_says() -> Result<(), String> {
             .collect();
         assert_eq!(actual, expected, "{name}");
 
+        let mut outcome = outcome;
+        outcome.language_view = Some(view.clone());
         let output = check_output(findings, view.public_runs.clone(), outcome);
         let human = crate::output::human::render(&output);
         let json = crate::output::json::render(&output);
@@ -363,6 +365,46 @@ fn every_surface_discloses_what_the_view_says() -> Result<(), String> {
             .map(|run| (run.language.clone(), run.status.as_str().to_string()))
             .collect();
         assert_eq!(json_runs, view_runs, "{name}");
+
+        // JSON: `language_completeness` mirrors every view row, so a completed
+        // zero run is told apart from a skipped adapter (#11272).
+        let completeness = &value["language_completeness"];
+        assert_eq!(
+            completeness["schema_version"], "language_completeness.v1",
+            "{name}"
+        );
+        assert_eq!(
+            completeness["completeness"],
+            match view.completeness {
+                DiffCompleteness::Complete => "complete",
+                DiffCompleteness::Incomplete => "incomplete",
+            },
+            "{name}"
+        );
+        let json_rows: Vec<(String, String, u64)> = completeness["languages"]
+            .as_array()
+            .ok_or_else(|| format!("{name}: no languages array"))?
+            .iter()
+            .map(|row| {
+                (
+                    row["language"].as_str().unwrap_or_default().to_string(),
+                    row["status"].as_str().unwrap_or_default().to_string(),
+                    row["findings"].as_u64().unwrap_or(u64::MAX),
+                )
+            })
+            .collect();
+        let view_rows: Vec<(String, String, u64)> = view
+            .rows
+            .iter()
+            .map(|row| {
+                (
+                    row.label.clone(),
+                    row.status.as_str().to_string(),
+                    row.findings as u64,
+                )
+            })
+            .collect();
+        assert_eq!(json_rows, view_rows, "{name}");
 
         // Unsupported scope cannot disappear: the typed limitation reaches
         // the JSON outcome whenever the view says it must.
@@ -625,5 +667,28 @@ fn preview_advisory_readiness_agrees_with_the_view() -> Result<(), String> {
         };
         assert_eq!(advisory.analyzed(&view.public_runs), analyzed, "{name}");
     }
+    Ok(())
+}
+
+#[test]
+fn language_completeness_tells_a_completed_zero_run_from_a_skipped_adapter() -> Result<(), String> {
+    let fixtures = fixtures()?;
+    let status_of = |name: &str, language: &str| -> Result<String, String> {
+        let fixture = fixtures
+            .iter()
+            .find(|fixture| fixture.name == name)
+            .ok_or_else(|| format!("missing fixture {name}"))?;
+        let view = LanguageCompletenessView::from_aggregate(&aggregate_for(fixture));
+        let value = view.to_json_value();
+        value["languages"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|row| row["language"] == language))
+            .and_then(|row| row["status"].as_str())
+            .map(str::to_string)
+            .ok_or_else(|| format!("{name}: no {language} row"))
+    };
+    // Both read as an empty findings array; only this member tells them apart.
+    assert_eq!(status_of("complete_zero", "rust")?, "complete_zero");
+    assert_eq!(status_of("unavailable", "python")?, "unavailable");
     Ok(())
 }

@@ -752,6 +752,19 @@ pub(crate) fn render_with_config(
         }
         out.push_str("  ]");
     }
+    // Additive per-language completeness projection (#11272): the shared
+    // `LanguageCompletenessView` owner's rows, so a completed zero-finding run
+    // reads differently from a skipped or unavailable adapter. Appended last
+    // as one compact line; classification goldens strip it like
+    // `canonical_next_action` (dedicated schema tests own the field).
+    if let Some(view) = output
+        .analysis_outcome
+        .as_ref()
+        .and_then(|outcome| outcome.language_view.as_ref())
+    {
+        out.push_str(",\n  \"language_completeness\": ");
+        out.push_str(&view.to_json_value().to_string());
+    }
     out.push_str("}\n");
     out
 }
