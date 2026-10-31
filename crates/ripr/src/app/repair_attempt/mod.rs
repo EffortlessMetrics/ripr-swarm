@@ -1257,13 +1257,13 @@ fn validate_retained_gap_after(
         let mut failed = Vec::new();
         if !verify_path_bound {
             failed.push(format!(
-                "verify `inputs/after` `{}` vs root `{recorded_root}`",
+                "verify `inputs/after` {:?} vs root {recorded_root:?}",
                 field(&verify, "/inputs/after").unwrap_or("<missing>")
             ));
         }
         if !receipt_path_bound {
             failed.push(format!(
-                "receipt `after_artifact/path` `{}` vs root `{recorded_root}`",
+                "receipt `after_artifact/path` {:?} vs root {recorded_root:?}",
                 field(receipt, "/provenance/after_artifact/path").unwrap_or("<missing>")
             ));
         }
