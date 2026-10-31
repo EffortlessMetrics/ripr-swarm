@@ -102,6 +102,11 @@ pub(crate) fn one_line_function_body(line_text: &str) -> &str {
     let Some(rest) = text.strip_prefix("function") else {
         return line_text;
     };
+    // `functionality(a) { ... }` and `functionHandler = ...` are not a
+    // `function` declaration: the keyword ends at whitespace or `*`.
+    if !rest.starts_with(|ch: char| ch.is_whitespace() || ch == '*') {
+        return line_text;
+    }
     let Some(open) = rest.find('(') else {
         return line_text;
     };
@@ -1077,6 +1082,9 @@ fn leading_paren_group_before_statement(text: &str) -> Option<&str> {
 /// whitespace-insensitive, when the line carries a statement after a single
 /// simple comparison. `None` for any other shape.
 pub(crate) fn inline_guard_condition(line_text: &str) -> Option<String> {
+    // A one-line function is read by its first statement, so an edit to the
+    // statement after an unchanged guard is still recognised (#11487).
+    let line_text = one_line_function_first_statement(line_text);
     let mut text = line_text.trim().trim_start_matches('}').trim();
     for prefix in ["else if", "if", "while"] {
         if let Some(stripped) = text.strip_prefix(prefix) {

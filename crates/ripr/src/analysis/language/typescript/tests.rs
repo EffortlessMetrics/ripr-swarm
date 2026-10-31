@@ -6708,6 +6708,30 @@ fn a_one_line_function_body_classifies_like_the_same_statement_on_its_own_line()
 }
 
 #[test]
+fn one_line_function_reading_does_not_claim_lookalikes_or_unchanged_guards() {
+    use super::probe_shape::{inline_guard_condition, one_line_function_body};
+    // `function` must be a whole keyword (reviewer finding on #11564).
+    for line in [
+        "functionality(a) { if (a > 1) { return 2 } }",
+        "functionHandler = (a) => { if (a > 1) { return 2 } }",
+    ] {
+        assert_eq!(one_line_function_body(line), line, "{line}");
+    }
+    // A generator is a function.
+    assert_ne!(
+        one_line_function_body("function* g(a) { if (a > 1) { yield 2 } }"),
+        "function* g(a) { if (a > 1) { yield 2 } }"
+    );
+    // The unchanged-guard check sees through the function head, so an edit
+    // to the statement after the guard is not credited at the guard's
+    // threshold.
+    let old = "function f(n: number) { if (n > 100) return n - 20; return 0 }";
+    let new = "function f(n: number) { if (n > 100) return n - 21; return 0 }";
+    assert!(inline_guard_condition(new).is_some());
+    assert_eq!(inline_guard_condition(old), inline_guard_condition(new));
+}
+
+#[test]
 fn one_line_function_first_statement_is_parseable_on_its_own() {
     use super::probe_shape::one_line_function_first_statement as first;
     assert_eq!(
