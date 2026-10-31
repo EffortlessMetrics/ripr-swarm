@@ -396,6 +396,8 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
         "xtask=\"$(ls xtask-binary/*/xtask | sort -V | tail -n 1)\"\n",
         "pattern: ${{ inputs.artifact-name }}-xtask-*\n          path: xtask-binary\n",
         "name: ${{ inputs.artifact-name }}-xtask-${{ github.run_attempt }}\n          path: target/xtask-binary/xtask\n",
+        "        if: matrix.shard == 1\n        run: |\n          mkdir -p target/xtask-binary\n          strip --strip-debug -o target/xtask-binary/xtask target/debug/xtask\n",
+        "if-no-files-found: error\n          retention-days: 1\n",
         "            --shards 4 \\\n",
         "            --sha \"$(git rev-parse HEAD)\" \\\n",
         "            --run-id \"$GITHUB_RUN_ID\" \\\n",
@@ -470,6 +472,18 @@ fn sharded_hosted_tests_reject_a_dropped_or_softened_shard_check() {
         ("fail-fast: false", "continue-on-error: true"),
         ("shard: [1, 2, 3, 4]", "shard: [1, 2, 3]"),
         ("\"$xtask\" verify-test-shards", "true"),
+        (
+            "xtask-binary/*/xtask | sort -V | tail -n 1",
+            "xtask-binary/*/xtask | head -n 1",
+        ),
+        (
+            "if-no-files-found: error\n          retention-days: 1",
+            "if-no-files-found: warn\n          retention-days: 1",
+        ),
+        (
+            "-xtask-${{ github.run_attempt }}\n          path: target",
+            "-xtask-0\n          path: target",
+        ),
         ("            --shards 4 \\\n", "            --shards 3 \\\n"),
         ("            --sha \"$(git rev-parse HEAD)\" \\\n", ""),
         (

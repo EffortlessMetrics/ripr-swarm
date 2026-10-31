@@ -188,6 +188,7 @@ jobs:
       - name: Check the shards are a complete, disjoint, green cover
         run: |
           xtask="$(ls xtask-binary/*/xtask | sort -V | tail -n 1)"
+          test -n "$xtask" || { echo "::error::no xtask binary artifact from shard 1"; exit 1; }
           chmod +x "$xtask"
           "$xtask" verify-test-shards \
             --dir shards \
