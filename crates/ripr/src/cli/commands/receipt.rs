@@ -12,7 +12,7 @@ use crate::cli::help;
 use crate::cli::parse::expect_value;
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 // ── top-level receipt command ─────────────────────────────────────────────────
 
@@ -41,9 +41,8 @@ fn run_receipt_write(args: &[String]) -> Result<(), String> {
     }
 
     let opts = parse_receipt_write_options(args)?;
-    if let Some(root) = &opts.root {
-        crate::atomic_file::ensure_default_output_contained(root)?;
-    }
+    let root = opts.root.as_deref().unwrap_or(Path::new("."));
+    crate::atomic_file::ensure_report_output_contained(root)?;
     let rendered = write_receipt(&opts)?;
 
     if opts.json || opts.out.is_none() {
@@ -848,5 +847,94 @@ mod tests {
         assert!(VALID_VERIFY_STATUSES.contains(&"not_run"));
         assert!(VALID_VERIFY_STATUSES.contains(&"unknown"));
         assert_eq!(VALID_VERIFY_STATUSES.len(), 4);
+    }
+
+    fn receipt_write_minimal_args(root_flag: Option<&str>) -> Vec<String> {
+        let mut values = vec![
+            "--gap",
+            "gap:test:aabbccdd",
+            "--verify-command",
+            "true",
+            "--status",
+            "passed",
+        ];
+        if let Some(root) = root_flag {
+            values.push("--root");
+            values.push(root);
+        }
+        args(values.as_slice())
+    }
+
+    fn plant_symlinked_receipts_dir(base: &std::path::Path) -> Result<std::path::PathBuf, String> {
+        let root = base.join("root");
+        let external = base.join("external");
+        std::fs::create_dir_all(root.join("target/ripr")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&external).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&external, root.join("target/ripr/receipts"))
+            .map_err(|e| e.to_string())?;
+        Ok(root)
+    }
+
+    fn assert_receipt_write_refuses_symlinked_receipts_dir(label: &str) -> Result<(), String> {
+        use crate::cli::commands::tests::unique_command_test_dir;
+
+        let base = unique_command_test_dir(label);
+        let root = plant_symlinked_receipts_dir(&base)?;
+        let prev = std::env::current_dir().map_err(|e| e.to_string())?;
+        std::env::set_current_dir(&root).map_err(|e| e.to_string())?;
+        let result = run_receipt_write(&receipt_write_minimal_args(None));
+        std::env::set_current_dir(prev).map_err(|e| e.to_string())?;
+        let leaked = std::fs::read_dir(base.join("external"))
+            .map_err(|e| e.to_string())?
+            .count();
+        let _ = std::fs::remove_dir_all(&base);
+        let message = result.err().unwrap_or_default();
+        assert!(
+            message.contains("refusing to write ripr output"),
+            "{message}"
+        );
+        assert_eq!(leaked, 0);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn receipt_write_refuses_symlinked_receipts_dir_without_ripr_cache_dir() -> Result<(), String> {
+        if std::env::var("RIPR_CACHE_DIR").is_ok_and(|value| !value.trim().is_empty()) {
+            return Ok(());
+        }
+        assert_receipt_write_refuses_symlinked_receipts_dir("receipt-write-receipts-link")
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn receipt_write_refuses_symlinked_receipts_dir_with_ripr_cache_dir() -> Result<(), String> {
+        if !std::env::var("RIPR_CACHE_DIR").is_ok_and(|value| !value.trim().is_empty()) {
+            return Ok(());
+        }
+        assert_receipt_write_refuses_symlinked_receipts_dir("receipt-write-receipts-link-cache")
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn receipt_write_succeeds_without_symlinked_receipts_dir() -> Result<(), String> {
+        use crate::cli::commands::tests::unique_command_test_dir;
+
+        let base = unique_command_test_dir("receipt-write-ok");
+        let root = base.join("root");
+        std::fs::create_dir_all(root.join("target/ripr/receipts")).map_err(|e| e.to_string())?;
+        let prev = std::env::current_dir().map_err(|e| e.to_string())?;
+        std::env::set_current_dir(&root).map_err(|e| e.to_string())?;
+        let result = run_receipt_write(&receipt_write_minimal_args(None));
+        std::env::set_current_dir(prev).map_err(|e| e.to_string())?;
+        result?;
+        let receipt = root.join("target/ripr/receipts/gap%3Atest%3Aaabbccdd.json");
+        assert!(
+            receipt.is_file(),
+            "expected receipt at {}",
+            receipt.display()
+        );
+        let _ = std::fs::remove_dir_all(&base);
+        Ok(())
     }
 }
