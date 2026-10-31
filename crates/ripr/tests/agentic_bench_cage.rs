@@ -1464,7 +1464,7 @@ fn b6_dirty_production_premise_refuses_before_the_inventory_in_both_arms() -> Re
         "--root",
         root_arg.as_str(),
         "--seam-id",
-        "seam:does-not-exist",
+        "f3c9e4d21a0b7c88",
         "--phase",
         "before",
     ];

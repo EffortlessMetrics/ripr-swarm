@@ -137,7 +137,19 @@ mod tests {
         }
         run_git(&root, &["init", "-q"])?;
         run_git(&root, &["add", "."])?;
-        run_git(&root, &["commit", "--no-gpg-sign", "-qm", "base"])?;
+        run_git(
+            &root,
+            &[
+                "-c",
+                "user.name=RIPR test",
+                "-c",
+                "user.email=ripr@example.invalid",
+                "commit",
+                "--no-gpg-sign",
+                "-qm",
+                "base",
+            ],
+        )?;
         Ok(root)
     }
 
@@ -240,7 +252,19 @@ mod tests {
             std::fs::create_dir_all(root.join("store")).map_err(|error| error.to_string())?;
             std::fs::write(root.join("store/m.json"), "{}").map_err(|error| error.to_string())?;
             run_git(&root, &["add", "store/m.json"])?;
-            run_git(&root, &["commit", "--no-gpg-sign", "-qm", "store"])?;
+            run_git(
+                &root,
+                &[
+                    "-c",
+                    "user.name=RIPR test",
+                    "-c",
+                    "user.email=ripr@example.invalid",
+                    "commit",
+                    "--no-gpg-sign",
+                    "-qm",
+                    "store",
+                ],
+            )?;
             std::fs::write(root.join("store/m.json"), "{\"a\":1}")
                 .map_err(|error| error.to_string())?;
             let head = crate::agent::artifact::current_git_head(&root)?;
