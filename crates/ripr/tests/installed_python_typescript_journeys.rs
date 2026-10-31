@@ -737,6 +737,154 @@ fn python_flat_layout_journey_runs_the_gap_bound_loop_from_the_printed_start() -
     decoy_untouched(&decoy)
 }
 
+/// #4518: receipt consumption for the Python gap-bound journey. After the
+/// printed start, a test-only edit and `continue`, the bound verify document
+/// issues a receipt at exactly the `--out` target; a missing, forged or edited
+/// verify document is refused and leaves no receipt behind. The receipt
+/// records no project test run, so static closure stays separate from
+/// project verification.
+#[cfg(feature = "lang-python")]
+#[test]
+fn python_receipt_route_consumes_the_bound_verify_and_refuses_forgery() -> Result<(), String> {
+    let (_guard, root, decoy) =
+        materialize("blind_journey_installed_python", "head", "pyrc", None)?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let (ok, check) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+    expect_exit(ok, true, "check")?;
+    let (gap, base) = gap_start_tokens(&check)
+        .ok_or_else(|| format!("check printed no gap-bound start:\n{check}"))?;
+    let (ok, before) = ripr(
+        &decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", &base, "--root", &root_arg, "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(ok, true, "agent repair --phase before")?;
+    let test_file = root.join("tests").join("test_pricing.py");
+    let mut tests =
+        std::fs::read_to_string(&test_file).map_err(|error| format!("read test file: {error}"))?;
+    tests.push_str(
+        "\n\ndef test_exact_boundary_gets_discount():\n    assert bulk_discount_rate(20) == 0.15\n",
+    );
+    std::fs::write(&test_file, tests).map_err(|error| format!("write test file: {error}"))?;
+    fixture_git_ok(&root, &["add", "tests/test_pricing.py"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "boundary test"])?;
+    let continue_command = before
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Next, after the test edit: "))
+        .ok_or_else(|| format!("before printed no continue command:\n{before}"))?;
+    let attempt = continue_command
+        .split_whitespace()
+        .skip_while(|token| *token != "--attempt")
+        .nth(1)
+        .ok_or_else(|| format!("continue command names no attempt: {continue_command}"))?
+        .to_string();
+    let (ok, after) = ripr(
+        &decoy,
+        &["continue", "--root", &root_arg, "--attempt", &attempt],
+    )?;
+    expect_exit(ok, true, "continue")?;
+    need(&after, "closed: weakly_exposed -> exposed", "closure")?;
+
+    let workflow = root.join("target/ripr/workflow");
+    let verify_path = workflow.join("agent-verify.json");
+    let verify_text =
+        std::fs::read_to_string(&verify_path).map_err(|error| format!("read verify: {error}"))?;
+    let verify: serde_json::Value =
+        serde_json::from_str(&verify_text).map_err(|error| format!("verify json: {error}"))?;
+    let receipt_for = |verify_path: &Path, label: &str| -> Result<std::process::Output, String> {
+        let out = workflow.join(format!("{label}.receipt.json"));
+        ripr_output(
+            &decoy,
+            &[
+                "agent",
+                "receipt",
+                "--root",
+                &root_arg,
+                "--verify-json",
+                &verify_path.to_string_lossy(),
+                "--seam-id",
+                &gap,
+                "--attempt",
+                &attempt,
+                "--json",
+                "--out",
+                &out.to_string_lossy(),
+            ],
+        )
+    };
+
+    // Positive: the bound verify issues a receipt at the `--out` target,
+    // closure is carried, and no project test run is recorded.
+    let issued = receipt_for(&verify_path, "control")?;
+    let (_, issued_err) = text_of(&issued);
+    expect_exit(
+        issued.status.success(),
+        true,
+        &format!("receipt: {issued_err}"),
+    )?;
+    let control = std::fs::read_to_string(workflow.join("control.receipt.json"))
+        .map_err(|error| format!("receipt not written at the --out target: {error}"))?;
+    need(&control, "\"closed\": true", "receipt carries closure")?;
+    if control.contains("\"status\": \"passed\"") {
+        return Err(format!("receipt claims a passed test run:\n{control}"));
+    }
+
+    // Negative 1: a missing verify document is refused, no receipt written.
+    let missing = receipt_for(&workflow.join("absent-verify.json"), "missing")?;
+    expect_exit(
+        missing.status.success(),
+        false,
+        "receipt over a missing verify",
+    )?;
+    if workflow.join("missing.receipt.json").exists() {
+        return Err("a receipt was written over a missing verify".to_string());
+    }
+
+    // Negative 2: a forged closure naming a gap that never closed.
+    let mut forged = verify.clone();
+    forged["bound_gap"]["gap_id"] = serde_json::json!("gap:python:pricing/core.py:x:deadbeef");
+    let forged_path = workflow.join("forged-verify.json");
+    std::fs::write(
+        &forged_path,
+        serde_json::to_string_pretty(&forged).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("write forged verify: {error}"))?;
+    let refused = receipt_for(&forged_path, "forged")?;
+    let (_, refused_err) = text_of(&refused);
+    expect_exit(refused.status.success(), false, "receipt over a forged gap")?;
+    need(
+        &refused_err,
+        "gap binding refused",
+        "forged closure refused",
+    )?;
+
+    // Negative 3: the real gap with an edited classification.
+    let mut edited = verify;
+    edited["bound_gap"]["before_classification"] = serde_json::json!("exposed");
+    let edited_path = workflow.join("edited-verify.json");
+    std::fs::write(
+        &edited_path,
+        serde_json::to_string_pretty(&edited).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("write edited verify: {error}"))?;
+    let refused = receipt_for(&edited_path, "edited")?;
+    let (_, refused_err) = text_of(&refused);
+    expect_exit(
+        refused.status.success(),
+        false,
+        "receipt over an edited closure",
+    )?;
+    need(&refused_err, "not_canonical", "edited closure refused")?;
+    for label in ["forged", "edited"] {
+        if workflow.join(format!("{label}.receipt.json")).exists() {
+            return Err(format!("a receipt was written over the {label} verify"));
+        }
+    }
+    decoy_untouched(&decoy)
+}
+
 /// #10432: the refused-variant control for the Python gap-bound start. With
 /// the fixture's tests removed, no Python test reaches the changed predicate,
 /// so the finding is static-limited (`no_static_path`): `ripr check` offers no
