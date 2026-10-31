@@ -659,7 +659,7 @@ only it is the mapping, not an observed `resources/read` response.
 | `item_not_found` | `-32002` | identity miss (`-32602` for 2026-07-28 peers) | the id is not in the current snapshot; re-list with `ripr_list_gaps` |
 | `attempt_not_found` | `-32002` | identity miss (`-32602` for 2026-07-28 peers) | the attempt/receipt id does not exist; list attempts |
 | `no_snapshot` | `-32603` | retryable after refresh | call `ripr_refresh`, then retry |
-| `stale_snapshot` | `-32603` | retryable after refresh | re-read with the `current_snapshot_id` in `error.data` or refresh |
+| `stale_snapshot` | `-32603` | retryable after refresh | re-read with the `current_snapshot_id` in `error.data` or refresh; a card refused because a bound source file changed since refresh needs `ripr_refresh` (the id alone still refuses) |
 | `analysis_in_flight` | `-32603` | retryable after wait | another attempt is running; wait and retry |
 | `superseded` | `-32603` | retryable after refresh | the transaction's snapshot is no longer current; refresh and re-prepare |
 | `result_too_large` | `-32603` | bound; narrow the request where a narrower read exists | pageable lists: page or filter. Single-item resources and status/repair documents can have no narrower MCP read; follow `error.data.recovery`, which is authoritative. Retrying unchanged cannot succeed |
