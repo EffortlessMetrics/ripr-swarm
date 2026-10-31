@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A Python edit in a click group subcommand (`@cli.command()` on a function of a same-file `@click.group()`) is no longer `static_unknown` / `decorator_indirection` when a test invokes the group with the subcommand's name (`runner.invoke(cli, ["greet", ...])`) through a recognised runner: it gets the weak, reach-only `cli_runner_invoke` relation and never `exposed` from it. Registrations the file cannot prove (duplicate or unreadable names, `add_command`, `.commands`, a custom group class, a suffixed derived name) keep the limit (#9226).

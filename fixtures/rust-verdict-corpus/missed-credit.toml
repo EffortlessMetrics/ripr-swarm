@@ -209,6 +209,10 @@ case = "mined-snapshot-helper-document-separator"
 reason = "Tests discriminate the change but ripr abstains (#9619). Delete this entry when the row credits."
 
 [[entry]]
+case = "mined-snapshot-helper-negative-zero"
+reason = "Discriminated at runtime, abstained on purpose: the exact inline snapshot is compared through a local assert_data_eq!/snap_str! helper macro whose expansion ripr does not evaluate, so it names the macro limitation instead of a gap or a credit (#9644, RIPR-SPEC-0120). Delete this entry when the helper macro is evaluated and the row credits."
+
+[[entry]]
 case = "mined-token-table-pinned-range"
 reason = "Tests discriminate the change but ripr abstains (#9619). Delete this entry when the row credits."
 
@@ -230,10 +234,6 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 
 [[entry]]
 case = "old-ratio-assert-only-owner"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
-case = "old-title-through-format-macro"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
