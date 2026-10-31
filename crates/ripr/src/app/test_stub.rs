@@ -1813,37 +1813,39 @@ pub(crate) fn run_command(
 mod tests {
     #[cfg(unix)]
     #[test]
-    fn stub_write_refuses_link_outside_root() {
+    fn stub_write_refuses_link_outside_root() -> Result<(), String> {
         let base = std::env::temp_dir().join(format!("ripr-stub-link-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let root = base.join("root");
         let victim = base.join("victim");
-        std::fs::create_dir_all(root.join("real")).expect("root");
-        std::fs::create_dir_all(&victim).expect("victim");
-        std::os::unix::fs::symlink(&victim, root.join("tests")).expect("link");
-        std::os::unix::fs::symlink(root.join("real"), root.join("okdir")).expect("link");
+        std::fs::create_dir_all(root.join("real")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&victim).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&victim, root.join("tests")).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(root.join("real"), root.join("okdir"))
+            .map_err(|e| e.to_string())?;
 
         let refused = super::ensure_stub_path_contained(&root, &root.join("tests/new_test.rs"));
         assert!(refused.is_err_and(|e| e.contains("outside the workspace")));
         assert!(super::ensure_stub_path_contained(&root, &root.join("okdir/new_test.rs")).is_ok());
         assert!(super::ensure_stub_path_contained(&root, &root.join("src/lib.rs")).is_ok());
         let _ = std::fs::remove_dir_all(&base);
+        Ok(())
     }
 
     #[cfg(unix)]
     #[test]
-    fn write_test_stub_leaves_outside_targets_untouched() {
+    fn write_test_stub_leaves_outside_targets_untouched() -> Result<(), String> {
         use crate::analysis::test_stub::{RustTestStub, TestStubPlacement};
         let base = std::env::temp_dir().join(format!("ripr-stub-e2e-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let root = base.join("root");
         let victim = base.join("victim");
-        std::fs::create_dir_all(root.join("src")).expect("root");
-        std::fs::create_dir_all(&victim).expect("victim");
-        std::fs::write(victim.join("lib.rs"), "// outside\n").expect("outside file");
-        std::os::unix::fs::symlink(&victim, root.join("tests")).expect("dir link");
+        std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&victim).map_err(|e| e.to_string())?;
+        std::fs::write(victim.join("lib.rs"), "// outside\n").map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&victim, root.join("tests")).map_err(|e| e.to_string())?;
         std::os::unix::fs::symlink(victim.join("lib.rs"), root.join("src/lib.rs"))
-            .expect("file link");
+            .map_err(|e| e.to_string())?;
 
         let stub = |placement| RustTestStub {
             placement,
@@ -1881,11 +1883,12 @@ mod tests {
             assert!(result.is_err_and(|e| e.contains("outside the workspace")));
         }
         assert_eq!(
-            std::fs::read_to_string(victim.join("lib.rs")).expect("read"),
+            std::fs::read_to_string(victim.join("lib.rs")).map_err(|e| e.to_string())?,
             "// outside\n"
         );
         assert!(!victim.join("new_test.rs").exists());
         let _ = std::fs::remove_dir_all(&base);
+        Ok(())
     }
 
     use super::*;
