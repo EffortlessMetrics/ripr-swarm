@@ -68,7 +68,10 @@ mod tests {
 
         assert_eq!(
             render_agent_packet_from_gap_ledger(&root, &gap_ledger, "gap:missing"),
-            Err("agent packet gap_id gap:missing was not found".to_string())
+            Err(format!(
+                "agent packet gap_id gap:missing was not found in {}; pass a gap_id listed in that gap ledger",
+                gap_ledger.display()
+            ))
         );
         assert_eq!(
             render_agent_packet_from_gap_ledger(&root, &gap_ledger, "gap:no-action"),

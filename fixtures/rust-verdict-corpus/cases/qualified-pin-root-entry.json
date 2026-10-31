@@ -1,0 +1,48 @@
+{
+  "case_id": "qualified-pin-root-entry",
+  "subject_id": "authored-crate-qualified-pin",
+  "diff": "cases/qualified-pin-root-entry.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 11
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "integration_test_crate_qualified_entry_pin",
+  "hard_case": "The entry `plus_one` shifts the private owner by `+ 1` and the integration test pins `crate_pin::plus_one(5) == 11` through the crate path, with no `use`.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "x * 3",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "plus_one_pins_the_doubled_value",
+        "equivalence_review": "the edit itself: plus_one(5) becomes 16"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`plus_one` returns `plus_one_inner(x) + 1` and the test calls it as `crate_pin::plus_one(5)`, a path only the package library can own. Adding a constant is injective on i64, so the pinned 11 moves with the owner. 1 of 1 listed mutants fails cargo test. Spec cells: RIPR-SPEC-0159.",
+  "labeling_observation": {
+    "ripr_commit": "ff3314c",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0159#16"
+  ]
+}

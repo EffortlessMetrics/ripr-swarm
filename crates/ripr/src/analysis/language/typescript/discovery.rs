@@ -119,18 +119,18 @@ pub(crate) fn ts_workspace_file_limit_from_env(
     match value {
         Ok(raw) => {
             let parsed = raw.trim().parse::<usize>().map_err(|err| {
-                format!("{TS_MAX_WORKSPACE_FILES_ENV} must be a positive integer: {err}")
+                format!("{TS_MAX_WORKSPACE_FILES_ENV} must be a positive integer: {err}; set it to a whole number above zero, or unset it to use the default")
             })?;
             if parsed == 0 {
                 return Err(format!(
-                    "{TS_MAX_WORKSPACE_FILES_ENV} must be a positive integer"
+                    "{TS_MAX_WORKSPACE_FILES_ENV} must be a positive integer; set it to a whole number above zero, or unset it to use the default"
                 ));
             }
             Ok(parsed)
         }
         Err(std::env::VarError::NotPresent) => Ok(DEFAULT_TS_MAX_WORKSPACE_FILES),
         Err(std::env::VarError::NotUnicode(_)) => Err(format!(
-            "{TS_MAX_WORKSPACE_FILES_ENV} must be a positive integer"
+            "{TS_MAX_WORKSPACE_FILES_ENV} must be a positive integer; set it to a whole number above zero, or unset it to use the default"
         )),
     }
 }

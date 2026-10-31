@@ -1275,6 +1275,22 @@ struct TypePathOwner {
     /// No other impl of the same trait for this type defines the method
     /// (`Add<f64>` beside `Add<Money>`), so `<Type as Trait>::name` names one.
     trait_unique: bool,
+    /// The owner's trait generic arguments as the impl header spells them,
+    /// whitespace removed (`Money` for `impl Add<Money> for Money`); `None`
+    /// when the header names the trait bare.
+    trait_args: Option<String>,
+}
+
+/// The generic arguments of the trait in an impl owner's symbol id, whitespace
+/// removed (`impl Add<Money> for Money::add` → `Money`). `None` for a bare
+/// trait, an inherent impl or a free function.
+fn owner_trait_args(owner_id: &str) -> Option<String> {
+    let impl_rest = owner_id.split("::impl ").nth(1)?;
+    let impl_body = impl_rest.rsplit_once("::")?.0;
+    let (trait_ty, _) = impl_body.rsplit_once(" for ")?;
+    let (_, args) = trait_ty.split_once('<')?;
+    let args = args.trim_end().strip_suffix('>')?;
+    Some(args.chars().filter(|ch| !ch.is_whitespace()).collect())
 }
 
 fn type_path_owner(owner: &FunctionSummary, index: &RustIndex) -> Option<TypePathOwner> {
@@ -1308,6 +1324,7 @@ fn type_path_owner(owner: &FunctionSummary, index: &RustIndex) -> Option<TypePat
         trait_name,
         sole_method: same_name == 1,
         trait_unique: same_trait == 1,
+        trait_args: owner_trait_args(&owner.id.0),
     })
 }
 
@@ -1379,7 +1396,9 @@ fn calls_by_type_path(code: &str, name: &str, owner: &TypePathOwner) -> bool {
             || qualifier.strip_suffix('>').is_some_and(|inner| {
                 // The `<` must open the qualified path itself, not a generic
                 // argument list (`Wrapper<Money as X>::add` is not this call).
-                let Some((head, inner)) = inner.rsplit_once('<') else {
+                // Match it by depth so the trait's own arguments
+                // (`<Money as Add<Money>>`) do not end the scan early.
+                let Some((head, inner)) = split_at_opening_angle(inner) else {
                     return false;
                 };
                 !head.ends_with(word)
@@ -1394,10 +1413,50 @@ fn calls_by_type_path(code: &str, name: &str, owner: &TypePathOwner) -> bool {
                             .strip_prefix("std::ops::")
                             .or_else(|| trait_path.strip_prefix("core::ops::"))
                             .unwrap_or(trait_path);
-                        ty.trim() == self_type && trait_path == owner.trait_name
+                        ty.trim() == self_type && trait_path_names_owner(trait_path, owner)
                     })
             })
     })
+}
+
+/// Split `text` (the qualifier without its final `>`) at the `<` that opens the
+/// angle group the final `>` closes, balancing nested `<..>`.
+fn split_at_opening_angle(text: &str) -> Option<(&str, &str)> {
+    let mut depth = 0usize;
+    for (at, ch) in text.char_indices().rev() {
+        match ch {
+            '>' => depth += 1,
+            '<' if depth == 0 => return Some((&text[..at], &text[at + 1..])),
+            '<' => depth -= 1,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether a qualified call's trait (`Add`, `Add<Money>`) is the owner's. Bare
+/// names match as before. A call that spells generic arguments must spell the
+/// same ones as the impl header; a bare header's omitted right-hand side is
+/// the self type (`impl Add for Money` is `Add<Money>`).
+fn trait_path_names_owner(trait_path: &str, owner: &TypePathOwner) -> bool {
+    let Some((name, args)) = trait_path.split_once('<') else {
+        return trait_path == owner.trait_name;
+    };
+    let Some(args) = args.trim_end().strip_suffix('>') else {
+        return false;
+    };
+    let args: String = args.chars().filter(|ch| !ch.is_whitespace()).collect();
+    name.trim() == owner.trait_name
+        && !args.is_empty()
+        && match owner.trait_args.as_deref() {
+            Some(declared) => declared == args,
+            // An omitted right-hand side reads as the self type. This holds
+            // for every trait, not only operators; for a non-operator trait
+            // with a different default it relies on `trait_unique` (checked by
+            // the caller) and on the call compiling. `rebinds_type_name` is
+            // not applied to the argument types.
+            None => args == owner.self_type,
+        }
 }
 
 #[cfg(test)]
@@ -1559,6 +1618,7 @@ mod tests {
             trait_name: "Add".into(),
             sole_method,
             trait_unique: true,
+            trait_args: None,
         };
         assert!(calls_by_type_path(
             "Money::add(a, b)",
@@ -1649,6 +1709,34 @@ mod tests {
             "<Money as core::ops::Add>::add(a, b)",
             "add",
             &path_owner(true)
+        ));
+        // Spelled trait arguments must be the impl header's (#10625).
+        assert!(calls_by_type_path(
+            "<Money as Add<Money>>::add(a, b)",
+            "add",
+            &path_owner(true)
+        ));
+        assert!(!calls_by_type_path(
+            "<Money as Add<i64>>::add(a, b)",
+            "add",
+            &path_owner(true)
+        ));
+        assert!(!calls_by_type_path(
+            "Wrapper<<Money as Add<Money>>::Output>::add(a, b)",
+            "add",
+            &path_owner(true)
+        ));
+        let mut declared = path_owner(true);
+        declared.trait_args = Some("i64".into());
+        assert!(calls_by_type_path(
+            "<Money as core::ops::Add< i64 >>::add(a, 1)",
+            "add",
+            &declared
+        ));
+        assert!(!calls_by_type_path(
+            "<Money as Add<Money>>::add(a, b)",
+            "add",
+            &declared
         ));
         assert!(calls_by_type_path(
             "let _ = stringify!(x); Money::add(1, 2)",

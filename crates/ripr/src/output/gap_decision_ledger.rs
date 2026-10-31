@@ -5945,7 +5945,7 @@ mod tests {
             finding["preview_actionability"]["why_not_actionable"].as_str()
         );
         assert!(record.static_limit_detail.as_deref().is_some_and(|detail| detail
-            .contains("validator: is not agent-packet eligible: observed call input `login('alice')` does not reach the missing discriminator `user.length == 3`")));
+            .contains("validator: is not agent-packet eligible: derive an input that hits the boundary before this repair can be handed to an agent: observed call input `login('alice')` does not reach the missing discriminator `user.length == 3`")));
         assert!(record.static_limits.iter().any(|limit| {
             limit["kind"] == "not_delegatable_target_shape"
                 && limit["detail"] == "Add an exact boundary assertion for `user.length == 3`."

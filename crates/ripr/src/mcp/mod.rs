@@ -163,13 +163,15 @@ pub fn run(args: &[String]) -> Result<(), String> {
                     Some(value) if !value.starts_with('-') => value.clone(),
                     Some(unexpected) => {
                         return Err(format!(
-                            "missing value for --root; found option {unexpected:?}"
+                            "missing value for --root; found option {unexpected:?}; pass the workspace directory after --root"
                         ));
                     }
-                    None => return Err("missing value for --root".to_string()),
+                    None => return Err("missing value for --root; pass the workspace directory after --root (`ripr mcp --help` shows usage)".to_string()),
                 };
                 if explicit_root.is_some() {
-                    return Err("--root may be passed only once".to_string());
+                    return Err(
+                        "--root may be passed only once; remove the extra --root".to_string()
+                    );
                 }
                 explicit_root = Some(PathBuf::from(value));
                 index += 1;
@@ -289,7 +291,7 @@ mod tests {
         );
         assert_eq!(
             run(&args(&["--root"])),
-            Err("missing value for --root".to_string())
+            Err("missing value for --root; pass the workspace directory after --root (`ripr mcp --help` shows usage)".to_string())
         );
         // A following option token is a missing value, not a path:
         // `--root --help` must surface help, not a directory named `--help`.
@@ -305,7 +307,7 @@ mod tests {
         );
         assert_eq!(
             run(&args(&["--root", ".", "--root", "."])),
-            Err("--root may be passed only once".to_string())
+            Err("--root may be passed only once; remove the extra --root".to_string())
         );
     }
 }

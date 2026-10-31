@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Rust constructed-field assertions now consult every blocking macro site (macro arguments, macro bodies, body binds and argument attributes, in addition to real definitions and imports) before crediting `assert_eq!`, so a withheld or early-stopped scan can no longer admit credit by absence. A `#[macro_use] extern crate` of a crate that exports the assertion macro is not yet refused for fields; that stays tracked in #11810 (#10191).

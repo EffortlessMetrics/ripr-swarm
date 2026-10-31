@@ -1103,6 +1103,92 @@ impl<'a> TransitiveReachIndex<'a> {
         })
     }
 
+    /// Trait-dispatch ambiguity for `owner_name` (RIPR-SPEC-0114, #11719): the
+    /// owner is called directly from an `impl Trait for X` method whose
+    /// implicit-dispatch name (`fmt`, `eq`, ...) is shared by two or more
+    /// trait impls in the crate, and the index holds a test. A test reaches
+    /// such an impl through `format!`, `==` or `to_string`, which leave no call
+    /// fact, and the name cannot say which impl, so ripr does not pick one:
+    /// the limit names the ambiguity and lists the calling impls. A name with
+    /// a single impl (the unique-impl rule), no calling impl, an owner that is
+    /// itself an implicit-dispatch method and a method outside
+    /// [`IMPLICIT_DISPATCH_METHODS`] give `None`. It is never a witness test.
+    pub(in crate::analysis) fn trait_dispatch_ambiguity(
+        &self,
+        owner_name: &str,
+    ) -> Option<TraitDispatchAmbiguity> {
+        if owner_name.is_empty() || IMPLICIT_DISPATCH_METHODS.contains(&owner_name) {
+            return None;
+        }
+        let graph = self.graph();
+        if graph.all_tests.is_empty() {
+            return None;
+        }
+        // The method with the most calling impls; ties by list order.
+        let mut best: Option<(&str, usize, Vec<&FunctionSummary>)> = None;
+        for method in IMPLICIT_DISPATCH_METHODS {
+            let impl_total = graph
+                .by_name
+                .get(method)
+                .into_iter()
+                .flatten()
+                .filter(|function| is_production_trait_impl_method(function))
+                .count();
+            if impl_total < 2 {
+                continue;
+            }
+            let mut callers: Vec<&FunctionSummary> = graph
+                .by_name
+                .get(method)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|function| {
+                    is_production_trait_impl_method(function)
+                        && calls_of(function)
+                            .any(|call| !is_macro_call(&call.name) && call.name == owner_name)
+                })
+                .collect();
+            callers.sort_by(|a, b| (&a.file, a.start_line).cmp(&(&b.file, b.start_line)));
+            let better = !callers.is_empty()
+                && best
+                    .as_ref()
+                    .is_none_or(|(_, _, current)| callers.len() > current.len());
+            if better {
+                best = Some((method, impl_total, callers));
+            }
+        }
+        let (method, method_impl_count, callers) = best?;
+        let impls: Vec<(&str, &str)> = callers
+            .iter()
+            .filter_map(|function| match &function.item.container {
+                FunctionContainer::TraitImpl {
+                    trait_path,
+                    self_ty,
+                } => Some((trait_path.as_str(), self_ty.as_str())),
+                _ => None,
+            })
+            .collect();
+        let one_trait = impls.windows(2).all(|pair| pair[0].0 == pair[1].0);
+        let mut candidates: Vec<String> = Vec::new();
+        for (trait_path, self_ty) in &impls {
+            let label = if one_trait {
+                (*self_ty).to_string()
+            } else {
+                format!("{trait_path} for {self_ty}")
+            };
+            if !candidates.contains(&label) {
+                candidates.push(label);
+            }
+        }
+        Some(TraitDispatchAmbiguity {
+            method: method.to_string(),
+            impl_count: callers.len(),
+            method_impl_count,
+            candidates,
+        })
+    }
+
     /// The best witnessing test among those calling a name in `reaching`.
     fn witness_through(
         &self,
@@ -2992,6 +3078,111 @@ pub(in crate::analysis) const RUST_MACRO_REACH_MESSAGE: &str = "ripr saw a test 
      stops at a macro invocation it does not expand. \
      This is not a coverage assessment -- ripr cannot confirm or deny \
      that the macro-generated path observes the change.";
+
+/// The message emitted when the owner is called from several impls of one
+/// implicit-dispatch trait method (#11719). A named limitation, NOT a
+/// coverage claim and not a witness: no test is named.
+pub(in crate::analysis) const RUST_TRAIT_DISPATCH_AMBIGUITY_MESSAGE: &str = "ripr saw production code that dispatches through a trait method toward this change, \
+     but the owner is called from several impls of that method and ripr does not guess which one a test reaches. \
+     This is not a coverage assessment -- ripr cannot confirm or deny \
+     that the change is observed.";
+
+/// Evidence-line prefix of the ambiguity statement.
+pub(in crate::analysis) const TRAIT_DISPATCH_AMBIGUITY_PREFIX: &str = "Trait-dispatch ambiguity: ";
+
+/// Candidate impls named on the ambiguity line; the rest are counted.
+const MAX_AMBIGUITY_CANDIDATES: usize = 5;
+
+/// Several `impl Trait for X` methods of one implicit-dispatch name call the
+/// owner ([`TransitiveReachIndex::trait_dispatch_ambiguity`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::analysis) struct TraitDispatchAmbiguity {
+    pub method: String,
+    /// Impl methods calling the owner (at least one).
+    pub impl_count: usize,
+    /// Trait impls of `method` in the crate (at least two).
+    pub method_impl_count: usize,
+    /// Distinct impl labels, in file/line order.
+    pub candidates: Vec<String>,
+}
+
+/// The candidate impls, at most [`MAX_AMBIGUITY_CANDIDATES`], then a count.
+fn bounded_candidates(ambiguity: &TraitDispatchAmbiguity) -> String {
+    let shown: Vec<&str> = ambiguity
+        .candidates
+        .iter()
+        .take(MAX_AMBIGUITY_CANDIDATES)
+        .map(String::as_str)
+        .collect();
+    let more = ambiguity.candidates.len() - shown.len();
+    if more == 0 {
+        shown.join(", ")
+    } else {
+        format!("{}, and {more} more", shown.join(", "))
+    }
+}
+
+/// A method of an `impl Trait for X` block that is not compiled out of
+/// production: a `#[cfg(test)]` impl block is test scaffolding, so it neither
+/// counts as an impl of the method name nor as a caller (#11719). The
+/// cfg-test reading is the shared `cfg_predicates` authority.
+fn is_production_trait_impl_method(function: &FunctionSummary) -> bool {
+    matches!(function.item.container, FunctionContainer::TraitImpl { .. })
+        && !function
+            .impl_attrs
+            .iter()
+            .any(|attr| crate::analysis::facts::cfg_predicates::attribute_requires_test(attr))
+}
+
+pub(in crate::analysis) fn trait_dispatch_ambiguity_pointer(
+    ambiguity: &TraitDispatchAmbiguity,
+    owner_name: &str,
+) -> String {
+    let calls = match ambiguity.impl_count {
+        1 => "1 impl".to_string(),
+        n => format!("{n} impls"),
+    };
+    format!(
+        "{}owner `{}` is called from {} of `{}` ({}), one of {} `{}` impls in this crate; ripr cannot tell whether any test reaches one of these impls. \
+         Inspect the tests that format or compare these types to judge whether this change is observed.",
+        TRAIT_DISPATCH_AMBIGUITY_PREFIX,
+        owner_name,
+        calls,
+        ambiguity.method,
+        bounded_candidates(ambiguity),
+        ambiguity.method_impl_count,
+        ambiguity.method
+    )
+}
+
+pub(in crate::analysis) fn trait_dispatch_ambiguity_detail_lines(
+    ambiguity: &TraitDispatchAmbiguity,
+    owner_name: &str,
+) -> [String; 4] {
+    [
+        format!(
+            "{}trait-impl method `{}` ({}) -> owner `{}`",
+            crate::domain::LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX,
+            ambiguity.method,
+            bounded_candidates(ambiguity),
+            owner_name
+        ),
+        format!(
+            "{}test -> one of {} `{}` impls (trait dispatch through syntax or macros) ripr does not resolve",
+            crate::domain::LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX,
+            ambiguity.method_impl_count,
+            ambiguity.method
+        ),
+        format!(
+            "{}analysis/rust-public-api-transitive-reach",
+            crate::domain::LIMITATION_ANALYZER_ROUTE_PREFIX
+        ),
+        format!(
+            "{}named limitation only; ripr cannot confirm or deny that any test reaches or observes the change",
+            crate::domain::LIMITATION_NON_CLAIM_PREFIX
+        ),
+    ]
+}
 
 #[cfg(test)]
 mod declaration_tests {

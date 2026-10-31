@@ -204,7 +204,7 @@ impl<R> BoundedStdinReader<R> {
             state: IngressState::Header(Vec::new()),
             tripped: false,
             error_reported: false,
-            trip_reason: "ripr lsp ingress bound exceeded",
+            trip_reason: "ripr lsp ingress bound exceeded; send smaller messages and restart the ripr language server",
             carry: Vec::new(),
         }
     }
@@ -229,7 +229,7 @@ impl<R> BoundedStdinReader<R> {
                     let room = self.max_header_bytes.saturating_sub(buffered.len());
                     if room == 0 {
                         return Err(
-                            "ripr lsp ingress bound: framing header block exceeds the byte cap",
+                            "ripr lsp ingress bound: framing header block exceeds the byte cap; send shorter headers and restart the ripr language server",
                         );
                     }
                     let take = room.min(bytes.len() - offset);
@@ -248,7 +248,7 @@ impl<R> BoundedStdinReader<R> {
                         match declared {
                             Some(length) if length > self.max_message_bytes => {
                                 return Err(
-                                    "ripr lsp ingress bound: declared Content-Length exceeds the message cap",
+                                    "ripr lsp ingress bound: declared Content-Length exceeds the message cap; send a smaller message and restart the ripr language server",
                                 );
                             }
                             Some(0) => {
