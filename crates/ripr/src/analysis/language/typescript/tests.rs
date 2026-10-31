@@ -8682,17 +8682,18 @@ fn ava_reference_equality_array_literal_stays_dynamic() {
     }
 }
 
-/// Jest: `toEqual` / `toStrictEqual` accept an all-literal array (including
-/// `[]`); `toBe` / `toMatchObject` and arrays holding a non-literal such as
+/// Jest: `toEqual` / `toStrictEqual` / `toMatchObject` accept an all-literal
+/// array (including `[]`); `toBe` and arrays holding a non-literal such as
 /// `[-x]` stay dynamic.
 #[test]
-fn jest_array_expected_values_are_literal_only_for_deep_equality() {
+fn jest_array_expected_values_are_literal_for_equality_matchers() {
     for (call, dynamic) in [
         ("expect(f(1)).toEqual([1, 2])", false),
         ("expect(f(1)).toStrictEqual([1, 'a', [2]])", false),
         ("expect(f(1)).toEqual([])", false),
         ("expect(f(1)).toBe([1])", true),
-        ("expect(f(1)).toMatchObject([1])", true),
+        // #11255: `toMatchObject` takes an all-literal container too.
+        ("expect(f(1)).toMatchObject([1])", false),
         ("expect(f(1)).toEqual([-x])", true),
         ("expect(f(1)).toEqual([1, y])", true),
     ] {
@@ -14068,7 +14069,7 @@ fn oracle_metadata_is_kept_for_a_matching_family_assertion() -> Result<(), Strin
 
 // ── RIPR-SPEC-0027: predicate boundary witness ───────────────────────────────
 
-fn exact_value_test(owner_name: &str, observed: &str, expected: &str) -> TypeScriptTest {
+pub(super) fn exact_value_test(owner_name: &str, observed: &str, expected: &str) -> TypeScriptTest {
     TypeScriptTest {
         name: format!("{owner_name} {observed}"),
         local_name: format!("{owner_name} {observed}"),
@@ -15027,7 +15028,7 @@ fn overcredit_4103_spy_fabrication_must_be_tied_to_owner_spy() -> Result<(), Str
 /// 90) and `return total;` (unchanged behavior there: 100). These are the
 /// extraction-populated facts the witness needs for position/arity matching
 /// and expected-side liveness.
-fn boundary_witness_owner() -> TypeScriptOwner {
+pub(super) fn boundary_witness_owner() -> TypeScriptOwner {
     TypeScriptOwner {
         name: "applyDiscount".to_string(),
         file: PathBuf::from("src/lib.ts"),
@@ -15060,7 +15061,7 @@ fn boundary_witness_owner() -> TypeScriptOwner {
     }
 }
 
-fn classify_boundary_line_for_owner(
+pub(super) fn classify_boundary_line_for_owner(
     owner: &TypeScriptOwner,
     line_text: &str,
     tests: &[TypeScriptTest],
@@ -19896,8 +19897,10 @@ mod guard_entry_tests;
 mod infection_tests;
 mod instance_class_tests;
 mod instance_factory_tests;
+mod issue10925_shadow_index_tests;
 mod issue10925_shadow_scan_tests;
 mod issue7507_shadow_tests;
+mod literal_container_tests;
 mod literal_matcher_tests;
 mod lookup_table_tests;
 mod loop_count_tests;

@@ -47,6 +47,7 @@ use crate::analysis_outcome::AnalysisLimitation;
 use crate::config::RiprConfig;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 const REPO_EXPOSURE_SEAM_LIMIT_ENV: &str = "RIPR_REPO_EXPOSURE_SEAM_LIMIT";
@@ -66,6 +67,72 @@ pub(crate) const PILOT_SEAM_BUDGET_ENV: &str = "RIPR_PILOT_SEAM_BUDGET";
 /// stay comfortably below 10 MB at typical per-seam evidence sizes.
 /// Operators can raise or remove the cap via `RIPR_PILOT_SEAM_BUDGET`.
 pub(crate) const DEFAULT_PILOT_SEAM_BUDGET: usize = 2_000;
+
+/// Default inventory cap while a pilot run is active; `0` means no pilot run.
+static PILOT_INVENTORY_DEFAULT: AtomicUsize = AtomicUsize::new(0);
+
+/// Scopes the built-in inventory cap of one `ripr pilot` run to the pilot
+/// artifact budget (#10726). Pilot ranks and writes at most
+/// `DEFAULT_PILOT_SEAM_BUDGET` seams, so classifying the other
+/// `DEFAULT_REPO_EXPOSURE_SEAM_LIMIT - DEFAULT_PILOT_SEAM_BUDGET` seams only
+/// to discard them tripled the wall time on a mid-size repo (tokio: 38 s vs
+/// 12 s) for an identical summary. Seams of the current change past the cap
+/// are still classified by the change supplement, and an explicit
+/// `RIPR_REPO_EXPOSURE_SEAM_LIMIT` (including `0`) still wins: only the
+/// built-in default moves, and it keeps reporting `source: default`.
+/// Dropping the guard restores the product default.
+///
+/// The cap is process-wide (a static, not thread-local, because inventory work
+/// runs on worker threads): one pilot run at a time per process. The guard
+/// restores the value it replaced, so nested guards unwind in order. The only
+/// holder is `ripr pilot`, whose entry point is private to the CLI adapter module and is
+/// reached from the CLI dispatch alone: the LSP and MCP adapters never call it
+/// and xtask runs the pilot binary as a subprocess, so no other in-process
+/// analysis shares the lowered default.
+#[must_use = "the pilot inventory default lasts only while the guard is held"]
+pub(crate) struct PilotInventoryDefault {
+    previous: usize,
+}
+
+impl PilotInventoryDefault {
+    /// Validates `RIPR_PILOT_SEAM_BUDGET` (#4529) and scopes the default.
+    pub(crate) fn enter() -> Result<Self, String> {
+        let cap = pilot_seam_budget()?.map_or(0, |(budget, _)| {
+            budget.min(DEFAULT_REPO_EXPOSURE_SEAM_LIMIT)
+        });
+        let previous = PILOT_INVENTORY_DEFAULT.swap(cap, Ordering::Relaxed);
+        Ok(Self { previous })
+    }
+}
+
+impl PilotInventoryDefault {
+    /// Re-labels an inventory cut made by the pilot-scoped default cap as the
+    /// pilot budget cut it stands in for: same analyzed and total counts, the
+    /// budget's own source. `None` for any other cut (an explicit
+    /// `RIPR_REPO_EXPOSURE_SEAM_LIMIT`, or a cap equal to the product default).
+    pub(crate) fn as_budget_cut(info: Option<&SeamLimitInfo>) -> Option<SeamLimitInfo> {
+        let cap = PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed);
+        let info = info?;
+        if cap == 0
+            || cap >= DEFAULT_REPO_EXPOSURE_SEAM_LIMIT
+            || info.source != SeamLimitSource::Default
+        {
+            return None;
+        }
+        let (_, source) = pilot_seam_budget().ok()??;
+        Some(SeamLimitInfo {
+            analyzed: info.analyzed,
+            total: info.total,
+            source,
+        })
+    }
+}
+
+impl Drop for PilotInventoryDefault {
+    fn drop(&mut self) {
+        PILOT_INVENTORY_DEFAULT.store(self.previous, Ordering::Relaxed);
+    }
+}
 
 /// Walk production Rust files at `root` and emit the raw seam inventory.
 /// Used by the `repo-seams-*` formats; the classified inventory used by
@@ -2673,9 +2740,14 @@ fn normalize_scope_key_bytes(bytes: &[u8]) -> Vec<u8> {
 /// - Anything else → `Err` naming the variable (#4529). Only an explicit `0`
 ///   removes the cap, so a typo never turns the memory guard off.
 pub(crate) fn repo_exposure_seam_limit() -> Result<Option<(usize, SeamLimitSource)>, String> {
+    let pilot_default = PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed);
     seam_limit_from_env(
         REPO_EXPOSURE_SEAM_LIMIT_ENV,
-        DEFAULT_REPO_EXPOSURE_SEAM_LIMIT,
+        if pilot_default == 0 {
+            DEFAULT_REPO_EXPOSURE_SEAM_LIMIT
+        } else {
+            pilot_default
+        },
         std::env::var(REPO_EXPOSURE_SEAM_LIMIT_ENV),
     )
 }
@@ -10301,6 +10373,25 @@ pub fn check_b(x: i32) -> bool { x < 0 }
     }
 
     // -- Pilot seam budget tests ---------------------------------------------
+
+    #[test]
+    fn built_in_inventory_default_is_the_product_cap_without_a_pilot_guard() {
+        // No lib test holds `PilotInventoryDefault`, so non-pilot callers keep
+        // the product default; an explicit value still wins and is configured.
+        if std::env::var_os(REPO_EXPOSURE_SEAM_LIMIT_ENV).is_none() {
+            assert_eq!(
+                repo_exposure_seam_limit(),
+                Ok(Some((
+                    DEFAULT_REPO_EXPOSURE_SEAM_LIMIT,
+                    SeamLimitSource::Default
+                )))
+            );
+        }
+        assert_eq!(
+            seam_limit_from_env(REPO_EXPOSURE_SEAM_LIMIT_ENV, 2_000, Ok("7".to_string())),
+            Ok(Some((7, SeamLimitSource::Configured)))
+        );
+    }
 
     #[test]
     fn pilot_seam_budget_default_constant_is_smaller_than_repo_exposure_cap() {

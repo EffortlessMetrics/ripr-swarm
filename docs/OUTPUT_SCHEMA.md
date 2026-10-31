@@ -138,7 +138,10 @@ The MCP tool envelopes carry the schema-versioned document as
 double-carry envelope cannot fit the id-aware response bound refuses typed
 with `result_too_large` instead of shipping a success without
 `structuredContent` (#7768; details in
-[MCP workspace status server](interop/mcp.md)).
+[MCP workspace status server](interop/mcp.md)). `content[0].text` is the
+compact JSON copy by default; `RIPR_MCP_TEXT_CONTENT=summary` opts a server
+process into a digest instead while `structuredContent` stays the one
+complete result (#9360).
 
 The published JSON Schemas have these current versions. Each row is checked
 against the schema's pinned `const` and every named producer source by
@@ -2224,7 +2227,8 @@ JSON fields:
     source text, emitted ONLY when the argument is a concrete resolvable literal
     (string, number, boolean, null, a safe all-literal object, or, for the
     deep-equality matchers AVA `deepEqual` and Jest `toEqual` / `toStrictEqual`,
-    an all-literal array). NOT emitted
+    an all-literal array; for Jest `toEqual` / `toStrictEqual` / `toMatchObject`
+    also an all-literal object or array nested to any depth). NOT emitted
     for dynamic/non-literal arguments; those trigger
     `typescript_dynamic_assertion_unresolved` instead.
   - `typescript_oracle_confidence: <level>` — additive; confidence derived from
@@ -9796,7 +9800,11 @@ Field contract:
   already-current items.
 - `skip_reason` is `mode_off`, `summary_only`, `suppressed`,
   `inline_comment_cap_reached`, `comment_body_too_large`, `unchanged_tests`,
-  `not_publishable`, or `already_current`.
+  `not_publishable`, or `already_current`. A `comments[]` item whose
+  `gap_state` is anything other than `actionable` (a named `static_limitation`,
+  `already_observed`, `internal_only`, or no `gap_state` at all) offers no test to add and is recorded in
+  `skipped[]` as `not_publishable` instead of an operation, so it never
+  becomes an inline review comment or uses a slot of the cap.
 - Each untrusted field of `operations[].body` is bounded before rendering:
   1,000 characters for a code-span field (changed behavior, verify or repair
   start command), 2,000 for prose (why this matters, repair, reason), and 200
@@ -18955,7 +18963,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.122",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.123",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -19740,7 +19748,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.122",
+      "schema_version": "1.123",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
