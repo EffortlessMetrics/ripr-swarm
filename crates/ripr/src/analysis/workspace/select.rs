@@ -193,10 +193,27 @@ fn module_parent_candidates(file: &Path) -> Vec<PathBuf> {
 }
 
 fn changed_existing_files(all_files: &[PathBuf], changed_rust_files: &[PathBuf]) -> Vec<PathBuf> {
+    changed_existing_files_with(all_files, changed_rust_files, |path| {
+        crate::analysis::diff::diff_path_identity_key(path)
+    })
+}
+
+/// Walk-membership for changed diff paths. `key` is injected so the macOS
+/// NFC/NFD fold can run on Linux (#8419). Returns the git-spelled changed
+/// path so Instant indexes the diff identity; display stays git's bytes
+/// (#7937).
+fn changed_existing_files_with(
+    all_files: &[PathBuf],
+    changed_rust_files: &[PathBuf],
+    key: impl Fn(&Path) -> String,
+) -> Vec<PathBuf> {
     sorted_unique(
         changed_rust_files
             .iter()
-            .filter(|changed| all_files.iter().any(|file| file == *changed))
+            .filter(|changed| {
+                let changed_key = key(changed);
+                all_files.iter().any(|file| key(file) == changed_key)
+            })
             .cloned(),
     )
 }
@@ -218,6 +235,46 @@ mod tests {
 
     fn files(paths: &[&str]) -> Vec<PathBuf> {
         paths.iter().map(PathBuf::from).collect()
+    }
+
+    #[test]
+    fn nfc_diff_path_matches_nfd_walked_file_when_normalization_is_injected() {
+        let nfc = PathBuf::from("caf\u{e9}.rs");
+        let walked = [PathBuf::from("cafe\u{301}.rs"), PathBuf::from("src/lib.rs")];
+        let fold = |path: &Path| {
+            crate::analysis::diff::diff_path_identity_key_with(path, false, true, true)
+        };
+        let exact = |path: &Path| {
+            crate::analysis::diff::diff_path_identity_key_with(path, false, true, false)
+        };
+        assert_eq!(
+            changed_existing_files_with(&walked, std::slice::from_ref(&nfc), fold),
+            std::slice::from_ref(&nfc),
+            "NFC git path must match the NFD walked file when normalization is injected (#8419)"
+        );
+        assert!(
+            changed_existing_files_with(&walked, std::slice::from_ref(&nfc), exact).is_empty(),
+            "NFC and NFD café.rs must stay unmatched when the fold is off"
+        );
+        assert_eq!(
+            changed_existing_files_with(
+                std::slice::from_ref(&nfc),
+                std::slice::from_ref(&nfc),
+                exact
+            ),
+            std::slice::from_ref(&nfc)
+        );
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn host_walk_membership_keeps_nfc_and_nfd_distinct_off_macos() {
+        let nfc = PathBuf::from("caf\u{e9}.rs");
+        let nfd = PathBuf::from("cafe\u{301}.rs");
+        assert!(
+            changed_existing_files(&[nfd], &[nfc]).is_empty(),
+            "Linux/Windows host walk membership must not fold NFC/NFD (#8419)"
+        );
     }
 
     fn temp_dir(name: &str) -> Result<PathBuf, String> {
