@@ -1557,8 +1557,17 @@ mod tests {
 
     fn local_boundary_evidence(body: &str, test_literal: &str) -> StageEvidence {
         // The predicate sits on line 3 of the owner body.
-        let mut changed = probe(ProbeFamily::Predicate, "val > surrogate_start");
-        changed.location = SourceLocation::new("src/lib.rs", 3, 1);
+        local_predicate_evidence(body, "val > surrogate_start", 3, test_literal)
+    }
+
+    fn local_predicate_evidence(
+        body: &str,
+        expression: &str,
+        line: usize,
+        test_literal: &str,
+    ) -> StageEvidence {
+        let mut changed = probe(ProbeFamily::Predicate, expression);
+        changed.location = SourceLocation::new("src/lib.rs", line, 1);
         let owner = owner_with_body(body);
         let test = test_with_literals(&[test_literal]);
         let activation = activation_with(&[(
@@ -1587,6 +1596,35 @@ mod tests {
         let evidence = local_boundary_evidence(owner, "0xd800u32");
         assert_eq!(evidence.state, StageState::Yes, "{}", evidence.summary);
         assert!(evidence.summary.contains("0xd800"), "{}", evidence.summary);
+    }
+
+    #[test]
+    fn a_local_initializer_is_read_from_either_operand_position() {
+        let owner = "fn pick(val: u32) -> bool {\n    let surrogate_start = 0xd800u32;\n    surrogate_start < val\n}\n";
+        let evidence = local_predicate_evidence(owner, "surrogate_start < val", 3, "0xd800u32");
+        assert_eq!(evidence.state, StageState::Yes, "{}", evidence.summary);
+    }
+
+    #[test]
+    fn two_local_operands_and_multi_literal_initializers_contribute_their_literals() {
+        let both = "fn pick(val: u32) -> bool {\n    let low = 5u32;\n    let high = 10u32;\n    low < high\n}\n";
+        let evidence = local_predicate_evidence(both, "low < high", 4, "10u32");
+        assert_eq!(evidence.state, StageState::Yes, "{}", evidence.summary);
+        let multi = "fn pick(val: u32, si: bool) -> bool {\n    let unit = if si { 1000 } else { 1024 };\n    val < unit\n}\n";
+        let evidence = local_predicate_evidence(multi, "val < unit", 3, "1024");
+        assert_eq!(evidence.state, StageState::Yes, "{}", evidence.summary);
+    }
+
+    #[test]
+    fn a_shadowed_or_later_local_does_not_supply_the_boundary() {
+        // The live declaration at the predicate is the computed one.
+        let shadowed = "fn pick(val: u32) -> bool {\n    let surrogate_start = 0xd800u32;\n    let surrogate_start = compute();\n    val > surrogate_start\n}\n";
+        let evidence = local_predicate_evidence(shadowed, "val > surrogate_start", 4, "0xd800u32");
+        assert_eq!(evidence.state, StageState::Unknown, "{}", evidence.summary);
+        // A declaration after the predicate line does not feed it.
+        let later = "fn pick(val: u32) -> bool {\n    let hit = val > surrogate_start;\n    let surrogate_start = 0xd800u32;\n    hit\n}\n";
+        let evidence = local_predicate_evidence(later, "val > surrogate_start", 2, "0xd800u32");
+        assert_eq!(evidence.state, StageState::Unknown, "{}", evidence.summary);
     }
 
     #[test]
