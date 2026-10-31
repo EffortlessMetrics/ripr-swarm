@@ -2077,17 +2077,22 @@ fn missing_discriminator_facts(
     {
         missing.push(fact);
     }
-    if matches!(
+    if (matches!(
         probe.family,
-        ProbeFamily::SideEffect | ProbeFamily::CallDeletion
-    ) && let Some(fact) = missing_guard_entry_discriminator(
-        probe,
-        owner_fn,
-        related_tests,
-        flow_sinks,
-        index,
-        workspace_complete,
-    ) {
+        ProbeFamily::SideEffect | ProbeFamily::CallDeletion | ProbeFamily::ErrorPath
+    ) || (matches!(probe.family, ProbeFamily::ReturnValue)
+        && flow_sinks
+            .iter()
+            .any(|sink| sink.kind == FlowSinkKind::ErrorVariant)))
+        && let Some(fact) = missing_guard_entry_discriminator(
+            probe,
+            owner_fn,
+            related_tests,
+            flow_sinks,
+            index,
+            workspace_complete,
+        )
+    {
         missing.push(fact);
     }
     if missing.is_empty()
