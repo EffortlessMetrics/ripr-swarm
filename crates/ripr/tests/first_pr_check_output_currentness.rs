@@ -336,7 +336,9 @@ fn zero_record_foreign_check_preserves_the_input() -> Result<(), String> {
     assert_eq!(other_ledger["input_root"], printed(&a)?);
     // The ledger records the root as given, which is the native spelling.
     assert_eq!(
-        other_ledger["root"].as_str().map(|root| root.replace('\\', "/")),
+        other_ledger["root"]
+            .as_str()
+            .map(|root| root.replace('\\', "/")),
         Some(printed(&b)?)
     );
     assert!(
