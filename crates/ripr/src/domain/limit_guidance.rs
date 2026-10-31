@@ -50,6 +50,7 @@ impl StaticLimitKind {
         StaticLimitKind::RustCallerLoopSelectorUnresolved,
         StaticLimitKind::ProofHarnessNotEvaluated,
         StaticLimitKind::RustInherentReceiverUnestablished,
+        StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated,
     ];
 
     /// What to do so ripr can settle this limitation. One imperative
@@ -190,6 +191,10 @@ impl StaticLimitKind {
                 "Assert on the changed method's result with the standard `assert_eq!`, in a \
                  test whose Cargo target ripr can place, so the assertion macro binding can be \
                  verified."
+            StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => {
+                "Run ripr from a narrower root, or raise RIPR_TS_MAX_WORKSPACE_FILES (and \
+                 RIPR_TS_MAX_WORKSPACE_READ_BYTES if the run then reports a read budget), then \
+                 check again."
             }
         }
     }
@@ -343,9 +348,10 @@ mod tests {
                 StaticLimitKind::RustCallerLoopSelectorUnresolved => 29,
                 StaticLimitKind::ProofHarnessNotEvaluated => 30,
                 StaticLimitKind::RustInherentReceiverUnestablished => 31,
+                StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => 32,
             }
         }
-        const COUNT: usize = 32;
+        const COUNT: usize = 33;
         assert_eq!(StaticLimitKind::ALL.len(), COUNT);
         let ordinals: Vec<usize> = StaticLimitKind::ALL.iter().copied().map(ordinal).collect();
         assert_eq!(

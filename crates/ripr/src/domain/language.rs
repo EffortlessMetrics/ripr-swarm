@@ -497,6 +497,12 @@ pub enum StaticLimitKind {
     /// mismatch. The gap is withheld and the class is `static_unknown`. See
     /// RIPR-SPEC-0352.
     RustInherentReceiverUnestablished,
+    /// TypeScript workspace discovery stopped at its entry cap
+    /// (`RIPR_TS_MAX_WORKSPACE_FILES`) before the walk covered the workspace,
+    /// so the test universe is incomplete. A finding that would say no test
+    /// reaches the change is withheld and the class is `static_unknown`: the
+    /// missing test may be one the walk never read. See RIPR-SPEC-0240.
+    TypescriptWorkspaceDiscoveryTruncated,
 }
 
 impl StaticLimitKind {
@@ -571,6 +577,9 @@ impl StaticLimitKind {
                 "rust_caller_loop_selector_unresolved"
             }
             StaticLimitKind::ProofHarnessNotEvaluated => "proof_harness_not_evaluated",
+            StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => {
+                "typescript_workspace_discovery_truncated"
+            }
         }
     }
 
@@ -758,6 +767,12 @@ impl StaticLimitKind {
                  its assertions are not oracle evidence, so no test path is established. A \
                  passing verifier run is a separate authority ripr does not read. This is a \
                  named limitation, not a coverage claim."
+            }
+            StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => {
+                "TypeScript workspace discovery stopped at its entry cap before it covered the \
+                 workspace, so tests past the cap were never read. ripr cannot say that no test \
+                 reaches this change, so it does not claim a gap; this is a named limitation, \
+                 not a coverage claim."
             }
         }
     }
@@ -1121,6 +1136,8 @@ mod tests {
         assert_eq!(
             StaticLimitKind::RustInherentReceiverUnestablished.as_str(),
             "rust_inherent_receiver_unestablished"
+            StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated.as_str(),
+            "typescript_workspace_discovery_truncated"
         );
     }
 
@@ -1159,6 +1176,7 @@ mod tests {
             StaticLimitKind::RustCallerLoopSelectorUnresolved,
             StaticLimitKind::ProofHarnessNotEvaluated,
             StaticLimitKind::RustInherentReceiverUnestablished,
+            StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by
