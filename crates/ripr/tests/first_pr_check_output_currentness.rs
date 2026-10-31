@@ -900,7 +900,7 @@ fn no_action_does_not_promote_unbound_or_stale_preview_check() -> Result<(), Str
     .map_err(|e| e.to_string())?;
     assert_eq!(
         ledger["input_root"],
-        text(&a)?,
+        printed(&a)?,
         "producer root must survive derivation: {ledger}"
     );
     assert_eq!(ledger["root"], printed(&b)?);
