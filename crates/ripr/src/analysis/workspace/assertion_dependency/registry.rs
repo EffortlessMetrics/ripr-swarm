@@ -539,7 +539,7 @@ fn verified_registry_identity(
 }
 
 fn decode_registry_metadata(bytes: &[u8]) -> Result<serde_json::Value, MetadataProbeFailure> {
-    serde_json::from_slice(bytes).map_err(|_| MetadataProbeFailure::InvalidJson)
+    serde_json::from_slice(bytes).map_err(|_error| MetadataProbeFailure::InvalidJson)
 }
 
 fn verified_registry_identity_result(
