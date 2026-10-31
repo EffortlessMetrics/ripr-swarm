@@ -62,8 +62,9 @@ use crate::config::{
     TYPESCRIPT_SOURCE_DIR_MARKERS, is_detectable_package_source_name,
     is_detectable_python_source_name, is_detectable_typescript_source_name,
     is_python_excluded_dir_everywhere, is_typescript_excluded_dir_everywhere,
-    javascript_led_manifest_name, python_project_marker_name, python_source_dir_marker_name,
-    typescript_project_marker_name, typescript_source_dir_marker_name,
+    javascript_led_manifest_name, javascript_led_source_dir_marker_name,
+    python_project_marker_name, python_source_dir_marker_name, typescript_project_marker_name,
+    typescript_source_dir_marker_name,
 };
 use crate::domain::{StageEvidence, StageState};
 use crate::lsp::diagnostic_budget::DiagnosticDeliveryOutcome;
@@ -4375,7 +4376,7 @@ fn path_is_detectable_package_source(root: &Path, path: &Path) -> bool {
     let Some((marker, below)) = directories.split_first() else {
         return true;
     };
-    JAVASCRIPT_LED_SOURCE_DIRS.contains(&marker.as_str())
+    javascript_led_source_dir_marker_name(marker).is_some()
         && below
             .iter()
             .all(|dir| !dir.starts_with('.') && !is_typescript_excluded_dir_everywhere(dir))
@@ -4780,6 +4781,20 @@ mod workspace_input_tests {
         }
         assert!(WorkspaceInputKind::JavascriptPackagePresence.reloads_repository_config());
         assert!(!WorkspaceInputKind::JavascriptPackagePresence.invalidates_workspace_graph());
+
+        // #11419: source-directory markers resolve through the host
+        // filesystem, so on a case-insensitive host (Windows, macOS) the
+        // differently-cased spellings classify like the canonical ones —
+        // exactly what the detector sees through `root.join(dir)`.
+        if crate::output::path::host_paths_case_insensitive() {
+            for source in ["Src/app.js", "Test/a.js", "TESTS/a.js", "Src/deep/view.jsx"] {
+                assert_eq!(
+                    workspace_input_kind(&root, &root.join(source)),
+                    Some(WorkspaceInputKind::JavascriptPackagePresence),
+                    "{source}"
+                );
+            }
+        }
     }
 
     #[test]

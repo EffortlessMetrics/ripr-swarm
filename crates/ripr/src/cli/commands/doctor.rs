@@ -9,7 +9,7 @@ use crate::analysis;
 use crate::app::Mode;
 use crate::cli::CommandError;
 use crate::cli::help;
-use crate::cli::suggest::unknown_argument;
+use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::config::{CONFIG_FILE_NAME, DEFAULT_LSP_SEAM_DIAGNOSTICS, RiprConfig};
 use crate::domain::{LanguageId, LanguageStatus};
 use crate::output;
@@ -38,8 +38,10 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
                     Some("analysis") => output::doctor::DoctorProfile::Analysis,
                     Some("source-build") => output::doctor::DoctorProfile::SourceBuild,
                     Some(other) => {
-                        return Err(CommandError::from(format!(
-                            "unknown doctor profile `{other}`; expected `analysis` or `source-build`"
+                        return Err(CommandError::from(unknown_value(
+                            "doctor profile",
+                            other,
+                            &["analysis", "source-build"],
                         )));
                     }
                     None => {

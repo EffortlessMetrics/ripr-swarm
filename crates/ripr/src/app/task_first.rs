@@ -392,7 +392,44 @@ fn route_not_ready_reason(
             ": write the test by hand, or run `ripr agent stub{root_flag} --at {at} --kind {kind}` for a fill-in skeleton{module_note}, then rerun `ripr repair`"
         ));
     }
+    if let Some(guidance) = owner_call_absent_guidance(entry, root) {
+        label.push_str(&format!(": {guidance}"));
+    }
     label
+}
+
+/// The most common refusal on real crates: no test calls the changed owner
+/// directly (a private or internal owner reached through a public call), so
+/// activation is unknown. Name the closest related test so the reader has a
+/// place to look; ripr cannot show that test runs the code, so the wording
+/// stays a by-hand check. Refusal text only; eligibility is unchanged.
+fn owner_call_absent_guidance(
+    entry: &crate::analysis::ClassifiedSeam,
+    root: Option<&Path>,
+) -> Option<String> {
+    if entry.class != crate::analysis::seams::SeamGripClass::ActivationUnknown
+        || !entry
+            .evidence
+            .activate
+            .summary
+            .starts_with("No direct owner call observed")
+    {
+        return None;
+    }
+    let related = &entry.evidence.related_tests;
+    // Same pick as `RepairStartRefusal::related_test` (no direct owner call
+    // exists here, so that is the first related test), so one refusal never
+    // names two different tests.
+    let test = related.first()?;
+    let file = root
+        .and_then(|root| test.file.strip_prefix(root).ok())
+        .unwrap_or(&test.file);
+    Some(format!(
+        "ripr observed no direct test call of this code; the closest related test is `{}` ({}:{}). If it runs the changed code through a public call, add the assertion there, otherwise write a new test",
+        test.test_name,
+        crate::analysis::stable_path_text(file),
+        test.line
+    ))
 }
 
 const NO_TEST_MODULE_STUB_NOTE: &str =
@@ -505,6 +542,57 @@ fn collect_no_eligible_reasons<'a>(
 /// the same actionable recovery. The cap is an environment variable, not a flag.
 pub(crate) const WIDEN_SEAM_BUDGET: &str = "rerun with a wider seam budget (set RIPR_REPO_EXPOSURE_SEAM_LIMIT to a larger count, or 0 to remove the cap)";
 
+/// Largest repository a repair start widens the built-in seam cap to cover.
+/// Past it the refusal stands, so the cap still bounds pathological monorepos.
+const REPAIR_SEAM_CEILING: usize = 2 * crate::analysis::DEFAULT_REPO_EXPOSURE_SEAM_LIMIT;
+
+/// Seam inventory for a repair resolver. A repository only just past the
+/// built-in cap (tokio: 12,754 seams) would otherwise refuse every repair, so
+/// a default-source cut within [`REPAIR_SEAM_CEILING`] reruns once with the cap
+/// raised to the exact total. The rerun is cut by nothing, and one that
+/// declined a Rust file is discarded, so the fail-closed truncation gate below
+/// is unchanged: an explicit
+/// `RIPR_REPO_EXPOSURE_SEAM_LIMIT` or a larger repository still refuses.
+///
+/// Only the one-shot CLI resolvers call this. `load_gate_state` stays on the
+/// plain inventory because MCP status reads reach it on concurrent worker
+/// threads, which must not share the process-wide cap; there a cut inventory
+/// still withholds the start with the wider-budget recovery.
+fn inventory_for_repair(
+    root: &Path,
+    config: &crate::config::RiprConfig,
+) -> Result<
+    (
+        Vec<crate::analysis::ClassifiedSeam>,
+        Option<crate::analysis::SeamLimitInfo>,
+    ),
+    String,
+> {
+    let first = crate::analysis::inventory_classified_seams_at_with_config(root, config)?;
+    if let Some(cap) = first.1.as_ref().and_then(repair_widened_cap) {
+        let _widened = crate::analysis::PilotInventoryDefault::widen_to(cap);
+        let rerun =
+            crate::analysis::inventory_classified_seams_report_at_with_config(root, config)?;
+        // The repair gates read the cap only. A file the parse budget declined
+        // has no seams in the inventory, so a rerun that declined any is not
+        // known to be complete and the original truncation refusal stands.
+        if rerun.declined_rust_files.is_empty() {
+            return Ok((rerun.classified, rerun.limit_info));
+        }
+    }
+    Ok(first)
+}
+
+/// The cap a repair resolver reruns with, or `None` when the cut stands: only
+/// a built-in default cut of a repository within [`REPAIR_SEAM_CEILING`]
+/// widens, to its exact total. An explicit limit is the operator's choice.
+fn repair_widened_cap(info: &crate::analysis::SeamLimitInfo) -> Option<usize> {
+    (info.is_truncated()
+        && info.source == crate::analysis::SeamLimitSource::Default
+        && info.total <= REPAIR_SEAM_CEILING)
+        .then_some(info.total)
+}
+
 /// Gather the live authorities and decide one repair start. A truncated seam
 /// inventory fails closed: selecting from a partial list could hide
 /// candidates and silently pick first.
@@ -516,8 +604,7 @@ pub(crate) fn resolve_repair_start(
     base: Option<&str>,
 ) -> Result<RepairStartDecision, String> {
     let config = load_for_root(root)?;
-    let (classified, limit_info) =
-        crate::analysis::inventory_classified_seams_at_with_config(root, &config)?;
+    let (classified, limit_info) = inventory_for_repair(root, &config)?;
     if let Some(info) = &limit_info
         && info.is_truncated()
     {
@@ -1161,8 +1248,7 @@ pub(crate) fn resolve_repair_subject_outcome(
     item: &str,
 ) -> Result<RepairSubjectOutcome, String> {
     let config = load_for_root(root)?;
-    let (classified, limit_info) =
-        crate::analysis::inventory_classified_seams_at_with_config(root, &config)?;
+    let (classified, limit_info) = inventory_for_repair(root, &config)?;
     if let Some(info) = &limit_info
         && info.is_truncated()
     {
@@ -2508,6 +2594,51 @@ fn held_inline_target(
 pub(crate) mod tests {
     use super::*;
 
+    /// A default-cap cut within the ceiling reruns at its exact total; an
+    /// explicit limit, a repository past the ceiling and a complete inventory
+    /// are left alone, so the truncation refusal still guards them.
+    #[test]
+    fn repair_widens_only_a_default_cut_within_the_ceiling() {
+        use crate::analysis::{SeamLimitInfo, SeamLimitSource};
+        let cut = |analyzed, total, source| SeamLimitInfo {
+            analyzed,
+            total,
+            source,
+        };
+        let default_cap = crate::analysis::DEFAULT_REPO_EXPOSURE_SEAM_LIMIT;
+        assert_eq!(
+            repair_widened_cap(&cut(default_cap, 12_754, SeamLimitSource::Default)),
+            Some(12_754)
+        );
+        assert_eq!(
+            repair_widened_cap(&cut(
+                default_cap,
+                REPAIR_SEAM_CEILING,
+                SeamLimitSource::Default
+            )),
+            Some(REPAIR_SEAM_CEILING)
+        );
+        assert_eq!(
+            repair_widened_cap(&cut(
+                default_cap,
+                REPAIR_SEAM_CEILING + 1,
+                SeamLimitSource::Default
+            )),
+            None,
+            "past the ceiling the refusal stands"
+        );
+        assert_eq!(
+            repair_widened_cap(&cut(default_cap, 12_754, SeamLimitSource::Configured)),
+            None,
+            "an explicit RIPR_REPO_EXPOSURE_SEAM_LIMIT is never overridden"
+        );
+        assert_eq!(
+            repair_widened_cap(&cut(500, 500, SeamLimitSource::Default)),
+            None,
+            "a complete inventory needs no rerun"
+        );
+    }
+
     fn key<'a>(
         kind: crate::analysis::seams::SeamKind,
         file: &'a str,
@@ -3179,6 +3310,55 @@ pub(crate) mod tests {
             bare.reason
         );
 
+        Ok(())
+    }
+
+    /// #11427: an activation-unknown seam with no direct owner call names the
+    /// closest related test as a by-hand check, without promising a repair.
+    #[test]
+    fn owner_call_absent_refusal_names_the_related_test() -> Result<(), String> {
+        use crate::analysis::seams::SeamGripClass;
+        use crate::domain::RelationReason;
+        let config = crate::config::RiprConfig::default();
+        let policy = AgentBriefPolicy::from_config(&config);
+        let root = Path::new("/repo");
+        let summary = "No direct owner call observed for value-insensitive seam";
+
+        let mut affinity = weak_related_test();
+        affinity.relation_reason = RelationReason::AssertionTargetAffinity;
+        let mut entry = gate_entry(SeamGripClass::ActivationUnknown, vec![affinity]);
+        entry.evidence.activate.summary = summary.to_string();
+        let refusal = repair_start_refusal_for_entry(root, &entry, policy)
+            .ok_or("an activation-unknown seam must be refused")?;
+        assert!(
+            refusal
+                .reason
+                .contains("the closest related test is `at_threshold_runs` (tests/pricing.rs:12)")
+                && refusal.reason.contains("otherwise write a new test"),
+            "{}",
+            refusal.reason
+        );
+
+        // Negatives: no related test, or a different activate summary, keeps
+        // the bare label.
+        let mut none = gate_entry(SeamGripClass::ActivationUnknown, Vec::new());
+        none.evidence.activate.summary = summary.to_string();
+        let bare = repair_start_refusal_for_entry(root, &none, policy)
+            .ok_or("an activation-unknown seam must be refused")?;
+        assert!(
+            !bare.reason.contains("closest related test"),
+            "{}",
+            bare.reason
+        );
+        let mut other = gate_entry(SeamGripClass::ActivationUnknown, vec![weak_related_test()]);
+        other.evidence.activate.summary = "test stage".to_string();
+        let bare = repair_start_refusal_for_entry(root, &other, policy)
+            .ok_or("an activation-unknown seam must be refused")?;
+        assert!(
+            !bare.reason.contains("closest related test"),
+            "{}",
+            bare.reason
+        );
         Ok(())
     }
 

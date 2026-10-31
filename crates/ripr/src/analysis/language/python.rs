@@ -90,6 +90,7 @@ mod guard_credit;
 mod helper_inline;
 mod imported_call_operator;
 mod known_equality_helpers;
+mod loop_walk;
 mod message_pin;
 mod module_value;
 mod test_local_literal;
@@ -1942,6 +1943,8 @@ mod row_miss_tests;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod loop_walk_tests;
 #[cfg(test)]
 mod verdict_corpus_tests;
 
