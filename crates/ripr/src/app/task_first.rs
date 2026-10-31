@@ -500,11 +500,58 @@ fn route_not_ready_reason(
     // A named stub route already answers "no test calls this"; a second
     // suffix would read as competing advice.
     if !label.contains("ripr agent stub")
-        && let Some(guidance) = owner_call_absent_guidance(entry, root)
+        && let Some(guidance) =
+            owner_call_absent_guidance(entry, root).or_else(|| reaching_test_guidance(entry, root))
     {
         label.push_str(&format!(": {guidance}"));
     }
     label
+}
+
+/// A test already reaches the changed code but ripr cannot follow the changed
+/// value to an assertion on it (`*_unknown` class past activation): name that
+/// test so the reader knows where to strengthen, instead of listing missing
+/// evidence alone (#11466). Refusal text only; class and eligibility are
+/// untouched.
+fn reaching_test_guidance(
+    entry: &crate::analysis::ClassifiedSeam,
+    root: RefusalRoot<'_>,
+) -> Option<String> {
+    use crate::analysis::seams::SeamGripClass;
+    use crate::domain::RelationReason;
+    if !matches!(
+        entry.class,
+        SeamGripClass::PropagationUnknown
+            | SeamGripClass::ObservationUnknown
+            | SeamGripClass::DiscriminationUnknown
+    ) {
+        return None;
+    }
+    // Same pick as `RepairStartRefusal::related_test` (a direct owner call
+    // first), so one refusal never names two different tests.
+    let related = &entry.evidence.related_tests;
+    let test = related
+        .iter()
+        .find(|test| test.relation_reason == RelationReason::DirectOwnerCall)
+        .or_else(|| related.first())?;
+    if !matches!(
+        test.relation_reason,
+        RelationReason::DirectOwnerCall
+            | RelationReason::HelperOwnerCall
+            | RelationReason::ReExportChainFollowed
+    ) {
+        return None;
+    }
+    let file = root
+        .source
+        .and_then(|root| test.file.strip_prefix(root).ok())
+        .unwrap_or(&test.file);
+    Some(format!(
+        "`{}` ({}:{}) calls this code, but ripr cannot follow the changed value to an assertion on it. Check by hand that it exercises the changed branch and asserts on its result, and add the assertion there",
+        test.test_name,
+        crate::analysis::stable_path_text(file),
+        test.line
+    ))
 }
 
 /// Why `ripr agent stub` would refuse this seam, read through the stub's own
@@ -3765,6 +3812,51 @@ pub(crate) mod tests {
         let reason = route_not_ready_reason(&plain, "repair route not ready", &[], root);
         assert!(!reason.contains("--kind predicate"), "{reason}");
         Ok(())
+    }
+
+    /// #11466: a propagation/observation-unknown seam that a test already runs
+    /// names that test; a seam no test calls directly, or a class past the
+    /// unknown stages, stays bare.
+    #[test]
+    fn unknown_stage_refusal_names_the_test_that_runs_the_code() {
+        use crate::analysis::seams::SeamGripClass;
+        let root = RefusalRoot::named(Path::new("/repo"));
+        let missing = vec!["incomplete evidence stage: propagation".to_string()];
+
+        let entry = gate_entry(SeamGripClass::PropagationUnknown, vec![weak_related_test()]);
+        let reason = route_not_ready_reason(&entry, "repair route not ready", &missing, root);
+        assert!(
+            reason.contains("`at_threshold_runs` (tests/pricing.rs:12) calls this code"),
+            "{reason}"
+        );
+
+        // The refusal's own pick wins: a direct owner call listed after a
+        // helper call is the one named, and other unknown stages name it too.
+        let mut helper = weak_related_test();
+        helper.test_name = "via_helper".to_string();
+        helper.relation_reason = crate::domain::RelationReason::HelperOwnerCall;
+        for class in [
+            SeamGripClass::ObservationUnknown,
+            SeamGripClass::DiscriminationUnknown,
+        ] {
+            let both = gate_entry(class, vec![helper.clone(), weak_related_test()]);
+            let reason = route_not_ready_reason(&both, "repair route not ready", &missing, root);
+            assert!(reason.contains("`at_threshold_runs`"), "{reason}");
+            assert!(!reason.contains("`via_helper`"), "{reason}");
+        }
+
+        // Negatives: no related test, a non-reaching relation, another class.
+        let none = gate_entry(SeamGripClass::PropagationUnknown, Vec::new());
+        let reason = route_not_ready_reason(&none, "repair route not ready", &missing, root);
+        assert!(!reason.contains("calls this code"), "{reason}");
+        let mut weak = weak_related_test();
+        weak.relation_reason = crate::domain::RelationReason::SameModule;
+        let same_module = gate_entry(SeamGripClass::PropagationUnknown, vec![weak]);
+        let reason = route_not_ready_reason(&same_module, "repair route not ready", &missing, root);
+        assert!(!reason.contains("calls this code"), "{reason}");
+        let weakly = gate_entry(SeamGripClass::WeaklyGripped, vec![weak_related_test()]);
+        let reason = route_not_ready_reason(&weakly, "repair route not ready", &missing, root);
+        assert!(!reason.contains("calls this code"), "{reason}");
     }
 
     /// #10622: a predicate boundary whose only missing evidence is the
