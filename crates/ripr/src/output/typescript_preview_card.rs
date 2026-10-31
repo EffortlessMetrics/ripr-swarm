@@ -269,6 +269,11 @@ fn suggested_assertion_shape(
     missing_discriminator: Option<&str>,
     static_limits: &[String],
 ) -> String {
+    if evidence_value(finding, "actionability_category: ") == Some("private_member_reach_unknown") {
+        return evidence_value(finding, "repair_route: ")
+            .unwrap_or("Establish private-member reach before choosing an assertion shape.")
+            .to_string();
+    }
     if !static_limits.is_empty() {
         return "Resolve the named static limitation before selecting an assertion shape."
             .to_string();
