@@ -41,7 +41,7 @@ No test stub here: the seam a stub would target is not a reported gap in the sea
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:12 (weak); kind: return_value; reason: No strong discriminator was detected
+    - ./src/lib.rs:12 (weak); kind: return_value; reason: No strong assertion was detected
   Hidden classes:
     weak = tests reach it but check it only loosely
   Full evidence: rerun with --format human-full
