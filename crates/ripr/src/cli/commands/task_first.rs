@@ -840,7 +840,16 @@ fn run_facade_status(mut options: StatusFacadeOptions) -> Result<(), CommandErro
         store: None,
         attempt_id: options.attempt_id,
     })
-    .map_err(CommandError::from)
+    .map_err(|message| CommandError::from(facade_status_message(message)))
+}
+
+/// #11600: the façade's `status --attempt` shares the agent status body, whose
+/// errors name `agent status`; name the command the caller actually typed.
+fn facade_status_message(message: String) -> String {
+    match message.strip_prefix("agent status --attempt") {
+        Some(rest) => format!("status --attempt{rest}"),
+        None => message,
+    }
 }
 
 /// Print one retry template and, when PowerShell needs a different spelling
@@ -1591,5 +1600,29 @@ mod tests {
             return Err("the refusal message must name the started attempt".to_string());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod facade_status_message_tests {
+    use super::facade_status_message;
+
+    #[test]
+    fn status_facade_errors_name_the_status_command() {
+        assert_eq!(
+            facade_status_message(
+                "agent status --attempt: repair attempt ID must start with `repair-attempt-`"
+                    .to_string()
+            ),
+            "status --attempt: repair attempt ID must start with `repair-attempt-`"
+        );
+    }
+
+    #[test]
+    fn unrelated_messages_pass_through_unchanged() {
+        assert_eq!(
+            facade_status_message("could not read store".to_string()),
+            "could not read store"
+        );
     }
 }
