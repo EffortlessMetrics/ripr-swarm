@@ -1960,10 +1960,7 @@ pub(super) fn literal_elements(text: &str) -> Option<Vec<String>> {
     })?;
     // A parenthesized scalar (`(None)`, `(0)`, `('')`) is the scalar itself, not
     // a one-element tuple: a tuple display needs a top-level comma.
-    if text.starts_with('(')
-        && !inner.trim().is_empty()
-        && split_top_level_args(inner).len() < 2
-    {
+    if text.starts_with('(') && !inner.trim().is_empty() && split_top_level_args(inner).len() < 2 {
         return None;
     }
     let segments: Vec<&str> = split_top_level_args(inner)
