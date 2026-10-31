@@ -7352,7 +7352,7 @@ mod tests {
                     || line.contains(".threshold("))
         }
         let lines = [
-            "Request::builder()",
+            "Request::builder().build()",
             ".with_limit(5)",
             ".amount(100)",
             ".token(\"abc\")",
@@ -7368,7 +7368,7 @@ mod tests {
             assert_eq!(super::looks_like_builder_method(line), legacy(line), "{line}");
         }
         assert_eq!(
-            super::BuilderPattern::of("Request::builder()"),
+            super::BuilderPattern::of("Request::builder().build()"),
             Some(super::BuilderPattern::BuilderCall)
         );
         assert_eq!(
