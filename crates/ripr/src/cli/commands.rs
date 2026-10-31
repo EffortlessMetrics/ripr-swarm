@@ -8342,7 +8342,7 @@ language = "rust"
         let workflow = generated_github_actions_workflow();
         // A label gets its own concurrency group, so it cannot cancel a push run (#11753).
         assert!(workflow.contains(
-            "-${{ github.event.action == 'labeled' || github.event.action == 'unlabeled' }}\n  cancel-in-progress: true"
+            "-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.action || 'run' }}\n  cancel-in-progress: true"
         ));
         // The job skips label events unless a waiver-reading gate mode is set.
         let condition = workflow

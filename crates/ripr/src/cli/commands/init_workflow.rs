@@ -51,8 +51,8 @@ defaults:
     shell: bash
 
 concurrency:
-  # Label events get their own group so an unrelated label cannot cancel an analysis in flight.
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.action == 'labeled' || github.event.action == 'unlabeled' }}
+  # Each label action gets its own group, so a label cannot cancel a push run or the other label event.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.action || 'run' }}
   cancel-in-progress: true
 
 jobs:
@@ -384,7 +384,7 @@ mod template_pin_tests {
     /// first line, and artifact paths, which the `generated_workflow_*` and
     /// `install_version_*` tests pin at the rendered level.
     const TEMPLATE_SHA256: &str =
-        "896ca769fb2fff5c137eddc5a554d799c8e7c654bdda5fb4e1050889a304424f";
+        "248b0d888519767082207b54ba9184ae0559b6e183bd8b2579c81dc4db0c4cef";
 
     #[test]
     fn template_matches_the_pinned_bytes() {
