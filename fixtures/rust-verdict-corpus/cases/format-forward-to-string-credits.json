@@ -1,0 +1,45 @@
+{
+  "case_id": "format-forward-to-string-credits",
+  "subject_id": "authored-format-forward",
+  "diff": "cases/format-forward-to-string-credits.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 42
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "owner_called_inside_to_string_caller",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "6",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "limit_tests::limit_label_is_five",
+        "equivalence_review": "not equivalent: the label reads \"6\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "limit_label carries limit() through to_string, which keeps the whole value, so the exact assertion on the label pins limit(): any other limit changes the label. A std scalar carried by a value-preserving method is the positive twin of the precision and bitwise-and negatives.",
+  "labeling_observation": {
+    "ripr_commit": "cf345099e",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
