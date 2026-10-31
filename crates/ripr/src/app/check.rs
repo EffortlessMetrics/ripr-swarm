@@ -1249,9 +1249,12 @@ mod tests {
 
         let refused = ensure_perl_cache_dir_contained(&root, &root.join("escape/facts"));
         assert!(refused.is_err_and(|e| e.contains("outside the workspace")));
-        assert!(ensure_perl_cache_dir_contained(&root, &root.join("dangling/facts")).is_err());
-        assert!(ensure_perl_cache_dir_contained(&root, &root.join("ok/facts")).is_ok());
-        assert!(ensure_perl_cache_dir_contained(&root, &root.join("new/deep/facts")).is_ok());
+        assert!(
+            ensure_perl_cache_dir_contained(&root, &root.join("dangling/facts"))
+                .is_err_and(|e| e.contains("cannot resolve"))
+        );
+        ensure_perl_cache_dir_contained(&root, &root.join("ok/facts"))?;
+        ensure_perl_cache_dir_contained(&root, &root.join("new/deep/facts"))?;
         let _ = std::fs::remove_dir_all(&base);
         Ok(())
     }
