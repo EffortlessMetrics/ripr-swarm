@@ -8281,6 +8281,9 @@ language = "rust"
         assert!(workflow.contains("RIPR_UPLOAD_SARIF"));
         assert!(workflow.contains("RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }}"));
         assert!(workflow.contains("RIPR_GATE_BASELINE: ${{ vars.RIPR_GATE_BASELINE || '' }}"));
+        assert!(
+            workflow.contains("RIPR_PILOT_TIMEOUT_MS: ${{ vars.RIPR_PILOT_TIMEOUT_MS || '' }}")
+        );
         assert!(workflow.contains("RIPR_COMMENT_MODE: ${{ vars.RIPR_COMMENT_MODE || 'off' }}"));
         assert!(workflow.contains("pull-requests: write"));
         assert!(workflow.contains("run: ripr reports ci-packet --root ."));
@@ -8531,8 +8534,8 @@ language = "rust"
         // The DX bar from #5409: a workflow an adopter can read in one sitting.
         let line_count = workflow.lines().count();
         assert!(
-            line_count <= 181,
-            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, #4452 added step env bindings, and #11145 added the failed-SARIF-upload explanation"
+            line_count <= 183,
+            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, #4452 added step env bindings, #11145 added the failed-SARIF-upload explanation, and #11205 added the optional pilot-timeout binding with its one-line comment"
         );
 
         assert!(workflow.contains("RIPR_UPLOAD_SARIF: \"true\""));
