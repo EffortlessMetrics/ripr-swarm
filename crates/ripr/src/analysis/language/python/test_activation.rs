@@ -222,15 +222,8 @@ pub(super) fn rebound_later(
     name: &str,
     source: &SourceText<'_>,
 ) -> bool {
-    let reads_name = |range| text_for_range(source, range).contains(name);
-    let targets_name = |target: &Expr| match target {
-        Expr::Name(bound) => bound.id.as_str() == name,
-        Expr::Tuple(tuple) => tuple
-            .elts
-            .iter()
-            .any(|elt| matches!(elt, Expr::Name(bound) if bound.id.as_str() == name)),
-        _ => false,
-    };
+    let reads_name = |range| mentions_identifier(&text_for_range(source, range), name);
+    let targets_name = |target: &Expr| binds_name(target, name);
     statements[index + 1..].iter().any(|stmt| match stmt {
         Stmt::FunctionDef(def) => {
             def.name.as_str() == name && !def.decorator_list.iter().any(|d| reads_name(d.range()))
@@ -238,7 +231,11 @@ pub(super) fn rebound_later(
         Stmt::AsyncFunctionDef(def) => {
             def.name.as_str() == name && !def.decorator_list.iter().any(|d| reads_name(d.range()))
         }
-        Stmt::ClassDef(def) => def.name.as_str() == name,
+        Stmt::ClassDef(def) => {
+            def.name.as_str() == name
+                && !def.decorator_list.iter().any(|d| reads_name(d.range()))
+                && !def.bases.iter().any(|b| reads_name(b.range()))
+        }
         Stmt::Assign(assign) => {
             assign.targets.iter().any(targets_name) && !reads_name(assign.value.range())
         }
@@ -249,7 +246,40 @@ pub(super) fn rebound_later(
                     .as_ref()
                     .is_some_and(|value| !reads_name(value.range()))
         }
+        // `del name` unbinds the earlier definition before collection.
+        Stmt::Delete(delete) => delete.targets.iter().any(targets_name),
+        // A loop or `with` target rebinds the name to a value that is not the
+        // earlier definition (the iterable or context manager could read it,
+        // so those stay credited).
+        Stmt::For(for_stmt) => {
+            targets_name(for_stmt.target.as_ref()) && !reads_name(for_stmt.iter.range())
+        }
+        Stmt::With(with) => with.items.iter().any(|item| {
+            item.optional_vars.as_deref().is_some_and(targets_name)
+                && !reads_name(item.context_expr.range())
+        }),
         _ => false,
+    })
+}
+
+/// Whether `target` binds `name` directly or inside a tuple/list target.
+fn binds_name(target: &Expr, name: &str) -> bool {
+    match target {
+        Expr::Name(bound) => bound.id.as_str() == name,
+        Expr::Tuple(tuple) => tuple.elts.iter().any(|elt| binds_name(elt, name)),
+        Expr::List(list) => list.elts.iter().any(|elt| binds_name(elt, name)),
+        _ => false,
+    }
+}
+
+/// Whether `name` occurs in `text` as a whole identifier, so `test_p_helper`
+/// or `xtest_p` does not count as a read of `test_p`.
+fn mentions_identifier(text: &str, name: &str) -> bool {
+    let is_ident = |c: char| c == '_' || c.is_alphanumeric();
+    text.match_indices(name).any(|(start, _)| {
+        let before = text[..start].chars().next_back();
+        let after = text[start + name.len()..].chars().next();
+        !before.is_some_and(is_ident) && !after.is_some_and(is_ident)
     })
 }
 

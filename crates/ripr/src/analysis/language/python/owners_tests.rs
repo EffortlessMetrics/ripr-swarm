@@ -967,6 +967,7 @@ pub(super) fn collect_tests_from_statements(
         let defined = match stmt {
             Stmt::FunctionDef(function) => Some(function.name.as_str()),
             Stmt::AsyncFunctionDef(function) => Some(function.name.as_str()),
+            Stmt::ClassDef(class) => Some(class.name.as_str()),
             _ => None,
         };
         if let Some(defined) = defined
