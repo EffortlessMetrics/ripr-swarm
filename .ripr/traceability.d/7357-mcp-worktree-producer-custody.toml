@@ -13,6 +13,8 @@ tests = [
   "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_and_worktree_refreshes_do_not_share_custody_or_identity",
   "crates/ripr/src/mcp/worktree_custody_tests.rs::inventory_failure_degrades_to_withheld_custody_and_keeps_findings",
   "crates/ripr/src/mcp/worktree_custody_tests.rs::deleted_tracked_rust_file_keeps_custody_and_card_producers_consistent",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_over_dirty_consumed_file_withholds_the_card",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_over_unrelated_dirty_file_keeps_the_card",
 ]
 
 [[extend]]

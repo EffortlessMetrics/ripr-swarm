@@ -419,6 +419,12 @@ pub(crate) enum SourceCustody {
     NotApplicable,
     /// A worktree snapshot whose producers were not shown to agree.
     NotEstablished { reason: String },
+    /// A committed snapshot taken over a checkout whose tracked source or test
+    /// files carry uncommitted edits: the findings read HEAD content while the
+    /// seam inventory and cards read the live files, and the two were not
+    /// shown to be the same bytes (#7357). Findings stay served; repair
+    /// readiness and cards are withheld.
+    CommittedOverUncommitted { reason: String },
     /// A worktree snapshot whose findings and inventory consumed the same
     /// Rust context.
     Established { commitment: String },
@@ -428,7 +434,9 @@ impl SourceCustody {
     fn commitment(&self) -> Option<&str> {
         match self {
             Self::Established { commitment } => Some(commitment),
-            Self::NotApplicable | Self::NotEstablished { .. } => None,
+            Self::NotApplicable
+            | Self::NotEstablished { .. }
+            | Self::CommittedOverUncommitted { .. } => None,
         }
     }
 }
@@ -1512,14 +1520,18 @@ fn worktree_scope_disclosure(snapshot: &Snapshot) -> Value {
             "consumed_source_commitment": "established",
             "repair_cards": "available",
         }),
-        SourceCustody::NotEstablished { .. } | SourceCustody::NotApplicable => json!({
+        SourceCustody::NotEstablished { .. }
+        | SourceCustody::NotApplicable
+        | SourceCustody::CommittedOverUncommitted { .. } => json!({
             "analyzed": analyzed,
             "uncommitted_edits": "saved tracked edits included",
             "note": format!(
                 "this snapshot analyzed saved staged and unstaged tracked edits as the producer read them during the refresh; unsaved editor buffers and gitignored files are outside it, and untracked files are never analyzed as findings. The consumed source bytes of the findings and the seam inventory were not shown to agree{}, so edits after the refresh are not detected (refresh again) and repair cards and repair readiness are withheld",
                 match &snapshot.custody {
                     SourceCustody::NotEstablished { reason } => format!(" ({reason})"),
-                    SourceCustody::Established { .. } | SourceCustody::NotApplicable => String::new(),
+                    SourceCustody::Established { .. }
+                    | SourceCustody::NotApplicable
+                    | SourceCustody::CommittedOverUncommitted { .. } => String::new(),
                 }
             ),
             "consumed_source_commitment": "not_established",
@@ -1590,6 +1602,23 @@ fn analyzed_label(snapshot: &Snapshot) -> String {
 }
 
 fn tracked_scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
+    let mut disclosure = tracked_scope_facts_disclosure(snapshot)?;
+    if let SourceCustody::CommittedOverUncommitted { reason } = &snapshot.custody {
+        let note = disclosure
+            .get("note")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        disclosure["note"] = json!(format!(
+            "{note}. Repair cards and repair readiness are withheld for this snapshot because the findings read HEAD content while the seam inventory reads your uncommitted files ({reason}); commit or stash the edits and run ripr_refresh again, or run ripr_refresh with source `worktree` to analyze them"
+        ));
+        disclosure["consumed_source_commitment"] = json!("not_established");
+        disclosure["repair_cards"] = json!("withheld");
+    }
+    Some(disclosure)
+}
+
+fn tracked_scope_facts_disclosure(snapshot: &Snapshot) -> Option<Value> {
     let scope = &snapshot.scope;
     const NAMED_PATHS: usize = 3;
     if !scope.uncommitted_edits {
@@ -1888,14 +1917,37 @@ pub(crate) fn run_check(
         if source == RefreshSource::Worktree {
             return run_worktree_check(input, &config, root_identity, base);
         }
-        let (output, language_view) = crate::app::check_workspace_with_config_typed(input, &config)
-            .map_err(|error| check_failure(&error, root, base, RefreshSource::Committed))?;
+        let (output, language_view, findings_sources) =
+            crate::app::check_workspace_with_config_typed(input, &config)
+                .map_err(|error| check_failure(&error, root, base, RefreshSource::Committed))?;
         // The seam inventory is gathered once inside this bounded attempt and
         // feeds both consumers: the shared repair validator that decides each
         // item's repair readiness (#8717) and the repair-card seam bindings
         // (RIPR-SPEC-0215). Readiness is projected before the snapshot identity
         // is computed, so the identity binds the admission decision.
         let inventory = super::repair_card::gather_seam_inventory(root, &config, &output.findings)?;
+        // A committed refresh over a checkout with uncommitted tracked edits
+        // reads HEAD content for the findings but live files for the inventory
+        // (#7357); only the shared custody owner may say they agree.
+        if let Some(reason) =
+            committed_over_uncommitted_refusal(&output, &findings_sources, &inventory)
+        {
+            let admission = super::repair_admission::SeamAdmission::withheld(
+                &output.findings,
+                super::repair_admission::SEAM_WORKTREE_SOURCE,
+                &committed_card_withheld_detail(&reason),
+            );
+            let mut snapshot = Snapshot::from_output_with_custody(
+                &output,
+                root_identity,
+                &admission,
+                RefreshSource::Committed,
+                SourceCustody::CommittedOverUncommitted { reason },
+            )?;
+            snapshot.base = base.map(str::to_string);
+            snapshot.language_view = language_view;
+            return Ok(snapshot);
+        }
         let admission = super::repair_admission::SeamAdmission::evaluate(
             &output.findings,
             &inventory.candidate_seams,
@@ -2062,6 +2114,42 @@ fn worktree_custody(
     )
     .map(|commitment| commitment.as_str().to_string())
     .map_err(|refusal| refusal.describe())
+}
+
+/// Why a committed refresh over uncommitted tracked edits cannot vouch that
+/// its findings and its live-file seam inventory describe the same bytes
+/// (#7357), or `None` when the checkout is clean or no finding needs a card.
+/// The shared [`ConsumedRustSources::establish_agreement`] owner names a
+/// moved path when the producers disagree. An agreement alone does not clear
+/// a dirty checkout: the inventory also reads dirty files the findings never
+/// consumed, so the refusal stays closed and says so.
+///
+/// [`ConsumedRustSources::establish_agreement`]: crate::analysis::consumed_source::ConsumedRustSources::establish_agreement
+fn committed_over_uncommitted_refusal(
+    output: &crate::app::CheckOutput,
+    findings_sources: &crate::analysis::consumed_source::ConsumedRustSources,
+    inventory: &super::repair_card::SeamInventory,
+) -> Option<String> {
+    if !output.unanalyzed_working_tree || output.findings.is_empty() {
+        return None;
+    }
+    Some(
+        match crate::analysis::consumed_source::ConsumedRustSources::establish_agreement(
+            findings_sources,
+            &inventory.consumed_sources,
+        ) {
+            Err(refusal) => refusal.describe(),
+            Ok(_) => "tracked source or test files have uncommitted edits that the seam inventory reads live and the committed findings never saw".to_string(),
+        },
+    )
+}
+
+/// Why a committed snapshot taken over uncommitted tracked edits carries no
+/// repair readiness or repair card (#7357).
+pub(crate) fn committed_card_withheld_detail(reason: &str) -> String {
+    format!(
+        "this snapshot analyzed the committed diff while the checkout has uncommitted tracked edits, so its findings and the live seam inventory were not shown to have consumed the same Rust source bytes ({reason}); repair readiness and cards are withheld rather than claimed current. Commit or stash the edits and run ripr_refresh again, or run ripr_refresh with source `worktree` to analyze them"
+    )
 }
 
 /// Test-only barrier between the findings producer and the seam inventory, so

@@ -285,15 +285,28 @@ official SDK transport:
     inventory cannot be gathered after the findings producer ran, the refresh
     still serves the findings with custody `not_established` and the failure
     named, rather than failing the whole refresh (a cancelled attempt still
-    fails). A committed snapshot
+    fails). A clean committed snapshot
     makes no custody claim and keeps its unchanged contract.
+  - A committed refresh over a checkout with uncommitted tracked source or
+    test edits (`unanalyzed_working_tree`) reads HEAD bytes for the findings
+    and live bytes for the inventory. It records the findings producer's
+    consumed Rust bytes and withholds readiness and cards when any finding
+    exists: every item is `repair_packet_ready: false` with the same typed
+    `worktree_source_not_committed` reason (its detail names the moved path
+    when `establish_agreement` finds one, otherwise says plainly that the
+    inventory reads uncommitted files the findings never saw),
+    `ripr_get_repair_card` refuses with `incomplete_inventory`, and the
+    `scope` note adds `consumed_source_commitment: "not_established"` and
+    `repair_cards: "withheld"`. Findings, list and gap evidence are still
+    served; committing or stashing the edits (or refreshing with source
+    `worktree`) and refreshing again recovers. No commitment is bound into a
+    committed identity, and a clean checkout or one dirty only in files
+    outside the routed source and test scope keeps its unchanged contract.
   - Residuals under #7357 / #1765 / #1602: a Rust file that only the
     inventory read and the findings producer did not (a new file or one the
     findings scope did not select) is bound into the commitment but cannot
     contradict the findings; unsupported, generated, `include!` and
-    mixed-language dependencies are not claimed; a committed refresh over a
-    dirty checkout still reads HEAD bytes for findings and live bytes for the
-    inventory and is not covered by this agreement; an untracked (not
+    mixed-language dependencies are not claimed; an untracked (not
     intent-to-add) Rust file is not analyzed as a finding but is read by the
     inventory, so editing it changes the commitment and snapshot identity; a
     deleted or renamed tracked Rust file in the findings scope has no captured
