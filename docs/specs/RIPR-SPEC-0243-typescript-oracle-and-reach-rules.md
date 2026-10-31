@@ -1634,7 +1634,9 @@ the masker.
     outer-scope and ambiguous aliases, dynamic keys within the count
     suffix, arithmetic on a count, and other APIs such as Sinon `callCount`
     properties retain their existing reading; they are not covered by this
-    bounded recognizer. `toHaveBeenCalledTimes` already reads weak mock
+    bounded recognizer. Ambiguous alias spellings, a test body that fails to
+    parse, and a worker-refusal textual fallback likewise retain the existing
+    reading (a disclosed fail-open). `toHaveBeenCalledTimes` already reads weak mock
     evidence without an exact-value equality.
 23. **Factory-built getter receivers (2026-10-30, #10402).** Adopted: a getter
     owner is related to a test that binds `const box = factory(...)` once and
