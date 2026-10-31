@@ -506,6 +506,50 @@ pub(crate) fn block_comment_only_lines(text: &str) -> std::collections::BTreeSet
     lines
 }
 
+/// 1-based lines of `text` that lie strictly inside a multi-line string
+/// literal, plus a closing line that holds only the literal's end delimiter
+/// (and an optional `;` or `,`). The line where the literal opens is not
+/// listed so a changed literal still seeds one probe on its declaration.
+pub(crate) fn string_literal_continuation_lines(text: &str) -> std::collections::BTreeSet<usize> {
+    use crate::analysis::extract::string_literal_spans;
+
+    let mut lines = std::collections::BTreeSet::new();
+    if !text.contains('"') {
+        return lines;
+    }
+    let mut line_starts = vec![0usize];
+    line_starts.extend(text.match_indices('\n').map(|(offset, _)| offset + 1));
+    let line_of = |offset: usize| line_starts.partition_point(|start| *start <= offset);
+    let line_end = |line: usize| line_starts.get(line).copied().unwrap_or(text.len());
+    for (open, close, raw) in string_literal_spans(text) {
+        let first = line_of(open);
+        let last = line_of(close);
+        if first >= last {
+            continue;
+        }
+        let literal_end = if raw {
+            let mut end = close + 1;
+            while text.as_bytes().get(end) == Some(&b'#') {
+                end += 1;
+            }
+            end
+        } else {
+            close + 1
+        };
+        for line in (first + 1)..=last {
+            if line < last {
+                lines.insert(line);
+                continue;
+            }
+            let tail = text[literal_end..line_end(last)].trim();
+            if tail.is_empty() || tail == ";" || tail == "," {
+                lines.insert(line);
+            }
+        }
+    }
+    lines
+}
+
 /// Byte offset just past a terminated leading frontmatter block (`---`
 /// fences around TOML, optionally after a shebang line), or 0 when the file
 /// has none. The parser lexes the whole block as one token, so its contents
@@ -893,6 +937,39 @@ mod tests {
             "/*! crate\n For example:\n*/\n/** doc /* nested */ still\ncomment */\nfn g() {}\n";
         let lines = block_comment_only_lines(source);
         assert_eq!(lines.into_iter().collect::<Vec<_>>(), vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn string_literal_continuation_lines_masks_interior_and_closing_only_lines() {
+        let source = "pub fn value() -> u32 { 1 }\npub const TEMPLATE: &str = \"\\\npub mod generated {\n    pub use crate::value;\n}\n\";\n";
+        let lines = string_literal_continuation_lines(source);
+        assert_eq!(lines.iter().copied().collect::<Vec<_>>(), vec![3, 4, 5, 6]);
+        assert!(!lines.contains(&2), "{lines:?}");
+    }
+
+    #[test]
+    fn string_literal_continuation_lines_covers_raw_and_backslash_continued_strings() {
+        let plain = "let s = \"a\\\nb\";\n";
+        assert_eq!(
+            string_literal_continuation_lines(plain)
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec![2]
+        );
+        let raw = "let s = r#\"line1\nline2\"#;\n";
+        assert_eq!(
+            string_literal_continuation_lines(raw)
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec![2]
+        );
+    }
+
+    #[test]
+    fn string_literal_continuation_lines_leaves_code_after_a_closing_quote_on_the_same_line() {
+        let source = "let s = \"a\nb\"; let live = 1;\n";
+        let lines = string_literal_continuation_lines(source);
+        assert!(lines.is_empty(), "{lines:?}");
     }
 
     #[test]

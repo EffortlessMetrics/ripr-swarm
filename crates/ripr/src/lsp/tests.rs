@@ -24727,7 +24727,7 @@ async fn did_save_without_text_during_unknown_buffer_authority_holds_the_quarant
             QUARANTINE_TEXT_A_DIRTY,
         ))
         .await;
-    // A rejected incremental change (position past the line end) disowns the
+    // A rejected incremental change (reversed range) disowns the
     // retained buffer and enters the fail-closed quarantine.
     backend
         .did_change(DidChangeTextDocumentParams {
@@ -24736,11 +24736,11 @@ async fn did_save_without_text_during_unknown_buffer_authority_holds_the_quarant
                 range: Some(Range {
                     start: Position {
                         line: 0,
-                        character: 500,
+                        character: 20,
                     },
                     end: Position {
                         line: 0,
-                        character: 501,
+                        character: 5,
                     },
                 }),
                 range_length: None,
@@ -26818,9 +26818,8 @@ fn framed_rejected_edit_binds_no_version_to_served_content() -> Result<(), Strin
         )
         .await?;
 
-        // A ranged edit past the line end is rejected: the version moves
-        // to 9 but the buffer stays frozen at the version-8 text with
-        // unknown authority.
+        // A reversed ranged edit is rejected: the version moves to 9 but the
+        // buffer stays frozen at the version-8 text with unknown authority.
         write_lsp_message(
             &mut client_write,
             serde_json::json!({
@@ -26830,8 +26829,8 @@ fn framed_rejected_edit_binds_no_version_to_served_content() -> Result<(), Strin
                     "textDocument": { "uri": text_uri, "version": 9 },
                     "contentChanges": [{
                         "range": {
-                            "start": { "line": 0, "character": 500 },
-                            "end": { "line": 0, "character": 501 }
+                            "start": { "line": 0, "character": 20 },
+                            "end": { "line": 0, "character": 5 }
                         },
                         "text": "X"
                     }]
