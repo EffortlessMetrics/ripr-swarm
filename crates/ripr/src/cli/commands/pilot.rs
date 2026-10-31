@@ -965,9 +965,7 @@ const DEFAULT_PILOT_OUT_DIR: &str = "target/ripr/pilot";
 /// complete" with no recommendation and write `target/ripr/` into the folder.
 /// Returns the refusal message, or `None` when the root has something to inspect.
 fn pilot_root_without_workspace(root: &Path) -> Option<String> {
-    let has_inspectable_content =
-        root.join("Cargo.toml").is_file() || analysis::workspace_has_inspectable_source(root);
-    (!has_inspectable_content).then(|| {
+    analysis::root_has_no_inspectable_workspace(root).then(|| {
         format!(
             "pilot root {} has no Cargo.toml and no source files to inspect; pass --root <dir> for the directory that contains your workspace (nothing was written)",
             root.display()
@@ -1044,7 +1042,10 @@ where
             Ok(PilotAnalysisResult::TimedOut)
         }
         Err(mpsc::RecvTimeoutError::Disconnected) => {
-            Err("pilot analysis stopped before producing a result".to_string())
+            Err(super::check_budget::worker_stopped_detail(
+                "ripr pilot",
+                "lower --max-seams or narrow the scope",
+            ))
         }
     }
 }
@@ -1575,6 +1576,22 @@ mod tests {
 
         assert!(matches!(result, Ok(PilotAnalysisResult::TimedOut)));
         assert_eq!(cancelled_rx.recv_timeout(Duration::from_secs(1)), Ok(()));
+    }
+
+    #[test]
+    fn pilot_worker_that_unwinds_reports_the_named_stop_not_a_result() -> Result<(), String> {
+        let result = run_pilot_analysis_with_timeout::<(), _>(
+            30_000,
+            None,
+            || {},
+            || std::panic::resume_unwind(Box::new("injected pilot worker fault (#11116)")),
+        );
+        let Err(message) = result else {
+            return Err("a dead pilot worker must not yield a result".to_string());
+        };
+        assert!(message.contains("analysis_worker_stopped"), "{message}");
+        assert!(message.contains("--max-seams"), "{message}");
+        Ok(())
     }
 
     #[test]

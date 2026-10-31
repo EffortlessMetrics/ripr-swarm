@@ -136,7 +136,7 @@ run reads as success (#9368).
 "#;
 pub(super) const OUTCOME_HELP: &str = r#"Compare before/after static evidence after adding a focused test.
 
-Usage: ripr outcome --before PATH --after PATH [--format md|json] [--out PATH]
+Usage: ripr outcome --before PATH --after PATH [--format md|markdown|text|json] [--out PATH]
 
 Options:
   --before PATH    Static snapshot before the focused test: repo exposure or check JSON.
@@ -292,7 +292,7 @@ Options:
                                human, human-full, json, github, sarif,
                                check-findings-json (identified snapshot
                                for `agent verify`)
-                             Badge (diff-scoped, for README status):
+                             Badge (diff-scoped, for PR/CI status):
                                badge-json, badge-shields,
                                badge-plus-json, badge-plus-shields
                              Repo-scope (full-repo analysis):

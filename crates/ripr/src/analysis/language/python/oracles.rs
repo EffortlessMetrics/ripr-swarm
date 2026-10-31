@@ -318,6 +318,14 @@ fn collect_with_item_assertions(
     }
 }
 
+/// True when `full_name` is `self.<method>`, `cls.<method>`, or `super().<method>`.
+fn is_unittest_receiver(full_name: &str, method: &str) -> bool {
+    let suffix = format!(".{method}");
+    full_name
+        .strip_suffix(&suffix)
+        .is_some_and(|receiver| matches!(receiver, "self" | "cls" | "super"))
+}
+
 /// RIPR-SPEC-0238 rule 14: the text of the first statement after a
 /// `raises(...) as N` / `assertRaises(...) as N` item that compares a
 /// value-preserving read of the raised error with `==`, when nothing in
@@ -335,10 +343,14 @@ fn bound_exception_comparison(
         return None;
     };
     let name = expr_full_name(call.func.as_ref())?;
-    let field = match name.as_str() {
-        "self.assertRaises" | "self.assertRaisesRegex" => "exception",
-        "pytest.raises" | "raises" => "value",
-        _ => return None,
+    let field = if is_unittest_receiver(&name, "assertRaises")
+        || is_unittest_receiver(&name, "assertRaisesRegex")
+    {
+        "exception"
+    } else if name == "pytest.raises" || name == "raises" {
+        "value"
+    } else {
+        return None;
     };
     for stmt in after {
         if let Some((left, right)) = equality_operands(stmt) {
@@ -1010,7 +1022,8 @@ fn oracle_for_call(
     if matches!(
         last_segment,
         "assertEqual" | "assertDictEqual" | "assertAlmostEqual"
-    ) && (last_segment != "assertAlmostEqual" || name == "self.assertAlmostEqual")
+    ) && (last_segment != "assertAlmostEqual"
+        || is_unittest_receiver(&name, "assertAlmostEqual"))
         && compared_operands(call).is_some_and(|(first, second)| same_tokens(source, first, second))
     {
         // RIPR-SPEC-0238 rule 1: comparing an expression with itself pins nothing.
@@ -1048,9 +1061,9 @@ fn oracle_for_call(
             oracle_shape_for_call_arguments(call, PythonOracleShape::BoundaryAssertion),
         )),
         // RIPR-SPEC-0238 rule 12: at its default tolerance the call pins the
-        // value; an explicit band may admit the old value. Only `self.` is the
-        // unittest method; another receiver may be a project helper.
-        "assertAlmostEqual" if name == "self.assertAlmostEqual" => {
+        // value; an explicit band may admit the old value. Only unittest
+        // receivers count; another receiver may be a project helper.
+        "assertAlmostEqual" if is_unittest_receiver(&name, "assertAlmostEqual") => {
             let explicit = |position: usize, keyword: &str| {
                 call.args
                     .get(position)

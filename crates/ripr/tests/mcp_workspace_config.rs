@@ -216,16 +216,17 @@ impl Drop for FixtureGuard {
     }
 }
 
-/// `ripr_refresh` reports a failed attempt as a success envelope whose
+/// `ripr_refresh` reports a failed attempt as an `isError: true` envelope whose
 /// document carries `attempt.state: failed` with the typed failure — the
 /// last-known-good snapshot is kept, so the attempt result is data.
 fn refresh_attempt_failure_code(reply: &Value, context: &str) -> Result<String, String> {
     let result = reply
         .get("result")
         .ok_or_else(|| format!("{context} lost its result: {reply}"))?;
-    if result.pointer("/isError").and_then(Value::as_bool) == Some(true) {
+    // A failed attempt is data and an error on the wire (#11571).
+    if result.pointer("/isError").and_then(Value::as_bool) != Some(true) {
         return Err(format!(
-            "{context} must stay a completed document: {result}"
+            "{context} must be isError:true with the failed document: {result}"
         ));
     }
     if result

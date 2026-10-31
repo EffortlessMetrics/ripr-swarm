@@ -1,0 +1,60 @@
+crates/ripr/src/app/python_repair_binding.rs|apply authorization authority `{authority}` does not match the retained authorization authority; a different a
+crates/ripr/src/app/python_repair_binding.rs|apply record refuses a malformed patch digest
+crates/ripr/src/app/python_repair_binding.rs|apply record refuses a retained prepare artifact whose bytes leave its digest
+crates/ripr/src/app/python_repair_binding.rs|apply record refuses an after verdict whose packet digest leaves the retained artifacts
+crates/ripr/src/app/python_repair_binding.rs|apply record refuses malformed durable attempt digests
+crates/ripr/src/app/python_repair_binding.rs|binding record construction failed: trust must be an object
+crates/ripr/src/app/python_repair_binding.rs|canonical selection serialization failed: {error}
+crates/ripr/src/app/python_repair_binding.rs|canonicalize repository root failed: {error}
+crates/ripr/src/app/python_repair_binding.rs|durable attempt is missing its retained agent packet
+crates/ripr/src/app/python_repair_binding.rs|durable attempt is missing its retained before snapshot
+crates/ripr/src/app/python_repair_binding.rs|path `{path}` is not portable: backslash separators are not allowed
+crates/ripr/src/app/python_repair_binding.rs|path `{path}` must be repo-relative, not a drive-letter absolute path
+crates/ripr/src/app/python_repair_binding.rs|path `{path}` must be repo-relative, not absolute
+crates/ripr/src/app/python_repair_binding.rs|path `{path}` must not contain `..` components
+crates/ripr/src/app/python_repair_binding.rs|path must be non-empty
+crates/ripr/src/app/python_repair_binding.rs|python repair-trust binding refuses to {action}: explicit --edit-authorized and --edit-authority <identity> ar
+crates/ripr/src/app/python_repair_binding.rs|python repair-trust binding repository inventory failed: {error}
+crates/ripr/src/app/python_repair_binding.rs|python repair-trust binding repository inventory failed: {}
+crates/ripr/src/app/python_repair_binding.rs|python repair-trust binding: field=`{field}`: field must be a string when present
+crates/ripr/src/app/python_repair_binding.rs|python repair-trust binding: field=`{field}`: string field must be non-empty when present python repair-trust
+crates/ripr/src/app/python_repair_binding.rs|python repair-trust binding: subject=`{subject}` field=`allowed`: must name at least one allowed path
+crates/ripr/src/app/python_repair_binding.rs|python repair-trust binding: subject=`{subject}` field=`binary_sha256`: must be bare lowercase sha256 hex
+crates/ripr/src/app/python_repair_binding.rs|python repair-trust binding: subject=`{subject}` field=`{digest_field}`: must be bare lowercase sha256 hex
+crates/ripr/src/app/python_repair_binding.rs|python repair-trust binding: subject=`{subject}` field=`{field}`: a present null is not a value python repair-
+crates/ripr/src/app/python_repair_binding.rs|python repair-trust binding: subject=`{subject}` field=`{field}`: field must be a string python repair-trust b
+crates/ripr/src/app/python_repair_binding.rs|python repair-trust binding: subject=`{subject}` field=`{field}`: required field is missing python repair-trus
+crates/ripr/src/app/python_repair_binding.rs|python repair-trust binding: subject=`{subject}` field=`{field}`: required field must be non-empty python repa
+crates/ripr/src/app/python_repair_binding.rs|python repair-trust binding: subject=`{subject}` field=`{surface_field}`: must be an array of paths
+crates/ripr/src/app/python_repair_binding.rs|python repair-trust binding: subject=`{subject}`: unknown field `{key}` (denied to catch schema rot and typos)
+crates/ripr/src/app/python_repair_binding.rs|python repair-trust selection manifest field `{field}` must be `{expected}`, got `{actual}`
+crates/ripr/src/app/python_repair_binding.rs|python repair-trust selection manifest is not UTF-8: {error}
+crates/ripr/src/app/python_repair_binding.rs|python repair-trust selection manifest must contain a selections array
+crates/ripr/src/app/python_repair_binding.rs|python repair-trust selection manifest {} is outside the repository root; a binding must cite a manifest insid
+crates/ripr/src/app/python_repair_binding.rs|retained binding authorization method `{retained_method}` is not the explicit-operator-flags authority
+crates/ripr/src/app/python_repair_binding.rs|retained binding authorization status is `{retained_status}`; the driver records no applied edit without expli
+crates/ripr/src/app/python_repair_binding.rs|retained binding record already carries an apply block; a prepare record cannot be replayed as an apply
+crates/ripr/src/app/python_repair_binding.rs|retained binding record field `{field}` must be `{expected}` for the apply phase, got `{actual}`
+crates/ripr/src/app/python_repair_binding.rs|retained binding record is missing authorization retained authorization
+crates/ripr/src/app/python_repair_binding.rs|retained binding record is missing input retained binding input
+crates/ripr/src/app/python_repair_binding.rs|retained binding record is missing trust retained binding trust
+crates/ripr/src/app/python_repair_binding.rs|retained binding record is missing {field}
+crates/ripr/src/app/python_repair_binding.rs|retained binding record must carry exactly the standing non-claims {BINDING_NON_CLAIMS:?}; a dropped or extra
+crates/ripr/src/app/python_repair_binding.rs|retained binding record must carry its non_claims
+crates/ripr/src/app/python_repair_binding.rs|retained python repair-trust binding is not UTF-8: {error}
+crates/ripr/src/app/python_repair_binding.rs|selection row `{attempt_id}` base must be a bare lowercase 40-character commit SHA
+crates/ripr/src/app/python_repair_binding.rs|selection row `{attempt_id}` declares target_state `{target_state}`; the driver binds only `{BINDABLE_TARGET_S
+crates/ripr/src/app/python_repair_binding.rs|selection row `{attempt_id}` digest mismatch: recorded `{recorded}` but the canonical content digests to `{rec
+crates/ripr/src/app/python_repair_binding.rs|selection row `{attempt_id}` head must be a bare lowercase 40-character commit SHA
+crates/ripr/src/app/python_repair_binding.rs|selection row `{attempt_id}` selection_digest must be bare lowercase sha256 hex
+crates/ripr/src/app/python_repair_binding.rs|selection row `{attempt_id}` target `{target_path}` falls under a production/generated/vendor/environment edit
+crates/ripr/src/app/python_repair_binding.rs|selection row `{attempt_id}` tree must be bare lowercase sha256 hex when present
+crates/ripr/src/app/python_repair_binding.rs|selection row `{}` target `{}` matches no file in the repository inventory; a zero-match target requires a new
+crates/ripr/src/app/python_repair_binding.rs|selection row `{}` target `{}` matches {} candidate files in the repository inventory; a multiple-match target
+crates/ripr/src/app/python_repair_binding.rs|selection row identity `{attempt_id}` does not match the requested attempt `{request_attempt_id}`
+crates/ripr/src/app/python_repair_binding.rs|serialize edit-cage status failed: {error}
+crates/ripr/src/app/python_repair_binding.rs|serialize python repair-trust binding record failed: {error}
+crates/ripr/src/app/python_repair_binding.rs|stale packet rejected before editing: {error}
+crates/ripr/src/app/python_repair_binding.rs|stale packet: the retained binding pins packet sha256 `{retained_packet_sha256}` but the attempt's retained pa
+crates/ripr/src/app/python_repair_binding.rs|stale selection manifest: the retained binding pins manifest sha256 `{recorded_manifest_sha256}` but {} now di
+crates/ripr/src/app/python_repair_binding.rs|stale selection: row `{}` pins head `{}` but the repository HEAD is `{repository_head}`; a changed repository

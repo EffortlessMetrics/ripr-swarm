@@ -978,6 +978,20 @@ impl AnalysisSnapshot {
                 )
             })
             .count();
+        // Preview-withheld markers (#11296) are governed, code-marked
+        // disclosures for a file whose preview findings the actionable
+        // profile withheld; they are not findings, seams, or gap records.
+        let preview_withheld_disclosures = self
+            .diagnostics_by_uri
+            .values()
+            .flatten()
+            .filter(|diagnostic| {
+                diagnostic_has_code(
+                    diagnostic,
+                    super::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE,
+                )
+            })
+            .count();
         let published_finding_count = super::diagnostics::canonical_finding_groups(&self.findings)
             .into_iter()
             .filter(|(primary, _)| {
@@ -995,6 +1009,7 @@ impl AnalysisSnapshot {
                 + gap_diagnostics
                 + scope_guard_disclosures
                 + language_not_analyzed_disclosures
+                + preview_withheld_disclosures
                 == diagnostic_count
             && self
                 .gap_artifacts
@@ -1209,8 +1224,10 @@ pub(super) enum DocumentStalenessReason {
     /// longer authoritative for line identity, so diagnostics stay
     /// quarantined until a later full replacement/open re-establishes it.
     InvalidIncrementalChange,
-    /// No refresh has analyzed this document's saved content in the current
-    /// session, so there is no analyzed baseline to serve against.
+    /// No analyzed baseline records this document's saved content, so there
+    /// is nothing to serve against. The cause (no attempt, in progress,
+    /// failed, or not recorded by a committed snapshot) is not part of the
+    /// reason; renderers that name one must observe it (#11452).
     NoAnalyzedSavedContent,
 }
 
@@ -1233,9 +1250,7 @@ impl DocumentStalenessReason {
             Self::InvalidIncrementalChange => {
                 "an incremental document change could not be applied under the negotiated position encoding"
             }
-            Self::NoAnalyzedSavedContent => {
-                "the document's saved content has not been analyzed in this session"
-            }
+            Self::NoAnalyzedSavedContent => "the document's saved content has no analyzed baseline",
         }
     }
 }
@@ -1484,15 +1499,53 @@ fn encoded_units_to_byte_offset(
     (units == target_units).then_some(line.len())
 }
 
+/// Bounds on one `didChange` notification (#11508).
+///
+/// Locating a position scans the retained buffer from byte 0, so a ranged
+/// change costs up to two buffer-length scans. Without bounds one maximum-size
+/// message of tiny ranged edits against a newline-free buffer is billions of
+/// byte steps on the handler. A notification that exceeds a bound is refused
+/// through the same fail-closed path as a malformed range: the retained buffer
+/// is left untouched and the document is quarantined until a range-less
+/// replacement re-establishes it.
+#[derive(Clone, Copy)]
+struct ContentChangeLimits {
+    /// Most content changes accepted in one notification.
+    max_changes: usize,
+    /// Most retained buffer bytes after any change.
+    max_document_bytes: usize,
+    /// Upper bound on the bytes position lookup may scan across the whole
+    /// notification: each ranged change is charged the buffer length twice.
+    max_scan_bytes: usize,
+}
+
+const CONTENT_CHANGE_LIMITS: ContentChangeLimits = ContentChangeLimits {
+    max_changes: 1_024,
+    max_document_bytes: crate::lsp::transport_bounds::MAX_MESSAGE_BYTES,
+    max_scan_bytes: 256 * 1024 * 1024,
+};
+
 fn apply_document_content_change(
     text: &mut String,
     change: TextDocumentContentChangeEvent,
     encoding: &PositionEncodingKind,
+    limits: ContentChangeLimits,
+    scan_budget: &mut usize,
 ) -> Result<(), ()> {
     let Some(range) = change.range else {
+        if change.text.len() > limits.max_document_bytes {
+            return Err(());
+        }
         *text = change.text;
         return Ok(());
     };
+    // Charge the worst-case scan before doing it: both endpoints may walk the
+    // whole buffer.
+    let cost = text.len().saturating_mul(2);
+    if cost > *scan_budget {
+        return Err(());
+    }
+    *scan_budget -= cost;
     let Some(start) = document_position_byte_offset(text, range.start, encoding) else {
         return Err(());
     };
@@ -1500,6 +1553,13 @@ fn apply_document_content_change(
         return Err(());
     };
     if start > end {
+        return Err(());
+    }
+    let resulting_len = text
+        .len()
+        .saturating_sub(end - start)
+        .saturating_add(change.text.len());
+    if resulting_len > limits.max_document_bytes {
         return Err(());
     }
     text.replace_range(start..end, &change.text);
@@ -1513,25 +1573,39 @@ fn apply_document_content_change(
 /// The common zero/one-change path edits the retained buffer without copying
 /// the whole document. Multi-change notifications use a candidate buffer so a
 /// malformed later range cannot partially commit earlier changes from the
-/// same notification.
+/// same notification. Notification size, retained size and scan work are
+/// bounded by [`CONTENT_CHANGE_LIMITS`].
 fn apply_document_content_changes(
     text: &mut String,
     changes: Vec<TextDocumentContentChangeEvent>,
     encoding: &PositionEncodingKind,
 ) -> Result<(), ()> {
+    apply_document_content_changes_within(text, changes, encoding, CONTENT_CHANGE_LIMITS)
+}
+
+fn apply_document_content_changes_within(
+    text: &mut String,
+    changes: Vec<TextDocumentContentChangeEvent>,
+    encoding: &PositionEncodingKind,
+    limits: ContentChangeLimits,
+) -> Result<(), ()> {
+    if changes.len() > limits.max_changes {
+        return Err(());
+    }
+    let mut scan_budget = limits.max_scan_bytes;
     let mut changes = changes.into_iter();
     let Some(first) = changes.next() else {
         return Ok(());
     };
     let Some(second) = changes.next() else {
-        return apply_document_content_change(text, first, encoding);
+        return apply_document_content_change(text, first, encoding, limits, &mut scan_budget);
     };
 
     let mut candidate = text.clone();
-    apply_document_content_change(&mut candidate, first, encoding)?;
-    apply_document_content_change(&mut candidate, second, encoding)?;
+    apply_document_content_change(&mut candidate, first, encoding, limits, &mut scan_budget)?;
+    apply_document_content_change(&mut candidate, second, encoding, limits, &mut scan_budget)?;
     for change in changes {
-        apply_document_content_change(&mut candidate, change, encoding)?;
+        apply_document_content_change(&mut candidate, change, encoding, limits, &mut scan_budget)?;
     }
     *text = candidate;
     Ok(())
@@ -1888,7 +1962,7 @@ fn read_saved_digest(uri: &Uri) -> Option<String> {
 /// A client names this path in `didOpen`, so it may be a device, FIFO or
 /// huge file (`/dev/zero`, `/dev/stdin`). Read only a regular file, and no
 /// more than one LSP message can carry: an open document never exceeds that.
-fn read_saved_bytes(path: &Path) -> Option<Vec<u8>> {
+pub(super) fn read_saved_bytes(path: &Path) -> Option<Vec<u8>> {
     use std::io::Read as _;
     let limit = crate::lsp::transport_bounds::MAX_MESSAGE_BYTES as u64;
     let metadata = std::fs::metadata(path).ok()?;
@@ -2421,6 +2495,183 @@ mod tests {
         );
         assert!(result.is_err());
         assert_eq!(reversed, "abcd");
+    }
+
+    fn ranged_insert(line: u32, character: u32, text: &str) -> TextDocumentContentChangeEvent {
+        let at = Position { line, character };
+        TextDocumentContentChangeEvent {
+            range: Some(tower_lsp_server::ls_types::Range { start: at, end: at }),
+            range_length: None,
+            text: text.to_string(),
+        }
+    }
+
+    fn tiny_limits() -> ContentChangeLimits {
+        ContentChangeLimits {
+            max_changes: 3,
+            max_document_bytes: 16,
+            max_scan_bytes: 40,
+        }
+    }
+
+    #[test]
+    fn content_change_count_is_capped_and_refusal_leaves_the_buffer_untouched() {
+        let encoding = PositionEncodingKind::UTF16;
+        let within = vec![
+            ranged_insert(0, 0, "a"),
+            ranged_insert(0, 0, "b"),
+            ranged_insert(0, 0, "c"),
+        ];
+        let mut text = "xy".to_string();
+        assert!(
+            apply_document_content_changes_within(&mut text, within, &encoding, tiny_limits())
+                .is_ok()
+        );
+        assert_eq!(text, "cbaxy");
+
+        let over = vec![
+            ranged_insert(0, 0, "a"),
+            ranged_insert(0, 0, "b"),
+            ranged_insert(0, 0, "c"),
+            ranged_insert(0, 0, "d"),
+        ];
+        let mut text = "xy".to_string();
+        assert!(
+            apply_document_content_changes_within(&mut text, over, &encoding, tiny_limits())
+                .is_err()
+        );
+        assert_eq!(text, "xy");
+    }
+
+    #[test]
+    fn retained_document_size_is_capped_for_replacement_and_growth() {
+        let encoding = PositionEncodingKind::UTF16;
+        let replace = |len: usize| TextDocumentContentChangeEvent {
+            range: None,
+            range_length: None,
+            text: "a".repeat(len),
+        };
+        let mut text = String::new();
+        assert!(
+            apply_document_content_changes_within(
+                &mut text,
+                vec![replace(16)],
+                &encoding,
+                tiny_limits()
+            )
+            .is_ok()
+        );
+        assert_eq!(text.len(), 16);
+        assert!(
+            apply_document_content_changes_within(
+                &mut text,
+                vec![replace(17)],
+                &encoding,
+                tiny_limits()
+            )
+            .is_err()
+        );
+        assert_eq!(text.len(), 16);
+        // Growth by a ranged insert past the cap is refused; shrinking is not.
+        let limits = ContentChangeLimits {
+            max_scan_bytes: 1_000,
+            ..tiny_limits()
+        };
+        assert!(
+            apply_document_content_changes_within(
+                &mut text,
+                vec![ranged_insert(0, 0, "b")],
+                &encoding,
+                limits
+            )
+            .is_err()
+        );
+        assert_eq!(text, "a".repeat(16));
+        let shrink = TextDocumentContentChangeEvent {
+            range: Some(tower_lsp_server::ls_types::Range {
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 0,
+                    character: 8,
+                },
+            }),
+            range_length: None,
+            text: "b".to_string(),
+        };
+        assert!(
+            apply_document_content_changes_within(&mut text, vec![shrink], &encoding, limits)
+                .is_ok()
+        );
+        assert_eq!(text, format!("b{}", "a".repeat(8)));
+    }
+
+    #[test]
+    fn ranged_scan_work_is_budgeted_per_notification() {
+        let encoding = PositionEncodingKind::UTF16;
+        // Each ranged change on a 10-byte buffer is charged 20 scan bytes, so
+        // a 40-byte budget admits two and refuses a third.
+        let mut text = "0123456789".to_string();
+        let two = vec![ranged_insert(0, 0, ""), ranged_insert(0, 0, "")];
+        assert!(
+            apply_document_content_changes_within(&mut text, two, &encoding, tiny_limits()).is_ok()
+        );
+        let three = vec![
+            ranged_insert(0, 0, ""),
+            ranged_insert(0, 0, ""),
+            ranged_insert(0, 0, ""),
+        ];
+        assert!(
+            apply_document_content_changes_within(&mut text, three, &encoding, tiny_limits())
+                .is_err()
+        );
+        // Range-less replacements scan nothing, so they never spend budget.
+        let replacements = (0..3)
+            .map(|_| TextDocumentContentChangeEvent {
+                range: None,
+                range_length: None,
+                text: "0123456789".to_string(),
+            })
+            .collect();
+        assert!(
+            apply_document_content_changes_within(
+                &mut text,
+                replacements,
+                &encoding,
+                tiny_limits()
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn production_limits_admit_an_ordinary_edit_and_refuse_the_stall_shape() {
+        let encoding = PositionEncodingKind::UTF16;
+        let mut text = "fn main() {}\n".repeat(1_000);
+        assert!(
+            apply_document_content_changes(
+                &mut text,
+                vec![ranged_insert(3, 0, "// x\n")],
+                &encoding
+            )
+            .is_ok()
+        );
+        // The reported shape: a large newline-free buffer and a flood of
+        // single-byte edits. It is refused before any scan.
+        let mut big = "a".repeat(16 * 1024 * 1024);
+        let flood: Vec<_> = (0..190_000).map(|_| ranged_insert(0, 0, "b")).collect();
+        let started = std::time::Instant::now();
+        assert!(apply_document_content_changes(&mut big, flood, &encoding).is_err());
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        assert_eq!(big.len(), 16 * 1024 * 1024);
+        // Within the count cap the scan budget still stops a flood: a 16 MiB
+        // buffer is charged 32 MiB per edit, so 8 fit and a 9th does not.
+        let few: Vec<_> = (0..8).map(|_| ranged_insert(0, 0, "")).collect();
+        assert!(apply_document_content_changes(&mut big, few, &encoding).is_ok());
+        let many: Vec<_> = (0..9).map(|_| ranged_insert(0, 0, "")).collect();
+        assert!(apply_document_content_changes(&mut big, many, &encoding).is_err());
     }
 
     #[test]
@@ -3131,6 +3382,62 @@ mod tests {
         };
 
         if lookalike_snapshot.is_consistent() {
+            return Err("a lookalike code must stay unaccounted".to_string());
+        }
+        Ok(())
+    }
+
+    fn preview_withheld_snapshot(code: &str) -> Result<AnalysisSnapshot, String> {
+        let uri = test_uri("file:///workspace/src/pricing.py")?;
+        let mut marker = plain_diagnostic();
+        marker.code = Some(tower_lsp_server::ls_types::NumberOrString::String(
+            code.to_string(),
+        ));
+        let mut diagnostics_by_uri = BTreeMap::new();
+        diagnostics_by_uri.insert(uri, vec![marker]);
+        Ok(AnalysisSnapshot {
+            root: PathBuf::from("/workspace"),
+            rust_consumed_sources: Default::default(),
+            input_identity: None,
+            base: None,
+            mode: Mode::Draft,
+            refresh: RefreshMetadata::default(),
+            findings: Vec::new(),
+            analysis_outcome: None,
+            diagnostic_profile: LspDiagnosticProfile::Actionable,
+            classified_seams: Vec::new(),
+            repair_card_candidate_seams: None,
+            gap_artifacts: Vec::new(),
+            gap_artifact_rejections: Vec::new(),
+            harness_facts: HarnessFactsOnSnapshot::NotRegistered,
+            diagnostics_by_uri,
+            diagnostic_uri_index: None,
+            delivery_selection: None,
+            seams_deferred: false,
+            partial_scope: None,
+            component_outcomes: Vec::new(),
+            out_of_scope_test_file_findings: 0,
+            unavailable_adapter: UnavailableAdapterCoverage::default(),
+            language_view: None,
+        })
+    }
+
+    #[test]
+    fn snapshot_consistency_counts_preview_withheld_marker() -> Result<(), String> {
+        // #11296: the governed marker is accounted without a finding.
+        let snapshot = preview_withheld_snapshot(
+            crate::lsp::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE,
+        )?;
+        if !snapshot.is_consistent() {
+            return Err("the preview-withheld marker should be accounted".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn snapshot_consistency_rejects_preview_withheld_lookalike() -> Result<(), String> {
+        let lookalike = preview_withheld_snapshot("ripr-diagnostic-preview-withheld-x")?;
+        if lookalike.is_consistent() {
             return Err("a lookalike code must stay unaccounted".to_string());
         }
         Ok(())

@@ -5688,6 +5688,10 @@ fn a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted() {
         format!("{definition}{definition}{call}"),
         format!("use other::case;\n{definition}{call}"),
         format!("use other::wrap as case;\n{definition}{call}"),
+        // Raw-identifier spellings and nested lists bind the same name.
+        format!("use other::r#case;\n{definition}{call}"),
+        format!("use other::wrap as r#case;\n{definition}{call}"),
+        format!("use other::{{inner::{{case}}}};\n{definition}{call}"),
         // Reached by path, so not the textual definition.
         format!("{definition}crate::case!(one, |v| {{ assert_eq!(v, 1); }});\n"),
         // The definition invokes a macro or holds a binding word.
@@ -11216,6 +11220,8 @@ fn test_crate_bindings_of_the_root_are_read_from_that_crate_only() {
 mod claims_direction;
 mod expect_test_pins;
 mod helper_pins;
+#[cfg(test)]
+mod projected_workspace_memo;
 
 /// One `#[test]` over `weight`, with `body` as its statements.
 fn weight_test(signature: &str, body: &str) -> String {
@@ -13115,5 +13121,33 @@ fn memoized_file_renames_to_matches_the_direct_scan() {
                 "{source:?} / {name:?}"
             );
         }
+    }
+}
+
+/// Two long files of equal length that differ only at a byte the memo key does
+/// not sample must still get their own rename answers: the key may collide,
+/// the stored text decides.
+#[test]
+fn rename_memo_keys_that_collide_still_answer_per_file() {
+    let pad = "x".repeat(2400);
+    // Length 2400+ puts the sampling stride above 1, so odd offsets are
+    // skipped; "Fxo" and "Foo" differ at offset 13 ("use a::B as " is 12
+    // bytes), which is odd. Both names appear in the trailing comment of both
+    // texts so `file_renames_to` passes its `contains` shortcut and reaches
+    // the memo; the comment is masked, so only the real `as` item answers.
+    let renames = format!("use a::B as Foo; // Foo Fxo {pad}\n");
+    let other = renames.replacen("as Foo", "as Fxo", 1);
+    assert_eq!(renames.len(), other.len());
+    assert_ne!(renames, other);
+    assert_eq!(
+        source_sample_key(&renames),
+        source_sample_key(&other),
+        "precondition: the two texts must share a memo key"
+    );
+    for _ in 0..2 {
+        assert!(file_renames_to(&renames, "Foo"));
+        assert!(!file_renames_to(&other, "Foo"));
+        assert!(file_renames_to(&other, "Fxo"));
+        assert!(!file_renames_to(&renames, "Fxo"));
     }
 }
