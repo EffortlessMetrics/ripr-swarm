@@ -318,7 +318,7 @@ fn schemas_accept_a_null_recovery_command_and_pair_status_with_error() -> Result
         .into_iter()
         .flatten()
     {
-        if !declared.iter().any(|declared| *declared == key) {
+        if !declared.contains(&key) {
             return Err(format!("emitted key {key} is not declared by the schema"));
         }
     }
