@@ -1007,7 +1007,11 @@ mod parser_state {
                 }
                 file.removed_lines.push(ChangedLine {
                     line: self.old_line,
-                    new_side_line: self.new_line,
+                    // A hunk that deletes from the top of a file is headed
+                    // `+0,0`: git's "after line 0". No file has a line 0, and
+                    // it would surface as `file:0` in findings, so anchor
+                    // at the first line (#11486).
+                    new_side_line: self.new_line.max(1),
                     text,
                 });
                 self.old_line = next;
@@ -2321,6 +2325,23 @@ deleted file mode 100644
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1442695040888963407);
         *seed
+    }
+
+    #[test]
+    fn removing_the_first_line_anchors_the_new_side_at_line_one() -> Result<(), String> {
+        // #11486: git heads a top-of-file deletion `+0,0`; no finding may be
+        // located at `file:0`.
+        let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +0,0 @@\n-pub fn gone() {}\n";
+        let parsed = parse_unified_diff_bounded_with_metadata(diff)
+            .map_err(|e| format!("diff should parse: {e}"))?;
+        let removed = parsed
+            .changed_files
+            .first()
+            .and_then(|file| file.removed_lines.first())
+            .ok_or("expected one removed line")?;
+        assert_eq!(removed.line, 1, "old-side coordinate is unchanged");
+        assert_eq!(removed.new_side_line, 1);
+        Ok(())
     }
 
     #[test]
