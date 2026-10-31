@@ -16308,6 +16308,176 @@ fn finding_projection_emits_one_limited_diagnostic_for_mixed_canonical_group() -
     Ok(())
 }
 
+fn second_family_probe_on_same_expression(first: &Finding) -> Finding {
+    let mut second = first.clone();
+    second.id = "probe:pricing:88:return_value".to_string();
+    second.probe.id = ProbeId(second.id.clone());
+    second.probe.family = ProbeFamily::ReturnValue;
+    second
+}
+
+fn published_diagnostics(findings: &[Finding]) -> Result<Vec<Diagnostic>, String> {
+    let config = LspAnalysisConfig::default();
+    let grouped = finding_diagnostics_by_uri(
+        Path::new("/workspace"),
+        findings,
+        config.repo_config().severity(),
+        true,
+        None,
+    )?;
+    Ok(grouped.into_values().flatten().collect())
+}
+
+#[test]
+fn two_probe_families_on_one_expression_publish_one_diagnostic() -> Result<(), String> {
+    let first = sample_finding();
+    let second = second_family_probe_on_same_expression(&first);
+
+    let diagnostics = published_diagnostics(&[first, second])?;
+
+    assert_eq!(diagnostics.len(), 1, "one expression, one squiggle");
+    let data = diagnostics[0].data.as_ref().ok_or("missing data")?;
+    assert_eq!(data["raw_signal_count"].as_u64(), Some(2));
+    assert_eq!(
+        data["group_reason"].as_str(),
+        Some("same_site_and_repair_signal")
+    );
+    let families = data["raw_findings"]
+        .as_array()
+        .ok_or("missing raw_findings")?
+        .iter()
+        .filter_map(|raw| raw["probe_family"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        families.len(),
+        2,
+        "the merged probe stays disclosed, not dropped"
+    );
+    assert!(families.contains(&"predicate") && families.contains(&"return_value"));
+    Ok(())
+}
+
+#[test]
+fn probes_on_different_expressions_or_sites_stay_separate() -> Result<(), String> {
+    let first = sample_finding();
+
+    let mut other_expression = second_family_probe_on_same_expression(&first);
+    other_expression.probe.expression = "amount > threshold".to_string();
+    assert_eq!(
+        published_diagnostics(&[first.clone(), other_expression])?.len(),
+        2
+    );
+
+    let mut other_column = second_family_probe_on_same_expression(&first);
+    other_column.probe.location.column = 9;
+    assert_eq!(
+        published_diagnostics(&[first.clone(), other_column])?.len(),
+        2
+    );
+
+    let mut other_line = second_family_probe_on_same_expression(&first);
+    other_line.probe.location.line = 89;
+    assert_eq!(published_diagnostics(&[first, other_line])?.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn same_site_probes_with_distinct_repair_signal_stay_separate() -> Result<(), String> {
+    let first = sample_finding();
+
+    let mut other_step = second_family_probe_on_same_expression(&first);
+    other_step.recommended_next_step = Some("Pin the returned value.".to_string());
+    assert_eq!(
+        published_diagnostics(&[first.clone(), other_step])?.len(),
+        2
+    );
+
+    let mut other_discriminator = second_family_probe_on_same_expression(&first);
+    other_discriminator.activation.missing_discriminators.push(
+        crate::domain::MissingDiscriminatorFact {
+            value: "amount == threshold".to_string(),
+            reason: "boundary value missing".to_string(),
+            flow_sink: None,
+        },
+    );
+    assert_eq!(
+        published_diagnostics(&[first.clone(), other_discriminator])?.len(),
+        2
+    );
+
+    let mut other_class = second_family_probe_on_same_expression(&first);
+    other_class.class = ExposureClass::ReachableUnrevealed;
+    assert_eq!(
+        published_diagnostics(&[first.clone(), other_class])?.len(),
+        2
+    );
+
+    let mut other_tests = second_family_probe_on_same_expression(&first);
+    other_tests.related_tests.push(RelatedTest {
+        name: "boundary".to_string(),
+        file: PathBuf::from("tests/pricing.rs"),
+        line: 3,
+        oracle: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        relation_reason: None,
+        relation_confidence: None,
+        miss: None,
+        miss_support: None,
+        role: crate::domain::RelatedTestRole::Contributing,
+    });
+    assert_eq!(published_diagnostics(&[first, other_tests])?.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn same_site_probes_with_distinct_canonical_gaps_stay_separate() -> Result<(), String> {
+    let mut first = sample_finding();
+    first.canonical_gap = Some(sample_canonical_gap());
+    let mut second = second_family_probe_on_same_expression(&first);
+    let mut other_gap = sample_canonical_gap();
+    other_gap.id = "gap:python:src/pricing.py:apply_discount:return_value:return_value:x".into();
+    other_gap.probe_kind = "return_value".to_string();
+    second.canonical_gap = Some(other_gap);
+    assert_eq!(published_diagnostics(&[first.clone(), second])?.len(), 2);
+
+    // A gap-bearing finding never merges with a gap-less one either.
+    let gapless = second_family_probe_on_same_expression(&sample_finding());
+    assert_eq!(published_diagnostics(&[first, gapless])?.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn merged_same_site_group_keeps_actionable_profile_gate_on_the_primary() {
+    use crate::config::LspDiagnosticProfile;
+
+    // Identical repair signal means identical actionability: a non-actionable
+    // pair stays withheld as one item, and no member can be hidden behind a
+    // primary that was judged differently.
+    let first = sample_finding();
+    let second = second_family_probe_on_same_expression(&first);
+    let groups = canonical_finding_groups(&[first, second]);
+    assert_eq!(groups.len(), 1);
+    assert!(
+        groups[0]
+            .1
+            .iter()
+            .all(|member| member.is_candidate_actionable() == groups[0].0.is_candidate_actionable())
+    );
+    assert_eq!(
+        groups[0].1.iter().any(|member| {
+            super::diagnostics::finding_is_visible_in_profile(
+                LspDiagnosticProfile::Actionable,
+                member,
+            )
+        }),
+        super::diagnostics::finding_is_visible_in_profile(
+            LspDiagnosticProfile::Actionable,
+            &groups[0].0,
+        )
+    );
+}
+
 pub(super) fn sample_finding() -> Finding {
     Finding {
         analysis_scope: crate::domain::AnalysisScope::Diff,

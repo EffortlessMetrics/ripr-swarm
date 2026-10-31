@@ -126,6 +126,39 @@ the concrete input or value. Preview findings, an empty value, a value
 longer than 80 characters (counted as characters) and a value containing a
 backtick or newline leave the message unchanged. This changes wording only; class, severity and actionability are untouched.
 
+### Same-site probe collapse
+
+One changed expression can seed probes of several families (for example a
+`return a >= b;` line yields a predicate and a return-value probe). When their
+findings carry no canonical gap and are indistinguishable to an editor user,
+the diagnostic projection publishes one diagnostic for them, not one per
+probe. The decision is the domain predicate
+`Finding::is_same_site_same_repair_signal`, applied inside the shared
+`canonical_group_members` owner so publishing, counts, code lens and the
+actionable-item listing see the same groups.
+
+Two findings collapse only when every one of these is equal: file, line,
+column, owner and trimmed expression; exposure class; reach/infect/propagate/
+reveal stages; `missing`, flow sinks, activation facts (including missing
+discriminators) and stop reasons; related tests; recommended next step;
+static limitation, language, language status and owner kind; sink alignment
+fields; source currentness; and analysis scope. Only the probe id, family,
+delta, confidence and free-text evidence may differ.
+
+What is not collapsed: any finding carrying a canonical gap (a gap id already
+includes the probe family and is the repair identity, so two gaps stay two
+items, and a gap-bearing finding never merges with a gap-less one); findings
+at a different line, column or expression; and findings whose repair signal
+differs in any field above. The merged diagnostic is the group's primary
+(stable sort), keeps its own severity, actionability and `delivery_eligible`,
+and lists every member under `data.raw_findings` with `probe_family` and
+`probe_id`, `raw_signal_count`, and `group_reason =
+"same_site_and_repair_signal"`; no member is dropped silently. Because the
+signals are equal, visibility under the `actionable` profile is identical for
+every member and cannot be changed by the merge. This is static
+presentation grouping, not a classifier change and not a claim about runtime
+mutation outcomes.
+
 ### Limited / stale run policy
 
 When `snapshot_run_status` returns anything other than `"full"`
@@ -193,6 +226,11 @@ and status surfaces, and it cannot authorize full-run gap diagnostics.
 - `limited_run_downgrades_finding_warnings` — snapshot with static_limit finding → run_status="limited" → finding WARNING downgrades to INFORMATION.
 - `stale_run_suppresses_gap_record_diagnostics` — StaleArtifact rejection → run_status="stale" → gap records suppressed (is_full_run=false).
 - `generic_next_step_names_the_missing_check_when_the_witness_has_one` — generic next step + witness missing value → message ends with ``Missing check: `value`.``; a step that already quotes the value, no or whitespace-only value, a value over 80 characters or containing a backtick or newline, or a preview finding is unchanged; padding is trimmed and multibyte values count by character.
+- `two_probe_families_on_one_expression_publish_one_diagnostic` — predicate and return-value probes on one expression, no gap → one diagnostic listing both probes.
+- `probes_on_different_expressions_or_sites_stay_separate` — different expression, column or line → two diagnostics.
+- `same_site_probes_with_distinct_repair_signal_stay_separate` — differing next step, missing discriminator, class or related tests → two diagnostics.
+- `same_site_probes_with_distinct_canonical_gaps_stay_separate` — distinct gap ids, or gap-bearing versus gap-less → two diagnostics.
+- `merged_same_site_group_keeps_actionable_profile_gate_on_the_primary` — merged members share one actionable-profile verdict.
 - `typed_incomplete_outcome_never_projects_as_full` — incomplete producer outcome → run_status="limited_incomplete_input" → full-run repair diagnostics suppressed.
 
 ## Implementation Mapping

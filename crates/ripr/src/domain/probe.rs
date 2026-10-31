@@ -866,6 +866,46 @@ pub(crate) fn boundary_input_observed_with_weak_oracle(
 }
 
 impl Finding {
+    /// Whether two findings are one editor-visible item: the same probe site
+    /// (file, line, column, owner, expression) carrying the same repair
+    /// signal, so publishing both would draw two squiggles for one behavior
+    /// with nothing to tell them apart but the probe family label.
+    ///
+    /// Deliberately narrow and fail-closed. Only findings that carry no
+    /// canonical gap qualify: a gap id (which includes the probe family) is
+    /// the producer's repair identity, so two distinct gaps are never merged
+    /// here. Every field a repair or actionability decision reads must be equal
+    /// (class, stages, missing discriminators, flow sinks, related tests, next
+    /// step, static limitation, currentness, language), so a finding with a
+    /// distinct repair signal always stays separate. Static evidence only; the
+    /// probe `id`, `family`, `delta`, `confidence`, and free-text `evidence`
+    /// are the fields allowed to differ.
+    pub(crate) fn is_same_site_same_repair_signal(&self, other: &Finding) -> bool {
+        self.canonical_gap.is_none()
+            && other.canonical_gap.is_none()
+            && self.probe.location == other.probe.location
+            && self.probe.owner == other.probe.owner
+            && self.probe.expression.trim() == other.probe.expression.trim()
+            && self.class == other.class
+            && self.ripr == other.ripr
+            && self.missing == other.missing
+            && self.flow_sinks == other.flow_sinks
+            && self.activation == other.activation
+            && self.stop_reasons == other.stop_reasons
+            && self.related_tests == other.related_tests
+            && self.recommended_next_step == other.recommended_next_step
+            && self.language == other.language
+            && self.language_status == other.language_status
+            && self.owner_kind == other.owner_kind
+            && self.static_limit_kind == other.static_limit_kind
+            && self.changed_sink == other.changed_sink
+            && self.observed_sink == other.observed_sink
+            && self.oracle_alignment == other.oracle_alignment
+            && self.alignment_reason == other.alignment_reason
+            && self.source_currentness == other.source_currentness
+            && self.analysis_scope == other.analysis_scope
+    }
+
     /// A weak predicate finding whose related tests already supply the changed
     /// boundary input (infection `yes`): the remaining gap is the oracle, not
     /// the input (#10622). Static evidence only. The finding must also carry

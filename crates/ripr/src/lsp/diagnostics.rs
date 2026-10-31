@@ -143,8 +143,36 @@ pub(super) fn canonical_group_members(findings: &[Finding]) -> Vec<(&Finding, Ve
         grouped.entry(key).or_default().push(finding);
     }
 
-    grouped
-        .into_values()
+    // Second pass (domain-owned predicate, not an LSP key): gap-less findings
+    // that are one editor item share a group, so two probe families on one
+    // expression publish one diagnostic. Candidates are bucketed by probe site
+    // first so the pass stays linear for the common no-duplicate case.
+    let mut merged = Vec::<Vec<&Finding>>::new();
+    let mut gapless_by_site = BTreeMap::<(&Path, usize, usize), Vec<usize>>::new();
+    for group in grouped.into_values() {
+        if group.len() == 1 && group[0].canonical_gap.is_none() {
+            let finding = group[0];
+            let site = (
+                finding.probe.location.file.as_path(),
+                finding.probe.location.line,
+                finding.probe.location.column,
+            );
+            let slots = gapless_by_site.entry(site).or_default();
+            if let Some(slot) = slots.iter().copied().find(|slot| {
+                merged[*slot]
+                    .iter()
+                    .all(|member| member.is_same_site_same_repair_signal(finding))
+            }) {
+                merged[slot].push(finding);
+                continue;
+            }
+            slots.push(merged.len());
+        }
+        merged.push(group);
+    }
+
+    merged
+        .into_iter()
         .filter_map(|mut group| {
             group.sort_by_key(|finding| finding_primary_sort_key(finding));
             let primary = *group.first()?;
@@ -277,7 +305,9 @@ pub(super) fn add_canonical_group_data(
     data.insert("raw_signal_count".to_string(), serde_json::json!(raw.len()));
     data.insert(
         "group_reason".to_string(),
-        serde_json::json!(if raw.len() > 1 {
+        serde_json::json!(if raw.len() > 1 && primary.canonical_gap.is_none() {
+            "same_site_and_repair_signal"
+        } else if raw.len() > 1 {
             "same_canonical_owner_and_missing_discriminator"
         } else {
             "single_canonical_item"
@@ -432,7 +462,7 @@ pub(super) fn finding_diagnostics_by_uri_with_profile(
                 serde_json::Value::Bool(true),
             );
         }
-        if primary.canonical_gap.is_some() {
+        if primary.canonical_gap.is_some() || raw_findings.len() > 1 {
             add_canonical_group_data(root, &mut diagnostic, &primary, &raw_findings);
             if canonical_group_has_mixed_classes(&raw_findings) {
                 diagnostic.severity = Some(DiagnosticSeverity::INFORMATION);

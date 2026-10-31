@@ -1,0 +1,13 @@
+[[extend]]
+id = "RIPR-SPEC-0076"
+tests = [
+  "crates/ripr/src/lsp/tests.rs::two_probe_families_on_one_expression_publish_one_diagnostic",
+  "crates/ripr/src/lsp/tests.rs::probes_on_different_expressions_or_sites_stay_separate",
+  "crates/ripr/src/lsp/tests.rs::same_site_probes_with_distinct_repair_signal_stay_separate",
+  "crates/ripr/src/lsp/tests.rs::same_site_probes_with_distinct_canonical_gaps_stay_separate",
+  "crates/ripr/src/lsp/tests.rs::merged_same_site_group_keeps_actionable_profile_gate_on_the_primary",
+]
+code = [
+  "crates/ripr/src/lsp/diagnostics.rs",
+  "crates/ripr/src/domain/probe.rs",
+]
