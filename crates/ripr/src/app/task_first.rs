@@ -3991,6 +3991,66 @@ pub(crate) mod tests {
         assert!(!reason.contains("ripr agent stub"), "{reason}");
     }
 
+    /// #11895: the return-value and error-path stubs are named too when the
+    /// owner-call gap is the only missing fact; a direct caller or a seam kind
+    /// with no stub kind keeps them out.
+    #[test]
+    fn owner_call_gap_alone_names_the_return_and_error_stub_routes() {
+        use crate::analysis::seams::{
+            ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
+        };
+        let root = RefusalRoot::named(Path::new("/repo"));
+        let activation = vec!["incomplete evidence stage: activation".to_string()];
+        let build = |kind, required, related: Vec<_>| {
+            let mut entry = gate_entry(SeamGripClass::ActivationUnknown, related);
+            entry.seam = RepoSeam::new(
+                "src/pricing.rs",
+                "pricing::discounted_total",
+                kind,
+                42,
+                88,
+                "changed value",
+                required,
+                ExpectedSink::ReturnValue,
+            );
+            entry
+        };
+        let ret_required = || RequiredDiscriminator::ReturnValue {
+            description: "changed value".to_string(),
+        };
+
+        let ret = build(SeamKind::ReturnValue, ret_required(), Vec::new());
+        let reason = route_not_ready_reason(&ret, "repair route not ready", &activation, root);
+        assert!(
+            reason.contains("--at src/pricing.rs:88 --kind return_value"),
+            "{reason}"
+        );
+
+        let err = build(
+            SeamKind::ErrorVariant,
+            RequiredDiscriminator::ErrorVariant {
+                variant: "Bad".to_string(),
+            },
+            Vec::new(),
+        );
+        let reason = route_not_ready_reason(&err, "repair route not ready", &activation, root);
+        assert!(reason.contains("--kind error_path"), "{reason}");
+
+        // Negatives: a direct caller keeps the gap, and a second missing fact
+        // keeps the stub out.
+        let direct = build(
+            SeamKind::ReturnValue,
+            ret_required(),
+            vec![weak_related_test()],
+        );
+        let reason = route_not_ready_reason(&direct, "repair route not ready", &activation, root);
+        assert!(!reason.contains("ripr agent stub"), "{reason}");
+        let mut more = activation.clone();
+        more.push("incomplete evidence stage: propagation".to_string());
+        let reason = route_not_ready_reason(&ret, "repair route not ready", &more, root);
+        assert!(!reason.contains("ripr agent stub"), "{reason}");
+    }
+
     /// #11466: a propagation/observation-unknown seam that a test already runs
     /// names that test; a seam no test calls directly, or a class past the
     /// unknown stages, stays bare.
