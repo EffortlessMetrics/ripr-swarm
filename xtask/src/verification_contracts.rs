@@ -4343,3 +4343,128 @@ mod tests {
         Ok(())
     }
 }
+
+/// #11272: the published `language_completeness` schema against real producer
+/// bytes, with discriminating negatives, so neither side can drift alone.
+#[cfg(test)]
+mod language_completeness_schema_tests {
+    use super::*;
+    use serde_json::json;
+
+    const BOUNDARY_PATCH: &str = "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\n";
+    const COMMENT_PATCH: &str = "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,4 @@\n+// a comment only\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n     if amount >= discount_threshold {\n         amount - 10\n";
+    const MARKDOWN_PATCH: &str = "diff --git a/README.md b/README.md\nindex 0000000..1111111 100644\n--- a/README.md\n+++ b/README.md\n@@ -1,1 +1,2 @@\n old\n+new\n";
+
+    fn real_output(name: &str, patch: &str) -> Result<Value, String> {
+        let root = repo_root()?;
+        let scratch = root.join("target/ripr/language-completeness-schema");
+        fs::create_dir_all(&scratch).map_err(|err| format!("create scratch: {err}"))?;
+        let patch_path = scratch.join(format!("{name}.patch"));
+        fs::write(&patch_path, patch).map_err(|err| format!("write patch: {err}"))?;
+        // The real producer, in process: the public check entry point and the
+        // public JSON renderer the CLI uses, not a hand-written document.
+        let input = ripr::CheckInput {
+            root: root.join("fixtures/boundary_gap/input"),
+            diff_file: Some(patch_path),
+            mode: ripr::Mode::Draft,
+            format: ripr::OutputFormat::Json,
+            ..ripr::CheckInput::default()
+        };
+        let output =
+            ripr::check_workspace(input).map_err(|err| format!("{name}: check failed: {err}"))?;
+        let stdout = ripr::render_check(&output, &ripr::OutputFormat::Json)?;
+        serde_json::from_str(&stdout).map_err(|err| format!("{name}: not JSON: {err}"))
+    }
+
+    fn violations(document: &Value, schema: &Value) -> Vec<String> {
+        let mut violations = Vec::new();
+        validate_value_against_schema(
+            document,
+            schema,
+            schema,
+            "check.json".to_string(),
+            &mut violations,
+        );
+        violations
+    }
+
+    fn mutated(document: &Value, edit: &dyn Fn(&mut Value)) -> Value {
+        let mut copy = document.clone();
+        if let Some(member) = copy.get_mut("language_completeness") {
+            edit(member);
+        }
+        copy
+    }
+
+    #[test]
+    fn real_check_output_validates_and_invalid_projections_are_rejected() -> Result<(), String> {
+        let schema_text = read_text(repo_root()?.join("schemas/ripr/check.schema.json"))?;
+        let schema: Value = serde_json::from_str(&schema_text).map_err(|err| err.to_string())?;
+        let mut validated = 0;
+        for (name, patch, status) in [
+            ("findings", BOUNDARY_PATCH, "complete"),
+            ("zero", COMMENT_PATCH, "complete_zero"),
+            ("no-scope", MARKDOWN_PATCH, "no_current_scope"),
+        ] {
+            let document = real_output(name, patch)?;
+            let member = document
+                .get("language_completeness")
+                .ok_or_else(|| format!("{name}: producer omitted language_completeness"))?;
+            assert_eq!(member["languages"][0]["status"], json!(status), "{name}");
+            let found = violations(&document, &schema);
+            assert!(found.is_empty(), "{name} must validate: {found:#?}");
+            validated += 1;
+
+            let negatives: [(&str, Value); 9] = [
+                (
+                    "invalid mode",
+                    mutated(&document, &|m| m["mode"] = json!("sideways")),
+                ),
+                (
+                    "invalid scope",
+                    mutated(&document, &|m| m["scope"] = json!("galaxy")),
+                ),
+                (
+                    "invalid completeness",
+                    mutated(&document, &|m| m["completeness"] = json!("mostly")),
+                ),
+                (
+                    "invalid status",
+                    mutated(&document, &|m| m["languages"][0]["status"] = json!("ok")),
+                ),
+                (
+                    "negative row findings",
+                    mutated(&document, &|m| m["languages"][0]["findings"] = json!(-1)),
+                ),
+                (
+                    "negative total",
+                    mutated(&document, &|m| m["total_findings"] = json!(-1)),
+                ),
+                (
+                    "extra member property",
+                    mutated(&document, &|m| m["note"] = json!("x")),
+                ),
+                (
+                    "extra row property",
+                    mutated(&document, &|m| m["languages"][0]["reason"] = json!("x")),
+                ),
+                (
+                    "missing languages",
+                    mutated(&document, &|m| {
+                        if let Some(object) = m.as_object_mut() {
+                            object.remove("languages");
+                        }
+                    }),
+                ),
+            ];
+            for (label, bad) in negatives {
+                assert!(
+                    !violations(&bad, &schema).is_empty(),
+                    "{name}: schema must reject {label}"
+                );
+            }
+        }
+        assert_eq!(validated, 3, "three real producer documents validated");
+        Ok(())
+    }
+}

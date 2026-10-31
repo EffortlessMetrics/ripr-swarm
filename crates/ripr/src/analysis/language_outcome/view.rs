@@ -244,6 +244,81 @@ mod projection_tests {
         );
     }
 
+    /// Every canonical status spelling (and each mode, scope and completeness
+    /// label) must be admitted by the published schema, and the schema must not
+    /// admit a spelling the producer cannot emit.
+    #[test]
+    fn schema_enums_equal_the_canonical_producer_spellings() -> Result<(), String> {
+        use LanguageOutcomeStatus as S;
+        // Exhaustive on purpose: a new variant fails to compile here until it
+        // is listed, then fails the comparison until the schema admits it.
+        let all = |status: S| match status {
+            S::Complete
+            | S::CompleteZero
+            | S::Partial
+            | S::Unavailable
+            | S::Invalid
+            | S::Failed
+            | S::Unsupported
+            | S::NotSelected
+            | S::NoCurrentScope => status,
+        };
+        let statuses: std::collections::BTreeSet<&str> = [
+            S::Complete,
+            S::CompleteZero,
+            S::Partial,
+            S::Unavailable,
+            S::Invalid,
+            S::Failed,
+            S::Unsupported,
+            S::NotSelected,
+            S::NoCurrentScope,
+        ]
+        .into_iter()
+        .map(|status| all(status).as_str())
+        .collect();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../schemas/ripr/check.schema.json");
+        let text = std::fs::read_to_string(&path).map_err(|err| format!("{path:?}: {err}"))?;
+        let schema: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+        let enum_of = |pointer: &str| -> Result<std::collections::BTreeSet<String>, String> {
+            schema
+                .pointer(pointer)
+                .and_then(serde_json::Value::as_array)
+                .ok_or_else(|| format!("schema has no enum at {pointer}"))?
+                .iter()
+                .map(|v| {
+                    v.as_str()
+                        .map(str::to_string)
+                        .ok_or_else(|| format!("non-string enum member at {pointer}"))
+                })
+                .collect()
+        };
+        let base = "/$defs/language_completeness/properties";
+        let row = "/$defs/language_completeness_row/properties/status/enum";
+        assert_eq!(
+            enum_of(row)?,
+            statuses.iter().map(|s| s.to_string()).collect(),
+            "schema status enum must equal LanguageOutcomeStatus::as_str()"
+        );
+        let labels = |values: &[&str]| -> std::collections::BTreeSet<String> {
+            values.iter().map(|v| v.to_string()).collect()
+        };
+        assert_eq!(
+            enum_of(&format!("{base}/mode/enum"))?,
+            labels(&[OutcomeMode::Diff.as_str(), OutcomeMode::Repo.as_str()])
+        );
+        assert_eq!(
+            enum_of(&format!("{base}/completeness/enum"))?,
+            labels(&[
+                DiffCompleteness::Complete.as_str(),
+                DiffCompleteness::Incomplete.as_str()
+            ])
+        );
+        // The scope enum is pinned beside `AnalysisProgressScope::as_str`.
+        Ok(())
+    }
+
     #[test]
     fn projection_keeps_silent_rows_that_the_public_run_projection_drops() {
         let view = view(vec![row("rust", LanguageOutcomeStatus::CompleteZero, 0)]);

@@ -2554,7 +2554,9 @@ from a skipped or never-dispatched language. This object can:
 - `scope` — run scope that produced it: `diff`, `worktree` or `repo`
 - `completeness` — aggregate state: `complete` or `incomplete`
 - `total_findings` — sum of the per-language finding counts
-- `languages[]` — one row per canonical language label, in label order:
+- `languages[]` — one row per canonical language label, in ascending label
+  (lexicographic) order, so the array is deterministic and a consumer must
+  match rows by `language`, never by position:
   `language`, `status` (`complete`, `complete_zero`, `partial`,
   `unavailable`, `invalid`, `failed`, `unsupported`, `not_selected` or
   `no_current_scope`, the canonical `LanguageOutcomeStatus` spelling) and

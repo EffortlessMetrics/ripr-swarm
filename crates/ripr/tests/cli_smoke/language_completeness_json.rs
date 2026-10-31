@@ -59,6 +59,36 @@ fn a_findings_run_names_the_completed_language_and_its_count() -> TestResult {
     Ok(())
 }
 
+/// The saved-worktree route reports its own scope label from the same view.
+#[test]
+fn a_worktree_run_names_the_worktree_scope() -> TestResult {
+    let root = unique_temp_workspace("lang-completeness-worktree");
+    let _cleanup = DeclaredHunkScratch(root.clone());
+    fs::create_dir_all(&root)?;
+    super::init_producer_fixture_repo(&root)?;
+    let source = root.join("src/lib.rs");
+    let edited = fs::read_to_string(&source)?.replace("amount - 10", "amount - 11");
+    fs::write(&source, edited)?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root_arg,
+        "--worktree",
+        "--mode",
+        "draft",
+        "--format",
+        "json",
+        "--quiet",
+    ]);
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+    let projection = &report["language_completeness"];
+    assert_eq!(projection["scope"], "worktree", "{report}");
+    assert_eq!(projection["mode"], "diff");
+    assert_eq!(rust_row(&report)?["status"], "complete");
+    Ok(())
+}
+
 #[test]
 fn a_complete_zero_run_is_distinct_from_nothing_in_scope() -> TestResult {
     let zero = check_with_patch("lang-completeness-zero", RUST_COMMENT_PATCH)?;

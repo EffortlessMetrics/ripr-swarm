@@ -214,6 +214,28 @@ mod tests {
     use std::sync::Mutex;
     use std::time::Duration;
 
+    /// #11272: the scope label is part of the published `language_completeness`
+    /// schema enum, so each variant's spelling is pinned.
+    #[test]
+    fn scope_labels_match_the_published_language_completeness_scopes() -> Result<(), String> {
+        assert_eq!(AnalysisProgressScope::Diff.as_str(), "diff");
+        assert_eq!(AnalysisProgressScope::Worktree.as_str(), "worktree");
+        assert_eq!(AnalysisProgressScope::Repo.as_str(), "repo");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../schemas/ripr/check.schema.json");
+        let text = std::fs::read_to_string(&path).map_err(|err| format!("{path:?}: {err}"))?;
+        let schema: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+        let admitted: Vec<&str> = schema
+            .pointer("/$defs/language_completeness/properties/scope/enum")
+            .and_then(serde_json::Value::as_array)
+            .ok_or("schema has no scope enum")?
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect();
+        assert_eq!(admitted, ["diff", "worktree", "repo"]);
+        Ok(())
+    }
+
     struct ProgressRecorder {
         events: Mutex<Vec<AnalysisProgressEvent>>,
     }

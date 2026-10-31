@@ -1514,6 +1514,12 @@ fn strip_canonical_next_action_member(value: &str) -> String {
 /// `language_completeness` projection (#11272). It is emitted on every
 /// diff/worktree/repo run as one compact line, so strip it here rather than
 /// force a corpus-wide golden refresh. Dedicated CLI/schema tests own the field.
+///
+/// Fail-closed: the strip applies only to the exact producer layout (a
+/// `,\n  "language_completeness": ` marker followed by a one-line value). A
+/// document that does not match, such as a pretty-printed member or one with no
+/// terminating newline, is returned unchanged, so the comparison then reports
+/// drift instead of silently hiding bytes.
 fn strip_language_completeness_member(value: &str) -> String {
     const MARKER: &str = ",\n  \"language_completeness\": ";
     let Some(start) = value.find(MARKER) else {

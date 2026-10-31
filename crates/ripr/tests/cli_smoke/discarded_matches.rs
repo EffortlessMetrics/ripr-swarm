@@ -5,7 +5,35 @@ use super::{
 /// Classification reports pin findings, not the check-JSON canonical
 /// next-action projection (#7258). Strip that last member so embedding it
 /// on the public CLI path does not force a report-wide golden refresh.
+/// The historical canonical captures predate the additive per-language
+/// `language_completeness` member (#11272); dedicated tests own that field, so
+/// remove its exact one-line producer layout before the byte comparison. A
+/// layout that does not match is left in place and fails the comparison.
+fn strip_check_json_language_completeness(bytes: &[u8]) -> Vec<u8> {
+    let Ok(value) = std::str::from_utf8(bytes) else {
+        return bytes.to_vec();
+    };
+    const MARKER: &str = ",\n  \"language_completeness\": ";
+    let Some(start) = value.find(MARKER) else {
+        return bytes.to_vec();
+    };
+    let rest = &value[start + MARKER.len()..];
+    let Some(end) = rest.find('\n') else {
+        return bytes.to_vec();
+    };
+    // The CLI adapter moves the separating comma onto this line when it
+    // appends `canonical_next_action` after it.
+    let mut stripped = value[..start].to_string();
+    if rest[..end].ends_with(',') {
+        stripped.push(',');
+    }
+    stripped.push_str(&rest[end..]);
+    stripped.into_bytes()
+}
+
 fn strip_check_json_canonical_next_action(bytes: &[u8]) -> Vec<u8> {
+    let stripped = strip_check_json_language_completeness(bytes);
+    let bytes = stripped.as_slice();
     let Ok(value) = std::str::from_utf8(bytes) else {
         return bytes.to_vec();
     };
