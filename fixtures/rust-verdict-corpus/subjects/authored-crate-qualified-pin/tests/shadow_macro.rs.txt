@@ -1,0 +1,15 @@
+macro_rules! shadow {
+    () => {
+        mod crate_pin {
+            pub fn macro_shadow(x: i64) -> i64 {
+                x + 6
+            }
+        }
+    };
+}
+shadow!();
+
+#[test]
+fn macro_module_is_called() {
+    assert_eq!(crate_pin::macro_shadow(5), 11);
+}
