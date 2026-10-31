@@ -28,7 +28,9 @@
 //! whose body holds an `async` block or closure (`fn f() -> impl Future { async
 //! move { .. } }` runs its changed line only when polled). A return type behind
 //! a type alias is not seen. The hop-side shadow guard is name-based: it sees
-//! local bindings and nested `fn`s, not `use` imports.
+//! local bindings, nested `fn`s and any `as` rename to the callee's name in
+//! the hop's file. It does not see a glob import, a module-level import in
+//! another file, or an external item of the same name.
 
 use super::helper_transfer::HelperChain;
 use super::owner_pin::{OwnerPinSyntax, function_declaration_is_async};
@@ -350,7 +352,23 @@ fn hop_call_sites(caller: &FunctionSummary, callee: &str, index: &RustIndex) -> 
                     && item.name().is_some_and(|name| name.text() == callee)
             })
     });
-    if rebinds_callee {
+    // An `as` rename to the callee's name (`use other::different as inner;`) in
+    // the hop's file, at any level, binds something else under that name. A
+    // plain `use ..::inner;` names the workspace-unique callee the chain
+    // followed, so this guard does not refuse it (the chain resolver
+    // upstream currently does not credit through such a hop).
+    let renamed_to_callee = index
+        .source_syntax
+        .get(index, &caller.file)
+        .and_then(|snapshot| snapshot.tree())
+        .is_none_or(|tree| {
+            tree.syntax().descendants().any(|node| {
+                ast::Rename::cast(node)
+                    .and_then(|rename| rename.name())
+                    .is_some_and(|name| name.text() == callee)
+            })
+        });
+    if rebinds_callee || renamed_to_callee {
         return Sites::Unpolled;
     }
     // A synchronous caller cannot `.await`, and ripr verifies no polling

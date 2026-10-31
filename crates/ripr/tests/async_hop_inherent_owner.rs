@@ -550,3 +550,39 @@ fn a_plain_fn_owner_returning_a_future_must_be_driven_by_the_lowest_hop() -> Res
     assert_both("plain fn future dropped", got, "same_test_file");
     Ok(())
 }
+
+#[test]
+fn review_import_alias_shadow_control() -> Result<(), String> {
+    let test = "        assert_eq!(load(10).await, true);";
+    let other =
+        "mod other {\n    pub async fn different(_qty: u32) -> bool {\n        true\n    }\n}\n";
+    let hops = |entry_body: &str| {
+        (
+            format!(
+                "{other}async fn inner(qty: u32) -> bool {{\n    Meter {{ limit: 10 }}.over(qty)\n}}\nasync fn load(qty: u32) -> bool {{\n{entry_body}\n}}\n"
+            ),
+            format!(
+                "{other}async fn inner(qty: u32) -> bool {{\n    over(qty)\n}}\nasync fn load(qty: u32) -> bool {{\n{entry_body}\n}}\n"
+            ),
+        )
+    };
+    // `inner` is imported from elsewhere under the callee's name: the real
+    // `inner` is never awaited.
+    let (inherent, free) = hops("    use other::different as inner;\n    inner(qty).await");
+    let got = both_owner_kinds(&inherent, &free, test, Harness::AsyncTest)?;
+    assert_both("import alias shadows the callee", got, "same_test_file");
+    // Controls: an import that binds a different name leaves the real call
+    // credited; the callee's own path with no alias is pinned below.
+    let (inherent, free) = hops(
+        "    use other::different as elsewhere;\n    let _ = elsewhere(qty).await;\n    inner(qty).await",
+    );
+    let got = both_owner_kinds(&inherent, &free, test, Harness::AsyncTest)?;
+    assert_both("import under another name", got, "helper_owner_call");
+    let (inherent, free) = hops("    use crate::inner;\n    inner(qty).await");
+    let got = both_owner_kinds(&inherent, &free, test, Harness::AsyncTest)?;
+    // Observed, not required by this guard (it does not refuse a plain
+    // import): the chain resolver upstream does not credit through a hop that
+    // imports its callee, so this stays a conservative recall gap.
+    assert_both("unaliased import of the callee", got, "same_test_file");
+    Ok(())
+}
