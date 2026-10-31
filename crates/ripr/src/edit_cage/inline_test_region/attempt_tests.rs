@@ -318,6 +318,12 @@ fn a_clean_filter_cannot_launder_a_committed_production_edit() -> Result<(), Str
 #[test]
 fn an_autocrlf_normalized_staged_target_is_refused() -> Result<(), String> {
     let fixture = fixture("autocrlf", LIB)?;
+    // Commit the target with CRLF endings first (autocrlf is still off), so
+    // the only difference from the baseline is the inserted test and the
+    // violation is the staged-copy comparison, not a whole-file rewrite.
+    write_lib(&fixture, &LIB.replace('\n', "\r\n"))?;
+    git_ok(&fixture.root, &["add", "src/lib.rs"])?;
+    git_ok(&fixture.root, &["commit", "-qm", "crlf baseline"])?;
     let baseline = capture_attempt_baseline(&fixture.root, &inline_policy()?)?;
     git_ok(&fixture.root, &["config", "core.autocrlf", "true"])?;
     let crlf = with_new_test(LIB).replace('\n', "\r\n");
