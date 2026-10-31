@@ -418,7 +418,13 @@ pub(crate) const WIDEN_SEAM_BUDGET: &str = "rerun with a wider seam budget (set 
 /// Gather the live authorities and decide one repair start. A truncated seam
 /// inventory fails closed: selecting from a partial list could hide
 /// candidates and silently pick first.
-pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, String> {
+///
+/// `base` is an explicit `--base`; `None` infers the diff base exactly as a
+/// bare `ripr check` does (#11246).
+pub(crate) fn resolve_repair_start(
+    root: &Path,
+    base: Option<&str>,
+) -> Result<RepairStartDecision, String> {
     let config = load_for_root(root)?;
     let (classified, limit_info) =
         crate::analysis::inventory_classified_seams_at_with_config(root, &config)?;
@@ -447,7 +453,7 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
     // as the change's repair start (check offers none for a line with no
     // seam, so repair must not start somewhere else). A diff that changes no
     // Rust production line leaves the whole-repository selection unscoped.
-    let diff = live_check_diff_files(root);
+    let diff = live_check_diff_files(root, base);
     let scope = diff.as_ref().and_then(|files| {
         if classified
             .iter()
@@ -611,6 +617,12 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
                 "{gripped_other_check} other {noun} already noticed by existing tests, but that is a different check than the one still open, so it does not mean the open one is covered"
             ));
         }
+    }
+    // #11246: inference only narrows. When no changed line could be read, the
+    // spots above are not scoped to the change, and the text says so first
+    // (the reason list is capped, so it is placed where it survives).
+    if let Some(note) = unscoped_diff_note(diff.as_deref(), base) {
+        refusal_reasons.insert(0, note);
     }
     let (reasons, reasons_total) =
         collect_no_eligible_reasons(refusal_reasons.iter().map(String::as_str));
@@ -1902,20 +1914,87 @@ pub(crate) struct ChangedNonRust {
     pub(crate) adds_code: bool,
 }
 
-/// The changed files of the diff a bare `ripr check` would read under `root`:
-/// check's own diff-source selection (committed history, or the working tree
-/// when it holds uncommitted work), base resolution and root scoping through
-/// the shared loaders. `None` when no such diff is readable.
-fn live_check_diff_files(root: &Path) -> Option<Vec<crate::analysis::ChangedFile>> {
+/// Why repair could not narrow its spots to the change, when it could not
+/// (#11246): no diff was readable (no base resolved), or the diff against the
+/// base changed nothing. A readable diff with changes is not unscoped here.
+fn unscoped_diff_note(
+    diff: Option<&[crate::analysis::ChangedFile]>,
+    base: Option<&str>,
+) -> Option<String> {
+    match (diff, base) {
+        (None, Some(base)) => Some(format!(
+            "ripr could not tell which lines you changed, because it could not read a diff against `{base}`, so the spots below are not narrowed to your change; check that `{base}` names a ref that exists here"
+        )),
+        (None, None) => Some(
+            "ripr could not tell which lines you changed, because no base to compare against could be found (the same base `ripr check` uses), so the spots below are not narrowed to your change; pass `--base <ref>` to name it".to_string(),
+        ),
+        (Some([]), Some(base)) => Some(format!(
+            "ripr could not tell which lines you changed, because nothing differs from `{base}`, so the spots below are not narrowed to your change; pass `--base <ref>` to name another base"
+        )),
+        (Some([]), None) => Some(
+            "ripr could not tell which lines you changed, because nothing differs from the base `ripr check` compares against (for example, you are on the default branch itself), so the spots below are not narrowed to your change; pass `--base <ref>` to name another base".to_string(),
+        ),
+        (Some(_), _) => None,
+    }
+}
+
+#[cfg(test)]
+mod unscoped_note_tests {
+    use super::unscoped_diff_note;
+
+    #[test]
+    fn unreadable_diff_says_no_base_could_be_found() {
+        let note = unscoped_diff_note(None, None).unwrap_or_default();
+        assert!(note.contains("could not tell which lines you changed"));
+        assert!(note.contains("no base to compare against could be found"));
+        assert!(note.contains("--base <ref>"));
+    }
+
+    #[test]
+    fn an_explicit_base_is_named_when_its_diff_cannot_be_read() {
+        let unreadable = unscoped_diff_note(None, Some("no-such-ref")).unwrap_or_default();
+        assert!(unreadable.contains("could not read a diff against `no-such-ref`"));
+        assert!(!unreadable.contains("no base to compare against could be found"));
+        let empty = unscoped_diff_note(Some(&[]), Some("main")).unwrap_or_default();
+        assert!(empty.contains("nothing differs from `main`"));
+    }
+
+    #[test]
+    fn empty_diff_says_nothing_differs_from_the_base() {
+        let note = unscoped_diff_note(Some(&[]), None).unwrap_or_default();
+        assert!(note.contains("could not tell which lines you changed"));
+        assert!(note.contains("nothing differs from the base"));
+    }
+
+    #[test]
+    fn a_readable_nonempty_diff_adds_no_note() {
+        let files = crate::analysis::parse_unified_diff(
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-a\n+b\n",
+        );
+        assert!(!files.is_empty(), "fixture must parse to a changed file");
+        assert_eq!(unscoped_diff_note(Some(&files), None), None);
+        assert_eq!(unscoped_diff_note(Some(&files), Some("main")), None);
+    }
+}
+
+/// The changed files of the diff a bare `ripr check` would read under `root`
+/// (or under an explicit `base`, which wins over inference): check's own
+/// diff-source selection (committed history, or the working tree when it
+/// holds uncommitted work), base resolution and root scoping through the
+/// shared loaders. `None` when no such diff is readable.
+fn live_check_diff_files(
+    root: &Path,
+    base: Option<&str>,
+) -> Option<Vec<crate::analysis::ChangedFile>> {
     let source = super::diff_source::select_live_diff_source(
         root,
         super::diff_source::DiffSourceRequest::Default,
         None,
     );
     let text = if source.is_working_tree() {
-        crate::analysis::load_worktree_diff(root, None, None)
+        crate::analysis::load_worktree_diff(root, base, None)
     } else {
-        crate::analysis::load_diff(root, None, None, None)
+        crate::analysis::load_diff(root, base, None, None)
     };
     text.ok()
         .map(|text| crate::analysis::parse_unified_diff(&text))
@@ -1928,8 +2007,8 @@ fn live_check_diff_files(root: &Path) -> Option<Vec<crate::analysis::ChangedFile
 /// decoding, so a committed-only branch, a package root and a C-quoted
 /// filename agree with `check`. Best effort: an unreadable diff reads as no
 /// such languages, so the caller keeps its generic message.
-pub(crate) fn changed_non_rust_languages(root: &Path) -> Vec<ChangedNonRust> {
-    let Some(files) = live_check_diff_files(root) else {
+pub(crate) fn changed_non_rust_languages(root: &Path, base: Option<&str>) -> Vec<ChangedNonRust> {
+    let Some(files) = live_check_diff_files(root, base) else {
         return Vec::new();
     };
     let mut found: Vec<ChangedNonRust> = Vec::new();
