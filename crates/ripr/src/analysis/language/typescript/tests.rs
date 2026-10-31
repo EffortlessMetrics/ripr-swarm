@@ -18166,50 +18166,82 @@ fn analyze_diff_discloses_a_test_extraction_worker_failure() -> Result<(), Strin
 /// Several unrelated test files with unindexed shapes collapse into ONE
 /// summary limitation carrying the file count, and the recovery names an
 /// inspection or rewrite rather than a bare retry.
+///
+/// #11702: the collapse oracle calls [`super::test_extraction_partial_summary`]
+/// with synthetic gaps so it does not spawn ~16 live 256 MiB parse workers.
+/// A thin `analyze_diff` still reaches that producer through the adapter,
+/// using relative paths the armed-injection tests never share (`src/calc.ts`,
+/// `src/isolation.ts`, `tests/calc.test.ts`).
 #[test]
 fn analyze_diff_collapses_test_extraction_partial_into_one_summary() -> Result<(), String> {
-    let root = ts_unique_tempdir("tmpltitle-many")?;
-    ts_write_file(
-        &root.join("src/calc.ts"),
-        "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
-    )?;
-    for index in 1..=5 {
-        ts_write_file(
-            &root.join(format!("tests/calc{index}.test.ts")),
-            "import { add } from '../src/calc';\nwhile (process.env.CI) {\n  it(`adds ${1} and ${2}`, () => {\n    expect(add(1, 2)).toBe(3);\n  });\n}\n",
-        )?;
-    }
-
-    let adapter = TypeScriptAdapter;
-    let options = ts_analysis_options(root.clone());
-    let result = adapter.analyze_diff(
-        &options,
-        &OraclePolicy::default(),
-        &[changed_with_lines("src/calc.ts", &[(2, "  return a + b;")])],
-    )?;
-    let extraction = result
-        .limitations
-        .iter()
-        .filter(|limitation| {
-            limitation
-                .bounded_detail
-                .as_deref()
-                .is_some_and(|detail| detail.contains("typescript_test_extraction_partial"))
+    let gaps: Vec<TypeScriptTestExtractionGap> = (1..=5)
+        .map(|index| TypeScriptTestExtractionGap {
+            file: PathBuf::from(format!("tests/tmpltitle_many_{index}.test.ts")),
+            sample_line: 3,
+            shape: "template-literal title",
+            snippet: "it(`adds ${1} and ${2}`, () => {".to_string(),
         })
-        .collect::<Vec<_>>();
-    assert_eq!(extraction.len(), 1, "{:?}", result.limitations);
-    let summary = extraction[0];
+        .collect();
+    assert!(
+        super::test_extraction_partial_summary(&[])?.is_none(),
+        "no gaps, no summary"
+    );
+    let single = super::test_extraction_partial_summary(&gaps[..1])?
+        .ok_or("one gap must keep a per-file limitation")?;
+    assert_eq!(single.affected_items, Some(1));
+    assert_eq!(
+        single.path.as_deref(),
+        Some("tests/tmpltitle_many_1.test.ts")
+    );
+    assert_eq!(single.recovery.kind, AnalysisRecoveryKind::InspectFailure);
+    assert_eq!(
+        single.bounded_detail.as_deref(),
+        Some(
+            "typescript_test_extraction_partial: template-literal title at tests/tmpltitle_many_1.test.ts:3"
+        )
+    );
+
+    let summary = super::test_extraction_partial_summary(&gaps)?
+        .ok_or("five gaps must collapse into one summary")?;
     assert_eq!(summary.affected_items, Some(5));
     assert_eq!(summary.path, None);
     assert_eq!(summary.recovery.kind, AnalysisRecoveryKind::InspectFailure);
+    assert_eq!(
+        summary.bounded_detail.as_deref(),
+        Some(
+            "typescript_test_extraction_partial: 5 test file(s) register tests the extractor does not index; e.g. template-literal title at tests/tmpltitle_many_1.test.ts:3; template-literal title at tests/tmpltitle_many_2.test.ts:3; template-literal title at tests/tmpltitle_many_3.test.ts:3 (+2 more)"
+        )
+    );
+
+    let root = ts_unique_tempdir("tmpltitle-many")?;
+    ts_write_file(
+        &root.join("src/tmpltitle_many_owner.ts"),
+        "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/tmpltitle_many.test.ts"),
+        "import { add } from '../src/tmpltitle_many_owner';\nwhile (process.env.CI) {\n  it(`adds ${1} and ${2}`, () => {\n    expect(add(1, 2)).toBe(3);\n  });\n}\n",
+    )?;
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[changed_with_lines(
+            "src/tmpltitle_many_owner.ts",
+            &[(2, "  return a + b;")],
+        )],
+    )?;
     assert!(
-        summary
-            .bounded_detail
-            .as_deref()
-            .is_some_and(|detail| detail.starts_with(
-                "typescript_test_extraction_partial: 5 test file(s) register tests the extractor does not index; e.g. "
-            ) && detail.ends_with("(+2 more)")),
-        "{summary:?}"
+        result.limitations.iter().any(|limitation| {
+            limitation.bounded_detail.as_deref().is_some_and(|detail| {
+                detail.contains("typescript_test_extraction_partial")
+                    && detail.contains("tmpltitle_many")
+                    && !detail.contains("src/calc.ts")
+                    && !detail.contains("tests/calc.test.ts")
+                    && !detail.contains("parse_worker_failed")
+            })
+        }),
+        "unique-path analyze_diff must still disclose extraction-partial: {:?}",
+        result.limitations
     );
     let _ = std::fs::remove_dir_all(&root);
     Ok(())
