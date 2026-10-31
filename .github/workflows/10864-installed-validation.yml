@@ -24,7 +24,7 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591
-      - name: Verify canonical artifact and run installed refusal/restoration
+      - name: Verify canonical artifact and run complete installed recovery
         env:
           GH_TOKEN: ${{ github.token }}
           WHEEL_ARTIFACT_DIR: ${{ runner.temp }}/ripr-10864-wheel-artifact
@@ -56,12 +56,14 @@ jobs:
             ("    wheels=list(ARTIFACT.rglob('*.whl'))\n    assert len(wheels)==1, 'expected one exact current-candidate wheel'\n    wheel=wheels[0]\n",
              "    receipt=json.loads((ARTIFACT/'wheel-receipt.json').read_text())\n    assert receipt['candidate_sha']==HEAD\n    assert receipt['candidate_tree']==subprocess.check_output(['git','rev-parse','HEAD^{tree}'],text=True).strip()\n    assert receipt['publication_attempted'] is False\n    filename=receipt['wheel']['filename']\n    assert Path(filename).name==filename and filename.startswith('ripr_rs-') and filename.endswith('.whl')\n    wheel=ARTIFACT/'wheelhouse'/filename\n    assert wheel.is_file() and not wheel.is_symlink()\n    assert sha(wheel.read_bytes())==receipt['wheel']['sha256']\n"),
             ("    installed=list((WORK/'venv').rglob('ripr_rs'))\n    payloads=[p for d in installed if d.is_dir() for p in d.rglob('ripr') if p.is_file()]\n    assert len(payloads)==1, 'expected one installed native payload'\n    record['installed_payload_sha256']=sha(payloads[0].read_bytes())\n",
-             "    # This wheel installs its native .data/scripts/ripr into venv/bin/ripr.\n    # The included broken/tooling wheels are separate producer controls.\n    assert binary.is_file() and not binary.is_symlink()\n    record['installed_payload_sha256']=sha(binary.read_bytes())\n    assert record['installed_payload_sha256']==receipt['wheel']['installed_payload_sha256']\n")]
+             "    # This wheel installs its native .data/scripts/ripr into venv/bin/ripr.\n    # The included broken/tooling wheels are separate producer controls.\n    assert binary.is_file() and not binary.is_symlink()\n    record['installed_payload_sha256']=sha(binary.read_bytes())\n    assert record['installed_payload_sha256']==receipt['wheel']['installed_payload_sha256']\n"),
+            ("        assert normalize(refused['recommended_next_step']) in normalize(rendered.decode())",
+             "        # #7756 is the existing human labelled-field display contract. Compare\n        # the COMPLETE dedicated action, not a substring elsewhere in output.\n        section=rendered.decode().split('\\nNext step\\n',1)[1].split('\\nDrill in:',1)[0]\n        assert normalize(section)==normalize(refused['recommended_next_step'].removesuffix('.'))")]
           for old,new in edits:
               assert text.count(old)==1
               text=text.replace(old,new,1)
           script=text.encode()
-          corrected_sha='3a7dc272eb0cafed0cc5f2ddf96f09a4e604c87109ff4474ab92cde097edcf80'
+          corrected_sha='6589a3502b1184d1575e4deca7e62c3187900df92a19caf99390d9be4edcfe15'
           assert hashlib.sha256(script).hexdigest()==corrected_sha
           class NoRedirect(urllib.request.HTTPRedirectHandler):
               def redirect_request(self,req,fp,code,msg,headers,newurl):
@@ -101,9 +103,10 @@ jobs:
                    'candidate':os.environ['CANDIDATE_SHA'],'zip_sha256':digest,
                    'downloaded_bytes':size,'base_proof_script_blob':script_sha,
                    'corrected_proof_script_sha256':corrected_sha,
-                   'prior_instrument_failure_run':41165610139}
+                   'prior_instrument_failure_runs':[41165610139,41165852993],
+                   'current_source_applicability':'b3571568 changes only the human-field test oracle; execution remains attributed to 5ea63555'}
           try:
-              exec(compile(script,'exact-10864-installed-proof-v2','exec'),{'__name__':'__main__'})
+              exec(compile(script,'exact-10864-installed-proof-v3','exec'),{'__name__':'__main__'})
           finally:
               out=Path(os.environ['RUNNER_TEMP'])/'ripr-10864-installed-proof'
               out.mkdir(exist_ok=True)
