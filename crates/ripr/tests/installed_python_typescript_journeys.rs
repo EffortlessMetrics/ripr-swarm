@@ -633,7 +633,7 @@ fn python_flat_layout_journey_runs_the_gap_bound_loop_from_the_printed_start() -
     expect_exit(stale_ok, false, "repair of an unrelated stale id")?;
     need(
         &stale,
-        "stale or maps to no current seam",
+        "stale or maps to no current gap",
         "unrelated id keeps stale-id guidance",
     )?;
     if stale.contains("covers Rust files only") {

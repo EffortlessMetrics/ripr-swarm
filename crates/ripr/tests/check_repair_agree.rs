@@ -160,7 +160,7 @@ fn exposed_change_says_nothing_to_repair_in_both_commands() -> Result<(), String
         "check must say there is nothing to repair:\n{check}"
     );
     for leak in [
-        "no seam in this finding's file",
+        "no spot in this finding's file",
         "no repairable spot in this finding's file",
         "no spot in this finding's file",
         "missing",

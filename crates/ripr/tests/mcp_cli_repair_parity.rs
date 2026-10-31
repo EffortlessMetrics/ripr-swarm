@@ -271,7 +271,7 @@ fn observe(fixture: &Fixture) -> Result<Observed, String> {
     );
     // `agent card` takes a seam id; the CLI's own refusal text names it.
     let seam_id = repair_text
-        .split("names seam `")
+        .split("names gap `")
         .nth(1)
         .and_then(|rest| rest.split('`').next())
         .map(str::to_string);
