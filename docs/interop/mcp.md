@@ -237,10 +237,14 @@ mean identical input. `ripr check --committed` selects committed input;
 edits outside MCP, or inside MCP with the opt-in `source: "worktree"`
 (RIPR-SPEC-0211, #7357: repair cards and readiness only with an
 established producer-custody agreement, withheld with the cause
-otherwise). A committed refresh over uncommitted tracked source or test edits
-likewise withholds repair cards and readiness (`worktree_source_not_committed`,
-`incomplete_inventory`) and says why, because its findings read HEAD while the
-cards would read your edited files; commit or stash and refresh again. The
+otherwise). A committed refresh whose findings and checkout Rust files were not
+shown to agree (a consumed file edited, staged, deleted or changed during the
+refresh, or an untracked Rust file) likewise withholds repair cards
+(`incomplete_inventory`) and turns repair-ready items not ready
+(`worktree_source_not_committed`; an item already not ready keeps its own
+reason) and says why, because its findings read committed content while the
+cards would read the checkout; settle it (commit or stash the edit, stage the
+untracked file) and refresh again. The
 existing response `scope` note discloses detected excluded edits. The call blocks until the attempt reaches a terminal state and reports it: `completed` with the new
 snapshot identity (a `snapshot:sha256:` digest over the typed outcome, the
 canonical item identities, and each item's evidence digest — equivalent

@@ -507,102 +507,117 @@ fn committed_refresh(root: &Path) -> Result<super::workspace::Snapshot, String> 
         .map_err(|failure| format!("{}: {}", failure.code, failure.detail))
 }
 
-/// A committed refresh (`main..HEAD`) over a checkout whose consumed Rust files
-/// carry uncommitted edits: the findings come from the committed content while
-/// the seam inventory reads the dirty bytes, so the card must not be served.
+/// The clean committed refresh is repair-ready, makes no worktree custody claim
+/// and serves a card.
+fn assert_serves_card(snapshot: super::workspace::Snapshot, root: &Path) -> Result<(), String> {
+    if snapshot.custody != SourceCustody::NotApplicable || snapshot.card_producers.is_none() {
+        return Err(format!(
+            "a committed snapshot keeps its unchanged contract: {:?}",
+            snapshot.custody
+        ));
+    }
+    let id = ready_item(&snapshot)?;
+    let session = WorkspaceSession {
+        last_good: Some(Arc::new(snapshot)),
+        ..Default::default()
+    };
+    session
+        .repair_card_document(&id, None, Some(root))
+        .map(|_| ())
+        .map_err(|failure| format!("the card must be served: {}", failure.detail))
+}
+
+/// The committed snapshot withholds with the owner's cause naming `path`.
+fn assert_committed_withheld(
+    snapshot: super::workspace::Snapshot,
+    root: &Path,
+    path: &str,
+) -> Result<(), String> {
+    let SourceCustody::CommittedOverUncommitted { reason } = &snapshot.custody else {
+        return Err(format!(
+            "{path}: custody must be withheld: {:?}",
+            snapshot.custody
+        ));
+    };
+    if !reason.contains(path) || !reason.contains("changed between") {
+        return Err(format!(
+            "{path}: the owner's moved-path cause must be named: {reason}"
+        ));
+    }
+    if snapshot.card_producers.is_some() || snapshot.items.is_empty() {
+        return Err(format!(
+            "{path}: no card producers bind, findings still serve"
+        ));
+    }
+    for item in &snapshot.items {
+        if item.repair_readiness.ready
+            || item.repair_readiness.ineligibility
+                != Some(crate::mcp::repair_admission::SEAM_WORKTREE_SOURCE)
+        {
+            return Err(format!(
+                "{path}: every item must carry the typed withheld reason: {:?}",
+                item.repair_readiness
+            ));
+        }
+    }
+    let canonical_id = snapshot
+        .items
+        .first()
+        .map(|item| item.canonical_id.clone())
+        .ok_or("no item")?;
+    let session = WorkspaceSession {
+        last_good: Some(Arc::new(snapshot)),
+        ..Default::default()
+    };
+    let refusal = session
+        .repair_card_document(&canonical_id, None, Some(root))
+        .err()
+        .ok_or_else(|| format!("{path}: a card was served over bytes the findings never saw"))?;
+    if refusal.code != super::repair_card::CODE_INCOMPLETE_INVENTORY
+        || !refusal.detail.contains(path)
+    {
+        return Err(format!(
+            "{path}: unexpected refusal {}: {}",
+            refusal.code, refusal.detail
+        ));
+    }
+    let disclosure = refresh_document(&session);
+    if disclosure.pointer("/scope/consumed_source_commitment")
+        != Some(&Value::from("not_established"))
+        || disclosure.pointer("/scope/repair_cards") != Some(&Value::from("withheld"))
+    {
+        return Err(format!("{path}: scope must withhold plainly: {disclosure}"));
+    }
+    Ok(())
+}
+
+/// A committed refresh over a checkout whose consumed Rust files differ from
+/// the committed content the findings read must not serve a card, whether the
+/// edit is unstaged or staged; the cause names the moved path. Positive
+/// control: the clean checkout serves a card, and committing recovers.
 #[test]
-fn committed_refresh_over_dirty_consumed_file_withholds_the_card() -> Result<(), String> {
-    for (tag, relative, edited) in [
-        (
-            "dirty-test",
-            "tests/pricing.rs",
-            PRICING_TESTS.replace(
-                "assert_eq!(discounted_total(100, 100), 90);",
-                "let _ = discounted_total(100, 100);",
-            ),
-        ),
-        ("dirty-src", "src/lib.rs", MOVED_LIB.to_string()),
+fn committed_refresh_over_edited_consumed_rust_file_withholds_naming_the_path() -> Result<(), String>
+{
+    let test_edit = PRICING_TESTS.replace(
+        "assert_eq!(discounted_total(100, 100), 90);",
+        "let _ = discounted_total(100, 100);",
+    );
+    for (tag, relative, edited, stage) in [
+        ("dirty-test", "tests/pricing.rs", test_edit, false),
+        ("dirty-src", "src/lib.rs", MOVED_LIB.to_string(), false),
+        ("staged-src", "src/lib.rs", MOVED_LIB.to_string(), true),
     ] {
         let fixture = install_fixture(tag)?;
-        // Positive control: the clean committed refresh is repair-ready, makes
-        // no worktree custody claim and serves a card.
-        let clean = committed_refresh(&fixture.root)?;
-        let clean_id = ready_item(&clean)?;
-        if clean.custody != SourceCustody::NotApplicable || clean.card_producers.is_none() {
-            return Err("a clean committed snapshot keeps its unchanged contract".to_string());
-        }
-        let clean_session = WorkspaceSession {
-            last_good: Some(Arc::new(clean)),
-            ..Default::default()
-        };
-        clean_session
-            .repair_card_document(&clean_id, None, Some(&fixture.root))
-            .map_err(|failure| format!("{relative}: clean control: {}", failure.detail))?;
-
+        assert_serves_card(committed_refresh(&fixture.root)?, &fixture.root)?;
         write(&fixture.root, relative, &edited)?;
+        if stage {
+            fixture_git_ok(&fixture.root, &["add", relative])?;
+        }
         let dirty = committed_refresh(&fixture.root)?;
         if !dirty.scope.uncommitted_edits {
             return Err("the control needs the producer to see the uncommitted edit".to_string());
         }
-        let SourceCustody::CommittedOverUncommitted { reason } = &dirty.custody else {
-            return Err(format!(
-                "{relative}: custody must be withheld: {:?}",
-                dirty.custody
-            ));
-        };
-        if reason.is_empty() || dirty.card_producers.is_some() || dirty.items.is_empty() {
-            return Err(format!(
-                "{relative}: withheld custody names a cause, binds no card producers and still serves findings: {reason}"
-            ));
-        }
-        for item in &dirty.items {
-            if item.repair_readiness.ready
-                || item.repair_readiness.ineligibility
-                    != Some(crate::mcp::repair_admission::SEAM_WORKTREE_SOURCE)
-            {
-                return Err(format!(
-                    "{relative}: every item must carry the typed withheld reason: {:?}",
-                    item.repair_readiness
-                ));
-            }
-        }
-        let canonical_id = dirty
-            .items
-            .first()
-            .map(|item| item.canonical_id.clone())
-            .ok_or("no item")?;
-        let session = WorkspaceSession {
-            last_good: Some(Arc::new(dirty)),
-            ..Default::default()
-        };
-        let refusal = session
-            .repair_card_document(&canonical_id, None, Some(&fixture.root))
-            .err()
-            .ok_or_else(|| {
-                format!("{relative}: a card was served over bytes the findings never saw")
-            })?;
-        if refusal.code != super::repair_card::CODE_INCOMPLETE_INVENTORY
-            || !refusal.detail.contains("uncommitted tracked edits")
-        {
-            return Err(format!(
-                "{relative}: unexpected refusal {}: {}",
-                refusal.code, refusal.detail
-            ));
-        }
-        let disclosure = refresh_document(&session);
-        if disclosure.pointer("/scope/consumed_source_commitment")
-            != Some(&Value::from("not_established"))
-            || disclosure.pointer("/scope/repair_cards") != Some(&Value::from("withheld"))
-            || disclosure.pointer("/scope/uncommitted_edits")
-                != Some(&Value::from("outside this analysis"))
-        {
-            return Err(format!(
-                "{relative}: scope must withhold plainly: {disclosure}"
-            ));
-        }
-
-        // Recovery: committing the edit settles the checkout and a fresh
-        // committed refresh serves a card again.
+        assert_committed_withheld(dirty, &fixture.root, relative)?;
         commit(&fixture.root, "settle the edit")?;
         let settled = committed_refresh(&fixture.root)?;
         if settled.custody != SourceCustody::NotApplicable {
@@ -614,21 +629,143 @@ fn committed_refresh_over_dirty_consumed_file_withholds_the_card() -> Result<(),
     Ok(())
 }
 
-/// Negative control: an uncommitted edit to a file outside the Rust corpus and
-/// the routed source/test scope does not withhold the committed card.
+/// TOCTOU: the checkout is clean while the findings run (no overlay, no dirty
+/// flag) and a consumed file is edited before the seam inventory reads it. The
+/// owner, not the dirty flag, decides, so the card is withheld.
 #[test]
-fn committed_refresh_over_unrelated_dirty_file_keeps_the_card() -> Result<(), String> {
-    let fixture = install_fixture("dirty-unrelated")?;
-    write(&fixture.root, "README.md", "notes\n")?;
-    commit(&fixture.root, "add notes")?;
-    write(&fixture.root, "README.md", "edited notes\n")?;
+fn committed_refresh_with_source_moved_after_findings_withholds_the_card() -> Result<(), String> {
+    let fixture = install_fixture("committed-race")?;
+    let root = fixture.root.clone();
+    after_worktree_findings_hook::install(move || {
+        let _ = write(&root, "src/lib.rs", MOVED_LIB);
+    });
+    let withheld = committed_refresh(&fixture.root)?;
+    if withheld.scope.uncommitted_edits {
+        return Err("the control needs a checkout that was clean when findings ran".to_string());
+    }
+    assert_committed_withheld(withheld, &fixture.root, "src/lib.rs")
+}
+
+/// A tracked consumed Rust file deleted on disk is unobserved by the inventory
+/// and withheld with its path named.
+#[test]
+fn committed_refresh_with_deleted_consumed_rust_file_withholds() -> Result<(), String> {
+    let fixture = install_fixture("deleted-consumed")?;
+    std::fs::remove_file(fixture.root.join("src/lib.rs")).map_err(|e| e.to_string())?;
     let snapshot = committed_refresh(&fixture.root)?;
-    if snapshot.custody != SourceCustody::NotApplicable || snapshot.card_producers.is_none() {
+    // The shared producer already refuses to discover a file deleted from the
+    // checkout (it discloses on stderr), so either no finding exists to carry
+    // a card, or custody names the path and withholds. A served card is the
+    // only failure.
+    match &snapshot.custody {
+        SourceCustody::CommittedOverUncommitted { reason } if reason.contains("src/lib.rs") => {
+            Ok(())
+        }
+        SourceCustody::NotApplicable if snapshot.items.is_empty() => Ok(()),
+        other => Err(format!(
+            "a deleted consumed file must not serve a card: {other:?}"
+        )),
+    }
+}
+
+/// Negative controls: edits the owner does not contradict keep the unchanged
+/// committed contract. A dirty file outside the routed scope and a dirty
+/// non-Rust routed file are not Rust bytes the findings consumed, so they do
+/// not withhold Rust cards.
+#[test]
+fn committed_refresh_over_unrelated_dirty_files_keeps_the_card() -> Result<(), String> {
+    for (tag, relative, first, second) in [
+        ("dirty-readme", "README.md", "notes\n", "edited notes\n"),
+        (
+            "dirty-python",
+            "scripts/tool.py",
+            "print(1)\n",
+            "print(2)\n",
+        ),
+    ] {
+        let fixture = install_fixture(tag)?;
+        write(&fixture.root, relative, first)?;
+        commit(&fixture.root, "add file")?;
+        write(&fixture.root, relative, second)?;
+        let snapshot =
+            committed_refresh(&fixture.root).map_err(|error| format!("{relative}: {error}"))?;
+        assert_serves_card(snapshot, &fixture.root)
+            .map_err(|error| format!("{relative}: {error}"))?;
+    }
+    Ok(())
+}
+
+/// An untracked routed Rust file has no committed content, so the findings
+/// producer cannot capture it and the owner withholds. The cause names the
+/// path and the remedy is to stage it, not to commit or stash an edit.
+#[test]
+fn committed_refresh_over_untracked_rust_file_withholds_with_a_staging_remedy() -> Result<(), String>
+{
+    let fixture = install_fixture("untracked-rust")?;
+    write(
+        &fixture.root,
+        "src/aux_helper.rs",
+        "pub fn aux_value() -> i32 {\n    1\n}\n",
+    )?;
+    let snapshot = committed_refresh(&fixture.root)?;
+    let SourceCustody::CommittedOverUncommitted { reason } = &snapshot.custody else {
         return Err(format!(
-            "an unrelated dirty file must not withhold cards: {:?}",
+            "untracked Rust must withhold: {:?}",
+            snapshot.custody
+        ));
+    };
+    if !reason.contains("src/aux_helper.rs") {
+        return Err(format!("the cause must name the untracked path: {reason}"));
+    }
+    let detail = snapshot
+        .items
+        .iter()
+        .find_map(|item| item.repair_readiness.seam_detail.clone())
+        .ok_or("a withheld item must explain itself")?;
+    if !detail.contains("stage untracked files") {
+        return Err(format!("the remedy must say to stage the file: {detail}"));
+    }
+    Ok(())
+}
+
+/// A finding-level refusal that already held keeps its first-failing reason:
+/// the snapshot-wide withheld verdict only turns a ready item not ready.
+#[test]
+fn withheld_verdict_keeps_an_earlier_finding_level_reason() {
+    use crate::mcp::gaps::RepairReadiness;
+    use crate::mcp::repair_admission::{SEAM_WORKTREE_SOURCE, SeamVerdict};
+    let withheld = SeamVerdict::Refused {
+        code: SEAM_WORKTREE_SOURCE,
+        detail: "withheld".to_string(),
+    };
+    let not_ready = RepairReadiness {
+        ready: false,
+        fix_site: None,
+        ineligibility: Some("missing_discriminator"),
+        seam_detail: None,
+    }
+    .with_seam_verdict(Some(&withheld));
+    assert_eq!(not_ready.ineligibility, Some("missing_discriminator"));
+    assert!(!not_ready.ready);
+}
+
+/// With no findings there is no card to protect: a dirty checkout keeps the
+/// unchanged committed contract and no custody claim.
+#[test]
+fn committed_refresh_with_no_findings_over_dirty_tree_makes_no_custody_claim() -> Result<(), String>
+{
+    let fixture = install_fixture("no-findings")?;
+    fixture_git_ok(&fixture.root, &["checkout", "-q", "main"])?;
+    write(&fixture.root, "src/lib.rs", MOVED_LIB)?;
+    let snapshot = committed_refresh(&fixture.root)?;
+    if !snapshot.items.is_empty() {
+        return Err("the control needs a committed diff with no findings".to_string());
+    }
+    if snapshot.custody != SourceCustody::NotApplicable {
+        return Err(format!(
+            "no findings, no custody claim: {:?}",
             snapshot.custody
         ));
     }
-    ready_item(&snapshot)?;
     Ok(())
 }

@@ -13,8 +13,13 @@ tests = [
   "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_and_worktree_refreshes_do_not_share_custody_or_identity",
   "crates/ripr/src/mcp/worktree_custody_tests.rs::inventory_failure_degrades_to_withheld_custody_and_keeps_findings",
   "crates/ripr/src/mcp/worktree_custody_tests.rs::deleted_tracked_rust_file_keeps_custody_and_card_producers_consistent",
-  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_over_dirty_consumed_file_withholds_the_card",
-  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_over_unrelated_dirty_file_keeps_the_card",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_over_edited_consumed_rust_file_withholds_naming_the_path",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_with_source_moved_after_findings_withholds_the_card",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_with_deleted_consumed_rust_file_withholds",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_over_unrelated_dirty_files_keeps_the_card",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_over_untracked_rust_file_withholds_with_a_staging_remedy",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::withheld_verdict_keeps_an_earlier_finding_level_reason",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_with_no_findings_over_dirty_tree_makes_no_custody_claim",
 ]
 
 [[extend]]

@@ -285,23 +285,30 @@ official SDK transport:
     inventory cannot be gathered after the findings producer ran, the refresh
     still serves the findings with custody `not_established` and the failure
     named, rather than failing the whole refresh (a cancelled attempt still
-    fails). A clean committed snapshot
+    fails). A committed snapshot whose producers agree
     makes no custody claim and keeps its unchanged contract.
-  - A committed refresh over a checkout with uncommitted tracked source or
-    test edits (`unanalyzed_working_tree`) reads HEAD bytes for the findings
-    and live bytes for the inventory. It records the findings producer's
-    consumed Rust bytes and withholds readiness and cards when any finding
-    exists: every item is `repair_packet_ready: false` with the same typed
-    `worktree_source_not_committed` reason (its detail names the moved path
-    when `establish_agreement` finds one, otherwise says plainly that the
-    inventory reads uncommitted files the findings never saw),
-    `ripr_get_repair_card` refuses with `incomplete_inventory`, and the
-    `scope` note adds `consumed_source_commitment: "not_established"` and
-    `repair_cards: "withheld"`. Findings, list and gap evidence are still
-    served; committing or stashing the edits (or refreshing with source
-    `worktree`) and refreshing again recovers. No commitment is bound into a
-    committed identity, and a clean checkout or one dirty only in files
-    outside the routed source and test scope keeps its unchanged contract.
+  - A committed refresh with findings reads committed bytes for the findings
+    and live checkout bytes for the inventory. On every such refresh the
+    shared `establish_agreement` owner compares what the findings producer
+    consumed with what the inventory read, whether or not the checkout was
+    dirty when the findings ran (an edit landing after the findings is caught
+    too). Any disagreement withholds repair readiness and cards: the snapshot
+    refuses `ripr_get_repair_card` with `incomplete_inventory` and its `scope`
+    adds `consumed_source_commitment: "not_established"` and
+    `repair_cards: "withheld"`. Per item, an item that was repair-ready
+    becomes `repair_packet_ready: false` with the typed
+    `worktree_source_not_committed` reason; an item already not ready keeps
+    its first-failing finding-level reason. The detail names the moved path
+    (a consumed file edited, staged, or deleted, or an untracked routed Rust
+    file the committed findings could not capture, for which the remedy is to
+    stage it). If the findings producer recorded no Rust bytes to compare, a
+    dirty checkout (`unanalyzed_working_tree`) withholds only for Rust
+    findings. A dirty non-Rust routed file or a file outside the routed scope
+    does not withhold Rust cards, and with no findings no custody claim is
+    made. Findings, list and gap evidence are still served; settling the
+    checkout (commit or stash the edit, stage the untracked file) or refreshing
+    with source `worktree` and refreshing again recovers. No commitment is
+    bound into a committed identity.
   - Residuals under #7357 / #1765 / #1602: a Rust file that only the
     inventory read and the findings producer did not (a new file or one the
     findings scope did not select) is bound into the commitment but cannot
