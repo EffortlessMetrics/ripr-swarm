@@ -95,6 +95,7 @@ Updated:
 
 Reason:
 RIPR-SPEC-0122: #10691 plain wording for the default digest's missing-assertion entry and the catch-all change type
+RIPR-SPEC-0114: proximity-only reach limit now also applies to infection_unknown findings (#11481); class, stages and related tests unchanged, finding gains macro_reach_unresolved
 
 Command:
 `cargo xtask goldens bless rust_macro_transcriber_own_call --reason "..."`
