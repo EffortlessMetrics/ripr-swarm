@@ -80,10 +80,10 @@ const MAX_RELATED_TESTS_PER_PACKET: usize = 8;
 const RUNTIME_CONFIRMATION_NOTE: &str =
     "optional cargo-mutants confirmation; ripr reports static evidence only";
 
-/// Packet task for a seam the agent can repair with a targeted test.
 /// Repair route for a pilot packet bound (#11951).
 const PILOT_PACKET_BOUND_ROUTE: &str = "Set RIPR_PILOT_PACKET_BUDGET=0 and rerun `ripr pilot` to write every packet, or run `ripr check --format agent-seam-packets-json` for the full set.";
 
+/// Packet task for a seam the agent can repair with a targeted test.
 pub(crate) const TASK_WRITE_TARGETED_TEST: &str = "write_targeted_test";
 
 /// Root the rendered repair-loop commands assume. The packet carries no
