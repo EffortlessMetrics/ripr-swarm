@@ -9,7 +9,8 @@ status = "active"
 # is intentionally retained instead of fixed. Bare `#[allow(...)]` without
 # a `reason = "..."` is forbidden by `clippy::allow_attributes_without_reason`.
 #
-# No live exceptions. `cargo xtask check-covered-by` still parses this file.
+# The Windows workflow-backup exception below retains a platform-specific call.
+# `cargo xtask check-covered-by` validates its test reference and receipt shape.
 # Add a row only for a suppression that is intentionally retained instead of
 # fixed. Each entry must record:
 #   id              stable identifier referenced in PR descriptions
@@ -41,3 +42,12 @@ status = "active"
 # reason = "CLI dispatch takes ownership intentionally to align with subcommand signatures."
 # covered_by = "cargo test -p ripr cli_smoke"
 # expires = "2027-03-31"
+
+[[exception]]
+id = "windows-workflow-backup-readonly-clear"
+lint = "clippy::permissions_set_readonly_false"
+path = "crates/ripr/src/cli/commands/agent.rs"
+selector = "fn resolve"
+owner = "core/cli"
+reason = "Windows-only backup cleanup clears FILE_ATTRIBUTE_READONLY, not Unix write permission bits."
+covered_by = "cargo test -p ripr --lib cli::commands::agent::repair_summary_tests::tracking_removes_readonly_backup_after_unchanged_phase -- --exact"

@@ -6388,7 +6388,7 @@ language = "rust"
         let out_md = dir.join("comment-publish-plan.md");
         std::fs::write(
             &comments,
-            r#"{"comments":[{"id":"ripr-review-a","dedupe_key":"ripr:a","placement":{"path":"src/lib.rs","line":7,"side":"RIGHT","mode":"exact_seam_line"},"reason":"add focused assertion"}],"summary_only":[],"suppressed":[]}"#,
+            r#"{"comments":[{"id":"ripr-review-a","dedupe_key":"ripr:a","gap_state":"actionable","placement":{"path":"src/lib.rs","line":7,"side":"RIGHT","mode":"exact_seam_line"},"reason":"add focused assertion"}],"summary_only":[],"suppressed":[]}"#,
         )
         .map_err(|err| format!("write comments: {err}"))?;
 

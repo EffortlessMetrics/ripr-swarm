@@ -1576,7 +1576,14 @@ Selection and placement must stay conservative:
   to the changed region or owner function;
 - skip recommendations when a nearby test changed in the pull request;
 - target only changed lines, otherwise fall back to summary-only guidance;
-- cap inline review comments to three by default;
+- cap inline review comments to three by default, and fill those slots with
+  gaps that name a missing check before any card that offers no test to add;
+- never post a card that offers no test to add (any `gap_state` other than
+  `actionable`, including none) as an inline review comment: the publish plan
+  skips it as `not_publishable`. A present non-actionable state (a static
+  limitation) annotates as a `::notice` reading "RIPR has no test to suggest
+  here: ...", not a `::warning`; a card with no `gap_state` keeps the
+  `::warning`;
 - include the missing discriminator, suggested assertion shape, recommended
   test file, related test to imitate, and the repair start
   (`ripr agent repair --root . --seam-id <seam-id> --phase before`) when the
