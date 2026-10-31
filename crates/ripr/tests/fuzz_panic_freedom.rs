@@ -94,6 +94,7 @@ mod tests {
 }
 "##;
 
+#[cfg(feature = "lang-python")]
 const PYTHON_SEED: &str = r#"import re
 from dataclasses import dataclass
 
@@ -114,6 +115,7 @@ async def grab(session, url):
         return [line async for line in response if line.strip()]
 "#;
 
+#[cfg(feature = "lang-python")]
 const PYTHON_EDITED: &str = r#"import re
 from dataclasses import dataclass
 
@@ -134,6 +136,7 @@ async def grab(session, url):
         return [line async for line in response if line.strip()]
 "#;
 
+#[cfg(feature = "lang-typescript")]
 const TS_SEED: &str = r#"interface Account { name: string; balance: number }
 
 export function price(account: Account, years: number): number {
@@ -151,6 +154,7 @@ export const load = async (url: string): Promise<string[]> => {
 };
 "#;
 
+#[cfg(feature = "lang-typescript")]
 const TS_EDITED: &str = r#"interface Account { name: string; balance: number }
 
 export function price(account: Account, years: number): number {
@@ -415,7 +419,9 @@ fn source_case(
 // Preview languages analyze only when enabled; without this the Python and
 // TypeScript suites would exercise nothing.
 const RUST_TOML: &str = "[languages]\nenabled = [\"rust\"]\n";
+#[cfg(feature = "lang-python")]
 const PYTHON_TOML: &str = "[languages]\nenabled = [\"python\"]\n";
+#[cfg(feature = "lang-typescript")]
 const TS_TOML: &str = "[languages]\nenabled = [\"typescript\"]\n";
 
 const CARGO_TOML: &str =
@@ -429,6 +435,7 @@ proptest! {
         source_case(CARGO_TOML, "Cargo.toml", RUST_TOML, "src/lib.rs", RUST_SEED, RUST_EDITED, &edits)?;
     }
 
+    #[cfg(feature = "lang-python")]
     #[test]
     fn python_sources_never_panic_or_hang(edits in edits()) {
         source_case(
@@ -442,6 +449,7 @@ proptest! {
         )?;
     }
 
+    #[cfg(feature = "lang-typescript")]
     #[test]
     fn typescript_sources_never_panic_or_hang(edits in edits()) {
         source_case(
@@ -519,7 +527,7 @@ fn mutations_change_the_input_and_stay_bounded() {
 /// without reaching analysis.
 #[test]
 fn unmutated_seeds_reach_analysis() -> Result<(), String> {
-    let cases: [(&str, &str, &str, &str, &str, &str); 3] = [
+    let cases: Vec<(&str, &str, &str, &str, &str, &str)> = vec![
         (
             CARGO_TOML,
             "Cargo.toml",
@@ -528,6 +536,7 @@ fn unmutated_seeds_reach_analysis() -> Result<(), String> {
             RUST_SEED,
             RUST_EDITED,
         ),
+        #[cfg(feature = "lang-python")]
         (
             "[project]\nname = \"fuzz-subject\"\nversion = \"0.0.0\"\n",
             "pyproject.toml",
@@ -536,6 +545,7 @@ fn unmutated_seeds_reach_analysis() -> Result<(), String> {
             PYTHON_SEED,
             PYTHON_EDITED,
         ),
+        #[cfg(feature = "lang-typescript")]
         (
             "{\"name\":\"fuzz-subject\",\"version\":\"0.0.0\"}",
             "package.json",
