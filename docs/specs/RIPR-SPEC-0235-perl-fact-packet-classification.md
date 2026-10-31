@@ -454,8 +454,11 @@ For each change, the first match wins:
     does not know which argument position the threshold literal sits in (any
     top-level literal argument of the owner call counts). It does not know
     which owner call the assertion is about: when the owner sub name appears
-    as a call more than once in one oracle expression it withholds, but a
-    call elsewhere in the same test file is not distinguished. It reads a
+    as a call more than once in one oracle expression it withholds, but only
+    calls spelled as the owner (bare or with the owner's package) are
+    counted: a call through a variable receiver, one inside an interpolated
+    string, and a call in a separate aligned oracle are not, and a call
+    elsewhere in the same test file is not distinguished. It reads a
     changed expression as text, so a `<` or `>` inside a string in
     `changed_observable` (`$x == 3 ? 'a > 5' : 0`) can be read as a
     comparison, and a `-->` or other operator spelling is not specially
@@ -463,7 +466,8 @@ For each change, the first match wins:
     supplies no threshold. The oracle-expression guard is a fail-closed scan,
     not a parser: it withholds on any `/`, `` ` ``, `$"`, `$'`, `=~`, `!~`,
     heredoc introducer or quote-like word (`q`, `qq`, `qw`, `qx`, `qr`, `m`,
-    `s`, `tr`, `y`) and treats `| & ^ x` and arithmetic neighbours as part
+    `s`, `tr`, `y`) followed by a non-word delimiter (a word-character
+    delimiter such as `q x ... x` is not recognized), and treats `| & ^ x` and arithmetic neighbours as part
     of a larger operand, so it over-withholds. These choices are meant to
     only withhold, but the read is not proven complete: a construct it does
     not know could still be read as a call.
