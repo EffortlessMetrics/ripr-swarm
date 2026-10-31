@@ -220,7 +220,7 @@ fn untied_count_does_not_claim_gripped_sibling_is_repairable() -> Result<(), Str
     let repo = Repo::create(
         &old,
         &new,
-        "use ar::{doubled, label};\n\n#[test]\nfn labels() {\n    assert!(!label(1).is_empty());\n    assert_eq!(doubled(2), 4);\n}\n",
+        "use ar::{doubled, label};\n\n#[test]\nfn labels() {\n    assert!(!label(1).is_empty());\n}\n\n#[test]\nfn doubled_exact() {\n    assert_eq!(doubled(2), 4);\n}\n",
     )?;
     let repair = repo.ripr(&["repair", "--root", "."])?;
     assert!(
