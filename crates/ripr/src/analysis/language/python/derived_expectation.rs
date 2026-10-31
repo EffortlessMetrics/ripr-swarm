@@ -660,11 +660,10 @@ impl<'a> TestScope<'a> {
                     hidden += usize::from(owner_args);
                     stack.push(owner_args);
                 }
-                Token::Close => {
-                    if stack.pop() == Some(true) {
-                        hidden -= 1;
-                    }
+                Token::Close if stack.pop() == Some(true) => {
+                    hidden -= 1;
                 }
+                Token::Close => {}
                 _ => {}
             }
         }
