@@ -378,10 +378,13 @@ pub(super) struct ForeignIndex<'a> {
     files: Vec<IndexedSource<'a>>,
     /// Each word's only source, or None when two sources mention it. A
     /// malformed file's own function/name is not an import.
-    references: std::collections::BTreeMap<&'a str, Option<&'a Path>>,
+    /// Hashed: the fold inserts every distinct word of every file and only
+    /// point lookups read it (#10914).
+    references: std::collections::HashMap<&'a str, Option<&'a Path>>,
     hidden_import: bool,
     /// For each reflective file, the module names in its import component.
-    reflective_reach: Vec<(&'a Path, std::collections::BTreeSet<String>)>,
+    /// Files of one import component share one reach.
+    reflective_reach: Vec<(&'a Path, Reach)>,
     /// The reference index passed its bound or a file went unread.
     unknown: bool,
     /// Per-write source counts over `files` and `reflective_reach`.
@@ -404,27 +407,93 @@ struct ForeignTotals {
 type WordCounts = std::sync::Arc<std::collections::BTreeMap<String, usize>>;
 
 impl ForeignTotals {
-    fn build(
-        files: &[IndexedSource<'_>],
-        reflective_reach: &[(&Path, std::collections::BTreeSet<String>)],
-    ) -> Self {
-        // Each source's distinct writes are counted in parallel and the
-        // additive counts merged, so the totals match a sequential pass.
-        let mut counts = files
-            .par_iter()
-            .map(SourceCounts::of)
-            .reduce(SourceCounts::default, SourceCounts::merge);
-        for (_, reach) in reflective_reach {
-            count_distinct(
-                &mut counts.reflective_reach,
-                reach.iter().map(String::as_str),
-            );
+    fn build(files: &[IndexedSource<'_>], reflective_reach: &[(&Path, Reach)]) -> Self {
+        Self {
+            attributes: count_sources(files, |source| {
+                source
+                    .assigned
+                    .iter()
+                    .flatten()
+                    .map(String::as_str)
+                    .collect()
+            }),
+            dynamic_words: count_sources(files, |source| {
+                source.dynamic_words.iter().flatten().copied().collect()
+            }),
+            table_unsafe: count_sources(files, |source| {
+                source.table_unsafe.iter().map(String::as_str).collect()
+            }),
+            reflective_words: count_sources(files, |source| {
+                source.reflective_words.iter().flatten().copied().collect()
+            }),
+            reflective_reach: count_shared_reaches(reflective_reach),
         }
-        counts.into_totals()
     }
 }
 
-/// [`ForeignTotals`] keyed by borrowed words while the counts are built.
+/// The module names one reflective file may reach, shared by every
+/// reflective file of its import component.
+type Reach = std::sync::Arc<std::collections::BTreeSet<String>>;
+
+/// How many reflective files reach each module name. Files sharing a
+/// component's reach count once per name through that shared reach, so a
+/// reach is read once however many files hold it (#10914).
+fn count_shared_reaches(reflective_reach: &[(&Path, Reach)]) -> WordCounts {
+    // Keyed by the shared allocation: one entry per component's reach.
+    let mut holders: std::collections::BTreeMap<
+        *const std::collections::BTreeSet<String>,
+        (&Reach, usize),
+    > = std::collections::BTreeMap::new();
+    for (_, reach) in reflective_reach {
+        holders
+            .entry(std::sync::Arc::as_ptr(reach))
+            .or_insert((reach, 0))
+            .1 += 1;
+    }
+    let mut weighted: Vec<(&str, usize)> = holders
+        .values()
+        .flat_map(|(reach, files)| reach.iter().map(move |name| (name.as_str(), *files)))
+        .collect();
+    weighted.par_sort_unstable();
+    let mut counts: Vec<(String, usize)> = Vec::new();
+    for (name, files) in weighted {
+        match counts.last_mut() {
+            Some((last, count)) if last == name => *count += files,
+            _ => counts.push((name.to_string(), files)),
+        }
+    }
+    std::sync::Arc::new(counts.into_iter().collect())
+}
+
+/// How many of `sources` hold each word, a source counting once per word.
+/// Each source's distinct words are gathered and sorted in parallel and the
+/// counts read off the sorted runs, which costs a sort instead of merging
+/// per-source maps (#10914).
+fn count_sources<'s, S: Sync>(
+    sources: &'s [S],
+    words: impl Fn(&'s S) -> Vec<&'s str> + Sync,
+) -> WordCounts {
+    let mut held: Vec<&str> = sources
+        .par_iter()
+        .flat_map_iter(|source| {
+            let mut distinct = words(source);
+            distinct.sort_unstable();
+            distinct.dedup();
+            distinct
+        })
+        .collect();
+    held.par_sort_unstable();
+    let mut counts: Vec<(String, usize)> = Vec::new();
+    for word in held {
+        match counts.last_mut() {
+            Some((last, count)) if last == word => *count += 1,
+            _ => counts.push((word.to_string(), 1)),
+        }
+    }
+    std::sync::Arc::new(counts.into_iter().collect())
+}
+
+/// One or more sources' distinct writes per set, keyed by borrowed words.
 #[derive(Default)]
 struct SourceCounts<'w> {
     attributes: std::collections::BTreeMap<&'w str, usize>,
@@ -473,24 +542,6 @@ impl<'w> SourceCounts<'w> {
         add(&mut self.reflective_words, other.reflective_words);
         add(&mut self.reflective_reach, other.reflective_reach);
         self
-    }
-
-    fn into_totals(self) -> ForeignTotals {
-        let owned = |counts: std::collections::BTreeMap<&str, usize>| {
-            std::sync::Arc::new(
-                counts
-                    .into_iter()
-                    .map(|(word, count)| (word.to_string(), count))
-                    .collect(),
-            )
-        };
-        ForeignTotals {
-            attributes: owned(self.attributes),
-            dynamic_words: owned(self.dynamic_words),
-            table_unsafe: owned(self.table_unsafe),
-            reflective_words: owned(self.reflective_words),
-            reflective_reach: owned(self.reflective_reach),
-        }
     }
 }
 
@@ -597,7 +648,7 @@ impl<'a> ForeignIndex<'a> {
         prior: &'a std::collections::BTreeMap<std::path::PathBuf, PriorFileFacts>,
     ) -> Self {
         let mut files = Vec::new();
-        let mut references = std::collections::BTreeMap::new();
+        let mut references = std::collections::HashMap::new();
         let mut hidden_import = false;
         // Parsing each source dominates the index on large workspaces, so each
         // batch is parsed in parallel and then folded sequentially in input
@@ -656,7 +707,7 @@ impl<'a> ForeignIndex<'a> {
                     if references.len() > MAX_WORKSPACE_WORDS {
                         return Self {
                             files: Vec::new(),
-                            references: std::collections::BTreeMap::new(),
+                            references: std::collections::HashMap::new(),
                             hidden_import,
                             unknown: true,
                             reflective_reach: Vec::new(),
@@ -1642,9 +1693,7 @@ fn import_words_lexed<'s>(source: &'s str, lexed: &LexedSource) -> Vec<&'s str> 
 /// component (a fixture hands a module to any test). A reflective file can
 /// only reach a module that is connected to it, even through a helper that
 /// receives the module as an argument.
-fn reflective_reaches<'a>(
-    files: &[IndexedSource<'a>],
-) -> Vec<(&'a Path, std::collections::BTreeSet<String>)> {
+fn reflective_reaches<'a>(files: &[IndexedSource<'a>]) -> Vec<(&'a Path, Reach)> {
     if files
         .iter()
         .all(|indexed| indexed.reflective_words.is_none())
@@ -1709,14 +1758,18 @@ fn reflective_reaches<'a>(
         .cloned()
         .collect();
     let mut reaches = Vec::new();
+    let mut by_root: std::collections::BTreeMap<usize, Reach> = std::collections::BTreeMap::new();
     for (index, indexed) in files.iter().enumerate() {
         if indexed.reflective_words.is_none() {
             continue;
         }
         let root = find(&mut parent, index);
-        let mut reach = members.get(&root).cloned().unwrap_or_default();
-        reach.extend(conftest.iter().cloned());
-        reaches.push((indexed.file, reach));
+        let reach = by_root.entry(root).or_insert_with(|| {
+            let mut reach = members.get(&root).cloned().unwrap_or_default();
+            reach.extend(conftest.iter().cloned());
+            std::sync::Arc::new(reach)
+        });
+        reaches.push((indexed.file, std::sync::Arc::clone(reach)));
     }
     reaches
 }
