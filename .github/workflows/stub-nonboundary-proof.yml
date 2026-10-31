@@ -24,7 +24,7 @@ jobs:
         with:
           ref: 6341e3e0408eb7be0083c71bd5df9f2bf1adffdb
           path: build
-          fetch-depth: 64
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -51,11 +51,13 @@ jobs:
           mkdir -p "$EVIDENCE"
           echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
           echo "SUBJECT_ROOT=$(realpath ../subject)" >> "$GITHUB_ENV"
+          printf 'controller=%s\nbasis=%s\nrun=%s\nattempt=%s\n' "$GITHUB_SHA" "$BASIS" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$EVIDENCE/identity.txt"
           test "$(git rev-parse HEAD)" = "$BASIS"
           test -z "$(git status --porcelain)"
           test "$(git hash-object crates/ripr/src/app/test_stub.rs)" = 8ababd473a4cc8596f8ee97c5b0a1797e53a0cb3
           git switch -c proof/8547-nonpredicate
           git fetch --no-tags origin main:refs/remotes/origin/main "$DESTINATION:refs/remotes/origin/$DESTINATION"
+          git rev-parse --is-shallow-repository HEAD "origin/$DESTINATION" >> "$EVIDENCE/identity.txt"
           test "$(git rev-parse "origin/$DESTINATION")" = "$EXPECTED_DESTINATION"
           git merge-base --is-ancestor "$EXPECTED_DESTINATION" HEAD
           gh api "repos/$GITHUB_REPOSITORY/git/blobs/$TEST_BLOB" > "$EVIDENCE/test-blob.json"
@@ -69,14 +71,13 @@ jobs:
           PY
           test "$(git hash-object "$EVIDENCE/test_stub_inventory_tests.rs")" = "$TEST_BLOB"
           {
-            printf 'controller=%s\nbasis=%s\nrun=%s\nattempt=%s\n' "$GITHUB_SHA" "$BASIS" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
             git rev-parse HEAD^{tree} origin/main
             rustc +1.95.0 -Vv
             uname -a
             nproc
             free -h
             df -h .
-          } > "$EVIDENCE/identity.txt"
+          } >> "$EVIDENCE/identity.txt"
           cat > "$RUNNER_TEMP/8547-run.sh" <<'SH'
           run() {
             local name="$1"; shift
