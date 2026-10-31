@@ -236,6 +236,7 @@ mod tests {
             identity_helpers_in_file: Default::default(),
             default_member_only_locals_in_file: Default::default(),
             written_locals_in_file: Default::default(),
+            member_replacements_in_file: Default::default(),
             mock_factories_in_file: Default::default(),
             mock_spread_sources_in_file: Default::default(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,

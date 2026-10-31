@@ -1360,7 +1360,9 @@ pub(crate) fn expect_assertion_from_expression(
         && outer_call
             .arguments
             .first()
-            .is_some_and(|argument| !is_literal_array_argument(argument))
+            .is_some_and(|argument| {
+            !is_literal_container_argument(argument) || is_literal_argument(argument)
+        })
         && bindings.runner_expects.iter().any(|name| name == "expect")
     {
         oracle_kind = OracleKind::ExactErrorVariant;
@@ -3224,6 +3226,61 @@ fn literal_array_elements(array: &oxc_ast::ast::ArrayExpression<'_>) -> bool {
     })
 }
 
+/// An array or object literal built only from scalar literals, signed numeric
+/// literals and nested all-literal arrays and objects (#11255), such as
+/// `{ _: [], name: "John" }`, `{ a: { b: "c" } }` or `["~/a.jpg", "~b.jpg"]`.
+/// Identifiers, calls, spreads, holes, computed or shorthand keys, getters,
+/// methods, template literals, parenthesized or `as` expressions and a
+/// `__proto__` key keep the value dynamic.
+pub(crate) fn is_literal_container_argument(arg: &Argument<'_>) -> bool {
+    match arg {
+        Argument::ArrayExpression(array) => literal_container_array(array),
+        Argument::ObjectExpression(object) => literal_container_object(object),
+        _ => false,
+    }
+}
+
+fn literal_container_array(array: &oxc_ast::ast::ArrayExpression<'_>) -> bool {
+    array
+        .elements
+        .iter()
+        .all(|element| element.as_expression().is_some_and(literal_container_value))
+}
+
+fn literal_container_object(object: &oxc_ast::ast::ObjectExpression<'_>) -> bool {
+    object.properties.iter().all(|property| match property {
+        ObjectPropertyKind::ObjectProperty(property) => {
+            !property.computed
+                && !property.shorthand
+                && !property.method
+                && matches!(property.kind, oxc_ast::ast::PropertyKind::Init)
+                && safe_mock_expected_object_key(&property.key)
+                && !matches!(&property.key, PropertyKey::StaticIdentifier(id) if id.name == "__proto__")
+                && !matches!(&property.key, PropertyKey::StringLiteral(text) if text.value == "__proto__")
+                && literal_container_value(&property.value)
+        }
+        ObjectPropertyKind::SpreadProperty(_) => false,
+    })
+}
+
+fn literal_container_value(value: &Expression<'_>) -> bool {
+    match value {
+        Expression::StringLiteral(_)
+        | Expression::NumericLiteral(_)
+        | Expression::BooleanLiteral(_)
+        | Expression::NullLiteral(_) => true,
+        Expression::UnaryExpression(unary) => {
+            matches!(
+                unary.operator,
+                oxc_ast::ast::UnaryOperator::UnaryNegation | oxc_ast::ast::UnaryOperator::UnaryPlus
+            ) && matches!(unary.argument, Expression::NumericLiteral(_))
+        }
+        Expression::ArrayExpression(array) => literal_container_array(array),
+        Expression::ObjectExpression(object) => literal_container_object(object),
+        _ => false,
+    }
+}
+
 /// Extract the expected value or variant from the first matcher argument.
 ///
 /// Returns `(Some(text), false)` when the argument is a concrete literal.
@@ -3272,7 +3329,8 @@ pub(crate) fn extract_matcher_expected_value(
     };
 
     if is_literal_argument(first_arg)
-        || (matches!(matcher, "toEqual" | "toStrictEqual") && is_literal_array_argument(first_arg))
+        || (matches!(matcher, "toEqual" | "toStrictEqual" | "toMatchObject")
+            && is_literal_container_argument(first_arg))
     {
         let text = source_text_for_argument(first_arg, source);
         (text, false)

@@ -1,0 +1,6 @@
+[[extend]]
+id = "RIPR-SPEC-0311"
+tests = [
+  "crates/ripr/src/cli/commands/agent.rs::tracking_removes_readonly_backup_after_unchanged_phase",
+]
+code = ["crates/ripr/src/cli/commands/agent.rs"]

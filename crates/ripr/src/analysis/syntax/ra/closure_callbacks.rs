@@ -362,28 +362,9 @@ pub(crate) fn invoked_callback_params(helper_text: &str) -> Option<Vec<InvokedCa
     let line_index = LineIndex::new(helper_text);
     let mut invoked = Vec::new();
     for (position, parameter) in parameters.params().enumerate() {
-        let Some(ast::Pat::IdentPat(pattern)) = parameter.pat() else {
+        let Some(name) = plain_callback_param(&function, &parameter) else {
             continue;
         };
-        if pattern.at_token().is_some() || pattern.ref_token().is_some() {
-            continue;
-        }
-        let Some(name) = pattern.name().map(|name| name.text().to_string()) else {
-            continue;
-        };
-        let bindings = function
-            .syntax()
-            .descendants()
-            .filter(|node| node != function.syntax())
-            .filter_map(|node| ast::AnyHasName::cast(node).and_then(|named| named.name()))
-            .filter(|bound| bound.text() == name)
-            .count();
-        if bindings != 1 {
-            continue;
-        }
-        if identity_may_change(&function, &name, pattern.mut_token().is_some()) {
-            continue;
-        }
         if let Some(end) = eager_invocation_end(&body, &name) {
             let end_line = line_index.line_for_range_end(end);
             let line_start = line_index.starts.get(end_line - 1).copied().unwrap_or(0);
@@ -396,6 +377,189 @@ pub(crate) fn invoked_callback_params(helper_text: &str) -> Option<Vec<InvokedCa
         }
     }
     Some(invoked)
+}
+
+/// The name of a parameter that is a plain, immutable identifier binding
+/// nothing else in the function rebinds, so a call spelled with that name can
+/// only be a call of the argument the caller passed at that position.
+fn plain_callback_param(function: &ast::Fn, parameter: &ast::Param) -> Option<String> {
+    let Some(ast::Pat::IdentPat(pattern)) = parameter.pat() else {
+        return None;
+    };
+    if pattern.at_token().is_some() || pattern.ref_token().is_some() {
+        return None;
+    }
+    let name = pattern.name().map(|name| name.text().to_string())?;
+    let bindings = function
+        .syntax()
+        .descendants()
+        .filter(|node| node != function.syntax())
+        .filter_map(|node| ast::AnyHasName::cast(node).and_then(|named| named.name()))
+        .filter(|bound| bound.text() == name)
+        .count();
+    if bindings != 1 || identity_may_change(function, &name, pattern.mut_token().is_some()) {
+        return None;
+    }
+    Some(name)
+}
+
+/// Positions of the parameters of the free function in `helper_text` that its
+/// body invokes as `param(..)` on a path every call of the function runs
+/// (#11199). Unlike [`invoked_callback_params`] the call may be nested in an
+/// argument, an operand or a standard assertion macro
+/// (`assert_eq!(f(x), want)`), because the question is only whether the
+/// argument is run, not what an assertion observes afterwards. A call under
+/// `if`/`match`/a loop, the right side of `&&`/`||`, a closure, an `async`
+/// block or a nested `fn`, in an `async fn`, or after a statement that may
+/// leave the function or hold an opaque macro, is not admitted. A parameter
+/// counts only as a plain identifier binding nothing else rebinds. A method
+/// (`self`) or an unparsable text yields `None`.
+pub(crate) fn unconditionally_invoked_param_positions(
+    helper_text: &str,
+) -> Option<BTreeSet<usize>> {
+    let parse = parse_clean_source_file(helper_text)?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    // Calling an `async fn` builds a future; the body does not run.
+    if function.async_token().is_some() {
+        return None;
+    }
+    let parameters = function.param_list()?;
+    if parameters.self_param().is_some() {
+        return None;
+    }
+    let body = function.body()?;
+    let eager = eager_statement_exprs(&body);
+    let mut positions = BTreeSet::new();
+    for (position, parameter) in parameters.params().enumerate() {
+        let Some(name) = plain_callback_param(&function, &parameter) else {
+            continue;
+        };
+        if eager
+            .iter()
+            .any(|(expression, _)| invokes_param_unconditionally(expression.syntax(), &name))
+        {
+            positions.insert(position);
+        }
+    }
+    Some(positions)
+}
+
+/// Whether `root` (one eagerly reached statement expression) calls `name` on
+/// a path that always evaluates the call: directly, or as an operand of a
+/// standard assertion macro.
+fn invokes_param_unconditionally(root: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
+    root.descendants().any(|node| {
+        if let Some(call) = ast::CallExpr::cast(node.clone()) {
+            single_segment_callee(&call).as_deref() == Some(name)
+                && evaluates_unconditionally_within(&node, root)
+        } else if let Some(call) = ast::MacroCall::cast(node.clone()) {
+            assertion_operands_invoke(&call, name) && evaluates_unconditionally_within(&node, root)
+        } else {
+            false
+        }
+    })
+}
+
+/// Whether every node from `node` up to `root` evaluates its operand
+/// unconditionally and in the enclosing function's own frame: calls, call
+/// arguments, borrows, parentheses, field and index reads, tuples, casts,
+/// unary operators and binary operators other than the right side of `&&` or
+/// `||`. Anything else (a branch, loop, closure, block, `async`, nested item
+/// or macro) may skip or defer the call.
+fn evaluates_unconditionally_within(
+    node: &ra_ap_syntax::SyntaxNode,
+    root: &ra_ap_syntax::SyntaxNode,
+) -> bool {
+    use ra_ap_syntax::SyntaxKind as Kind;
+    let mut child = node.clone();
+    while child != *root {
+        let Some(parent) = child.parent() else {
+            return false;
+        };
+        let admitted = match parent.kind() {
+            Kind::CALL_EXPR
+            | Kind::ARG_LIST
+            | Kind::METHOD_CALL_EXPR
+            | Kind::REF_EXPR
+            | Kind::PAREN_EXPR
+            | Kind::FIELD_EXPR
+            | Kind::INDEX_EXPR
+            | Kind::TUPLE_EXPR
+            | Kind::CAST_EXPR
+            | Kind::PREFIX_EXPR
+            | Kind::MACRO_EXPR => true,
+            Kind::BIN_EXPR => ast::BinExpr::cast(parent.clone()).is_some_and(|binary| {
+                let lazy = matches!(
+                    binary.op_kind(),
+                    Some(ast::BinaryOp::LogicOp(ast::LogicOp::And | ast::LogicOp::Or))
+                );
+                !lazy || binary.lhs().is_some_and(|lhs| *lhs.syntax() == child)
+            }),
+            _ => false,
+        };
+        if !admitted {
+            return false;
+        }
+        child = parent;
+    }
+    true
+}
+
+/// Whether a standard assertion macro evaluates a call of `name` among the
+/// operands it always runs (`assert!(a)`, `assert_eq!(a, b)`; the message
+/// arguments are not read). The operands are parsed as the arguments of a
+/// synthetic call so strings, nesting and commas follow the real grammar; a
+/// tree that does not parse cleanly, or a macro this reader does not know,
+/// answers `false`.
+fn assertion_operands_invoke(call: &ast::MacroCall, name: &str) -> bool {
+    let Some(path) = call.path() else {
+        return false;
+    };
+    let operands = match path.syntax().text().to_string().trim() {
+        "assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne" => 2,
+        "assert" | "debug_assert" => 1,
+        _ => return false,
+    };
+    let Some(tree) = call.token_tree() else {
+        return false;
+    };
+    let text = tree.syntax().text().to_string();
+    let Some(inner) = text.get(1..text.len().saturating_sub(1)) else {
+        return false;
+    };
+    let Some(parse) = parse_clean_source_file(&format!(
+        "fn ripr_operands() {{ ripr_operands_call({inner}); }}"
+    )) else {
+        return false;
+    };
+    let Some(outer) = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::CallExpr::cast)
+    else {
+        return false;
+    };
+    // The synthetic call must be the wrapper's own, so an operand list that
+    // closed the wrapper early cannot smuggle a different call in.
+    if single_segment_callee(&outer).as_deref() != Some("ripr_operands_call") {
+        return false;
+    }
+    let Some(arguments) = outer.arg_list() else {
+        return false;
+    };
+    arguments.args().take(operands).any(|operand| {
+        operand.syntax().descendants().any(|node| {
+            ast::CallExpr::cast(node.clone()).is_some_and(|inner| {
+                single_segment_callee(&inner).as_deref() == Some(name)
+                    && evaluates_unconditionally_within(&node, operand.syntax())
+            })
+        })
+    })
 }
 
 fn single_segment_callee(call: &ast::CallExpr) -> Option<String> {

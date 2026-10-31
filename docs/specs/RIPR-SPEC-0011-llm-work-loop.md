@@ -559,9 +559,9 @@ requires the original whole-delta digest and verdict. Unowned or modified
 bytes, missing predecessor evidence, tracked/authored/forbidden paths and
 neighbor or sibling drift receive no exception. The predecessor can remain
 historical; this does not recurse through or grant it currentness. Legacy
-attempts without this optional witness retain their existing behavior. This
-does not authorize reconstructing missing gap projections or ignoring present
-projection drift.
+attempts without this optional witness retain their existing behavior. Neither
+this witness nor identity binding alone authorizes reconstructing missing gap
+projections or ignoring present projection drift.
 The same HEAD and the same changed path and kind do not establish
 the same bytes: changing an already-bound boundary assertion after finish must
 make both status currentness and receipt issuance refuse or remain unknown;
@@ -574,9 +574,24 @@ shared attempt owner and the gap-bound CLI respectively.
 The attempt's own mutable operational scaffolding cannot be bound as if it
 were authored input: a finished receipt must remain comparable after its
 producer cleans up transient rollback or compatibility scaffolding, without
-exempting arbitrary files or treating names as proof of ownership. The
-repeat-attempt custody and cleanup defect is tracked in #10988; this identity
-refinement does not claim it is repaired.
+exempting arbitrary files or treating names as proof of ownership. For a
+gap-bound attempt, the separate missing-projection mechanism (#10988) requires
+validated retained receipt, verify, and `after_check_findings` evidence and
+`RetainedGapAfterUse::CurrentEvidence` validation. Historical receipt
+readability alone does not grant missing-projection custody. Only absent
+members of the fixed, protected `GAP_WORKFLOW_PROJECTIONS` set are candidates;
+present projection drift, selected/authored/forbidden paths, baseline-index
+entries and unsafe root-relative paths receive no exemption.
+
+The bounded reconstruction must produce exactly one candidate matching the
+original whole-delta digest and verdict. It composes with the exact issued
+receipt replacement above and validates declared retained gap evidence on
+every accepting route. Root/path binding, attempt-store custody and unrelated
+neighbor/sibling drift protections still apply. Legacy retention without the
+after snapshot cannot authorize missing-projection reconstruction. The
+check-findings validators refuse `input:v4:` identities; repo-exposure's
+separate `input:v4:` identity algorithm remains supported. These are static
+custody/currentness requirements, not a runtime-qualification claim.
 
 Repair inventories and Git currentness probes ignore the user's
 `diff.orderFile`: a dangling orderfile must not abort the before phase or the
