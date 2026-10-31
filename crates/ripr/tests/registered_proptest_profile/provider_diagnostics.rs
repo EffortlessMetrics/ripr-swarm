@@ -85,8 +85,14 @@ fn offline_metadata_diagnosis_is_scoped_and_recovers_without_purging_diff_cache(
         .ok_or_else(|| format!("missing complete Next step section: {human}"))?;
     let expected_next = next.strip_suffix('.').unwrap_or(&next);
     assert_eq!(
-        rendered_next.split_whitespace().collect::<Vec<_>>().join(" "),
-        expected_next.split_whitespace().collect::<Vec<_>>().join(" "),
+        rendered_next
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" "),
+        expected_next
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" "),
         "JSON action differs from the complete human Next step field: {human}"
     );
     fixture.1.human = false;
