@@ -5139,7 +5139,6 @@ pub(in crate::analysis) fn requires_inherent_receiver_identity(owner: &FunctionS
 /// never a raw captured-line comment or a binding in an expired inner block.
 /// Aliases, receiver value flow and unsupported binding scopes stay unresolved.
 /// This does not establish general type or Cargo-target identity.
-#[cfg(test)]
 pub(in crate::analysis) fn inherent_receiver_call_resolves(
     test: &TestSummary,
     method: &str,
