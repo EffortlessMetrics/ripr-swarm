@@ -1,6 +1,7 @@
 mod attempt_inventory;
 mod framing;
 pub(crate) mod gaps;
+mod panic_containment;
 mod protocol;
 mod repair;
 mod repair_admission;
