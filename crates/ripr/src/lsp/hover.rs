@@ -691,6 +691,10 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
     let mut lines = vec![hover_header(&classification), String::new()];
     push_preview_boundary(&mut lines, finding);
     push_preview_actionability(&mut lines, finding);
+    if let Some(disclosure) = finding.source_currentness_disclosure() {
+        lines.push(format!("**Source:** {disclosure}"));
+        lines.push(String::new());
+    }
     lines.extend([
         diagnostic.message.clone(),
         String::new(),
