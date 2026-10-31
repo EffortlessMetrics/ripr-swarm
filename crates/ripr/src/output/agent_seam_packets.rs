@@ -277,6 +277,10 @@ pub(crate) fn render_refusal_json(notice: &crate::core_error::RefusalNotice) -> 
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Each argument is an independent render input shared by every packet entry point; the pilot bound is the eighth and bundling them would force every caller through a new options struct."
+)]
 fn render_agent_seam_packets_json_with_root(
     classified: &[ClassifiedSeam],
     limit_info: Option<RepoExposureLimit<'_>>,
@@ -7175,11 +7179,11 @@ mod tests {
                 let mut entry = weakly_gripped_classified();
                 let seam = RepoSeam::new(
                     "src/limits.rs",
-                    &format!("limits::opaque_{index}"),
+                    format!("limits::opaque_{index}"),
                     SeamKind::PredicateBoundary,
                     100 + index,
                     100 + index,
-                    &format!("opaque_{index} >= threshold"),
+                    format!("opaque_{index} >= threshold"),
                     RequiredDiscriminator::BoundaryValue {
                         description: format!("opaque_{index} >= threshold"),
                     },
