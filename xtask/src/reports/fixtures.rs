@@ -1820,148 +1820,17 @@ fn is_path_bearing_json_key(key: &str) -> bool {
             .any(|needle| key.contains(needle))
 }
 
+/// Human fixture text is never separator-folded: the Windows-facing human
+/// producers already print paths with `/` (`human_path`, `display_path`,
+/// `root_path_display`), and everything else in it is quoted SOURCE text
+/// (`read \"error\"`, `\u{7b}`, `root: \u{7b}`) that must stay byte-identical
+/// on every host so the checked-in goldens hold the real source (#11178).
 pub(crate) fn normalize_fixture_human_output(value: &str) -> String {
-    normalize_fixture_human_output_for_host(value, cfg!(windows))
-}
-
-/// Human text has no key structure, so the Windows separator fold is scoped to
-/// the lines and tokens that carry filesystem paths (see
-/// [`fold_human_path_separators`]). Every other line quotes asserted source
-/// text (`read \"error\"`, `\u{7b}`) and stays byte-identical, so the
-/// checked-in goldens hold the real source on every host (#11178).
-fn normalize_fixture_human_output_for_host(value: &str, windows: bool) -> String {
-    let folded = if windows {
-        value
-            .split('\n')
-            .map(fold_human_path_separators)
-            .collect::<Vec<_>>()
-            .join("\n")
-    } else {
-        value.to_string()
-    };
-    let normalized = project_renderer_cwd(&folded);
+    let normalized = project_renderer_cwd(value);
     let trimmed = normalized.trim_end_matches(['\r', '\n']);
     let mut output = trimmed.to_string();
     output.push('\n');
     output
-}
-
-/// Fold `\` to `/` only where the human renderer prints a path: whole
-/// `root:`/`owner:` lines and `ripr ...` drill-in command lines, plus
-/// path-shaped tokens elsewhere. Everything else (assertion text,
-/// before/after code, evidence prose) is source text.
-fn fold_human_path_separators(line: &str) -> String {
-    let trimmed = line.trim_start();
-    if trimmed.starts_with("root:") || trimmed.starts_with("owner:") || trimmed.starts_with("ripr ")
-    {
-        return normalize_separators(line);
-    }
-    // Split into alternating whitespace / non-whitespace pieces so the line
-    // can be rebuilt byte-for-byte around the one folded token.
-    let mut pieces: Vec<String> = Vec::new();
-    for c in line.chars() {
-        let ws = c.is_whitespace();
-        match pieces.last_mut() {
-            Some(last) if last.chars().next().is_some_and(|f| f.is_whitespace() == ws) => {
-                last.push(c);
-            }
-            _ => pieces.push(c.to_string()),
-        }
-    }
-    let words: Vec<usize> = (0..pieces.len())
-        .filter(|&i| !pieces[i].starts_with(char::is_whitespace))
-        .collect();
-    let word = |n: usize| words.get(n).map(|&i| pieces[i].as_str());
-    let upper = |w: Option<&str>| {
-        w.is_some_and(|w| !w.is_empty() && w.chars().all(|c| c.is_ascii_uppercase()))
-    };
-    // The one word position that holds a path, decided by the line's own
-    // leading label so assertion text, before/after code and evidence prose
-    // (which can hold path-shaped words of their own) are never folded.
-    let at = if upper(word(0)) {
-        Some(1) // `WARNING .\src\x.rs:5`
-    } else {
-        match (word(0), word(1), word(2)) {
-            (Some("Fix:"), _, _) | (Some("-"), _, _) => Some(1),
-            (Some("Related"), Some("test:"), _) => Some(2),
-            (Some("related"), Some("test"), _) => Some(2), // evidence row
-            (Some("First"), Some("finding:"), w2) => Some(if upper(w2) { 3 } else { 2 }),
-            _ => None,
-        }
-    };
-    let at = match (at, word(0), word(1), word(2)) {
-        (Some(1), Some("-"), Some("related"), Some("test")) => Some(3),
-        (at, ..) => at,
-    };
-    let gap = matches!(word(0), Some("Gap")) || (word(0) == Some("gap") && word(1) == Some("id"));
-    let mut out = String::with_capacity(line.len());
-    for (i, piece) in pieces.iter().enumerate() {
-        let n = words.iter().position(|&w| w == i);
-        let fold = match n {
-            Some(n) if gap => piece.starts_with("gap:") && n > 0,
-            Some(n) => Some(n) == at,
-            None => false,
-        };
-        if fold {
-            out.push_str(&fold_human_token(piece));
-        } else {
-            out.push_str(piece);
-        }
-    }
-    out
-}
-
-/// Fold one whitespace-delimited token when it is shaped like a path
-/// (`WARNING .\src\x.rs:5`, `Fix:`/`Related test:` targets, `- path:line`
-/// list lines, several per line) or is a `gap:<lang>:<path>:...` id.
-fn fold_human_token(token: &str) -> String {
-    if !token.contains('\\') {
-        return token.to_string();
-    }
-    if let Some(rest) = token.strip_prefix("gap:") {
-        let mut parts = rest.splitn(3, ':');
-        if let (Some(lang), Some(path), Some(tail)) = (parts.next(), parts.next(), parts.next())
-            && is_human_path_segment(path)
-        {
-            return format!("gap:{lang}:{}:{tail}", path.replace('\\', "/"));
-        }
-        return token.to_string();
-    }
-    let core = token.trim_matches(|c: char| matches!(c, '(' | ')' | ',' | ';' | '\'' | '`'));
-    let mut parts = core.split(':');
-    let path = parts.next().unwrap_or_default();
-    let numeric_rest = parts.all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
-    if numeric_rest && is_human_path_segment(path) {
-        token.replacen(core, &core.replace('\\', "/"), 1)
-    } else {
-        token.to_string()
-    }
-}
-
-/// `dir\file.ext`, optionally `.\`-anchored; components are plain filename
-/// characters, so quotes, braces and escapes (`\"`, `\u{7b}`, `\n`) never match.
-fn is_human_path_segment(path: &str) -> bool {
-    let body = path.strip_prefix(".\\").unwrap_or(path);
-    let comps: Vec<&str> = body.split(['\\', '/']).collect();
-    path.contains('\\')
-        && comps.len() >= 2
-        && comps.iter().all(|c| {
-            !c.is_empty()
-                && c.chars()
-                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '-'))
-        })
-        && comps.last().is_some_and(|f| f.contains('.'))
-}
-
-/// Turn Windows separators into `/` while keeping the shell's `'\''`
-/// escape intact, so a checkout path containing an apostrophe still reaches
-/// `project_cwd_prefix` as one quoted token (#6762).
-fn normalize_separators(value: &str) -> String {
-    value
-        .split(r"'\''")
-        .map(|part| part.replace('\\', "/"))
-        .collect::<Vec<_>>()
-        .join(r"'\''")
 }
 
 /// The `check` drill-in commands bind `--root` to the resolved repository
@@ -3425,64 +3294,30 @@ mod tests {
             ),
             "--root <cwd>/fixtures/x/input --diff d"
         );
-        // The full human-output path keeps that escape through separator
-        // normalization; replacing every backslash first left it unprojected.
-        assert_eq!(
-            project_cwd_prefix(
-                &normalize_separators(r"--root '/tmp/dev'\''s repo/fixtures\x\input' --diff d"),
-                "/tmp/dev's repo/"
-            ),
-            "--root <cwd>/fixtures/x/input --diff d"
-        );
     }
 
     #[test]
-    fn human_normalizer_keeps_source_text_backslashes_and_folds_paths_on_windows() {
-        let human = "root: fixtures\\x\\input\nWARNING .\\src\\lib.rs:5\n  - related test src\\lib.rs:14 t uses oracle: assert_eq!(a, 1, \"read \\\"error\\\" \\u{7b}\");\n  ripr explain --root <cwd>\\fixtures --diff d";
-        let win = normalize_fixture_human_output_for_host(human, true);
-        assert!(win.contains("root: fixtures/x/input\n"));
-        assert!(win.contains("WARNING ./src/lib.rs:5\n"));
-        assert!(win.contains("related test src/lib.rs:14 t uses oracle: assert_eq!(a, 1, \"read \\\"error\\\" \\u{7b}\");"));
-        assert!(win.contains("--root <cwd>/fixtures --diff d"));
-        let host = normalize_fixture_human_output_for_host(human, false);
-        assert!(host.contains("\\u{7b}") && host.contains("fixtures\\x"));
+    fn human_normalizer_never_rewrites_source_text_backslashes() {
+        let human = [
+            "root: \\u{7b}",
+            "  root: \\u{7b}",
+            "owner: \\u{7d}",
+            "owner: \\n",
+            "WARNING .\\src\\lib.rs:5",
+            "  - src\\foo.rs:3 (weak)",
+            "  before: write!(f, \"\\u{7b}\\u{7d}\", self.0)",
+            "  - source assertion argument value \"read \\\"error\\\"\" at line 18",
+            "  before: write!(f, r#\"prefix src\\foo.rs suffix\"#)",
+            "ripr does not infer `\\u{7b}` here",
+        ]
+        .join("\n");
+        assert_eq!(normalize_fixture_human_output(&human), format!("{human}\n"));
     }
 
     #[test]
-    fn human_normalizer_folds_every_path_shaped_token_but_no_source_text() {
-        let lines = [
-            ("Fix: .\\src\\x.rs:7", "Fix: ./src/x.rs:7"),
-            ("Related test: src\\x.rs:9", "Related test: src/x.rs:9"),
-            (
-                "First finding: WARNING .\\src\\x.rs:5",
-                "First finding: WARNING ./src/x.rs:5",
-            ),
-            ("- .\\src\\x.rs:5 (weak)", "- ./src/x.rs:5 (weak)"),
-            (
-                "  - related test src\\a.rs:1 t uses oracle: assert_eq!(p, \"src\\b.rs:2 x\")",
-                "  - related test src/a.rs:1 t uses oracle: assert_eq!(p, \"src\\b.rs:2 x\")",
-            ),
-            (
-                "  Gap ID: gap:rust:src\\lib.rs:f:error_variant:x",
-                "  Gap ID: gap:rust:src/lib.rs:f:error_variant:x",
-            ),
-        ];
-        for (input, want) in lines {
-            assert_eq!(fold_human_path_separators(input), want, "{input}");
-        }
-        for source in [
-            r#"  Changed behavior: write!(f, "\u{7b}:?\u{7d}", 1)"#,
-            r#"  - source assertion argument value "read \"error\"" at line 18"#,
-            r#"  before: let s = "a\nb.rs:3";"#,
-            // Source text holding a whitespace-delimited path-shaped word.
-            r##"  before: write!(f, r#"prefix src\foo.rs suffix {}"#, self.0)"##,
-            r##"  after:  write!(f, r#"prefix src\foo.rs:3 suffix {}"#, self.0)"##,
-            r##"  Changed behavior: write!(f, r#"prefix src\foo.rs:3 suffix"#)"##,
-            r#"  - source assertion argument value "src\foo.rs:3" at line 18"#,
-            r#"  - propagation yes: reaches returned value: format!("src\foo.rs:3")"#,
-        ] {
-            assert_eq!(fold_human_path_separators(source), source);
-        }
+    fn human_normalizer_projects_cwd_and_ends_with_one_newline() {
+        let out = normalize_fixture_human_output("root: \\u{7b}\r\n\n");
+        assert_eq!(out, "root: \\u{7b}\n");
     }
 
     /// Unique per process and per call. Fixed names under the shared temp
