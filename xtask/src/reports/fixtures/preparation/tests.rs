@@ -457,3 +457,20 @@ fn installed_pin_missing_locked_dependency_refuses_then_seeded_cache_succeeds() 
     assert_eq!(server.requests.load(Ordering::SeqCst), 0);
     Ok(())
 }
+
+#[test]
+fn target_dir_overlay_is_the_only_target_the_child_can_write() {
+    let environment = vec![
+        ("CARGO_HOME", "/cargo-home".to_string()),
+        ("CARGO_TARGET_DIR", "/shared/target".to_string()),
+    ];
+    let envs = with_target_dir_overlay(&environment, "/shared/target/fixture-variants");
+    assert_eq!(
+        envs,
+        [
+            ("CARGO_HOME", "/cargo-home"),
+            ("CARGO_TARGET_DIR", "/shared/target/fixture-variants"),
+        ],
+        "an inherited target entry must be replaced, not duplicated"
+    );
+}

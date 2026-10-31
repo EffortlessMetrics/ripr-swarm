@@ -22750,11 +22750,62 @@ fn context_reuse_matches_fresh(fresh: &[u8], reused: &[u8]) -> Result<(), String
 /// artifact's write and read execs. Identity constants are baked into the
 /// bytes, so the copy verifies exactly like the original — the comparison
 /// is not weakened.
+///
+/// Publication never leaves a descriptor open for writing on the path that is
+/// about to be executed. `execve` fails with `ETXTBSY` while any process holds
+/// the file open for writing, and a peer test forking inside a multi-megabyte
+/// `fs::copy` inherits that descriptor until its own `exec` (the intermittent
+/// `Text file busy` failures of the `check-artifact-*` tests). Cargo and the
+/// linker replace `target/debug/ripr` by unlinking and relinking it, so a hard
+/// link keeps the original inode's bytes. A staged copy-then-rename covers
+/// hosts without hard links (cross-device, or a filesystem that has none): its
+/// descriptor is closed and synced before the executable path exists.
 fn stable_ripr_copy(workspace: &Path) -> Result<PathBuf, String> {
+    let source = Path::new(env!("CARGO_BIN_EXE_ripr"));
     let copy = workspace.join(format!("ripr{}", std::env::consts::EXE_SUFFIX));
-    std::fs::copy(env!("CARGO_BIN_EXE_ripr"), &copy)
-        .map_err(|err| format!("copy suite binary to {}: {err}", copy.display()))?;
+    let link_error = match std::fs::hard_link(source, &copy) {
+        Ok(()) => return Ok(copy),
+        Err(error) => error,
+    };
+    let staged = workspace.join(format!("ripr{}.staged", std::env::consts::EXE_SUFFIX));
+    std::fs::copy(source, &staged).map_err(|err| {
+        format!(
+            "copy suite binary to {} failed after link error ({link_error}): {err}",
+            staged.display()
+        )
+    })?;
+    std::fs::File::open(&staged)
+        .and_then(|file| file.sync_all())
+        .map_err(|err| format!("sync staged suite binary {}: {err}", staged.display()))?;
+    std::fs::rename(&staged, &copy)
+        .map_err(|err| format!("publish suite binary at {}: {err}", copy.display()))?;
     Ok(copy)
+}
+
+/// The stable copy must be published without writing a second copy of the
+/// bytes: a hard link shares the already-built inode, so no descriptor was
+/// ever open for writing on the path that is about to be executed (the
+/// `Text file busy` flake of the `check-artifact-*` tests).
+#[cfg(unix)]
+#[test]
+fn stable_ripr_copy_links_the_suite_binary_instead_of_writing_a_copy() -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+    // Beside the suite binary, so source and link share a filesystem and the
+    // cross-device fallback cannot legitimately fire.
+    let dir = Path::new(env!("CARGO_BIN_EXE_ripr"))
+        .with_file_name(format!("stable-copy-link-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
+    let copy = stable_ripr_copy(&dir)?;
+    let source = std::fs::metadata(env!("CARGO_BIN_EXE_ripr"))
+        .map_err(|err| format!("stat suite binary: {err}"))?;
+    let published = std::fs::metadata(&copy).map_err(|err| format!("stat copy: {err}"))?;
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        (source.dev(), source.ino()),
+        (published.dev(), published.ino()),
+        "the published copy must be the suite binary's own inode"
+    );
+    Ok(())
 }
 
 fn run_ripr_copy(binary: &Path, args: &[&str]) -> Result<Output, String> {

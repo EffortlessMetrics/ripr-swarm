@@ -1189,7 +1189,7 @@ static RIPR_PERL_BINARY_BUILD: OnceLock<Result<(), String>> = OnceLock::new();
 /// [`ripr_debug_binary`], so routed CI jobs build and cache it in the same
 /// restored target and `cargo clean` clears it with the rest of the
 /// artifacts.
-fn fixture_variant_target_dir() -> Result<PathBuf, String> {
+pub(crate) fn fixture_variant_target_dir() -> Result<PathBuf, String> {
     let mut root = std::env::var_os("CARGO_TARGET_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("target"));
@@ -1211,23 +1211,48 @@ fn fixture_variant_target_dir() -> Result<PathBuf, String> {
 /// to wait there. Once the variant target is warm, only the `ripr` crate
 /// recompiles.
 pub(crate) fn ripr_perl_fixture_binary() -> Result<String, String> {
-    let shared = ripr_debug_binary();
-    let perl = shared.with_file_name(format!("ripr-lang-perl{}", std::env::consts::EXE_SUFFIX));
-    let variant_target = fixture_variant_target_dir()?;
-    let variant = ripr_debug_binary_in(Some(variant_target.clone()));
-    ripr_fixture_binary_built_by(perl.clone(), &RIPR_PERL_BINARY_BUILD, &|| {
-        preparation::build_in_target_dir(
-            &["build", "-p", "ripr", "--features", "lang-perl"],
-            &variant_target,
-        )?;
-        fs::copy(&variant, &perl).map(|_| ()).map_err(|err| {
-            format!(
-                "copy {} to {} failed: {err}",
-                variant.display(),
-                perl.display()
-            )
-        })
+    let plan = perl_variant_build_plan(ripr_debug_binary(), fixture_variant_target_dir()?);
+    ripr_fixture_binary_built_by(plan.published.clone(), &RIPR_PERL_BINARY_BUILD, &|| {
+        preparation::build_in_target_dir(plan.cargo_args, &plan.target_dir)?;
+        fs::copy(&plan.built, &plan.published)
+            .map(|_| ())
+            .map_err(|err| {
+                format!(
+                    "copy {} to {} failed: {err}",
+                    plan.built.display(),
+                    plan.published.display()
+                )
+            })
     })
+}
+
+/// Where the Perl variant is built and published. Kept separate from the
+/// spawn so the isolation contract is checkable without running a build: the
+/// suite-level guard (`fixture_variants`) used to stamp the shared binary
+/// around a real variant build, which any unrelated in-suite Cargo run could
+/// invalidate (a recurring Test Analytics failure on main) and which held a
+/// test for minutes on the build lock.
+pub(crate) struct PerlVariantBuildPlan {
+    /// Plain `cargo build -p ripr --features lang-perl` argv.
+    pub(crate) cargo_args: &'static [&'static str],
+    /// `CARGO_TARGET_DIR` overlay the build runs under.
+    pub(crate) target_dir: PathBuf,
+    /// Where Cargo writes the variant binary inside `target_dir`.
+    pub(crate) built: PathBuf,
+    /// Spawnable copy published beside the shared binary.
+    pub(crate) published: PathBuf,
+}
+
+pub(crate) fn perl_variant_build_plan(
+    shared: PathBuf,
+    target_dir: PathBuf,
+) -> PerlVariantBuildPlan {
+    PerlVariantBuildPlan {
+        cargo_args: &["build", "-p", "ripr", "--features", "lang-perl"],
+        built: ripr_debug_binary_in(Some(target_dir.clone())),
+        published: shared.with_file_name(format!("ripr-lang-perl{}", std::env::consts::EXE_SUFFIX)),
+        target_dir,
+    }
 }
 
 /// Resolve `binary` after ensuring `build` has run exactly once for `build_once`.

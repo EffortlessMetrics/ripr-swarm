@@ -110,9 +110,24 @@ pub(super) fn build_in_target_dir(args: &[&str], target_dir: &Path) -> Result<()
         )
     })?;
     let environment = proxy_environment(environment()?, offline_mode(args.contains(&"--offline")));
-    let mut envs: Vec<(&str, &str)> = environment.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    envs.push(("CARGO_TARGET_DIR", dir));
+    let envs = with_target_dir_overlay(&environment, dir);
     crate::run::run_with_envs("cargo", args, &envs).map(|_| ())
+}
+
+/// The prepared environment with `CARGO_TARGET_DIR` pinned to `dir`. An
+/// inherited `CARGO_TARGET_DIR` entry is replaced, never joined by a second
+/// one, so the overlay is the only target the child can write.
+pub(crate) fn with_target_dir_overlay<'a>(
+    environment: &'a [(&'a str, String)],
+    dir: &'a str,
+) -> Vec<(&'a str, &'a str)> {
+    let mut envs: Vec<(&str, &str)> = environment
+        .iter()
+        .filter(|(key, _)| *key != "CARGO_TARGET_DIR")
+        .map(|(key, value)| (*key, value.as_str()))
+        .collect();
+    envs.push(("CARGO_TARGET_DIR", dir));
+    envs
 }
 
 fn binding(environment: &[(&str, String)]) -> String {

@@ -332,12 +332,16 @@ where
     }
     let owned_file = file.to_path_buf();
     let owned_source = source.to_string();
+    // Test-only: the thread that asked for the parse, so an armed injection
+    // only reaches the arming test's own parses (see `injected_worker_panic`).
+    #[cfg(test)]
+    let requesting_thread = std::thread::current().id();
     let spawn = std::thread::Builder::new()
         .name("ripr-ts-oxc-parse".to_string())
         .stack_size(PARSE_WORKER_STACK_BYTES)
         .spawn(move || {
             #[cfg(test)]
-            injected_worker_panic::fire(&owned_file);
+            injected_worker_panic::fire(requesting_thread, &owned_file);
             let allocator = Allocator::default();
             analyze(&owned_file, &owned_source, &allocator)
         });
@@ -356,35 +360,45 @@ where
 /// tests never observe each other's arming.
 #[cfg(test)]
 pub(crate) mod injected_worker_panic {
-    use std::collections::BTreeMap;
+    use std::collections::HashMap;
     use std::path::{Path, PathBuf};
-    use std::sync::Mutex;
+    use std::sync::{LazyLock, Mutex};
+    use std::thread::ThreadId;
 
-    /// Armed path -> number of parses of that path allowed to succeed first.
-    static ARMED: Mutex<BTreeMap<PathBuf, usize>> = Mutex::new(BTreeMap::new());
+    /// (arming test thread, path) -> number of parses allowed to succeed
+    /// first. The relative paths tests arm (`src/calc.ts`) are shared by many
+    /// unrelated tests, and `cargo test` (the coverage lane) runs them as
+    /// threads of one process, so a path-only key let one test's armed panic
+    /// kill another test's parse (main-branch coverage failures). The parse
+    /// worker is spawned by the thread that requested the parse, so keying on
+    /// that thread confines an injection to its own test.
+    static ARMED: LazyLock<Mutex<HashMap<(ThreadId, PathBuf), usize>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
 
     /// Disarms the path when dropped.
-    pub(crate) struct Armed(PathBuf);
+    pub(crate) struct Armed(ThreadId, PathBuf);
 
     impl Drop for Armed {
         fn drop(&mut self) {
             if let Ok(mut armed) = ARMED.lock() {
-                armed.remove(&self.0);
+                armed.remove(&(self.0, self.1.clone()));
             }
         }
     }
 
-    /// Panic on the worker for every parse of `path` after `allow` successes.
+    /// Panic on the worker for every parse of `path` requested by the calling
+    /// thread after `allow` successes.
     pub(crate) fn arm(path: &Path, allow: usize) -> Armed {
+        let thread = std::thread::current().id();
         if let Ok(mut armed) = ARMED.lock() {
-            armed.insert(path.to_path_buf(), allow);
+            armed.insert((thread, path.to_path_buf()), allow);
         }
-        Armed(path.to_path_buf())
+        Armed(thread, path.to_path_buf())
     }
 
-    pub(super) fn fire(path: &Path) {
+    pub(super) fn fire(requesting_thread: ThreadId, path: &Path) {
         let due = match ARMED.lock() {
-            Ok(mut armed) => match armed.get_mut(path) {
+            Ok(mut armed) => match armed.get_mut(&(requesting_thread, path.to_path_buf())) {
                 Some(0) => true,
                 Some(remaining) => {
                     *remaining -= 1;

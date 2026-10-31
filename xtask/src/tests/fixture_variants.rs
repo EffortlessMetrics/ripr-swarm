@@ -10,40 +10,58 @@ use super::*;
 
 #[test]
 fn perl_variant_build_never_rewrites_shared_debug_binary() -> Result<(), String> {
-    // The fixture machinery resolves its relative target paths against the
-    // process cwd, and the unit-test binary runs at the xtask package dir
-    // while the spawned `cargo build -p ripr` writes the workspace target at
-    // the repository root; the fixture-cache controls run their children at
-    // the repository root for the same reason.
+    // The contract is structural: the variant is built under a target
+    // directory that is not the shared one, and is published under its own
+    // name, so no step of the variant build names the shared binary. This used
+    // to stamp `target/debug/ripr` around a real variant build; that check
+    // observed every unrelated in-suite Cargo run too, so it failed on main
+    // whenever one overlapped (Test Analytics), and it held the suite for
+    // minutes on Cargo's build lock.
     with_repo_cwd(|| {
-        use crate::reports::{ripr_fixture_binary, ripr_perl_fixture_binary};
-        // Materialize the shared default binary exactly as the fixture corpus
-        // does, then stamp it before the variant build runs.
-        ripr_fixture_binary()?;
+        use crate::reports::{fixture_variant_target_dir, perl_variant_build_plan};
         let shared = crate::ripr_debug_binary();
-        let before = binary_stamp(&shared)?;
-        let perl = ripr_perl_fixture_binary()?;
-        assert!(
-            std::path::Path::new(&perl).is_file(),
-            "perl variant binary must exist at its copy-to path: {perl}"
-        );
-        let after = binary_stamp(&shared)?;
+        let shared_target = std::path::absolute(
+            shared
+                .parent()
+                .and_then(std::path::Path::parent)
+                .ok_or("shared binary has no target root")?,
+        )
+        .map_err(|error| format!("resolve shared target root: {error}"))?;
+        let plan = perl_variant_build_plan(shared.clone(), fixture_variant_target_dir()?);
         assert_eq!(
-            before,
-            after,
-            "in-suite variant build rewrote {} mid-suite; cross-process \
-             artifact tests would observe two analyzer identities (#11197)",
-            shared.display()
+            plan.cargo_args,
+            ["build", "-p", "ripr", "--features", "lang-perl"],
+            "the argv stays a plain feature build so native-lock observers match it"
+        );
+        assert_ne!(
+            plan.target_dir, shared_target,
+            "the variant must not build into the shared target (#11197)"
+        );
+        assert!(
+            plan.target_dir.starts_with(&shared_target),
+            "the variant overlay stays under the shared root so CI caches and \
+             `cargo clean` cover it: {} vs {}",
+            plan.target_dir.display(),
+            shared_target.display()
+        );
+        let shared_abs = std::path::absolute(&shared)
+            .map_err(|error| format!("resolve shared binary: {error}"))?;
+        assert!(
+            !plan.built.starts_with(&shared_target.join("debug")),
+            "Cargo must write the variant outside the shared debug dir: {}",
+            plan.built.display()
+        );
+        assert_ne!(std::path::absolute(&plan.published).ok(), Some(shared_abs));
+        assert_ne!(
+            plan.published.file_name(),
+            shared.file_name(),
+            "the published copy carries its own name, never the shared one (#11197)"
+        );
+        assert_eq!(
+            plan.published.parent(),
+            shared.parent(),
+            "the published copy sits beside the shared binary"
         );
         Ok(())
     })
-}
-
-fn binary_stamp(path: &std::path::Path) -> Result<(SystemTime, u64), String> {
-    let metadata =
-        fs::metadata(path).map_err(|error| format!("stat {}: {error}", path.display()))?;
-    let modified = metadata
-        .modified()
-        .map_err(|error| format!("mtime {}: {error}", path.display()))?;
-    Ok((modified, metadata.len()))
 }

@@ -17937,6 +17937,38 @@ fn parse_worker_panic_is_a_typed_refusal_not_a_process_failure() -> Result<(), S
     Ok(())
 }
 
+/// An injected worker panic is confined to the arming test's own thread.
+/// `cargo test` runs tests as threads of one process and many tests parse the
+/// same relative path, so a path-only key made `src/calc.ts` panics leak into
+/// unrelated tests (the main-branch coverage lane failure).
+#[test]
+fn armed_parse_worker_panic_never_reaches_a_parse_from_another_thread() -> Result<(), String> {
+    let path = Path::new("src/armed-isolation.ts");
+    let _armed = super::parse::injected_worker_panic::arm(path, 0);
+    let other = std::thread::spawn(move || {
+        super::parse::parse_on_worker(
+            Path::new("src/armed-isolation.ts"),
+            "export const a = 1;\n",
+            |_file, source, _allocator| source.len(),
+        )
+    })
+    .join()
+    .map_err(|_| "other thread panicked".to_string())?;
+    assert_eq!(other, Ok(20), "another thread's parse must not be armed");
+    let own = super::parse::parse_on_worker(
+        path,
+        "export const a = 1;\n",
+        |_file, source, _allocator| source.len(),
+    );
+    assert!(
+        own.as_ref()
+            .err()
+            .is_some_and(|reason| super::parse::is_worker_failure(reason)),
+        "the arming thread's own parse still dies: {own:?}"
+    );
+    Ok(())
+}
+
 /// #11132: a worker that dies on a CHANGED file is disclosed as a typed
 /// `unsupported_syntax` finding plus a language-scope limitation naming the
 /// file, never as a clean result and never as an actionable repair signal.
