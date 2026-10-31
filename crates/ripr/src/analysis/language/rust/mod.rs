@@ -2602,9 +2602,9 @@ impl RustAdapter {
                                 }
                                 // #11116: one probe's internal failure must not
                                 // unwind the pool and abort every other file's
-                                // result. The payload is not kept: it can quote
-                                // repository text and the panic hook has
-                                // already reported it.
+                                // result. The payload is not kept in findings: it can
+                                // quote repository text. A panic hook may
+                                // still report it separately.
                                 let contained =
                                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                                         #[cfg(test)]
