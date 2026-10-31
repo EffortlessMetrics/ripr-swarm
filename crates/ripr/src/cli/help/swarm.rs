@@ -20,9 +20,9 @@ Options:
   --root PATH        Workspace root. Defaults to current directory.
   --gap-ledger PATH  Gap decision ledger JSON. Defaults to target/ripr/reports/gap-decision-ledger.json.
   --language NAME    Language filter, matched exactly against the lowercase
-                     language of each gap record: rust, typescript,
-                     javascript, python or perl. Defaults to python. Any other
-                     value is accepted but yields an empty queue.
+                     language of each gap record: rust, typescript, python or
+                     perl. Defaults to python. Any other value is accepted but
+                     yields an empty queue.
   --top N            Maximum assignable frontier candidates to return. Defaults to 10.
   --format json      Explicit JSON output. JSON is the only queue format.
   --json             Compatibility alias for JSON output.
