@@ -42,12 +42,14 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_indirect_owner_item_scope/input --diff <cwd>/fixtures/rust_indirect_owner_item_scope/diff.patch --mode fast probe:src_lib.rs:return_value:4e24400d
   ripr context --root <cwd>/fixtures/rust_indirect_owner_item_scope/input --diff <cwd>/fixtures/rust_indirect_owner_item_scope/diff.patch --mode fast --at probe:src_lib.rs:return_value:4e24400d
-  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_indirect_owner_item_scope/input --at src/lib.rs:2 --kind return_value
 
 Hidden:
   All 1 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - ./src/lib.rs:2 (unknown); kind: static_unknown; reason: No relevant oracle was detected
+    - ./src/lib.rs:2 (unknown: static analysis limited); kind: unclear; reason: No relevant oracle was detected
+  Hidden classes:
+    unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
