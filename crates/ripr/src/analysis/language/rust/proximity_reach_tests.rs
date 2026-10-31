@@ -1318,3 +1318,126 @@ fn an_infection_unknown_helper_no_test_enters_keeps_its_bare_reading() -> Result
     }
     Ok(())
 }
+
+// #11481 negatives for the `infection_unknown` + `owner_named_test` admission.
+const NUMERIC_OWNER: &str = r####"use std::str::FromStr;
+fn numeric_identifier(input: &str) -> Result<u64, String> {
+    let mut value = 0u64;
+    for digit in input.bytes() {
+        if digit < b'0' || digit > b'9' {
+            return Err("bad digit".to_string());
+        }
+        value = value * 10 + (digit - b'0') as u64;
+    }
+    Ok(value)
+}
+"####;
+
+const OWNER_NAMED_TEST: &str = r####"#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn numeric_identifier_rejects_garbage() {
+        assert!(other::parse("1x").is_err());
+    }
+}
+"####;
+
+fn assert_unlimited(finding: &Finding, label: &str) {
+    assert_eq!(finding.static_limit_kind, None, "{label}");
+    assert!(
+        finding.stop_reasons.iter().all(|reason| {
+            *reason != StopReason::TransitiveReachUnresolved
+                && *reason != StopReason::MacroReachUnresolved
+        }),
+        "{label}"
+    );
+}
+
+// (a) A same-named function in a different module is what the entry calls.
+// Observed behavior: the lexical walk matches callee names only, so it does
+// not distinguish `other::numeric_identifier` from the changed owner and
+// still names the (advisory) limit. This pins that known limit; the class,
+// reach and related tests are unchanged either way.
+#[test]
+fn a_same_named_function_in_another_module_is_witnessed_by_name_only_known_limit()
+-> Result<(), String> {
+    let lib = format!(
+        "{NUMERIC_OWNER}pub mod other {{\n    pub fn numeric_identifier(input: &str) -> Result<u64, String> {{\n        Ok(input.len() as u64)\n    }}\n    pub fn parse(text: &str) -> Result<u64, String> {{\n        numeric_identifier(text)\n    }}\n}}\n{OWNER_NAMED_TEST}"
+    );
+    let fixture = Fixture::new("same-name-other-module", &lib)?;
+    let finding = fixture.boundary_finding()?;
+    assert_eq!(finding.class, ExposureClass::InfectionUnknown);
+    assert_eq!(finding.ripr.reach.state, StageState::Weak);
+    assert!(all_relations(&finding, |reason| {
+        reason == RelationReason::OwnerNamedTest
+    }));
+    // Known limit: witnessed through the name-only walk, still advisory.
+    assert!(
+        finding.static_limit_kind.is_some(),
+        "{:?}",
+        finding.evidence
+    );
+    assert_eq!(finding.related_tests.len(), 1);
+    Ok(())
+}
+
+// (d) A `#[cfg(test)]`-only helper as the entry is not production reach.
+#[test]
+fn a_cfg_test_only_helper_entry_names_no_limit() -> Result<(), String> {
+    let lib = format!(
+        "{NUMERIC_OWNER}#[cfg(test)]\nmod helpers {{\n    pub fn parse(text: &str) -> Result<u64, String> {{\n        super::numeric_identifier(text)\n    }}\n}}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn numeric_identifier_rejects_garbage() {{\n        assert!(helpers::parse(\"1x\").is_err());\n    }}\n}}\n"
+    );
+    let fixture = Fixture::new("cfg-test-helper", &lib)?;
+    let finding = fixture.boundary_finding()?;
+    assert_eq!(finding.ripr.reach.state, StageState::Weak);
+    assert_unlimited(&finding, "cfg-test-helper");
+    Ok(())
+}
+
+fn related(
+    template: &crate::domain::RelatedTest,
+    reason: RelationReason,
+) -> crate::domain::RelatedTest {
+    let mut row = template.clone();
+    row.relation_reason = Some(reason);
+    row
+}
+
+// (b) and (c) pin the trigger on a real owner-named finding, varying only the
+// class and the relation set.
+#[test]
+fn the_owner_named_admission_is_limited_to_infection_unknown_all_owner_named() -> Result<(), String>
+{
+    let lib = format!(
+        "{NUMERIC_OWNER}pub struct Version(pub u64);\nimpl Version {{\n    pub fn parse(text: &str) -> Result<Self, String> {{\n        Ok(Version(numeric_identifier(text)?))\n    }}\n}}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn numeric_identifier_rejects_garbage() {{\n        assert!(Version::parse(\"1x\").is_err());\n    }}\n}}\n"
+    );
+    let fixture = Fixture::new("admission-matrix", &lib)?;
+    let mut finding = fixture.boundary_finding()?;
+    finding.static_limit_kind = None;
+    finding.class = ExposureClass::InfectionUnknown;
+    finding.ripr.reach.state = StageState::Weak;
+    let template = finding
+        .related_tests
+        .first()
+        .cloned()
+        .ok_or("fixture has no related test")?;
+    let base = related(&template, RelationReason::OwnerNamedTest);
+    finding.related_tests = vec![base.clone()];
+    assert!(super::needs_proximity_reach_limit(&finding));
+    // (b) mixed with another non-proximity relation stays unlimited.
+    for other in [
+        RelationReason::ImportPathAffinity,
+        RelationReason::FixtureOwnerAffinity,
+        RelationReason::DirectOwnerCall,
+    ] {
+        finding.related_tests = vec![base.clone(), related(&template, other)];
+        assert!(!super::needs_proximity_reach_limit(&finding), "{other:?}");
+    }
+    // (c) deliberate asymmetry: owner_named_test alone does not limit a
+    // weakly_exposed finding (follow-up, #11481).
+    finding.class = ExposureClass::WeaklyExposed;
+    finding.related_tests = vec![base];
+    assert!(!super::needs_proximity_reach_limit(&finding));
+    Ok(())
+}
