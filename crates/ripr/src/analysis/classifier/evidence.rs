@@ -211,6 +211,16 @@ impl ClassifiedProbeEvidence {
         })
         .or_else(|| {
             context.owner_fn.and_then(|owner| {
+                crate::analysis::classify::concat_tail_witness(
+                    context.probe,
+                    owner,
+                    context.index,
+                    &flow_sinks,
+                )
+            })
+        })
+        .or_else(|| {
+            context.owner_fn.and_then(|owner| {
                 crate::analysis::classify::result_map_witness(
                     context.probe,
                     owner,
