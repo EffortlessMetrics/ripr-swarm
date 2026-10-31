@@ -590,7 +590,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending - rust_macro_wrapped_assertion_limitation (32)
+## Pending — rust_macro_wrapped_assertion_limitation (33)
 
 Reason:
 #10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to observed/safe checks
@@ -600,3 +600,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_macro_wrapped_assertion_limitation (32)
+
+Reason:
+RIPR-SPEC-0120 (#9644): the unresolved custom-macro next step now always names inspecting the macro's definition and running the existing test instead of "Add a meaningful assertion"
+
+Command:
+`cargo xtask goldens bless rust_macro_wrapped_assertion_limitation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
