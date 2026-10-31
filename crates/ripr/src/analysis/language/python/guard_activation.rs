@@ -1193,7 +1193,7 @@ fn is_integer_literal(text: &str) -> bool {
 }
 
 /// Compare two resolved literal values with `op`. Equality uses Python
-/// scalar semantics (`guard_literals_equal`: `True == 1`, `False == 0`);
+/// scalar semantics via [`literals_equal`] (`True == 1`, `False == 0`);
 /// ordering parses the canonical decimals and never orders across kinds (a
 /// string against a number is unreadable, which fails open).
 pub(super) fn compare_literal_values(left: &str, op: &str, right: &str) -> Option<bool> {
@@ -1208,8 +1208,8 @@ pub(super) fn compare_literal_values(left: &str, op: &str, right: &str) -> Optio
         return None;
     }
     match op {
-        "==" => Some(guard_literals_equal(left, right)),
-        "!=" => Some(!guard_literals_equal(left, right)),
+        "==" => literals_equal(left, right),
+        "!=" => literals_equal(left, right).map(|equal| !equal),
         "<" | "<=" | ">" | ">=" => {
             let left = canonical_decimal(left)?;
             let right = canonical_decimal(right)?;
@@ -1252,35 +1252,6 @@ fn guard_literal_is_readable(text: &str) -> bool {
     canonical_decimal(text).is_some()
         || matches!(text, "True" | "False" | "None")
         || python_string_literal_value(text).is_some_and(|body| !body.contains('\\'))
-}
-
-/// Equality as Python evaluates it for scalar literals. The shared
-/// [`literals_equal`] intentionally never equates mixed kinds ("fails closed
-/// toward not observed") because the boundary rule uses it to award credit;
-/// this gate uses the answer to EXCLUDE a call, which reverses the
-/// conservative direction, so bool/numeric pairs follow Python semantics:
-/// `True == 1` and `False == 0` hold, and `2 == True` does not.
-fn guard_literals_equal(left: &str, right: &str) -> bool {
-    match (bool_decimal(left), bool_decimal(right)) {
-        (Some(left), Some(right)) => return left == right,
-        (Some(bool_value), None) => {
-            return canonical_decimal(right).is_some_and(|num| num == bool_value);
-        }
-        (None, Some(bool_value)) => {
-            return canonical_decimal(left).is_some_and(|num| num == bool_value);
-        }
-        (None, None) => {}
-    }
-    literals_equal(left, right)
-}
-
-/// The decimal value Python equates a bool with, or None for anything else.
-fn bool_decimal(text: &str) -> Option<String> {
-    match text {
-        "True" => Some("1".to_string()),
-        "False" => Some("0".to_string()),
-        _ => None,
-    }
 }
 
 #[cfg(test)]
@@ -1509,9 +1480,8 @@ mod tests {
 
     #[test]
     fn compare_literal_values_equates_bool_like_python() {
-        // Python compares `True == 1` and `False == 0` as true; the shared
-        // literals_equal never mixes kinds, which is conservative for credit
-        // but wrong for the exclusion direction this gate evaluates.
+        // Python compares `True == 1` and `False == 0`; boundary and guard
+        // paths share [`literals_equal`] for that semantics.
         assert_eq!(compare_literal_values("True", "==", "1"), Some(true));
         assert_eq!(compare_literal_values("1", "==", "True"), Some(true));
         assert_eq!(compare_literal_values("False", "==", "0"), Some(true));

@@ -524,7 +524,7 @@ impl ManifestInventory {
         if let Some(cached) = self.manifests.get(dir) {
             return cached.clone();
         }
-        let parsed = match std::fs::read_to_string(dir.join("Cargo.toml"))
+        let parsed = match crate::bounded_input::read_metadata_toml(dir.join("Cargo.toml"))
             .ok()
             .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
         {
@@ -896,7 +896,7 @@ where
             continue;
         };
         if !manifests.contains_key(&root) {
-            let targets = std::fs::read_to_string(root.join("Cargo.toml"))
+            let targets = crate::bounded_input::read_metadata_toml(root.join("Cargo.toml"))
                 .map(|text| declared_targets_from_manifest(&text, &root))
                 .unwrap_or_default();
             manifests.insert(root.clone(), targets);

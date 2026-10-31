@@ -16479,7 +16479,7 @@ fn sample_typescript_preview_actionability_finding() -> Finding {
     finding.language_status = Some(LanguageStatus::Preview);
     finding.owner_kind = Some(OwnerKind::Function);
     finding.evidence = vec![
-        "gap_state: advisory".to_string(),
+        "gap_state: unknown".to_string(),
         "actionability_category: missing_context".to_string(),
         "why_not_actionable: verify command and receipt command are not inferred for TypeScript preview".to_string(),
         "repair_route: add strict TypeScript repair-packet actionability proof".to_string(),
@@ -16894,7 +16894,7 @@ fn typescript_preview_finding_diagnostic_carries_actionability_context() -> Resu
         actionability
             .get("gap_state")
             .and_then(|value| value.as_str()),
-        Some("advisory")
+        Some("unknown")
     );
     assert_eq!(
         actionability
@@ -17373,7 +17373,7 @@ fn typescript_preview_finding_hover_shows_actionability_before_evidence() -> Res
                 "Language: typescript",
                 "Status: preview",
                 "Repair instructions for an AI agent: not ready",
-                "State: advisory",
+                "State: unknown",
                 "Category: missing_context",
                 "Why not actionable: verify command and receipt command are not inferred for TypeScript preview",
                 "Repair route: add strict TypeScript repair-packet actionability proof",

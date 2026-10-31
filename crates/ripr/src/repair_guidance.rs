@@ -691,27 +691,27 @@ impl DiscriminatorGuidanceView {
                 let text = self
                     .text
                     .as_deref()
-                    .ok_or("discriminator state present requires text")?;
+                    .ok_or("discriminator state present requires text; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it")?;
                 check_guidance_text("discriminator text", text)?;
                 if self.basis.is_none() {
-                    return Err("discriminator state present requires a producer basis".to_string());
+                    return Err("discriminator state present requires a producer basis; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it".to_string());
                 }
                 if self.reason.is_some() || self.recovery.is_some() {
                     return Err(
-                        "discriminator state present cannot carry a reason or recovery".to_string(),
+                        "discriminator state present cannot carry a reason or recovery; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it".to_string(),
                     );
                 }
             }
             _ if concrete => {
                 return Err(format!(
-                    "discriminator state {:?} cannot carry text or basis",
+                    "discriminator state {:?} cannot carry text or basis; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it",
                     self.state
                 ));
             }
             DiscriminatorState::NotProduced | DiscriminatorState::Stale => {
                 if self.reason.is_none() || self.recovery.is_none() {
                     return Err(format!(
-                        "discriminator state {:?} requires a reason and recovery",
+                        "discriminator state {:?} requires a reason and recovery; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it",
                         self.state
                     ));
                 }
@@ -719,13 +719,13 @@ impl DiscriminatorGuidanceView {
             DiscriminatorState::NotApplicable | DiscriminatorState::StaticLimitation => {
                 if self.reason.is_none() {
                     return Err(format!(
-                        "discriminator state {:?} requires a reason",
+                        "discriminator state {:?} requires a reason; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it",
                         self.state
                     ));
                 }
                 if self.recovery.is_some() {
                     return Err(format!(
-                        "discriminator state {:?} cannot carry a recovery",
+                        "discriminator state {:?} cannot carry a recovery; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it",
                         self.state
                     ));
                 }
@@ -738,7 +738,7 @@ impl DiscriminatorGuidanceView {
             && !allowed_discriminator_reasons(self.state).contains(&reason)
         {
             return Err(format!(
-                "discriminator state {:?} cannot carry reason {reason:?}",
+                "discriminator state {:?} cannot carry reason {reason:?}; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it",
                 self.state
             ));
         }
@@ -746,7 +746,7 @@ impl DiscriminatorGuidanceView {
             && !allowed_discriminator_recoveries(self.state).contains(&recovery)
         {
             return Err(format!(
-                "discriminator state {:?} cannot carry recovery {recovery:?}",
+                "discriminator state {:?} cannot carry recovery {recovery:?}; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it",
                 self.state
             ));
         }
@@ -799,38 +799,38 @@ impl AssertionGuidanceView {
                 let example = self
                     .example
                     .as_deref()
-                    .ok_or("assertion state concrete requires an example")?;
+                    .ok_or("assertion state concrete requires an example; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it")?;
                 check_guidance_text("assertion example", example)?;
                 if self.kind.is_none() || self.basis.is_none() {
                     return Err(
-                        "assertion state concrete requires an assertion kind and producer basis"
+                        "assertion state concrete requires an assertion kind and producer basis; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it"
                             .to_string(),
                     );
                 }
                 if self.observer_kind.is_some() || self.reason.is_some() || self.recovery.is_some()
                 {
                     return Err(
-                        "assertion state concrete cannot carry an observer, reason, or recovery"
+                        "assertion state concrete cannot carry an observer, reason, or recovery; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it"
                             .to_string(),
                     );
                 }
             }
             _ if concrete => {
                 return Err(format!(
-                    "assertion state {:?} cannot carry an example, kind, or basis",
+                    "assertion state {:?} cannot carry an example, kind, or basis; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it",
                     self.state
                 ));
             }
             AssertionState::RequiresObserverSetup => {
                 if self.observer_kind.is_none() || self.reason.is_none() {
                     return Err(
-                        "assertion state requires_observer_setup requires an observer kind and reason"
+                        "assertion state requires_observer_setup requires an observer kind and reason; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it"
                             .to_string(),
                     );
                 }
                 if self.recovery.is_some() {
                     return Err(
-                        "assertion state requires_observer_setup cannot carry a recovery"
+                        "assertion state requires_observer_setup cannot carry a recovery; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it"
                             .to_string(),
                     );
                 }
@@ -838,13 +838,13 @@ impl AssertionGuidanceView {
             AssertionState::FixSiteOnly | AssertionState::VerificationOnly => {
                 if self.reason.is_none() {
                     return Err(format!(
-                        "assertion state {:?} requires a reason",
+                        "assertion state {:?} requires a reason; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it",
                         self.state
                     ));
                 }
                 if self.recovery.is_some() {
                     return Err(format!(
-                        "assertion state {:?} cannot carry a recovery",
+                        "assertion state {:?} cannot carry a recovery; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it",
                         self.state
                     ));
                 }
@@ -852,7 +852,7 @@ impl AssertionGuidanceView {
             AssertionState::Unresolved | AssertionState::Stale => {
                 if self.reason.is_none() || self.recovery.is_none() {
                     return Err(format!(
-                        "assertion state {:?} requires a reason and recovery",
+                        "assertion state {:?} requires a reason and recovery; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it",
                         self.state
                     ));
                 }
@@ -861,7 +861,7 @@ impl AssertionGuidanceView {
         let expects_observer = self.state == AssertionState::RequiresObserverSetup;
         if expects_observer != self.observer_kind.is_some() {
             return Err(
-                "observer_kind is present exactly when the state is requires_observer_setup"
+                "observer_kind is present exactly when the state is requires_observer_setup; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it"
                     .to_string(),
             );
         }
@@ -869,7 +869,7 @@ impl AssertionGuidanceView {
             && !allowed_assertion_reasons(self.state).contains(&reason)
         {
             return Err(format!(
-                "assertion state {:?} cannot carry reason {reason:?}",
+                "assertion state {:?} cannot carry reason {reason:?}; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it",
                 self.state
             ));
         }
@@ -877,7 +877,7 @@ impl AssertionGuidanceView {
             && !allowed_assertion_recoveries(self.state).contains(&recovery)
         {
             return Err(format!(
-                "assertion state {:?} cannot carry recovery {recovery:?}",
+                "assertion state {:?} cannot carry recovery {recovery:?}; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it",
                 self.state
             ));
         }
@@ -1026,7 +1026,7 @@ impl RepairGuidance {
             && assertion.state == AssertionState::Concrete
         {
             return Err(
-                "stale discriminator state cannot accompany concrete assertion guidance"
+                "stale discriminator state cannot accompany concrete assertion guidance; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it"
                     .to_string(),
             );
         }
@@ -1043,12 +1043,12 @@ impl RepairGuidance {
     /// across checkout roots and traversal orders.
     pub(crate) fn semantic_digest(&self) -> Result<String, String> {
         let bytes = serde_json::to_vec(self)
-            .map_err(|error| format!("serialize repair guidance for digest failed: {error}"))?;
+            .map_err(|error| format!("serialize repair guidance for digest failed: {error}; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it"))?;
         let digest = Sha256::digest(bytes);
         let mut hex = String::with_capacity(digest.len() * 2);
         for byte in digest {
             write!(&mut hex, "{byte:02x}")
-                .map_err(|error| format!("format repair guidance digest failed: {error}"))?;
+                .map_err(|error| format!("format repair guidance digest failed: {error}; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it"))?;
         }
         Ok(format!("sha256:{hex}"))
     }
@@ -1059,7 +1059,9 @@ impl RepairGuidance {
 fn check_guidance_text(field: &str, value: &str) -> Result<(), String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
-        return Err(format!("{field} must not be empty"));
+        return Err(format!(
+            "{field} must not be empty; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it"
+        ));
     }
     let count = trimmed.chars().count();
     if count > MAX_REPAIR_GUIDANCE_TEXT_CHARS {

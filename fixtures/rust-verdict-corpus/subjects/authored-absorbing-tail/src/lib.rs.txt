@@ -1,0 +1,14 @@
+pub fn floor_hit(n: u32) -> u32 {
+    let r: u32 = if n == 5 { 1 } else { 0 };
+    r.min(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pins_the_floor() {
+        assert_eq!(floor_hit(5), 0);
+    }
+}

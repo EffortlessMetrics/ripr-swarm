@@ -69,7 +69,11 @@ ripr baseline create \
 workflow writes it. The command refuses to overwrite an existing output unless
 `--force` is passed. Review `.ripr/gate-baseline.json` before committing it in
 its own PR, still in `visible-only`. The baseline is scoped to
-the pull request the decision came from. Full steps and review checklist:
+the pull request the decision came from. To checkpoint the whole repository
+instead, build it from a whole-tree `ripr check` with `ripr baseline create
+--from-check` (see [Baselining the whole
+repository](BASELINE_LEDGER_WORKFLOW.md#baselining-the-whole-repository)).
+Full steps and review checklist:
 [baseline ledger workflow](BASELINE_LEDGER_WORKFLOW.md).
 
 ## 4. Enable baseline-check
