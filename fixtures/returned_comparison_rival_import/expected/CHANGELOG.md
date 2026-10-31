@@ -76,3 +76,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — returned_comparison_rival_import (7)
+
+Reason:
+RIPR-SPEC-0197: re-bless human and evidence-prose surfaces for the plain-wording render; classifications and finding count unchanged (3 infection_unknown retained)
+
+Command:
+`cargo xtask goldens bless returned_comparison_rival_import --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
