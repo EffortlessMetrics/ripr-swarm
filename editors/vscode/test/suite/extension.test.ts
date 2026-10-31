@@ -498,13 +498,13 @@ suite('Extension Smoke', () => {
       diagnostic.range.start.character + 1
     );
     const hoverText = await waitForHoverText(uri, hoverPosition, (text) =>
-      text.includes('**ripr** behavioral seam') &&
-      text.includes('`weakly_gripped`') &&
-      text.includes('## Missing discriminator')
+      text.includes('**ripr** changed behavior') &&
+      text.includes('Tests only loosely check this') &&
+      text.includes('Weak / missing evidence:')
     );
-    assert.ok(hoverText.includes('**ripr** behavioral seam'), hoverText);
-    assert.ok(hoverText.includes('`weakly_gripped`'), hoverText);
-    assert.ok(hoverText.includes('## Missing discriminator'), hoverText);
+    assert.ok(hoverText.includes('**ripr** changed behavior'), hoverText);
+    assert.ok(hoverText.includes('Tests only loosely check this'), hoverText);
+    assert.ok(hoverText.includes('Weak / missing evidence:'), hoverText);
 
     const actions = await vscode.commands.executeCommand<Array<vscode.CodeAction | vscode.Command>>(
       'vscode.executeCodeActionProvider',
@@ -941,7 +941,7 @@ suite('Extension Smoke', () => {
         diagnostic.range.start.character + 1
       );
       const hoverText = await waitForHoverText(uri, hoverPosition, (text) =>
-        text.includes('**ripr** gap decision') &&
+        text.includes('**ripr** test gap') &&
         text.includes('- Language: `typescript`') &&
         text.includes('- Status: `preview`') &&
         text.includes('Static limit: missing_import_graph') &&
@@ -2121,7 +2121,7 @@ suite('Extension Smoke', () => {
       assertDegraded([
         'ripr analysis completed on a bounded partition of the diff.',
         'the remainder was not evaluated',
-        'Next safe action: Run ripr: Show Top Limitation to see which budget stopped the run (RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET), raise it or narrow the diff'
+        'Next safe action: Run ripr: Show Main Analysis Limit to see which budget stopped the run (RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET), raise it or narrow the diff'
       ]);
 
       emitSucceededWithRunStatus('limited_incomplete_input');
@@ -2362,7 +2362,7 @@ suite('Extension Smoke', () => {
       // The artifact recovery does not widen the diff partition, so the canned
       // budget remedy must survive composition with the component recovery.
       assert.ok(
-        tooltip.includes('Next safe action: Run ripr: Show Top Limitation to see which budget stopped the run (RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET), raise it or narrow the diff, then run ripr: Refresh Diagnostics. Run ripr check to regenerate the gap decision ledger'),
+        tooltip.includes('Next safe action: Run ripr: Show Main Analysis Limit to see which budget stopped the run (RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET), raise it or narrow the diff, then run ripr: Refresh Diagnostics. Run ripr check to regenerate the gap decision ledger'),
         tooltip
       );
     } finally {
