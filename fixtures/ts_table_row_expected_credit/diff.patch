@@ -1,0 +1,33 @@
+diff --git a/src/eachPattern.ts b/src/eachPattern.ts
+index 0000000..1111111 100644
+--- a/src/eachPattern.ts
++++ b/src/eachPattern.ts
+@@ -1,5 +1,5 @@
+ export function eachPattern(points: number): string {
+-    if (points > 1000) {
++    if (points >= 1000) {
+         return "gold";
+     }
+     return "silver";
+diff --git a/src/eachTable.ts b/src/eachTable.ts
+index 0000000..1111111 100644
+--- a/src/eachTable.ts
++++ b/src/eachTable.ts
+@@ -1,5 +1,5 @@
+ export function eachTable(points: number): string {
+-    if (points > 1000) {
++    if (points >= 1000) {
+         return "gold";
+     }
+     return "silver";
+diff --git a/src/loopTable.ts b/src/loopTable.ts
+index 0000000..1111111 100644
+--- a/src/loopTable.ts
++++ b/src/loopTable.ts
+@@ -1,5 +1,5 @@
+ export function loopTable(points: number): string {
+-    if (points > 1000) {
++    if (points >= 1000) {
+         return "gold";
+     }
+     return "silver";
