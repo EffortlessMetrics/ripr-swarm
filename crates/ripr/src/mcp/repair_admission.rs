@@ -161,6 +161,8 @@ impl SeamAdmission {
         // The CLI checks inventory truncation before it resolves any item, so
         // a truncated or unverifiable inventory refuses every finding first.
         let truncation = completeness.refusal_detail();
+        // The held-file probe runs git; ask it once per seam per refresh.
+        let mut held_by_seam: HashMap<String, Option<String>> = HashMap::new();
         let by_finding = findings
             .iter()
             .map(|finding| {
@@ -180,14 +182,17 @@ impl SeamAdmission {
                         // same predicate so MCP names the CLI's cause instead
                         // of a producer-side fix-site gate.
                         let held = match &outcome {
-                            RepairSubjectOutcome::Seam(seam_id) => {
-                                crate::app::task_first::held_inline_start_file(
-                                    root,
-                                    seam_id,
-                                    candidate_seams,
-                                )
-                                .map(|file| (seam_id.clone(), file))
-                            }
+                            RepairSubjectOutcome::Seam(seam_id) => held_by_seam
+                                .entry(seam_id.clone())
+                                .or_insert_with(|| {
+                                    crate::app::task_first::held_inline_start_file(
+                                        root,
+                                        seam_id,
+                                        candidate_seams,
+                                    )
+                                })
+                                .clone()
+                                .map(|file| (seam_id.clone(), file)),
                             _ => None,
                         };
                         match held {

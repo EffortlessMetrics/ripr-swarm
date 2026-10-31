@@ -98,7 +98,7 @@ pub(super) fn agent_card_stdout(options: AgentCardOptions) -> Result<String, Com
         let mut lines = agent_card_prose_lines(&card, &packet_command, Some(&options.root));
         // #11397: the card's own readiness is evidence readiness; the start
         // gate `ripr repair` applies is a separate fact, so name it here.
-        if let Some(hold) = &hold {
+        if let Some(hold) = hold.as_ref().filter(|hold| hold.next.is_some()) {
             lines.insert(1, format!("  repair start: held ({})", hold.reason));
         }
         lines
@@ -473,7 +473,11 @@ pub(crate) fn agent_card_plain_lines(
     // One verdict: the shared start gate (`hold`) outranks the card's own
     // evidence readiness, so "ready" is only printed when `ripr repair`
     // would also start (#11397, #11381).
-    let started = card.attempt.is_some();
+    // Only the held-file cause (it carries its own next step) overrides the
+    // card: any other gate refusal keeps the card's own evidence wording and
+    // its canonical next action.
+    let hold = hold.filter(|hold| hold.next.is_some());
+    let started = card.attempt.is_some() && card.readiness.repair_ready;
     let ready = card.readiness.repair_ready && hold.is_none();
     if let Some(hold) = hold {
         lines.push(format!("  Not ready to repair yet: {}.", hold.reason));
@@ -544,10 +548,11 @@ pub(crate) fn agent_card_plain_lines(
         )
     };
     match &card.canonical_next_action {
-        _ if hold.is_some() => match hold.and_then(|hold| hold.next.as_ref()) {
-            Some(next) => lines.push(format!("  Next: {next}")),
-            None => lines.push("  Next: ripr cannot start a repair for this gap yet.".to_string()),
-        },
+        _ if hold.is_some() => {
+            if let Some(next) = hold.and_then(|hold| hold.next.as_ref()) {
+                lines.push(format!("  Next: {next}"));
+            }
+        }
         // No runnable command of the card's own, a repair not yet started,
         // and the start gate holds nothing: the one next step is the repair
         // start itself (#11397), the command the pilot printed.
@@ -1200,6 +1205,51 @@ mod tests {
         }
         if !text.contains("and 4 more") || lines.len() > 18 {
             return Err(format!("limits/cap wrong ({} lines):\n{text}", lines.len()));
+        }
+        Ok(())
+    }
+
+    /// #11397: a gate refusal without its own next step (route not ready)
+    /// keeps the card's evidence wording and canonical next action; only the
+    /// held-file cause, which carries a next step, replaces them.
+    #[test]
+    fn plain_brief_keeps_card_wording_for_a_gate_refusal_without_a_next_step() -> Result<(), String>
+    {
+        use crate::app::task_first::CardStartHold;
+        let mut card = prose_test_card();
+        card.readiness.repair_ready = false;
+        card.readiness.missing_evidence =
+            vec!["producer-owned missing discriminator fact: boundary_value".to_string()];
+        let route_not_ready = CardStartHold {
+            reason: "repair route not ready".to_string(),
+            next: None,
+        };
+        let text = agent_card_plain_lines(
+            &card,
+            "ripr agent packet --json",
+            None,
+            Some(&route_not_ready),
+        )
+        .join("\n");
+        if !text.contains("Not ready to repair yet: a test assertion that pins the changed boundary value exactly")
+            || text.contains("repair route not ready")
+            || text.contains("cannot start a repair")
+        {
+            return Err(format!("gate refusal replaced the card's wording:\n{text}"));
+        }
+        let mut ready = prose_test_card();
+        ready.attempt = None;
+        let held = CardStartHold {
+            reason: "the inline test target `src/lib.rs` has uncommitted changes; commit or stash them first".to_string(),
+            next: Some("commit or stash `src/lib.rs`, then run `ripr repair s`".to_string()),
+        };
+        let text = agent_card_plain_lines(&ready, "ripr agent packet --json", None, Some(&held))
+            .join("\n");
+        if !text.contains("Not ready to repair yet: the inline test target")
+            || !text.contains("Next: commit or stash `src/lib.rs`")
+            || text.contains("Ready to repair.")
+        {
+            return Err(format!("held-file cause not shown:\n{text}"));
         }
         Ok(())
     }

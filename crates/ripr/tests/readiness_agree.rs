@@ -37,8 +37,11 @@ impl Repo {
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
         let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+        // The guard exists before anything else can fail, so a partial
+        // fixture is still removed.
         let repo = Self(root);
+        std::fs::create_dir_all(repo.0.join("src")).map_err(|e| e.to_string())?;
         repo.write("Cargo.toml", CARGO_TOML)?;
         repo.write(".gitignore", "target/\n.ripr/\n")?;
         repo.write("src/lib.rs", &source(">"))?;
@@ -205,13 +208,17 @@ fn uncommitted_weak_test_gap_gets_one_cause_on_every_surface() -> Result<(), Str
     assert!(repair.contains("Commit or stash `src/lib.rs`"), "{repair}");
 
     // Pilot offers the command only behind the same commit-or-stash step.
-    let before_step = pilot
-        .find("commit or stash")
-        .ok_or_else(|| format!("pilot dropped the commit-or-stash step:\n{pilot}"))?;
-    let command_at = pilot
-        .find("Next, in order:")
+    let steps = pilot
+        .split_once("Next, in order:")
+        .map(|(_, steps)| steps)
         .ok_or_else(|| format!("pilot printed no ordered steps:\n{pilot}"))?;
-    assert!(before_step < command_at + 200, "{pilot}");
+    let precondition = steps
+        .find("Before step 1: if `src/lib.rs` has uncommitted edits, commit or stash them")
+        .ok_or_else(|| format!("pilot dropped the commit-or-stash step:\n{pilot}"))?;
+    let start = steps
+        .find("1. ripr agent repair")
+        .ok_or_else(|| format!("pilot printed no repair start step:\n{pilot}"))?;
+    assert!(precondition < start, "{pilot}");
 
     // Card: not ready, the same cause, the same next step, no contradiction.
     let card = repo.ripr(&["agent", "card", "--root", ".", "--seam-id", &seam])?;
