@@ -3792,6 +3792,22 @@ fn run_gap_bound_before_phase(
             ));
         }
     };
+    // An unknown or not-ready gap keeps its own, more specific refusal; a
+    // ready gap is still refused while the run that produced it is incomplete.
+    let analysis_complete = snapshot
+        .output
+        .analysis_outcome
+        .as_ref()
+        .map(|outcome| outcome.kind.is_complete());
+    if !crate::agent::artifact::check_findings_outcome_is_complete(analysis_complete, None) {
+        refusal.start_refused = true;
+        let limitation = crate::app::task_first::incomplete_limitation_summary(&snapshot.output);
+        return Err(format!(
+            "agent repair --gap-id `{gap_id}`: analysis is incomplete ({limitation}). Resolve the limitation and rerun `ripr check --root {} --base {}`; no repair attempt was started.",
+            shell_arg(&root_display),
+            shell_arg(base)
+        ));
+    }
     let before_snapshot_display = format!("target/ripr/workflow/{GAP_BOUND_BEFORE_SNAPSHOT_FILE}");
     let packet = output::agent_seam_packets::render_gap_bound_repair_packet(
         &before_snapshot_display,

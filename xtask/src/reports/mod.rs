@@ -128,7 +128,7 @@ pub(crate) use fixtures::{
     golden_assistant_loop_health_contract_violations_at, golden_drift_semantics, golden_drift_type,
     goldens_check_failure_message, json_string_values_for_key, next_pending_heading,
     normalize_golden_text, parse_reason, ripr_perl_fixture_binary, run_fixture,
-    run_fixture_outputs, validate_bless_reason,
+    run_fixture_outputs, validate_bless_reason, variant_test,
 };
 pub(crate) use index::{reports, reports_index};
 pub(crate) use issue_intake::issue_intake;
