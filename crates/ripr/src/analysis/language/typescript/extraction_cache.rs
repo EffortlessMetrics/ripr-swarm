@@ -370,6 +370,7 @@ fn shared_bytes(tests: &[super::types::TypeScriptTest]) -> usize {
             &test.unstable_member_roots_in_file,
             &test.identity_helpers_in_file,
             &test.written_locals_in_file,
+            &test.member_replacements_in_file,
         ] {
             total = total.saturating_add(elements(list, &mut seen, std::mem::size_of::<String>()));
         }
@@ -454,19 +455,41 @@ thread_local! {
 /// of the returned tests. A reentrant or poisoned cell degrades to an
 /// uncached extraction. Test extraction costs about 4 s/MB in a debug build,
 /// which an unchanged test file used to pay again on every LSP save.
+#[cfg(test)]
 pub(crate) fn test_extraction_cached(relative: &Path, source: &str) -> Rc<TestExtraction> {
-    test_extraction_cached_with(relative, source, || {
+    test_extraction_cached_disclosing(relative, source).0
+}
+
+/// [`test_extraction_cached`] that also returns the typed worker-failure
+/// reason when the parse worker could not extract (#11132). The empty result
+/// a failure serves reads as "this file registers no tests", which would
+/// silently turn a related test into a false `no_static_path`; the caller
+/// owns turning the reason into a disclosed extraction gap.
+pub(crate) fn test_extraction_cached_disclosing(
+    relative: &Path,
+    source: &str,
+) -> (Rc<TestExtraction>, Option<String>) {
+    test_extraction_cached_with_failure(relative, source, || {
         super::tests_extract::try_extract_tests_with_expansion(relative, source)
     })
 }
 
 /// [`test_extraction_cached`] with the extractor injected, so a test can
 /// force the worker-failure path that cannot be provoked from outside.
+#[cfg(test)]
 fn test_extraction_cached_with(
     relative: &Path,
     source: &str,
     extract: impl FnOnce() -> Result<TestExtraction, String>,
 ) -> Rc<TestExtraction> {
+    test_extraction_cached_with_failure(relative, source, extract).0
+}
+
+fn test_extraction_cached_with_failure(
+    relative: &Path,
+    source: &str,
+    extract: impl FnOnce() -> Result<TestExtraction, String>,
+) -> (Rc<TestExtraction>, Option<String>) {
     let key = test_extraction_key(relative, source);
     let cached = TEST_EXTRACTION_CACHE.with(|cache| {
         cache.try_borrow_mut().ok().and_then(|cache| {
@@ -476,13 +499,13 @@ fn test_extraction_cached_with(
         })
     });
     if let Some(extraction) = cached {
-        return extraction;
+        return (extraction, None);
     }
     // A worker failure is environmental, not a function of the bytes: serve
-    // the empty result this call but never store it.
+    // the empty result this call but never store it, and report the reason.
     let extraction = match extract() {
         Ok(extraction) => Rc::new(extraction),
-        Err(_) => return Rc::new((Vec::new(), None, None)),
+        Err(reason) => return (Rc::new((Vec::new(), None, None)), Some(reason)),
     };
     TEST_EXTRACTION_CACHE.with(|cache| {
         if let Ok(mut cache) = cache.try_borrow_mut() {
@@ -492,7 +515,7 @@ fn test_extraction_cached_with(
             cache.insert(key, Rc::clone(&extraction));
         }
     });
-    extraction
+    (extraction, None)
 }
 
 /// Seed the process-lifetime facts cache with `facts` for

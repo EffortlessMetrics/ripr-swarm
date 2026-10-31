@@ -1,0 +1,20 @@
+{
+  "id": "python_truthiness_swap_inline_rebind_control",
+  "language": "python",
+  "tier": "pure",
+  "source_fixture": "fixtures/python_truthiness_swap_inline_rebind_control",
+  "vector": "predicate_swap_after_an_inline_parameter_rebind_keeps_exposed",
+  "assertions": [
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "expected_class",
+      "class": "exposed"
+    },
+    {
+      "type": "must_not_report_clean"
+    }
+  ]
+}

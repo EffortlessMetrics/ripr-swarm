@@ -5,6 +5,102 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
+      "id": "rust_matches_panic_message_return_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-matches-panic-message.json",
+      "vector": "expected_panic_diagnostic_must_distinguish_native_harness_outcomes",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_matches_panic_message_error_path",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-matches-panic-message.json",
+      "vector": "expected_panic_diagnostic_must_distinguish_native_harness_outcomes",
+      "probe_family": "error_path",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_matches_ineligible_return_context",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-matches-ineligible-context.json",
+      "vector": "ignored_or_non_discriminating_expected_panic_cannot_lend_matches_credit",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
+      "id": "rust_matches_ineligible_error_context",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-matches-ineligible-context.json",
+      "vector": "ignored_or_non_discriminating_expected_panic_cannot_lend_matches_credit",
+      "probe_family": "error_path",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
       "id": "rust_qualified_helper_effect_side_effect",
       "language": "rust",
       "tier": "pure",
@@ -14092,6 +14188,75 @@
       ]
     },
     {
+      "id": "python_caplog_alias_same_line_mask",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_caplog_alias_same_line_mask",
+      "vector": "caplog_alias_native_statement_and_binding_order",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_caplog_alias_assertion_store",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_caplog_alias_assertion_store",
+      "vector": "caplog_alias_native_statement_and_binding_order",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_caplog_alias_late_binding",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_caplog_alias_late_binding",
+      "vector": "caplog_alias_native_statement_and_binding_order",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
       "id": "python_caplog_alias_in_literal",
       "language": "python",
       "tier": "pure",
@@ -14803,6 +14968,46 @@
       ]
     },
     {
+      "id": "rust_display_placeholder_edit",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_display_placeholder_edit",
+      "vector": "encoded_placeholder_change_cannot_borrow_display_pin",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "rust_display_raw_placeholder_edit",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_display_raw_placeholder_edit",
+      "vector": "raw_placeholder_change_cannot_recover_credit_through_token_overlap",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
       "id": "rust_nested_use_dependency_glob",
       "language": "rust",
       "tier": "pure",
@@ -15474,6 +15679,75 @@
         },
         {
           "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "ts_reassigned_setup_hook",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_reassigned_setup_hook",
+      "vector": "inert_hook_reassignment_cannot_construct_the_asserted_receiver",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "ts_parameter_default_body_shadow",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_parameter_default_setup_hook",
+      "vector": "body_local_root_proofs_cannot_hide_parameter_default_hook_writes",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "ts_trailing_suite_hook_argument",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_trailing_setup_hook_argument",
+      "vector": "trailing_suite_argument_invalidates_hook_before_callback_registration",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
         }
       ]
     }

@@ -218,41 +218,59 @@ fn prebuilt_install_block_verifies_on_macos() -> Result<(), String> {
 }
 
 /// The macOS archives are unsigned. Browser, AirDrop or mail downloads are
-/// quarantined and Gatekeeper blocks the binary, so both install docs must say
-/// so, point at the checksum-first `xattr` remedy, and keep the claim that
-/// command-line downloads are normally not quarantined.
+/// quarantined and Gatekeeper blocks the binary. The Installation section of
+/// the Quickstart owns that explanation (the `xattr` remedy paired with the
+/// checksum condition, and the claim that command-line downloads are normally
+/// not quarantined); the README stays short and must point at it.
+fn readme_points_at_installation(readme: &str) -> bool {
+    let flat = normalized(readme);
+    flat.split(". ").any(|sentence| {
+        sentence.contains("Gatekeeper") && sentence.contains("(docs/QUICKSTART.md#installation)")
+    })
+}
+
 #[test]
 fn install_docs_explain_macos_gatekeeper_quarantine() -> Result<(), String> {
-    for (name, doc) in [
-        ("README.md", ROOT_README),
-        ("docs/QUICKSTART.md", QUICKSTART_DOC),
+    if !readme_points_at_installation(ROOT_README) {
+        return Err(
+            "README.md must have one sentence naming Gatekeeper and linking (docs/QUICKSTART.md#installation)"
+                .to_string(),
+        );
+    }
+    let without_link = ROOT_README.replace("(docs/QUICKSTART.md#installation)", "");
+    if readme_points_at_installation(&without_link) {
+        return Err("README Gatekeeper pointer negative control kept passing".to_string());
+    }
+    let name = "docs/QUICKSTART.md Installation";
+    let installation = doc_section(QUICKSTART_DOC, "## Installation")?;
+    let flat = installation
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    for needle in [
+        "not signed or notarized",
+        "Gatekeeper",
+        "normally carries no quarantine attribute",
+        "xattr -d com.apple.quarantine",
+        "whose `.sha256` matched",
     ] {
-        let flat = doc.split_whitespace().collect::<Vec<_>>().join(" ");
-        for needle in [
-            "not signed or notarized",
-            "Gatekeeper",
-            "normally carries no quarantine attribute",
-            "xattr -d com.apple.quarantine",
-            "whose `.sha256` matched",
-        ] {
-            assert_contains(name, &flat, needle)?;
-        }
-        let paired = match (
-            flat.find("xattr -d com.apple.quarantine"),
-            flat.find("whose `.sha256` matched"),
-        ) {
-            (Some(remedy), Some(check)) => remedy < check,
-            _ => false,
-        };
-        if !paired {
-            return Err(format!(
-                "{name} must pair the xattr remedy with the checksum condition"
-            ));
-        }
-        let removed = flat.replace("xattr -d com.apple.quarantine", "");
-        if assert_contains(name, &removed, "xattr -d com.apple.quarantine").is_ok() {
-            return Err(format!("{name} negative control kept the xattr remedy"));
-        }
+        assert_contains(name, &flat, needle)?;
+    }
+    let paired = match (
+        flat.find("xattr -d com.apple.quarantine"),
+        flat.find("whose `.sha256` matched"),
+    ) {
+        (Some(remedy), Some(check)) => remedy < check,
+        _ => false,
+    };
+    if !paired {
+        return Err(format!(
+            "{name} must pair the xattr remedy with the checksum condition"
+        ));
+    }
+    let removed = flat.replace("xattr -d com.apple.quarantine", "");
+    if assert_contains(name, &removed, "xattr -d com.apple.quarantine").is_ok() {
+        return Err(format!("{name} negative control kept the xattr remedy"));
     }
     Ok(())
 }
