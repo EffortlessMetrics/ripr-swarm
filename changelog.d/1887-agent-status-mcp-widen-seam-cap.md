@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr agent status`, the repair-start gate and MCP reads now use the same widened seam cap as `ripr repair`, so a 10,000 to 20,000 seam repository (tokio at 12,754) is no longer withheld there while `ripr repair` starts. Widened reruns now hold the process-wide cap exclusively, so concurrent MCP workers cannot strand it. A test over a generated repository above 10,000 seams pins the plain cut, the widened repair inventory, the gate and the cap restore (#1887, #1985)

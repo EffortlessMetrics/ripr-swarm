@@ -538,13 +538,15 @@ suite('Downloader Manifest Placement', () => {
           stableManifestUrl: `${server.base}/releases/download/v2.0.0/redirect`,
           admittedManifestSha256: 'a'.repeat(64)
         })),
-        /Refusing non-HTTPS manifest URL http:\/\//
+        // The redirect allowlist (isAllowedHttpsRedirect) refuses the hop before
+        // the https request call can reject the protocol.
+        /Refusing redirect from https:\/\/127\.0\.0\.1:\d+\/.* to disallowed host 127\.0\.0\.1:9\./
       );
 
       const paths = server.requests.map((requestPath) => requestPath.path);
       assert.ok(
         !paths.includes('/releases/download/v2.0.0-rc.1/ripr-server-manifest-v2.0.0.json'),
-        'a non-HTTPS transport refusal must not authorize the RC placement'
+        'a refused redirect must not authorize the RC placement'
       );
     } finally {
       await server.stop();

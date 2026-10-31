@@ -1,3 +1,4 @@
+use super::capabilities::WorkspaceRootResolution;
 use super::component_outcome::ComponentOutcome;
 use super::gap_artifacts::{GapArtifactRejection, ValidatedGapArtifact};
 use super::input_identity::LspAnalysisInputIdentity;
@@ -10,6 +11,8 @@ use crate::config::LspDiagnosticProfile;
 use crate::domain::{Finding, LanguageId};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 use tower_lsp_server::ls_types::{
     Diagnostic, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
@@ -90,6 +93,39 @@ impl WorkspaceRootAuthority {
             detail: Some(
                 "the selected workspace root was removed; select a root and restart".into(),
             ),
+        }
+    }
+
+    pub(super) fn from_resolution(resolution: WorkspaceRootResolution) -> Self {
+        match resolution {
+            WorkspaceRootResolution::Selected(root) => {
+                if !root.is_absolute() {
+                    Self::unavailable(format!(
+                        "workspace root is not absolute: {}",
+                        root.display()
+                    ))
+                } else if !root.is_dir() {
+                    Self::unavailable(format!(
+                        "workspace root is inaccessible or not a directory: {}",
+                        root.display()
+                    ))
+                } else {
+                    Self::selected(root)
+                }
+            }
+            WorkspaceRootResolution::Ambiguous(candidates) => {
+                if candidates
+                    .iter()
+                    .any(|root| !root.is_absolute() || !root.is_dir())
+                {
+                    Self::unavailable(
+                        "one or more workspace folders are inaccessible or not directories",
+                    )
+                } else {
+                    Self::ambiguous(candidates)
+                }
+            }
+            WorkspaceRootResolution::Unavailable(detail) => Self::unavailable(detail),
         }
     }
 
@@ -481,6 +517,105 @@ pub(super) enum ConfigPullState {
     /// failed validation (`config_pull_invalid`); the retained pulled layer
     /// is last-known-good and stale.
     Failed(AnalysisFailure),
+}
+
+/// Single owner of the config-pull session state (#2942): the epoch guarding
+/// pull responses, the disclosed pull lifecycle state, the in-flight/queued
+/// coalescing flags and the root the retained pulled layer was scoped to.
+/// Each field keeps its own lock exactly as `Backend` held them.
+pub(super) struct ConfigPullCoordinator {
+    epoch: AtomicU64,
+    state: Mutex<ConfigPullState>,
+    coalescer: Mutex<ConfigPullCoalescer>,
+    scope_root: Mutex<Option<PathBuf>>,
+}
+
+/// Coalesces pull scheduling to one in-flight request plus at most one
+/// queued re-pull for the latest epoch.
+#[derive(Default)]
+struct ConfigPullCoalescer {
+    in_flight: bool,
+    queued: bool,
+}
+
+impl Default for ConfigPullCoordinator {
+    fn default() -> Self {
+        Self {
+            epoch: AtomicU64::new(0),
+            state: Mutex::new(ConfigPullState::NotApplicable),
+            coalescer: Mutex::new(ConfigPullCoalescer::default()),
+            scope_root: Mutex::new(None),
+        }
+    }
+}
+
+impl ConfigPullCoordinator {
+    pub(super) fn epoch(&self) -> u64 {
+        self.epoch.load(Ordering::SeqCst)
+    }
+
+    pub(super) fn bump_epoch(&self) {
+        self.epoch.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub(super) fn state(&self) -> ConfigPullState {
+        self.state
+            .lock()
+            .map(|state| state.clone())
+            .unwrap_or(ConfigPullState::NotApplicable)
+    }
+
+    pub(super) fn set_state(&self, state: ConfigPullState) {
+        if let Ok(mut current) = self.state.lock() {
+            *current = state;
+        }
+    }
+
+    /// Claim the single in-flight slot. `false` means a pull is already in
+    /// flight (a re-pull is queued) or the lock is poisoned.
+    pub(super) fn begin_or_queue(&self) -> bool {
+        let Ok(mut coalescer) = self.coalescer.lock() else {
+            return false;
+        };
+        if coalescer.in_flight {
+            coalescer.queued = true;
+            return false;
+        }
+        coalescer.in_flight = true;
+        true
+    }
+
+    /// Finish one pull cycle. `true` means a queued re-pull must run now;
+    /// `false` releases the in-flight slot (also on a poisoned lock).
+    pub(super) fn finish_cycle(&self) -> bool {
+        let Ok(mut coalescer) = self.coalescer.lock() else {
+            return false;
+        };
+        if coalescer.queued {
+            coalescer.queued = false;
+            true
+        } else {
+            coalescer.in_flight = false;
+            false
+        }
+    }
+
+    pub(super) fn in_flight(&self) -> bool {
+        self.coalescer
+            .lock()
+            .map(|coalescer| coalescer.in_flight)
+            .unwrap_or(false)
+    }
+
+    pub(super) fn scope_root(&self) -> Option<PathBuf> {
+        self.scope_root.lock().ok().and_then(|root| root.clone())
+    }
+
+    pub(super) fn set_scope_root(&self, root: PathBuf) {
+        if let Ok(mut scope_root) = self.scope_root.lock() {
+            *scope_root = Some(root);
+        }
+    }
 }
 
 impl ConfigPullState {
@@ -1267,6 +1402,93 @@ pub(super) struct DocumentQuarantine {
     pub(super) withdrawal_disclosed: bool,
 }
 
+/// Owner of the open-document store, per-document save digests and the last
+/// published diagnostics (#2941). Each field keeps its own lock exactly as the
+/// `Backend` held them, so lock ordering and behavior are unchanged; the
+/// digest and quarantine-marker transitions live here instead of in `Backend`.
+#[derive(Default)]
+pub(super) struct QuarantineLedger {
+    pub(super) documents: Mutex<DocumentStore>,
+    /// Per-document save digest plus the workspace revision that save
+    /// produced; the revision lets a failed refresh drop only the digests no
+    /// successful snapshot has covered yet.
+    saved_content_digests: Mutex<BTreeMap<Uri, (String, u64)>>,
+    pub(super) last_diagnostics: Mutex<BTreeMap<Uri, Vec<Diagnostic>>>,
+}
+
+impl QuarantineLedger {
+    pub(super) fn saved_content_digest_matches(&self, uri: &Uri, digest: &str) -> bool {
+        self.saved_content_digests
+            .lock()
+            .ok()
+            .and_then(|digests| digests.get(uri).map(|(recorded, _)| recorded.clone()))
+            .is_some_and(|recorded| recorded == digest)
+    }
+
+    pub(super) fn record_saved_content_digest(&self, uri: &Uri, digest: String, revision: u64) {
+        if let Ok(mut digests) = self.saved_content_digests.lock() {
+            digests.insert(uri.clone(), (digest, revision));
+        }
+    }
+
+    /// Drop digests stamped with a revision no published snapshot covered.
+    pub(super) fn retain_covered_digests(&self, covered_revision: u64) {
+        if let Ok(mut digests) = self.saved_content_digests.lock() {
+            digests.retain(|_, (_, revision)| *revision <= covered_revision);
+        }
+    }
+
+    pub(super) fn forget_saved_content_digest(&self, uri: &Uri) {
+        if let Ok(mut digests) = self.saved_content_digests.lock() {
+            digests.remove(uri);
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn saved_content_digest_uris(&self) -> Vec<Uri> {
+        self.saved_content_digests
+            .lock()
+            .map(|digests| digests.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// `(path, reason)` for a quarantined open document; `None` when the
+    /// document is unknown or clean.
+    pub(super) fn document_quarantine(
+        &self,
+        uri: &Uri,
+    ) -> Option<(PathBuf, DocumentStalenessReason)> {
+        let documents = self.documents.lock().ok()?;
+        let state = documents.state_for_uri(uri)?;
+        let quarantine = state.quarantine.as_ref()?;
+        Some((state.path.clone(), quarantine.reason))
+    }
+
+    pub(super) fn document_path_for_uri(&self, uri: &Uri) -> Option<PathBuf> {
+        self.documents
+            .lock()
+            .ok()?
+            .state_for_uri(uri)
+            .map(|state| state.path.clone())
+    }
+
+    /// Mark the withdrawal disclosed, returning `(path, reason)` only on the
+    /// first disclosure of the quarantine episode.
+    pub(super) fn mark_withdrawal_disclosed(
+        &self,
+        uri: &Uri,
+    ) -> Option<(PathBuf, DocumentStalenessReason)> {
+        let mut documents = self.documents.lock().ok()?;
+        let state = documents.state_for_uri_mut(uri)?;
+        let quarantine = state.quarantine.as_mut()?;
+        if quarantine.withdrawal_disclosed {
+            return None;
+        }
+        quarantine.withdrawal_disclosed = true;
+        Some((state.path.clone(), quarantine.reason))
+    }
+}
+
 /// Quarantine edges produced by applying a committed snapshot's analyzed
 /// identities (#1970): documents that entered quarantine, and documents
 /// that exited it with each exit carrying its disclosed marker.
@@ -2012,6 +2234,29 @@ mod tests {
     }
 
     #[test]
+    fn config_pull_coordinator_coalesces_and_guards_epoch() {
+        let pull = ConfigPullCoordinator::default();
+        assert_eq!(pull.state(), ConfigPullState::NotApplicable);
+        assert!(pull.begin_or_queue(), "first schedule claims the slot");
+        assert!(pull.in_flight());
+        assert!(!pull.begin_or_queue(), "second schedule only queues");
+        assert!(pull.finish_cycle(), "queued re-pull runs once");
+        assert!(!pull.finish_cycle(), "then the slot is released");
+        assert!(!pull.in_flight());
+        assert!(pull.begin_or_queue(), "slot is reusable after release");
+
+        let epoch = pull.epoch();
+        pull.bump_epoch();
+        assert_ne!(pull.epoch(), epoch, "a bump invalidates in-flight epochs");
+
+        assert_eq!(pull.scope_root(), None);
+        pull.set_scope_root(PathBuf::from("/workspace"));
+        assert_eq!(pull.scope_root(), Some(PathBuf::from("/workspace")));
+        pull.set_state(ConfigPullState::Applied);
+        assert_eq!(pull.state(), ConfigPullState::Applied);
+    }
+
+    #[test]
     fn analysis_failure_kinds_keep_stable_wire_names() {
         let cases = [
             (AnalysisFailureKind::AnalysisError, "analysis_error"),
@@ -2038,6 +2283,62 @@ mod tests {
         for (kind, expected) in cases {
             assert_eq!(kind.as_str(), expected);
         }
+    }
+
+    #[test]
+    fn quarantine_ledger_owns_digests_and_disclosure_once() -> Result<(), String> {
+        let uri = test_uri("file:///workspace/src/lib.rs")?;
+        let ledger = QuarantineLedger::default();
+        if ledger.saved_content_digest_matches(&uri, "a") {
+            return Err("unrecorded digest must not match".to_string());
+        }
+        ledger.record_saved_content_digest(&uri, "a".to_string(), 5);
+        if !ledger.saved_content_digest_matches(&uri, "a")
+            || ledger.saved_content_digest_matches(&uri, "b")
+        {
+            return Err("recorded digest must match only itself".to_string());
+        }
+        ledger.retain_covered_digests(4);
+        if ledger.saved_content_digest_matches(&uri, "a") {
+            return Err("digest above covered revision must be dropped".to_string());
+        }
+        ledger.record_saved_content_digest(&uri, "a".to_string(), 3);
+        ledger.retain_covered_digests(4);
+        if !ledger.saved_content_digest_matches(&uri, "a") {
+            return Err("covered digest must be retained".to_string());
+        }
+        ledger.forget_saved_content_digest(&uri);
+        if ledger.saved_content_digest_matches(&uri, "a") {
+            return Err("closed document digest must be forgotten".to_string());
+        }
+
+        let mut state = clean_document_state(&uri, "fn saved() {}");
+        if ledger.document_quarantine(&uri).is_some()
+            || ledger.mark_withdrawal_disclosed(&uri).is_some()
+        {
+            return Err("unknown document is neither quarantined nor disclosable".to_string());
+        }
+        state.quarantine = Some(DocumentQuarantine {
+            reason: DocumentStalenessReason::InvalidIncrementalChange,
+            withdrawal_disclosed: false,
+        });
+        ledger
+            .documents
+            .lock()
+            .map_err(|error| format!("documents lock poisoned: {error}"))?
+            .documents
+            .insert(uri.clone(), state);
+        if ledger.document_quarantine(&uri).map(|(_, reason)| reason)
+            != Some(DocumentStalenessReason::InvalidIncrementalChange)
+        {
+            return Err("quarantined document must report its reason".to_string());
+        }
+        if ledger.mark_withdrawal_disclosed(&uri).is_none()
+            || ledger.mark_withdrawal_disclosed(&uri).is_some()
+        {
+            return Err("withdrawal must disclose exactly once per episode".to_string());
+        }
+        Ok(())
     }
 
     #[test]
@@ -4038,5 +4339,51 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    #[test]
+    fn root_authority_from_resolution_selects_only_an_absolute_directory() {
+        let dir = std::env::temp_dir();
+        let selected =
+            WorkspaceRootAuthority::from_resolution(WorkspaceRootResolution::Selected(dir.clone()));
+        assert_eq!(selected.state, WorkspaceRootState::SelectedSingleRoot);
+        assert_eq!(selected.effective_root, Some(dir.clone()));
+
+        let relative = WorkspaceRootAuthority::from_resolution(WorkspaceRootResolution::Selected(
+            PathBuf::from("relative/root"),
+        ));
+        assert_eq!(relative.state, WorkspaceRootState::RootUnavailable);
+        assert!(relative.effective_root.is_none());
+
+        let missing = WorkspaceRootAuthority::from_resolution(WorkspaceRootResolution::Selected(
+            dir.join("ripr-state-missing-root-3020"),
+        ));
+        assert_eq!(missing.state, WorkspaceRootState::RootUnavailable);
+        assert!(!missing.allows_analysis());
+    }
+
+    #[test]
+    fn root_authority_from_resolution_keeps_ambiguity_only_for_valid_candidates() {
+        let dir = std::env::temp_dir();
+        let ambiguous =
+            WorkspaceRootAuthority::from_resolution(WorkspaceRootResolution::Ambiguous(vec![
+                dir.clone(),
+                dir.clone(),
+            ]));
+        assert_eq!(ambiguous.state, WorkspaceRootState::WorkspaceAmbiguous);
+        assert_eq!(ambiguous.candidate_roots.len(), 2);
+
+        let invalid =
+            WorkspaceRootAuthority::from_resolution(WorkspaceRootResolution::Ambiguous(vec![
+                dir,
+                PathBuf::from("relative"),
+            ]));
+        assert_eq!(invalid.state, WorkspaceRootState::RootUnavailable);
+        assert!(invalid.candidate_roots.is_empty());
+
+        let unavailable = WorkspaceRootAuthority::from_resolution(
+            WorkspaceRootResolution::Unavailable("no folders".to_string()),
+        );
+        assert_eq!(unavailable.detail.as_deref(), Some("no folders"));
     }
 }
