@@ -1499,12 +1499,25 @@ fn encoded_units_to_byte_offset(
     (units == target_units).then_some(line.len())
 }
 
+/// Most ranged edits one `didChange` may carry. Each ranged edit scans the
+/// buffer from byte 0, so an unbounded list multiplies document size by edit
+/// count (#11508). Real editors batch a handful; a longer list is treated as
+/// an invalid incremental change and quarantines the document.
+const MAX_CHANGES_PER_NOTIFICATION: usize = 1024;
+
+/// Largest retained document text: the transport's message cap, so a document
+/// that fit in one `didOpen` can be edited but never grown without bound.
+const MAX_DOCUMENT_BYTES: usize = crate::lsp::transport_bounds::MAX_MESSAGE_BYTES;
+
 fn apply_document_content_change(
     text: &mut String,
     change: TextDocumentContentChangeEvent,
     encoding: &PositionEncodingKind,
 ) -> Result<(), ()> {
     let Some(range) = change.range else {
+        if change.text.len() > MAX_DOCUMENT_BYTES {
+            return Err(());
+        }
         *text = change.text;
         return Ok(());
     };
@@ -1515,6 +1528,9 @@ fn apply_document_content_change(
         return Err(());
     };
     if start > end {
+        return Err(());
+    }
+    if text.len() - (end - start) + change.text.len() > MAX_DOCUMENT_BYTES {
         return Err(());
     }
     text.replace_range(start..end, &change.text);
@@ -1534,6 +1550,9 @@ fn apply_document_content_changes(
     changes: Vec<TextDocumentContentChangeEvent>,
     encoding: &PositionEncodingKind,
 ) -> Result<(), ()> {
+    if changes.len() > MAX_CHANGES_PER_NOTIFICATION {
+        return Err(());
+    }
     let mut changes = changes.into_iter();
     let Some(first) = changes.next() else {
         return Ok(());
@@ -2296,6 +2315,50 @@ mod tests {
             return Err(format!("unexpected incremental result: {text:?}"));
         }
         Ok(())
+    }
+
+    fn ranged_edit(text: &str) -> TextDocumentContentChangeEvent {
+        TextDocumentContentChangeEvent {
+            range: Some(Range {
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 0,
+                    character: 0,
+                },
+            }),
+            range_length: None,
+            text: text.to_string(),
+        }
+    }
+
+    #[test]
+    fn change_list_and_document_size_are_bounded() {
+        let encoding = PositionEncodingKind::UTF16;
+        let mut text = "x".to_string();
+        let many = (0..=MAX_CHANGES_PER_NOTIFICATION)
+            .map(|_| ranged_edit(""))
+            .collect::<Vec<_>>();
+        assert!(apply_document_content_changes(&mut text, many, &encoding).is_err());
+        let at_cap = (0..MAX_CHANGES_PER_NOTIFICATION)
+            .map(|_| ranged_edit(""))
+            .collect::<Vec<_>>();
+        assert!(apply_document_content_changes(&mut text, at_cap, &encoding).is_ok());
+        assert_eq!(text, "x");
+
+        let mut big = "y".repeat(MAX_DOCUMENT_BYTES);
+        let grow = vec![ranged_edit("z")];
+        assert!(apply_document_content_changes(&mut big, grow, &encoding).is_err());
+        assert_eq!(big.len(), MAX_DOCUMENT_BYTES);
+        let full = TextDocumentContentChangeEvent {
+            range: None,
+            range_length: None,
+            text: "w".repeat(MAX_DOCUMENT_BYTES + 1),
+        };
+        assert!(apply_document_content_changes(&mut text, vec![full], &encoding).is_err());
+        assert_eq!(text, "x");
     }
 
     #[test]
