@@ -594,7 +594,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// no longer reads as comparing by its fields (#10684).
 /// `1.123`: return/error matches! assertions require shared test execution
 /// admission. Older entries may credit ignored or broad expected-panic tests.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.123";
+/// `1.124`: a Kani proof harness gets its own source role and no longer
+/// reads as a production function (RIPR-SPEC-0367); `1.123` entries score it.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.124";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -1129,7 +1131,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `return_value` (RIPR-SPEC-0360, #9478); `1.48` facts keep it unmapped.
 /// `1.50`: the row's literal arguments are substituted into the returned
 /// expression (#10797); `1.49` facts keep the unsubstituted row.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.50";
+/// `1.51`: exact `#[kani::proof]` functions carry the proof-harness role
+/// (RIPR-SPEC-0367); `1.50` facts leave them production.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.51";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -5214,7 +5218,7 @@ mod tests {
         // 1.47 -> 1.48: arrow-row oracles (RIPR-SPEC-0231 rule 9, #9619).
         // 1.48 -> 1.49: call-in-term accumulator probe (RIPR-SPEC-0360, #9478).
         // 1.49 -> 1.50: arrow row inputs substituted (RIPR-SPEC-0231 rule 9, #10797).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.50");
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.51");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -5361,7 +5365,7 @@ mod tests {
         // 1.120 -> 1.121: Display placeholder-edit refusal (#9836).
         // 1.121 -> 1.122: foreign embedded-type equality reading (#10684).
         // 1.122 -> 1.123: return/error matches! execution admission.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.123");
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.124");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.

@@ -39,8 +39,8 @@ Policy impact:
   `policy/doc-artifacts.d/`) and `.ripr/traceability.d/`.
 - Adds the additive `static_limit_kind` value `proof_harness_not_evaluated`
   (`docs/OUTPUT_SCHEMA.md`, `docs/STATIC_LIMITS.md`,
-  `policy/output_contracts.txt`) and the serialized function source role
-  `proof_harness`.
+  `policy/output_contracts.txt`). The `proof_harness` function source role is
+  internal analysis state; it is not serialized.
 
 ## Problem
 
@@ -134,7 +134,9 @@ dialects are out of scope here.
 
 ## Known Limits
 
-- A deleted harness (removed lines only) yields no disclosure.
+- A deleted harness (removed lines only) yields no disclosure; deletion is silent.
+- `cfg_attr(feature = "kani", kani::proof)` (a string-literal feature predicate)
+  is not recognized and the function stays production.
 - Contract attribute edits, `kani::stub`, `cfg(kani)` production arms, Verus,
   Prusti and Creusot items are not recognized by this spec.
 - A harness imported under another name (`use kani::proof as p`) is not
