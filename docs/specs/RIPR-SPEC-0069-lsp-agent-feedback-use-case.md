@@ -388,6 +388,34 @@ the only word about a live finding:
   `withheld_unknown=N` beside the existing `findings` and `diagnostics`
   counts.
 
+Preview-language withholding (#11296): the same discipline covers Python,
+TypeScript and other `language_status = "preview"` findings of a gap class
+(`weakly_exposed`, `reachable_unrevealed`, `no_static_path`) that the
+`actionable` profile withholds because they carry no producer-backed fix
+route. Eligibility is unchanged and fail-closed: nothing is promoted to a
+diagnostic, and under `full` such a finding publishes as an `INFORMATION`
+diagnostic. Under `actionable` the disclosure is additive: `ripr/analysisStatus`
+`withheld_findings` counts them in `count`/`classes` with a separate
+`preview_count`; the pull-channel disclosure and the completion log
+(`withheld_preview=N`) name them, so `findings=N, diagnostics=0` is never the
+only word about a live preview finding. These findings are disjoint from the
+`*_unknown` set and remain listed under `hidden_gaps` by
+`ripr/listActionableItems`.
+
+The editor surface must not end on an empty list either. Each file with
+withheld preview gap findings carries exactly one passive Hint diagnostic,
+code `ripr-diagnostic-preview-withheld`, anchored on the first withheld
+finding, with a `preview:`-prefixed message such as `preview: 1 preview python
+finding(s) not shown in the editor; set diagnosticProfile: full or run
+`ripr check``. It carries no finding identity, repair data, witness,
+`delivery_eligible` or `preview_actionability`, offers no code action beyond
+refresh, and is exempt from the diagnostic delivery budget: it takes no slot
+and the eligible-diagnostic caps are unchanged. It exists only under the
+`actionable` profile (the `full` profile publishes the real INFORMATION
+diagnostics instead), is replaced with the snapshot so it clears when no
+withheld preview gap remains, and is withdrawn with the document's other
+diagnostics while the buffer is quarantined.
+
 ## Non-Goals
 
 - No autonomous edits. The LSP never modifies source; every command

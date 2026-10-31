@@ -490,17 +490,33 @@ pub(in crate::analysis) struct WithheldMacroBindings {
     by_root: CrateMacroBindings,
     /// The first such site per trusted name and root, for disclosure.
     root_sites: BTreeMap<(String, PathBuf), (PathBuf, MacroBindingSite)>,
+    /// Withheld binary roots whose sites were confined to themselves. A file
+    /// that composes one of them (`#[path]`, `include!`) puts its macros in
+    /// another crate, which [`Self::widen_composed`] undoes.
+    confined_binaries: BTreeSet<PathBuf>,
 }
 
 impl WithheldMacroBindings {
     /// Fold one withheld file in. Returns `true` once nothing further can
     /// change the result, so the caller can stop reading.
+    #[cfg(test)]
     pub(in crate::analysis) fn absorb(
         &mut self,
         path: &Path,
         source: &str,
         packages: &BTreeSet<String>,
         drop_ins: &DropInManifests,
+    ) -> bool {
+        self.absorb_with_members(path, source, packages, drop_ins, &Default::default())
+    }
+
+    pub(in crate::analysis) fn absorb_with_members(
+        &mut self,
+        path: &Path,
+        source: &str,
+        packages: &BTreeSet<String>,
+        drop_ins: &DropInManifests,
+        members: &crate::analysis::facts::member_crates::MemberCrates,
     ) -> bool {
         if self.any_name {
             return true;
@@ -513,20 +529,30 @@ impl WithheldMacroBindings {
             }
         };
         let root = withheld_crate_root(path);
+        let binary_root = OnceCell::new();
         for (name, site) in macro_binding_scan(
             source,
             packages,
             &assertion_context_macros(),
             &drop_in_verified,
         ) {
-            if let Some(root) = root.as_ref().filter(|_| site.crate_local) {
+            let binary = *binary_root.get_or_init(|| members.is_binary_target_root(path));
+            let local_root = if binary {
+                Some(path)
+            } else {
+                root.as_deref().filter(|_| site.crate_local)
+            };
+            if let Some(root) = local_root {
+                if binary {
+                    self.confined_binaries.insert(path.to_path_buf());
+                }
                 self.root_any_name |= site.kind.binds_any_name();
                 self.by_root
-                    .entry(root.clone())
+                    .entry(root.to_path_buf())
                     .or_default()
                     .insert(name.clone());
                 self.root_sites
-                    .entry((name, root.clone()))
+                    .entry((name, root.to_path_buf()))
                     .or_insert_with(|| (path.to_path_buf(), site));
                 continue;
             }
@@ -535,6 +561,42 @@ impl WithheldMacroBindings {
             self.sites
                 .entry(name)
                 .or_insert_with(|| (path.to_path_buf(), site));
+        }
+        self.any_name
+    }
+}
+
+impl WithheldMacroBindings {
+    /// A withheld binary's macros stay in its own crate only while no file
+    /// composes it into another one. `composed` holds the file names that
+    /// path/include compositions spell, with `"*"` standing for a
+    /// composition ripr cannot read; a binary so named, or any binary under
+    /// `"*"`, keeps its sites workspace-wide again. Returns `any_name`.
+    pub(in crate::analysis) fn widen_composed(&mut self, composed: &BTreeSet<String>) -> bool {
+        let unreadable = composed.contains("*");
+        let widened = std::mem::take(&mut self.confined_binaries)
+            .into_iter()
+            .filter(|binary| {
+                unreadable
+                    || binary
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| composed.contains(name))
+            })
+            .collect::<Vec<_>>();
+        for binary in widened {
+            let Some(names) = self.by_root.remove(&binary) else {
+                continue;
+            };
+            for name in names {
+                let Some((path, site)) = self.root_sites.remove(&(name.clone(), binary.clone()))
+                else {
+                    continue;
+                };
+                self.any_name |= site.kind.binds_any_name();
+                self.trusted.insert(name.clone());
+                self.sites.entry(name).or_insert((path, site));
+            }
         }
         self.any_name
     }
@@ -841,6 +903,7 @@ impl OwnerPinSyntax {
             Some("assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne") => matches!(
                 family,
                 ProbeFamily::ReturnValue
+                    | ProbeFamily::FieldConstruction
                     | ProbeFamily::ErrorPath
                     | ProbeFamily::Predicate
                     | ProbeFamily::SideEffect
@@ -897,6 +960,27 @@ impl OwnerPinSyntax {
                         .refusal_trusting_comparison_macros(test, assertion, index)
                         .is_none()
             }
+            // Field construction: only a real shadow (a definition or import
+            // of the assertion name) or an opaque in-scope expansion that
+            // mentions it refuses credit. A site that only may rebind it
+            // (`#[macro_use] extern crate`, a glob import) does not, matching
+            // the operand-whitespace contracts on main; the return family
+            // keeps refusing on those sites.
+            Some(AssertionRefusal::Syntax(AssertionContextRefusal::MacroBinding(name))) => {
+                family == ProbeFamily::FieldConstruction
+                    && self
+                        .macro_binding_site(test, assertion.line, &name, index)
+                        .is_some_and(|(_, site)| {
+                            !rebinds(&site)
+                                && !matches!(
+                                    site.kind,
+                                    MacroBindingKind::MacroArgument(_)
+                                        | MacroBindingKind::MacroBody(_)
+                                        | MacroBindingKind::BodyBindsAny { .. }
+                                        | MacroBindingKind::ArgumentAttribute { .. }
+                                )
+                        })
+            }
             Some(_) => false,
         }
     }
@@ -932,50 +1016,62 @@ impl OwnerPinSyntax {
         ));
         Some(match refusal {
             AssertionRefusal::Syntax(AssertionContextRefusal::MacroBinding(name)) => {
-                let resolved_modules = self.resolved_module_declarations(index);
-                let resolved = |path: &Path, line: usize, declaration: &str| {
-                    resolved_modules.contains(&(path.to_path_buf(), line, declaration.to_string()))
-                };
-                let test_roots = self.target_roots(index).roots(&test.file, index);
-                // #8255: the single ambiguity pass retained the earliest
-                // sites; a lookup completes that pass once when it stopped
-                // early, instead of rescanning the workspace per
-                // (name, test root).
-                let workspace = self
-                    .workspace_macro_site_in(&name, test_roots.as_ref(), Some(&test.file), index)
-                    .or_else(|| self.withheld.sites.get(&name).cloned())
-                    .or_else(|| {
-                        self.withheld
-                            .root_sites
-                            .iter()
-                            .find_map(|((site_name, root), site)| {
-                                (*site_name == name
-                                    && test_roots.as_ref().is_none_or(|roots| roots.contains(root)))
-                                .then(|| site.clone())
-                            })
-                    });
-                // A definition or `use` covering the test is a real
-                // rebinding; it outranks a workspace site that only may
-                // rebind the name, or the refusal would read as an analyzer
-                // limit (RIPR-SPEC-0240) for a macro that is really replaced.
-                let local = test_macro_binding_site(
-                    &name,
-                    test,
-                    assertion.line,
-                    index,
-                    &self.test_file_macro_sites,
-                    self.target_roots(index),
-                    &resolved,
-                );
-                let site = if local.as_ref().is_some_and(|(_, site)| rebinds(site)) {
-                    local
-                } else {
-                    workspace.or(local)
-                };
+                let site = self.macro_binding_site(test, assertion.line, &name, index);
                 AssertionRefusal::MacroBinding { name, site }
             }
             refusal => refusal,
         })
+    }
+
+    /// The binding site behind a `MacroBinding` refusal for `name`: a real
+    /// local rebinding outranks a workspace site that only may rebind it.
+    fn macro_binding_site(
+        &self,
+        test: &TestSummary,
+        assertion_line: usize,
+        name: &str,
+        index: &RustIndex,
+    ) -> Option<(PathBuf, MacroBindingSite)> {
+        let resolved_modules = self.resolved_module_declarations(index);
+        let resolved = |path: &Path, line: usize, declaration: &str| {
+            resolved_modules.contains(&(path.to_path_buf(), line, declaration.to_string()))
+        };
+        let test_roots = self.target_roots(index).roots(&test.file, index);
+        // #8255: the single ambiguity pass retained the earliest
+        // sites; a lookup completes that pass once when it stopped
+        // early, instead of rescanning the workspace per
+        // (name, test root).
+        let workspace = self
+            .workspace_macro_site_in(name, test_roots.as_ref(), Some(&test.file), index)
+            .or_else(|| self.withheld.sites.get(name).cloned())
+            .or_else(|| {
+                self.withheld
+                    .root_sites
+                    .iter()
+                    .find_map(|((site_name, root), site)| {
+                        (*site_name == name
+                            && test_roots.as_ref().is_none_or(|roots| roots.contains(root)))
+                        .then(|| site.clone())
+                    })
+            });
+        // A definition or `use` covering the test is a real
+        // rebinding; it outranks a workspace site that only may
+        // rebind the name, or the refusal would read as an analyzer
+        // limit (RIPR-SPEC-0240) for a macro that is really replaced.
+        let local = test_macro_binding_site(
+            name,
+            test,
+            assertion_line,
+            index,
+            &self.test_file_macro_sites,
+            self.target_roots(index),
+            &resolved,
+        );
+        if local.as_ref().is_some_and(|(_, site)| rebinds(site)) {
+            local
+        } else {
+            workspace.or(local)
+        }
     }
 
     fn execution_context(
@@ -2148,6 +2244,9 @@ struct TargetRoots {
     src_dirs: BTreeSet<PathBuf>,
     /// Per-file answers, so repeated admissions do not recompute them.
     memo: SyncMemo<BTreeMap<PathBuf, Option<BTreeSet<PathBuf>>>>,
+    /// #10191: all contexts must be non-importable binary crates before
+    /// opaque expansions or exported bindings can be confined to them.
+    binary_macro_roots: SyncMemo<BTreeMap<PathBuf, Option<BTreeSet<PathBuf>>>>,
 }
 
 impl TargetRoots {
@@ -2173,6 +2272,7 @@ impl TargetRoots {
             disabled,
             src_dirs,
             memo: SyncMemo::default(),
+            binary_macro_roots: SyncMemo::default(),
         }
     }
 
@@ -2195,6 +2295,44 @@ impl TargetRoots {
         (roots.len() == 1)
             .then(|| roots.into_iter().next())
             .flatten()
+    }
+
+    fn binding_roots(
+        &self,
+        file: &Path,
+        site: &MacroBindingSite,
+        index: &RustIndex,
+    ) -> Option<BTreeSet<PathBuf>> {
+        if self.disabled {
+            return None;
+        }
+        if site.crate_local
+            && let Some(roots) = self.roots(file, index)
+        {
+            return Some(roots);
+        }
+        self.binary_roots(file, index)
+    }
+
+    fn binary_roots(&self, file: &Path, index: &RustIndex) -> Option<BTreeSet<PathBuf>> {
+        if self.disabled {
+            return None;
+        }
+        if let Some(roots) = self.binary_macro_roots.borrow().get(file) {
+            return roots.clone();
+        }
+        let roots = index.execution_context(file).and_then(|context| {
+            (!context.roots.is_empty()
+                && context
+                    .roots
+                    .iter()
+                    .all(|root| index.member_crates.is_binary_target_root(root)))
+            .then_some(context.roots)
+        });
+        self.binary_macro_roots
+            .borrow_mut()
+            .insert(file.to_path_buf(), roots.clone());
+        roots
     }
 
     fn may_belong(&self, file: &Path, root: &Path, index: &RustIndex) -> bool {
@@ -2662,17 +2800,16 @@ fn workspace_macro_binding_site_for(
         .files()
         .iter()
         .map(|(path, facts)| {
-            let placed = roots.roots(path, index);
-            let root = test_root.and_then(|_| placed.clone());
-            (path, facts, root, placed.is_some())
+            // Preserve the selected manifest overlay before entering rayon.
+            if test_root.is_some() {
+                let _ = roots.roots(path, index);
+                let _ = roots.binary_roots(path, index);
+            }
+            let placed = roots.roots(path, index).is_some();
+            (path, facts, placed)
         })
         .collect();
-    let scan = |(path, facts, root, placed): &(
-        &PathBuf,
-        FileFactsView<'_>,
-        Option<BTreeSet<PathBuf>>,
-        bool,
-    )| {
+    let scan = |(path, facts, placed): &(&PathBuf, FileFactsView<'_>, bool)| {
         // The same rule as the decision: a crate-local site in another
         // recognized root does not reach this test.
         let reaches = |site: &MacroBindingSite| {
@@ -2684,11 +2821,11 @@ fn workspace_macro_binding_site_for(
             {
                 return ancestors.contains(path.as_path());
             }
-            !site.crate_local
-                || test_root.is_none()
-                || root.as_ref().is_none_or(|site_roots| {
-                    test_root.is_some_and(|root| site_roots.contains(root))
-                })
+            test_root.is_none_or(|test_root| {
+                roots
+                    .binding_roots(path, site, index)
+                    .is_none_or(|site_roots| site_roots.contains(test_root))
+            })
         };
         let mut first = None;
         for (_, site) in macro_binding_sites(
@@ -2719,7 +2856,7 @@ fn workspace_macro_binding_site_for(
         } else {
             chunk.iter().map(scan).collect()
         };
-        for ((path, _, _, _), (rebinding, site)) in chunk.iter().zip(per_file) {
+        for ((path, _, _), (rebinding, site)) in chunk.iter().zip(per_file) {
             if let Some(site) = rebinding {
                 return Some(((*path).clone(), site));
             }
@@ -2994,11 +3131,7 @@ fn retain_macro_sites(
                 .absorb(&path, position, &site);
             continue;
         }
-        if let Some(contexts) = site
-            .crate_local
-            .then(|| roots.roots(&path, index))
-            .flatten()
-        {
+        if let Some(contexts) = roots.binding_roots(&path, &site, index) {
             for root in contexts {
                 retained
                     .by_root
@@ -3114,11 +3247,7 @@ fn absorb_macro_sites(
             binding.names.insert(name);
             continue;
         }
-        if let Some(contexts) = site
-            .crate_local
-            .then(|| roots.roots(&path, index))
-            .flatten()
-        {
+        if let Some(contexts) = roots.binding_roots(&path, &site, index) {
             for root in contexts {
                 by_root.entry(root).or_default().insert(name.clone());
             }
@@ -9458,19 +9587,21 @@ fn word_after_as(rest: &str) -> &str {
 /// changed file can never read a stale answer; bounded so a long-lived
 /// process cannot grow without limit. `None` if the lock is poisoned.
 fn renamed_names_memoized(source: &str) -> Option<Arc<BTreeSet<String>>> {
-    use std::hash::{Hash, Hasher};
     // The full text is kept beside its answer and compared on a hit, so a
-    // hash collision can only miss, never hand one file another's renames
-    // (which would drop a refusal).
+    // key collision can only miss, never hand one file another's renames
+    // (which would drop a refusal). The key is the length plus a bounded
+    // byte sample: a pilot asks per (seam, test, type) triple, and hashing the
+    // whole file each time (SipHash over every byte) was a third of ripgrep's
+    // evidence stage. Files that share a key sit side by side in one bucket.
     type Entry = (Arc<str>, Arc<BTreeSet<String>>);
-    static MEMO: std::sync::Mutex<BTreeMap<u64, Entry>> = std::sync::Mutex::new(BTreeMap::new());
+    static MEMO: std::sync::Mutex<BTreeMap<u64, Vec<Entry>>> =
+        std::sync::Mutex::new(BTreeMap::new());
     const MAX_ENTRIES: usize = 2048;
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    source.hash(&mut hasher);
-    let key = hasher.finish();
+    let key = source_sample_key(source);
     if let Ok(memo) = MEMO.lock()
-        && let Some((text, found)) = memo.get(&key)
-        && &**text == source
+        && let Some((_, found)) = memo
+            .get(&key)
+            .and_then(|bucket| bucket.iter().find(|(text, _)| &**text == source))
     {
         return Some(Arc::clone(found));
     }
@@ -9490,11 +9621,30 @@ fn renamed_names_memoized(source: &str) -> Option<Arc<BTreeSet<String>>> {
         .collect();
     let renamed = Arc::new(renamed);
     let mut memo = MEMO.lock().ok()?;
-    if memo.len() >= MAX_ENTRIES {
+    if memo.values().map(Vec::len).sum::<usize>() >= MAX_ENTRIES {
         memo.clear();
     }
-    memo.insert(key, (Arc::from(source), Arc::clone(&renamed)));
+    let bucket = memo.entry(key).or_default();
+    if !bucket.iter().any(|(text, _)| &**text == source) {
+        bucket.push((Arc::from(source), Arc::clone(&renamed)));
+    }
     Some(renamed)
+}
+
+/// A cheap memo key for `source`: its length and a byte sample spread evenly
+/// across it (the whole file when it is under 2048 bytes, otherwise up to
+/// about 2047 bytes at a stride of `len / 1024`). Equal texts always share a key; unequal texts may, which
+/// callers resolve by comparing the full text.
+fn source_sample_key(source: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let bytes = source.as_bytes();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.len().hash(&mut hasher);
+    let stride = (bytes.len() / 1024).max(1);
+    for byte in bytes.iter().step_by(stride) {
+        byte.hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 /// The byte spans in `masked` where an `as` may rename: every `use ..;`
@@ -14252,11 +14402,14 @@ fn test_module_shadows_item(
         owner.map(|o| (o.file.to_path_buf(), o.name.to_string(), o.start_line)),
     );
     snapshot.shadow_answer(key, || {
-        let masked = mask_comments_and_strings(source);
+        // The snapshot is built from `source` (or is the index's snapshot of
+        // those same bytes), so its masked copy is the same text; mask once
+        // per file instead of once per (test, owner, name) key.
+        let masked = snapshot.masked_source(|| mask_comments_and_strings(source));
         let raw = format!("r#{base}");
         let declared = match kind {
-            ShadowKind::Type => declares_type(&masked, base) || file_aliases_type(source, base),
-            ShadowKind::Trait => declares_trait(&masked, base),
+            ShadowKind::Type => declares_type(masked, base) || file_aliases_type(source, base),
+            ShadowKind::Trait => declares_trait(masked, base),
         };
         if !declared && !masked.contains(raw.as_str()) {
             return false;

@@ -1,0 +1,2 @@
+pub fn nested_shift(base: u32) -> u32 { base + 3 }
+mod child;
