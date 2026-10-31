@@ -68,7 +68,7 @@ after snapshot, verify, and receipt steps. It remains advisory and static; it
 does not call an LLM API, run mutation testing, generate tests, edit files,
 change cache behavior, or touch LSP/MCP surfaces.
 
-A refusal (for example an unknown seam or an unsupported language) exits `3`
+A refusal (for example, an unknown seam or an unsupported language) exits `3`
 with the cause on stderr.
 "#;
 pub(super) const AGENT_BRIEF_HELP: &str = r#"Write a bounded brief for a coding agent over the current diff or change.
@@ -120,7 +120,7 @@ without rerunning analysis. It remains advisory and static; it does not run
 mutation testing, generate tests, edit files, change cache behavior, or touch
 LSP/MCP surfaces.
 
-A refusal (for example an unknown seam or gap) exits `3` with the cause on
+A refusal (for example, an unknown seam or gap) exits `3` with the cause on
 stderr and empty stdout.
 "#;
 pub(super) const AGENT_CARD_HELP: &str = r#"Hand off one seam as the compact default repair card.
