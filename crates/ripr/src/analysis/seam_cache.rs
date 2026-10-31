@@ -561,9 +561,6 @@ pub(crate) struct CachedSeamLimitInfo {
 /// weak reading.
 /// `1.110`: a grouped `use crate::{a, b};` names each plain
 /// `#[macro_export]` test generator member like a single import (#10298).
-/// `1.121`: item declaration ranges and lexical shadows preserve real indirect
-/// owner values while retaining known unrelated-item gaps (#10162).
-
 /// `1.111`: an `async` owner called through a test-local polling helper
 /// (`block_on(owner(..))`) credits like `.await` (RIPR-SPEC-0197, #9478). Old
 /// entries keep the indirect-owner limit.
@@ -756,8 +753,6 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.123";
 /// `0.115`: same `#[test_case]` row and generated-assertion limit as full
 /// `1.108` (#10190).
 /// `0.116`: same indirect-owner limit and `cfg_attr` test reading as full `1.109`.
-/// `0.128`: same item-scope and import-identity reading as full `1.121`.
-
 /// `0.118`: same polling-helper owner pin as full `1.111` (#9478).
 /// `0.119`: same arrow-row table splitting as full `1.112` (#10298).
 /// `0.120`: same arrow-row oracle as full `1.113` (#9619).
@@ -929,8 +924,6 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.130";
 /// `0.115`: same `#[test_case]` row and generated-assertion limit as full
 /// `1.108` (#10190).
 /// `0.116`: same indirect-owner limit and `cfg_attr` test reading as full `1.109`.
-/// `0.128`: same item-scope and import-identity reading as full `1.121`.
-
 /// `0.118`: same polling-helper owner pin as full `1.111` (#9478).
 /// `0.119`: same arrow-row table splitting as full `1.112` (#10298).
 /// `0.120`: same arrow-row oracle as full `1.113` (#9619).

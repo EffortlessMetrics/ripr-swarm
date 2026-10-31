@@ -2389,14 +2389,6 @@ mod tests {
         let facts = adapter
             .summarize_file(std::path::Path::new("src/lib.rs"), source)
             .map_err(|error| format!("source summarizes: {error}"))?;
-        let owner = facts
-            .functions
-            .iter()
-            .find(|function| {
-                function.name == "discounted_total"
-                    && function.file == std::path::Path::new("src/lib.rs")
-            })
-            .ok_or("owner function is indexed")?;
         let shadowed = |name: &str| {
             let test = facts
                 .tests
