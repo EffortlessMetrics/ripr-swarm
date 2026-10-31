@@ -3061,6 +3061,18 @@ fn h2_changed_ordering_comparison_is_not_observed_by_equal_sink_text() -> Result
                 .is_some_and(|step| step.contains("on each side of the boundary")),
             "{comparison}: the next step says what settles it"
         );
+        // Rule 13: no gap and no suggested test location or assertion.
+        assert!(
+            finding.canonical_gap.is_none(),
+            "{comparison}: an unknown threshold input emits no canonical gap"
+        );
+        assert!(
+            !finding
+                .evidence
+                .iter()
+                .any(|e| e.starts_with("perl_suggested_")),
+            "{comparison}: no suggested test location or assertion"
+        );
     }
     // An owner call whose literal argument is the threshold keeps the
     // alignment: that test does put an input on the boundary.
@@ -3082,6 +3094,40 @@ fn h2_changed_ordering_comparison_is_not_observed_by_equal_sink_text() -> Result
         exposed,
         crate::domain::ExposureClass::Exposed,
         "a literal threshold input in the owner call keeps exact alignment"
+    );
+    // A far literal in the owner call is not a threshold input: the test
+    // asserts the value at 5, not near 100.
+    let far = EXACT_RETURN_PACKET
+        .replace(
+            "\"changed_text_digest\": \"sha256:return\",",
+            "\"changed_text_digest\": \"sha256:return\",\n      \"changed_observable\": \"$amount >= 100\",",
+        )
+        .replace(
+            "\"expression\": \"is($got, 10, 'discount threshold')\",",
+            "\"expression\": \"is(discount(5), 10, 'discount threshold')\",\n      \"observed_sink\": \"$amount >= 100\",",
+        );
+    assert_eq!(
+        findings_from_packet(&far)?
+            .first()
+            .ok_or_else(|| "expected one finding".to_string())?
+            .class,
+        crate::domain::ExposureClass::StaticUnknown,
+        "discount(5) against >= 100 is not a threshold input"
+    );
+    // The aligned oracle's own call is far, but a later strong exact oracle of
+    // the same test calls the owner on the threshold: that supplies the input.
+    let second_oracle = far.replace(
+        "      \"provenance_refs\": [\"prov:oracle:1\"]\n    }\n  ],",
+        "      \"provenance_refs\": [\"prov:oracle:1\"]\n    },\n    {\n      \"oracle_id\": \"oracle:t/app.t:9:is\",\n      \"test_id\": \"test:t/app.t:test_discount_threshold\",\n      \"kind\": \"exact_return_assertion\",\n      \"strength\": \"strong_exact\",\n      \"target_owner_id\": \"perl:lib/My/App.pm::My::App::discount\",\n      \"expression\": \"is(discount(100), 10, 'at the threshold')\",\n      \"range\": {\"start_line\": 9, \"start_column\": 1, \"end_line\": 9, \"end_column\": 40},\n      \"confidence\": \"medium\",\n      \"provenance_refs\": [\"prov:oracle:1\"]\n    }\n  ],",
+    );
+    assert_ne!(second_oracle, far, "the second oracle must be inserted");
+    assert_eq!(
+        findings_from_packet(&second_oracle)?
+            .first()
+            .ok_or_else(|| "expected one finding".to_string())?
+            .class,
+        crate::domain::ExposureClass::Exposed,
+        "a later strong exact oracle on the threshold supplies the input"
     );
     // Controls: arrows, fat commas, hash keys named like the operators and
     // equality tests are not ordering comparisons, so equal text still aligns.

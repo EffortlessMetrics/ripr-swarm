@@ -412,18 +412,26 @@ For each change, the first match wins:
     comparison (`<`, `>`, `<=`, `>=`, `<=>`, or a `lt`, `gt`, `le`, `ge` or
     `cmp` word that is not a variable, method or hash key name; a `>` after
     `-` or `=` is an arrow or fat comma) only when the aligned oracle's
-    `expression` calls the changed owner's sub with a literal argument that
-    equals a numeric literal written directly beside the operator (`1000` in
+    `expression`, or the `expression` of any other strong exact oracle of the
+    same test (the producer links only some oracles to the owner), calls the
+    changed owner's sub with a literal argument that equals a numeric literal
+    that is a whole side of the comparison (`1000` in
     `'gold' if 1000 <= $points`; digit separators are ignored, a leading `-`
-    counts; the sub name comes from the owner id). An exact oracle on one
+    counts; the sub name comes from the owner id). A literal beside an
+    arithmetic or concatenation operator (`$n + 1 > 10`, `$x > 10 + $y`,
+    `$total / 100 >= 5` for the `100`) is only part of an operand and is not a
+    threshold. Quoted strings and `#` comments in the oracle expression are
+    masked before the owner call is read, so a call named inside a message is
+    never an input. An exact oracle on one
     input observes the value at that input, not whether the input sits near
     the threshold: moving `>= 1000` changes no asserted value when the test
     asserts only 2000 and 10. The packet carries no row-owned predicate-input
     fact (the producer fact tracked by perl-lsp-swarm#17237 and #5562), so
     this is a bounded lexical read of two strings the packet already
     carries; ripr does not parse Perl. Without that threshold input the
-    change reads `static_unknown`, with no gap and no location (rule 13), a
-    next step that names what settles it, and no static limit kind. A
+    change reads `static_unknown`, with no gap and no location (rule 13) and
+    no suggested test location or assertion, and a next step that names what
+    settles it; `static_limit_kind` still comes from the existing projection. A
     nested call, a variable, a string and any other argument form
     contribute no input, and a literal that is not directly beside the
     operator is not a threshold, so uncertainty only withholds `exposed`.
@@ -435,6 +443,11 @@ For each change, the first match wins:
     sum) reads `limited` until the producer emits the fact; that is an
     accepted missed credit, not a claim that the test fails to
     discriminate.
+    Known limits: the read does not check argument position (any top-level
+    literal argument of the owner call counts), a `-->` or other operator
+    spelling is not specially recognized, and a `<` or `>` inside a string
+    in `changed_observable` can demote a non-comparison; each only withholds
+    `exposed`, never grants it.
 
 ### Decisions
 
@@ -733,8 +746,10 @@ cases.
   - `PerlFactPacket::related_test_evidence_for_change`: rule 3;
   - `PerlFactPacket::classify_related_relation`: rules 4 to 7;
   - `PerlFactPacket::classify_change_from_related_tests`: rule 8;
-  - `sink_aligned_observation`: rules 5, 9 and 19 (`matches_a_pattern`);
-    `changes_ordering_comparison` in `packet_to_findings`: rule 22;
+  - `sink_aligned_observation`: rules 5, 9 and 19 (`matches_a_pattern`), and
+    rule 22 (its `boundary_input::boundary_input_for` branch, read again in
+    `packet_to_findings`);
+  - `boundary_input::boundary_input_for`: rule 22;
   - `packet_to_findings_with_currentness` (`coderef_unresolved`) and
     `PerlFactPacket::test_asserts_through_code_reference`: rule 20;
   - `unowned_change_findings` and `static_limit::file_scope_kind`: rule 21;

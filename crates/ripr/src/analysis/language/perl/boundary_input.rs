@@ -46,14 +46,17 @@ fn is_word(c: char) -> bool {
 }
 
 /// `None` when the text has no ordering comparison. Otherwise the numeric
-/// literal operands directly beside an ordering operator (`<`, `>`, `<=`, `>=`,
-/// `<=>`, `lt`, `gt`, `le`, `ge`, `cmp`), normalized. It errs toward finding a
-/// comparison (a `<` inside a literal counts): a false positive only withholds
-/// `exposed`. Only an operand written next to the operator counts as a
-/// threshold, so a literal elsewhere in the expression never credits a test.
+/// literal operands that are a whole side of an ordering operator (`<`, `>`,
+/// `<=`, `>=`, `<=>`, `lt`, `gt`, `le`, `ge`, `cmp`), normalized. It errs
+/// toward finding a comparison (a `<` inside a literal counts): a false
+/// positive only withholds `exposed`. A literal next to an arithmetic or
+/// concatenation operator (`$n + 1 > 10`, `$x > 10 + $y`) is only part of an
+/// operand and is dropped, so a literal elsewhere in the expression never
+/// credits a test.
 fn ordering_thresholds(text: &str) -> Option<Vec<String>> {
     let chars: Vec<char> = text.chars().collect();
     let mut found = false;
+    let mut comparisons = 0usize;
     let mut thresholds = Vec::new();
     let mut i = 0;
     while i < chars.len() {
@@ -101,9 +104,16 @@ fn ordering_thresholds(text: &str) -> Option<Vec<String>> {
             continue;
         };
         found = true;
+        comparisons += 1;
         thresholds.extend(operand_before(&chars, start));
         thresholds.extend(operand_after(&chars, end));
         i = end;
+    }
+    // Which comparison the change sits on is not known from this text, so a
+    // second ordering comparison (`$a > 5 && $b < 100`) would let an input
+    // that only hits the other one credit the change: no thresholds.
+    if comparisons > 1 {
+        thresholds.clear();
     }
     found.then_some(thresholds)
 }
@@ -125,6 +135,15 @@ fn operand_before(chars: &[char], operator_start: usize) -> Option<String> {
         && chars[start - 1] == '-'
         && (start == 1 || matches!(chars[start - 2], ' ' | '\t' | '(' | ','));
     let token: String = chars[start..end].iter().collect();
+    let literal_start = if negative { start - 1 } else { start };
+    let mut lead = literal_start;
+    while lead > 0 && chars[lead - 1].is_whitespace() {
+        lead -= 1;
+    }
+    // `$count + 1 > 10`: the `1` is part of a larger operand, not a side.
+    if lead > 0 && is_arithmetic(chars[lead - 1]) {
+        return None;
+    }
     numeric_literal(&token, negative)
 }
 
@@ -142,7 +161,22 @@ fn operand_after(chars: &[char], operator_end: usize) -> Option<String> {
         end += 1;
     }
     let token: String = chars[start..end].iter().collect();
+    let mut trail = end;
+    while trail < chars.len() && chars[trail].is_whitespace() {
+        trail += 1;
+    }
+    // `$x > 10 + $y`: the `10` is part of a larger operand, not a side.
+    if chars.get(trail).is_some_and(|c| is_arithmetic(*c))
+        || (chars.get(trail) == Some(&'x') && !chars.get(trail + 1).is_some_and(|c| is_word(*c)))
+    {
+        return None;
+    }
     numeric_literal(&token, negative)
+}
+
+/// An operator that makes a neighboring literal only part of an operand.
+fn is_arithmetic(c: char) -> bool {
+    matches!(c, '+' | '-' | '*' | '/' | '%' | '.')
 }
 
 /// A plain decimal literal (`100`, `1_000`, `0.5`), normalized: no `_`, a
@@ -171,7 +205,7 @@ fn owner_call_literal_args(expression: &str, owner_id: &str) -> Vec<String> {
     let Some((package, name)) = owner_sub_name(owner_id) else {
         return Vec::new();
     };
-    let chars: Vec<char> = expression.chars().collect();
+    let chars = mask_strings_and_comments(expression);
     let needle: Vec<char> = name.chars().collect();
     let mut literals = Vec::new();
     let mut i = 0;
@@ -197,9 +231,108 @@ fn owner_call_literal_args(expression: &str, owner_id: &str) -> Vec<String> {
     literals
 }
 
+/// The expression's characters with quoted spans and `#` comments blanked, so
+/// a call spelled inside a string (`'tier_label(1000) is gold'`) or a comment
+/// is never read as a call. Quote delimiters stay (argument splitting still
+/// sees one quoted argument); their contents become `x`. Comments become
+/// spaces. `q`, `qq` and `qw` spans are masked to their closing delimiter. An
+/// unterminated span masks to the end: uncertainty only withholds `exposed`.
+fn mask_strings_and_comments(text: &str) -> Vec<char> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = chars.clone();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\'' || c == '"' {
+            i = mask_span(&chars, &mut out, i + 1, c, c);
+        } else if c == '#' && !(i > 0 && chars[i - 1] == '$') {
+            while i < chars.len() && chars[i] != '\n' {
+                out[i] = ' ';
+                i += 1;
+            }
+        } else if is_word(c) {
+            let start = i;
+            while i < chars.len() && is_word(chars[i]) {
+                i += 1;
+            }
+            // A word after a sigil, `->` or `::` is a variable, method or
+            // name, not a quote-like operator.
+            let named = start > 0 && matches!(chars[start - 1], '$' | '@' | '%' | '&' | '>' | ':');
+            let word: String = chars[start..i].iter().collect();
+            if !named && matches!(word.as_str(), "q" | "qq" | "qw") {
+                let mut open = i;
+                while open < chars.len() && chars[open].is_whitespace() {
+                    open += 1;
+                }
+                if let Some(&delimiter) = chars.get(open)
+                    && matches!(delimiter, '(' | '[' | '{' | '<' | '/' | '|' | '!')
+                {
+                    let close = match delimiter {
+                        '(' => ')',
+                        '[' => ']',
+                        '{' => '}',
+                        '<' => '>',
+                        other => other,
+                    };
+                    i = mask_span(&chars, &mut out, open + 1, delimiter, close);
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Masks from `from` to the closing delimiter (nesting counted for brackets),
+/// returning the index after it. A backslash masks the next character too.
+fn mask_span(chars: &[char], out: &mut [char], from: usize, open: char, close: char) -> usize {
+    let mut depth = 0usize;
+    let mut i = from;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\\' {
+            out[i] = 'x';
+            if let Some(next) = out.get_mut(i + 1) {
+                *next = 'x';
+            }
+            i += 2;
+            continue;
+        }
+        if c == close && depth == 0 {
+            return i + 1;
+        }
+        if open != close && c == open {
+            depth += 1;
+        } else if open != close && c == close {
+            depth -= 1;
+        }
+        out[i] = 'x';
+        i += 1;
+    }
+    chars.len()
+}
+
 /// A call spelled `Other::name(` is another package's sub: its qualifier must
-/// name the owner's package. An unqualified or method call is accepted.
+/// name the owner's package. A method call (`Pkg->name(`) needs a bareword
+/// receiver naming the owner's package; a variable or other receiver has an
+/// unknown package and establishes nothing. An unqualified call is accepted.
 fn qualifier_matches(chars: &[char], name_start: usize, package: Option<&str>) -> bool {
+    if name_start >= 2 && chars[name_start - 2] == '-' && chars[name_start - 1] == '>' {
+        let mut end = name_start - 2;
+        while end > 0 && chars[end - 1].is_whitespace() {
+            end -= 1;
+        }
+        let mut start = end;
+        while start > 0 && (is_word(chars[start - 1]) || chars[start - 1] == ':') {
+            start -= 1;
+        }
+        if start > 0 && matches!(chars[start - 1], '$' | '@' | '%' | '&') {
+            return false;
+        }
+        let receiver: String = chars[start..end].iter().collect();
+        return package == Some(receiver.as_str());
+    }
     if name_start < 2 || chars[name_start - 1] != ':' || chars[name_start - 2] != ':' {
         return true;
     }
@@ -325,7 +458,7 @@ mod tests {
                 "is(Shop::Pricing::tier_label(1_000), 'gold')",
             ),
             ("$amount < 25", "is(tier_label(undef, 25), 5, 'mid')"),
-            ("$n > -5", "is($obj->tier_label(-5), 1)"),
+            ("$n > -5", "is(Shop::Pricing->tier_label(-5), 1)"),
             ("$a lt 7", "is(tier_label( 7 ), 1)"),
         ] {
             assert_eq!(
@@ -353,6 +486,8 @@ mod tests {
             "is(retier_label(1000), 1)",
             "is(Other::Pkg::tier_label(1000), 1)",
             "is($tier_label(1000), 1)",
+            "is($obj->tier_label(1000), 1)",
+            "is(Other->tier_label(1000), 1)",
         ] {
             assert_eq!(
                 input("$points >= 1000", expression),
@@ -427,6 +562,90 @@ mod tests {
                 boundary_input_for("$n >= 1000", owner, ["is(f(1000), 1)"]),
                 BoundaryInput::Unestablished,
                 "{owner}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_call_inside_a_string_or_comment_is_not_an_input() {
+        for expression in [
+            "is(tier_label(2000), 'gold', 'tier_label(1000) is gold')",
+            "is(tier_label(2000), \"gold\", \"tier_label(1000) is gold\")",
+            "is(tier_label(2000), 'gold') # tier_label(1000)",
+            "is(tier_label(2000), q(tier_label(1000)))",
+            "is(tier_label(2000), qq{tier_label(1000)})",
+            "is(tier_label(2000), 'it\\'s tier_label(1000)')",
+            "is(tier_label(2000), 'unterminated tier_label(1000)",
+        ] {
+            assert_eq!(
+                input("$points >= 1000", expression),
+                BoundaryInput::Unestablished,
+                "{expression}"
+            );
+        }
+        // Controls: a real call next to a string or comment still counts, and
+        // `$#` is not a comment.
+        for expression in [
+            "is(tier_label(1000), 'gold', 'tier_label(5)') # note",
+            "is(tier_label(1000), $#items)",
+            "is('x', tier_label(1000))",
+        ] {
+            assert_eq!(
+                input("$points >= 1000", expression),
+                BoundaryInput::OnThreshold,
+                "{expression}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_literal_inside_a_larger_operand_is_not_a_threshold() {
+        // The 1, 10 and 100 are parts of arithmetic operands.
+        for (observable, argument) in [
+            ("$count + 1 > 10", 1),
+            ("$x > 10 + $y", 10),
+            ("$total / 100 >= 5", 100),
+            ("$a - 3 < $b", 3),
+            ("$a * 2 lt $b", 2),
+            ("$a > 7 . $b", 7),
+            ("$a > 4 ** 2", 4),
+        ] {
+            assert_eq!(
+                input(observable, &format!("is(tier_label({argument}), 1)")),
+                BoundaryInput::Unestablished,
+                "{observable}"
+            );
+        }
+        // A whole side stays a threshold, even beside an arithmetic other side.
+        for (observable, argument) in [
+            ("$count + 1 > 10", 10),
+            ("$total / 100 >= 5", 5),
+            ("10 < $x", 10),
+            ("$x < -3", -3),
+            ("($x) >= 100", 100),
+            ("$ok && $x > 100 ? 1 : 2", 100),
+        ] {
+            assert_eq!(
+                input(observable, &format!("is(tier_label({argument}), 1)")),
+                BoundaryInput::OnThreshold,
+                "{observable}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_second_ordering_comparison_withholds_every_threshold() {
+        // 5 only hits `$a > 5`; which comparison changed is unknown.
+        for observable in ["$a > 5 && $b < 100", "$x lt 3 || $y >= 9"] {
+            assert_eq!(
+                input(observable, "is(tier_label(5), 1)"),
+                BoundaryInput::Unestablished,
+                "{observable}"
+            );
+            assert_eq!(
+                input(observable, "is(tier_label(100), 1)"),
+                BoundaryInput::Unestablished,
+                "{observable}"
             );
         }
     }
