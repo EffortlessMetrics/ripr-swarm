@@ -1356,6 +1356,50 @@ fn a_missing_policy_report_keeps_the_fold_open_beside_clean_ones() -> TestResult
 }
 
 #[test]
+fn extra_promotion_files_cannot_stand_in_for_a_missing_category() -> TestResult {
+    let fixture = Fixture::complete("fold-promotion-stand-in")?;
+    write_quiet(&fixture)?;
+    let reports = "target/ripr/reports";
+    fs::remove_file(fixture.root.join(reports).join("policy-readiness.json"))?;
+    fixture.json(
+        &format!("{reports}/policy-promotion-visible-only.json"),
+        &json!({"target_mode": "visible-only", "warnings": [], "unknowns": []}),
+    )?;
+    fixture.json(
+        &format!("{reports}/policy-promotion-blocking.json"),
+        &json!({"target_mode": "blocking", "warnings": [], "unknowns": []}),
+    )?;
+    let summary = render_gate(&fixture, false)?;
+    assert!(summary.contains(OPEN), "{summary}");
+    assert!(!summary.contains(CLEAN), "{summary}");
+    Ok(())
+}
+
+#[test]
+fn conditional_preview_and_waiver_reports_are_not_required_for_a_clean_fold() -> TestResult {
+    let fixture = Fixture::complete("fold-conditional")?;
+    write_quiet(&fixture)?;
+    let reports = "target/ripr/reports";
+    fs::remove_file(fixture.root.join(reports).join("waiver-aging.json"))?;
+    fs::remove_file(
+        fixture
+            .root
+            .join(reports)
+            .join("preview-promotion-typescript-boundary-gap.json"),
+    )?;
+    fixture.json(
+        &format!("{reports}/policy-promotion-visible-only.json"),
+        &json!({"target_mode": "visible-only", "warnings": [], "unknowns": []}),
+    )?;
+    let summary = render_gate(&fixture, false)?;
+    assert!(
+        summary.contains(CLEAN) && !summary.contains(OPEN),
+        "{summary}"
+    );
+    Ok(())
+}
+
+#[test]
 fn no_policy_reports_is_neither_clean_nor_open() -> TestResult {
     let fixture = Fixture::new("fold-none")?;
     let summary = render_gate(&fixture, false)?;

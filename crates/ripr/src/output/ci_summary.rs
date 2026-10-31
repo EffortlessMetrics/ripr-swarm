@@ -49,8 +49,20 @@ type ObjectTest<'a> = dyn Fn(&serde_json::Map<String, Value>) -> Result<bool, Fa
 
 const REPORTS: &str = "target/ripr/reports";
 const START_HERE_JSON: &str = "target/ripr/reports/start-here.json";
-/// Folded policy sections that each read one JSON report.
-const POLICY_REPORTS: usize = 7;
+/// Policy report categories the fold has read, one bit each. Several files
+/// can belong to one category (promotion), so presence is tracked per
+/// category rather than per file.
+const READINESS: u8 = 1;
+const OPERATIONS: u8 = 2;
+const HISTORY: u8 = 4;
+const PROMOTION: u8 = 8;
+const SUPPRESSION: u8 = 16;
+const PREVIEW: u8 = 32;
+const WAIVER: u8 = 64;
+/// The categories every producer run emits. Preview packets depend on the
+/// enabled languages and waiver aging on a PR ledger, so their absence is not
+/// a gap; they still keep the fold open when present and not clean.
+const REQUIRED_POLICY_REPORTS: u8 = READINESS | OPERATIONS | HISTORY | PROMOTION | SUPPRESSION;
 const START_HERE_MD: &str = "target/ripr/reports/start-here.md";
 const INDEX_JSON: &str = "target/ripr/reports/index.json";
 const INDEX_MD: &str = "target/ripr/reports/index.md";
@@ -191,7 +203,7 @@ struct Summary {
     /// A folded governance section carried a count that is not exactly `0`.
     attention: bool,
     /// How many folded sections read a policy JSON report.
-    policy_reports_read: usize,
+    policy_reports_read: u8,
 }
 
 impl Summary {
@@ -249,7 +261,7 @@ impl Summary {
         // as clean; anything else stays open or says nothing was read.
         if self.attention {
             self.line("<details open><summary>Policy and governance (advisory; no gate configured; needs attention)</summary>");
-        } else if self.policy_reports_read == POLICY_REPORTS {
+        } else if self.policy_reports_read & REQUIRED_POLICY_REPORTS == REQUIRED_POLICY_REPORTS {
             self.line(
                 "<details><summary>Policy and governance (advisory; no gate configured; no warnings or unknowns)</summary>",
             );
@@ -269,8 +281,8 @@ impl Summary {
     /// Record what a folded section's report establishes. Only a report that
     /// parsed with every listed count present and exactly `0` is clean;
     /// unreadable, wrong-shape and missing-count reports need attention.
-    fn note_attention(&mut self, doc: &Doc, count_paths: &[&str]) {
-        self.policy_reports_read += 1;
+    fn note_attention(&mut self, doc: &Doc, category: u8, count_paths: &[&str]) {
+        self.policy_reports_read |= category;
         if count_paths
             .iter()
             .any(|path| doc.strict_count(path) != Some(0))
@@ -1168,7 +1180,7 @@ impl Summary {
             let warnings = inline(&doc.length("warnings"));
             let unknowns = inline(&doc.length("unknowns"));
             let next = inline(&doc.field(&["next_policy_action"], "not_available", "unknown"));
-            self.note_attention(&doc, &["warnings", "unknowns"]);
+            self.note_attention(&doc, READINESS, &["warnings", "unknowns"]);
             self.line("#### Policy readiness at a glance");
             self.line(&format!("- Status: `{status}`"));
             self.line(&format!("- Recommended mode: `{mode}`"));
@@ -1199,7 +1211,11 @@ impl Summary {
             ));
             let warnings = inline(&doc.length("warnings"));
             let unknowns = inline(&doc.length("unknowns"));
-            self.note_attention(&doc, &["promotion_blockers", "warnings", "unknowns"]);
+            self.note_attention(
+                &doc,
+                OPERATIONS,
+                &["promotion_blockers", "warnings", "unknowns"],
+            );
             self.line("#### Policy operations at a glance");
             self.line(&format!("- Current ceiling: `{ceiling}`"));
             self.line(&format!("- Next safe action: `{next}`"));
@@ -1234,7 +1250,7 @@ impl Summary {
             let preview = direction("trend.preview_boundary_state.direction");
             let warnings = inline(&doc.length("warnings"));
             let unknowns = inline(&doc.length("unknowns"));
-            self.note_attention(&doc, &["warnings", "unknowns"]);
+            self.note_attention(&doc, HISTORY, &["warnings", "unknowns"]);
             self.line("#### Policy history at a glance");
             self.line(&format!(
                 "- Current ceiling: `{ceiling}`; history entries: `{entries}`"
@@ -1266,7 +1282,7 @@ impl Summary {
             let warnings = inline(&doc.length("warnings"));
             let unknowns = inline(&doc.length("unknowns"));
             let reason = inline(&doc.field(&["why_or_why_not"], "not_available", "unknown"));
-            self.note_attention(&doc, &["warnings", "unknowns"]);
+            self.note_attention(&doc, PROMOTION, &["warnings", "unknowns"]);
             self.line(&format!("- `{target}`: allowed_now=`{allowed}`, repairs=`{repairs}`, receipts=`{receipts}`, warnings=`{warnings}`, unknowns=`{unknowns}`, why=`{reason}`"));
         }
         if found {
@@ -1299,7 +1315,7 @@ impl Summary {
             let supplied = inline(&doc.length("supplied_evidence"));
             let warnings = inline(&doc.length("warnings"));
             let unknowns = inline(&doc.length("unknowns"));
-            self.note_attention(&doc, &["warnings", "unknowns"]);
+            self.note_attention(&doc, PREVIEW, &["warnings", "unknowns"]);
             self.line(&format!("- `{language}`/`{class}`: allowed_now=`{allowed}`, supplied_evidence=`{supplied}`, missing_evidence=`{missing}`, warnings=`{warnings}`, unknowns=`{unknowns}`"));
         }
         if jsons.iter().any(|json| self.is_file(json)) {
@@ -1353,6 +1369,7 @@ impl Summary {
             let warnings = count("summary.warnings");
             self.note_attention(
                 &doc,
+                WAIVER,
                 &["summary.durable_suppression_candidates", "summary.warnings"],
             );
             self.line("#### Waiver aging at a glance");
@@ -1390,6 +1407,7 @@ impl Summary {
             let config_errors = count("summary.config_errors");
             self.note_attention(
                 &doc,
+                SUPPRESSION,
                 &[
                     "summary.missing_owner",
                     "summary.missing_reason",
