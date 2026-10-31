@@ -202,6 +202,8 @@ pub(crate) fn substitute_row(body: &str, params: &[String], row: &[String]) -> O
     let bytes = body.as_bytes();
     let mut out = String::with_capacity(body.len());
     let mut brackets: Vec<u8> = Vec::new();
+    let mut opens: Vec<usize> = Vec::new();
+    let mut container_seen: Vec<usize> = Vec::new();
     let mut idx = 0;
     let mut copied = 0;
     while idx < bytes.len() {
@@ -216,10 +218,12 @@ pub(crate) fn substitute_row(body: &str, params: &[String], row: &[String]) -> O
             b'"' | b'\'' | b'`' => idx = skip_quoted(bytes, idx)?,
             b'(' | b'[' | b'{' => {
                 brackets.push(byte);
+                opens.push(idx);
                 idx += 1;
             }
             b')' | b']' | b'}' => {
                 brackets.pop();
+                opens.pop();
                 idx += 1;
             }
             _ if is_identifier_start(byte) => {
@@ -238,10 +242,22 @@ pub(crate) fn substitute_row(body: &str, params: &[String], row: &[String]) -> O
                     // (argument or element), never through a further
                     // member that could mutate the shared row.
                     let container = cell.starts_with(['[', '{']);
+                    // (see `container_read_is_direct`: one direct read only)
                     if !plain_read_with(body, idx, end, brackets.last().copied(), container)
-                        || (container && !body[end..].trim_start().starts_with([',', ')', ']']))
+                        || (container
+                            && (container_seen.contains(&position)
+                                || !super::object_rows::single_expect_statement(body)
+                                || !super::object_rows::container_read_is_direct(
+                                    body,
+                                    idx,
+                                    end,
+                                    opens.last().copied(),
+                                )))
                     {
                         return None;
+                    }
+                    if container {
+                        container_seen.push(position);
                     }
                     out.push_str(&body[copied..idx]);
                     out.push_str(cell);

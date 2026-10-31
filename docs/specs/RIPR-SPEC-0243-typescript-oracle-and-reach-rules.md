@@ -400,15 +400,22 @@ or `Number.POSITIVE_INFINITY`/`NaN` (outside the literal vocabulary),
 leaves the whole table unresolved. The row parameter may appear only as a
 plain `row.key` read (a spread of an array cell is a plain read); a bare
 row, `row[key]`, `row?.key`, an assignment, a declaration or shadowing
-parameter, or a container cell read through a further member (it could
-be mutated through the shared row) is refused. The assertions of a
+parameter is refused. A container (array or object) cell is shared by
+every read of the row, so it resolves only when the callback is one
+`expect(..).matcher(..)` statement and the cell is read at most once, as
+a direct argument of the call that is the whole argument of `expect(` or of
+the matcher call; a second read, a read wrapped in parentheses, through a
+further member, or as an argument of any other call or statement
+(`Object.assign(t.input, ..)`, `fix(t.input)`, `(t.input).pop()`)
+refuses the table. Scalar cells are unaffected. The assertions of a
 resolved table are the concatenation over its rows, each with that
 row's literals, so the credit is an aggregate over the row set and the
 existing classifier decides whether any row's input reaches the changed
 boundary with a discriminating expected value; nothing here grants
-credit by itself. Tuple rows with array or object cells, rows whose cells
-span lines, ragged rows and `as`-cast tables keep
-`typescript_table_case_unresolved`.
+credit by itself. A `for...of` table written `[..] as const` or `[..] as
+T[]` resolves like the plain array (the cast changes no runtime value).
+Tuple rows with array or object cells, rows whose cells span lines and
+ragged rows keep `typescript_table_case_unresolved`.
 
 ### Recogniser order
 

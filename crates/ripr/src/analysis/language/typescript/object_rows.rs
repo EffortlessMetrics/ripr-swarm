@@ -422,6 +422,8 @@ pub(crate) fn substitute_member_row(
     let bytes = body.as_bytes();
     let mut out = String::with_capacity(body.len());
     let mut brackets: Vec<u8> = Vec::new();
+    let mut opens: Vec<usize> = Vec::new();
+    let mut container_reads: Vec<String> = Vec::new();
     let mut idx = 0;
     let mut copied = 0;
     let mut reads = 0;
@@ -437,10 +439,12 @@ pub(crate) fn substitute_member_row(
             b'"' | b'\'' | b'`' => idx = skip_quoted(bytes, idx)?,
             b'(' | b'[' | b'{' => {
                 brackets.push(byte);
+                opens.push(idx);
                 idx += 1;
             }
             b')' | b']' | b'}' => {
                 brackets.pop();
+                opens.pop();
                 idx += 1;
             }
             _ if ident_start(byte) => {
@@ -474,15 +478,21 @@ pub(crate) fn substitute_member_row(
                 if !plain_read_with(body, idx, key_end, brackets.last().copied(), container) {
                     return None;
                 }
-                // A container cell is shared by every read of the row: only
-                // a bare value position (argument or element) is allowed,
-                // never a further member that could mutate it. A TypeScript
-                // `as` assertion (`t.input as string[]`) only retypes it.
+                // A container cell is shared by every read of the row, so a
+                // callback that could change it must not be credited on the
+                // original literal: see `container_read_is_direct`.
                 if container {
-                    let after = body[key_end..].trim_start();
-                    if !after.starts_with([',', ')', ']']) && !after.starts_with("as ") {
+                    let key = &body[end + 1..key_end];
+                    // A container cell is only trusted in a callback that is one
+                    // `expect` statement: another statement could change the
+                    // shared row first.
+                    if container_reads.iter().any(|read| read == key)
+                        || !single_expect_statement(body)
+                        || !container_read_is_direct(body, idx, key_end, opens.last().copied())
+                    {
                         return None;
                     }
+                    container_reads.push(key.to_string());
                 }
                 out.push_str(&body[copied..idx]);
                 out.push_str(cell);
@@ -509,4 +519,118 @@ fn ident_start(byte: u8) -> bool {
 
 fn ident_part(byte: u8) -> bool {
     ident_start(byte) || byte.is_ascii_digit()
+}
+
+/// `true` when `body` (a callback body, braces optional) is exactly one
+/// `expect(..).matcher(..)` chain: at bracket depth zero only the `expect`
+/// identifier (optionally after `await`/`return`) and `.member` names, no
+/// string, comment, second statement or `;` before the end.
+pub(crate) fn single_expect_statement(body: &str) -> bool {
+    let mut text = body.trim();
+    if let Some(inner) = text.strip_prefix('{').and_then(|t| t.strip_suffix('}')) {
+        text = inner.trim();
+    }
+    let text = text.strip_suffix(';').unwrap_or(text).trim();
+    let bytes = text.as_bytes();
+    let mut depth = 0usize;
+    let mut idx = 0;
+    let mut seen_expect = false;
+    let mut previous_dot = false;
+    while idx < bytes.len() {
+        let byte = bytes[idx];
+        match byte {
+            b'(' | b'[' | b'{' => {
+                depth += 1;
+                idx += 1;
+            }
+            b')' | b']' | b'}' => {
+                if depth == 0 {
+                    return false;
+                }
+                depth -= 1;
+                idx += 1;
+            }
+            _ if depth > 0 => match byte {
+                b'"' | b'\'' | b'`' => match skip_quoted(bytes, idx) {
+                    Some(next) => idx = next,
+                    None => return false,
+                },
+                b'/' if matches!(bytes.get(idx + 1), Some(b'/' | b'*')) => return false,
+                _ => idx += 1,
+            },
+            b'.' => {
+                previous_dot = true;
+                idx += 1;
+            }
+            _ if byte.is_ascii_whitespace() => idx += 1,
+            _ if ident_start(byte) => {
+                let end = idx + bytes[idx..].iter().take_while(|b| ident_part(**b)).count();
+                let word = &text[idx..end];
+                let allowed = if seen_expect {
+                    previous_dot
+                } else {
+                    match word {
+                        "await" | "return" => true,
+                        "expect" => {
+                            seen_expect = true;
+                            true
+                        }
+                        _ => false,
+                    }
+                };
+                if !allowed {
+                    return false;
+                }
+                previous_dot = false;
+                idx = end;
+            }
+            _ => return false,
+        }
+    }
+    depth == 0 && seen_expect
+}
+
+/// A container read is direct when it is an argument of the call that is
+/// the whole argument of `expect(` (the value under test), or the argument
+/// of the matcher call (`.toEqual(t.out)`), is not followed by a member, and
+/// is not wrapped in its own parentheses.
+pub(crate) fn container_read_is_direct(
+    body: &str,
+    read_start: usize,
+    read_end: usize,
+    open: Option<usize>,
+) -> bool {
+    let Some(open) = open else { return false };
+    if body.as_bytes().get(open) != Some(&b'(') {
+        return false;
+    }
+    let after = body[read_end..].trim_start();
+    if !after.starts_with([',', ')']) {
+        return false;
+    }
+    // The read must follow `(` or `,` (optionally spread), not an operator.
+    let before = body[..read_start].trim_end();
+    let before = before.strip_suffix("...").unwrap_or(before).trim_end();
+    if !before.ends_with(['(', ',']) {
+        return false;
+    }
+    // Callee: the identifier run before `(`.
+    let head = body[..open].trim_end();
+    let name_start = head
+        .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
+        .map_or(0, |at| at + 1);
+    let name = &head[name_start..];
+    if name.is_empty() {
+        return false;
+    }
+    let before_name = head[..name_start].trim_end();
+    // `expect(owner(<read>))`: the callee is the whole argument of expect(.
+    if before_name.ends_with("expect(") {
+        return true;
+    }
+    // `expect(..).matcher(<read>)`.
+    name.starts_with("to")
+        && before_name
+            .strip_suffix('.')
+            .is_some_and(|b| b.ends_with(')'))
 }

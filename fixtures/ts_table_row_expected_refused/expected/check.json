@@ -4,10 +4,10 @@
   "mode": "fast",
   "root": "fixtures/ts_table_row_expected_refused/input",
   "config_path": "<cwd>/fixtures/ts_table_row_expected_refused/input/ripr.toml",
-  "summary": {"changed_rust_files":0,"probes":7,"findings":7,"exposed":0,"weakly_exposed":4,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":3,"changed_files_by_language":[{"language":"rust","files":0},{"language":"typescript","files":7}]},
+  "summary": {"changed_rust_files":0,"probes":8,"findings":8,"exposed":0,"weakly_exposed":5,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":3,"changed_files_by_language":[{"language":"rust","files":0},{"language":"typescript","files":8}]},
   "analysis_outcome": {
     "analysis_complete": false,
-    "outcome": {"schema_version":"0.1","kind":"partial_with_limitations","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:4fbb9720aa6abe91","base_revision":null,"input_identity":"sha256:ca12146c3c58a69a706d4c854da4fc8385d7816925945b0d6c5fce7722894d34","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":7,"changed_line_count":14,"candidate_line_count":7,"probe_count":7,"finding_count":7},"limitations":[{"kind":"unevaluated_condition","producer_stage":"language_adapter","path":null,"affected_items":3,"bounded_detail":"typescript_conditional_registration: 3 test file(s) register tests under conditions static analysis cannot evaluate; e.g. `for (... of cases.map((row) => row))` at tests/derivedTable.test.ts:11; `for (... of cases)` at tests/exportedTable.test.ts:11; `for (... of cases)` at tests/letTable.test.ts:11","recovery":{"kind":"inspect_failure","detail":"Static analysis cannot evaluate the branch condition; runtime coverage establishes whether the discriminator executes."}}],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+    "outcome": {"schema_version":"0.1","kind":"partial_with_limitations","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:4fbb9720aa6abe91","base_revision":null,"input_identity":"sha256:bd7e26fe2ba3158cb7ae9847ec5a16caf9adebe3a0ef90b0fb8ad625328413df","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":8,"changed_line_count":16,"candidate_line_count":8,"probe_count":8,"finding_count":8},"limitations":[{"kind":"unevaluated_condition","producer_stage":"language_adapter","path":null,"affected_items":3,"bounded_detail":"typescript_conditional_registration: 3 test file(s) register tests under conditions static analysis cannot evaluate; e.g. `for (... of cases.map((row) => row))` at tests/derivedTable.test.ts:11; `for (... of cases)` at tests/exportedTable.test.ts:11; `for (... of cases)` at tests/letTable.test.ts:11","recovery":{"kind":"inspect_failure","detail":"Static analysis cannot evaluate the branch condition; runtime coverage establishes whether the discriminator executes."}}],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
   },
   "findings": [
     {
@@ -704,6 +704,153 @@
       "source_currentness": "candidate_current"
     },
     {
+      "id": "probe:src_mutatedContainer.ts:typescript_preview:50ac2866",
+      "canonical_gap_id": "gap:typescript:typescript_preview:50ac2866",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "boundary_input_not_matched", "summary": "no observed call supplies the changed boundary input"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_mutatedContainer.ts:typescript_preview:50ac2866",
+        "family": "predicate",
+        "delta": "control",
+        "file": "src/mutatedContainer.ts",
+        "line": 2,
+        "expression": "    if (point.points >= 1000) {",
+        "owner": "typescript:src/mutatedContainer.ts::mutatedContainer"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related test(s) found for owner `mutatedContainer`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `point.points == 1000`."}
+       },
+      "evidence_path": ["reach yes: 1 related test(s) found for owner `mutatedContainer`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `point.points == 1000`.", "related test tests/mutatedContainer.test.ts:11 mutatedContainer tier by points uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator point.points == 1000: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
+      "flow_sinks": [
+      ],
+      "evidence": ["owner: mutatedContainer", "missing_discriminator: point.points == 1000", "typescript_limitation: typescript_dynamic_assertion_unresolved", "typescript_limitation_sample: typescript_dynamic_assertion_unresolved at tests/mutatedContainer.test.ts:13", "typescript_limitation_why: typescript_dynamic_assertion_unresolved — the matcher `.toBe(...)` receives a non-literal dynamic argument; the adapter cannot statically resolve the expected value and cannot confirm the discriminator pins the changed behavior", "typescript_limitation_repair_route: typescript_dynamic_assertion_unresolved → analysis/typescript-dynamic-assertion-resolution", "typescript_oracle_observed: mutatedContainer(t.input)", "typescript_oracle_confidence: medium", "typescript_oracle_evidence_ref: tests/mutatedContainer.test.ts:13", "gap_state: advisory", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/mutatedContainer.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_mutatedContainer.ts:typescript_preview:50ac2866;owner=mutatedContainer", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Related tests reach `mutatedContainer` with a strong oracle, but no strong assertion observes a `mutatedContainer(...)` call at the changed predicate boundary `point.points == 1000`; inputs on one side of the boundary do not discriminate the changed comparison.", "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "point.points == 1000",
+            "reason": "changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator",
+            "flow_sink": null
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "point.points == 1000",
+          "reason": "changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator",
+          "flow_sink": null
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "mutatedContainer tier by points",
+          "file": "tests/mutatedContainer.test.ts",
+          "line": 11,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "expect(...).toBe(...)",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "predicate changed at src/mutatedContainer.ts:2: `if (point.points >= 1000) {`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": "point.points == 1000",
+        "oracle_kind": "exact_value",
+        "oracle_strength": "strong",
+        "owner": "mutatedContainer",
+        "owner_kind": "function",
+        "probe_family": "predicate",
+        "related_test": {
+          "file": "tests/mutatedContainer.test.ts",
+          "line": 11,
+          "name": "mutatedContainer tier by points"
+        },
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Exact-value evidence is present; verify it targets the changed discriminator.",
+        "verify": {
+          "command": null
+        },
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "preview_actionability": {
+        "actionability_category": "incomplete_repair_packet",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
+        "gap_state": "advisory",
+        "missing_actionability_fields": [
+          "canonical_gap_id",
+          "repair_kind",
+          "target_test_shape",
+          "related_test_or_observer",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/mutatedContainer.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 2,
+            "owner": "mutatedContainer",
+            "raw": "file=src/mutatedContainer.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_mutatedContainer.ts:typescript_preview:50ac2866;owner=mutatedContainer",
+            "sample": null,
+            "source_id": "probe:src_mutatedContainer.ts:typescript_preview:50ac2866"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "unlock_condition": null,
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `point.points == 1000`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `point.points == 1000`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    },
+    {
       "id": "probe:src_offBoundary.ts:typescript_preview:0b09d6fc",
       "canonical_gap_id": "gap:typescript:typescript_preview:0b09d6fc",
       "classification": "weakly_exposed",
@@ -1001,7 +1148,7 @@
   "preview_languages": [
     {
       "language": "typescript",
-      "file_count": 7,
+      "file_count": 8,
       "sample_paths": ["src/derivedTable.ts", "src/exportedTable.ts", "src/identifierCell.ts"],
       "enabled": true,
       "analyzed": true,
@@ -1009,5 +1156,5 @@
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
   ],
-  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/identifierCell.ts","digest":"sha256:c122ea38b4a01b4bf39ffc8fb7fac5ce5ef48101c73950c2fc2164b30fb107ad"},{"path":"src/missingKey.ts","digest":"sha256:536ce14a349123b5c1cc256f0d682bd1edd8c647ebed7c0518ca60aff61fb313"},{"path":"src/offBoundary.ts","digest":"sha256:b5123b732c7ef4ed3de140806f9a6ca6874eadc00a7e063182f7ee00dae38998"},{"path":"src/pushedTable.ts","digest":"sha256:038e13ff435152b097b4f9e8d648a9069aab6cb6a51a1f86352feda2b6c04988"}]}
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/identifierCell.ts","digest":"sha256:c122ea38b4a01b4bf39ffc8fb7fac5ce5ef48101c73950c2fc2164b30fb107ad"},{"path":"src/missingKey.ts","digest":"sha256:536ce14a349123b5c1cc256f0d682bd1edd8c647ebed7c0518ca60aff61fb313"},{"path":"src/mutatedContainer.ts","digest":"sha256:d7fc5d2b23be451a27262e696717daac1d24e82be91a50d20ba4833ac736eec7"},{"path":"src/offBoundary.ts","digest":"sha256:b5123b732c7ef4ed3de140806f9a6ca6874eadc00a7e063182f7ee00dae38998"},{"path":"src/pushedTable.ts","digest":"sha256:038e13ff435152b097b4f9e8d648a9069aab6cb6a51a1f86352feda2b6c04988"}]}
 }

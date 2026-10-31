@@ -3,12 +3,12 @@ mode: fast
 root: fixtures/ts_table_row_expected_refused/input
 config: <cwd>/fixtures/ts_table_row_expected_refused/input/ripr.toml
 
-Summary: 7 changed behaviors checked: 0 appear noticed by tests, 4 partly noticed, 0 reached but not noticed, 0 no test path, 3 unclear. 7 found, 0 suppressed by your settings
+Summary: 8 changed behaviors checked: 0 appear noticed by tests, 5 partly noticed, 0 reached but not noticed, 0 no test path, 3 unclear. 8 found, 0 suppressed by your settings
 
-Changed file(s) by language: typescript = 7
+Changed file(s) by language: typescript = 8
 
 Analysis outcome: limitations below (analysis incomplete)
-  The 7 finding(s) below cover only the analyzed scope; behavior outside it has no finding.
+  The 8 finding(s) below cover only the analyzed scope; behavior outside it has no finding.
   Limitation: a test or credited assertion sits under a condition static analysis cannot evaluate during language analysis; affected items: 3; recovery: inspect the failure — Static analysis cannot evaluate the branch condition; runtime coverage establishes whether the discriminator executes.
 
 Start here:
@@ -49,15 +49,16 @@ Next: drill into the top finding:
   no repair start offered: ripr has no complete repair packet for this TypeScript finding (ripr cannot tell whether the test at `tests/identifierCell.test.ts:13` covers this change: its `.toBe(...)` compares against a variable or computed value, not a literal); add or strengthen the test by hand as the Next step above says, then rerun `ripr check`
 
 Hidden:
-  6 lower-priority finding(s) omitted from default human output (TypeScript preview: 6).
+  7 lower-priority finding(s) omitted from default human output (TypeScript preview: 7).
     - src/derivedTable.ts:2 (unknown); kind: predicate; reason: Related tests reach `derivedTable` only through a registration under a condition static analysis cannot evaluate (a platform or environment guard); whether they run, and what they…
     - src/exportedTable.ts:2 (unknown); kind: predicate; reason: Related tests reach `exportedTable` only through a registration under a condition static analysis cannot evaluate (a platform or environment guard); whether they run, and what…
     - src/letTable.ts:2 (unknown); kind: predicate; reason: Related tests reach `letTable` only through a registration under a condition static analysis cannot evaluate (a platform or environment guard); whether they run, and what they…
     - src/missingKey.ts:2 (weak); kind: predicate; reason: Related tests reach `missingKey` with a strong oracle, but no strong assertion observes a `missingKey(...)` call at the changed predicate boundary `points == 1000`; inputs on one…
+    - src/mutatedContainer.ts:2 (weak); kind: predicate; reason: Related tests reach `mutatedContainer` with a strong oracle, but no strong assertion observes a `mutatedContainer(...)` call at the changed predicate boundary…
     - src/offBoundary.ts:2 (weak); kind: predicate; reason: Related tests reach `offBoundary` with a strong oracle, but no strong assertion observes a `offBoundary(...)` call at the changed predicate boundary `points == 1000`; inputs on…
     - src/pushedTable.ts:2 (weak); kind: predicate; reason: Related tests reach `pushedTable` with a strong oracle, but no strong assertion observes a `pushedTable(...)` call at the changed predicate boundary `points == 1000`; inputs on…
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 
 
-Note: 7 TypeScript files analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.
+Note: 8 TypeScript files analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

@@ -76,17 +76,6 @@ fn container_cells_resolve_only_as_bare_values() -> Result<(), String> {
         expected_values(&assertions),
         vec![Some("{ k: [1, 2] }"), Some("{}")]
     );
-    // ufo join.test.ts:61: a type assertion only retypes the shared cell.
-    let asserted = describe_source(
-        table,
-        "",
-        LOOP,
-        "test(\"x\", () => { expect(encode(...(t.input as string[]))).toEqual(t.out); });",
-    );
-    assert_eq!(
-        expected_values(&assertions_of(&asserted)?),
-        vec![Some("{ k: [1, 2] }"), Some("{}")]
-    );
     // A container read through a further member could be mutated through the
     // shared row: refused.
     let mutated = describe_source(
@@ -96,6 +85,38 @@ fn container_cells_resolve_only_as_bare_values() -> Result<(), String> {
         "test(\"x\", () => { t.input.push(\"z\"); expect(encode(t.input)).toEqual(t.out); });",
     );
     assert!(all_dynamic(&assertions_of(&mutated)?));
+    // A container cell may be read once, directly, in a lone expect statement.
+    for (label, body) in [
+        (
+            "Object.assign on the shared row",
+            "test(\"x\", () => { Object.assign(t.input, [9]); expect(encode(...t.input)).toEqual(t.out); });",
+        ),
+        (
+            "a mutating call on the row",
+            "test(\"x\", () => { fix(t.input); expect(encode(...t.input)).toEqual(t.out); });",
+        ),
+        (
+            "a parenthesized member call",
+            "test(\"x\", () => { expect(encode((t.input).pop())).toEqual(t.out); });",
+        ),
+        (
+            "two reads of the same cell",
+            "test(\"x\", () => { expect(encode(...t.input)).toEqual(t.input); });",
+        ),
+        (
+            "an argument of a call nested inside the owner call",
+            "test(\"x\", () => { expect(encode(fix(t.input))).toEqual(t.out); });",
+        ),
+        (
+            "a type assertion wrapper",
+            "test(\"x\", () => { expect(encode(...(t.input as string[]))).toEqual(t.out); });",
+        ),
+    ] {
+        let assertions = assertions_of(&describe_source(table, "", LOOP, body))?;
+        if !all_dynamic(&assertions) {
+            return Err(format!("{label} resolved: {assertions:?}"));
+        }
+    }
     let member = describe_source(
         table,
         "",
