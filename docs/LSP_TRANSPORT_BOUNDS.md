@@ -52,6 +52,7 @@ input.
 | `executeCommand` arguments | 8 entries; 64 KiB total (size estimate) | Every RIPR command takes zero or one argument object; bounds all downstream identifiers (gap/seam/snapshot ids) transitively. |
 | `ripr/listActionableItems` params | 16 KiB (size estimate) | The live handler reads no client-supplied fields (#1603); the bound caps the params blob as one opaque value at handler entry, before any snapshot access or early-return fast path. |
 | JSON nesting depth | 128 | Enforced by serde_json's default recursion limit; the `unbounded_depth` feature is not enabled anywhere in the workspace. Over-deep bodies are bounded codec errors. |
+| `didChange` range-resolution scan | 256 MiB per notification | Every ranged position is resolved from the start of the retained buffer, so a change list costs edits x buffer size (#11508). Scanned bytes are charged against this budget in `lsp/state.rs`; past it the list is refused through the invalid-incremental-change quarantine. Open-document count and retained-document size remain uncapped. |
 
 Work-done progress creation uses that same 30-second request bound, but its
 announcement runs separately from refresh completion (#9149). Tokens register
