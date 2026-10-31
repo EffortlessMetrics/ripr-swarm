@@ -879,6 +879,13 @@ pub(super) struct AnalysisSnapshot {
     /// select) is read from here, not re-derived from limitation text.
     /// `None` when the producer returned no view (no analysis ran).
     pub(super) language_view: Option<LanguageCompletenessView>,
+    /// Numeric editor-row origins captured by the same Rust analysis pass that
+    /// produced `findings` (#10609). Code-lens placement, the lens-view
+    /// identity and unpublished line-hover lookup select their row from this
+    /// map, never from a later disk read or from diagnostic visibility. A
+    /// finding without a record (non-Rust, or a producer without origins)
+    /// takes the conservative analyzer-row fallback.
+    pub(super) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
 }
 
 /// Changed-file coverage for languages the run did not analyze because the
@@ -3438,6 +3445,7 @@ mod tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         };
 
         if !snapshot.is_consistent() {
@@ -3475,6 +3483,7 @@ mod tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         };
 
         if snapshot.is_consistent() {
@@ -3522,6 +3531,7 @@ mod tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         };
 
         if !snapshot.is_consistent() {
@@ -3577,6 +3587,7 @@ mod tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         })
     }
 

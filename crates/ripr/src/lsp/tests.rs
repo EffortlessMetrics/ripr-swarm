@@ -1158,6 +1158,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
+        rust_diagnostic_origins: Default::default(),
     };
 
     // Call the pure code_lens_response directly to verify the handler→helper path.
@@ -10197,6 +10198,7 @@ async fn did_open_matching_disk_bytes_with_stale_committed_snapshot_keeps_refres
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
+        rust_diagnostic_origins: Default::default(),
     };
     backend
         .refresh_plan(WorkspaceDiagnostics {
@@ -15554,6 +15556,7 @@ fn sample_analysis_snapshot(
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
+        rust_diagnostic_origins: Default::default(),
     }
 }
 
@@ -22802,6 +22805,7 @@ fn quarantine_workspace_diagnostics(
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
+        rust_diagnostic_origins: Default::default(),
     };
     WorkspaceDiagnostics {
         snapshot,
@@ -23732,6 +23736,7 @@ fn partition_workspace_diagnostics(
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
+        rust_diagnostic_origins: Default::default(),
     };
     WorkspaceDiagnostics {
         snapshot,
@@ -24090,6 +24095,7 @@ fn disabled_language_workspace_diagnostics(
         out_of_scope_test_file_findings: 0,
         unavailable_adapter,
         language_view: Some(not_selected_language_view("python")),
+        rust_diagnostic_origins: Default::default(),
     };
     Ok(WorkspaceDiagnostics {
         snapshot,
@@ -24426,6 +24432,7 @@ async fn workspace_status_uncompiled_perl_recovery_does_not_claim_enablement() -
             },
         ]),
         language_view: Some(not_selected_language_view("perl")),
+        rust_diagnostic_origins: Default::default(),
     };
     backend
         .refresh_plan(WorkspaceDiagnostics {

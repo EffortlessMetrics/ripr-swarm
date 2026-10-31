@@ -9450,6 +9450,7 @@ mod top_limitation_selection_tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         }
     }
 
@@ -12282,6 +12283,7 @@ mod delivery_selection_parity_tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         };
         WorkspaceDiagnostics { snapshot, batches }
     }
@@ -13444,6 +13446,7 @@ mod list_actionable_items_tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         }
     }
 
@@ -14284,6 +14287,7 @@ mod pull_disclosure_dedup_tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         })
     }
 }
