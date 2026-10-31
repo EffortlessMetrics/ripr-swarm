@@ -1,0 +1,1 @@
+crates/ripr/tests/typescript_truncated_discovery.rs|Command::new|1|typescript-preview|#11767: integration test runs the worktree-built ripr binary against an isolated temp TypeScript fixture with RIPR_TS_MAX_WORKSPACE_FILES set on the child only, to prove a truncated walk withholds no_static_path; no shell, network, or user-repository mutation.
