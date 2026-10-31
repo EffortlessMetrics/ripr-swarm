@@ -33,12 +33,21 @@ fn result_step() -> TestResult<&'static str> {
     let (_, step) = job("result")?
         .split_once("      - name: Summarize routed result\n")
         .ok_or("production summary step exists")?;
-    Ok(step)
+    // Later result-job steps (completion record, cancellation guard) carry
+    // their own run blocks; scope to the summary step only.
+    Ok(step.split("\n      - name:").next().unwrap_or(step))
 }
 
 fn shell(name: &str) -> TestResult<String> {
     let source = if name == "result" {
         result_step()?
+    } else if name == "detect-docs-only" {
+        // The detector job first verifies the admitted integration in its own
+        // run block; the classifier under test is the named step after it.
+        let (_, step) = job(name)?
+            .split_once("      - name: Check whether every changed file is docs/spec/markdown\n")
+            .ok_or("classifier step exists")?;
+        step
     } else {
         job(name)?
     };
@@ -794,7 +803,28 @@ fn routed_result_admitted(
         })
         .collect::<Vec<_>>();
     assert!(env.len() >= 20, "actual result env is initialized");
+    // An explicit merge-ready request carries admitted qualification and all
+    // four selected leaves; main/manual runs skip both (legacy profile).
+    let (qualification, execute, leaf) = if event == "pull_request" {
+        ("success", "true", "success")
+    } else {
+        ("skipped", "", "skipped")
+    };
     env.extend([
+        ("QUALIFICATION_RESULT", qualification),
+        ("QUALIFICATION_EXECUTE", execute),
+        (
+            "REF",
+            if event == "pull_request" {
+                "refs/pull/10/merge"
+            } else {
+                "refs/heads/main"
+            },
+        ),
+        ("WINDOWS_RESULT", leaf),
+        ("PASTE_RESULT", leaf),
+        ("CI_RESULT", leaf),
+        ("WHEEL_RESULT", leaf),
         ("EVENT_NAME", event),
         // A pull_request result is a qualification only for an explicit
         // merge-ready request; other labels are exercised separately.
@@ -887,13 +917,15 @@ fn actual_result_block_treats_other_labels_as_a_nonrequest_that_never_qualifies(
     let (_, run) = result_step()?
         .split_once("        run: |\n")
         .ok_or("result step")?;
-    let gate = run
+    let nonrequest = run
         .find("[ \"$LABEL_NAME\" = merge-ready ] || exit 0")
-        .ok_or("nonrequest label gate")?;
-    let first_qualification = run
-        .find("QUALIFICATION_RESULT\" = success")
+        .ok_or("nonrequest exit")?;
+    let first_qualification_decision = run
+        .find("[ \"$QUALIFICATION_RESULT\" = success ]")
         .ok_or("qualification decision")?;
-    assert!(gate < first_qualification, "label gate precedes decisions");
+    let status_decision = run.find("status=pass").ok_or("status decision")?;
+    assert!(nonrequest < first_qualification_decision);
+    assert!(nonrequest < status_decision);
     assert!(source.contains("'Merge-ready Nonrequest'"));
     Ok(())
 }
