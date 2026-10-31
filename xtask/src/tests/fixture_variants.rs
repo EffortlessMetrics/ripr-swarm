@@ -47,7 +47,7 @@ fn perl_variant_build_never_rewrites_shared_debug_binary() -> Result<(), String>
         let shared_abs = std::path::absolute(&shared)
             .map_err(|error| format!("resolve shared binary: {error}"))?;
         assert!(
-            !plan.built.starts_with(&shared_target.join("debug")),
+            !plan.built.starts_with(shared_target.join("debug")),
             "Cargo must write the variant outside the shared debug dir: {}",
             plan.built.display()
         );
