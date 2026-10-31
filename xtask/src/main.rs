@@ -4896,7 +4896,7 @@ fn pr_triage_queue_disposition(
         (
             "merge_candidate",
             "PR is current, non-draft, and has no detected validation or policy-sensitive queue risks",
-            "Review the diff and merge if the scope is still the canonical path.",
+            "Inspect current final merge gates, reviews, proof and findings, then decide on a normal server-enforced merge if the scope remains canonical.",
         )
     } else {
         (

@@ -31437,6 +31437,31 @@ fn pr_triage_queue_dispositions_name_actionable_queue_state() {
 }
 
 #[test]
+fn pr_triage_merge_candidate_requests_final_gate_inspection_on_both_surfaces() -> Result<(), String>
+{
+    let pr = triage_pr(1, "devex: ready", &["xtask/src/main.rs"]);
+    let prs = std::slice::from_ref(&pr);
+    let today = days_from_civil(2026, 5, 14);
+    let expected = "Inspect current final merge gates, reviews, proof and findings, then decide on a normal server-enforced merge if the scope remains canonical.";
+    let markdown = pr_triage_markdown(prs, &[], today);
+    let row = markdown
+        .lines()
+        .find(|row| row.starts_with("| #1 |"))
+        .ok_or("missing candidate row")?;
+    assert!(row.contains("merge_candidate"), "{row}");
+    assert!(row.contains(expected), "{row}");
+    let json: Value = serde_json::from_str(&pr_triage_json(prs, &[], today, "fixture"))
+        .map_err(|err| err.to_string())?;
+    assert_eq!(json["mode"], "advisory");
+    assert_eq!(
+        json["queue_disposition"][0]["disposition"],
+        "merge_candidate"
+    );
+    assert_eq!(json["queue_disposition"][0]["recommended_action"], expected);
+    Ok(())
+}
+
+#[test]
 fn pr_triage_behind_packets_preserve_observation_without_branch_update() -> Result<(), String> {
     let mut pr = triage_pr(2, "devex: behind", &["docs/CI.md"]);
     pr.merge_state_status = "BEHIND".to_string();
