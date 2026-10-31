@@ -243,3 +243,6 @@ mod tests {
         assert_ne!(left, right);
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs;
