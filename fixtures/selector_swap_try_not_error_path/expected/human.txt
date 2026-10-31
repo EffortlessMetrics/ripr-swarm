@@ -15,7 +15,7 @@ Start here:
   Why unknown: the analysis could not determine a static exposure state
   Gap ID (for scripts): gap:rust:src/lib.rs:impl Scheduler::next:static_unknown:static_unknown:let_idx=self.queue.iter_.enumerate_.min_by_key___t_t.prio_.map_i___i
   Changed behavior: let idx = self.queue.iter().enumerate().min_by_key(|(_, t)| t.prio).map(|(i, _)| i)?;
-  Analyzer limit: No strong discriminator was detected
+  Analyzer limit: No strong check was detected
   Related test (1 of 3 matched rows): src/lib.rs:19 drains_all
   Next step: Inspect the changed behavior and its existing tests; ripr has not established a test
     gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and

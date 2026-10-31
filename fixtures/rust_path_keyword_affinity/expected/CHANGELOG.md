@@ -106,3 +106,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_path_keyword_affinity (9)
+
+Reason:
+RIPR-SPEC-0122: render the missing check in plain language
+
+Command:
+`cargo xtask goldens bless rust_path_keyword_affinity --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

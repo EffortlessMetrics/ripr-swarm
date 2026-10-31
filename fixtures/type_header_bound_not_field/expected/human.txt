@@ -14,7 +14,7 @@ Start here:
   Static exposure: unknown (severity: note, confidence 0.50)
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: enum Operator<P, Q: Ord + Copy> {
-  Analyzer limit: No strong discriminator was detected
+  Analyzer limit: No strong check was detected
   Related test: src/lib.rs:13 a_is_one (no established call path to the changed code; linked by file location only)
   Next step: Inspect the changed behavior and its existing tests; ripr has not established a test
     gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place

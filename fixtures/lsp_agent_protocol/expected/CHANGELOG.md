@@ -431,3 +431,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — lsp_agent_protocol (28)
+
+Reason:
+RIPR-SPEC-0122: render the missing check in plain language
+
+Command:
+`cargo xtask goldens bless lsp_agent_protocol --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -15,7 +15,7 @@ Start here:
   Why unknown: the analysis could not determine a static exposure state
   Gap ID (for scripts): gap:rust:src/lib.rs:process:static_unknown:static_unknown:let__=compute_fee_amount*9
   Changed behavior: let _ = compute_fee(amount * 9);
-  Analyzer limit: No strong discriminator was detected
+  Analyzer limit: No strong check was detected
   Related test: tests/process_tests.rs:4 process_returns_amount_unchanged
   Next step: Inspect the changed behavior and its existing tests; ripr has not established a test
     gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and

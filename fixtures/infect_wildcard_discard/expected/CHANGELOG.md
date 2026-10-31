@@ -552,3 +552,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — infect_wildcard_discard (32)
+
+Reason:
+RIPR-SPEC-0122: render the missing check in plain language
+
+Command:
+`cargo xtask goldens bless infect_wildcard_discard --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
