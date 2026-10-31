@@ -226,6 +226,23 @@ as strong for one credit branch only; its table row is unchanged.
    other operator (`int('1') == 1 < parse('x')`) also assigns
    `relational_check` / weak: the operand the owner result sits in may be
    compared only by the other operator.
+   An expectation computed from the code under test is the same emptiness
+   behind a binding or a rewrite (#11531). Once workspace owners and tests are
+   known, an exact comparison of two operands is also weak when the workspace
+   owners called on one side (after reading the test's local assignments, the
+   `setUp`/`setUpClass`/`setup_method` attributes and class attributes of its
+   class and same-file bases, module constants and fixture bodies) are reached
+   by the other side's calls, closed over the owners' own bodies (a forwarder
+   `def g(x): return f(x)`): `self.expected = f(2)` then
+   `assertEqual(f(2), self.expected)`, `EXP = f(2)`, `e = f(2)`,
+   `assertEqual(f(2), g(2))`, `assertEqual(f(2), f(2) + 0)` and
+   `assertEqual(f(2), f(1) * 2)`; so is a side that is an owner call minus,
+   divided by, or xor-ed with the same call (`f(2) - f(2)`). The read is over
+   the expression text, not a form allow-list, so an unrecognized expression
+   that mentions the owner demotes; a literal, an independent name, or a call
+   of a function unrelated to the other side keeps its credit. The pass is
+   `derived_expectation.rs`, pinned by `derived_expectation_tests.rs` and the
+   `py-derived-*` corpus cases.
 2. **A trivial message pattern is a broad error.** A `pytest.raises`
    `match=` value, or an `assertRaisesRegex` expected-regex argument,
    that is a string literal (any `r`, `b` or `u` prefix) whose content is
