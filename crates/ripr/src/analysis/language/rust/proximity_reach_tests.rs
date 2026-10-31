@@ -1510,7 +1510,7 @@ fn an_owner_called_from_several_fmt_impls_names_the_dispatch_ambiguity() -> Resu
         .ok_or("no ambiguity line")?;
     assert!(
         line.contains("owner `pad` is called from 2 impls of `fmt` (A, B), one of 2 `fmt` impls")
-            && line.contains("cannot tell which impl a test reaches"),
+            && line.contains("cannot tell whether any test reaches one of these impls"),
         "{line}"
     );
     // No witness test is named and no runtime claim is made.
@@ -1640,5 +1640,61 @@ fn several_impls_without_any_test_stay_bare() -> Result<(), String> {
     let finding = Fixture::new("pad-no-tests", &lib)?.finding_on_line(PAD_DIFF, 6)?;
     assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
     assert!(finding.related_tests.is_empty());
+    Ok(())
+}
+
+const CALLING_B_FMT: &str = "fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {\n        let _ = pad(1, 2);\n        f.write_str(\"x\")\n    }";
+
+#[test]
+fn a_cfg_test_only_impl_is_neither_a_caller_nor_an_impl() -> Result<(), String> {
+    // One production `fmt` caller; a `#[cfg(test)]` impl that also calls the
+    // owner must not make the name look ambiguous.
+    let impls = format!(
+        "{}#[cfg(test)]\nimpl fmt::Display for B {{\n    {CALLING_B_FMT}\n}}\n",
+        display_impl("A")
+    );
+    let finding = pad_finding_with("pad-cfg-test-impl", &pad_lib(&impls), OTHER_TEST)?;
+    assert_bare_no_static_path(&finding, "cfg-test-impl");
+    assert_unlimited(&finding, "cfg-test-impl");
+    Ok(())
+}
+
+#[test]
+fn inherent_fmt_methods_are_not_trait_impls_and_do_not_count() -> Result<(), String> {
+    // Two inherent `fmt` methods calling the owner: no trait dispatch.
+    let inherent = |ty: &str| {
+        format!("impl {ty} {{\n    pub fn fmt(&self) -> bool {{\n        pad(1, 2)\n    }}\n}}\n")
+    };
+    let both = format!("{}{}", inherent("A"), inherent("B"));
+    let finding = pad_finding("pad-inherent-both", &pad_lib(&both))?;
+    assert_bare_no_static_path(&finding, "inherent-both");
+    assert_unlimited(&finding, "inherent-both");
+    // One trait `fmt` caller plus an inherent `fmt` is still one trait impl.
+    let mixed = format!("{}{}", display_impl("A"), inherent("B"));
+    let finding = pad_finding("pad-inherent-mixed", &pad_lib(&mixed))?;
+    assert_unlimited(&finding, "inherent-mixed");
+    Ok(())
+}
+
+#[test]
+fn a_self_qualified_call_from_the_single_caller_behaves_as_the_plain_call() -> Result<(), String> {
+    // `Self::pad(..)` normalises to the callee name `pad`, so the single
+    // calling impl among many still names the ambiguity.
+    let impls = format!(
+        "impl fmt::Display for A {{\n    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {{\n        let _ = Self::pad(1, 2);\n        f.write_str(\"x\")\n    }}\n}}\n{}",
+        "impl fmt::Display for B {\n    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {\n        f.write_str(\"b\")\n    }\n}\n"
+    );
+    let finding = pad_finding_with("pad-self-call", &pad_lib(&impls), OTHER_TEST)?;
+    assert_bare_no_static_path(&finding, "self-call");
+    let plain = pad_finding_with(
+        "pad-plain-call",
+        &pad_lib(&format!(
+            "{}impl fmt::Display for B {{\n    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {{\n        f.write_str(\"b\")\n    }}\n}}\n",
+            display_impl("A")
+        )),
+        OTHER_TEST,
+    )?;
+    assert_eq!(finding.static_limit_kind, plain.static_limit_kind);
+    assert_eq!(finding.evidence, plain.evidence);
     Ok(())
 }

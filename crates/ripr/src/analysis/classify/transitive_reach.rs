@@ -1132,9 +1132,7 @@ impl<'a> TransitiveReachIndex<'a> {
                 .get(method)
                 .into_iter()
                 .flatten()
-                .filter(|function| {
-                    matches!(function.item.container, FunctionContainer::TraitImpl { .. })
-                })
+                .filter(|function| is_production_trait_impl_method(function))
                 .count();
             if impl_total < 2 {
                 continue;
@@ -1146,7 +1144,7 @@ impl<'a> TransitiveReachIndex<'a> {
                 .flatten()
                 .copied()
                 .filter(|function| {
-                    matches!(function.item.container, FunctionContainer::TraitImpl { .. })
+                    is_production_trait_impl_method(function)
                         && calls_of(function)
                             .any(|call| !is_macro_call(&call.name) && call.name == owner_name)
                 })
@@ -3124,6 +3122,18 @@ fn bounded_candidates(ambiguity: &TraitDispatchAmbiguity) -> String {
     }
 }
 
+/// A method of an `impl Trait for X` block that is not compiled out of
+/// production: a `#[cfg(test)]` impl block is test scaffolding, so it neither
+/// counts as an impl of the method name nor as a caller (#11719). The
+/// cfg-test reading is the shared `cfg_predicates` authority.
+fn is_production_trait_impl_method(function: &FunctionSummary) -> bool {
+    matches!(function.item.container, FunctionContainer::TraitImpl { .. })
+        && !function
+            .impl_attrs
+            .iter()
+            .any(|attr| crate::analysis::facts::cfg_predicates::attribute_requires_test(attr))
+}
+
 pub(in crate::analysis) fn trait_dispatch_ambiguity_pointer(
     ambiguity: &TraitDispatchAmbiguity,
     owner_name: &str,
@@ -3133,7 +3143,7 @@ pub(in crate::analysis) fn trait_dispatch_ambiguity_pointer(
         n => format!("{n} impls"),
     };
     format!(
-        "{}owner `{}` is called from {} of `{}` ({}), one of {} `{}` impls in this crate; ripr cannot tell which impl a test reaches. \
+        "{}owner `{}` is called from {} of `{}` ({}), one of {} `{}` impls in this crate; ripr cannot tell whether any test reaches one of these impls. \
          Inspect the tests that format or compare these types to judge whether this change is observed.",
         TRAIT_DISPATCH_AMBIGUITY_PREFIX,
         owner_name,
