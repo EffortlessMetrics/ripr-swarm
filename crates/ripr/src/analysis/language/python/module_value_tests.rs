@@ -1028,6 +1028,43 @@ fn subtracting_the_excluded_file_matches_rebuilding_every_write_set() {
 }
 
 #[test]
+fn reflective_files_of_one_component_each_count_toward_its_reach() {
+    // #10914: reflective files of one import component share one reach, and
+    // the totals count it once per file holding it, so excluding one of
+    // them keeps the reach the others still hold. The per-file rebuild is
+    // the independent oracle; a separate component's file stays its own.
+    let sources = [
+        (Path::new("c.py"), "TABLE = {\"a\": 1}\n"),
+        (Path::new("a.py"), "import c\nnames = dir(c)\n"),
+        (
+            Path::new("b.py"),
+            "import c\nvalue = getattr(c, \"TABLE\")\n",
+        ),
+        (Path::new("solo.py"), "names = dir(object)\n"),
+    ];
+    let index = super::module_value::ForeignIndex::build(sources.iter().copied(), false);
+    let module = Path::new("c.py");
+    for own in ["absent.py", "a.py", "b.py", "c.py", "solo.py"] {
+        let own = Path::new(own);
+        assert_eq!(
+            index.excluding(own),
+            index.rebuilt_excluding(own),
+            "{own:?}"
+        );
+    }
+    assert!(
+        index
+            .excluding(Path::new("a.py"))
+            .may_mutate_table("TABLE", module)
+    );
+    assert!(
+        index
+            .excluding(Path::new("b.py"))
+            .may_mutate_table("TABLE", module)
+    );
+}
+
+#[test]
 fn excluding_views_share_the_word_counts_and_keep_the_sorted_wire_form() -> Check {
     // #10914: each changed file's view reads the workspace's shared per-word
     // counts and hides only the words its own file alone holds, so a view
