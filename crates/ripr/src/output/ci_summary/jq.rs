@@ -57,6 +57,11 @@ impl Doc {
     /// `$(jq -r QUERY file 2>/dev/null || echo FAIL)`, captured. jq runs
     /// the query on every value and exits nonzero when the last one failed
     /// or the input was malformed; then `FAIL` follows whatever it printed.
+    /// The artifact did not parse as JSON.
+    pub(super) fn is_broken(&self) -> bool {
+        self.broken
+    }
+
     /// An empty `fail` is `|| true`, which prints nothing.
     pub(super) fn text(&self, query: impl Fn(&Value) -> Q, fail: &str) -> String {
         let mut printed = String::new();

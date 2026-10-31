@@ -32,7 +32,7 @@ pub(super) fn ci_summary(args: &[String]) -> Result<(), String> {
         base_ref: options.base_ref,
         upload_sarif: options.upload_sarif == "true",
         gate_baseline: !options.gate_baseline.is_empty(),
-        gate_configured: !matches!(settings.gate_mode.trim(), "" | "off"),
+        gate_configured: gate_configured(&settings.gate_mode),
         comment_mode: options.comment_mode,
     };
     let summary = render_ci_summary(&input);
@@ -41,6 +41,12 @@ pub(super) fn ci_summary(args: &[String]) -> Result<(), String> {
         .write_all(&summary)
         .and_then(|()| stdout.flush())
         .map_err(|err| format!("{COMMAND} could not write the summary: {err}"))
+}
+
+/// `RIPR_GATE_MODE` counts as set when it is not blank, as `ci_packet` reads
+/// it; an invalid value is still "configured" and fails in the gate itself.
+fn gate_configured(mode: &str) -> bool {
+    !mode.trim().is_empty()
 }
 
 /// The enabled languages `ripr doctor --json` reports; none when the
@@ -106,6 +112,15 @@ pub(super) fn parse_ci_summary_options_with(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn gate_mode_is_configured_unless_blank() {
+        assert!(!super::gate_configured(""));
+        assert!(!super::gate_configured("  \t"));
+        assert!(super::gate_configured("visible-only"));
+        assert!(super::gate_configured("off"));
+        assert!(super::gate_configured("not-a-mode"));
+    }
+
     use super::super::ci_packet::CiSettings;
     use super::{CiSummaryOptions, configured_languages, parse_ci_summary_options_with};
     use std::path::PathBuf;

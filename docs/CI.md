@@ -1525,9 +1525,9 @@ exists, the summary opens with "What RIPR found in this pull request": the count
 of changed-behavior spots where the tests may not notice a wrong result, the first
 spot with its missing check, and the `ripr agent repair` start when it is a plain
 `ripr agent repair ...` command (an unfinished analysis is never reported as clean). With no gate configured (`RIPR_GATE_MODE`
-unset or `off`), the policy and governance sections (readiness, operations,
+unset or blank), the policy and governance sections (readiness, operations,
 history, promotion, waiver aging, suppression health) are folded into one
-collapsed block; they stay open when a gate mode is set. First-run status rows
+collapsed block that stays open when any folded count (warnings, unknowns, blockers, config errors, stale or ownerless suppressions) is not `0`, and when a gate mode is set. First-run status rows
 whose value is only the `not_available` placeholder are omitted, and the
 start-here packet is named as a file in the `ripr-reports` artifact rather than
 a `target/` path. The summary then continues with

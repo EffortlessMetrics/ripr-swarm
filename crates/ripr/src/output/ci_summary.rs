@@ -84,7 +84,7 @@ pub(crate) struct CiSummaryInput {
     pub(crate) upload_sarif: bool,
     /// `RIPR_GATE_BASELINE` is set.
     pub(crate) gate_baseline: bool,
-    /// `RIPR_GATE_MODE` names a mode other than `off`. When false the policy
+    /// `RIPR_GATE_MODE` is not blank. When false the policy
     /// and governance sections are folded (#11217).
     pub(crate) gate_configured: bool,
     /// `RIPR_COMMENT_MODE`, `off` when unset.
@@ -100,6 +100,7 @@ pub(crate) fn render_ci_summary(input: &CiSummaryInput) -> Vec<u8> {
         root: input.root.clone(),
         relative: repo_relative_for(&input.root),
         out: Vec::new(),
+        attention: false,
     };
     summary.headline();
     summary.start_here();
@@ -184,6 +185,8 @@ struct Summary {
     root: PathBuf,
     relative: RepoRelative,
     out: Vec<u8>,
+    /// A folded governance section carried a count that is not exactly `0`.
+    attention: bool,
 }
 
 impl Summary {
@@ -237,20 +240,34 @@ impl Summary {
             return;
         }
         let body = self.out.split_off(start);
-        self.line(
-            "<details><summary>Policy and governance (advisory; no gate configured)</summary>",
-        );
+        // Fail closed: a warning, unknown, blocker or error count that is not
+        // exactly `0` keeps the block open so a non-clean state is not hidden.
+        if self.attention {
+            self.line("<details open><summary>Policy and governance (advisory; no gate configured; has warnings, unknowns or blockers)</summary>");
+        } else {
+            self.line(
+                "<details><summary>Policy and governance (advisory; no gate configured; no warnings or unknowns)</summary>",
+            );
+        }
         self.blank();
         self.out.extend(body);
         self.line("</details>");
         self.blank();
     }
 
+    /// Record that a folded section reported a count that is not `0`.
+    fn note_attention(&mut self, doc: &Doc, counts: &[&str]) {
+        // A report that did not parse reads as `0` counts; it is not clean.
+        if doc.is_broken() || counts.iter().any(|count| *count != "0") {
+            self.attention = true;
+        }
+    }
+
     /// A first-run status row, left out when its value is the
     /// `not_available` placeholder (#11217). Only the placeholder is
     /// dropped; `unknown`, `none` and real values still print.
-    fn status_row(&mut self, text: &str) {
-        if !text.ends_with(": `not_available`") {
+    fn status_row(&mut self, value: &str, text: &str) {
+        if value != "not_available" {
             self.line(text);
         }
     }
@@ -300,10 +317,14 @@ impl Summary {
         } else if let Some(index) = self.doc(INDEX_JSON) {
             let path =
                 inline(&index.field(&["summary.start_here"], "not_available", "not_available"));
-            let name = path.rsplit('/').next().unwrap_or(&path);
-            self.line(&format!(
-                "- Start-here artifact: `{name}` in the `ripr-reports` artifact"
-            ));
+            if path == "not_available" {
+                self.line("- Start-here artifact: `not_available`");
+            } else {
+                let name = path.rsplit('/').next().unwrap_or(&path);
+                self.line(&format!(
+                    "- Start-here artifact: `{name}` in the `ripr-reports` artifact"
+                ));
+            }
         } else if self.is_file(FRONT_PANEL_MD) {
             self.line(
                 "- Start-here artifact: `pr-review-front-panel.md` in the `ripr-reports` artifact",
@@ -401,8 +422,8 @@ impl Summary {
             "unknown",
         ));
         let kind = field(&["selected.kind"], "none");
-        let changed =
-            code_span(&doc.field(&["selected.changed_behavior"], "not_available", "unknown"));
+        let changed_raw = doc.field(&["selected.changed_behavior"], "not_available", "unknown");
+        let changed = code_span(&changed_raw);
         let evidence = field(
             &["selected.current_evidence_strength", "selected.state"],
             "not_available",
@@ -468,26 +489,32 @@ impl Summary {
         if !repair_command.is_empty() {
             self.repair_start("Start repair", &inline(&repair_command));
         }
-        self.status_row(&format!("- Status: `{status}`"));
-        self.status_row(&format!("- Selected state: `{state}`"));
-        self.status_row(&format!("- Canonical gap: `{gap}`"));
-        self.status_row(&format!("- Language: `{language}`"));
-        self.status_row(&format!("- Top gap/no-action: `{kind}`"));
-        self.status_row(&format!("- Repair: `{repair}`"));
-        self.status_row(&format!("- Changed behavior: {changed}"));
-        self.status_row(&format!("- Current evidence strength: `{evidence}`"));
-        self.status_row(&format!("- Missing discriminator: `{missing}`"));
-        self.status_row(&format!("- Focused proof intent: `{focused}`"));
-        self.status_row(&format!("- Boundary: `{boundary}`"));
-        self.status_row(&format!("- Repair target: `{target}`"));
-        self.status_row(&format!("- Related test: `{related}`"));
-        self.status_row(&format!("- Static limit: `{limit}`"));
-        self.status_row(&format!("- {}: `{verify}`", labels.verify));
-        self.status_row(&format!("- {}: `{receipt}`", labels.receipt));
-        self.status_row(&format!("- Receipt path: `{receipt_path}`"));
-        self.status_row(&format!("- Receipt state: `{receipt_state}`"));
-        self.status_row(&format!("- Safe next action command: `{next}`"));
-        self.status_row(&format!("- Warnings: `{warnings}`"));
+        self.status_row(&status, &format!("- Status: `{status}`"));
+        self.status_row(&state, &format!("- Selected state: `{state}`"));
+        self.status_row(&gap, &format!("- Canonical gap: `{gap}`"));
+        self.status_row(&language, &format!("- Language: `{language}`"));
+        self.status_row(&kind, &format!("- Top gap/no-action: `{kind}`"));
+        self.status_row(&repair, &format!("- Repair: `{repair}`"));
+        self.status_row(&changed_raw, &format!("- Changed behavior: {changed}"));
+        self.status_row(
+            &evidence,
+            &format!("- Current evidence strength: `{evidence}`"),
+        );
+        self.status_row(&missing, &format!("- Missing discriminator: `{missing}`"));
+        self.status_row(&focused, &format!("- Focused proof intent: `{focused}`"));
+        self.status_row(&boundary, &format!("- Boundary: `{boundary}`"));
+        self.status_row(&target, &format!("- Repair target: `{target}`"));
+        self.status_row(&related, &format!("- Related test: `{related}`"));
+        self.status_row(&limit, &format!("- Static limit: `{limit}`"));
+        self.status_row(&verify, &format!("- {}: `{verify}`", labels.verify));
+        self.status_row(&receipt, &format!("- {}: `{receipt}`", labels.receipt));
+        self.status_row(&receipt_path, &format!("- Receipt path: `{receipt_path}`"));
+        self.status_row(
+            &receipt_state,
+            &format!("- Receipt state: `{receipt_state}`"),
+        );
+        self.status_row(&next, &format!("- Safe next action command: `{next}`"));
+        self.status_row(&warnings, &format!("- Warnings: `{warnings}`"));
         self.line("- Artifacts: `start-here.json`, `start-here.md` in the `ripr-reports` artifact");
         self.line("- Boundary: start-here is advisory first-run guidance only; gate decision remains separate pass/fail authority when configured.");
         if self.is_file(START_HERE_MD) {
@@ -501,12 +528,14 @@ impl Summary {
         let status = field(&["status"], "unknown");
         let action_kind = field(&["action_kind"], "unknown");
         let title = field(&["title"], "not_available");
-        let why = code_span(&doc.field(&["why"], "not_available", "unknown"));
-        let changed = code_span(&doc.field(
+        let why_raw = doc.field(&["why"], "not_available", "unknown");
+        let why = code_span(&why_raw);
+        let changed_raw = doc.field(
             &["selected.changed_behavior", "why"],
             "not_available",
             "unknown",
-        ));
+        );
+        let changed = code_span(&changed_raw);
         let evidence = field(
             &[
                 "selected.current_evidence_strength",
@@ -572,21 +601,27 @@ impl Summary {
         if led {
             self.repair_start("Repair start", &repair);
         }
-        self.status_row(&format!("- Status: `{status}`"));
-        self.status_row(&format!("- Safe next action: `{action_kind}`"));
-        self.status_row(&format!("- Title: `{title}`"));
-        self.status_row(&format!("- Why: {why}"));
-        self.status_row(&format!("- Changed behavior: {changed}"));
-        self.status_row(&format!("- Current evidence strength: `{evidence}`"));
-        self.status_row(&format!("- Missing discriminator: `{missing}`"));
-        self.status_row(&format!("- Focused proof intent: `{proof}`"));
-        self.status_row(&format!("- Gap: `{gap}`"));
-        self.status_row(&format!("- Repair target: `{target}`"));
-        self.status_row(&format!("- Agent packet: `{packet}`"));
-        self.status_row(&format!("- {}: `{verify}`", labels.verify));
-        self.status_row(&format!("- {}: `{receipt}`", labels.receipt));
-        self.status_row(&format!("- Fallback/no-action: `{fallback}`"));
-        self.status_row(&format!("- Warnings: `{warnings}`"));
+        self.status_row(&status, &format!("- Status: `{status}`"));
+        self.status_row(
+            &action_kind,
+            &format!("- Safe next action: `{action_kind}`"),
+        );
+        self.status_row(&title, &format!("- Title: `{title}`"));
+        self.status_row(&why_raw, &format!("- Why: {why}"));
+        self.status_row(&changed_raw, &format!("- Changed behavior: {changed}"));
+        self.status_row(
+            &evidence,
+            &format!("- Current evidence strength: `{evidence}`"),
+        );
+        self.status_row(&missing, &format!("- Missing discriminator: `{missing}`"));
+        self.status_row(&proof, &format!("- Focused proof intent: `{proof}`"));
+        self.status_row(&gap, &format!("- Gap: `{gap}`"));
+        self.status_row(&target, &format!("- Repair target: `{target}`"));
+        self.status_row(&packet, &format!("- Agent packet: `{packet}`"));
+        self.status_row(&verify, &format!("- {}: `{verify}`", labels.verify));
+        self.status_row(&receipt, &format!("- {}: `{receipt}`", labels.receipt));
+        self.status_row(&fallback, &format!("- Fallback/no-action: `{fallback}`"));
+        self.status_row(&warnings, &format!("- Warnings: `{warnings}`"));
         self.line(&format!(
             "- Artifacts: `target/ripr/reports/first-useful-action.json`, `target/ripr/reports/first-useful-action.md`, `{WORKFLOW_AGENT_PACKET_ARTIFACT}`"
         ));
@@ -1117,6 +1152,7 @@ impl Summary {
             let warnings = inline(&doc.length("warnings"));
             let unknowns = inline(&doc.length("unknowns"));
             let next = inline(&doc.field(&["next_policy_action"], "not_available", "unknown"));
+            self.note_attention(&doc, &[&warnings, &unknowns]);
             self.line("#### Policy readiness at a glance");
             self.line(&format!("- Status: `{status}`"));
             self.line(&format!("- Recommended mode: `{mode}`"));
@@ -1147,6 +1183,7 @@ impl Summary {
             ));
             let warnings = inline(&doc.length("warnings"));
             let unknowns = inline(&doc.length("unknowns"));
+            self.note_attention(&doc, &[&blockers, &warnings, &unknowns]);
             self.line("#### Policy operations at a glance");
             self.line(&format!("- Current ceiling: `{ceiling}`"));
             self.line(&format!("- Next safe action: `{next}`"));
@@ -1181,6 +1218,7 @@ impl Summary {
             let preview = direction("trend.preview_boundary_state.direction");
             let warnings = inline(&doc.length("warnings"));
             let unknowns = inline(&doc.length("unknowns"));
+            self.note_attention(&doc, &[&warnings, &unknowns]);
             self.line("#### Policy history at a glance");
             self.line(&format!(
                 "- Current ceiling: `{ceiling}`; history entries: `{entries}`"
@@ -1212,6 +1250,7 @@ impl Summary {
             let warnings = inline(&doc.length("warnings"));
             let unknowns = inline(&doc.length("unknowns"));
             let reason = inline(&doc.field(&["why_or_why_not"], "not_available", "unknown"));
+            self.note_attention(&doc, &[&warnings, &unknowns]);
             self.line(&format!("- `{target}`: allowed_now=`{allowed}`, repairs=`{repairs}`, receipts=`{receipts}`, warnings=`{warnings}`, unknowns=`{unknowns}`, why=`{reason}`"));
         }
         if found {
@@ -1244,6 +1283,7 @@ impl Summary {
             let supplied = inline(&doc.length("supplied_evidence"));
             let warnings = inline(&doc.length("warnings"));
             let unknowns = inline(&doc.length("unknowns"));
+            self.note_attention(&doc, &[&warnings, &unknowns]);
             self.line(&format!("- `{language}`/`{class}`: allowed_now=`{allowed}`, supplied_evidence=`{supplied}`, missing_evidence=`{missing}`, warnings=`{warnings}`, unknowns=`{unknowns}`"));
         }
         if jsons.iter().any(|json| self.is_file(json)) {
@@ -1295,6 +1335,7 @@ impl Summary {
             let focused = count("summary.focused_test_candidates");
             let suppression = count("summary.durable_suppression_candidates");
             let warnings = count("summary.warnings");
+            self.note_attention(&doc, &[&suppression, &warnings]);
             self.line("#### Waiver aging at a glance");
             self.line(&format!("- Status: `{status}`"));
             self.line(&format!("- Counts: waivers=`{waivers}`, identities=`{identities}`, repeated_seams=`{repeated_seams}`, repeated_files=`{repeated_files}`"));
@@ -1328,6 +1369,19 @@ impl Summary {
             let preview_gap = count("summary.preview_without_preview_label");
             let warnings = count("summary.warnings");
             let config_errors = count("summary.config_errors");
+            self.note_attention(
+                &doc,
+                &[
+                    &missing_owner,
+                    &missing_reason,
+                    &stale,
+                    &overbroad,
+                    &unknown_selector,
+                    &preview_gap,
+                    &warnings,
+                    &config_errors,
+                ],
+            );
             self.line("#### Suppression health at a glance");
             self.line(&format!("- Status: `{status}`"));
             self.line(&format!("- Counts: suppressions=`{total}`, healthy=`{healthy}`, missing_owner=`{missing_owner}`, missing_reason=`{missing_reason}`"));
