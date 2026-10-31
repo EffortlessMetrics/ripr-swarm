@@ -370,21 +370,24 @@ accepts, three surfaces agree on one recommended follow-through:
   withheld (static limit, incomplete run, validator refusal), no route is
   recommended and the by-hand `Safe next action` stands alone.
 - `ripr first-pr`'s top-gap `Safe next action` and
-  `selected.recommended_repair_command` name the same command spelling,
-  built only when the ledger record parses as a `GapRecord` and passes
-  `validate_agent_gap_record_packet` (which includes a current candidate);
-  otherwise the field is absent. first-pr judges the ledger record only: it
-  cannot see the working tree or the producing run, so it does not decide
-  whether the start is currently available, and the start still refuses a
-  dirty tree or an incomplete run.
+  `selected.recommended_repair_command` name one command, built only when
+  the ledger record parses as a `GapRecord`, passes
+  `validate_agent_gap_record_packet` (which includes a current candidate),
+  has a canonical gap id no other record shares, and the ledger's recorded
+  analysis outcome is complete (the predicate `check` uses); otherwise the
+  field is absent. first-pr judges the ledger record and its recorded
+  outcome. It cannot see the working tree, and `check` may print the resolved
+  dirty origin as `--base` where first-pr prints its own, so the two can
+  differ in that one argument; the start itself still refuses a dirty tree.
 - A TypeScript preview card whose `repair_packet_ready` is `true` no longer
   states "This card is advisory and is not a repair packet."; it says the card
   is an advisory summary and the complete packet is projected separately. A
   card whose packet is not ready keeps the original sentence.
 
-No new decision is introduced: `check` reads the existing
-`gap_repair_route_for` result and `first-pr` reads the shared validator, so the
-actionability flip remains fail-closed.
+No new validator is introduced: `check` reads the existing
+`gap_repair_route_for` result and `first-pr` reads the shared validator and
+analysis-outcome predicate, and either one withholds the recommendation when
+its input is missing.
 
 ## Implementation Mapping
 

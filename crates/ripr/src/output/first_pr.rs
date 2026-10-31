@@ -2396,7 +2396,7 @@ fn top_gap_from_record(
     } else {
         None
     };
-    let recommended_repair_command = recommended_gap_repair_command(record, options);
+    let recommended_repair_command = recommended_gap_repair_command(record, gap_ledger, options);
     let repair_route_kind = string_from_sources(&[(repair_route, &["route_kind"])])
         .unwrap_or_else(|| "RepairRouteUnavailable".to_string());
     let target_file = string_from_sources(&[(repair_route, &["target_file"])]);
@@ -2471,11 +2471,15 @@ fn top_gap_from_record(
 /// does not parse, has no canonical gap id, is another language, or fails the
 /// validator yields `None` and keeps the by-hand route alone. The command is
 /// spelled as `check` spells it (`--base`, `--root`, `--phase before`). This
-/// judges the ledger record only. Unlike `check`, first-pr cannot see the
-/// working tree or the producing run's analysis outcome, so it does not decide
+/// judges the ledger record and the ledger's recorded analysis outcome. Unlike
+/// `check`, first-pr cannot see the working tree, so it does not decide
 /// whether the start is currently available: the start itself still refuses a
-/// dirty tree or an incomplete run, and the rendered text says to commit first.
-fn recommended_gap_repair_command(record: &Value, options: &FirstPrOptions) -> Option<String> {
+/// dirty tree, and the rendered text says to commit first.
+fn recommended_gap_repair_command(
+    record: &Value,
+    gap_ledger: &Value,
+    options: &FirstPrOptions,
+) -> Option<String> {
     use crate::output::agent_seam_packets::validate_agent_gap_record_packet;
     use crate::output::gap_decision_ledger::GapRecord;
     let language = string_path(record, &["language"])?;
@@ -2486,6 +2490,44 @@ fn recommended_gap_repair_command(record: &Value, options: &FirstPrOptions) -> O
         return None;
     }
     if options.base.trim().is_empty() {
+        return None;
+    }
+    // `check` withholds the start unless the producing run's analysis was
+    // complete (`gap_bound_route`); the ledger carries that outcome, so read
+    // it through the same predicate. Missing or incomplete fails closed, and
+    // so does a bounded run (`run_limitations`).
+    let outcome = gap_ledger.get("analysis_outcome");
+    let analysis_complete = outcome
+        .and_then(|value| value.get("analysis_complete"))
+        .and_then(Value::as_bool);
+    let document_complete = outcome
+        .and_then(|value| value.get("document_complete"))
+        .and_then(Value::as_bool);
+    if !crate::agent::artifact::check_findings_outcome_is_complete(
+        analysis_complete,
+        document_complete,
+    ) || gap_ledger
+        .get("run_limitations")
+        .and_then(Value::as_array)
+        .is_some_and(|limits| !limits.is_empty())
+    {
+        return None;
+    }
+    // A canonical gap id shared by two records is ambiguous; `check` refuses
+    // it for Python, so refuse it here for every language.
+    let canonical = string_path(record, &["canonical_gap_id"])?;
+    let sharing = gap_ledger
+        .get("records")
+        .and_then(Value::as_array)
+        .map_or(0, |records| {
+            records
+                .iter()
+                .filter(|other| {
+                    string_path(other, &["canonical_gap_id"]).as_deref() == Some(canonical.as_str())
+                })
+                .count()
+        });
+    if sharing > 1 {
         return None;
     }
     let typed: GapRecord = serde_json::from_value(record.clone()).ok()?;
@@ -7978,7 +8020,11 @@ mod tests {
             base: "HEAD~1".to_string(),
             ..FirstPrOptions::default()
         };
-        let command = recommended_gap_repair_command(&record, &options)
+        let ledger = json!({
+            "analysis_outcome": {"analysis_complete": true},
+            "records": [record.clone()]
+        });
+        let command = recommended_gap_repair_command(&record, &ledger, &options)
             .ok_or("validator-accepted TypeScript record must recommend the start")?;
         assert!(
             command.starts_with(
@@ -7988,31 +8034,70 @@ mod tests {
         );
         assert!(command.ends_with(" --phase before"), "{command}");
 
+        // Negative: the ledger's analysis outcome missing, incomplete or
+        // bounded withholds the recommendation, as `check` withholds the start.
+        let mut missing_outcome = ledger.clone();
+        if let Some(object) = missing_outcome.as_object_mut() {
+            object.remove("analysis_outcome");
+        }
+        assert_eq!(
+            recommended_gap_repair_command(&record, &missing_outcome, &options),
+            None
+        );
+        let mut incomplete = ledger.clone();
+        incomplete["analysis_outcome"]["analysis_complete"] = json!(false);
+        assert_eq!(
+            recommended_gap_repair_command(&record, &incomplete, &options),
+            None
+        );
+        let mut bounded = ledger.clone();
+        bounded["run_limitations"] = json!([{"kind": "bounded"}]);
+        assert_eq!(
+            recommended_gap_repair_command(&record, &bounded, &options),
+            None
+        );
+        // Negative: a canonical gap id shared by two records is ambiguous.
+        let mut shared = ledger.clone();
+        shared["records"] = json!([record.clone(), record.clone()]);
+        assert_eq!(
+            recommended_gap_repair_command(&record, &shared, &options),
+            None
+        );
+
         let mut ineligible = record.clone();
         ineligible["projection_eligibility"]["agent_packet"]["eligible"] = json!(false);
-        assert_eq!(recommended_gap_repair_command(&ineligible, &options), None);
+        assert_eq!(
+            recommended_gap_repair_command(&ineligible, &ledger, &options),
+            None
+        );
 
         let mut no_projection = record.clone();
         if let Some(object) = no_projection.as_object_mut() {
             object.remove("projection_eligibility");
         }
         assert_eq!(
-            recommended_gap_repair_command(&no_projection, &options),
+            recommended_gap_repair_command(&no_projection, &ledger, &options),
             None
         );
 
         let mut no_receipt = record.clone();
         no_receipt["receipt_command"] = json!("  ");
-        assert_eq!(recommended_gap_repair_command(&no_receipt, &options), None);
+        assert_eq!(
+            recommended_gap_repair_command(&no_receipt, &ledger, &options),
+            None
+        );
 
         let mut rust = record.clone();
         rust["language"] = json!("rust");
-        assert_eq!(recommended_gap_repair_command(&rust, &options), None);
+        assert_eq!(
+            recommended_gap_repair_command(&rust, &ledger, &options),
+            None
+        );
 
         let mut not_actionable = record.clone();
         not_actionable["gap_state"] = json!("no_action");
         assert_eq!(
-            recommended_gap_repair_command(&not_actionable, &options),
+            recommended_gap_repair_command(&not_actionable, &ledger, &options),
             None
         );
 
@@ -8021,7 +8106,7 @@ mod tests {
             object.remove("canonical_gap_id");
         }
         assert_eq!(
-            recommended_gap_repair_command(&no_canonical, &options),
+            recommended_gap_repair_command(&no_canonical, &ledger, &options),
             None
         );
         Ok(())
