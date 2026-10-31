@@ -1035,3 +1035,57 @@ fn python_repo_comment_termination_changes_identity_and_suppression() -> Result<
     assert!(!changed.warnings.is_empty());
     Ok(())
 }
+
+#[cfg(feature = "lang-python")]
+#[test]
+fn python_findings_are_withheld_when_the_checkout_is_not_the_diff_post_image() -> Result<(), String>
+{
+    let fixture = Fixture::new(&[])?;
+    fixture.write(
+        "pyproject.toml",
+        "[project]\nname=\"identity_fixture\"\nversion=\"0.0.0\"\n",
+    )?;
+    let mut config = ripr::config::RiprConfig::default();
+    config.languages.enabled = vec![
+        ripr::domain::LanguageId::Rust,
+        ripr::domain::LanguageId::Python,
+    ];
+    let before =
+        "def limit(quantity):\n    if quantity >= 100:\n        return 0.1\n    return 0.0\n";
+    let after =
+        "def limit(quantity):\n    if quantity > 100:\n        return 0.1\n    return 0.0\n";
+    let python_findings = |output: &CheckOutput| {
+        output
+            .findings
+            .iter()
+            .filter(|finding| {
+                finding
+                    .probe
+                    .location
+                    .file
+                    .to_string_lossy()
+                    .ends_with("subject.py")
+            })
+            .count()
+    };
+    // Positive control: the checkout is the diff's post-image, so the finding
+    // is minted from verifiable source context.
+    fixture.write("src/subject.py", after)?;
+    let matching = fixture.check_with_config(&[("src/subject.py", before, after)], &config)?;
+    assert_eq!(
+        python_findings(&matching),
+        1,
+        "a verifiable post-image must keep its finding"
+    );
+    // Negative control: the same diff over the pre-image checkout cannot be
+    // tied to source context, so the file's findings are withheld (fail
+    // closed) rather than minted with an unverifiable identity.
+    fixture.write("src/subject.py", before)?;
+    let mismatched = fixture.check_with_config(&[("src/subject.py", before, after)], &config)?;
+    assert_eq!(
+        python_findings(&mismatched),
+        0,
+        "a checkout that is not the diff post-image must not yield findings"
+    );
+    Ok(())
+}
