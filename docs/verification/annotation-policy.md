@@ -34,7 +34,8 @@ cargo xtask ripr-annotations --check
 ```
 
 It emits GitHub Actions `::warning` lines only. It does not post inline review
-comments.
+comments. (The CI packet path, `ripr reports ci-packet`, additionally emits
+`::notice` for cards that are not actionable; see `docs/CI.md`.)
 
 The annotation consumer must ignore:
 
@@ -62,7 +63,8 @@ Bad placement is worse than no placement.
 
 ## Severity And Blocking
 
-Annotations are warning-level and non-blocking.
+Annotations are warning-level (or notice-level for non-actionable cards in the
+CI packet path) and non-blocking.
 
 Allowed:
 
