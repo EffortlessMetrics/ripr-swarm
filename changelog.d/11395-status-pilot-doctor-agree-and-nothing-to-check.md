@@ -1,0 +1,3 @@
+<!-- section: Fixed -->
+- `ripr status` no longer recommends `ripr pilot` in a directory with no `Cargo.toml` and no source files; pilot refuses there, so status now says there is nothing to repair yet and points at `ripr doctor` and `--root <dir>`. Status and pilot share one workspace verdict (#11395).
+- `ripr check` with nothing in scope (a clean tree or a docs-only diff) now headlines "Nothing to check: no changed Rust, Python or TypeScript source was found, so ripr examined no behavior." instead of "No findings: ripr checked no changed behavior." The docs-only stderr line no longer calls the empty result "correct"; it says nothing was analyzed. JSON fields and exit codes are unchanged (#11396).

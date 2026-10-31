@@ -36,10 +36,16 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .map(|duration| duration.as_nanos())
             .unwrap_or(0);
-        std::env::temp_dir().join(format!(
+        let dir = std::env::temp_dir().join(format!(
             "ripr-agent-review-summary-{label}-{}-{stamp}",
             std::process::id()
-        ))
+        ));
+        // #11395: status withholds the pilot route for a root with no
+        // manifest and no source, so these roots are minimal workspaces.
+        if std::fs::create_dir_all(&dir).is_ok() {
+            let _ = std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n");
+        }
+        dir
     }
 
     fn workspace_root() -> PathBuf {
