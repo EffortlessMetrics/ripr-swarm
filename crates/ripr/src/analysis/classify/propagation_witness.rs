@@ -392,6 +392,9 @@ pub(in crate::analysis) fn concat_literal_tail(
     index: &crate::analysis::rust_index::RustIndex,
 ) -> Option<(usize, String, String)> {
     use ra_ap_syntax::{AstNode, ast};
+    if !owner.body.contains("concat") {
+        return None;
+    }
     if super::activation::macro_names_rebound(index, &["concat"]) {
         return None;
     }
@@ -405,7 +408,7 @@ pub(in crate::analysis) fn concat_literal_tail(
         return None;
     };
     let call = tail.macro_call()?;
-    if call.path()?.syntax().text().to_string() != "concat" {
+    if call.path()?.syntax().text() != "concat" {
         return None;
     }
     let tree = call.token_tree()?;
