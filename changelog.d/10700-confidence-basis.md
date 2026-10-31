@@ -1,2 +1,0 @@
-<!-- section: Added -->
-- `Finding` gains a shared, skip-when-empty `confidence_basis` list (`domain::ConfidenceCap`) that check and context JSON render as `confidence_basis` and `confidence_why_capped`, so a preview adapter can state why its per-class constant `confidence` is capped and that it is not on Rust's scale. No adapter populates it in this change, so output is unchanged; the editor diagnostic `confidence` is also rounded to two decimals (#10700, #10717).
