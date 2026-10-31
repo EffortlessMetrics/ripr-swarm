@@ -12359,6 +12359,7 @@ id = "RIPR-SPEC-0159"
 name = "Bounded helper-call transfer"
 spec = "docs/specs/RIPR-SPEC-0159-bounded-helper-transfer.md"
 tests = [
+  "crates/ripr/tests/concat_literal_return.rs",
   "crates/ripr/tests/pub_api_method_entry_reach.rs",
   "crates/ripr/tests/helper_wrapper_reach.rs::qualified_helper_effect_keeps_reach_without_propagation",
   "crates/ripr/tests/helper_wrapper_reach.rs::qualified_hop_above_a_tested_method_keeps_the_lower_forwarder",
@@ -16208,6 +16209,11 @@ tests = [
   "crates/ripr/src/app/task_first.rs::tests::wrapper_match_is_exact_and_never_looser",
   "crates/ripr/tests/check_repair_agree.rs::bare_repair_does_not_list_an_unchanged_seams_missing_evidence_for_the_change",
   "crates/ripr/tests/check_repair_agree.rs::whole_repository_refusals_name_the_seam_each_reason_is_about",
+  "crates/ripr/tests/check_repair_agree.rs::exposed_change_refusal_says_nothing_to_do",
+  "crates/ripr/tests/check_repair_agree.rs::change_with_no_repairable_code_says_so_first",
+  "crates/ripr/tests/check_repair_agree.rs::async_route_refusal_does_not_offer_a_stub_that_refuses",
+  "crates/ripr/tests/mcp_cli_repair_parity.rs::async_owner_refusal_names_the_stub_refusal_on_both_surfaces",
+  "crates/ripr/src/app/task_first.rs::tests::opaque_refusal_names_what_could_not_be_established",
   "crates/ripr/src/app/agent_status.rs::tests::agent_attempt_status_types_a_missing_attempt_instead_of_erroring",
   "crates/ripr/src/app/agent_status.rs::tests::agent_attempt_status_uses_only_the_selected_store",
   "crates/ripr/src/app/agent_status.rs::tests::agent_attempt_status_never_claims_resumable_past_a_moved_head",

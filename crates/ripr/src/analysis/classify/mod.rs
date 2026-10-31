@@ -138,8 +138,9 @@ pub(in crate::analysis) use pinned_shape::{
 pub(in crate::analysis) use propagation_witness::{
     PropagationWitnessV1, assertion_compares_hand_built_field,
     assertion_observes_collection_argument, assertion_observes_direct_collection_for_probe,
-    current_path_witness_with, direct_collection_mutation_receiver, field_assignment_target,
-    owner_may_exit_before_line, retain_returned_ledger, returned_ledger_witness,
+    concat_literal_tail, concat_tail_witness, current_path_witness_with,
+    direct_collection_mutation_receiver, field_assignment_target, owner_may_exit_before_line,
+    retain_returned_ledger, returned_ledger_witness,
 };
 pub(in crate::analysis) use propagation_witness::{
     constant_tail_witness, fallible_literal_witness, format_tail_witness, result_map_witness,

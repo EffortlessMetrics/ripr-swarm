@@ -2980,11 +2980,15 @@ impl RepoFileFactCache {
             stage: FileFactStoreStage::CreateDir,
             message: format!("create file fact cache dir failed: {err}"),
         })?;
-        let envelope = FileFactCacheEnvelope::new(key.clone(), facts.clone());
-        let bytes = codec::encode_file_facts(&envelope).map_err(|message| FileFactStoreError {
-            stage: FileFactStoreStage::Encode,
-            message,
-        })?;
+        // Borrow the key and facts: the owned envelope deep-cloned the whole
+        // `FileFacts` (and four key strings) for every cold write only to
+        // serialize it once for the digest and once for the entry.
+        let envelope = FileFactCacheEnvelopeRef::new(key, facts);
+        let bytes =
+            codec::encode_file_facts_ref(&envelope).map_err(|message| FileFactStoreError {
+                stage: FileFactStoreStage::Encode,
+                message,
+            })?;
         crate::atomic_file::write_cache(&self.entry_path(key), &bytes, "file fact cache").map_err(
             |message| FileFactStoreError {
                 stage: FileFactStoreStage::Write,
@@ -3115,6 +3119,36 @@ struct FileFactCacheEnvelope {
     file_facts: FileFacts,
 }
 
+/// Borrowing write-side twin of [`FileFactCacheEnvelope`]. Field names, order
+/// and the omitted `payload_digest` match the owned envelope exactly, so the
+/// digest and the entry bytes are identical; it only avoids cloning the facts.
+#[derive(serde::Serialize)]
+struct FileFactCacheEnvelopeRef<'a> {
+    file_fact_cache_schema_version: &'a str,
+    analyzer_version: &'a str,
+    file_path: &'a Path,
+    content_hash: &'a str,
+    file_facts: &'a FileFacts,
+}
+
+impl<'a> FileFactCacheEnvelopeRef<'a> {
+    fn new(key: &'a RepoFileFactCacheKey, file_facts: &'a FileFacts) -> Self {
+        Self {
+            file_fact_cache_schema_version: &key.schema_version,
+            analyzer_version: &key.analyzer_version,
+            file_path: &key.file_path,
+            content_hash: &key.content_hash,
+            file_facts,
+        }
+    }
+
+    fn expected_digest(&self) -> Result<String, String> {
+        semantic_body_digest(FILE_FACT_ENVELOPE_DIGEST_DOMAIN, self)
+    }
+}
+
+const FILE_FACT_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:FileFactCacheEnvelope:v1";
+
 /// The envelope fields the inventory needs; serde skips the rest.
 #[derive(serde::Deserialize)]
 struct FileFactCacheHeader {
@@ -3226,6 +3260,7 @@ impl KnownFilePaths {
 }
 
 impl FileFactCacheEnvelope {
+    #[cfg(test)]
     fn new(key: RepoFileFactCacheKey, file_facts: FileFacts) -> Self {
         Self {
             payload_digest: None,
@@ -3659,7 +3694,7 @@ impl FileFactCacheEnvelope {
     /// Unsigned typed body binds identity and all serialized served fields in fixed order.
     /// Nested serde-skipped derived state is excluded by the existing serialization contract.
     fn expected_digest(&self) -> Result<String, String> {
-        semantic_body_digest("ripr-cache:FileFactCacheEnvelope:v1", self)
+        semantic_body_digest(FILE_FACT_ENVELOPE_DIGEST_DOMAIN, self)
     }
     fn validate_integrity(&self) -> Result<(), String> {
         let expected = self.expected_digest()?;
@@ -3728,8 +3763,8 @@ mod codec {
     #[cfg(test)]
     use super::CountCacheEnvelope;
     use super::{
-        CacheEnvelope, CorpusFingerprintEnvelope, FileFactCacheEnvelope, ShardedCacheEnvelope,
-        ShardedCacheManifest,
+        CacheEnvelope, CorpusFingerprintEnvelope, FileFactCacheEnvelope, FileFactCacheEnvelopeRef,
+        ShardedCacheEnvelope, ShardedCacheManifest,
     };
 
     #[cfg(test)]
@@ -3773,7 +3808,14 @@ mod codec {
         serde_json::from_slice(bytes).map_err(|err| format!("decode counts failed: {err}"))
     }
 
+    #[cfg(test)]
     pub(super) fn encode_file_facts(envelope: &FileFactCacheEnvelope) -> Result<Vec<u8>, String> {
+        super::encode_integrity_body(envelope, envelope.expected_digest()?)
+    }
+
+    pub(super) fn encode_file_facts_ref(
+        envelope: &FileFactCacheEnvelopeRef<'_>,
+    ) -> Result<Vec<u8>, String> {
         super::encode_integrity_body(envelope, envelope.expected_digest()?)
     }
 
@@ -5515,6 +5557,26 @@ mod tests {
             CacheLoad::Hit(facts) => assert_eq!(facts, current_facts),
             other => return Err(format!("quarantined facts did not round trip: {other:?}")),
         }
+        Ok(())
+    }
+
+    #[test]
+    fn store_file_facts_writes_the_owned_envelope_bytes() -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        // The store path borrows the key and facts instead of cloning them
+        // into an owned envelope; the entry on disk must stay byte-identical
+        // to what the owned envelope encodes.
+        let scratch = integrity_scratch("store-owned-bytes")?;
+        let cache = RepoFileFactCache::at_dir(scratch.0.clone());
+        let file = Path::new("src/lib.rs");
+        let source = "pub fn f(x: u32) -> u32 { if x > 0 { x + 1 } else { 0 } }\n\
+                      #[test] fn t() { assert_eq!(f(1), 2); }\n";
+        let facts = RaRustSyntaxAdapter.summarize_file(file, source)?;
+        let key = RepoFileFactCacheKey::new(file, source.as_bytes());
+        cache.store_file_facts(&key, &facts)?;
+        let owned = FileFactCacheEnvelope::new(key.clone(), facts);
+        let on_disk = std::fs::read(cache.entry_path(&key)).map_err(|err| err.to_string())?;
+        assert_eq!(on_disk, codec::encode_file_facts(&owned)?);
         Ok(())
     }
 
