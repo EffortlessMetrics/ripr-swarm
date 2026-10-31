@@ -1446,7 +1446,8 @@ fn needs_no_static_path_limit(finding: &Finding) -> bool {
         && finding.static_limit_kind.is_none()
 }
 
-/// Whether a `weakly_exposed` or `reachable_unrevealed` finding's only reach is proximity: every
+/// Whether a `weakly_exposed`, `reachable_unrevealed` or `infection_unknown`
+/// (#11481) finding's only reach is proximity: every
 /// related test shares the owner's file, module or a name token. With reach
 /// `weak`, the reach stage has already found no test calling the owner, so
 /// the weak reach rests on ripr not tracing a path, the same unresolved
@@ -1455,7 +1456,9 @@ fn needs_no_static_path_limit(finding: &Finding) -> bool {
 fn needs_proximity_reach_limit(finding: &Finding) -> bool {
     matches!(
         finding.class,
-        ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+        ExposureClass::WeaklyExposed
+            | ExposureClass::ReachableUnrevealed
+            | ExposureClass::InfectionUnknown
     )
         && finding.static_limit_kind.is_none()
         && finding.ripr.reach.state == crate::domain::StageState::Weak
@@ -1463,8 +1466,15 @@ fn needs_proximity_reach_limit(finding: &Finding) -> bool {
         // The list is capped; reach `weak` was computed from the full
         // relation set, so no dropped row calls the owner.
         && finding.related_tests.iter().all(|test| {
-            test.relation_reason
-                .is_some_and(classify::is_proximity_only)
+            test.relation_reason.is_some_and(|reason| {
+                classify::is_proximity_only(reason)
+                    // #11481: a test related to an `infection_unknown`
+                    // finding only by naming the owner never has to call it
+                    // (RelationReason::establishes_reach is false), so it is
+                    // as unresolved as a shared file or token.
+                    || (finding.class == ExposureClass::InfectionUnknown
+                        && reason == crate::domain::RelationReason::OwnerNamedTest)
+            })
         })
 }
 

@@ -104,6 +104,8 @@ all proximity-only; RIPR-SPEC-0117 states the rule. The class stays
 
 #10127 extends it to `reachable_unrevealed` findings, but only when a witness test lives in a different workspace package than the owner (a cross-crate wrapper). A witness counts only when its package (attributed through the discovered manifests, so a declared `[lib] path` root is not misread as foreign) directly declares the owner's package as a dependency, the path-dependency graph is complete, and that package defines no other function of the owner's name. Same-package, unrelated, transitive-dependent, unattributable and shadowing witnesses keep the existing reading. The class stays `reachable_unrevealed`; the finding gains the named limit.
 
+#11481 extends it to `infection_unknown` findings with `weak` reach whose related tests are all proximity-only or related only by an owner-named test (`owner_named_test`, which never has to call the owner). A private helper reached only through a public entry (the `numeric_identifier` -> `Version::from_str` -> `Version::parse` shape) now names the same limit. The class stays `infection_unknown`; reach stays `weak`; the witness is a candidate path, not a related test. No witness leaves the finding unchanged. RIPR-SPEC-0117 ("`infection_unknown` with an owner-named test") states the admission rule. `weakly_exposed` with only `owner_named_test` is intentionally not limited here (follow-up), and a mixed set holding a non-proximity relation stays unlimited. Known limit: the witness walk is name-only, so a same-named function in another module can name the limit (advisory only).
+
 ### When NOT found
 
 Leave the finding exactly as today (bare `no_static_path`, or a proximity-only
