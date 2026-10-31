@@ -1401,6 +1401,36 @@ pub(crate) fn line_of_offset(source: &str, offset: usize) -> usize {
         .unwrap_or(1)
 }
 
+/// A committed link such as `tests -> /elsewhere` (or a linked owner file)
+/// must not redirect `agent stub --write` outside the analyzed root (#11477).
+/// Resolves the deepest existing ancestor of `path`, dangling links included.
+fn ensure_stub_path_contained(root: &Path, path: &Path) -> Result<(), String> {
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve workspace root {}: {error}", root.display()))?;
+    let mut existing = path;
+    while std::fs::symlink_metadata(existing).is_err() {
+        match existing.parent() {
+            Some(parent) => existing = parent,
+            None => break,
+        }
+    }
+    let resolved = existing.canonicalize().map_err(|error| {
+        format!(
+            "refusing to write test stub: cannot resolve {}: {error}",
+            existing.display()
+        )
+    })?;
+    if resolved.starts_with(&canonical_root) {
+        Ok(())
+    } else {
+        Err(format!(
+            "refusing to write test stub: {} resolves outside the workspace",
+            path.display()
+        ))
+    }
+}
+
 /// Apply the stub: insert into the owner file, or create the new
 /// integration file. Refuses when the owner file changed since the stub was
 /// computed, or the new file already exists.
@@ -1411,6 +1441,7 @@ pub(crate) fn write_test_stub(
 ) -> Result<PathBuf, String> {
     let relative = stub.placement.file();
     let path = root.join(relative);
+    ensure_stub_path_contained(root, &path)?;
     match &stub.placement {
         TestStubPlacement::ExistingInlineModule { offset, .. }
         | TestStubPlacement::NewInlineModule { offset, .. } => {
@@ -1780,6 +1811,86 @@ pub(crate) fn run_command(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    #[test]
+    fn stub_write_refuses_link_outside_root() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!("ripr-stub-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("root");
+        let victim = base.join("victim");
+        std::fs::create_dir_all(root.join("real")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&victim).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&victim, root.join("tests")).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(root.join("real"), root.join("okdir"))
+            .map_err(|e| e.to_string())?;
+
+        let refused = super::ensure_stub_path_contained(&root, &root.join("tests/new_test.rs"));
+        assert!(refused.is_err_and(|e| e.contains("outside the workspace")));
+        assert!(super::ensure_stub_path_contained(&root, &root.join("okdir/new_test.rs")).is_ok());
+        assert!(super::ensure_stub_path_contained(&root, &root.join("src/lib.rs")).is_ok());
+        let _ = std::fs::remove_dir_all(&base);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_test_stub_leaves_outside_targets_untouched() -> Result<(), String> {
+        use crate::analysis::test_stub::{RustTestStub, TestStubPlacement};
+        let base = std::env::temp_dir().join(format!("ripr-stub-e2e-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("root");
+        let victim = base.join("victim");
+        std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&victim).map_err(|e| e.to_string())?;
+        std::fs::write(victim.join("lib.rs"), "// outside\n").map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&victim, root.join("tests")).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(victim.join("lib.rs"), root.join("src/lib.rs"))
+            .map_err(|e| e.to_string())?;
+
+        let stub = |placement| RustTestStub {
+            placement,
+            test_name: "t".to_string(),
+            text: "#[test]\nfn t() {}\n".to_string(),
+            already_present: false,
+            fill_ins: Vec::new(),
+            derived_inputs: Vec::new(),
+        };
+        let resolution = TestStubResolution {
+            seam_id: "s".to_string(),
+            owner: "o".to_string(),
+            source: "// outside\n".to_string(),
+            outcome: Err(crate::analysis::test_stub::TestStubRefusal::NotAGap),
+            grip_class: None,
+            at_note: None,
+            next_repair: None,
+            seam_line: 1,
+            weak_oracle_guidance: None,
+        };
+        let placements = [
+            TestStubPlacement::NewIntegrationFile {
+                file: "tests/new_test.rs".into(),
+            },
+            TestStubPlacement::NewInlineModule {
+                file: "src/lib.rs".into(),
+                offset: 0,
+            },
+            TestStubPlacement::ExistingIntegrationFile {
+                file: "src/lib.rs".into(),
+            },
+        ];
+        for placement in placements {
+            let result = super::write_test_stub(&root, &resolution, &stub(placement));
+            assert!(result.is_err_and(|e| e.contains("outside the workspace")));
+        }
+        assert_eq!(
+            std::fs::read_to_string(victim.join("lib.rs")).map_err(|e| e.to_string())?,
+            "// outside\n"
+        );
+        assert!(!victim.join("new_test.rs").exists());
+        let _ = std::fs::remove_dir_all(&base);
+        Ok(())
+    }
+
     use super::*;
 
     #[test]
