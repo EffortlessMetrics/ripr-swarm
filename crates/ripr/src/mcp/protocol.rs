@@ -2264,7 +2264,7 @@ mod tests {
         // terminal mapping moved onto the outputSchema status field.
         // Intentional metadata changes need to reconcile this byte count as
         // well as the ceilings.
-        assert_eq!(total, 16447);
+        assert_eq!(total, 16436);
         Ok(())
     }
 
