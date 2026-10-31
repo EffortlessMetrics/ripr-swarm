@@ -167,8 +167,8 @@
       "flow_sinks": [
         {"kind":"return_value","text":"return \"ready\";","line":5}
       ],
-      "evidence": ["owner: load", "typescript_infection: unknown (literal_return)", "gap_state: unknown", "actionability_category: missing_target_shape", "why_not_actionable: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape", "repair_route: add probe-specific discriminator extraction for this expression before repair packet projection", "missing_actionability_fields: repair_kind, target_test_shape, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/load.ts;line=5;kind=typescript_preview_probe;source_id=probe:src_load.ts:typescript_preview:2209cfc8;owner=load", "typescript_assertion_selection: no_return_value_relevant_assertion (missing token rejects with the required literal)", "typescript_package_root: .", "typescript_workspace_root: .", "typescript_framework_hint: vitest", "typescript_test_runner: vitest", "typescript_runner_hint: npm", "typescript_package_confidence: high", "typescript_verify_command: npx --no-install vitest run tests/load.test.ts"],
-      "missing": ["The change to `load` is a `literal_return` edit: the edit changes a literal return value, and the adapter does not model whether any test input reaches this return. No assertion is requested until a test input is shown to change the behavior.", "TypeScript preview actionability `unknown` / `missing_target_shape`: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape. Repair route: add probe-specific discriminator extraction for this expression before repair packet projection"],
+      "evidence": ["owner: load", "typescript_infection: unknown (literal_return)", "gap_state: unknown", "actionability_category: missing_target_shape", "why_not_actionable: TypeScript preview found related test evidence but cannot name a safe target check or observer shape", "repair_route: add probe-specific discriminator extraction for this expression before repair packet projection", "missing_actionability_fields: repair_kind, target_test_shape, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/load.ts;line=5;kind=typescript_preview_probe;source_id=probe:src_load.ts:typescript_preview:2209cfc8;owner=load", "typescript_assertion_selection: no_return_value_relevant_assertion (missing token rejects with the required literal)", "typescript_package_root: .", "typescript_workspace_root: .", "typescript_framework_hint: vitest", "typescript_test_runner: vitest", "typescript_runner_hint: npm", "typescript_package_confidence: high", "typescript_verify_command: npx --no-install vitest run tests/load.test.ts"],
+      "missing": ["The change to `load` is a `literal_return` edit: the edit changes a literal return value, and the adapter does not model whether any test input reaches this return. No assertion is requested until a test input is shown to change the behavior.", "TypeScript preview actionability `unknown` / `missing_target_shape`: TypeScript preview found related test evidence but cannot name a safe target check or observer shape. Repair route: add probe-specific discriminator extraction for this expression before repair packet projection"],
       "assertion_texts": {
       },
       "activation": {
@@ -225,7 +225,7 @@
         "verify": {
           "command": "npx --no-install vitest run tests/load.test.ts"
         },
-        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape"
+        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target check or observer shape"
       },
       "preview_actionability": {
         "actionability_category": "missing_target_shape",
@@ -256,7 +256,7 @@
         "repair_packet_ready": false,
         "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
         "unlock_condition": null,
-        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape"
+        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target check or observer shape"
       },
       "stop_reasons": ["infection_evidence_unknown"],
       "oracle_kind": "unknown",

@@ -817,3 +817,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_owner_kinds (36)
+
+Reason:
+RIPR-SPEC-0246: re-render after merging main; plain wording for TypeScript preview check text (#11619)
+
+Command:
+`cargo xtask goldens bless typescript_owner_kinds --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
