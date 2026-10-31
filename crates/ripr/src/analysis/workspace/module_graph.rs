@@ -2524,6 +2524,43 @@ mod tests {
             Some(Origin::Evidence),
             "fallback must keep the #[path] child's stem anchor"
         );
+        assert_eq!(
+            leftover
+                .reached
+                .get(&path("tests/helper/child.rs"))
+                .copied(),
+            baseline
+                .reached
+                .get(&path("tests/helper/child.rs"))
+                .copied()
+        );
+
+        let evidence_first_order = evidence_for(
+            &root,
+            &[
+                "tests/it.rs",
+                "tests/helper/child.rs",
+                "src/orphan.rs",
+                "src/m00.rs",
+            ],
+        );
+        let production_first_order = evidence_for(
+            &root,
+            &[
+                "src/m00.rs",
+                "tests/it.rs",
+                "tests/helper/child.rs",
+                "src/orphan.rs",
+            ],
+        );
+        assert_eq!(
+            module_graph_verdict_bytes(&evidence_first_order),
+            module_graph_verdict_bytes(&production_first_order)
+        );
+        assert_eq!(
+            evidence_first_order.module_graph_orphans,
+            BTreeSet::from([PathBuf::from("src/orphan.rs")])
+        );
         std::fs::remove_dir_all(root).map_err(|error| error.to_string())
     }
 }
