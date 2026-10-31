@@ -2252,6 +2252,9 @@ fn unreadable_unchanged_python_source_does_not_downgrade_a_rust_only_diff() -> R
     assert_found_change(&ran, "rust diff beside unreadable python")?;
     if !ran.stdout.contains("(analysis complete)") {
         return Err(format!("Rust-only diff must stay complete\n{}", ran.stdout));
+    }
+    Ok(())
+}
 
 /// A FIFO named `package.json` or `tsconfig.json` blocks `open` forever. The
 /// TypeScript config readers and the implicit-root probe must treat it as an
