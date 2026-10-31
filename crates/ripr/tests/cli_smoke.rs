@@ -3147,25 +3147,29 @@ fn write_suppression_policy(label: &str, text: &str) -> Result<PathBuf, String> 
 }
 
 #[test]
-fn check_json_suppression_policy_marks_findings_and_adjusts_summary() -> Result<(), String> {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
+fn check_json_suppression_policy_marks_findings_and_adjusts_summary() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    let root = fixture.root().display().to_string();
+    let diff = fixture.diff().display().to_string();
     let policy = write_suppression_policy(
         "suppression-json",
         "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"crates/ripr/examples/sample/**\"\nreason = \"sample surface accepted for this smoke test\"\nowner = \"repo-owner\"\n",
     )?;
     let policy_arg = policy.display().to_string();
 
-    let output = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--json",
-        "--suppression-policy",
-        &policy_arg,
-    ]);
+    let output = fixture.execute(
+        &[
+            "check",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "--json",
+            "--suppression-policy",
+            &policy_arg,
+        ],
+        &[],
+    )?;
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -3205,24 +3209,29 @@ fn check_json_suppression_policy_marks_findings_and_adjusts_summary() -> Result<
 }
 
 #[test]
-fn check_human_suppression_policy_lists_suppressed_findings_compactly() -> Result<(), String> {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
+fn check_human_suppression_policy_lists_suppressed_findings_compactly() -> sample_output::TestResult
+{
+    let fixture = sample_output::Fixture::new()?;
+    let root = fixture.root().display().to_string();
+    let diff = fixture.diff().display().to_string();
     let policy = write_suppression_policy(
         "suppression-human",
         "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"crates/ripr/examples/sample/**\"\nreason = \"sample surface accepted for this smoke test\"\nowner = \"repo-owner\"\n",
     )?;
     let policy_arg = policy.display().to_string();
 
-    let output = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--suppression-policy",
-        &policy_arg,
-    ]);
+    let output = fixture.execute(
+        &[
+            "check",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "--suppression-policy",
+            &policy_arg,
+        ],
+        &[],
+    )?;
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -3245,20 +3254,24 @@ fn check_github_over_broad_suppression_policy_emits_denominator_notice() -> samp
 }
 
 #[test]
-fn check_suppression_policy_missing_file_fails_closed() {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
+fn check_suppression_policy_missing_file_fails_closed() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    let root = fixture.root().display().to_string();
+    let diff = fixture.diff().display().to_string();
 
-    let output = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--json",
-        "--suppression-policy",
-        "does/not/exist.toml",
-    ]);
+    let output = fixture.execute(
+        &[
+            "check",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "--json",
+            "--suppression-policy",
+            "does/not/exist.toml",
+        ],
+        &[],
+    )?;
     assert_failure(&output);
 
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -3266,6 +3279,7 @@ fn check_suppression_policy_missing_file_fails_closed() {
         stderr.contains("failed to read suppression policy"),
         "stderr: {stderr}"
     );
+    Ok(())
 }
 
 #[test]
@@ -5211,13 +5225,14 @@ fn check_json_success_carries_no_refusal_shape() -> sample_output::TestResult {
 /// #5448: an invalid `RIPR_DIFF_DEPENDENT_SCOPE` names itself even when the
 /// diff has no dependent packages to narrow.
 #[test]
-fn check_rejects_an_invalid_dependent_scope_without_dependents() {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr_with_env(
+fn check_rejects_an_invalid_dependent_scope_without_dependents() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    let root = fixture.root().display().to_string();
+    let diff = fixture.diff().display().to_string();
+    let output = fixture.execute(
         &["check", "--root", &root, "--diff", &diff, "--json"],
         &[("RIPR_DIFF_DEPENDENT_SCOPE", "everything")],
-    );
+    )?;
     assert_failure(&output);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -5226,6 +5241,7 @@ fn check_rejects_an_invalid_dependent_scope_without_dependents() {
         ),
         "stderr should name the invalid override: {stderr}"
     );
+    Ok(())
 }
 
 #[test]
@@ -22598,17 +22614,21 @@ fn check_badge_command_exits_zero_even_with_nonzero_count() -> sample_output::Te
 }
 
 #[test]
-fn explain_returns_targeted_probe_details() {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr(&[
-        "explain",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250",
-    ]);
+fn explain_returns_targeted_probe_details() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    let root = fixture.root().display().to_string();
+    let diff = fixture.diff().display().to_string();
+    let output = fixture.execute(
+        &[
+            "explain",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250",
+        ],
+        &[],
+    )?;
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -22616,22 +22636,27 @@ fn explain_returns_targeted_probe_details() {
     assert!(stdout.contains("delta:  value"));
     assert!(stdout.contains("Static exposure\n  weakly_exposed"));
     assert!(stdout.contains("No exact error variant discriminator was detected"));
+    Ok(())
 }
 
 #[test]
-fn context_json_returns_probe_and_discriminator_guidance() {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr(&[
-        "context",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--at",
-        "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250",
-        "--json",
-    ]);
+fn context_json_returns_probe_and_discriminator_guidance() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    let root = fixture.root().display().to_string();
+    let diff = fixture.diff().display().to_string();
+    let output = fixture.execute(
+        &[
+            "context",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "--at",
+            "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250",
+            "--json",
+        ],
+        &[],
+    )?;
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -22642,24 +22667,30 @@ fn context_json_returns_probe_and_discriminator_guidance() {
     );
     assert!(stdout.contains(r#""discriminate": "weak""#));
     assert!(stdout.contains(r#""missing""#));
+    Ok(())
 }
 
 #[test]
-fn explain_unknown_probe_fails_with_clear_error() {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr(&[
-        "explain",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "probe:missing:0:not_real",
-    ]);
+fn explain_unknown_probe_fails_with_clear_error() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    let root = fixture.root().display().to_string();
+    let diff = fixture.diff().display().to_string();
+    let output = fixture.execute(
+        &[
+            "explain",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "probe:missing:0:not_real",
+        ],
+        &[],
+    )?;
     assert!(!output.status.success());
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("no finding matched"));
+    Ok(())
 }
 
 // -------- check-artifact reuse smoke (RIPR-SPEC-0140, #2107) --------
@@ -22838,9 +22869,10 @@ fn run_ripr_copy(binary: &Path, args: &[&str]) -> Result<Output, String> {
 /// Every identity mismatch class fails closed with a typed error naming the
 /// mismatched field — never a silent recompute.
 #[test]
-fn explain_from_fails_closed_on_tampered_identity() -> Result<(), String> {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
+fn explain_from_fails_closed_on_tampered_identity() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    let root = fixture.root().display().to_string();
+    let diff = fixture.diff().display().to_string();
     let dir = unique_temp_workspace("check-artifact-tamper");
     std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
     let artifact = dir.join("last-check.json");
@@ -22870,6 +22902,7 @@ fn explain_from_fails_closed_on_tampered_identity() -> Result<(), String> {
 
         // Mode mismatch (tampered recording).
         let tampered = original.replace("\"mode\": \"draft\"", "\"mode\": \"ready\"");
+        assert_ne!(tampered, original, "mode mutation must change the artifact");
         std::fs::write(&artifact, &tampered).map_err(|err| format!("write: {err}"))?;
         let output = run_ripr_copy(
             &binary,
@@ -22926,6 +22959,7 @@ fn explain_from_fails_closed_on_tampered_identity() -> Result<(), String> {
 
         // Unsupported schema version.
         let stale = original.replace("ripr-check-artifact-v1", "ripr-check-artifact-v0");
+        assert_ne!(stale, original, "schema mutation must change the artifact");
         std::fs::write(&artifact, &stale).map_err(|err| format!("write: {err}"))?;
         let output = run_ripr_copy(
             &binary,
@@ -22949,7 +22983,7 @@ fn explain_from_fails_closed_on_tampered_identity() -> Result<(), String> {
         // override: a different --diff than the recording fails closed.
         std::fs::write(&artifact, &original).map_err(|err| format!("write: {err}"))?;
         let other_diff = dir.join("other.diff");
-        std::fs::copy(sample_diff(), &other_diff).map_err(|err| format!("copy: {err}"))?;
+        std::fs::copy(fixture.diff(), &other_diff).map_err(|err| format!("copy: {err}"))?;
         let other_diff_arg = other_diff.display().to_string();
         let output = run_ripr_copy(
             &binary,
@@ -22973,7 +23007,8 @@ fn explain_from_fails_closed_on_tampered_identity() -> Result<(), String> {
         Ok(())
     })();
     ignore_remove_dir_all(&dir);
-    result
+    result?;
+    Ok(())
 }
 
 /// `--write-artifact` fails closed with a named limitation for run shapes
@@ -23234,9 +23269,10 @@ fn explain_from_consumes_artifact_written_with_non_default_mode() -> Result<(), 
 /// same flag (byte-identical) and fails closed naming
 /// `analysis_options.include_unchanged_tests` without it.
 #[test]
-fn context_from_consumes_artifact_written_with_no_unchanged_tests() -> Result<(), String> {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
+fn context_from_consumes_artifact_written_with_no_unchanged_tests() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    let root = fixture.root().display().to_string();
+    let diff = fixture.diff().display().to_string();
     let dir = unique_temp_workspace("check-artifact-unchanged");
     std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
     let artifact = dir.join("no-unchanged.json");
