@@ -8,7 +8,7 @@ see [installation](QUICKSTART.md#installation) for published and source builds.
 | Inspect one change | `ripr check` | Static findings, or an explicit no-action or limited result. Analysis stages go to stderr; `--quiet` suppresses them. Machine stdout is unchanged. |
 | Inspect a finding | The `ripr explain` command printed by `check` | Evidence for that finding, using the same root, diff, mode, and ID. |
 | Hand off a finding | The `ripr context` command printed by `check` | Context for a human or coding agent. |
-| Explore the repository (optional) | `ripr pilot --root .` | Broader analysis, pilot reports, and a supported next action. Not a prerequisite for `check` or `repair`. |
+| Explore the repository | `ripr pilot --root .` | Optional broader analysis, pilot reports, and a supported next action. Not a prerequisite for `check` or `repair`. |
 | Repair a selected Rust gap | `ripr repair` | A prepared before/edit/after attempt; you or your agent edit the test. |
 | Resume a repair | `ripr status --root .` | The continuation command or a recovery step. |
 | Compose PR evidence | `ripr first-pr` with the inputs described in [First PR workflow](FIRST_PR_WORKFLOW.md) | A summary of existing artifacts, not a new analysis or repair. |

@@ -1,0 +1,10 @@
+diff --git a/src/enabled_runner.rs b/src/enabled_runner.rs
+--- a/src/enabled_runner.rs
++++ b/src/enabled_runner.rs
+@@ -1,5 +1,5 @@
+ fn enabled_base() -> u32 {
+-    12
++    6 + 6
+ }
+ 
+ #[test]
