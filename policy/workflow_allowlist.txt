@@ -55,4 +55,5 @@
 .github/workflows/python-wheelhouse-qualification.yml|50|On-demand local-wheelhouse pip/uv qualification writes isolation facts and a fail-closed aggregate; credential-free, artifact-only, no publication.
 .github/workflows/zed-extension.yml|1|Zed extension workflow keeps each run block to one Cargo command.
 .github/workflows/contabo-qualification.yml|0|#4988/#7164 reviewed dispatch-only standard reusable consumer rehearsal; no shell, hosted fallback, or protected-context claim.
+.github/workflows/fuzz.yml|1|Scheduled and manual panic/hang fuzzing (#11439): one cargo test command runs the fuzz_panic_freedom and fuzz_protocol_frames proptest suites with a raised PROPTEST_CASES; on failure a one-line collect step copies leftover case workspaces from the temp directory and the artifact step uploads them. Not a required check.
 .github/workflows/windows-subset-qualification.yml|437|Extracted #4987 native Windows subset retains the existing inline producer/oracles and bounded source precheck; no new write authority.

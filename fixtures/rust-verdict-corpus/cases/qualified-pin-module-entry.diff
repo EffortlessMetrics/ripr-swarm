@@ -1,0 +1,12 @@
+diff --git a/src/tiers.rs b/src/tiers.rs
+--- a/src/tiers.rs
++++ b/src/tiers.rs
+@@ -5,7 +5,7 @@
+ }
+ 
+ fn bumped_inner(x: i64) -> i64 {
+-    x * 4
++    x * 5
+ }
+ 
+ pub fn twin(x: i64) -> i64 {

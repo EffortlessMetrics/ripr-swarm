@@ -3041,6 +3041,22 @@ fn explicit_config_wins_when_markers_and_source_both_detect() -> Result<(), Stri
     Ok(())
 }
 
+/// #11563: the `toml` lexer needs ~27x the text size, so `parse_config` itself
+/// refuses text past the metadata cap (the candidate-tree blob never passes
+/// through the bounded file read).
+#[test]
+fn parse_config_refuses_text_over_the_metadata_cap() -> Result<(), String> {
+    let cap = crate::bounded_input::MAX_METADATA_TOML_BYTES as usize;
+    let at_cap = "\n".repeat(cap);
+    parse_config(&at_cap)?;
+    let over = "\n".repeat(cap + 1);
+    let error = parse_config(&over)
+        .err()
+        .ok_or("text over the cap must be refused")?;
+    assert!(error.contains("metadata limit"), "{error}");
+    Ok(())
+}
+
 /// #11560: a hostile `ripr.toml` may list tens of thousands of entries. The
 /// duplicate check must stay linear, and still name the first duplicate.
 #[test]

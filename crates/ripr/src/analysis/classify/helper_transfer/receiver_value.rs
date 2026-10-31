@@ -25,6 +25,12 @@
 //!   declared once, not rebound and not imported, evaluated exactly and
 //!   checked against the field type (an overflow declines).
 //!
+//! A constructor argument is a plain decimal literal, or a bare name the
+//! caller binds with exactly one immutable `let NAME = <decimal>;` in its
+//! body (the shared `test_let_bound_literal` authority: a `mut`, a second
+//! `let`, a pattern, closure or `for` rebind, a non-literal initializer or a
+//! name with no `let` declines).
+//!
 //! The canonical string exists only as a row cell at the chain's entry and
 //! in the pseudo-parameter `self` a method hop hands its callee. It is never
 //! an owner parameter value and is never compared against a boundary.
@@ -52,6 +58,7 @@ pub(in crate::analysis::classify) fn is_receiver_cell(value: &str) -> bool {
 pub(in crate::analysis::classify) fn receiver_cell_value(
     argument: &str,
     index: &RustIndex,
+    binding: &dyn Fn(&str) -> Option<String>,
 ) -> Option<String> {
     // The parameter's declared type is `Type`, `&Type` or `&mut Type`
     // (checked when the method hop resolved), so a borrow of the constructed
@@ -70,7 +77,7 @@ pub(in crate::analysis::classify) fn receiver_cell_value(
             canonical(
                 &tuple,
                 head,
-                &literal_arguments(&arguments, &tuple.field_type)?,
+                &literal_arguments(&arguments, &tuple.field_type, binding)?,
             )
         }
         Some((type_name, ctor_name))
@@ -79,7 +86,8 @@ pub(in crate::analysis::classify) fn receiver_cell_value(
                 && !ctor_name.contains("::") =>
         {
             let tuple = tuple_struct(index, type_name)?;
-            let values = constructor_values(index, &tuple, type_name, ctor_name, &arguments)?;
+            let values =
+                constructor_values(index, &tuple, type_name, ctor_name, &arguments, binding)?;
             canonical(&tuple, type_name, &values)
         }
         _ => None,
@@ -128,13 +136,26 @@ fn canonical(tuple: &TupleStruct, type_name: &str, values: &[String]) -> Option<
     (values.len() == tuple.arity).then(|| format!("{type_name}({})", values.join(",")))
 }
 
-/// Plain decimal literal arguments that fit `field_type`, normalized.
-fn literal_arguments(arguments: &[String], field_type: &str) -> Option<Vec<String>> {
+/// Plain decimal literal arguments that fit `field_type`, normalized. A bare
+/// identifier reads as the plain decimal literal `binding` answers for it
+/// (the caller's one immutable `let` of that name); anything else declines.
+fn literal_arguments(
+    arguments: &[String],
+    field_type: &str,
+    binding: &dyn Fn(&str) -> Option<String>,
+) -> Option<Vec<String>> {
     let max = integer_max(field_type)?;
     arguments
         .iter()
         .map(|argument| {
             let argument = argument.trim();
+            let bound;
+            let argument = if is_identifier(argument) {
+                bound = binding(argument)?;
+                bound.trim()
+            } else {
+                argument
+            };
             if argument.is_empty() || !argument.chars().all(|ch| ch.is_ascii_digit()) {
                 return None;
             }
@@ -262,6 +283,7 @@ fn constructor_values(
     type_name: &str,
     ctor_name: &str,
     arguments: &[String],
+    binding: &dyn Fn(&str) -> Option<String>,
 ) -> Option<Vec<String>> {
     if !callee_is_unique(ctor_name, index) {
         return None;
@@ -313,7 +335,7 @@ fn constructor_values(
     if parameters.len() != arguments.len() {
         return None;
     }
-    let literals = literal_arguments(arguments, &tuple.field_type)?;
+    let literals = literal_arguments(arguments, &tuple.field_type, binding)?;
     let mut inputs = ExactInputs::new();
     for (parameter, literal) in parameters.iter().zip(&literals) {
         inputs.insert(parameter.clone(), literal.clone());
