@@ -19,7 +19,7 @@
 //! printed in every report: `human-full.txt`, `--verbose`/`--format human-full`
 //! output, JSON, and spec documents (internal vocabulary lives there).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -338,6 +338,7 @@ pub(crate) fn evaluate_delta(
     baseline: &Baseline,
     head_paths: &Counts,
     base_paths: &BTreeMap<(String, String), usize>,
+    base_files: &BTreeSet<String>,
 ) -> Evaluation {
     let absolute = evaluate(counts, baseline);
     let golden_prefix = format!("in {GOLDEN_SURFACE}:");
@@ -352,7 +353,7 @@ pub(crate) fn evaluate_delta(
             .copied()
             .unwrap_or(0);
         if found.lines > before {
-            let origin = if base_paths.keys().any(|(base_path, _)| base_path == path) {
+            let origin = if base_files.contains(path) {
                 format!("{before} at the merge-base")
             } else {
                 "new path, 0 at the merge-base".to_string()
@@ -524,25 +525,32 @@ pub(crate) fn scan_cat_file_batch(data: &[u8], paths: &[&str]) -> Result<Counts,
 pub(crate) struct BaseRead {
     pub upstream: String,
     pub upstream_sha: String,
+    pub binding: String,
     pub base_sha: String,
     pub head_sha: String,
     pub dirty_goldens: bool,
     pub counts: Counts,
+    pub files: BTreeSet<String>,
+    /// Golden counts read from HEAD's blobs (CI only); `None` locally.
+    pub head_counts: Option<Counts>,
 }
 
 impl BaseRead {
     pub(crate) fn describe(&self) -> String {
         let short = |sha: &str| sha[..sha.len().min(12)].to_string();
-        let head_side = if self.dirty_goldens {
+        let head_side = if self.head_counts.is_some() {
+            "head side is HEAD's committed blobs"
+        } else if self.dirty_goldens {
             "head side is the WORKING TREE (uncommitted changes to golden paths)"
         } else {
             "head side is the committed tree"
         };
         format!(
-            "Gate: golden-human rows compare per file against the merge-base {} ({} is at {}); HEAD {}; {head_side}; live rows use absolute ceilings.",
+            "Gate: golden-human rows compare per file against the merge-base {} (base {} = {}, {}); HEAD {}; {head_side}; live rows use absolute ceilings.",
             short(&self.base_sha),
             self.upstream,
             short(&self.upstream_sha),
+            self.binding,
             short(&self.head_sha),
         )
     }
@@ -559,17 +567,158 @@ fn resolve_sha(root: &Path, args: &[&str]) -> Result<String, String> {
     Ok(sha)
 }
 
-/// Banned-term counts per `(golden path, term)` at the merge-base with
-/// `upstream` (`origin/main` in production), read through Git objects without
-/// building or checking out the base. The merge-base is resolved to a commit
-/// SHA once and every read uses that SHA. Errors (no upstream, shallow history)
-/// mean the caller must fall back or fail; this never returns an empty guess.
-fn merge_base_golden_counts(root: &Path, upstream: &str) -> Result<BaseRead, String> {
-    let upstream_sha = resolve_sha(
+/// Golden counts per `(path, term)` and the set of golden paths in the tree of
+/// the commit `sha`, read through Git objects only.
+fn golden_counts_at(root: &Path, sha: &str) -> Result<(Counts, BTreeSet<String>), String> {
+    let listing = git_text(
         root,
-        &["rev-parse", "--verify", &format!("{upstream}^{{commit}}")],
+        &["ls-tree", "-r", "-z", "--name-only", sha, "--", "fixtures"],
     )?;
-    let base = resolve_sha(root, &["merge-base", &upstream_sha, "HEAD"])?;
+    let paths = golden_paths_from_ls_tree_z(&listing);
+    if paths.is_empty() {
+        return Err(format!("no default human.txt goldens found at {sha}"));
+    }
+    if paths.iter().any(|path| path.contains('\n')) {
+        return Err("a golden path contains a newline; cannot batch-read it".to_string());
+    }
+    let request: String = paths.iter().map(|path| format!("{sha}:{path}\n")).collect();
+    let output = git_run(root, &["cat-file", "--batch"], Some(request.into_bytes()))?;
+    let files = paths.iter().map(|path| path.to_string()).collect();
+    Ok((scan_cat_file_batch(&output, &paths)?, files))
+}
+
+/// The GitHub event identity a CI run was started from.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CiEvent {
+    pub name: String,
+    pub payload: String,
+    pub checkout: String,
+}
+
+/// How the two sides of the comparison are bound.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum Mode {
+    /// Developer machine: `upstream` ref, working-tree head.
+    Local,
+    /// Hosted CI: pull_request and merge_group runs bind the base to the event's
+    /// immutable sha and verify the checkout; head is HEAD's blobs; a dirty
+    /// golden path or an unusable event identity fails closed.
+    Ci { event: Result<CiEvent, String> },
+}
+
+impl Mode {
+    pub(crate) fn from_env() -> Mode {
+        let github = std::env::var("GITHUB_ACTIONS").is_ok_and(|value| !value.is_empty());
+        let ci = github || std::env::var("CI").is_ok_and(|value| value == "true");
+        if !ci {
+            return Mode::Local;
+        }
+        let name = match std::env::var("GITHUB_EVENT_NAME") {
+            Ok(name) => name,
+            Err(_) if github => {
+                return Mode::Ci {
+                    event: Err("GITHUB_EVENT_NAME is missing under GitHub Actions".into()),
+                };
+            }
+            Err(_) => String::new(),
+        };
+        if name != "pull_request" && name != "merge_group" {
+            return Mode::Ci {
+                event: Ok(CiEvent {
+                    name,
+                    payload: String::new(),
+                    checkout: String::new(),
+                }),
+            };
+        }
+        let event = std::env::var("GITHUB_EVENT_PATH")
+            .map_err(|_| "GITHUB_EVENT_PATH is missing".to_string())
+            .and_then(|path| {
+                fs::read_to_string(path).map_err(|err| format!("read GitHub event payload: {err}"))
+            })
+            .and_then(|payload| {
+                let checkout =
+                    std::env::var("GITHUB_SHA").map_err(|_| "GITHUB_SHA is missing".to_string())?;
+                Ok(CiEvent {
+                    name,
+                    payload,
+                    checkout,
+                })
+            });
+        Mode::Ci { event }
+    }
+}
+
+fn is_full_sha(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// Bind a CI comparison to the event's immutable sides. For `pull_request` the
+/// checkout must be the integration commit whose parents are exactly the event
+/// base and PR head; for `merge_group` HEAD must be the event head and the
+/// event base an ancestor. Other events return `None` (the caller uses its
+/// ref). Any mismatch, missing identity or dirty golden input is an error.
+fn event_base(root: &Path, event: &CiEvent, dirty: bool) -> Result<Option<String>, String> {
+    let name = event.name.as_str();
+    if name != "pull_request" && name != "merge_group" {
+        return Ok(None);
+    }
+    if dirty {
+        return Err("golden working tree is dirty under CI".into());
+    }
+    let value: serde_json::Value = serde_json::from_str(&event.payload)
+        .map_err(|err| format!("invalid GitHub event payload: {err}"))?;
+    let sha = |pointer: &str| -> Result<String, String> {
+        let found = value
+            .pointer(pointer)
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| format!("missing event identity {pointer}"))?;
+        if !is_full_sha(found) {
+            return Err(format!("invalid event identity {pointer}"));
+        }
+        Ok(found.to_ascii_lowercase())
+    };
+    if !is_full_sha(&event.checkout) {
+        return Err("missing or invalid GITHUB_SHA".into());
+    }
+    let head = resolve_sha(root, &["rev-parse", "--verify", "HEAD^{commit}"])?;
+    if head != event.checkout.to_ascii_lowercase() {
+        return Err(format!(
+            "checkout {head} does not match event checkout {}",
+            event.checkout
+        ));
+    }
+    if name == "pull_request" {
+        let base = sha("/pull_request/base/sha")?;
+        let subject = sha("/pull_request/head/sha")?;
+        let line = git_text(root, &["rev-list", "--parents", "-n", "1", &head])?;
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.as_slice() != [head.as_str(), base.as_str(), subject.as_str()] {
+            return Err(
+                "PR checkout does not have the event base and PR head as its two parents".into(),
+            );
+        }
+        Ok(Some(base))
+    } else {
+        let base = sha("/merge_group/base_sha")?;
+        let subject = sha("/merge_group/head_sha")?;
+        if head != subject {
+            return Err("merge-group checkout does not match event head".into());
+        }
+        if resolve_sha(root, &["merge-base", &base, &head])? != base {
+            return Err("merge-group base is not an ancestor of its head".into());
+        }
+        Ok(Some(base))
+    }
+}
+
+/// Banned-term counts per `(golden path, term)` at the merge-base, read through
+/// Git objects without building or checking out the base. Locally the base
+/// side is the `upstream` ref resolved to a SHA once; under CI pull_request and
+/// merge_group runs take it from the verified event. Errors (no upstream,
+/// shallow history, unusable CI identity) mean the caller must fall back or
+/// fail; this never returns an empty guess.
+fn merge_base_golden_counts(root: &Path, upstream: &str, mode: &Mode) -> Result<BaseRead, String> {
     let head_sha = resolve_sha(root, &["rev-parse", "--verify", "HEAD^{commit}"])?;
     let dirty = git_text(
         root,
@@ -582,40 +731,59 @@ fn merge_base_golden_counts(root: &Path, upstream: &str) -> Result<BaseRead, Str
             "fixtures",
         ],
     )?;
-    let dirty_goldens = dirty.split('\0').any(|entry| {
-        entry.len() > 3 && is_golden_human_path(&entry[3..]) || is_golden_human_path(entry)
-    });
-    let listing = git_text(
+    let ignored = git_text(
         root,
         &[
-            "ls-tree",
-            "-r",
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
             "-z",
-            "--name-only",
-            &base,
             "--",
             "fixtures",
         ],
     )?;
-    let paths = golden_paths_from_ls_tree_z(&listing);
-    if paths.is_empty() {
-        return Err(format!("no default human.txt goldens found at {base}"));
-    }
-    if paths.iter().any(|path| path.contains('\n')) {
-        return Err("a golden path contains a newline; cannot batch-read it".to_string());
-    }
-    let request: String = paths
-        .iter()
-        .map(|path| format!("{base}:{path}\n"))
-        .collect();
-    let output = git_run(root, &["cat-file", "--batch"], Some(request.into_bytes()))?;
+    let dirty_goldens = dirty.split('\0').any(|entry| {
+        entry.get(3..).is_some_and(is_golden_human_path) || is_golden_human_path(entry)
+    }) || ignored.split('\0').any(is_golden_human_path);
+    let bound = match mode {
+        Mode::Local => None,
+        Mode::Ci { event } => match event {
+            Ok(event) => event_base(root, event, dirty_goldens)?,
+            Err(reason) => return Err(reason.clone()),
+        },
+    };
+    let (upstream_ref, upstream_sha, binding, base) = match bound {
+        Some(base) => (
+            "event base".to_string(),
+            base.clone(),
+            "verified GitHub event identity".to_string(),
+            base,
+        ),
+        None => {
+            let sha = resolve_sha(
+                root,
+                &["rev-parse", "--verify", &format!("{upstream}^{{commit}}")],
+            )?;
+            let base = resolve_sha(root, &["merge-base", &sha, &head_sha])?;
+            (upstream.to_string(), sha, format!("{upstream} ref"), base)
+        }
+    };
+    let (counts, files) = golden_counts_at(root, &base)?;
+    let head_counts = match mode {
+        Mode::Ci { .. } => Some(golden_counts_at(root, &head_sha)?.0),
+        Mode::Local => None,
+    };
     Ok(BaseRead {
-        upstream: upstream.to_string(),
+        upstream: upstream_ref,
         upstream_sha,
+        binding,
         base_sha: base,
         head_sha,
         dirty_goldens,
-        counts: scan_cat_file_batch(&output, &paths)?,
+        counts,
+        files,
+        head_counts,
     })
 }
 
@@ -638,36 +806,46 @@ pub(crate) fn scan_golden_paths(root: &Path) -> Result<Counts, String> {
 pub(crate) const BASE_UNAVAILABLE_LABEL: &str =
     "base unavailable: absolute-ceiling check only, no PR-relative no-growth established";
 
-/// Hosted CI always has full history, so an unreadable base there is a failure.
-pub(crate) fn running_in_ci() -> bool {
-    std::env::var("GITHUB_ACTIONS").is_ok_and(|value| !value.is_empty())
-        || std::env::var("CI").is_ok_and(|value| value == "true")
-}
-
-/// Pick the gate: per-path delta against the merge-base with `upstream`. When
-/// the merge-base is unreadable: under `ci` fail closed; locally fall back to
-/// the absolute ceilings, labelled as not establishing PR-relative no-growth.
+/// Pick the gate: per-path delta against the merge-base. Under CI both sides
+/// are bound to commits (event base, HEAD blobs) and a dirty golden path or an
+/// unreadable/unbound base fails closed. Locally an unreadable base falls back
+/// to the absolute ceilings, labelled as not establishing PR-relative
+/// no-growth.
 pub(crate) fn gate_goldens(
     root: &Path,
     upstream: &str,
-    ci: bool,
+    mode: &Mode,
     counts: &Counts,
     head_paths: &Counts,
     baseline: &Baseline,
 ) -> (Evaluation, String) {
-    match merge_base_golden_counts(root, upstream) {
+    match merge_base_golden_counts(root, upstream, mode) {
         Ok(read) => {
             let note = read.describe();
+            if matches!(mode, Mode::Ci { .. }) && read.dirty_goldens {
+                let evaluation = Evaluation {
+                    violations: vec![
+                        "golden files have uncommitted changes under CI; the head side is not an immutable commit"
+                            .to_string(),
+                    ],
+                    ..Evaluation::default()
+                };
+                return (evaluation, note);
+            }
             let base: BTreeMap<(String, String), usize> = read
                 .counts
                 .into_iter()
                 .map(|(key, found)| (key, found.lines))
                 .collect();
-            (evaluate_delta(counts, baseline, head_paths, &base), note)
+            let head = read.head_counts.as_ref().unwrap_or(head_paths);
+            (
+                evaluate_delta(counts, baseline, head, &base, &read.files),
+                note,
+            )
         }
         Err(reason) => {
             let fetch = "Run `git fetch --deepen=200 origin main` (or `git fetch origin main`) so the per-PR delta gate can run.";
-            if ci {
+            if matches!(mode, Mode::Ci { .. }) {
                 let note = format!(
                     "Gate: {BASE_UNAVAILABLE_LABEL} ({reason}). Failing closed under CI. {fetch}"
                 );
@@ -1155,16 +1333,42 @@ pub(crate) fn check_user_text_with_args(args: &[String]) -> Result<(), String> {
         (Vec::new(), golden_only)
     };
 
+    let scanned = Scanned {
+        counts,
+        baseline,
+        live,
+        golden_files,
+    };
+    finish_check(&root, "origin/main", &Mode::from_env(), &scanned, ratchet)
+}
+
+/// What the scan half produced, handed to the gate.
+struct Scanned {
+    counts: Counts,
+    baseline: Baseline,
+    live: Vec<String>,
+    golden_files: usize,
+}
+
+/// Gate the scanned counts, write the report and decide the result. The command
+/// calls this with `origin/main` and the real CI flag; tests drive it directly
+/// against temp repositories.
+fn finish_check(
+    root: &Path,
+    upstream: &str,
+    mode: &Mode,
+    scanned: &Scanned,
+    ratchet: bool,
+) -> Result<(), String> {
+    let Scanned {
+        counts,
+        baseline,
+        live,
+        golden_files,
+    } = scanned;
     // Golden rows gate per file on this tree's delta (#11374).
-    let head_paths = scan_golden_paths(&root)?;
-    let (evaluation, gate_note) = gate_goldens(
-        &root,
-        "origin/main",
-        running_in_ci(),
-        &counts,
-        &head_paths,
-        &baseline,
-    );
+    let head_paths = scan_golden_paths(root)?;
+    let (evaluation, gate_note) = gate_goldens(root, upstream, mode, counts, &head_paths, baseline);
     println!("check-user-text: {gate_note}");
     let status = if evaluation.violations.is_empty() {
         "pass"
@@ -1173,17 +1377,17 @@ pub(crate) fn check_user_text_with_args(args: &[String]) -> Result<(), String> {
     };
     let report = render_report(
         status,
-        golden_files,
-        &live,
-        &counts,
-        &baseline,
+        *golden_files,
+        live,
+        counts,
+        baseline,
         &evaluation,
         &gate_note,
     );
-    write_report(&root, &report);
+    write_report(root, &report);
     print!("{report}");
     if ratchet {
-        if let Some(lowered) = ratchet_outcome(&counts, &baseline) {
+        if let Some(lowered) = ratchet_outcome(counts, baseline) {
             fs::write(root.join(BASELINE_PATH), render_baseline(&lowered))
                 .map_err(|err| format!("write {BASELINE_PATH}: {err}"))?;
             println!("\nceilings lowered where counts dropped; none raised.");
@@ -1283,7 +1487,8 @@ mod tests {
 
     fn delta(base: &[(&str, &str)], head: &[(&str, &str)], baseline: &Baseline) -> Evaluation {
         let (paths, totals) = goldens(head);
-        evaluate_delta(&totals, baseline, &paths, &base_of(base))
+        let files = base.iter().map(|(path, _)| path.to_string()).collect();
+        evaluate_delta(&totals, baseline, &paths, &base_of(base), &files)
     }
 
     const A: &str = "fixtures/a/expected/human.txt";
@@ -1376,7 +1581,13 @@ mod tests {
     #[test]
     fn delta_gate_keeps_absolute_ceilings_for_live_surfaces() {
         let live = scan("check", "a discriminator\n");
-        let evaluation = evaluate_delta(&live, &Baseline::new(), &Counts::new(), &BTreeMap::new());
+        let evaluation = evaluate_delta(
+            &live,
+            &Baseline::new(),
+            &Counts::new(),
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+        );
         assert_eq!(evaluation.violations.len(), 1, "{evaluation:?}");
         assert!(evaluation.warnings.is_empty());
     }
@@ -1451,17 +1662,21 @@ mod tests {
     }
 
     fn gate_in(root: &Path, upstream: &str) -> Result<(Evaluation, String), String> {
-        gate_in_ci(root, upstream, false)
+        gate_in_ci(root, upstream, &Mode::Local)
     }
 
-    fn gate_in_ci(root: &Path, upstream: &str, ci: bool) -> Result<(Evaluation, String), String> {
+    fn gate_in_ci(
+        root: &Path,
+        upstream: &str,
+        mode: &Mode,
+    ) -> Result<(Evaluation, String), String> {
         let mut totals = Counts::new();
         scan_goldens(root, &mut totals)?;
         let paths = scan_golden_paths(root)?;
         Ok(gate_goldens(
             root,
             upstream,
-            ci,
+            mode,
             &totals,
             &paths,
             &Baseline::new(),
@@ -1493,6 +1708,241 @@ mod tests {
         Ok(())
     }
 
+    fn scanned_in(root: &Path) -> Result<Scanned, String> {
+        let mut counts = Counts::new();
+        let golden_files = scan_goldens(root, &mut counts)?;
+        Ok(Scanned {
+            counts,
+            baseline: Baseline::new(),
+            live: Vec::new(),
+            golden_files,
+        })
+    }
+
+    /// B1: the function the command ends in applies the merge-base delta, the
+    /// CI flag and the upstream it is given, end to end through Git.
+    #[test]
+    fn finish_check_applies_the_delta_and_the_ci_flag() -> Result<(), String> {
+        let base = [(A, "a seam\n")];
+        let grown = golden_repo("finish-add", &base, &[(A, "a seam\nanother seam\n")])?;
+        let failed = finish_check(&grown, "main", &Mode::Local, &scanned_in(&grown)?, false);
+        let _ = fs::remove_dir_all(&grown);
+        let message = failed
+            .err()
+            .ok_or("an added golden banned line must fail")?;
+        assert!(message.contains("rose"), "{message}");
+
+        let shrunk = golden_repo("finish-remove", &base, &[(A, "plain\n")])?;
+        let passed = finish_check(&shrunk, "main", &Mode::Local, &scanned_in(&shrunk)?, false);
+        let _ = fs::remove_dir_all(&shrunk);
+        assert_eq!(passed, Ok(()));
+
+        let no_upstream = golden_repo("finish-ci", &base, &base)?;
+        let local = finish_check(
+            &no_upstream,
+            "origin/main",
+            &Mode::Local,
+            &scanned_in(&no_upstream)?,
+            false,
+        );
+        let in_ci = finish_check(
+            &no_upstream,
+            "origin/main",
+            &ci_other(),
+            &scanned_in(&no_upstream)?,
+            false,
+        );
+        let _ = fs::remove_dir_all(&no_upstream);
+        // Absolute fallback: a zero baseline makes the existing seam line fail
+        // locally too, so assert the CI result is a failure and local differs
+        // only by note; the CI-only difference is shown in the next test.
+        assert!(in_ci.is_err(), "{in_ci:?}");
+        assert!(local.is_err(), "{local:?}");
+        Ok(())
+    }
+
+    /// With nothing banned, ci=false falls back and passes while ci=true fails
+    /// closed: the flag is what changes the command's result.
+    #[test]
+    fn finish_check_fails_closed_only_under_ci_without_a_base() -> Result<(), String> {
+        let root = golden_repo("finish-clean", &[(A, "plain\n")], &[(A, "plain\n")])?;
+        let local = finish_check(
+            &root,
+            "origin/main",
+            &Mode::Local,
+            &scanned_in(&root)?,
+            false,
+        );
+        let in_ci = finish_check(
+            &root,
+            "origin/main",
+            &ci_other(),
+            &scanned_in(&root)?,
+            false,
+        );
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(local, Ok(()));
+        assert!(in_ci.is_err(), "{in_ci:?}");
+        Ok(())
+    }
+
+    /// The command itself must hand the real upstream and CI flag to the gate
+    /// and must not gate goldens with the absolute `evaluate` directly.
+    #[test]
+    fn the_command_calls_the_gate_with_origin_main_and_the_ci_flag() -> Result<(), String> {
+        let source = fs::read_to_string(repo_root()?.join("xtask/src/policy/user_text.rs"))
+            .map_err(|err| format!("read user_text.rs: {err}"))?;
+        let start = source
+            .find("pub(crate) fn check_user_text_with_args(")
+            .ok_or("command not found")?;
+        let end = source[start..]
+            .find("\n}\n")
+            .ok_or("command end not found")?
+            + start;
+        let command = &source[start..end];
+        assert!(
+            command.contains(
+                "finish_check(&root, \"origin/main\", &Mode::from_env(), &scanned, ratchet)"
+            ),
+            "command must call finish_check with origin/main and running_in_ci()"
+        );
+        assert!(
+            !command.contains("evaluate("),
+            "command must not gate with evaluate("
+        );
+        let fin = source
+            .find("\nfn finish_check(")
+            .ok_or("finish_check not found")?;
+        let fin_end = source[fin..].find("\n}\n").ok_or("finish_check end")? + fin;
+        let fin_body = &source[fin..fin_end];
+        assert!(fin_body.contains("gate_goldens(root, upstream, mode,"));
+        assert!(!fin_body.contains("evaluate("));
+        Ok(())
+    }
+
+    /// CI run with no pull_request/merge_group identity (for example `push`).
+    fn ci_other() -> Mode {
+        Mode::Ci {
+            event: Ok(CiEvent {
+                name: String::new(),
+                payload: String::new(),
+                checkout: String::new(),
+            }),
+        }
+    }
+
+    /// A pull_request checkout: `main` holds `base`, `pr` holds `head`, HEAD is
+    /// their merge commit (detached), and the returned mode carries the event.
+    fn pr_event_repo(
+        name: &str,
+        base: &[(&str, &str)],
+        head: &[(&str, &str)],
+    ) -> Result<(PathBuf, String, String, String), String> {
+        let root = golden_repo(name, base, head)?;
+        let pr = git_text(&root, &["rev-parse", "HEAD"])?.trim().to_string();
+        let main = git_text(&root, &["rev-parse", "main"])?.trim().to_string();
+        run_git(&root, &["checkout", "-q", "main"])?;
+        run_git(
+            &root,
+            &["merge", "-q", "--no-ff", "pr", "-m", "integration"],
+        )?;
+        let merge = git_text(&root, &["rev-parse", "HEAD"])?.trim().to_string();
+        run_git(&root, &["checkout", "-q", "--detach"])?;
+        Ok((root, main, pr, merge))
+    }
+
+    fn pr_mode(base: &str, head: &str, checkout: &str) -> Mode {
+        Mode::Ci {
+            event: Ok(CiEvent {
+                name: "pull_request".into(),
+                payload: serde_json::json!({
+                    "pull_request": {"base": {"sha": base}, "head": {"sha": head}}
+                })
+                .to_string(),
+                checkout: checkout.into(),
+            }),
+        }
+    }
+
+    /// Negative: a ref moved onto the candidate hides growth locally, but under
+    /// CI the base is the event sha, so the same input still fails.
+    #[test]
+    fn ci_ignores_a_base_ref_pointed_at_the_candidate() -> Result<(), String> {
+        let (root, base, pr, merge) =
+            pr_event_repo("ci-ref", &[(A, "a seam\n")], &[(A, "a seam\nmore seam\n")])?;
+        run_git(&root, &["branch", "-f", "main", "HEAD"])?;
+        let (local, _) = gate_in_ci(&root, "main", &Mode::Local)?;
+        let (ci, note) = gate_in_ci(&root, "main", &pr_mode(&base, &pr, &merge))?;
+        let _ = fs::remove_dir_all(&root);
+        assert!(
+            local.violations.is_empty(),
+            "ref lookup is fooled: {local:?}"
+        );
+        assert_eq!(ci.violations.len(), 1, "{ci:?}");
+        assert!(note.contains("HEAD's committed blobs"), "{note}");
+        assert!(note.contains("verified GitHub event identity"), "{note}");
+        Ok(())
+    }
+
+    /// Negative: under CI an edited working-tree golden fails closed, even when
+    /// the edit hides the committed growth.
+    #[test]
+    fn ci_fails_closed_on_a_dirty_golden_path() -> Result<(), String> {
+        let (root, base, pr, merge) = pr_event_repo(
+            "ci-dirty",
+            &[(A, "a seam\n")],
+            &[(A, "a seam\nmore seam\n")],
+        )?;
+        write_file(&root.join(A), "a seam\n")?;
+        let (ci, _) = gate_in_ci(&root, "main", &pr_mode(&base, &pr, &merge))?;
+        let _ = fs::remove_dir_all(&root);
+        assert!(!ci.violations.is_empty(), "{ci:?}");
+        Ok(())
+    }
+
+    /// Negative: mismatched event identities (wrong base, wrong PR head, wrong
+    /// checkout) fail closed rather than falling back to a ref.
+    #[test]
+    fn ci_rejects_mismatched_event_identities() -> Result<(), String> {
+        let (root, base, pr, merge) =
+            pr_event_repo("ci-ident", &[(A, "a seam\n")], &[(A, "a seam\n")])?;
+        let good = gate_in_ci(&root, "main", &pr_mode(&base, &pr, &merge))?.0;
+        let wrong_base = gate_in_ci(&root, "main", &pr_mode(&pr, &pr, &merge))?.0;
+        let wrong_head = gate_in_ci(&root, "main", &pr_mode(&base, &base, &merge))?.0;
+        let wrong_checkout = gate_in_ci(&root, "main", &pr_mode(&base, &pr, &base))?.0;
+        let missing = gate_in_ci(
+            &root,
+            "main",
+            &Mode::Ci {
+                event: Err("GITHUB_EVENT_NAME is missing under GitHub Actions".into()),
+            },
+        )?
+        .0;
+        let _ = fs::remove_dir_all(&root);
+        assert!(good.violations.is_empty(), "{good:?}");
+        for (label, evaluation) in [
+            ("wrong base", wrong_base),
+            ("wrong head", wrong_head),
+            ("wrong checkout", wrong_checkout),
+            ("missing event", missing),
+        ] {
+            assert_eq!(evaluation.violations.len(), 1, "{label}: {evaluation:?}");
+        }
+        Ok(())
+    }
+
+    /// An existing clean golden that gains its first banned line is not labelled
+    /// a new path.
+    #[test]
+    fn existing_clean_file_is_not_labelled_a_new_path() {
+        let evaluation = delta(&[(A, "plain\n")], &[(A, "a seam\n")], &Baseline::new());
+        assert_eq!(evaluation.violations.len(), 1, "{evaluation:?}");
+        assert!(
+            !evaluation.violations[0].contains("new path"),
+            "{evaluation:?}"
+        );
+    }
+
     /// No upstream ref: loud fallback to absolute ceilings, never a silent pass.
     #[test]
     fn gate_goldens_without_an_upstream_falls_back_loudly_to_absolute_ceilings()
@@ -1514,7 +1964,7 @@ mod tests {
     #[test]
     fn gate_goldens_fails_closed_under_ci_when_the_base_is_unreadable() -> Result<(), String> {
         let root = golden_repo("gate-ci", &[(A, "plain\n")], &[(A, "plain\n")])?;
-        let (evaluation, note) = gate_in_ci(&root, "origin/main", true)?;
+        let (evaluation, note) = gate_in_ci(&root, "origin/main", &ci_other())?;
         let _ = fs::remove_dir_all(&root);
         assert_eq!(evaluation.violations.len(), 1, "{evaluation:?}");
         assert!(

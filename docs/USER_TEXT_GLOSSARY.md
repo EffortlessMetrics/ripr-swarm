@@ -88,15 +88,29 @@ of output lines containing the term when last lowered.
   banned lines. It is therefore not a plain net no-growth rule: removals never
   offset increases elsewhere, and a rename of a golden that still carries banned
   lines is rejected as a new path.
-- Inputs are recorded. The report names the merge-base commit, where
-  `origin/main` pointed, and HEAD, and says when the head side is the working
-  tree (uncommitted golden changes); a stale `origin/main` is visible there.
+- Inputs are recorded. The report names the merge-base commit, the base source
+  and sha, and HEAD, and says when the head side is the working tree.
+- CI binds both sides to commits. For `pull_request` the base is the event's
+  base sha and the checkout must be the integration commit whose two parents are
+  exactly that base and the PR head (`GITHUB_SHA` must match HEAD); for
+  `merge_group` HEAD must be the event head and the event base its ancestor.
+  Mismatched or missing identities fail the check, as do uncommitted or ignored
+  golden files; the head side is read from HEAD's committed blobs. Other CI
+  events (for example `push`) use the `origin/main` ref. Locally the base is the
+  `origin/main` ref and the head is the working tree, so a local comparison is
+  advisory when that ref is stale; the report records where each side came from.
 - Unreadable base: locally the check falls back to absolute ceilings and labels
   the run "base unavailable: absolute-ceiling check only, no PR-relative
   no-growth established" (a loose ceiling can pass growth). Under CI (`CI=true`
   or `GITHUB_ACTIONS` set) it fails closed instead.
 - A golden total above its absolute ceiling is reported as a WARNING (main
   health) and does not fail a PR that did not add lines.
+- Limits to know when reviewing: the banned-term list, the matcher and the
+  baseline file are applied with the head's code on both sides, so a PR that
+  edits the gate logic, `BANNED` or the baseline is visible only in the diff and
+  needs explicit reviewer attention (tracked in #11385). A renamed or copied
+  golden that keeps banned lines counts as a new path; the reviewer's remedy is
+  to reword those lines.
 - To restore the delta gate after an unreadable base, run
   `git fetch --deepen=200 origin main` (or `git fetch origin main`).
 - Live-surface rows are small and keep absolute ceilings: a live count above
