@@ -1477,11 +1477,39 @@ fn find_related_tests_with_candidates<'a>(
         // method call elsewhere in the test must not hide a real formatting
         // reach. The in-package check is explicit because a name-only owner
         // call can pass the package guard below.
+        // One in-package rule for both entry routes (#8999).
+        let test_in_owner_package = match &owner_package_prefix {
+            Some(prefix) => normalize_path(&test.file).starts_with(prefix),
+            // A root-package owner has no prefix. Only a test that is
+            // itself outside every member package (`tests/..`, `src/..`
+            // of the root) shares its package; a workspace member's
+            // test, and any path that cannot be scoped, fails closed.
+            None => {
+                // `package_prefix` reads a later `/tests/` or `/src/` segment
+                // as a package marker, so a root test at `src/tests/mod.rs`
+                // would look like package `src/`. When the discovered
+                // manifests are known, the package is the nearest manifest of
+                // each file (a member under `examples/` or `tests/` has its
+                // own manifest, so it is another package); the path shape is
+                // only the fallback and fails closed.
+                let same_manifest = dependency_edges.and_then(|context| {
+                    let owner = owner_fn?;
+                    Some(
+                        nearest_manifest_identity(context.manifest_dir_prefixes, &test.file)?
+                            == nearest_manifest_identity(
+                                context.manifest_dir_prefixes,
+                                &owner.file,
+                            )?,
+                    )
+                });
+                same_manifest.unwrap_or_else(|| package_prefix(&test.file).is_none())
+                    && !path_is_absolute_form(&test.file)
+                    && owner_fn.is_some_and(|owner| !path_is_absolute_form(&owner.file))
+            }
+        };
         let dispatches_to_helper_fmt_entry = !calls_helper_entry
             && !property_only_owner_call
-            && owner_package_prefix
-                .as_ref()
-                .is_none_or(|prefix| normalize_path(&test.file).starts_with(prefix))
+            && test_in_owner_package
             && fmt_entry_hops.iter().any(|entry| {
                 Option::as_ref(&entry.context).is_some_and(|context| {
                     fmt_dispatch::test_dispatches_to_fmt(
@@ -1501,18 +1529,6 @@ fn find_related_tests_with_candidates<'a>(
                     index,
                 )
             });
-        let method_entry_in_owner_package = match &owner_package_prefix {
-            Some(prefix) => normalize_path(&test.file).starts_with(prefix),
-            // A root-package owner has no prefix. Only a test that is
-            // itself outside every member package (`tests/..`, `src/..`
-            // of the root) shares its package; a workspace member's
-            // test, and any path that cannot be scoped, fails closed.
-            None => {
-                package_prefix(&test.file).is_none()
-                    && !path_is_absolute_form(&test.file)
-                    && owner_fn.is_some_and(|owner| !path_is_absolute_form(&owner.file))
-            }
-        };
         // #8999: a plain inherent method entry is judged separately too, on
         // the same in-package terms. The receiver must be bound to the impl's
         // self type by the established receiver rules, and the test must not
@@ -1520,7 +1536,7 @@ fn find_related_tests_with_candidates<'a>(
         let calls_helper_method_entry = !calls_helper_entry
             && !dispatches_to_helper_fmt_entry
             && !property_only_owner_call
-            && method_entry_in_owner_package
+            && test_in_owner_package
             && method_entry_hops.iter().any(|entry| {
                 method_entry_uses_plain_receiver(test, &entry.caller.name, &entry.self_type, index)
                     && entry.identity.binds_inherent_entry_type(test, index)
@@ -1550,7 +1566,7 @@ fn find_related_tests_with_candidates<'a>(
         // mutation test pins on its own (the later cross-package `continue`
         // and the receiver-type check refuse the same test).
         let calls_method_entry = !calls_helper_entry
-            && method_entry_in_owner_package
+            && test_in_owner_package
             && helper_chain.is_some_and(|chain| {
                 super::helper_transfer::test_calls_method_entry(index, test, chain)
             });
@@ -2251,13 +2267,25 @@ fn own_crate_qualified_entry_call(
     caller: &FunctionSummary,
     call_line: usize,
 ) -> bool {
+    own_crate_qualified_entry_path(index, test, caller, call_line).is_some()
+}
+
+/// [`own_crate_qualified_entry_call`] with the established spelling: the
+/// `<crate>::<module path>::<entry>` path the call at `call_line` writes,
+/// which the helper-transfer entry pin (#9638) reads as the entry's operand.
+pub(super) fn own_crate_qualified_entry_path(
+    index: &RustIndex,
+    test: &TestSummary,
+    caller: &FunctionSummary,
+    call_line: usize,
+) -> Option<String> {
     if !super::call_identity::under_tests_dir(&test.file)
         || path_is_absolute_form(&test.file)
         || path_is_absolute_form(&caller.file)
         || package_prefix(&test.file).is_some()
         || package_prefix(&caller.file).is_some()
     {
-        return false;
+        return None;
     }
     // The entry is an item of the root package's library: at the crate root,
     // or (#8999) in a `src/` file module or inline module whose path is read
@@ -2266,11 +2294,8 @@ fn own_crate_qualified_entry_call(
     let composes_under_library_root =
         super::owner_pin::target_root(&caller.file, index, &BTreeSet::new())
             .is_some_and(|root| root == Path::new("src/lib.rs"));
-    let Some(module) = super::call_identity::root_library_item_module_path(index, caller)
-        .filter(|_| composes_under_library_root)
-    else {
-        return false;
-    };
+    let module = super::call_identity::root_library_item_module_path(index, caller)
+        .filter(|_| composes_under_library_root)?;
     // Only a test-crate root (`tests/<name>.rs`, `tests/<name>/main.rs`):
     // a module child (`tests/api/child.rs`, `tests/common/mod.rs`) resolves
     // paths from a parent file whose bindings this scan does not read.
@@ -2282,22 +2307,18 @@ fn own_crate_qualified_entry_call(
         _ => false,
     };
     if !is_test_crate_root {
-        return false;
+        return None;
     }
-    let Some(facts) = index.files().get(&test.file) else {
-        return false;
-    };
+    let facts = index.files().get(&test.file)?;
     if facts.source.contains("include!")
         || super::call_identity::source_may_splice_items(&facts.source, true)
     {
-        return false;
+        return None;
     }
     // The one identifier the package's library is imported as: `[lib] name`
     // when set, else the package name (hyphens folded). The package name is
     // not a second spelling when `[lib] name` differs.
-    let Some(crate_name) = index.root_library_name.as_deref() else {
-        return false;
-    };
+    let crate_name = index.root_library_name.as_deref()?;
     let stripped_file = strip_comments_and_strings(&facts.source);
     // Any import that may bind the crate name to something else, in the
     // file or in the test body: a glob, or a path ending in that name
@@ -2320,24 +2341,22 @@ fn own_crate_qualified_entry_call(
     // own location: a call path inside a multiline raw string or block
     // comment that ends on a line holding a real call is masked out.
     let masked_file = mask_comments_and_strings(&facts.source);
-    let Some(code_line) = call_line
+    let code_line = call_line
         .checked_sub(1)
-        .and_then(|line| masked_file.lines().nth(line))
-    else {
-        return false;
-    };
+        .and_then(|line| masked_file.lines().nth(line))?;
     let spelled_path: String = std::iter::once(crate_name)
         .chain(module.iter().map(String::as_str))
         .chain(std::iter::once(caller.name.as_str()))
         .collect::<Vec<_>>()
         .join("::");
-    is_qualified_owner_call(code_line, &spelled_path)
+    (is_qualified_owner_call(code_line, &spelled_path)
         && !file_may_bind_name(&stripped_file, crate_name)
         && !body_binds_owner_name(&test.body, crate_name)
         && !super::owner_pin::file_renames_to(&facts.source, crate_name)
         && !super::owner_pin::file_renames_to(&facts.source, &format!("r#{crate_name}"))
         && !may_rebind_crate_name(&facts.source)
-        && !may_rebind_crate_name(&test.body)
+        && !may_rebind_crate_name(&test.body))
+    .then_some(spelled_path)
 }
 
 /// The call's source line as code: the line at `line` of the comment/string-

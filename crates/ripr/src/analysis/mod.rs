@@ -895,8 +895,19 @@ impl PreviewLanguageAdvisory {
     /// [`crate::domain::LanguageId::unavailable_adapter_recovery`] so every
     /// renderer tells the same story.
     pub(crate) fn unavailable_adapter_recovery(&self) -> Option<String> {
+        use crate::domain::language_availability::{
+            LanguageAvailabilityInput, resolve_language_availability, unavailable_recovery,
+        };
         let language = crate::domain::LanguageId::from_wire(&self.language)?;
-        (!self.enabled && !language.is_available()).then(|| language.unavailable_adapter_recovery())
+        if self.enabled {
+            return None;
+        }
+        let report = resolve_language_availability(&LanguageAvailabilityInput {
+            project_detected: true,
+            file_count: self.file_count,
+            ..LanguageAvailabilityInput::for_language(language)
+        });
+        unavailable_recovery(&report).map(str::to_owned)
     }
 
     /// Single-line `why` for a not-enabled advisory, shared by the JSON check

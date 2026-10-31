@@ -54,6 +54,10 @@ pub(crate) struct InlineTargetCopies<'a> {
     /// `true` when HEAD did not move, the committed copy is unchanged, or the
     /// committed copy is the worktree bytes.
     pub(crate) head_matches: bool,
+    /// Git's failure text when the worktree object id needed to compare the
+    /// staged and committed copies could not be read. Distinct from a copy
+    /// that differs, so the refusal says git failed.
+    pub(crate) object_unreadable: Option<String>,
     pub(crate) baseline: &'a InlineTestRegionBaseline,
 }
 
@@ -147,6 +151,9 @@ pub(crate) fn observe_attempt_inline_region(
         InlineTestRegionStatus::Rejected => {
             return observation(false, Some(reason_label(verdict.reason)));
         }
+    }
+    if let Some(error) = copies.object_unreadable {
+        return observation(false, Some(format!("git_object_unreadable: {error}")));
     }
     if !copies.index_matches {
         return observation(false, Some("index_copy_not_validated".to_string()));

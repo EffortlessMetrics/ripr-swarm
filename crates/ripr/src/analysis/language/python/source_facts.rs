@@ -601,7 +601,7 @@ pub(super) fn parse_module_result(path: &Path, source: &str) -> Result<Mod, Stri
         .map_err(|err| format!("parse_error: {err}"))?;
     match module {
         Mod::Module(_) => Ok(module),
-        _ => Err("parse_error: expected Python module".to_string()),
+        _ => Err("parse_error: expected Python module; fix the Python syntax error in the changed file and rerun".to_string()),
     }
 }
 

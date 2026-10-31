@@ -93,8 +93,8 @@ analyzed count.
   the inventory-retained seam list.
 
 The budget is distinct from `RIPR_REPO_EXPOSURE_SEAM_LIMIT` (which bounds the
-inventory pass). When both caps apply the pilot budget fires on the already-
-capped slice and the tighter cap's `SeamLimitInfo` is disclosed.
+inventory pass). When both caps apply, the pilot budget fires on the already-
+capped slice and both independent cuts are disclosed.
 
 ### Disclosure
 
@@ -124,8 +124,8 @@ they do not promise recovery from an independent inventory cut.
 An inventory-only packet cut uses `repo_seam_limit_applied` and
 `RIPR_REPO_EXPOSURE_SEAM_LIMIT`, with the same default/configured inventory
 routes as repo-exposure. A configured but inactive pilot budget does not change
-that identity. When both caps fire, packet counts and guidance describe the
-pilot cut of the already-capped inventory. Packet admission remains independent
+that identity. When both independent caps fire, packet limitations name both
+cuts and controls, with the outer inventory total. Packet admission remains independent
 of cap attribution: `packets_total` equals the rendered `packets` array length,
 which may be smaller than `seams_analyzed`.
 
@@ -251,6 +251,13 @@ renderer retains its existing admission filter.
 - `crates/ripr/src/output/agent_seam_packets.rs::tests::no_limit_info_emits_run_status_complete`
 - `crates/ripr/src/output/agent_seam_packets.rs::tests::limit_info_emits_run_status_seam_limit_applied_and_disclosure`
 - `crates/ripr/src/output/agent_seam_packets.rs::tests::limit_info_configured_source_emits_configured_repair_route`
+
+When an independent inventory cap and the pilot budget both cut
+the population, the JSON artifacts disclose both limitations and their controls.
+The pilot limitation reports the outer inventory total, and the inventory
+limitation retains its own analyzed count and source. Disabling only one cap
+does not imply that the other was lifted. The pilot-scoped default inventory
+cut that stands in for the budget remains a single budget limitation.
 
 ## Implementation Mapping
 

@@ -80,6 +80,7 @@ mod call_chain;
 mod caplog_text;
 mod classify;
 mod conditional_defs;
+mod conditional_expression;
 mod dataclass_default;
 mod deleted_lines;
 mod doctest_eval;
@@ -110,6 +111,7 @@ mod hypothesis;
 mod module_constants;
 mod no_behavior;
 mod oracles;
+mod owner_exact;
 mod owners_tests;
 mod param_fixtures;
 mod parametrize;
@@ -596,6 +598,11 @@ struct PythonAssertion {
     /// library's; `known_equality_helpers` re-reads the assertion as
     /// `assert left == right` once the file's imports prove it.
     known_equality_helper: Option<PythonKnownEqualityHelper>,
+    /// Set when rule 25 demoted `f(g(x)) == g(x)`: `f` is the bare callee
+    /// whose result the independent `g(x)` pins. The demotion stays for every
+    /// other owner; `owner_exact.rs` re-reads it as an exact pin per finding
+    /// whose owner is `f` (#9814).
+    owner_exact_callee: Option<String>,
 }
 
 /// The call under a candidate numpy.testing or assertpy equality helper
@@ -1856,6 +1863,9 @@ mod unreachable_assertion_tests;
 
 #[cfg(test)]
 mod arm_activation_tests;
+
+#[cfg(test)]
+mod conditional_expression_tests;
 
 #[cfg(test)]
 mod assertion_selection_tests;

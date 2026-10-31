@@ -348,6 +348,11 @@ For each change, the first match wins:
     next step says so. A packet without the capability keeps the reading above,
     including example 5. The perl-lsp-swarm producer advertises the capability from
     56b40816 (perl-lsp-swarm#18503), and the Perl verdict corpus pins it.
+    From 43336765 (perl-lsp-swarm#18540) the producer also grades
+    `like($@, MATCHER)` the same way and binds it to the callee in the
+    `eval { ... }` statement directly before it, and block `eval` in a test
+    file is no longer an `eval_or_string_code` boundary; block `eval` in a
+    source file and every string form still are.
 17. **`isnt` pins nothing.** An oracle whose recorded expression begins with
     the call `isnt` (bare, or qualified `Test::More::`, `Test2::V0::` or
     `Test2::V1::`) is read as `weak_smoke` when the producer graded it

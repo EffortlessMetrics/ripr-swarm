@@ -2045,6 +2045,42 @@ fn locally_rebound_owner_call_does_not_credit_exposed_exact_value() -> Result<()
 }
 
 #[test]
+fn independent_nested_call_credits_only_the_owner_the_test_calls_by_name() -> Result<(), String> {
+    // #9814: `fee(tax(10)) == tax(10)` pins the outer `fee`. The resolved
+    // assertion reaches the finding's row, alignment and class together.
+    let credited = classify_shop_fee(
+        "from src.shop import fee\nfrom src.other import tax\n\n\ndef test_fee():\n    assert fee(tax(10)) == tax(10)\n",
+    )?;
+    assert_shop_fee_exposed(&credited);
+
+    // Same spelling, different function: `fee` comes from another module.
+    let foreign = classify_shop_fee(
+        "from src.other import fee\nfrom src.other import tax\n\n\ndef test_fee():\n    assert fee(tax(10)) == tax(10)\n",
+    )?;
+    assert_shop_fee_withholds_stand_in_credit(&foreign, "fee imported from another module");
+
+    // Local and module-level rebinding of the outer callee.
+    let rebound = classify_shop_fee(
+        "from src.shop import fee\nfrom src.other import tax\n\n\ndef test_fee():\n    fee = lambda amount: amount\n    assert fee(tax(10)) == tax(10)\n",
+    )?;
+    assert_shop_fee_withholds_stand_in_credit(&rebound, "local rebinding");
+
+    // An import alias spells the callee differently, so the exact reading
+    // (keyed on the bare spelling) is not applied: the demotion stays.
+    let aliased = classify_shop_fee(
+        "from src.shop import fee as charge\nfrom src.other import tax\n\n\ndef test_fee():\n    assert charge(tax(10)) == tax(10)\n",
+    )?;
+    assert_ne!(aliased.class, ExposureClass::Exposed);
+
+    // A method named like the owner is a different owner.
+    let method = classify_shop_fee(
+        "from src.shop import fee\nfrom src.other import tax\n\n\ndef test_fee(shop):\n    assert shop.fee(tax(10)) == tax(10)\n",
+    )?;
+    assert_ne!(method.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
 fn nested_helper_local_shadow_keeps_outer_owner_credit() -> Result<(), String> {
     // Binding `fee` only inside an uncalled helper does not shadow the
     // test's own assertion, which still calls the imported owner.

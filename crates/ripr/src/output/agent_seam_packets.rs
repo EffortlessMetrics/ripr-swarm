@@ -331,7 +331,11 @@ fn render_agent_seam_packets_json_with_root(
     }
 
     let mut limitations = Vec::new();
-    if let Some(limit) = limit_info {
+    for limit in limit_info
+        .into_iter()
+        .flat_map(RepoExposureLimit::parts)
+        .flatten()
+    {
         let info = limit.info();
         let repair_route = limit.repair_route();
         limitations.push(format!(
@@ -3970,7 +3974,7 @@ mod tests {
               "language_status":"preview",
               "scope":"diff",
               "evidence_class":"weakly_exposed",
-              "gap_state":"advisory",
+              "gap_state": "unknown",
               "policy_state":"preview",
               "repairability":"repairable",
               "anchor":{{"file":"src/pricing.ts","line":7,"owner":"discountedTotal","dedupe_fingerprint":"probe:src/pricing.ts:typescript_preview:1a2b3c4d"}},
