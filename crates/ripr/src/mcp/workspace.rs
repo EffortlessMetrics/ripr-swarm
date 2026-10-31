@@ -1996,6 +1996,7 @@ fn run_worktree_check(
                 &inventory.candidate_seams,
                 crate::app::agent_brief::AgentBriefPolicy::from_config(config),
                 &inventory.completeness,
+                Some(root.as_path()),
             );
             let mut snapshot = Snapshot::from_output_with_custody(
                 &output,
