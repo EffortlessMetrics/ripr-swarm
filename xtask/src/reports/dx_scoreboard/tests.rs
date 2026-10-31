@@ -419,7 +419,7 @@ fn a_ceilinged_row_fails_the_gate_above_its_ceiling_whatever_the_baseline() -> R
 }
 
 #[test]
-fn a_ceiling_must_name_a_measured_per_repo_lower_is_better_metric() {
+fn a_ceiling_must_name_a_measured_per_repo_lower_is_better_metric() -> Result<(), String> {
     for (ceilings, message) in [
         (
             "\"speed.warm_check_mss\" = 2000",
@@ -437,9 +437,10 @@ fn a_ceiling_must_name_a_measured_per_repo_lower_is_better_metric() {
     ] {
         match ceilinged_config(ceilings) {
             Err(error) if error.contains(message) => {}
-            other => panic!("{ceilings}: expected `{message}`, got {other:?}"),
+            other => return Err(format!("{ceilings}: expected `{message}`, got {other:?}")),
         }
     }
+    Ok(())
 }
 
 #[test]
