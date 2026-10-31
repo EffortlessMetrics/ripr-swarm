@@ -1,0 +1,51 @@
+{
+  "case_id": "mined-snapshot-helper-heading-unasserted",
+  "subject_id": "authored-mined-features",
+  "diff": "cases/mined-snapshot-helper-heading-unasserted.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 93
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "snapshot_helper_result_discarded",
+  "hard_case": "Negative twin of the snapshot cases: the test calls the non-asserting snap::matches helper and discards the bool, so no failure can reach it. Reading a snapshot helper by name as an oracle credits this test falsely.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "[\"(\", name, \")\"].concat()",
+        "mutated_line": "[\"(\", name, \")\"].concat()",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the brackets become parentheses"
+      },
+      {
+        "replacement": "String::new()",
+        "mutated_line": "String::new()",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: empty heading"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "heading_is_computed_but_never_asserted discards the result of snap::matches, so both mutants pass.",
+  "labeling_observation": {
+    "ripr_commit": "f0397266",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

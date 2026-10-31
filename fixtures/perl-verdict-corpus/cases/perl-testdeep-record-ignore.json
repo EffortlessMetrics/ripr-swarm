@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testdeep-record-ignore.json",
-    "sha256": "274c6a167badcff3727019e7f885bfd66f25001957c7c0dfdbda53929c689aac",
+    "sha256": "a0f027499659c9d908d7df90c3ae17084f8e8748f8adb99eeb7c61add95c151b",
     "provenance": "producer"
   }
 }

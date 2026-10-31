@@ -20962,3 +20962,371 @@ fn inherent_helper_declarations_are_not_executable_self_edges() -> Result<(), St
     }
     Ok(())
 }
+
+/// #11382: the seam-side relation applies the finding-level refusal for a
+/// receiver whose type the test's own module shadows. The shadowed test's
+/// `window.clone()` calls the test-local `Window`, so it is never a direct
+/// call of the production `Window::clone`. The unshadowed control keeps the
+/// credit, so the refusal is the only difference.
+#[test]
+fn a_test_local_shadow_of_the_impl_type_is_not_a_direct_owner_call() -> Result<(), String> {
+    let shadowed = include_str!(
+        "../../../../../fixtures/owner_return_pin_test_module_shadow/input/src/lib.rs"
+    );
+    let control = shadowed
+        .replace(
+            "    #[derive(Debug, Clone, PartialEq, Eq)]\n    struct Window {\n        start: u32,\n        end: u32,\n    }\n\n",
+            "",
+        )
+        .replace(
+            "let window = Window { start: 3, end: 9 };",
+            "let window = Window::new(3, 9);",
+        );
+    assert!(
+        !control.contains(
+            "struct Window {\n        start: u32,\n        end: u32,\n    }\n\n    #[test]"
+        ),
+        "control must drop the test-local type"
+    );
+    assert!(
+        control.contains("let window = Window::new(3, 9);")
+            && !control.contains("let window = Window { start: 3, end: 9 };"),
+        "control must replace the struct-literal construction"
+    );
+    let mut direct_by_source = Vec::new();
+    for source in [shadowed, control.as_str()] {
+        let path = PathBuf::from("src/lib.rs");
+        let index = index_from_files(&[(path.clone(), source)])?;
+        assert_eq!(index.tests().len(), 1, "one real subject");
+        let seams: Vec<_> = inventory_seams_from_index(&[path], &index)
+            .into_iter()
+            .filter(|seam| seam.owner().ends_with("::clone"))
+            .collect();
+        assert!(!seams.is_empty(), "the clone owner has seams");
+        let context = CompactGripContext::new(&index);
+        let mut direct = 0usize;
+        for seam in &seams {
+            direct += find_related_tests_with_context(seam, &context)
+                .iter()
+                .filter(|(test, reason)| {
+                    test.test.name == "a_clone_equals_its_original"
+                        && *reason == RelationReason::DirectOwnerCall
+                })
+                .count();
+        }
+        direct_by_source.push(direct);
+    }
+    assert_eq!(
+        direct_by_source[0], 0,
+        "shadowed receiver must not be direct"
+    );
+    assert!(
+        direct_by_source[1] > 0,
+        "the unshadowed control keeps direct credit: {direct_by_source:?}"
+    );
+    Ok(())
+}
+
+/// #11469: the seam-side relation refuses a test-local trait that shadows a
+/// trait-declaration default-method owner, as the finding-level relation does
+/// (#7123). The owner has no impl self type, so the impl-type refusal never
+/// applies; the shared trait-declaration predicate does. The unshadowed control
+/// keeps the credit, so the shadow is the only difference.
+#[test]
+fn a_test_local_shadow_of_the_default_method_trait_is_not_a_direct_owner_call() -> Result<(), String>
+{
+    let shadowed =
+        include_str!("../../../../../fixtures/rust_trait_default_shadow/input/src/lib.rs");
+    let control = shadowed
+        .replace("    use super::Unit;\n", "    use super::{Counter, Unit};\n")
+        .replace(
+            "    trait Counter {\n        fn step(&self) -> u32;\n        fn advance(&self) -> u32 {\n            8\n        }\n    }\n\n    impl Counter for Unit {\n        fn step(&self) -> u32 {\n            2\n        }\n    }\n\n",
+            "",
+        )
+        .replace("self::Counter::advance(&Unit)", "Counter::advance(&Unit)");
+    assert_eq!(
+        shadowed.matches("trait Counter").count(),
+        2,
+        "the shadowed source declares the production and the test-local trait"
+    );
+    assert_eq!(
+        control.matches("trait Counter").count(),
+        1,
+        "the control drops the test-local trait"
+    );
+    assert!(
+        control.contains("use super::{Counter, Unit};")
+            && control.contains("Counter::advance(&Unit)")
+            && !control.contains("self::Counter::advance"),
+        "the control must bind the production trait"
+    );
+    let mut direct_by_source = Vec::new();
+    for source in [shadowed, control.as_str()] {
+        let path = PathBuf::from("src/lib.rs");
+        let index = index_from_files(&[(path.clone(), source)])?;
+        assert_eq!(index.tests().len(), 1, "one real subject");
+        let seams: Vec<_> = inventory_seams_from_index(&[path], &index)
+            .into_iter()
+            .filter(|seam| seam.owner().ends_with("::advance"))
+            .collect();
+        assert!(!seams.is_empty(), "the advance owner has seams");
+        let context = CompactGripContext::new(&index);
+        let mut direct = 0usize;
+        for seam in &seams {
+            direct += find_related_tests_with_context(seam, &context)
+                .iter()
+                .filter(|(test, reason)| {
+                    test.test.name == "advances" && *reason == RelationReason::DirectOwnerCall
+                })
+                .count();
+        }
+        direct_by_source.push(direct);
+    }
+    assert_eq!(
+        direct_by_source[0], 0,
+        "a shadowed trait must not be a direct call"
+    );
+    assert!(
+        direct_by_source[1] > 0,
+        "the unshadowed control keeps direct credit: {direct_by_source:?}"
+    );
+    Ok(())
+}
+
+fn return_seam_containing(source: &str, needle: &str) -> Result<RepoSeam, String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let index = index_from_files(&[(prod.clone(), source)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    seams
+        .into_iter()
+        .find(|seam| seam.kind() == SeamKind::ReturnValue && seam.expression().contains(needle))
+        .ok_or_else(|| format!("expected a return_value seam containing `{needle}`"))
+}
+
+/// #11111: a payload-bearing `Err(E::Parse("..."))` return seam is credited by
+/// an exact error-variant pin only when the pin observes the same payload.
+/// Naming the variant alone is identity coincidence, so it stays uncredited.
+#[test]
+fn exact_err_return_pin_requires_the_string_payload_to_be_discriminated() -> Result<(), String> {
+    let seam = return_seam_containing(
+        "pub enum E { Parse(&'static str), Other }\n\
+         pub fn parse(x: i32) -> Result<i32, E> {\n\
+         \x20   if x < 0 {\n\
+         \x20       return Err(E::Parse(\"bad input\"));\n\
+         \x20   }\n\
+         \x20   Ok(x)\n\
+         }\n",
+        "E::Parse",
+    )?;
+    assert!(
+        exact_err_return_matches_error_pin(
+            &seam,
+            "assert_eq!(parse(-1), Err(E::Parse(\"bad input\")))"
+        ),
+        "same variant and same payload literal discriminates"
+    );
+    for (label, oracle) in [
+        (
+            "payload ignored",
+            "assert!(matches!(parse(-1), Err(E::Parse(_))))",
+        ),
+        (
+            "different payload literal",
+            "assert_eq!(parse(-1), Err(E::Parse(\"other\")))",
+        ),
+        ("sibling variant", "assert_eq!(parse(-1), Err(E::Other))"),
+    ] {
+        assert!(
+            !exact_err_return_matches_error_pin(&seam, oracle),
+            "{label} must not credit a payload-bearing Err: {oracle}"
+        );
+    }
+    Ok(())
+}
+
+/// #11111: an Option-to-Result conversion names a variant but is not a plain
+/// `Err(Type::Variant)` construction, so no error-variant pin credits it.
+#[test]
+fn ok_or_conversion_return_is_not_credited_as_an_exact_err_construction() -> Result<(), String> {
+    let seam = return_seam_containing(
+        "pub enum E { Bad }\n\
+         pub fn find(value: Option<i32>) -> Result<i32, E> {\n\
+         \x20   value.ok_or(E::Bad)\n\
+         }\n",
+        "ok_or",
+    )?;
+    for oracle in [
+        "assert_eq!(find(None), Err(E::Bad))",
+        "assert!(matches!(find(None), Err(E::Bad)))",
+    ] {
+        assert!(
+            !exact_err_return_matches_error_pin(&seam, oracle),
+            "an `.ok_or(..)` return must not be credited by {oracle}"
+        );
+    }
+    Ok(())
+}
+
+/// Positive control for the two tests above: a plain `Err(E::Bad)` return with
+/// no payload is credited by the exact pin, so the negatives are not vacuous.
+#[test]
+fn plain_exact_err_return_is_credited_by_the_matching_pin_only() -> Result<(), String> {
+    let seam = return_seam_containing(
+        "pub enum E { Bad, Other }\n\
+         pub fn fail() -> Result<i32, E> {\n\
+         \x20   return Err(E::Bad);\n\
+         }\n",
+        "E::Bad",
+    )?;
+    assert!(exact_err_return_matches_error_pin(
+        &seam,
+        "assert!(matches!(fail(), Err(E::Bad)))"
+    ));
+    assert!(!exact_err_return_matches_error_pin(
+        &seam,
+        "assert!(matches!(fail(), Err(E::Other)))"
+    ));
+    Ok(())
+}
+
+fn related_test_names_for_boundary_seam(tests_src: &str) -> Result<Vec<String>, String> {
+    let prod_src = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\n";
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), prod_src),
+        (PathBuf::from("tests/boundary.rs"), tests_src),
+    ])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected predicate boundary seam".to_string())?;
+    let evidence = evidence_for_seam(seam, &index);
+    Ok(evidence
+        .related_tests
+        .iter()
+        .map(|test| test.test_name.clone())
+        .collect())
+}
+
+#[test]
+fn given_integration_test_when_local_module_shadows_library_crate_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    let shadow = "mod lib_proptest {\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 90 }\n}\n\n#[test]\nfn equality_boundary_discounts() {\n    assert_eq!(lib_proptest::discounted_total(100, 100), 90);\n}\n";
+    let related = related_test_names_for_boundary_seam(shadow)?;
+    assert!(
+        related.is_empty(),
+        "#10855: a test-local module rival must not relate the production owner: {related:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_no_local_module_shadows_then_owner_keeps_related_test()
+-> Result<(), String> {
+    let real = "#[test]\nfn equality_boundary_discounts() {\n    assert_eq!(lib_proptest::discounted_total(100, 100), 90);\n}\n";
+    let related = related_test_names_for_boundary_seam(real)?;
+    assert_eq!(related, vec!["equality_boundary_discounts".to_string()]);
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_keyword_path_reaches_local_module_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    for prefix in ["crate::", "self::"] {
+        let shadow = format!(
+            "mod lib_proptest {{\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 {{ 90 }}\n}}\n\n#[test]\nfn equality_boundary_discounts() {{\n    assert_eq!({prefix}lib_proptest::discounted_total(100, 100), 90);\n}}\n"
+        );
+        let related = related_test_names_for_boundary_seam(&shadow)?;
+        assert!(
+            related.is_empty(),
+            "#10855: `{prefix}` path to a local module rival must not relate the owner: {related:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_local_call_and_library_value_then_owner_keeps_related_test()
+-> Result<(), String> {
+    let mixed = "mod lib_proptest {\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 90 }\n}\n\n#[test]\nfn equality_boundary_discounts() {\n    let f = other_crate::discounted_total;\n    assert_eq!(lib_proptest::discounted_total(100, 100), f(100, 100));\n}\n";
+    let related = related_test_names_for_boundary_seam(mixed)?;
+    assert_eq!(related, vec!["equality_boundary_discounts".to_string()]);
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_nested_module_rival_reached_through_super_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    let nested = "mod lib_proptest {\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 90 }\n}\n\nmod inner {\n    #[test]\n    fn equality_boundary_discounts() {\n        assert_eq!(super::lib_proptest::discounted_total(100, 100), 90);\n    }\n}\n";
+    let related = related_test_names_for_boundary_seam(nested)?;
+    assert!(
+        related.is_empty(),
+        "#10855: a `super::` path to a local module rival must not relate the owner: {related:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_unrelated_nested_module_shares_the_name_then_external_call_keeps_related_test()
+-> Result<(), String> {
+    let sources = [
+        "mod unrelated {\n    mod lib_proptest {\n        pub fn helper() {}\n    }\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 1 }\n}\n\n#[test]\nfn equality_boundary_discounts() {\n    assert_eq!(lib_proptest::discounted_total(100, 100), 90);\n}\n",
+        "// mod lib_proptest { }\nfn discounted_total(_amount: i32, _threshold: i32) -> i32 { 1 }\n\n#[test]\nfn equality_boundary_discounts() {\n    assert_eq!(lib_proptest::discounted_total(100, 100), 90);\n}\n",
+        "mod unrelated {\n    pub mod lib_proptest {\n        pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 1 }\n    }\n}\n\n#[test]\nfn equality_boundary_discounts() {\n    assert_eq!(lib_proptest::discounted_total(100, 100), 90);\n}\n",
+    ];
+    for source in sources {
+        let related = related_test_names_for_boundary_seam(source)?;
+        assert_eq!(
+            related,
+            vec!["equality_boundary_discounts".to_string()],
+            "{source}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_local_module_alias_reaches_rival_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    for import in ["use local as alias;", "use self::local as alias;"] {
+        let aliased = format!(
+            "mod local {{\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 {{ 777 }}\n}}\n{import}\n\n#[test]\nfn alias_rival() {{\n    assert_eq!(alias::discounted_total(100, 100), 777);\n}}\n"
+        );
+        let related = related_test_names_for_boundary_seam(&aliased)?;
+        assert!(
+            related.is_empty(),
+            "#10855: `{import}` to a local module rival must not relate the owner: {related:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_rival_is_absent_then_nested_and_aliased_calls_keep_related_test()
+-> Result<(), String> {
+    // Positive controls for the emptiness assertions above: the same shapes
+    // without the local rival are extracted and related.
+    let nested = "mod inner {\n    #[test]\n    fn equality_boundary_discounts() {\n        assert_eq!(lib_proptest::discounted_total(100, 100), 90);\n    }\n}\n";
+    let aliased = "mod local {\n    pub fn other() -> i32 { 1 }\n}\nuse local as alias;\n\n#[test]\nfn equality_boundary_discounts() {\n    assert_eq!(alias::discounted_total(100, 100), 90);\n}\n";
+    for source in [nested, aliased] {
+        let related = related_test_names_for_boundary_seam(source)?;
+        assert_eq!(
+            related,
+            vec!["equality_boundary_discounts".to_string()],
+            "{source}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_single_line_nested_module_reaches_rival_through_super_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    let nested = "mod lib_proptest {\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 90 }\n}\n\nmod inner { #[test] fn equality_boundary_discounts() { assert_eq!(super::lib_proptest::discounted_total(100, 100), 90); } }\n";
+    let related = related_test_names_for_boundary_seam(nested)?;
+    assert!(
+        related.is_empty(),
+        "#10855: a single-line nested `super::` call to a local rival must not relate the owner: {related:?}"
+    );
+    Ok(())
+}

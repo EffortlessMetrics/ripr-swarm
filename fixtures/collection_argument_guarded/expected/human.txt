@@ -43,5 +43,7 @@ Write this test by hand: call the function, then assert the visible change the c
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
     - ./src/lib.rs:4 (weak); kind: side_effect; reason: Missing discriminator value: if x > 10
+  Hidden classes:
+    weak = tests reach it but check it only loosely
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

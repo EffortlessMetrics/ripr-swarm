@@ -51,5 +51,7 @@ Write this test by hand: call the function, then assert the visible change the c
 Hidden:
   All 1 omitted finding(s) are base-side evidence, not candidate edit targets.
     - ./src/sensors/ripr_limits.rs:137 (unrevealed); kind: call_deletion; reason: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
+  Hidden classes:
+    unrevealed = tests reach it but nothing appears to notice a change
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
