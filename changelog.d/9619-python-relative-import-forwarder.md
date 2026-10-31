@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- Python: an edit to a module constant or dict table now credits a test that reaches its reader through a sibling module's one-`return` function, bound by `from .<module> import reader` in the same regular package (`quote("gold", 3) == 30` through `return lookup(tier) * units`). Both modules must load without importing anything else, and the forwarder module must have certain bindings: nothing rebinds it or the imported name, it does not reflect, and no other file or compiled module shares its name (#9619).

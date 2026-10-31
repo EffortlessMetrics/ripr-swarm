@@ -66,7 +66,7 @@ job is called with `test-shards: 4`, so its own `rust-tests` step is skipped, th
 single `if: inputs.test-shards == 1` condition `product_gate_plan.rs` allows on
 that row. The self-hosted routes keep the unpartitioned step in their gates job.
 A partitioned run selects exactly the tests of the unpartitioned command because
-`rust-test-shards-verify` runs `cargo xtask verify-test-shards`, which fails the
+`rust-test-shards-verify` runs `xtask verify-test-shards` (the binary shard 1 built), which fails the
 hosted result unless each shard retained status 0, a run context naming this
 repository, checkout, run, attempt, profile, partition and command with
 `nextest_exit=0`, and a complete JUnit report with no failure whose testcases
