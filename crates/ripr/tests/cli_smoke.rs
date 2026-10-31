@@ -3147,25 +3147,29 @@ fn write_suppression_policy(label: &str, text: &str) -> Result<PathBuf, String> 
 }
 
 #[test]
-fn check_json_suppression_policy_marks_findings_and_adjusts_summary() -> Result<(), String> {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
+fn check_json_suppression_policy_marks_findings_and_adjusts_summary() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    let root = fixture.root().display().to_string();
+    let diff = fixture.diff().display().to_string();
     let policy = write_suppression_policy(
         "suppression-json",
         "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"crates/ripr/examples/sample/**\"\nreason = \"sample surface accepted for this smoke test\"\nowner = \"repo-owner\"\n",
     )?;
     let policy_arg = policy.display().to_string();
 
-    let output = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--json",
-        "--suppression-policy",
-        &policy_arg,
-    ]);
+    let output = fixture.execute(
+        &[
+            "check",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "--json",
+            "--suppression-policy",
+            &policy_arg,
+        ],
+        &[],
+    )?;
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -3205,24 +3209,29 @@ fn check_json_suppression_policy_marks_findings_and_adjusts_summary() -> Result<
 }
 
 #[test]
-fn check_human_suppression_policy_lists_suppressed_findings_compactly() -> Result<(), String> {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
+fn check_human_suppression_policy_lists_suppressed_findings_compactly() -> sample_output::TestResult
+{
+    let fixture = sample_output::Fixture::new()?;
+    let root = fixture.root().display().to_string();
+    let diff = fixture.diff().display().to_string();
     let policy = write_suppression_policy(
         "suppression-human",
         "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"crates/ripr/examples/sample/**\"\nreason = \"sample surface accepted for this smoke test\"\nowner = \"repo-owner\"\n",
     )?;
     let policy_arg = policy.display().to_string();
 
-    let output = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--suppression-policy",
-        &policy_arg,
-    ]);
+    let output = fixture.execute(
+        &[
+            "check",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "--suppression-policy",
+            &policy_arg,
+        ],
+        &[],
+    )?;
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -3245,20 +3254,24 @@ fn check_github_over_broad_suppression_policy_emits_denominator_notice() -> samp
 }
 
 #[test]
-fn check_suppression_policy_missing_file_fails_closed() {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
+fn check_suppression_policy_missing_file_fails_closed() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    let root = fixture.root().display().to_string();
+    let diff = fixture.diff().display().to_string();
 
-    let output = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--json",
-        "--suppression-policy",
-        "does/not/exist.toml",
-    ]);
+    let output = fixture.execute(
+        &[
+            "check",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "--json",
+            "--suppression-policy",
+            "does/not/exist.toml",
+        ],
+        &[],
+    )?;
     assert_failure(&output);
 
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -3266,6 +3279,7 @@ fn check_suppression_policy_missing_file_fails_closed() {
         stderr.contains("failed to read suppression policy"),
         "stderr: {stderr}"
     );
+    Ok(())
 }
 
 #[test]
@@ -3830,8 +3844,13 @@ fn assert_check_json_refusal(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let value: serde_json::Value = serde_json::from_str(&stdout)
         .map_err(|err| format!("refusal stdout should parse as JSON: {err}\n{stdout}"))?;
+    let expected_generation = if identity == "analysis_timeout" {
+        "0.3"
+    } else {
+        "0.2"
+    };
     for (pointer, expected) in [
-        ("/schema_version", "0.2"),
+        ("/schema_version", expected_generation),
         ("/tool", "ripr"),
         ("/analysis_scope/scope", "diff"),
         ("/analysis_scope/run_status", identity),
@@ -5197,6 +5216,196 @@ fn check_json_bound_subject_config_timeout_names_timeout_identity() -> Result<()
     Ok(())
 }
 
+/// #10796: an early analysis deadline (the diff loader still stalled) keeps
+/// the typed `analysis_timeout` identity but now renders generation 0.3 with
+/// an `input_context`: the requested committed source selection is echoed,
+/// every resolved fact is explicitly unavailable with the deadline reason,
+/// and one bounded shell-safe retry is offered. The deadline is forced by a
+/// slow-git shim under `--timeout 1`; the git deadline stays at its default
+/// so the check budget — not the git timeout — is what fires.
+#[cfg(unix)]
+#[test]
+fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery() -> Result<(), String> {
+    let root = init_check_refusal_repo("check-json-analysis-timeout", 1)?;
+    let root_arg = root.display().to_string();
+    std::fs::write(root.join("ripr.toml"), "[analysis]\nmode = \"deep\"\n")
+        .map_err(|err| format!("write configured deep mode: {err}"))?;
+    // Every git call takes 3 s; the 1 s check budget fires inside the first
+    // loader call, before any producer published (the early-timeout case).
+    let shim_dir = unique_temp_workspace("check-json-analysis-timeout-shim");
+    std::fs::create_dir_all(&shim_dir).map_err(|err| format!("create shim dir: {err}"))?;
+    let shim = shim_dir.join("git");
+    std::fs::write(&shim, "#!/bin/sh\nexec sleep 3\n")
+        .map_err(|err| format!("write git shim: {err}"))?;
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
+            .map_err(|err| format!("make git shim executable: {err}"))?;
+    }
+    let mut paths = vec![shim_dir.clone()];
+    paths.push(
+        std::path::Path::new(env!("CARGO_BIN_EXE_ripr"))
+            .parent()
+            .ok_or("ripr binary must have a parent directory")?
+            .to_path_buf(),
+    );
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let search_path = std::env::join_paths(paths)
+        .map_err(|err| format!("build shim PATH: {err}"))?
+        .to_string_lossy()
+        .into_owned();
+    let run = |extra: &[&str]| {
+        let mut args = vec!["check", "--root", root_arg.as_str(), "--base", "HEAD"];
+        args.extend_from_slice(&["--committed", "--timeout", "1"]);
+        args.extend_from_slice(extra);
+        run_command_with_env(
+            env!("CARGO_BIN_EXE_ripr"),
+            &root,
+            &args,
+            &[("PATH", search_path.as_str())],
+        )
+        .map_err(|err| format!("run check under slow git: {err}"))
+    };
+
+    let configured = run(&["--json"])?;
+    let configured_stdout = assert_machine_refusal_basics(&configured)?;
+    let configured_value: serde_json::Value = serde_json::from_str(&configured_stdout)
+        .map_err(|err| format!("configured control must parse: {err}\n{configured_stdout}"))?;
+    if configured_value
+        .pointer("/input_context/requested/analysis_mode")
+        .and_then(serde_json::Value::as_str)
+        != Some("deep")
+    {
+        return Err(format!(
+            "configuration must select deep without override: {configured_value}"
+        ));
+    }
+    let started = std::time::Instant::now();
+    let output = run(&["--json", "--mode", "draft"])?;
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(45),
+        "check waited {elapsed:?} under --timeout 1 with slow git"
+    );
+    let stdout = assert_machine_refusal_basics(&output)?;
+    let value: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|err| format!("timeout refusal must parse as JSON: {err}\n{stdout}"))?;
+    // The #6834 contract is intact at generation 0.3, and the check budget,
+    // not the git timeout, is what fired.
+    if value["analysis_scope"]["run_status"] != "analysis_timeout"
+        || value["schema_version"] != "0.3"
+        || value["findings"].as_array().map(Vec::len) != Some(0)
+        || value["summary"]["changed_rust_files"] != 0
+        || value["analysis_scope"]["downstream_consumable"] != false
+    {
+        return Err(format!("0.3 analysis_timeout refusal contract: {value}"));
+    }
+    for (pointer, expected) in [
+        ("/input_context/requested/source", "committed"),
+        ("/input_context/requested/base", "HEAD"),
+        ("/input_context/requested/analysis_mode", "draft"),
+        ("/input_context/requested/root", root_arg.as_str()),
+        ("/input_context/recovery/kind", "retry_with_larger_budget"),
+    ] {
+        let actual = value.pointer(pointer).and_then(serde_json::Value::as_str);
+        if actual != Some(expected) {
+            return Err(format!(
+                "{pointer}: expected {expected}, got {actual:?}\n{stdout}"
+            ));
+        }
+    }
+    if value.pointer("/input_context/recovery/budget_seconds") != Some(&serde_json::json!(2)) {
+        return Err(format!("recovery budget must double to 2 s: {stdout}"));
+    }
+    // Early timeout: the loader never published, so every fact names the
+    // deadline instead of reporting a value.
+    for fact in [
+        "effective_base",
+        "base_commit",
+        "merge_base",
+        "scoped_changed_files",
+        "out_of_scope_files",
+    ] {
+        let fact = &value["input_context"]["resolved"][fact];
+        if fact["available"] != false || fact["reason"] != "not_published_before_deadline" {
+            return Err(format!(
+                "{fact} must be unavailable at the deadline: {stdout}"
+            ));
+        }
+    }
+    // The bounded retry preserves the invocation authority and never
+    // broadens or disables the time limit.
+    let command = value["input_context"]["recovery"]["command"]
+        .as_str()
+        .ok_or("recovery must carry a literal command")?;
+    let root_flag = format!("--root {root_arg}");
+    for needle in [
+        "ripr check",
+        root_flag.as_str(),
+        "--base HEAD",
+        "--committed",
+        "--mode draft",
+        "--json",
+        "--timeout 2",
+    ] {
+        if !command.contains(needle) {
+            return Err(format!(
+                "recovery command must contain `{needle}`: {command}"
+            ));
+        }
+    }
+    if command.contains("--timeout 0") {
+        return Err(format!("the retry must stay bounded: {command}"));
+    }
+    let retry = run_command_with_env(
+        "/bin/sh",
+        &root,
+        &["-c", command],
+        &[("PATH", search_path.as_str())],
+    )
+    .map_err(|err| format!("run generated retry: {err}"))?;
+    let retry_stdout = assert_machine_refusal_basics(&retry)?;
+    let retry_value: serde_json::Value = serde_json::from_str(&retry_stdout)
+        .map_err(|err| format!("retry refusal must parse: {err}\n{retry_stdout}"))?;
+    if retry_value
+        .pointer("/input_context/requested/analysis_mode")
+        .and_then(serde_json::Value::as_str)
+        != Some("draft")
+    {
+        return Err(format!(
+            "generated retry must still select draft: {retry_value}"
+        ));
+    }
+    if value["input_context"]["recovery"]["rereads"]
+        .as_array()
+        .is_none_or(Vec::is_empty)
+    {
+        return Err(format!("the retry must state what it re-reads: {stdout}"));
+    }
+
+    // Native human consumers get the same recovery on stderr, with empty
+    // stdout and exit 2 preserved.
+    let human = run(&["--mode", "draft"])?;
+    let stderr = String::from_utf8_lossy(&human.stderr);
+    if human.status.code() != Some(2)
+        || !human.stdout.is_empty()
+        || !stderr.contains("analysis_timeout")
+        || !stderr.contains("bounded retry: ripr check")
+        || !stderr.contains("--timeout 2")
+        || !stderr.contains("--mode draft")
+        || !stderr.contains("not pinned")
+    {
+        return Err(format!(
+            "human timeout recovery on stderr, exit 2, empty stdout: {stderr}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&shim_dir);
+    Ok(())
+}
+
 /// #6834: the success path carries no refusal shape — no `analysis_scope`
 /// or `run_limitations` keys — so the envelope cannot be mistaken for a
 /// result and no success field moved. Byte-identity against the base
@@ -5211,13 +5420,14 @@ fn check_json_success_carries_no_refusal_shape() -> sample_output::TestResult {
 /// #5448: an invalid `RIPR_DIFF_DEPENDENT_SCOPE` names itself even when the
 /// diff has no dependent packages to narrow.
 #[test]
-fn check_rejects_an_invalid_dependent_scope_without_dependents() {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr_with_env(
+fn check_rejects_an_invalid_dependent_scope_without_dependents() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    let root = fixture.root().display().to_string();
+    let diff = fixture.diff().display().to_string();
+    let output = fixture.execute(
         &["check", "--root", &root, "--diff", &diff, "--json"],
         &[("RIPR_DIFF_DEPENDENT_SCOPE", "everything")],
-    );
+    )?;
     assert_failure(&output);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -5226,6 +5436,7 @@ fn check_rejects_an_invalid_dependent_scope_without_dependents() {
         ),
         "stderr should name the invalid override: {stderr}"
     );
+    Ok(())
 }
 
 #[test]
@@ -9537,7 +9748,8 @@ fn after_phase_redirect_scenario(
     // Build the argument vectors from the known root and seam instead of
     // splitting the printed text (a quoted root may contain spaces), and
     // check the message prints those commands with the rendered root.
-    let root_arg = root.display().to_string();
+    // The printed commands render the root with `/` separators on Windows.
+    let root_arg = rendered_path(&root.display().to_string());
     assert!(
         refusal.contains(&format!("`ripr agent status --root {root_arg}"))
             && refusal.contains(&format!("`ripr agent repair --root {root_arg}"))
@@ -10872,7 +11084,7 @@ fn agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids()
             ("--seam-id", "agent receipt requires --seam-id"),
             (
                 "--json",
-                "agent receipt requires --json (the supported output for this subcommand)",
+                "agent receipt requires --json (the supported output for this subcommand); add --json to the command",
             ),
         ] {
             let mut incomplete = Vec::new();
@@ -22598,17 +22810,21 @@ fn check_badge_command_exits_zero_even_with_nonzero_count() -> sample_output::Te
 }
 
 #[test]
-fn explain_returns_targeted_probe_details() {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr(&[
-        "explain",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250",
-    ]);
+fn explain_returns_targeted_probe_details() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    let root = fixture.root().display().to_string();
+    let diff = fixture.diff().display().to_string();
+    let output = fixture.execute(
+        &[
+            "explain",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250",
+        ],
+        &[],
+    )?;
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -22616,22 +22832,27 @@ fn explain_returns_targeted_probe_details() {
     assert!(stdout.contains("delta:  value"));
     assert!(stdout.contains("Static exposure\n  weakly_exposed"));
     assert!(stdout.contains("No exact error variant discriminator was detected"));
+    Ok(())
 }
 
 #[test]
-fn context_json_returns_probe_and_discriminator_guidance() {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr(&[
-        "context",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--at",
-        "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250",
-        "--json",
-    ]);
+fn context_json_returns_probe_and_discriminator_guidance() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    let root = fixture.root().display().to_string();
+    let diff = fixture.diff().display().to_string();
+    let output = fixture.execute(
+        &[
+            "context",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "--at",
+            "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250",
+            "--json",
+        ],
+        &[],
+    )?;
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -22642,24 +22863,30 @@ fn context_json_returns_probe_and_discriminator_guidance() {
     );
     assert!(stdout.contains(r#""discriminate": "weak""#));
     assert!(stdout.contains(r#""missing""#));
+    Ok(())
 }
 
 #[test]
-fn explain_unknown_probe_fails_with_clear_error() {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr(&[
-        "explain",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "probe:missing:0:not_real",
-    ]);
+fn explain_unknown_probe_fails_with_clear_error() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    let root = fixture.root().display().to_string();
+    let diff = fixture.diff().display().to_string();
+    let output = fixture.execute(
+        &[
+            "explain",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "probe:missing:0:not_real",
+        ],
+        &[],
+    )?;
     assert!(!output.status.success());
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("no finding matched"));
+    Ok(())
 }
 
 // -------- check-artifact reuse smoke (RIPR-SPEC-0140, #2107) --------
@@ -22838,9 +23065,10 @@ fn run_ripr_copy(binary: &Path, args: &[&str]) -> Result<Output, String> {
 /// Every identity mismatch class fails closed with a typed error naming the
 /// mismatched field — never a silent recompute.
 #[test]
-fn explain_from_fails_closed_on_tampered_identity() -> Result<(), String> {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
+fn explain_from_fails_closed_on_tampered_identity() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    let root = fixture.root().display().to_string();
+    let diff = fixture.diff().display().to_string();
     let dir = unique_temp_workspace("check-artifact-tamper");
     std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
     let artifact = dir.join("last-check.json");
@@ -22851,7 +23079,7 @@ fn explain_from_fails_closed_on_tampered_identity() -> Result<(), String> {
     // with this test's identity observations (#11197).
     let binary = stable_ripr_copy(&dir)?;
 
-    let result = (|| {
+    let result = (|| -> Result<(), String> {
         let check = run_ripr_copy(
             &binary,
             &[
@@ -22870,6 +23098,7 @@ fn explain_from_fails_closed_on_tampered_identity() -> Result<(), String> {
 
         // Mode mismatch (tampered recording).
         let tampered = original.replace("\"mode\": \"draft\"", "\"mode\": \"ready\"");
+        assert_ne!(tampered, original, "mode mutation must change the artifact");
         std::fs::write(&artifact, &tampered).map_err(|err| format!("write: {err}"))?;
         let output = run_ripr_copy(
             &binary,
@@ -22926,6 +23155,7 @@ fn explain_from_fails_closed_on_tampered_identity() -> Result<(), String> {
 
         // Unsupported schema version.
         let stale = original.replace("ripr-check-artifact-v1", "ripr-check-artifact-v0");
+        assert_ne!(stale, original, "schema mutation must change the artifact");
         std::fs::write(&artifact, &stale).map_err(|err| format!("write: {err}"))?;
         let output = run_ripr_copy(
             &binary,
@@ -22949,7 +23179,7 @@ fn explain_from_fails_closed_on_tampered_identity() -> Result<(), String> {
         // override: a different --diff than the recording fails closed.
         std::fs::write(&artifact, &original).map_err(|err| format!("write: {err}"))?;
         let other_diff = dir.join("other.diff");
-        std::fs::copy(sample_diff(), &other_diff).map_err(|err| format!("copy: {err}"))?;
+        std::fs::copy(fixture.diff(), &other_diff).map_err(|err| format!("copy: {err}"))?;
         let other_diff_arg = other_diff.display().to_string();
         let output = run_ripr_copy(
             &binary,
@@ -22973,7 +23203,8 @@ fn explain_from_fails_closed_on_tampered_identity() -> Result<(), String> {
         Ok(())
     })();
     ignore_remove_dir_all(&dir);
-    result
+    result?;
+    Ok(())
 }
 
 /// `--write-artifact` fails closed with a named limitation for run shapes
@@ -23234,9 +23465,10 @@ fn explain_from_consumes_artifact_written_with_non_default_mode() -> Result<(), 
 /// same flag (byte-identical) and fails closed naming
 /// `analysis_options.include_unchanged_tests` without it.
 #[test]
-fn context_from_consumes_artifact_written_with_no_unchanged_tests() -> Result<(), String> {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
+fn context_from_consumes_artifact_written_with_no_unchanged_tests() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    let root = fixture.root().display().to_string();
+    let diff = fixture.diff().display().to_string();
     let dir = unique_temp_workspace("check-artifact-unchanged");
     std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
     let artifact = dir.join("no-unchanged.json");
