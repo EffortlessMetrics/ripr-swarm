@@ -2780,17 +2780,37 @@ pub(in crate::analysis) fn test_calls_only_through_local_rival_module(
     let Some(facts) = index.files().get(&test.file) else {
         return false;
     };
-    let qualifiers = call_qualifiers(&test.body, &owner.name);
-    !qualifiers.is_empty()
-        && qualifiers.iter().all(|qualifier| {
-            qualifier
-                .as_ref()
-                .and_then(|segments| segments.first())
-                .is_some_and(|first| {
-                    !matches!(first.as_str(), "crate" | "self" | "super" | "Self")
-                        && mentions_word(&facts.data().source, &format!("mod {first}"))
-                })
+    let source = &facts.data().source;
+    let integration_crate = under_tests_dir(&test.file);
+    let through_local_module = |qualifier: &Option<Vec<String>>| {
+        let Some(segments) = qualifier else {
+            return false;
+        };
+        // `self::` stays in the test file's module; `crate::` is that file only
+        // for an integration-test crate root.
+        let mut rest = segments.as_slice();
+        while let Some((first, tail)) = rest.split_first() {
+            if first == "self" || (first == "crate" && integration_crate) {
+                rest = tail;
+            } else {
+                break;
+            }
+        }
+        rest.first().is_some_and(|first| {
+            !matches!(first.as_str(), "crate" | "self" | "super" | "Self")
+                && mentions_word(source, &format!("mod {first}"))
         })
+    };
+    // The owner used as a value (`let f = memory_fixture::name;`) is no call,
+    // so a value mention outside the local module may still reach the owner.
+    if !value_mentions(&test.body, &owner.name)
+        .iter()
+        .all(through_local_module)
+    {
+        return false;
+    }
+    let qualifiers = call_qualifiers(&test.body, &owner.name);
+    !qualifiers.is_empty() && qualifiers.iter().all(through_local_module)
 }
 
 /// The spelled module path of every mention of `name` in `body` that is no

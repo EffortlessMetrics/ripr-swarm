@@ -21002,3 +21002,28 @@ fn given_integration_test_when_no_local_module_shadows_then_owner_keeps_related_
     assert_eq!(related, vec!["equality_boundary_discounts".to_string()]);
     Ok(())
 }
+
+#[test]
+fn given_integration_test_when_keyword_path_reaches_local_module_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    for prefix in ["crate::", "self::"] {
+        let shadow = format!(
+            "mod lib_proptest {{\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 {{ 90 }}\n}}\n\n#[test]\nfn equality_boundary_discounts() {{\n    assert_eq!({prefix}lib_proptest::discounted_total(100, 100), 90);\n}}\n"
+        );
+        let related = related_test_names_for_boundary_seam(&shadow)?;
+        assert!(
+            related.is_empty(),
+            "#10855: `{prefix}` path to a local module rival must not relate the owner: {related:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_local_call_and_library_value_then_owner_keeps_related_test()
+-> Result<(), String> {
+    let mixed = "mod lib_proptest {\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 90 }\n}\n\n#[test]\nfn equality_boundary_discounts() {\n    let f = other_crate::discounted_total;\n    assert_eq!(lib_proptest::discounted_total(100, 100), f(100, 100));\n}\n";
+    let related = related_test_names_for_boundary_seam(mixed)?;
+    assert_eq!(related, vec!["equality_boundary_discounts".to_string()]);
+    Ok(())
+}
