@@ -298,7 +298,10 @@ official SDK transport:
     paths the findings consumed while the inventory reads the whole
     analyzable Rust corpus, any dirty, untracked or gitignored Rust-routed path (a
     `.rs` file, including a helper or test outside the findings scope) also
-    withholds when there are Rust findings; if that list cannot be
+    withholds when there are Rust findings (gitignored files only outside the
+    directories the discovery walk never enters: `target`, `.git`, `.ripr`,
+    `.direnv`, `fixtures`, `node_modules`, so a built Cargo project keeps its
+    cards); if that list cannot be
     established the refresh withholds. A dirty non-Rust file (README, `.py`)
     does not withhold Rust cards, and with no findings no custody claim is
     made. Withholding refuses `ripr_get_repair_card` with

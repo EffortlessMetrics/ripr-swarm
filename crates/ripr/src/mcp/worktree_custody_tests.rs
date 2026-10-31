@@ -853,11 +853,28 @@ fn committed_refresh_over_gitignored_rust_file_withholds() -> Result<(), String>
     write(
         &fixture.root,
         ".gitignore",
-        "/target/\n/.ripr/\n/ignored/\n",
+        "/target/\n/.ripr/\n/ignored/\n/node_modules/\n/.direnv/\n",
     )?;
     commit(&fixture.root, "ignore a directory")?;
+    // A built Cargo project: Cargo's build-script output layout (observed from
+    // a real `cargo build` of a build.rs crate) plus the other directories the
+    // discovery walk never enters. None of it is read by the inventory, so none
+    // of it may withhold the card.
+    write(
+        &fixture.root,
+        "target/CACHEDIR.TAG",
+        "Signature: 8a477f597d28d172789f06886806bc55\n",
+    )?;
+    for built in [
+        "target/debug/build/custody-fixture-0123abcd/out/gen.rs",
+        "target/debug/examples/ex.rs",
+        "node_modules/pkg/vendored.rs",
+        ".direnv/cache.rs",
+    ] {
+        write(&fixture.root, built, "pub fn built() -> i32 {\n    1\n}\n")?;
+    }
     assert_serves_card(committed_refresh(&fixture.root)?, &fixture.root)
-        .map_err(|error| format!("clean control: {error}"))?;
+        .map_err(|error| format!("a built Cargo project must keep its card: {error}"))?;
     write(
         &fixture.root,
         "ignored/gen.rs",

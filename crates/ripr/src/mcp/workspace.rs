@@ -2219,8 +2219,17 @@ fn dirty_rust_routed_paths(root: &Path) -> Result<Vec<String>, String> {
     let mut paths = overlay.dirty_source_paths();
     paths.extend(overlay.untracked_source_paths());
     // Workspace discovery does not apply `.gitignore`, so the inventory can
-    // read a gitignored Rust file the committed findings never analyzed.
-    paths.extend(overlay.ignored_source_paths());
+    // read a gitignored Rust file the committed findings never analyzed. It
+    // never enters `target`, `.git`, `.ripr`, `.direnv`, `fixtures` or
+    // `node_modules` (the discovery walk's one skip predicate), so ignored
+    // files below those directories (Cargo build output, vendored JS) are not
+    // read and must not withhold a built Cargo project's cards.
+    paths.extend(
+        overlay
+            .ignored_source_paths()
+            .into_iter()
+            .filter(|path| !crate::analysis::path_enters_ignored_dir(path)),
+    );
     paths.retain(|path| {
         crate::analysis::language::route(Path::new(path)) == Some(crate::domain::LanguageId::Rust)
     });
