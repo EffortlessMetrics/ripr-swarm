@@ -9,9 +9,13 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 mod command_diagnostic;
+#[cfg(all(test, target_os = "linux"))]
+mod test_session;
 pub(crate) use command_diagnostic::{
     CommandDiagnostic, DISCLOSURE as COMMAND_DIAGNOSTIC_DISCLOSURE,
 };
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) use test_session::enter_test_session;
 
 /// Grace period for draining stdout/stderr pipes after a process-group kill.
 ///
@@ -710,13 +714,76 @@ fn capture_output_sampled(
     sample_rss: bool,
     error_context: &str,
 ) -> Result<(TimedOutput, Option<u64>), String> {
+    capture_output_sampled_owned(
+        program,
+        args,
+        cwd,
+        envs,
+        deadline,
+        CaptureMode::Platform { sample_rss },
+        error_context,
+    )
+}
+
+/// The reexecuted test must call `enter_test_session` before launching work.
+/// This is a cooperative test boundary, not containment of hostile programs
+/// that deliberately create further sessions.
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) fn capture_isolated_test(
+    program: &str,
+    args: &[String],
+    cwd: Option<&Path>,
+    envs: &[(&str, &str)],
+    timeout: Duration,
+    error_context: &str,
+) -> Result<MeasuredOutput, String> {
+    let (output, peak_rss_bytes) = capture_output_sampled_owned(
+        program,
+        args,
+        cwd,
+        envs,
+        &mut CaptureDeadline::FromStart(&Some(timeout)),
+        CaptureMode::TestSession,
+        error_context,
+    )?;
+    Ok(MeasuredOutput {
+        output,
+        peak_rss_bytes,
+    })
+}
+
+#[derive(Clone, Copy)]
+enum CaptureMode {
+    Platform {
+        sample_rss: bool,
+    },
+    #[cfg(all(test, target_os = "linux"))]
+    TestSession,
+}
+
+fn capture_output_sampled_owned(
+    program: &str,
+    args: &[String],
+    cwd: Option<&Path>,
+    envs: &[(&str, &str)],
+    deadline: &mut CaptureDeadline<'_>,
+    mode: CaptureMode,
+    error_context: &str,
+) -> Result<(TimedOutput, Option<u64>), String> {
     let started = Instant::now();
+    let (sample_rss, isolated_test) = match mode {
+        CaptureMode::Platform { sample_rss } => (sample_rss, false),
+        #[cfg(all(test, target_os = "linux"))]
+        CaptureMode::TestSession => (true, true),
+    };
     let mut command = Command::new(program);
     command.args(args);
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
     }
-    configure_timed_child_command(&mut command);
+    if !isolated_test {
+        configure_timed_child_command(&mut command);
+    }
     for (name, value) in envs {
         command.env(name, value);
     }
@@ -728,6 +795,8 @@ fn capture_output_sampled(
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = OwnedProcess::spawn(command)
         .map_err(|err| format!("failed to run {error_context}: {err}"))?;
+    #[cfg(all(test, target_os = "linux"))]
+    let mut session = isolated_test.then(|| test_session::TestSession::new(child.id()));
     let stdout = child
         .stdout_pipe()
         .take()
@@ -749,6 +818,13 @@ fn capture_output_sampled(
         spawn_stream_reader_channel(stderr)
     };
 
+    #[cfg(all(test, target_os = "linux"))]
+    let wait_outcome = if let Some(session) = session.as_mut() {
+        session.wait(&mut child, started, deadline, sample_rss, error_context)?
+    } else {
+        wait_for_child_sampled(&mut child, started, deadline, sample_rss, error_context)?
+    };
+    #[cfg(not(all(test, target_os = "linux")))]
     let wait_outcome =
         wait_for_child_sampled(&mut child, started, deadline, sample_rss, error_context)?;
 
