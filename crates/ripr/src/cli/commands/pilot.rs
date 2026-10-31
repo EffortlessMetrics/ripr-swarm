@@ -736,7 +736,7 @@ fn elapsed_ms(started: Instant) -> u64 {
 /// sink is terminal-once, so a timed-out attempt (or its #2424 retry)
 /// needs a fresh one from `pilot_progress_sink`.
 fn pilot_progress_sink(quiet: bool) -> Option<Arc<CliProgressSink>> {
-    if quiet {
+    if crate::cli::progress::progress_silenced(quiet) {
         return None;
     }
     Some(Arc::new(CliProgressSink::for_stderr(
