@@ -2792,6 +2792,7 @@ dependencies = [
  "repo-policy",
  "ripr",
  "roxmltree",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",

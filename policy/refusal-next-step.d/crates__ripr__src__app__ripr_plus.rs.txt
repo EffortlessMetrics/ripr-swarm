@@ -1,0 +1,19 @@
+crates/ripr/src/app/ripr_plus.rs|JSON is missing numerical field {} .
+crates/ripr/src/app/ripr_plus.rs|RIPR+ receipt must be an object
+crates/ripr/src/app/ripr_plus.rs|RIPR+ receipt warnings must be an array
+crates/ripr/src/app/ripr_plus.rs|failed to create parent dir for {label}: {err}
+crates/ripr/src/app/ripr_plus.rs|failed to determine working directory: {err} failed to create parent dir for {label}: {err}
+crates/ripr/src/app/ripr_plus.rs|failed to parse native badge JSON: {err}
+crates/ripr/src/app/ripr_plus.rs|failed to parse repo-exposure-summary-json: {err}
+crates/ripr/src/app/ripr_plus.rs|failed to read gap ledger {}: {err}
+crates/ripr/src/app/ripr_plus.rs|failed to read {}: {err}
+crates/ripr/src/app/ripr_plus.rs|failed to remove stale {RIPR_PLUS_LAST_GOOD_MD}: {err}
+crates/ripr/src/app/ripr_plus.rs|failed to serialize ripr-plus receipt: {err}
+crates/ripr/src/app/ripr_plus.rs|failed to write {label}: {err}
+crates/ripr/src/app/ripr_plus.rs|plus requires either --repo-exposure-summary or --gap-ledger failed to read gap ledger {}: {err}
+crates/ripr/src/app/ripr_plus.rs|plus {flag} requires a non-empty path
+crates/ripr/src/app/ripr_plus.rs|plus {flag} requires a path
+crates/ripr/src/app/ripr_plus.rs|repo-exposure-summary-json is missing top_files array
+crates/ripr/src/app/ripr_plus.rs|ripr plus requires repo-badge-json with canonical actionable or gap decision ledger basis, got {:?}
+crates/ripr/src/app/ripr_plus.rs|ripr plus requires repo-exposure-summary-json with canonical_actionable_gap basis, got {basis:?}
+crates/ripr/src/app/ripr_plus.rs|ripr plus requires repo-exposure-summary-json, got {summary_format:?}

@@ -646,7 +646,13 @@ pub(crate) fn stub_route_for_finding(
         };
     // #10683: `agent stub` refuses a weak-oracle boundary seam (an existing
     // test already reaches it); never advertise a stub command it will refuse.
-    if resolution.weak_oracle_guidance.is_none() {
+    // #8547: the guidance producer only accepts PredicateBoundary. The
+    // --kind resolver above selects that same mapped seam kind, so other
+    // families cannot gain this pointer from a full-workspace inventory.
+    // Keep the explicit stub command's lookup: it also discloses grip class.
+    if resolution.weak_oracle_guidance.is_none()
+        && analysis::seam_kind_for_probe_family(kind) == Some(SeamKind::PredicateBoundary)
+    {
         resolution.weak_oracle_guidance =
             inventory_entry_facts(root, config, &file, &resolution.seam_id)
                 .and_then(|(_, guidance)| guidance);
@@ -3023,3 +3029,7 @@ impl Size {
         Ok(())
     }
 }
+
+#[cfg(all(test, feature = "lang-rust"))]
+#[path = "test_stub_inventory_tests.rs"]
+mod inventory_lookup_tests;

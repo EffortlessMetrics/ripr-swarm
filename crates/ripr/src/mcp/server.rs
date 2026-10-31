@@ -169,7 +169,7 @@ impl McpServer {
                 "retry with ripr_refresh",
             )),
         };
-        let document = {
+        let (document, attempt_failed) = {
             let mut session = session.lock().await;
             session.in_flight = false;
             attempt.disarm();
@@ -184,14 +184,20 @@ impl McpServer {
                     session.last_failure = Some(failure);
                 }
             }
-            workspace::refresh_document(&session)
+            (
+                workspace::refresh_document(&session),
+                session.last_failure.is_some(),
+            )
         };
-        self.bounded_tool_result(
+        // A failed attempt is not a success: `isError` says so while the
+        // document keeps the typed failure and the last-known-good pointer.
+        self.bounded_tool_result_flagged(
             document,
             workspace::REFRESH_SCHEMA_VERSION,
             "serialize refresh result",
             workspace::RECOVERY_REFRESH_TOO_LARGE,
             max_envelope_bytes,
+            attempt_failed,
         )
     }
 
@@ -348,13 +354,20 @@ impl McpServer {
             requested.as_deref(),
             self.root_identity.as_deref(),
         ) {
-            Ok(document) => self.bounded_tool_result(
-                document,
-                repair::REPAIR_PACKET_SCHEMA_VERSION,
-                "serialize repair packet",
-                workspace::RECOVERY_REPAIR_TOO_LARGE,
-                max_envelope_bytes,
-            ),
+            Ok(document) => {
+                // A refused item created no transaction: say so with
+                // `isError`, the same convention `ripr_get_repair_card`
+                // already uses for the same condition.
+                let refused = document.get("repair_packet_ready") == Some(&Value::Bool(false));
+                self.bounded_tool_result_flagged(
+                    document,
+                    repair::REPAIR_PACKET_SCHEMA_VERSION,
+                    "serialize repair packet",
+                    workspace::RECOVERY_REPAIR_TOO_LARGE,
+                    max_envelope_bytes,
+                    refused,
+                )
+            }
             Err(failure) => self.typed_failure(failure, repair::REPAIR_PACKET_SCHEMA_VERSION),
         }
     }
@@ -653,18 +666,44 @@ impl McpServer {
         recovery: &str,
         max_envelope_bytes: usize,
     ) -> Result<CallToolResponse, ErrorData> {
-        let envelope =
-            match protocol::tool_result_with(document, max_envelope_bytes, self.text_mode) {
-                Ok(envelope) => envelope,
-                Err(detail) => {
-                    let failure = workspace::AttemptFailure::new(
-                        workspace::CODE_RESULT_TOO_LARGE,
-                        format!("{serialize_context}: {detail}"),
-                        recovery,
-                    );
-                    return self.typed_failure(failure, failure_version);
-                }
-            };
+        self.bounded_tool_result_flagged(
+            document,
+            failure_version,
+            serialize_context,
+            recovery,
+            max_envelope_bytes,
+            false,
+        )
+    }
+
+    /// [`Self::bounded_tool_result`] with an explicit `isError`: a refused
+    /// repair or a failed refresh keeps its typed document but is not a
+    /// success on the wire.
+    fn bounded_tool_result_flagged(
+        &self,
+        document: Value,
+        failure_version: &'static str,
+        serialize_context: &'static str,
+        recovery: &str,
+        max_envelope_bytes: usize,
+        is_error: bool,
+    ) -> Result<CallToolResponse, ErrorData> {
+        let envelope = match protocol::tool_result_flagged(
+            document,
+            max_envelope_bytes,
+            self.text_mode,
+            is_error,
+        ) {
+            Ok(envelope) => envelope,
+            Err(detail) => {
+                let failure = workspace::AttemptFailure::new(
+                    workspace::CODE_RESULT_TOO_LARGE,
+                    format!("{serialize_context}: {detail}"),
+                    recovery,
+                );
+                return self.typed_failure(failure, failure_version);
+            }
+        };
         self.bounded_tool_envelope(
             envelope,
             failure_version,
