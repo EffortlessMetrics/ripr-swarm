@@ -27,9 +27,10 @@ The TypeScript preview adapter:
 - Fails the packet closed through the shared validator:
   `repair_packet_ready: false` and no `typescript_repair_packet`
 - The default human Start-here line says the packet is not ready and leads
-  with the remedy, `derive an input where `amount == threshold` holds`, before
-  the cause (boundary operand `threshold` is not bound by the observed call
-  input `discount(50, 100)`), so the line budget never cuts the remedy
+  with the remedy (`derive an input where `amount == threshold` holds before
+  this repair can be handed to an agent`), then the cause: boundary operand
+  `threshold` is not bound by the observed call input `discount(50, 100)`. The
+  line budget cuts the cause, never the remedy
 
 ## Must Not
 
