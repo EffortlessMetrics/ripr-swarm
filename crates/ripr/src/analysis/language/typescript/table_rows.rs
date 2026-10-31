@@ -370,9 +370,13 @@ pub(crate) fn reparse_row_assertions(
         let [Statement::ExpressionStatement(statement)] = ret.program.body.as_slice() else {
             return None;
         };
-        let statements = match statement.expression.get_inner_expression() {
-            Expression::ArrowFunctionExpression(arrow) => &arrow.body.statements,
-            Expression::FunctionExpression(function) => &function.body.as_ref()?.statements,
+        let (statements, expression_body) = match statement.expression.get_inner_expression() {
+            Expression::ArrowFunctionExpression(arrow) => {
+                (&arrow.body.statements, arrow.expression)
+            }
+            Expression::FunctionExpression(function) => {
+                (&function.body.as_ref()?.statements, false)
+            }
             _ => return None,
         };
         return Some(collect_callback_assertions(
@@ -381,6 +385,7 @@ pub(crate) fn reparse_row_assertions(
             None,
             bindings,
             returns_to_runner,
+            expression_body,
         ));
     }
     None

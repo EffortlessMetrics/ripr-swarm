@@ -155,6 +155,7 @@ pub(crate) fn collect_expect_assertions_in_statements(
         source,
         receiver,
         &TypeScriptAssertionBindings::default(),
+        false,
     )
 }
 
@@ -166,8 +167,16 @@ pub(crate) fn collect_assertions_in_statements_with_bindings(
     source: &SourceText<'_>,
     receiver: Option<&str>,
     bindings: &TypeScriptAssertionBindings,
+    expression_body: bool,
 ) -> Vec<TypeScriptAssertion> {
-    collect_callback_assertions(statements, source, receiver, bindings, true)
+    collect_callback_assertions(
+        statements,
+        source,
+        receiver,
+        bindings,
+        true,
+        expression_body,
+    )
 }
 
 /// Like [`collect_assertions_in_statements_with_bindings`] for a callback
@@ -180,6 +189,7 @@ pub(crate) fn collect_callback_assertions(
     receiver: Option<&str>,
     bindings: &TypeScriptAssertionBindings,
     returns_to_runner: bool,
+    expression_body: bool,
 ) -> Vec<TypeScriptAssertion> {
     let literal_consts = loose_literal_consts(statements, source);
     let match_object_consts = match_object_consts(statements, source);
@@ -198,6 +208,7 @@ pub(crate) fn collect_callback_assertions(
             identifier_occurrences(text, name) == receiver_method_call_occurrences(text, name)
         }),
         returned_to_runner: false,
+        expression_body,
         table_consts: &table_consts,
     };
     let mut out = Vec::new();
@@ -337,6 +348,7 @@ pub(crate) fn statements_collect_assertion_probe(
         receiver_named_once: false,
         receiver_only_called: false,
         returned_to_runner: false,
+        expression_body: false,
         table_consts: &[],
     };
     let mut probe = Vec::new();
@@ -376,6 +388,10 @@ pub(crate) struct AssertionContext<'a> {
     /// Whether the expression under inspection is a `return` argument the
     /// test runner awaits.
     returned_to_runner: bool,
+    /// Whether this is the single implicit-return statement of an
+    /// expression-bodied arrow (`() => expect(p).resolves.toBe(x)`), whose
+    /// value the runner awaits. Empty (`false`) inside a nested statement.
+    expression_body: bool,
     /// The test body's top-level literal table `const`s a `for...of` loop may
     /// read (RIPR-SPEC-0243 rule 11). Empty inside a nested statement.
     table_consts: &'a [TableConst],
@@ -387,6 +403,7 @@ impl<'a> AssertionContext<'a> {
     fn returning(&self) -> AssertionContext<'a> {
         AssertionContext {
             returned_to_runner: self.returns_to_runner,
+            expression_body: false,
             literal_consts: self.literal_consts,
             match_object_consts: self.match_object_consts,
             table_consts: self.table_consts,
@@ -406,6 +423,7 @@ impl<'a> AssertionContext<'a> {
             receiver_named_once: self.receiver_named_once,
             receiver_only_called: self.receiver_only_called,
             returned_to_runner: false,
+            expression_body: false,
             table_consts: &[],
         }
     }
@@ -467,6 +485,13 @@ pub(crate) fn collect_expect_assertions_in_statement(
             collect_expect_assertions_from_statement_vec(&block.body, source, &nested, out);
         }
         Statement::ExpressionStatement(expr_stmt) => {
+            // A floating `expect(p).resolves.toBe(x)` / `.rejects.toThrow()`
+            // statement (no `await`, no `return`) leaves its promise to
+            // settle after the test body ends, so its failure cannot fail the
+            // test: no discriminator (fail closed, like a floating `.then`).
+            if !context.expression_body && is_floating_promise_assertion(&expr_stmt.expression) {
+                return;
+            }
             if let Some(mut assertion) =
                 assertion_from_expression_any(&expr_stmt.expression, source, context)
             {
@@ -632,6 +657,22 @@ pub(crate) fn collect_expect_assertions_in_statement(
         }
         _ => {}
     }
+}
+
+/// An un-awaited `expect(...).resolves...` / `.rejects...` assertion
+/// expression statement. `await expect(...)` (also parenthesised) is the
+/// evident awaiting; a `return` argument and an expression-bodied arrow are
+/// handled by the callers. `void expect(...)` is not a call expression and
+/// never reaches the assertion reader.
+fn is_floating_promise_assertion(expr: &Expression<'_>) -> bool {
+    let Expression::CallExpression(call) = expr.get_inner_expression() else {
+        return false;
+    };
+    let Some(member) = call.callee.as_member_expression() else {
+        return false;
+    };
+    expect_assertion_chain(member.object().get_inner_expression())
+        .is_some_and(|(_, async_modifier, _)| async_modifier.is_some())
 }
 
 /// Jump targets open while walking a finalizer, so a `break`/`continue` that
@@ -960,6 +1001,7 @@ fn collect_nested_callback_assertions(
                 receiver_named_once: false,
                 receiver_only_called: false,
                 returned_to_runner: false,
+                expression_body: false,
                 table_consts: &table_consts,
             };
             collect_expect_assertions_from_statement_vec(statements, source, &subtest, out);
