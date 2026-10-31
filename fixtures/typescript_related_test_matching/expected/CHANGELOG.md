@@ -733,3 +733,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_related_test_matching (31)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless typescript_related_test_matching --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

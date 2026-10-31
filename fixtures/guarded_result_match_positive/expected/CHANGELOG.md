@@ -335,3 +335,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — guarded_result_match_positive (28)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless guarded_result_match_positive --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

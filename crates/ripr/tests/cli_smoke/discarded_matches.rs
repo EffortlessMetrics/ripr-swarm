@@ -324,10 +324,11 @@ fn bind_advisory_transition(expected: &[u8], actual: &[u8]) -> Vec<u8> {
 fn normalize_moved_repair_advisories(bytes: &[u8]) -> (Vec<u8>, usize) {
     // The hash-bound captures keep the earlier spellings; the live producer
     // prints the plain-language one (#10692).
-    const NO_BINDING: [&str; 3] = [
+    const NO_BINDING: [&str; 4] = [
         "  no repair start offered: no seam in the finding's file binds this finding;",
         "  no repair start offered: ripr found no seam in this finding's file to bind it to,",
         "  no repair start offered: ripr found no repairable spot in this finding's file to bind it to,",
+        "  no repair start offered: ripr found no spot in this finding's file to bind it to,",
     ];
     const EXPOSED_ADVISORY: &str = "  no repair start offered: nothing to repair here; the related tests already notice this change (exposed)";
     const COUNTED_START: &str = "  no repair start offered: ripr found ";
@@ -338,9 +339,16 @@ fn normalize_moved_repair_advisories(bytes: &[u8]) -> (Vec<u8>, usize) {
             let digits = rest.chars().take_while(char::is_ascii_digit).count();
             let after = &rest[digits..];
             digits > 0
-                && [" seam", " seams", " repairable spot", " repairable spots"]
-                    .iter()
-                    .any(|noun| after.starts_with(&format!("{noun}{COUNTED_REST}")))
+                && [
+                    " seam",
+                    " seams",
+                    " repairable spot",
+                    " repairable spots",
+                    " spot",
+                    " spots",
+                ]
+                .iter()
+                .any(|noun| after.starts_with(&format!("{noun}{COUNTED_REST}")))
         })
     };
     const OLD_NOT_READY: &str =

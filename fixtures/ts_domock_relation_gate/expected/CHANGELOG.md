@@ -336,3 +336,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_domock_relation_gate (29)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless ts_domock_relation_gate --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

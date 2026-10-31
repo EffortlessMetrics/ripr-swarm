@@ -443,3 +443,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — scanner_controls (37)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless scanner_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -91,12 +91,12 @@ Environment variables:
                                  the budget and write all gaps (may produce very large files).
                                  When the budget is applied, both artifacts include a
                                  limitations[] disclosure naming the env var and a repair route.
-  RIPR_REPO_EXPOSURE_SEAM_LIMIT Maximum gaps analyzed and ranked in one pilot run.
+  RIPR_REPO_EXPOSURE_SEAM_LIMIT Maximum spots analyzed and ranked in one pilot run.
                                  Default: the pilot gap budget (2000), so pilot does not
                                  classify gaps it would not rank; `ripr check` keeps 10000.
-                                 Set to 0 to analyze every gap. When the
+                                 Set to 0 to analyze every spot. When the
                                  limit cuts the ranking, the terminal and summary state
-                                 "ranked N of M gaps" and actionable gap totals become
+                                 the summary reports how many spots were ranked, and actionable totals become
                                  lower bounds until you raise or remove the limit.
   RIPR_GIT_TIMEOUT              Cooperative deadline in seconds for each git invocation
                                  in the current-change discovery path, exactly as `ripr

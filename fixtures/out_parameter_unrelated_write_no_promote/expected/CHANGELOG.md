@@ -107,3 +107,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — out_parameter_unrelated_write_no_promote (10)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless out_parameter_unrelated_write_no_promote --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

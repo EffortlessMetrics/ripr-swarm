@@ -313,3 +313,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_reexport_barrel_other_name (27)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless typescript_reexport_barrel_other_name --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

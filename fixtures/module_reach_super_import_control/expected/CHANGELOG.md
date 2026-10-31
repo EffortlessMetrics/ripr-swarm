@@ -111,3 +111,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_super_import_control (9)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

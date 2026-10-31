@@ -533,3 +533,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — plain_diff_multifile_boundary (29)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless plain_diff_multifile_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

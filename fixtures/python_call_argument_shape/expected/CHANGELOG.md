@@ -696,3 +696,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_call_argument_shape (30)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless python_call_argument_shape --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

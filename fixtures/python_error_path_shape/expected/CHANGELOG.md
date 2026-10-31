@@ -696,3 +696,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_error_path_shape (30)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless python_error_path_shape --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

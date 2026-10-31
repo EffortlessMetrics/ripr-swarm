@@ -708,3 +708,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_unittest_basic (30)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless python_unittest_basic --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -696,3 +696,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_mock_assert_called (30)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless python_mock_assert_called --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -456,3 +456,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — binding_predicate_equality_boundary (31)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless binding_predicate_equality_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

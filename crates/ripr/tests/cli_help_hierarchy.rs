@@ -30,6 +30,19 @@ fn run_ripr_in(
 }
 
 #[test]
+fn pilot_help_describes_limit_summary_without_inventing_a_quote() -> Result<(), String> {
+    let output = run_ripr(&["help", "pilot"])?;
+    assert!(output.status.success(), "{output:?}");
+    let help = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        help.contains("the summary reports how many spots were ranked"),
+        "{help}"
+    );
+    assert!(!help.contains("ranked N of M gaps"), "{help}");
+    Ok(())
+}
+
+#[test]
 fn init_ci_provider_errors_recover_near_misses() -> Result<(), String> {
     for (value, suggestion) in [
         ("githb", " Did you mean `github`?"),

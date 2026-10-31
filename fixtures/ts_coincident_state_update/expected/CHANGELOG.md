@@ -71,3 +71,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_coincident_state_update (7)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless ts_coincident_state_update --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

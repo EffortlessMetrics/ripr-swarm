@@ -478,3 +478,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — propagate_value_returned (41)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless propagate_value_returned --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

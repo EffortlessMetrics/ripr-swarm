@@ -720,3 +720,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_pytest_raises (30)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless python_pytest_raises --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

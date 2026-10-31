@@ -1583,10 +1583,12 @@ const REPAIR_REFUSAL_RULES: &[RefusalRule] = &[
     // openings stay listed so retained captures that still carry them mask
     // the same way.
     rule("ripr found no repairable spot in this finding's file to bind it to"),
+    rule("ripr found no spot in this finding's file to bind it to"),
     rule("several gaps bind this finding"),
     rule("the gap inventory behind `ripr repair`"),
     rule("the limit on how many gaps ripr analyzes left"),
     rule("classifying the finding's repairable spots failed"),
+    rule("classifying the finding's spots failed"),
     rule("ripr cannot build a repair packet for this finding yet because the static evidence"),
     RefusalRule {
         prefix: "ripr cannot build a repair packet for this finding yet because it is still missing: ",
@@ -1692,7 +1694,11 @@ fn normalize_seam_count(body: &str) -> Option<String> {
     let after = &rest[digits..];
     let after = after
         .strip_prefix(" seams")
-        .or_else(|| after.strip_prefix(" seam"))?;
+        .or_else(|| after.strip_prefix(" seam"))
+        .or_else(|| after.strip_prefix(" repairable spots"))
+        .or_else(|| after.strip_prefix(" repairable spot"))
+        .or_else(|| after.strip_prefix(" spots"))
+        .or_else(|| after.strip_prefix(" spot"))?;
     after.strip_prefix(
         " in this finding's file, but could not tie one to this finding's changed line",
     )?;

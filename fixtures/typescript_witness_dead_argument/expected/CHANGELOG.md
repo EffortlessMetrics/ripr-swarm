@@ -410,3 +410,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_witness_dead_argument (35)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless typescript_witness_dead_argument --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

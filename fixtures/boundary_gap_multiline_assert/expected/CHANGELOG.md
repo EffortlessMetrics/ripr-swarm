@@ -551,3 +551,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — boundary_gap_multiline_assert (26)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless boundary_gap_multiline_assert --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

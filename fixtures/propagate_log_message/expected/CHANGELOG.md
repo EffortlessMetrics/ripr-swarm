@@ -407,3 +407,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — propagate_log_message (25)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless propagate_log_message --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

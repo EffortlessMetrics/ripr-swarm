@@ -697,3 +697,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_dynamic_dispatch_limit (29)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless python_dynamic_dispatch_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

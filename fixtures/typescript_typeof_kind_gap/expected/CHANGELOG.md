@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_typeof_kind_gap (3)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless typescript_typeof_kind_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

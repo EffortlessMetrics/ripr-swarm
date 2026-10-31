@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — undeclared_target_glob_public_call (3)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless undeclared_target_glob_public_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

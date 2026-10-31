@@ -71,3 +71,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_nonliteral_loop_test (7)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless typescript_nonliteral_loop_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

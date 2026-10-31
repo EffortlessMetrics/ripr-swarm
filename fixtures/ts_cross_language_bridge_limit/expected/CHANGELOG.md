@@ -566,3 +566,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_cross_language_bridge_limit (29)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless ts_cross_language_bridge_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

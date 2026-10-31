@@ -757,3 +757,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_parametrize_basic (32)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless python_parametrize_basic --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

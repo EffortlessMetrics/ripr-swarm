@@ -371,3 +371,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — infection_expected_value_literal (31)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless infection_expected_value_literal --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

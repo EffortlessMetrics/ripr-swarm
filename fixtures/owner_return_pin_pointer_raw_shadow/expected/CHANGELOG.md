@@ -127,3 +127,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_pointer_raw_shadow (11)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless owner_return_pin_pointer_raw_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

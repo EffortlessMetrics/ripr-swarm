@@ -70,3 +70,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — inherent_receiver_async_operand_helper (7)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless inherent_receiver_async_operand_helper --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -337,3 +337,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_mock_forms_owner_module (29)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless ts_mock_forms_owner_module --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

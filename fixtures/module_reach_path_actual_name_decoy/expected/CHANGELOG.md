@@ -130,3 +130,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_path_actual_name_decoy (10)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless module_reach_path_actual_name_decoy --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

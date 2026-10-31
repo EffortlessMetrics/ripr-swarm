@@ -94,3 +94,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — same_crate_trait_impl_same_leaf_doctest_control (8)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless same_crate_trait_impl_same_leaf_doctest_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

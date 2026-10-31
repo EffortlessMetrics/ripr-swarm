@@ -465,3 +465,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — observation_unverified_return_value (40)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless observation_unverified_return_value --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

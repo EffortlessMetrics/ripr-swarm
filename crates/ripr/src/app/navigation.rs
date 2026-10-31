@@ -203,7 +203,7 @@ impl RepairRouteRefusal {
                  read; fix the ripr.toml error at the root, then rerun `ripr check`"
                 .to_string(),
             Self::ClassificationFailed => format!(
-                "no repair start offered: classifying the finding's repairable spots failed; \
+                "no repair start offered: classifying the finding's spots failed; \
                  `{full_gate_command}` may print the underlying error"
             ),
             Self::SeamLimit => {
@@ -213,7 +213,7 @@ impl RepairRouteRefusal {
                 )
             }
             Self::NoBindingSeam { seams_in_file: 0 } => {
-                "no repair start offered: ripr found no repairable spot in this \
+                "no repair start offered: ripr found no spot in this \
                  finding's file to bind it to, so there is nothing to start a repair from; \
                  follow the Next step above"
                     .to_string()
@@ -222,11 +222,7 @@ impl RepairRouteRefusal {
                 "no repair start offered: ripr found {seams_in_file} {} in this finding's \
                  file, but could not tie one to this finding's changed line, so it cannot pick one \
                  for you; `ripr pilot` lists them, or follow the Next step above",
-                if *seams_in_file == 1 {
-                    "repairable spot"
-                } else {
-                    "repairable spots"
-                }
+                if *seams_in_file == 1 { "spot" } else { "spots" }
             ),
             Self::FindingAlreadyExposed => "no repair start offered: nothing to repair here; \
                  the related tests already notice this change (exposed)"
@@ -958,7 +954,7 @@ mod tests {
         let unbound = RepairRouteRefusal::NoBindingSeam { seams_in_file: 0 }.advisory(gate);
         assert_eq!(
             unbound,
-            "no repair start offered: ripr found no repairable spot in this finding's file to \
+            "no repair start offered: ripr found no spot in this finding's file to \
              bind it to, so there is nothing to start a repair from; follow the Next step above"
         );
         assert!(
@@ -968,15 +964,15 @@ mod tests {
         // #10702: seams exist in the file, so the advisory must not claim there are none.
         let counted = RepairRouteRefusal::NoBindingSeam { seams_in_file: 3 }.advisory(gate);
         assert!(
-            counted.contains("found 3 repairable spots in this finding's file")
-                && !counted.contains("no repairable spot in this finding's file")
-                && !counted.contains("found no repairable spot"),
+            counted.contains("found 3 spots in this finding's file")
+                && !counted.contains("no spot in this finding's file")
+                && !counted.contains("found no spot"),
             "{counted}"
         );
         let one = RepairRouteRefusal::NoBindingSeam { seams_in_file: 1 }.advisory(gate);
         assert_eq!(
             one,
-            "no repair start offered: ripr found 1 repairable spot in this finding's file, but could not \
+            "no repair start offered: ripr found 1 spot in this finding's file, but could not \
              tie one to this finding's changed line, so it cannot pick one for you; `ripr \
              pilot` lists them, or follow the Next step above"
         );
@@ -1004,7 +1000,7 @@ mod tests {
         );
         let classification = RepairRouteRefusal::ClassificationFailed.advisory(gate);
         assert!(
-            classification.contains("classifying the finding's repairable spots failed")
+            classification.contains("classifying the finding's spots failed")
                 && classification.contains(&format!("`{gate}` may print the underlying error"))
                 && !classification.contains("full gate's answer"),
             "classification refusal must say what the gate yields: {classification}"

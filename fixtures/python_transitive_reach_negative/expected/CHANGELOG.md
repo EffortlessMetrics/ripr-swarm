@@ -240,3 +240,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_transitive_reach_negative (21)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless python_transitive_reach_negative --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

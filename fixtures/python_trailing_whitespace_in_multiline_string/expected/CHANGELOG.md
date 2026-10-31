@@ -34,3 +34,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_trailing_whitespace_in_multiline_string (4)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless python_trailing_whitespace_in_multiline_string --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

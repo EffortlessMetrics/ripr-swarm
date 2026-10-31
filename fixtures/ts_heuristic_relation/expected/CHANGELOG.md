@@ -577,3 +577,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_heuristic_relation (34)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless ts_heuristic_relation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

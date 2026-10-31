@@ -142,3 +142,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_local_module_self_import (11)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless module_reach_local_module_self_import --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
