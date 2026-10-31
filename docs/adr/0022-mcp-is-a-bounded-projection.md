@@ -50,7 +50,8 @@ The first slice:
 - validates and canonicalizes the selected repository root, then emits only a
   hashed host-local root identity rather than an absolute path;
 - detects `ripr.toml` but does not load project-local configuration through the
-  transport;
+  transport (historical for this slice; refresh honors it since #6825, see
+  "Analysis-configuration loading (#6825)" below);
 - declares no source-edit, verification-execution, mutation-execution, or model
   provider authority;
 - bounds request and response bytes and keeps stdout protocol-only; and

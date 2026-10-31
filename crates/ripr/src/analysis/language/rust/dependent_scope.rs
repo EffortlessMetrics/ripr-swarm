@@ -695,7 +695,17 @@ pub(super) fn admit_dependents(
     // main index then counts twice, which a union absorbs.
     let mut withheld_macro_bindings = classify::WithheldMacroBindings::default();
     let mut bindings_saturated = false;
+    // File names spelled by `#[path]`/`include!` compositions, `"*"` for one
+    // with no readable literal: a composed withheld binary's macros reach
+    // the composing crate (#10191).
+    let mut composed_names = BTreeSet::new();
+    for file in &admitted {
+        if let Some(bytes) = read_source(root, file)? {
+            note_composed_names(&bytes, &mut composed_names);
+        }
+    }
     let drop_ins = crate::analysis::facts::drop_in::DropInManifests::new(root);
+    let members = crate::analysis::facts::member_crates::MemberCrates::new(root);
     // A package nested under a changed one relates like the owner's own, so
     // it is read first: its local empty macros join the query.
     let mut query = query.clone();
@@ -715,6 +725,7 @@ pub(super) fn admit_dependents(
                     .extend(crate::analysis::syntax::local_empty_macro_names(&source));
             }
             query.note_trait_receivers(&source);
+            note_composed_names(&bytes, &mut composed_names);
             admitted.push(file.clone());
         }
     }
@@ -741,6 +752,7 @@ pub(super) fn admit_dependents(
             consumed.record(file, bytes.as_deref());
             // No content to index: the full selection skips it too.
             if let Some(bytes) = bytes {
+                note_composed_names(&bytes, &mut composed_names);
                 batch_bytes = batch_bytes.saturating_add(bytes.len());
                 loaded.push((file, bytes));
             }
@@ -774,11 +786,12 @@ pub(super) fn admit_dependents(
                     tokens.insert_scanned(id, file_tokens);
                     withheld.push((*file).clone());
                     if !bindings_saturated {
-                        bindings_saturated = withheld_macro_bindings.absorb(
+                        bindings_saturated = withheld_macro_bindings.absorb_with_members(
                             file,
                             &String::from_utf8_lossy(bytes),
                             &query.package_names,
                             &drop_ins,
+                            &members,
                         );
                     }
                 }
@@ -800,6 +813,7 @@ pub(super) fn admit_dependents(
             }
         }
     }
+    withheld_macro_bindings.widen_composed(&composed_names);
     admitted.sort();
     admitted.dedup();
     let main_files = crate::analysis::workspace::with_module_context_files(all_files, admitted);
@@ -1452,6 +1466,30 @@ fn composes_modules(bytes: &[u8]) -> bool {
     })
 }
 
+/// The `.rs` file names a composing file spells, or `"*"` when it composes
+/// modules without spelling one.
+fn note_composed_names(bytes: &[u8], names: &mut BTreeSet<String>) {
+    if !composes_modules(bytes) {
+        return;
+    }
+    let text = String::from_utf8_lossy(bytes);
+    let mut spelled = false;
+    // Every quote-delimited segment is read, not only the odd ones: an
+    // earlier unpaired quote (an escaped quote in a string or comment) flips
+    // parity, and a skipped real literal would leave a composed binary
+    // confined. A code segment that happens to end in `.rs` only widens.
+    for literal in text.split('"') {
+        if let Some(name) = literal.strip_suffix(".rs") {
+            let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
+            names.insert(format!("{base}.rs"));
+            spelled = true;
+        }
+    }
+    if !spelled {
+        names.insert("*".to_string());
+    }
+}
+
 fn identifier_tokens(text: &str) -> impl Iterator<Item = String> + '_ {
     identifier_runs(text.as_bytes()).map(|run| String::from_utf8_lossy(run).into_owned())
 }
@@ -1478,6 +1516,16 @@ thread_local! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An earlier unpaired quote must not hide a real `#[path]` literal.
+    #[test]
+    fn composed_names_survive_an_unpaired_quote_before_the_path_literal() {
+        let source = b"// it\"s\n#[path = \"../fuzz/parse.rs\"]\nmod shadow;\nconst X: &str = \"other.rs\";\n";
+        let mut names = BTreeSet::new();
+        note_composed_names(source, &mut names);
+        assert!(names.contains("parse.rs"), "{names:?}");
+        assert!(!names.contains("*"), "{names:?}");
+    }
 
     /// The seed scan reads the main index once per scope, and for every
     /// owner (ASCII, Unicode, absent) it finds the macros the old per-owner
