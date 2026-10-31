@@ -43,5 +43,7 @@ Write a test for it:
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
     - ./src/lib.rs:11 (unrevealed); kind: error_path; reason: Missing discriminator value: CalcError::TooLarge
+  Hidden classes:
+    unrevealed = tests reach it but nothing appears to notice a change
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
