@@ -10404,6 +10404,12 @@ id = "RIPR-SPEC-0120"
 name = "rust macro-wrapped assertion limitation"
 spec = "docs/specs/RIPR-SPEC-0120-rust-macro-wrapped-assertion-limitation.md"
 tests = [
+  "crates/ripr/tests/local_snapshot_helper_limit.rs::nested_expected_macro_keeps_the_local_helper_limit",
+  "crates/ripr/tests/local_snapshot_helper_limit.rs::helper_and_expected_names_cannot_supply_exposed_credit",
+  "crates/ripr/tests/local_snapshot_helper_limit.rs::only_owner_calls_outside_nested_macro_inputs_supply_the_limit",
+  "crates/ripr/tests/local_snapshot_helper_limit.rs::a_literal_expected_operand_retains_its_existing_limit",
+  "crates/ripr/tests/local_snapshot_helper_limit.rs::complete_proximity_evidence_survives_the_display_cap",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::complete_proximity_scope_rejects_a_hidden_direct_or_refused_oracle",
   "crates/ripr/src/analysis/language/rust/oracles.rs::tests::macro_wrapped_assertion_limit_names_reachable_unobserved_assertion_macro",
   "crates/ripr/tests/local_macro_assertion_limit.rs::a_local_wrapper_beside_a_proximity_oracle_reads_as_the_macro_limit",
   "crates/ripr/tests/local_macro_assertion_limit.rs::a_wrapper_with_no_local_definition_is_not_credited_or_limited",
@@ -12352,6 +12358,7 @@ id = "RIPR-SPEC-0159"
 name = "Bounded helper-call transfer"
 spec = "docs/specs/RIPR-SPEC-0159-bounded-helper-transfer.md"
 tests = [
+  "crates/ripr/tests/concat_literal_return.rs",
   "crates/ripr/tests/pub_api_method_entry_reach.rs",
   "crates/ripr/tests/helper_wrapper_reach.rs::qualified_helper_effect_keeps_reach_without_propagation",
   "crates/ripr/tests/helper_wrapper_reach.rs::qualified_hop_above_a_tested_method_keeps_the_lower_forwarder",

@@ -3962,7 +3962,12 @@ pub(crate) fn normalized_relative_import_module(
     // (`require('..')`, #4546) exactly like `./` and `../` prefixes do.
     if is_relative_specifier(source) {
         // Standard relative resolution.
-        let mut parts = normalized_path(test_file.parent().unwrap_or_else(|| Path::new("")))
+        // An absolute test file keeps its leading `/` (#4207), matching the
+        // alias branch and `normalized_module_path`, so both sides of a
+        // module comparison spell the same file identically.
+        let parent_path = normalized_path(test_file.parent().unwrap_or_else(|| Path::new("")));
+        let absolute = parent_path.starts_with('/');
+        let mut parts = parent_path
             .split('/')
             .filter(|part| !part.is_empty() && *part != ".")
             .map(ToString::to_string)
@@ -3983,8 +3988,10 @@ pub(crate) fn normalized_relative_import_module(
         // Directory resolution only for an extensionless specifier whose
         // join stayed inside the workspace root; otherwise the historical
         // lexical module is kept.
+        // An absolute join is not workspace-relative, so root probes are skipped.
         if let Some(root) = workspace_root
             && !escaped_root
+            && !absolute
             && module == joined
             && let Some(resolved) = resolve_directory_module(root, &module)
         {
@@ -3997,6 +4004,7 @@ pub(crate) fn normalized_relative_import_module(
         // directory, or a symlink to something else (#4800 review).
         if let Some(root) = workspace_root
             && !escaped_root
+            && !absolute
             && let Some(out_dir_map) = out_dir_map_for(root)
             && out_dir_map.contains(&joined)
             && std::fs::symlink_metadata(root.join(&joined)).is_err()
@@ -4005,7 +4013,11 @@ pub(crate) fn normalized_relative_import_module(
         {
             return Some(source_module);
         }
-        return Some(module);
+        return Some(if absolute {
+            format!("/{module}")
+        } else {
+            module
+        });
     }
 
     // Non-relative specifier — consult alias map if available.
@@ -5669,6 +5681,41 @@ mod module_extension_tests {
                     "{source} from {test_file} resolved to {resolved}, not the {owner_file} owner module {EXPECTED}"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    /// #4207: an absolute test file keeps its leading `/` on the relative
+    /// branch, so it matches an absolute owner module identity exactly as the
+    /// alias branch and `normalized_module_path` spell it. A different absolute
+    /// module still resolves to a different identity, so a negative assertion
+    /// cannot pass vacuously because the two sides can never be equal.
+    #[test]
+    fn normalized_relative_import_module_keeps_leading_slash_for_absolute_inputs()
+    -> Result<(), String> {
+        let resolved = normalized_relative_import_module(
+            Path::new("/ws/pkg/tests/cart.test.mts"),
+            "../src/cart.mjs",
+            None,
+            None,
+        )
+        .ok_or("absolute relative import must resolve")?;
+        if resolved != "/ws/pkg/src/cart" {
+            return Err(format!("expected /ws/pkg/src/cart, got {resolved}"));
+        }
+        let owner = normalized_module_path(Path::new("/ws/pkg/src/cart.mts"));
+        if resolved != owner {
+            return Err(format!("{resolved} must equal owner module {owner}"));
+        }
+        let other = normalized_relative_import_module(
+            Path::new("/ws/pkg/tests/cart.test.mts"),
+            "../src/basket.mjs",
+            None,
+            None,
+        )
+        .ok_or("absolute relative import must resolve")?;
+        if other == owner {
+            return Err("a different module must not equal the owner".to_string());
         }
         Ok(())
     }
