@@ -171,10 +171,10 @@ fn no_ancestor_manifest(root: &Path) -> bool {
         return false;
     };
     root.ancestors().skip(1).all(|ancestor| {
-        match std::fs::symlink_metadata(ancestor.join("Cargo.toml")) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
-            _ => false,
-        }
+        matches!(
+            std::fs::symlink_metadata(ancestor.join("Cargo.toml")),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound
+        )
     })
 }
 
