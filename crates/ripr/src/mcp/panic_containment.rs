@@ -42,7 +42,11 @@ impl<F: Future> ContainPanic<F> {
 /// `.await` consumes the adapter and answers the typed failure. Tokio mutexes
 /// do not poison and release their guard on unwind, so the shared session
 /// stays usable; state the handler wrote before the panic persists, and a
-/// later call proceeds on it.
+/// later call proceeds on it, so a handler that mutates session state across a
+/// possible panic point must order its writes so every intermediate state is
+/// valid. The only mutating tool handler is `ripr_prepare_repair`; it records
+/// the `superseded` tombstones before evicting stale transactions and inserts
+/// the new transaction last, with a fault-injection control at each step.
 impl<F: Future> Future for ContainPanic<F> {
     type Output = Result<F::Output, Panicked>;
 
