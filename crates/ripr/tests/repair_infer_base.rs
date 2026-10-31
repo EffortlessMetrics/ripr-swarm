@@ -237,6 +237,20 @@ fn offered_starts(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// The seam id of the `ripr repair <id>` start listed right after the line
+/// that names `location` in a selection list.
+fn start_offered_for(text: &str, location: &str) -> Option<String> {
+    let mut lines = text.lines();
+    while let Some(line) = lines.next() {
+        if line.contains(location)
+            && let Some(next) = lines.next()
+        {
+            return offered_starts(next).into_iter().next();
+        }
+    }
+    None
+}
+
 fn check_says_nothing_to_repair(repo: &Repo, args: &[&str]) -> Result<(), String> {
     let check = repo.ripr(args)?;
     assert!(
@@ -298,7 +312,7 @@ fn a_spot_outside_the_changed_lines_is_not_offered_as_the_start() -> Result<(), 
     on_default.assert_changed_paths(Form::OnDefaultBranch, "src/lib.rs")?;
     let unscoped = on_default.ripr(&["repair", "--root", "."])?;
     assert!(
-        unscoped.contains(" visible seams under ") && unscoped.contains("repair route not ready"),
+        unscoped.contains("ripr looked at ") && unscoped.contains("repair route not ready"),
         "control: with nothing to scope by, repair lists the repository's spots:\n{unscoped}"
     );
 
@@ -330,7 +344,7 @@ fn no_resolvable_base_keeps_the_unscoped_list_and_says_so() -> Result<(), String
     // by the plain statement that nothing could be scoped.
     let repair = repo.ripr(&["repair", "--root", "."])?;
     assert!(
-        repair.contains(" visible seams under ")
+        repair.contains("ripr looked at ")
             && repair.contains("repair route not ready")
             && repair.contains("could not tell which lines you changed"),
         "no base means no narrowing:\n{repair}"
@@ -433,7 +447,16 @@ fn an_explicit_base_narrows_a_selection_to_the_changed_spot() -> Result<(), Stri
             && wide.contains("src/lib.rs:5"),
         "control: unscoped, both spots are offered:\n{wide}"
     );
+    let changed_spot = start_offered_for(&wide, "src/lib.rs:5")
+        .ok_or_else(|| format!("the unscoped list must offer the changed spot:\n{wide}"))?;
+    let other_spot = start_offered_for(&wide, "src/lib.rs:2")
+        .ok_or_else(|| format!("the unscoped list must offer the other spot:\n{wide}"))?;
     let narrow = repo.ripr(&["repair", "--root", ".", "--base", "HEAD~1"])?;
+    assert!(
+        narrow.contains(&format!("for seam `{changed_spot}`")),
+        "the one start must be the changed spot's seam:\n{narrow}"
+    );
+    assert!(!narrow.contains(&other_spot), "{narrow}");
     assert!(
         !narrow.contains("different repairs") && !narrow.contains("src/lib.rs:2"),
         "the spot outside the changed line must not be offered or started:\n{narrow}"

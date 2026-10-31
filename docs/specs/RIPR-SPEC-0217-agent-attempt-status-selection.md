@@ -143,6 +143,12 @@ receipt strength, and currentness as separate facts:
   a second verdict on the change (#11111). Every listed refusal reason names
   the seam it is about, with or without a diff; identical reasons on several
   seams are listed once with the first seam and a count.
+  When the diff touches seams and every spot on the changed lines is already
+  gripped (a `return Err(V)` wrapper of a gripped error variant counts as the
+  same behavior), the refusal says only that; it intentionally omits the
+  blocked-outside and eligible-outside hints, which would argue with
+  `ripr check`'s "nothing to repair". A gripped spot beside an open finding on
+  the change is counted as a different check, never cited as its verdict.
 
 - That diff's base is inferred the way a bare `ripr check` infers it, through
   the shared base resolver (#11246), so a change committed on a branch scopes

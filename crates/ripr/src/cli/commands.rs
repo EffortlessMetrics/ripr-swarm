@@ -6362,6 +6362,12 @@ language = "rust"
                     .to_string()
             )
         );
+        // #11146: an empty mode is named as empty (not as an unknown value
+        // `""`) and says how to publish nothing.
+        assert_eq!(
+            parse_pr_comments_plan_options(&args(&["--mode", ""])),
+            Err("pr-comments plan mode is empty; expected `off`, `plan`, or `inline` (leave `--mode` out, or pass `off`, to publish no comments)".to_string())
+        );
         assert_eq!(
             parse_pr_comments_plan_options(&args(&["--pr-guidance", ""])),
             Err("pr-comments plan --pr-guidance requires a non-empty value".to_string())

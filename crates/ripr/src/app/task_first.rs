@@ -226,10 +226,7 @@ fn repair_refusal(
             if reason == RepairPacketIneligibility::ClassNotHeadlineEligible
                 && entry.class == crate::analysis::seams::SeamGripClass::StronglyGripped
             {
-                (
-                    RefusalKind::AlreadyGripped,
-                    "its existing tests already grip it (exposed) on current static evidence, so no static gap remains to repair in this seam (this is the whole-seam view of `ripr repair`; `ripr check` judges your changed lines)".to_string(),
-                )
+                (RefusalKind::AlreadyGripped, GRIPPED_SPOT_REASON.to_string())
             } else if reason == RepairPacketIneligibility::RouteNotReady {
                 // Name the evidence the route still needs, not just the gate
                 // verdict: "repair route not ready" alone sends the reader
@@ -248,7 +245,12 @@ fn repair_refusal(
                 // #10644: the refusal reads on a human surface, so name each
                 // missing fact in plain words; the machine readiness strings
                 // behind it stay internal.
-                let label = route_not_ready_reason(entry, label, &eligibility.readiness.missing_evidence, root);
+                let label = route_not_ready_reason(
+                    entry,
+                    label,
+                    &eligibility.readiness.missing_evidence,
+                    root,
+                );
                 (RefusalKind::RouteNotReady, label)
             } else {
                 (RefusalKind::Other, label.to_string())
@@ -361,12 +363,12 @@ pub(super) fn humanize_route_evidence(evidence: &str) -> String {
 }
 
 fn ineligibility_label(reason: RepairPacketIneligibility) -> &'static str {
-    // Sentence-style labels: these render directly in "none repair-eligible
-    // (...)" lists and refusal notes, so an internal-enum spelling reads as a
+    // Sentence-style labels: these render directly in "none is ready for an
+    // automatic repair (...)" lists and refusal notes, so an internal-enum spelling reads as a
     // bug to the user (#9604).
     match reason {
         RepairPacketIneligibility::ClassNotHeadlineEligible => {
-            "ripr does not start a repair for a seam in this state"
+            "ripr does not start an automatic repair for this kind of finding"
         }
         RepairPacketIneligibility::CrossLanguageOracleVisibilityUnresolved => {
             "ripr cannot resolve which external-language observer would notice this seam"
@@ -444,8 +446,6 @@ pub(crate) fn resolve_repair_start(
     let bound = bound_root(&root.to_string_lossy());
     let mut eligible_ids = Vec::new();
     let mut candidate_notes: Vec<RepairCandidateNote> = Vec::new();
-    let mut refusal_reasons: Vec<String> = Vec::new();
-    let mut gripped_reasons: Vec<String> = Vec::new();
     // #11111: the gate judges whole seams, not the change. When the diff a
     // bare `ripr check` would read is available, a seam the diff does not
     // touch says nothing about the change: an already-gripped one is counted,
@@ -469,93 +469,154 @@ pub(crate) fn resolve_repair_start(
         Some(ChangeScope::TouchesNoSeam(_)) => true,
         None => false,
     };
-    let mut gripped_off_change = 0usize;
+    // The shared gate runs once per seam; the wrapper match and the loop below
+    // both read these results.
+    let refusals: Vec<_> = classified
+        .iter()
+        .map(|entry| (entry, repair_refusal(entry, policy, Some(root))))
+        .collect();
+    let gripped_siblings: Vec<&crate::analysis::ClassifiedSeam> = refusals
+        .iter()
+        .filter(|(_, refusal)| matches!(refusal, Some((RefusalKind::AlreadyGripped, _))))
+        .map(|(entry, _)| *entry)
+        .collect();
+    // For each gripped refusal: whether the spot is outside the change, and why.
+    let mut gripped_reasons: Vec<(bool, String)> = Vec::new();
     let mut eligible_off_change = 0usize;
     let mut blocked_off_change = 0usize;
+    let mut open_on_change = 0usize;
     // Distinct refusal reasons in first-seen order, each with the first seam
     // that has it and how many seams share it.
     let mut blocked_groups: Vec<(String, String, usize)> = Vec::new();
-    for entry in &classified {
-        match repair_refusal(entry, policy, Some(root)) {
-            None if off_change(entry) => eligible_off_change += 1,
+    for (entry, refusal) in &refusals {
+        let off = off_change(entry);
+        match refusal {
+            None if off => eligible_off_change += 1,
             None => {
                 eligible_ids.push(entry.seam.id().as_str().to_string());
                 candidate_notes.push(describe_candidate(entry, &bound));
             }
-            // An already-gripped reason names its seam, so "exposed" is
-            // never read as the verdict on a different changed line; it is
-            // listed after the reasons that can still name work.
+            // An already-gripped reason names its own spot, so it is never
+            // read as the verdict on a different changed line.
             Some((RefusalKind::AlreadyGripped, reason)) => {
-                if off_change(entry) {
-                    gripped_off_change += 1;
-                } else {
-                    gripped_reasons.push(format!("{}: {reason}", seam_label(entry)));
-                }
+                gripped_reasons.push((off, format!("{}: {reason}", seam_label(entry))));
+            }
+            // A `return Err(V)` wrapper of an error variant that is already
+            // gripped is the same behavior, not an open check of its own. It
+            // is classified before any off-change blocked counting.
+            Some(_) if wraps_gripped_error_variant(entry, &gripped_siblings) => {
+                gripped_reasons.push((
+                    off,
+                    format!("{}: {GRIPPED_WRAPPER_REASON}", seam_label(entry)),
+                ));
             }
             // A seam the diff does not touch says nothing about the change
             // (#11111 group 4): its "not ready" or "no gap here" reason is
             // counted, not listed beside the verdict on the changed seam.
-            Some(_) if off_change(entry) => blocked_off_change += 1,
+            Some(_) if off => blocked_off_change += 1,
             // Name the shared gate's own reason among the no-eligible
             // reasons so the limitation is diagnosable, with the seam it
             // is about, so two reasons about two seams never read as two
             // verdicts on one change.
-            Some((_, reason)) => match blocked_groups.iter_mut().find(|group| group.0 == reason) {
-                Some(group) => group.2 += 1,
-                None => blocked_groups.push((reason, seam_label(entry), 1)),
-            },
+            Some((_, reason)) => {
+                open_on_change += 1;
+                match blocked_groups.iter_mut().find(|group| group.0 == *reason) {
+                    Some(group) => group.2 += 1,
+                    None => blocked_groups.push((reason.clone(), seam_label(entry), 1)),
+                }
+            }
         }
     }
-    for (reason, label, count) in blocked_groups {
-        let mut text = format!("{label}: {reason}");
-        if count > 1 {
-            text.push_str(&format!(
-                " (and {} other seams in the same state)",
-                count - 1
+    let gripped_on_change = gripped_reasons.iter().filter(|(off, _)| !off).count();
+    let mut refusal_reasons: Vec<String> = Vec::new();
+    if matches!(scope, Some(ChangeScope::TouchesSeams(_)))
+        && gripped_on_change > 0
+        && open_on_change == 0
+    {
+        // Every spot on the changed lines is already gripped: say only that.
+        // A missing-evidence or test-layout demand about code the change
+        // never touched would contradict `ripr check`'s "nothing to repair".
+        refusal_reasons.extend(
+            gripped_reasons
+                .into_iter()
+                .filter(|(off, _)| !off)
+                .map(|(_, reason)| reason),
+        );
+    } else {
+        for (reason, label, count) in blocked_groups {
+            let mut text = format!("{label}: {reason}");
+            if count > 1 {
+                text.push_str(&format!(
+                    " (and {} other seams in the same state)",
+                    count - 1
+                ));
+            }
+            refusal_reasons.push(text);
+        }
+        let mut gripped_off_change = 0usize;
+        let mut gripped_other_check = 0usize;
+        for (off, reason) in gripped_reasons {
+            if scope.is_none() {
+                // Without the diff, the reason names its own spot only.
+                refusal_reasons.push(reason);
+            } else if off {
+                gripped_off_change += 1;
+            } else {
+                // The change still has an open finding: a gripped spot on the
+                // same lines is a different check, never the verdict on it.
+                gripped_other_check += 1;
+            }
+        }
+        if eligible_off_change > 0 {
+            let (noun, verb) = if eligible_off_change == 1 {
+                ("spot", "is")
+            } else {
+                ("spots", "are")
+            };
+            let lead = match &scope {
+                Some(ChangeScope::TouchesNoSeam(lines)) => format!(
+                    "your changed lines ({lines}) touch no code ripr can start a repair on, the same as `ripr check`; "
+                ),
+                _ => String::new(),
+            };
+            refusal_reasons.insert(
+                0,
+                format!(
+                    "{lead}{eligible_off_change} repairable {noun} outside your changed lines {verb} not offered, since repairing {} would not address your change (to repair one anyway, pass its id: `ripr repair <seam-id>`)",
+                    if eligible_off_change == 1 { "it" } else { "them" }
+                ),
+            );
+        }
+        if blocked_off_change > 0 {
+            let noun = if blocked_off_change == 1 {
+                "spot outside your changed lines cannot start a repair either and is"
+            } else {
+                "spots outside your changed lines cannot start a repair either and are"
+            };
+            refusal_reasons.push(format!(
+                "{blocked_off_change} {noun} not listed, since that says nothing about your change"
             ));
         }
-        refusal_reasons.push(text);
-    }
-    refusal_reasons.extend(gripped_reasons);
-    if blocked_off_change > 0 {
-        let noun = if blocked_off_change == 1 {
-            "seam outside your changed lines cannot start a repair either and is"
-        } else {
-            "seams outside your changed lines cannot start a repair either and are"
-        };
-        refusal_reasons.push(format!(
-            "{blocked_off_change} {noun} not listed, since that says nothing about your change"
-        ));
-    }
-    if eligible_off_change > 0 {
-        let (noun, verb) = if eligible_off_change == 1 {
-            ("seam", "is")
-        } else {
-            ("seams", "are")
-        };
-        let lead = match &scope {
-            Some(ChangeScope::TouchesNoSeam(lines)) => format!(
-                "your changed lines ({lines}) touch no seam ripr can start a repair on, the same as `ripr check`; "
-            ),
-            _ => String::new(),
-        };
-        refusal_reasons.insert(
-            0,
-            format!(
-                "{lead}{eligible_off_change} repairable {noun} outside your changed lines {verb} not offered, since repairing {} would not address your change (to repair one anyway, pass its id: `ripr repair <seam-id>`)",
-                if eligible_off_change == 1 { "it" } else { "them" }
-            ),
-        );
-    }
-    if gripped_off_change > 0 {
-        let noun = if gripped_off_change == 1 {
-            "seam outside your changed lines is"
-        } else {
-            "seams outside your changed lines are"
-        };
-        refusal_reasons.push(format!(
-            "{gripped_off_change} {noun} already gripped by existing tests and not listed, since that says nothing about your change"
-        ));
+        if gripped_off_change > 0 {
+            let noun = if gripped_off_change == 1 {
+                "spot outside your changed lines is"
+            } else {
+                "spots outside your changed lines are"
+            };
+            refusal_reasons.push(format!(
+                "{gripped_off_change} {noun} already noticed by existing tests and not listed, since that says nothing about your change"
+            ));
+        }
+        if gripped_other_check > 0 {
+            let noun = if gripped_other_check == 1 {
+                "part of your changed lines is"
+            } else {
+                "parts of your changed lines are"
+            };
+            refusal_reasons.push(format!(
+                "{gripped_other_check} other {noun} already noticed by existing tests, but that is a different check than the one still open, so it does not mean the open one is covered"
+            ));
+        }
     }
     // #11246: inference only narrows. When no changed line could be read, the
     // spots above are not scoped to the change, and the text says so first
@@ -581,6 +642,55 @@ pub(crate) fn resolve_repair_start(
         candidate_notes: &candidate_notes,
         start_spec: spec.as_ref(),
     })
+}
+
+/// Why an already-gripped spot needs no repair, naming its limits.
+const GRIPPED_SPOT_REASON: &str = "existing tests already grip it, so there is no gap to repair at this spot; this speaks only to this spot, not to what you changed (`ripr check` judges your changed lines)";
+
+/// Why a wrapper that restates a gripped error variant needs no repair. It
+/// is inferred from the same-line match, so it does not claim the engine
+/// classified the wrapper itself as gripped.
+const GRIPPED_WRAPPER_REASON: &str = "this line restates behavior the existing tests already grip (its error value), so it adds no separate gap to repair; this speaks only to this spot, not to what you changed (`ripr check` judges your changed lines)";
+
+/// The facts the wrapper match compares for one seam.
+struct SeamKey<'a> {
+    kind: crate::analysis::seams::SeamKind,
+    file: &'a Path,
+    line: usize,
+    expression: &'a str,
+}
+
+fn seam_key(entry: &crate::analysis::ClassifiedSeam) -> SeamKey<'_> {
+    SeamKey {
+        kind: entry.seam.kind(),
+        file: entry.seam.file(),
+        line: entry.seam.display_line(),
+        expression: entry.seam.expression(),
+    }
+}
+
+/// Whether `entry` is the return-value seam of `return <expression>;` where
+/// `<expression>` is an error-variant seam in `gripped` on the same line: the
+/// wrapper restates that gripped behavior, so it adds no open check. Same file,
+/// same line and an exact expression match; nothing looser.
+fn wraps_gripped_error_variant(
+    entry: &crate::analysis::ClassifiedSeam,
+    gripped: &[&crate::analysis::ClassifiedSeam],
+) -> bool {
+    let entry = seam_key(entry);
+    gripped
+        .iter()
+        .any(|other| restates_error_variant(&entry, &seam_key(other)))
+}
+
+fn restates_error_variant(entry: &SeamKey<'_>, other: &SeamKey<'_>) -> bool {
+    use crate::analysis::seams::SeamKind;
+    let normalize = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    entry.kind == SeamKind::ReturnValue
+        && other.kind == SeamKind::ErrorVariant
+        && other.file == entry.file
+        && other.line == entry.line
+        && normalize(entry.expression) == format!("return {}", normalize(other.expression))
 }
 
 /// How the diff a bare `ripr check` reads relates to the seam inventory.
@@ -652,12 +762,12 @@ fn normalized_relative_path(path: &Path) -> String {
     text.strip_prefix("./").unwrap_or(&text).to_string()
 }
 
-/// `seam src/lib.rs:6 `acc``: where a refused seam is and its own code, so a
+/// `the code at src/lib.rs:6 `acc``: where a refused seam is and its own code, so a
 /// whole-seam reason is never read as the verdict on another line.
 fn seam_label(entry: &crate::analysis::ClassifiedSeam) -> String {
     let file = crate::analysis::stable_path_text(entry.seam.file());
     format!(
-        "seam {file}:{} `{}`",
+        "the code at {file}:{} `{}`",
         entry.seam.display_line(),
         collapsed_code(entry.seam.expression())
     )
@@ -1782,7 +1892,7 @@ fn ineligible_repair_item(root: &Path, item: &str, seam_id: &str, reason: &str) 
         shell_arg(&bound_root(&root.to_string_lossy()))
     );
     format!(
-        "repair item `{item}` names seam `{seam_id}`, which is not repair-eligible: {reason}; no repair attempt was started. Run {list} to list current seam IDs"
+        "repair item `{item}` names seam `{seam_id}`, which is not ready for an automatic repair: {reason}; no repair attempt was started. Run {list} to list current seam IDs"
     )
 }
 
@@ -2308,6 +2418,100 @@ fn held_inline_target(
 pub(crate) mod tests {
     use super::*;
 
+    fn key<'a>(
+        kind: crate::analysis::seams::SeamKind,
+        file: &'a str,
+        line: usize,
+        expression: &'a str,
+    ) -> SeamKey<'a> {
+        SeamKey {
+            kind,
+            file: Path::new(file),
+            line,
+            expression,
+        }
+    }
+
+    /// A wrapper is matched only by the exact same-file, same-line error
+    /// variant; every near miss stays an open reason.
+    #[test]
+    fn wrapper_match_is_exact_and_never_looser() {
+        use crate::analysis::seams::SeamKind::{ErrorVariant, ReturnValue};
+        let variant = key(ErrorVariant, "src/lib.rs", 9, "Err(ParseError::Empty)");
+        let wrapper = key(
+            ReturnValue,
+            "src/lib.rs",
+            9,
+            "return  Err(ParseError::Empty)",
+        );
+        assert!(
+            restates_error_variant(&wrapper, &variant),
+            "whitespace-insensitive match"
+        );
+        let near_misses = [
+            (
+                "different variant",
+                key(
+                    ReturnValue,
+                    "src/lib.rs",
+                    9,
+                    "return Err(ParseError::TooLong)",
+                ),
+            ),
+            (
+                "different line",
+                key(
+                    ReturnValue,
+                    "src/lib.rs",
+                    10,
+                    "return Err(ParseError::Empty)",
+                ),
+            ),
+            (
+                "different file",
+                key(
+                    ReturnValue,
+                    "src/other.rs",
+                    9,
+                    "return Err(ParseError::Empty)",
+                ),
+            ),
+            (
+                "not a return value",
+                key(
+                    ErrorVariant,
+                    "src/lib.rs",
+                    9,
+                    "return Err(ParseError::Empty)",
+                ),
+            ),
+            (
+                "bare expression",
+                key(ReturnValue, "src/lib.rs", 9, "Err(ParseError::Empty)"),
+            ),
+            (
+                "extra tail",
+                key(
+                    ReturnValue,
+                    "src/lib.rs",
+                    9,
+                    "return Err(ParseError::Empty).into()",
+                ),
+            ),
+        ];
+        for (why, near) in &near_misses {
+            assert!(
+                !restates_error_variant(near, &variant),
+                "{why} must not match"
+            );
+        }
+        let not_variant = key(ReturnValue, "src/lib.rs", 9, "Err(ParseError::Empty)");
+        assert!(
+            !restates_error_variant(&wrapper, &not_variant),
+            "the gripped sibling must be an error variant"
+        );
+    }
+
     /// #10978: the candidate list is bounded by the stop's own cap, and every
     /// described candidate carries the bound root.
     #[test]
@@ -2658,7 +2862,7 @@ pub(crate) mod tests {
         let gripped_refusal = repair_start_refusal_for_entry(root, &gripped, policy)
             .ok_or("an already gripped seam has no gap to repair")?;
         assert!(
-            gripped_refusal.reason.contains("already grip it (exposed)"),
+            gripped_refusal.reason.contains("already grip it"),
             "{}",
             gripped_refusal.reason
         );
@@ -2669,7 +2873,7 @@ pub(crate) mod tests {
         // reading rather than a runtime result.
         let no_test_note = repair_start_withheld_note("/repo", "seam-2", &gripped_refusal);
         assert!(
-            no_test_note.contains("already grip it (exposed)")
+            no_test_note.contains("already grip it")
                 && no_test_note.contains("static reading")
                 && no_test_note.contains("not a runtime-verified result")
                 && !no_test_note.contains("by hand")
@@ -3273,7 +3477,7 @@ pub(crate) mod tests {
         let labels = [
             (
                 RepairPacketIneligibility::ClassNotHeadlineEligible,
-                "ripr does not start a repair for a seam in this state",
+                "ripr does not start an automatic repair for this kind of finding",
             ),
             (
                 RepairPacketIneligibility::CrossLanguageOracleVisibilityUnresolved,
@@ -3386,7 +3590,7 @@ pub(crate) mod tests {
         );
         for expected in [
             "repair item `gap:x` names seam `seam:y`",
-            "not repair-eligible: configured off",
+            "not ready for an automatic repair: configured off",
             "no repair attempt was started",
             "ripr pilot --root",
         ] {
