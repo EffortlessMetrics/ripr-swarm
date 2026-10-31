@@ -137,7 +137,7 @@ the public argument-taking entry point adds no embedding lifecycle promise.
 
 The SDK maps resource-miss codes by negotiated version and preserves the
 adapter's message and data. Both lifecycles use a bounded unknown-resource
-message naming `ripr://workspace/status` and all five resource templates,
+message naming `ripr://workspace/status` and all six resource templates,
 with the same routes in `error.data.available` and
 `error.data.resource_templates`. Recognized unavailable resources retain their
 typed errors; a listed template does not establish an existing resource identity.
