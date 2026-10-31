@@ -1472,7 +1472,10 @@ fn needs_proximity_reach_limit(finding: &Finding) -> bool {
                     // #11481: a test related to an `infection_unknown`
                     // finding only by naming the owner never has to call it
                     // (RelationReason::establishes_reach is false), so it is
-                    // as unresolved as a shared file or token.
+                    // as unresolved as a shared file or token. Only that
+                    // class: a `weakly_exposed` owner-named test holds a real
+                    // weak assertion the repo-wide witness cannot replace
+                    // (decided under #11481).
                     || (finding.class == ExposureClass::InfectionUnknown
                         && reason == crate::domain::RelationReason::OwnerNamedTest)
             })
