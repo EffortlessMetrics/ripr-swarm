@@ -48,8 +48,11 @@ mod fallible_check;
 mod helper_arguments;
 pub(super) mod result_map;
 pub(super) mod returned_closure;
+mod shared_macro_scan;
 pub(super) mod short_circuit;
 pub(in crate::analysis) use fallible_check::{FallibleCheckReceipt, fallible_check_receipt};
+use shared_macro_scan::ScanPart;
+pub(in crate::analysis) use shared_macro_scan::SharedMacroScans;
 
 use super::super::rust_index::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use super::call_identity::{CallTarget, ConstantTable, OwnerCallIdentity};
@@ -1545,8 +1548,13 @@ impl OwnerPinSyntax {
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
             module_declaration_resolved(resolved_modules, index, file, line, declaration)
         };
-        let (_, rest) = partition_macro_scan_files(index);
-        let sites = scan_macro_sites(&rest, index, self.target_roots(index), &module_resolved);
+        // #11509: the index-owned scan, shared with every other instance.
+        let sites = index.call_identity_memos.macro_site_scans.scan(
+            ScanPart::Rest,
+            index,
+            self.target_roots(index),
+            &module_resolved,
+        );
         // Resolved before the map borrow: target roots never re-enter the
         // site scan, and the mutable borrow must not outlive its purpose.
         let roots = self.target_roots(index);
@@ -1557,7 +1565,7 @@ impl OwnerPinSyntax {
         if retained.complete {
             return;
         }
-        retain_macro_sites(sites.retained, retained, roots, index);
+        retain_macro_sites(&sites.retained, retained, roots, index);
         retained.complete = true;
         #[cfg(test)]
         {
@@ -3195,9 +3203,9 @@ fn trusted_macro_sites_in(
     // every test, no later file (scoped sites included) changes an answer,
     // so the rest are skipped. A refusal that needs a site completes the
     // retained scan once instead (#8255).
-    let (likely, rest) = partition_macro_scan_files(index);
+    let shared = &index.call_identity_memos.macro_site_scans;
     absorb_macro_sites(
-        scan_macro_sites(&likely, index, roots, module_resolved),
+        &shared.scan(ScanPart::Likely, index, roots, module_resolved),
         &mut global,
         &mut scoped,
         &mut by_root,
@@ -3207,7 +3215,7 @@ fn trusted_macro_sites_in(
     );
     if global.len() < assertion_context_macros().len() {
         absorb_macro_sites(
-            scan_macro_sites(&rest, index, roots, module_resolved),
+            &shared.scan(ScanPart::Rest, index, roots, module_resolved),
             &mut global,
             &mut scoped,
             &mut by_root,
@@ -3312,7 +3320,7 @@ fn scan_macro_sites(
 
 /// Both initial absorption and deferred completion exclude every scoped site.
 fn retain_macro_sites(
-    sites: Vec<(PathBuf, String, usize, MacroBindingSite)>,
+    sites: &[(PathBuf, String, usize, MacroBindingSite)],
     retained: &mut WorkspaceMacroSiteIndex,
     roots: &TargetRoots,
     index: &RustIndex,
@@ -3321,17 +3329,17 @@ fn retain_macro_sites(
         if site.scope.is_some() {
             continue;
         }
-        if module_confined(&site, &path, roots, index) {
+        if module_confined(site, path, roots, index) {
             let binding = retained.by_module.entry(path.clone()).or_default();
-            binding.roots = roots.roots(&path, index);
+            binding.roots = roots.roots(path, index);
             binding
                 .sites
-                .entry(name)
+                .entry(name.clone())
                 .or_default()
-                .absorb(&path, position, &site);
+                .absorb(path, *position, site);
             continue;
         }
-        if let Some(contexts) = roots.binding_roots(&path, &site, index) {
+        if let Some(contexts) = roots.binding_roots(path, site, index) {
             for root in contexts {
                 retained
                     .by_root
@@ -3339,14 +3347,14 @@ fn retain_macro_sites(
                     .or_default()
                     .entry(name.clone())
                     .or_default()
-                    .absorb(&path, position, &site);
+                    .absorb(path, *position, site);
             }
         } else {
             retained
                 .global
-                .entry(name)
+                .entry(name.clone())
                 .or_default()
-                .absorb(&path, position, &site);
+                .absorb(path, *position, site);
         }
     }
 }
@@ -3427,7 +3435,7 @@ pub(in crate::analysis) fn nested_parallelism_allowed() -> bool {
     reason = "one ordered fold over four run-scoped ambiguity outputs and the retention index"
 )]
 fn absorb_macro_sites(
-    sites: ScannedMacroSites,
+    sites: &ScannedMacroSites,
     global: &mut BTreeSet<String>,
     scoped: &mut ScopedMacroBindings,
     by_root: &mut CrateMacroBindings,
@@ -3435,24 +3443,27 @@ fn absorb_macro_sites(
     roots: &TargetRoots,
     index: &RustIndex,
 ) {
-    retain_macro_sites(sites.retained, retained, roots, index);
-    for (path, name, site) in sites.ambiguities {
+    retain_macro_sites(&sites.retained, retained, roots, index);
+    for (path, name, site) in &sites.ambiguities {
         if site.scope.is_some() {
-            scoped.entry(path).or_default().push((name, site));
+            scoped
+                .entry(path.clone())
+                .or_default()
+                .push((name.clone(), site.clone()));
             continue;
         }
-        if module_confined(&site, &path, roots, index) {
+        if module_confined(site, path, roots, index) {
             let binding = retained.by_module.entry(path.clone()).or_default();
-            binding.roots = roots.roots(&path, index);
-            binding.names.insert(name);
+            binding.roots = roots.roots(path, index);
+            binding.names.insert(name.clone());
             continue;
         }
-        if let Some(contexts) = roots.binding_roots(&path, &site, index) {
+        if let Some(contexts) = roots.binding_roots(path, site, index) {
             for root in contexts {
                 by_root.entry(root).or_default().insert(name.clone());
             }
         } else {
-            global.insert(name);
+            global.insert(name.clone());
         }
     }
 }

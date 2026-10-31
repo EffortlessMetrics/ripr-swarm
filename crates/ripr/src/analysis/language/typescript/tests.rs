@@ -4067,7 +4067,7 @@ fn classify_change_marks_weak_direct_typescript_candidate_advisory() -> Result<(
     let finding = classify_weak_direct_line("    if (amount >= threshold) {")?;
 
     assert!(finding.canonical_gap.is_none());
-    assert_evidence_contains(&finding, "gap_state: advisory");
+    assert_evidence_contains(&finding, "gap_state: unknown");
     assert_evidence_contains(&finding, "actionability_category: incomplete_repair_packet");
     assert_evidence_contains(
         &finding,
@@ -4134,7 +4134,7 @@ fn typescript_preview_weak_oracle_guidance_names_snapshot_exact_value_shape() ->
     assert!(matches!(finding.class, ExposureClass::WeaklyExposed));
     assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::Snapshot);
     assert!(finding.canonical_gap.is_none());
-    assert_evidence_contains(&finding, "gap_state: advisory");
+    assert_evidence_contains(&finding, "gap_state: unknown");
     assert!(
         finding.missing.iter().any(|line| {
             line.contains("snapshot evidence") && line.contains("add an exact-value assertion")
@@ -4161,7 +4161,7 @@ fn typescript_preview_weak_oracle_guidance_names_smoke_exact_value_shape() -> Re
     assert!(matches!(finding.class, ExposureClass::WeaklyExposed));
     assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::SmokeOnly);
     assert!(finding.canonical_gap.is_none());
-    assert_evidence_contains(&finding, "gap_state: advisory");
+    assert_evidence_contains(&finding, "gap_state: unknown");
     assert!(
         finding.missing.iter().any(|line| {
             line.contains("smoke-only oracle") && line.contains("exact-value assertion")
@@ -4208,7 +4208,7 @@ fn typescript_preview_weak_oracle_guidance_keeps_broad_error_advisory() -> Resul
     assert!(matches!(finding.class, ExposureClass::WeaklyExposed));
     assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::BroadError);
     assert!(finding.canonical_gap.is_none());
-    assert_evidence_contains(&finding, "gap_state: advisory");
+    assert_evidence_contains(&finding, "gap_state: unknown");
     assert!(
         finding
             .missing
@@ -4260,7 +4260,7 @@ fn typescript_preview_weak_oracle_guidance_distinguishes_mock_payload_limits() -
         OracleStrength::Medium
     );
     assert!(finding.canonical_gap.is_none());
-    assert_evidence_contains(&finding, "gap_state: advisory");
+    assert_evidence_contains(&finding, "gap_state: unknown");
     assert_evidence_contains(&finding, "actionability_category: incomplete_repair_packet");
     assert!(
             finding.missing.iter().any(|line| line.contains(
@@ -4320,7 +4320,7 @@ test("records ready status", () => {
         Some("expect(sink.record).toHaveBeenCalledWith(\"ready\")")
     );
     assert!(finding.canonical_gap.is_none());
-    assert_evidence_contains(&finding, "gap_state: advisory");
+    assert_evidence_contains(&finding, "gap_state: unknown");
     assert_evidence_contains(
         &finding,
         "mock_payload_evidence: expect(sink.record).toHaveBeenCalledWith(\"ready\")",
@@ -5507,7 +5507,7 @@ fn classify_change_returns_no_static_path_when_no_related_test() -> Result<(), S
     assert!(matches!(finding.class, ExposureClass::NoStaticPath));
     assert!(finding.related_tests.is_empty());
     assert!(finding.canonical_gap.is_none());
-    assert_evidence_contains(&finding, "gap_state: advisory");
+    assert_evidence_contains(&finding, "gap_state: unknown");
     assert_evidence_contains(&finding, "actionability_category: missing_context");
     assert_evidence_contains(&finding, "related_test_or_observer");
     Ok(())
@@ -8222,7 +8222,7 @@ test("renders summary snapshot", () => {
     );
     // static_limit_kind is unset (snapshot is not a static_limit, it is oracle-based)
     assert_eq!(finding.static_limit_kind, None);
-    // repair_packet_ready remains false — gap_state is advisory (not static_limitation)
+    // repair_packet_ready remains false — gap_state is unknown (not static_limitation)
     // because snapshot is not a StaticLimitKind
     assert!(
         !finding
@@ -11964,7 +11964,7 @@ fn untested_function_owner_guidance_names_owner_and_ordered_route() -> Result<()
     // lands advisory (the preview card's `repair_packet_ready` remains
     // false, pinned by the fixture goldens), so no packet may be emitted
     // on this evidence.
-    assert_evidence_contains(&finding, "gap_state: advisory");
+    assert_evidence_contains(&finding, "gap_state: unknown");
     let step = finding
         .recommended_next_step
         .as_deref()
@@ -14057,8 +14057,8 @@ fn remove_field_from_missing_list_unit() {
 
     // Wrong prefix — line returned unchanged.
     assert_eq!(
-        remove_field_from_missing_list("gap_state: advisory", "verify_command"),
-        "gap_state: advisory"
+        remove_field_from_missing_list("gap_state: unknown", "verify_command"),
+        "gap_state: unknown"
     );
 
     // Removing another field leaves verify_command intact.

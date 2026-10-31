@@ -1281,10 +1281,8 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
     // G-D: oracle-eligible relation is guaranteed by G-A (ambiguous_related_test
     // is a different category and is excluded above). Verify also that there is
     // actually a related test with an oracle-eligible file we can use.
-    let related_test = finding
-        .related_tests
-        .iter()
-        .max_by_key(|t| t.oracle_strength.rank())?;
+    let related_test =
+        crate::output::related_test_miss::strongest_related_test(&finding.related_tests)?;
     let test_file = related_test.file.display().to_string().replace('\\', "/");
     if test_file.is_empty() {
         return None;
@@ -1452,7 +1450,7 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
         language_status: "preview".to_string(),
         scope: "diff".to_string(),
         evidence_class: "weakly_exposed".to_string(),
-        gap_state: "advisory".to_string(),
+        gap_state: "unknown".to_string(),
         policy_state: "preview".to_string(),
         repairability: "repairable".to_string(),
         repair_route: Some(repair_route),
@@ -1704,7 +1702,7 @@ pub(crate) mod tests {
             confidence: 0.4,
             evidence: vec![
                 "owner: applyDiscount".to_string(),
-                "gap_state: advisory".to_string(),
+                "gap_state: unknown".to_string(),
                 "actionability_category: incomplete_repair_packet".to_string(),
                 "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract".to_string(),
                 "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available".to_string(),
