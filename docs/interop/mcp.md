@@ -54,7 +54,13 @@ claude mcp add --scope project ripr -- ripr mcp --stdio
 
 # Codex: adds an entry to its user config
 codex mcp add ripr -- ripr mcp --stdio
+
+# Cursor: writes .cursor/mcp.json (same mcpServers shape), keeping your other servers
+ripr init --agents cursor --mcp
 ```
+
+Cursor reads the same `mcpServers` entry from `.cursor/mcp.json`; see the
+[agent quickstart](../AGENT_QUICKSTART.md) for the matching Cursor rule file.
 
 Equivalent Codex `config.toml` entry:
 
