@@ -668,7 +668,7 @@ covered_by = ["npm --prefix packaging/npm/launcher pack --dry-run --json --ignor
 # ---------------------------------------------------------------------------
 
 [[allow]]
-glob = ".agents/skills/finish-pr/references/review-conversations.fixture.json"
+glob = "docs/agent-context/review-conversations.fixture.json"
 kind = "fixture_input"
 owner = "agents/review"
 surface = "fixtures"

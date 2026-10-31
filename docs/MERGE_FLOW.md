@@ -68,8 +68,9 @@ required result.
 - Open Drafts early and use the shared
   [Draft to Ready handoff](PR_AUTOMATION.md#draft-to-ready-handoff).
 - Apply lane-selecting labels such as `full-ci` before `merge-ready`.
-- A push after a request needs affected review/proof refreshed and a new explicit
-  request. Preserve an unchanged-head in-flight run; reapplying the label cancels it.
+- A push after a request needs affected review/proof refreshed. Inspect current
+  request and run state before any new request, using the shared handoff. Preserve
+  a current-subject in-flight run; reapplying the label cancels it.
 - Do not dispatch `routed-rust.yml` on a PR branch (#5394).
 - Inspect the real check results and current findings, make the final integration
   judgment, then use an expected-head protected squash. Do not arm generic

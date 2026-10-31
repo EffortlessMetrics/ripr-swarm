@@ -68,8 +68,10 @@ squash merge and cleanup of lane-created state need no repeated permission.
 Existing explicit limits still apply. Shared-history rewrites, deletion of
 durable evidence, settings/rulesets/secrets, tags, public releases, registry or
 marketplace publication, signing and release-credential actions require the
-applicable explicit authorization. Continue reversible preparation while a
-separate authorization is pending.
+applicable explicit authorization. Ordinary branch/PR publication is not registry
+publication. Release-specific merges, package qualification and publication follow
+the user's applicable approval rule; where not expressly requested, obtain approval
+immediately before the action. Continue reversible preparation while pending.
 
 Ordinary `ripr-swarm` PRs squash merge. A behind-only branch or unrelated main
 movement does not justify restacking or rerunning unaffected proof. Reconcile
@@ -210,10 +212,12 @@ head. Reconcile existing native request/run/attempt state before creating more w
 The same useful lead normally stays with its candidate through an ordinary CI wait,
 inspects complete results and current review/Conversation findings, makes the final
 judgment, performs the authorized protected merge and reads back the landing.
-Separate decisions do not require separate agents or a new routine human approval.
+The final judgment does not require a new routine human approval. Perform the
+substantive current-head review under the applicable `review-pr` procedure.
 Use supported waits/events or bounded checks without tight polling. Retain context
 and ownership; a real interruption or exhausted window gets an exact continuation,
-not duplicate CI or an uncertain merge write repeated blindly.
+not duplicate CI or an uncertain merge write repeated blindly. Follow the shared
+[failure and retry protocol](docs/agent-context/remote-wait-discipline.md#failure-retry-and-uncertain-writes).
 
 Inspect submitted reviews, all inline threads including outdated unresolved ones,
 and ordinary Conversation comments. Repair or refute material findings with current
@@ -334,7 +338,9 @@ are broken.
 
 ## Validation and environment
 
-Detect the actual shell and installed tools, not just the OS. PowerShell may run
+Detect the actual shell and installed tools, not just the OS. A PATH miss alone
+does not establish tool unavailability; follow the permitted tool-discovery
+checkpoint in `docs/agent-context/validation.md`. PowerShell may run
 on Linux; Windows may host PowerShell, Bash or WSL. Use that shell's grammar.
 Native Windows evidence is distinct from WSL. Cargo progress on stderr is
 normal. Read the native exit status and terminal report together; neither a red
@@ -358,9 +364,10 @@ merely because its full hosted matrix cannot run locally.
 Use focused tests, a narrow compile, `cargo xtask check-fast` and
 `cargo xtask precommit` for candidate shaping. Read the emitted reports and
 independently verify `check-fast`'s base/diff selector; zero selected paths after
-a selector failure is not pass. Establish an inherited baseline before changing
-code and reproduce an apparent base failure on the exact base before attributing
-it. Follow `build-candidate` for the bounded sequence.
+a selector failure is not pass. Use relevant existing baseline evidence; reproduce an apparent base failure on
+the exact base before attributing it as inherited. An unavailable or irrelevant
+baseline build need not block a safe candidate repair. Follow `build-candidate`
+for the bounded sequence.
 
 Hosted PR CI owns the required merge-gate matrix. Do not serially duplicate the
 whole matrix locally before publishing. Use `cargo xtask ci-full` for an
@@ -531,22 +538,21 @@ Keep implementation/test/oracle/public-claim/generated/conflict/integration/head
 currentness dimensions separate. Unrelated main movement invalidates nothing
 by itself. Output-shape changes need all affected goldens and independent semantic
 justification; do not re-bless a wrong result or merge stale bytes already
-superseded upstream. If CI fails on untouched code, reproduce the exact base and
-route the inherited repair separately.
+superseded upstream. If CI fails on untouched code and inheritance is plausible, compare the exact
+relevant base before attributing it as inherited, and route a demonstrated inherited
+repair separately. Preserve uncertainty when the comparison is unavailable.
 
-Read classic protection and active rulesets before diagnosing a blocked merge:
-
-```bash
-gh api repos/EffortlessMetrics/ripr-swarm/branches/main/protection/required_pull_request_reviews
-gh api repos/EffortlessMetrics/ripr-swarm/rules/branches/main
-```
-
-A blocked/unstable status is not a causal diagnosis. Identify actual required
-checks, advisory results, thread requirements and rule. An advisory red can still
-merge; verify that a claimed protective gate is actually on the required path.
-Missing permission to read rules is an evidence gap, not absence of protection.
-Never patch approval counts, disable checks or use admin bypass to make a PR
-merge. Settings changes require explicit authorization naming the rule/change.
+For routine PR progression, inspect the exact current head, PR-visible checks,
+reviews, conversations and merge state; do not read branch-protection or ruleset
+settings, or inspect credential values. `BLOCKED` or `UNSTABLE` alone does not
+identify a cause. Unknown or inaccessible checks are not passed. A settings-read
+403 is not a blanket PR block or a reason to request broader access; distinguish
+it from a 401 on an ordinary PR/check read, which leaves that evidence unavailable.
+After exact-head review, required proof and addressed findings, use the normal
+expected-head squash merge endpoint; GitHub enforces applicable requirements.
+Report a concrete rejection without guessing the rule. Never use admin bypass,
+change settings or weaken checks to make a PR merge; settings changes require
+explicit authorization naming the change.
 
 `stackable = false` prohibits building a dependent item atop that branch; it is
 not an approval pause. `blocked_by` requires the dependency to land or an

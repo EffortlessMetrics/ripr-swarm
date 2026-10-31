@@ -13853,8 +13853,12 @@ stale reviews stay visible; they are not silently attributed to the new head.
 
 This attribution is advisory. It does not establish substantive or independent
 review, required approval counts, protection satisfaction, integration proof,
-or permission to merge. The retained current-head control preserves the
-existing advisory action; the command performs no PR mutation.
+or permission to merge. A CLEAN packet's `safe_next_action` is now
+`inspect final merge gates`, not `merge`; external consumers of schema `0.1`
+must handle the changed value. An empty rollup still leaves required-context
+completeness unknown. The action calls for final judgment and the normal
+server-enforced merge route when eligible, not settings discovery or an endless
+wait. The command performs no PR mutation.
 
 ## Report Packet Index
 
@@ -14126,6 +14130,12 @@ Report packet index field contract:
 
 Field contract:
 
+- `open_prs[].checks_rollup_available` is true only when GitHub returned an
+  array, including a valid empty array. A missing, null, or non-array rollup
+  is unknown, not evidence that no checks exist. `checks_summary` distinguishes
+  passed, neutral/skipped, pending, failed, and unknown entries. An unknown
+  rollup or check calls for inspection; this advisory packet does not establish
+  required-check completeness or authorize a merge.
 - `queue_disposition[].disposition` is advisory. It may be
   `merge_candidate`, `needs_integration_review`, `needs_review`, `close_duplicate`,
   `superseded`, `needs_fresh_validation`, `needs_owner_decision`, or

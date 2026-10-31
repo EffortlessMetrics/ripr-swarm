@@ -96,10 +96,12 @@ head. Reconcile existing native request/run/attempt state before creating more w
 The same useful lead normally stays with its candidate through an ordinary CI wait,
 inspects complete results and current review/Conversation findings, makes the final
 judgment, performs the authorized protected merge and reads back the landing.
-Separate decisions do not require separate agents or a new routine human approval.
+The final judgment does not require a new routine human approval. Perform the
+substantive current-head review under the applicable `review-pr` procedure.
 Use supported waits/events or bounded checks without tight polling. Retain context
 and ownership; a real interruption or exhausted window gets an exact continuation,
-not duplicate CI or an uncertain merge write repeated blindly.
+not duplicate CI or an uncertain merge write repeated blindly. Follow the shared
+[failure and retry protocol](docs/agent-context/remote-wait-discipline.md#failure-retry-and-uncertain-writes).
 
 Inspect submitted reviews, all inline threads including outdated unresolved ones,
 and ordinary Conversation comments. Repair or refute material findings with current
@@ -272,9 +274,10 @@ alternatives may be compared with focused proof; select one to land before expen
 qualification. Do not create rival implementations merely to consume parallel
 capacity. Disjoint pieces may be delegated through one integrating candidate owner.
 
-An issue claim is one ordinary comment (branch, PR and candidate/qualification state), live for 3 hours of claimant activity and
-then takeable with a note; duplicate drafts are tolerated, but only one PR per claim, chosen on merit, goes to qualification (see
-`prepare-issue` Issue claim comment).
+Coordinate the actual candidate and writer through the issue or PR as needed. An
+untouched PR may be investigated for takeover after the user-authorized interval,
+but elapsed time alone does not transfer ownership or establish abandonment;
+inspect current activity and preserve unique work (see `prepare-issue`).
 
 Do not create repository-global active-goal, current-writer, current-stage,
 liveness, lease, lock, candidate-frontier, or worker-state files. GitHub issues,
@@ -303,7 +306,11 @@ Routine commit, ordinary branch push, PR creation/update, review/CI repair,
 protected squash merge and lane cleanup inside an authorized delivery goal do
 not require repeated approval. Settings/rulesets/secrets, shared-history rewrite,
 durable-evidence deletion and public release actions need applicable explicit
-authorization. Diagnose protection read-only; never weaken it to clear a merge.
+authorization. Ordinary branch/PR publication is not registry publication.
+Release-specific merges, package qualification and publication follow the user's
+applicable approval rule; where not expressly requested, obtain approval immediately
+before the action. Use PR-visible checks and reviews, not protection or ruleset
+settings, for routine progression; never weaken or bypass server enforcement.
 
 ## Evidence and actionability
 
@@ -373,7 +380,8 @@ stimulus and oracle grip, rendered/public behavior, runtime/schema/docs/output
 parity, platform-relevant branches, and exact-head job/artifact evidence. A
 clean self-review records what was inspected and uses a `COMMENT` disposition on
 the author's PR; GitHub's inability to request changes from the author is not
-approval.
+approval. The owning session remains accountable for substantive current-head
+review under the applicable procedure.
 
 Review binds only to committed Git objects. Record completed source/oracle review
 separately from missing hosted proof or provider evidence. A final-merge review can
