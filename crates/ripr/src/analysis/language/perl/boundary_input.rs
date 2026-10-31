@@ -116,12 +116,12 @@ fn scan_ordering(text: &str) -> (usize, Vec<String>) {
             continue;
         };
         comparisons += 1;
-        let left_has_call = range_has_call(&chars, 0, start);
-        let right_has_call = range_has_call(&chars, end, chars.len());
-        if !right_has_call {
+        // Only the immediate operand is a call (`length($s) < 5`), not a
+        // sibling `foo(1) && $x > 5`.
+        if !right_operand_is_call(&chars, end) {
             thresholds.extend(operand_before(&chars, start));
         }
-        if !left_has_call {
+        if !left_operand_is_call(&chars, start) {
             thresholds.extend(operand_after(&chars, end));
         }
         i = end;
@@ -135,30 +135,71 @@ fn scan_ordering(text: &str) -> (usize, Vec<String>) {
     (comparisons, thresholds)
 }
 
-/// A `name(` call in `chars[from..to]`, not a sigil/arrow/hash-key spelling.
-/// Used only to withhold a neighboring literal: argument position is unknown,
-/// so a compared `length($s)` is not the owner input.
-fn range_has_call(chars: &[char], from: usize, to: usize) -> bool {
-    let mut i = from;
-    while i < to {
-        if is_word(chars[i]) {
-            let start = i;
-            while i < to && is_word(chars[i]) {
-                i += 1;
-            }
-            let named = start > 0 && matches!(chars[start - 1], '$' | '@' | '%' | '&' | '>' | '{');
-            let mut open = i;
-            while open < to && chars[open].is_whitespace() {
-                open += 1;
-            }
-            if !named && chars.get(open) == Some(&'(') {
-                return true;
-            }
-        } else {
-            i += 1;
+/// The operand immediately left of an operator is a bare `name(...)` call,
+/// not a grouping `($x)` or a sigil/arrow spelling.
+fn left_operand_is_call(chars: &[char], operator_start: usize) -> bool {
+    let mut end = operator_start;
+    while end > 0 && chars[end - 1].is_whitespace() {
+        end -= 1;
+    }
+    if end == 0 || !matches!(chars[end - 1], ')' | ']' | '}') {
+        return false;
+    }
+    let close = chars[end - 1];
+    let open = if close == ')' {
+        '('
+    } else if close == ']' {
+        '['
+    } else {
+        '{'
+    };
+    let mut depth = 1usize;
+    let mut i = end - 1;
+    while i > 0 && depth > 0 {
+        i -= 1;
+        if chars[i] == close {
+            depth += 1;
+        } else if chars[i] == open {
+            depth -= 1;
         }
     }
-    false
+    if depth != 0 {
+        return false;
+    }
+    let mut name_end = i;
+    while name_end > 0 && chars[name_end - 1].is_whitespace() {
+        name_end -= 1;
+    }
+    if name_end == 0 || !is_word(chars[name_end - 1]) {
+        return false;
+    }
+    let mut name_start = name_end;
+    while name_start > 0 && is_word(chars[name_start - 1]) {
+        name_start -= 1;
+    }
+    let named =
+        name_start > 0 && matches!(chars[name_start - 1], '$' | '@' | '%' | '&' | '>' | '{');
+    !named
+}
+
+/// The operand immediately right of an operator opens as a bare `name(`.
+fn right_operand_is_call(chars: &[char], operator_end: usize) -> bool {
+    let mut i = operator_end;
+    while i < chars.len() && chars[i].is_whitespace() {
+        i += 1;
+    }
+    if i >= chars.len() || !is_word(chars[i]) {
+        return false;
+    }
+    let start = i;
+    while i < chars.len() && is_word(chars[i]) {
+        i += 1;
+    }
+    let named = start > 0 && matches!(chars[start - 1], '$' | '@' | '%' | '&' | '>' | '{');
+    while i < chars.len() && chars[i].is_whitespace() {
+        i += 1;
+    }
+    !named && chars.get(i) == Some(&'(')
 }
 
 fn operand_before(chars: &[char], operator_start: usize) -> Option<String> {
@@ -951,6 +992,11 @@ mod tests {
             input("$x > 5", r#"is("@{[ tier_label(2000) ]}", tier_label(5))"#),
             BoundaryInput::Unestablished
         );
+        // A differently named method is not a second `tier_label(`.
+        assert_eq!(
+            input("$x > 5", "is($o->other_label(2000), tier_label(5))"),
+            BoundaryInput::OnThreshold
+        );
     }
 
     #[test]
@@ -994,6 +1040,27 @@ mod tests {
             input("length($s) < 5", "is(tier_label(5), 1)"),
             BoundaryInput::Unestablished
         );
+        assert_eq!(
+            input("5 < length($s)", "is(tier_label(5), 1)"),
+            BoundaryInput::Unestablished
+        );
+        // A call in a sibling conjunct is not the compared operand.
+        assert_eq!(
+            input("foo(1) && $x > 5", "is(tier_label(5), 1)"),
+            BoundaryInput::OnThreshold
+        );
+        assert_eq!(
+            input("$x > 5 && foo(1)", "is(tier_label(5), 1)"),
+            BoundaryInput::OnThreshold
+        );
+        assert_eq!(
+            input("($x) >= 100", "is(tier_label(100), 1)"),
+            BoundaryInput::OnThreshold
+        );
+        assert_eq!(
+            input("$amount < 25", "is(tier_label(undef, 25), 5, 'mid')"),
+            BoundaryInput::OnThreshold
+        );
     }
 
     #[test]
@@ -1004,6 +1071,10 @@ mod tests {
         assert_eq!(
             input("$x == 3 ? 'a > 5' : 0", "is(tier_label(5), 1)"),
             BoundaryInput::Unestablished
+        );
+        assert_eq!(
+            input("'gold' if 1000 <= $points", "is(tier_label(1000), 'gold')"),
+            BoundaryInput::OnThreshold
         );
     }
 
