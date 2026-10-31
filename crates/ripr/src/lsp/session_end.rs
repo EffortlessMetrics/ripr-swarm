@@ -142,7 +142,8 @@ mod tests {
         let (end, count) = counting_end();
         let mut reader = EndOfInput::new(FailingReader, end);
         let mut byte = [0u8; 1];
-        assert!(reader.read(&mut byte).await.is_err());
+        let failure = reader.read(&mut byte).await;
+        assert_eq!(failure.map_err(|e| e.kind()), Err(io::ErrorKind::Other));
         assert_eq!(count.load(Ordering::SeqCst), 1);
     }
 
