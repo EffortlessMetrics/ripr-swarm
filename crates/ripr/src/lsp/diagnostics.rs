@@ -7357,7 +7357,7 @@ mod lsp_next_step_parity_tests {
             confidence: 0.4,
             evidence: vec![
                 "owner: applyDiscount".to_string(),
-                "gap_state: advisory".to_string(),
+                "gap_state: unknown".to_string(),
                 "actionability_category: incomplete_repair_packet".to_string(),
                 "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract".to_string(),
                 "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available".to_string(),

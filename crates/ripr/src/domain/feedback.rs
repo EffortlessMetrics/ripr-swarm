@@ -281,11 +281,11 @@ impl ResultIdentity {
     pub(crate) fn validate(&self) -> Result<(), String> {
         if self.snapshot_id.trim().is_empty() {
             return Err(
-                "feedback requires --snapshot; file and line are not a result identity".to_string(),
+                "feedback requires --snapshot; file and line are not a result identity; pass the snapshot id from the finding".to_string(),
             );
         }
         if self.snapshot_id.chars().any(char::is_control) {
-            return Err("feedback --snapshot must not contain control characters".to_string());
+            return Err("feedback --snapshot must not contain control characters; pass the snapshot id exactly as the finding printed it".to_string());
         }
         for (label, value) in [
             ("--item", self.canonical_item.as_deref()),
@@ -297,7 +297,7 @@ impl ResultIdentity {
                 && (value.trim().is_empty() || value.chars().any(char::is_control))
             {
                 return Err(format!(
-                    "feedback {label} must be a non-empty identity without control characters"
+                    "feedback {label} must be a non-empty identity without control characters; pass the id exactly as the finding printed it"
                 ));
             }
         }
@@ -375,11 +375,11 @@ impl FeedbackPayload {
         if self.reason.requires_note()
             && self.note.as_ref().is_none_or(|note| note.trim().is_empty())
         {
-            return Err("feedback reason `other` requires a bounded --note".to_string());
+            return Err("feedback reason `other` requires a bounded --note; add a short --note explaining the reason".to_string());
         }
         if self.reason == FeedbackReason::Other && self.judgment_override.is_none() {
             return Err(
-                "feedback reason `other` requires --judgment useful|incorrect|unclear|expensive|intentional_no_action"
+                "feedback reason `other` requires --judgment useful|incorrect|unclear|expensive|intentional_no_action; add one of those values"
                     .to_string(),
             );
         }
@@ -389,18 +389,21 @@ impl FeedbackPayload {
                 .is_some_and(|judgment| judgment != self.reason.judgment())
         {
             return Err(
-                "feedback --judgment must match the closed reason class unless --reason is `other`"
+                "feedback --judgment must match the closed reason class unless --reason is `other`; pass the --judgment that matches --reason, or use --reason other"
                     .to_string(),
             );
         }
         if let Some(note) = &self.note {
             if note.len() > FEEDBACK_NOTE_MAX_BYTES {
                 return Err(format!(
-                    "feedback --note exceeds {FEEDBACK_NOTE_MAX_BYTES} bytes"
+                    "feedback --note exceeds {FEEDBACK_NOTE_MAX_BYTES} bytes; use a shorter note"
                 ));
             }
             if note.chars().any(|ch| ch == '\0') {
-                return Err("feedback --note must not contain NUL".to_string());
+                return Err(
+                    "feedback --note must not contain NUL; remove the NUL character and retry"
+                        .to_string(),
+                );
             }
         }
         if self.review_status.is_reviewed() && self.review_actor_kind.is_none() {
@@ -410,7 +413,7 @@ impl FeedbackPayload {
         }
         if !self.review_status.is_reviewed() && self.review_actor_kind.is_some() {
             return Err(
-                "unreviewed feedback cannot carry --review-actor; omit it or set --review"
+                "unreviewed feedback cannot carry --review-actor; drop it or set --review"
                     .to_string(),
             );
         }

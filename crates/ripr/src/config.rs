@@ -7,6 +7,10 @@
 //! initialization options after this file is loaded.
 
 use crate::app::{CheckInput, Mode};
+use crate::domain::language_availability::{
+    ConfiguredIntent, LanguageAvailabilityInput, resolve_language_availability,
+    unavailable_recovery,
+};
 use crate::domain::{LanguageId, OracleStrength};
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
@@ -298,7 +302,7 @@ fn is_repository_boundary(directory: &Path) -> bool {
     }
 
     let manifest = directory.join("Cargo.toml");
-    let Ok(contents) = crate::bounded_input::read_to_string(manifest) else {
+    let Ok(contents) = crate::bounded_input::read_metadata_toml(manifest) else {
         return false;
     };
     if !contents.contains("workspace") {
@@ -314,7 +318,7 @@ pub(crate) fn load_for_root(root: &Path) -> Result<RiprConfig, String> {
     let Some(path) = discover_config_path(root) else {
         return default_config_for_root(root);
     };
-    let text = crate::bounded_input::read_to_string(&path)
+    let text = crate::bounded_input::read_metadata_toml(&path)
         .map_err(|err| config_load_read_error_for_host(&path, &err, cfg!(windows)))?;
     let mut config = parse_config(&text)
         .map_err(|err| config_load_parse_error_for_host(&path, &err, cfg!(windows)))?;
@@ -617,6 +621,17 @@ fn parse_config(text: &str) -> Result<RiprConfig, String> {
 /// The diagnostic is boxed: it is deliberately rich (spans, expected values),
 /// which would otherwise trip `clippy::result_large_err` on every parser hop.
 pub(crate) fn parse_config_diagnostic(text: &str) -> Result<RiprConfig, Box<ConfigDiagnostic>> {
+    // Every caller (worktree load, candidate-tree blob, editor transports) goes
+    // through here, so the cap holds even when the text did not come from the
+    // bounded file read (#11563).
+    if text.len() as u64 > crate::bounded_input::MAX_METADATA_TOML_BYTES {
+        return Err(Box::new(ConfigDiagnostic::structural(format!(
+            "invalid ripr.toml: {} bytes exceeds the {} byte metadata limit ({} MiB); ripr parses repository metadata fully into memory, so trim the file",
+            text.len(),
+            crate::bounded_input::MAX_METADATA_TOML_BYTES,
+            crate::bounded_input::MAX_METADATA_TOML_BYTES / (1024 * 1024)
+        ))));
+    }
     let raw: RawConfig = toml::from_str(text).map_err(|err| {
         // A valid key in the wrong table names its table (#4534). The hint is
         // built from the fixed KEY_HOME_TABLES allowlist, never from file text.
@@ -1027,11 +1042,14 @@ fn parse_languages_enabled(values: &[String]) -> Result<Vec<LanguageId>, String>
                 "languages.enabled lists `{value}` more than once; remove the duplicate"
             ));
         }
-        if !language.is_available() {
+        let report = resolve_language_availability(&LanguageAvailabilityInput {
+            configured: ConfiguredIntent::Enabled,
+            ..LanguageAvailabilityInput::for_language(language)
+        });
+        if let Some(recovery) = unavailable_recovery(&report) {
             return Err(format!(
-                "languages.enabled lists `{value}`, but this ripr binary was built without Cargo feature `{}`; {}",
-                language.required_feature(),
-                language.unavailable_adapter_recovery()
+                "languages.enabled lists `{value}`, but this ripr binary was built without Cargo feature `{}`; {recovery}",
+                report.compile_feature,
             ));
         }
         parsed.push(language);

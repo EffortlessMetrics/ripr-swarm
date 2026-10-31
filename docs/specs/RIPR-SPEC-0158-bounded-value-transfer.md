@@ -440,8 +440,14 @@ only reaches the owner without a bound exact assertion stays below `exposed`.
     (`method-hop-field-read-trap`): no boundary input is credited.
 15. Reject: a receiver rebound before the call
     (`method-hop-field-read-rebound`): the earlier stop is kept.
-16. Reject: a constructor argument that is not a literal
-    (`method-hop-field-read-nonliteral`): every row is withdrawn.
+16. Reject: a constructor argument that is neither a plain decimal literal nor
+    a name bound by exactly one immutable `let NAME = <plain decimal>;` in the
+    calling test body: an expression, a name with no `let`, a `mut` binding
+    (reassigned or not), a second `let` of the name (literal or computed), a
+    non-literal, suffixed, negative or text initializer, a tuple, `for`,
+    `if let` or closure binding of the name, a binding copied from another
+    name, a parameter of the test and a module constant each withdraw every
+    row (`receiver_value` and `method_hop_rows` unit tests).
 17. Reject: a constructor shape the product reader declines
     (`method-hop-field-read-second-ctor`, `Size::shifted(1)` shifts instead
     of multiplying): no receiver value is built.
@@ -488,6 +494,16 @@ only reaches the owner without a bound exact assertion stays below `exposed`.
 26. Reject: a call shape that is not the bare helper: a path, a method call, a
     call with arguments or a cast around it keeps the argument unread
     (`argument_fold` unit tests).
+27. Accept: a constructor argument that is a let-bound literal: `let count =
+    1; check("1 big", Size::kib(count), true)` builds the receiver `Size(1024)`
+    exactly as `Size::kib(1)` does, so the owner row is `bytes = 1024` and
+    infection reads `yes` (`method-hop-field-read-nonliteral`). The name is
+    read by the shared single-immutable-`let` authority
+    (`value_resolution::test_let_bound_literal`), never a second scanner; the
+    sibling rows `method-hop-field-read-rebound` (the helper rebinds the
+    receiver) and `method-hop-field-read-second-ctor` (a constructor the reader
+    declines) and `method-hop-multi-caller-both-reached` (two owner callers
+    reached) stay `infection_unknown`.
 
 ## Test Mapping
 
@@ -524,7 +540,7 @@ eight callers),
 rule of the method hop and the receiver value);
 `rust-verdict-corpus` cases `method-hop-field-read-hit`,
 `method-hop-field-read-name-collision`, `method-hop-field-read-trap`, `method-hop-field-read-rebound`,
-`method-hop-field-read-nonliteral` and `method-hop-field-read-second-ctor`;
+`method-hop-field-read-nonliteral` (credited since the let-bound literal) and `method-hop-field-read-second-ctor`;
 `analysis/language/rust/mod.rs` end-to-end retarget+evaluation tests;
 fixtures `binding_predicate_equality_boundary` (re-blessed flip) and
 the #3295 family fixtures.

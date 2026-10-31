@@ -539,13 +539,13 @@ pub(crate) fn validate_repo_exposure_artifact(
     } = document;
     if schema_version != crate::output::repo_exposure::REPO_EXPOSURE_SCHEMA_VERSION {
         return Err(format!(
-            "agent verify {label} artifact has unsupported repo-exposure schema `{}`",
+            "agent verify {label} artifact has unsupported repo-exposure schema `{}`; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)",
             schema_version
         ));
     }
     if scope != "repo" {
         return Err(format!(
-            "agent verify {label} artifact has unsupported scope `{}`",
+            "agent verify {label} artifact has unsupported scope `{}`; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)",
             scope
         ));
     }
@@ -557,7 +557,7 @@ pub(crate) fn validate_repo_exposure_artifact(
             || seam.grip_class.trim().is_empty()
     }) {
         return Err(format!(
-            "agent verify {label} artifact contains an invalid canonical seam"
+            "agent verify {label} artifact contains an invalid canonical seam; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
         ));
     }
     validate_artifact_identity(root, raw, label, identity, &REPO_EXPOSURE_IDENTITY_SPEC)
@@ -699,7 +699,7 @@ pub(crate) fn validate_issued_check_findings_commitment(
     validate_artifact_identity_shape(label, &identity, &CHECK_FINDINGS_IDENTITY_SPEC)?;
     if identity.producer.version != recorded_producer_version {
         return Err(format!(
-            "agent verify {label} artifact producer does not match the issued attempt"
+            "agent verify {label} artifact producer does not match the issued attempt; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
         ));
     }
     validate_artifact_commitment(root, raw, label, &identity, &CHECK_FINDINGS_IDENTITY_SPEC)?;
@@ -807,7 +807,7 @@ pub(crate) fn verify_gap_closure(
     for (raw, label) in [(before_raw, "before"), (after_raw, "after")] {
         if declared_artifact_kind(raw).as_deref() != Some("check_findings") {
             return Err(format!(
-                "agent verify --gap-id requires `check-findings-json` snapshots; the {label} artifact is not one"
+                "agent verify --gap-id requires `check-findings-json` snapshots; the {label} artifact is not one; save `ripr check --format check-findings-json` output as both --before and --after"
             ));
         }
     }
@@ -846,7 +846,7 @@ fn check_findings_gaps(
 ) -> Result<Vec<CheckFindingsGap>, String> {
     let Some(outcome) = analysis_outcome else {
         return Err(format!(
-            "agent verify {label} artifact carries no analysis outcome, so a gap's absence cannot be read as closed"
+            "agent verify {label} artifact carries no analysis outcome, so a gap's absence cannot be read as closed; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
         ));
     };
     if !check_findings_outcome_is_complete(outcome.analysis_complete, outcome.document_complete) {
@@ -871,7 +871,7 @@ fn check_findings_gaps(
         });
         if classification.trim().is_empty() || file.trim().is_empty() || line == 0 {
             return Err(format!(
-                "agent verify {label} artifact contains an invalid finding for gap `{gap_id}`"
+                "agent verify {label} artifact contains an invalid finding for gap `{gap_id}`; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
             ));
         }
         let missing_discriminator = finding
@@ -939,7 +939,7 @@ fn validate_artifact_identity(
         }
         None => {
             return Err(format!(
-                "agent verify {label} artifact repository head `{}` is not present in the checked repository",
+                "agent verify {label} artifact repository head `{}` is not present in the checked repository; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)",
                 identity.repository.head
             ));
         }
@@ -992,7 +992,7 @@ fn validate_artifact_identity_shape(
         )
     {
         return Err(format!(
-            "agent verify {label} artifact has invalid or unknown producer identity"
+            "agent verify {label} artifact has invalid or unknown producer identity; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
         ));
     }
     Ok(())
@@ -1018,7 +1018,7 @@ fn validate_artifact_commitment(
         && !stamp.starts_with("unix_ms:")
     {
         return Err(format!(
-            "agent verify {label} artifact carries a generated_at stamp that is neither a unix_ms millisecond disclosure nor the documented \"unavailable\" fallback: {stamp}"
+            "agent verify {label} artifact carries a generated_at stamp that is neither a unix_ms millisecond disclosure nor the documented \"unavailable\" fallback: {stamp}; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
         ));
     }
     // Version gate (#2823): only the current input-identity algorithm
@@ -1035,7 +1035,7 @@ fn validate_artifact_commitment(
         .strip_prefix(&supported_prefix)
     else {
         return Err(format!(
-            "agent verify {label} artifact has unsupported input identity version `{}` (expected `{supported_prefix}<digest>`)",
+            "agent verify {label} artifact has unsupported input identity version `{}` (expected `{supported_prefix}<digest>`); regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)",
             identity.analysis.input_identity
         ));
     };
@@ -1045,7 +1045,7 @@ fn validate_artifact_commitment(
     // reason so a shape failure is never confused with a version failure.
     let Some(digest) = algorithm_and_digest.strip_prefix("fnv1a64:") else {
         return Err(format!(
-            "agent verify {label} artifact has malformed input identity digest `{}` (expected `{supported_prefix}fnv1a64:<16 lowercase hex>`)",
+            "agent verify {label} artifact has malformed input identity digest `{}` (expected `{supported_prefix}fnv1a64:<16 lowercase hex>`); regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)",
             identity.analysis.input_identity
         ));
     };
@@ -1055,7 +1055,7 @@ fn validate_artifact_commitment(
             .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
     {
         return Err(format!(
-            "agent verify {label} artifact has malformed input identity digest `{}` (expected `{supported_prefix}fnv1a64:<16 lowercase hex>`)",
+            "agent verify {label} artifact has malformed input identity digest `{}` (expected `{supported_prefix}fnv1a64:<16 lowercase hex>`); regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)",
             identity.analysis.input_identity
         ));
     }
@@ -1063,14 +1063,14 @@ fn validate_artifact_commitment(
     let declared_root = canonical_root(Path::new(&identity.repository.root))?;
     if declared_root != expected_root {
         return Err(format!(
-            "agent verify {label} artifact repository root {} does not match {}",
+            "agent verify {label} artifact repository root {} does not match {}; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)",
             declared_root.display(),
             expected_root.display()
         ));
     }
     if identity.repository.head != "unavailable" && !is_full_sha(&identity.repository.head) {
         return Err(format!(
-            "agent verify {label} artifact has invalid repository HEAD `{}`",
+            "agent verify {label} artifact has invalid repository HEAD `{}`; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)",
             identity.repository.head
         ));
     }
@@ -1080,12 +1080,12 @@ fn validate_artifact_commitment(
     );
     if identity.snapshot_identity != expected_snapshot {
         return Err(format!(
-            "agent verify {label} artifact snapshot identity does not match the declared analysis input identity and repository head"
+            "agent verify {label} artifact snapshot identity does not match the declared analysis input identity and repository head; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
         ));
     }
     if !identity.content_sha256.starts_with("sha256:") {
         return Err(format!(
-            "agent verify {label} artifact is missing a sha256 content commitment"
+            "agent verify {label} artifact is missing a sha256 content commitment; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
         ));
     }
     // The typed parse above already established these bytes as well-formed,
@@ -1105,7 +1105,7 @@ fn validate_artifact_commitment(
     // always refuse it before currentness or movement can be calculated.
     if identity.repository.head == "unavailable" || identity.analysis.worktree == "unavailable" {
         return Err(format!(
-            "agent verify {label} artifact has unavailable Git/revision provenance (repository.head={}, analysis.worktree={}); {VERIFY_GIT_PROVENANCE_REQUIREMENT} Regenerate both snapshots from the existing Git checkout. Patch analysis and agent brief remain supported without verification provenance.",
+            "agent verify {label} artifact has unavailable Git/revision provenance (repository.head={}, analysis.worktree={}); regenerate both snapshots from the existing Git checkout. {VERIFY_GIT_PROVENANCE_REQUIREMENT} Patch analysis and agent brief remain supported without verification provenance.",
             identity.repository.head, identity.analysis.worktree,
         ));
     }
@@ -1266,12 +1266,12 @@ pub(crate) fn validate_pair_lineage(
     }
     if git_merge_base_is_ancestor(root, &after.repository_head, &before.repository_head)? {
         return Err(format!(
-            "repository revisions are reversed: after head {} does not descend from before head {}",
+            "repository revisions are reversed: after head {} does not descend from before head {}; swap --before and --after, or regenerate both snapshots in order",
             after.repository_head, before.repository_head
         ));
     }
     Err(format!(
-        "repository revisions are unrelated: before head {} and after head {} share no ancestry",
+        "repository revisions are unrelated: before head {} and after head {} share no ancestry; regenerate both snapshots from the same branch",
         before.repository_head, after.repository_head
     ))
 }
@@ -1299,7 +1299,7 @@ pub(crate) fn validate_verify_movement(
             .get(..7)
             .unwrap_or(&before.repository_head);
         return Err(format!(
-            "no repository movement between before and after artifacts: the repository is still at {short}, so nothing has changed since the before phase and there is nothing to compare yet"
+            "no repository movement between before and after artifacts: the repository is still at {short}, so nothing has changed since the before phase and there is nothing to compare yet; make the edit, then regenerate the after snapshot"
         ));
     }
     Ok(())
@@ -1520,7 +1520,7 @@ pub(crate) fn git_output(root: &Path, args: &[&str]) -> Result<String, String> {
     let output = git_spawn(root, args)?;
     if !output.status.success() {
         return Err(format!(
-            "git {:?} in {} failed with {}: {}",
+            "git {:?} in {} failed with {}: {}; check that the selected root is a Git checkout and git is on PATH",
             args,
             root.display(),
             output.status,
@@ -1544,8 +1544,15 @@ const ARTIFACT_GIT_DEADLINE: Duration = Duration::from_mins(1);
 /// the adapter-level `Output` contract (exit status inspected by the caller)
 /// is unchanged.
 fn git_spawn(root: &Path, args: &[&str]) -> Result<std::process::Output, String> {
-    crate::git::run_git_output_with_deadline(root, args, Some(ARTIFACT_GIT_DEADLINE))
-        .map_err(|err| format!("run git {:?} in {} failed: {err}", args, root.display()))
+    crate::git::run_git_output_with_deadline(root, args, Some(ARTIFACT_GIT_DEADLINE)).map_err(
+        |err| {
+            format!(
+                "run git {:?} in {} failed: {err}; check that git is installed and on PATH",
+                args,
+                root.display()
+            )
+        },
+    )
 }
 
 /// Resolve the commit that Git reports for a repository root.
@@ -1558,7 +1565,7 @@ pub(crate) fn current_git_head(root: &Path) -> Result<String, String> {
     let head = head.trim();
     if !is_full_sha(head) {
         return Err(format!(
-            "git rev-parse HEAD in {} returned an invalid commit `{head}`",
+            "git rev-parse HEAD in {} returned an invalid commit `{head}`; check that the selected root is a healthy Git checkout, or report this as a ripr bug",
             root.display()
         ));
     }
@@ -1570,7 +1577,9 @@ pub(crate) fn current_git_head(root: &Path) -> Result<String, String> {
 /// result must be a full lowercase commit id.
 pub(crate) fn resolve_commit_rev(root: &Path, rev: &str) -> Result<String, String> {
     if rev.trim().is_empty() || rev.starts_with('-') {
-        return Err(format!("`{rev}` is not a revision ripr can resolve"));
+        return Err(format!(
+            "`{rev}` is not a revision ripr can resolve; pass a commit id, branch or tag that does not start with `-`"
+        ));
     }
     let spec = format!("{rev}^{{commit}}");
     let resolved =
@@ -1580,7 +1589,7 @@ pub(crate) fn resolve_commit_rev(root: &Path, rev: &str) -> Result<String, Strin
     let resolved = resolved.trim();
     if !is_full_sha(resolved) {
         return Err(format!(
-            "revision `{rev}` resolved to an invalid commit `{resolved}`"
+            "revision `{rev}` resolved to an invalid commit `{resolved}`; report this as a ripr bug with the revision and your git version"
         ));
     }
     Ok(resolved.to_string())
@@ -1693,7 +1702,7 @@ pub(crate) fn git_merge_base_is_ancestor(
         Some(0) => Ok(true),
         Some(1) => Ok(false),
         _ => Err(format!(
-            "git merge-base --is-ancestor {ancestor} {descendant} in {} failed with {}: {}",
+            "git merge-base --is-ancestor {ancestor} {descendant} in {} failed with {}: {}; check that both revisions exist in this checkout (fetch them if needed)",
             root.display(),
             output.status,
             String::from_utf8_lossy(&output.stderr).trim()
@@ -2111,7 +2120,7 @@ mod tests {
         );
         assert_eq!(
             error.map(|closure| closure.after_classification),
-            Err("agent verify --gap-id requires `check-findings-json` snapshots; the before artifact is not one"
+            Err("agent verify --gap-id requires `check-findings-json` snapshots; the before artifact is not one; save `ripr check --format check-findings-json` output as both --before and --after"
                 .to_string())
         );
         assert!(!"agent verify --gap-id requires".starts_with(GAP_BINDING_REFUSAL_PREFIX));
@@ -2127,7 +2136,7 @@ mod tests {
         );
         assert_eq!(
             error.map(|closure| closure.after_classification),
-            Err("agent verify --gap-id requires `check-findings-json` snapshots; the after artifact is not one"
+            Err("agent verify --gap-id requires `check-findings-json` snapshots; the after artifact is not one; save `ripr check --format check-findings-json` output as both --before and --after"
                 .to_string())
         );
     }
@@ -3645,7 +3654,7 @@ mod tests {
             validate_verify_movement(&before, &after),
             Err(error) if error.contains("no repository movement")
                 && error.contains("the repository is still at aaaaaaa")
-                && error.contains("nothing has changed since the before phase and there is nothing to compare yet")
+                && error.contains("nothing has changed since the before phase and there is nothing to compare yet; make the edit, then regenerate the after snapshot")
                 // The old internal wording and the full 40-character
                 // revision must not come back.
                 && !error.contains("both are current")

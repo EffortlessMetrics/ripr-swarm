@@ -1,3 +1,0 @@
-crates/ripr/src/domain/repair_card.rs|max_detail_items must be greater than zero
-crates/ripr/src/domain/repair_card.rs|max_inline_detail_bytes must be greater than zero
-crates/ripr/src/domain/repair_card.rs|max_serialized_bytes must be greater than zero
