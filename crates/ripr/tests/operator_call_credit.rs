@@ -1844,6 +1844,36 @@ fn capped_rows_do_not_hide_a_named_operator_call() -> Result<(), String> {
     );
     assert_eq!(operator_findings[0].related_tests.len(), 8);
     assert_eq!(operator_findings[0].class, ExposureClass::StaticUnknown);
+    let ignored_named = Case {
+        label: "capped_ignored_named_call",
+        test_body: "let sum = Money(1) + Money(1);\n        assert_eq!(sum.0, 2);\n        assert_eq!(sum.0, 1 + 1);\n        assert_eq!(sum.0, 3 - 1);\n        assert_eq!(sum.0, 4 - 2);\n        assert_eq!(sum.0, 5 - 3);\n        assert_eq!(sum.0, 6 - 4);\n        assert_eq!(sum.0, 7 - 5);\n        assert_eq!(sum.0, 8 - 6);\n        assert_eq!(sum.0, 9 - 7);",
+        extra_items: "
+#[cfg(test)]
+mod ignored {
+    use super::*;
+    #[test]
+    #[ignore]
+    fn named_call() {
+        let sum = Money::add(Money(1), Money(1));
+        assert_eq!(sum.0, 2);
+    }
+}",
+        ..operator
+    };
+    let ignored_findings = findings_of(&ignored_named)?;
+    assert_eq!(ignored_findings.len(), 1);
+    assert!(
+        ignored_findings[0]
+            .related_tests_matched_total
+            .is_some_and(|total| total > 8)
+    );
+    assert_eq!(ignored_findings[0].class, ExposureClass::StaticUnknown);
+    assert_eq!(
+        ignored_findings[0]
+            .static_limit_kind
+            .map(|kind| kind.as_str()),
+        Some("rust_implicit_call_unresolved")
+    );
     let named = Case {
         label: "capped_named_call",
         test_body: "let sum = Money::add(Money(1), Money(1));\n        assert_ne!(sum.0, 3);\n        assert_ne!(sum.0, 4);\n        assert_ne!(sum.0, 5);\n        assert_ne!(sum.0, 6);\n        assert_ne!(sum.0, 7);\n        assert_ne!(sum.0, 8);\n        assert_ne!(sum.0, 9);\n        assert_ne!(sum.0, 10);\n        assert_ne!(sum.0, 11);",

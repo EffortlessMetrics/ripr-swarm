@@ -818,7 +818,8 @@ fails closed at the relation stage. The test must also reach this impl directly
 to be judged this way. Related rows are capped for display, but this decision
 reads the admitted direct rows before that cap. A named call outside the display
 window, or in a test with more than eight assertion rows, can therefore lift the
-syntax-only withholding. A capped operator-only relation still stays withheld. The call only lifts the withholding: the finding is then
+syntax-only withholding. A capped operator-only relation still stays withheld,
+and an ignored named test does not lift that withholding. The call only lifts the withholding: the finding is then
 classified from its own stages, and an assertion-free path call leaves it an
 unconfirmed `weakly_exposed` rather than borrowing evidence.
 A confirmed
@@ -1080,7 +1081,8 @@ Tests in `crates/ripr/tests/operator_call_credit.rs` and
 `crates/ripr/src/analysis/classify/related_tests/operator_dispatch.rs`
 (#9567):
 
-- `capped_rows_do_not_hide_a_named_operator_call` and the crowded named-call controls in `a_credit_no_assertion_confirms_is_withheld_not_a_gap` preserve pre-cap decisions and operator-only withholding (#10625).
+- `repo_operator_cap_uses_uncapped_direct_relations` exercises the repository producer and its capped fallback;
+  `capped_rows_do_not_hide_a_named_operator_call` and the crowded named-call controls in `a_credit_no_assertion_confirms_is_withheld_not_a_gap` preserve pre-cap decisions and operator-only withholding (#10625).
 - `typed_operands_reach_each_operator_impl` (`Add`, `Sub`, `Neg`, `Not`,
   `AddAssign`) and `an_operator_impl_reached_through_the_operator_is_credited`
 - `operands_that_are_not_established_as_the_impl_type_stay_unrelated`

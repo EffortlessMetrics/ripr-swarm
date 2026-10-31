@@ -3518,7 +3518,7 @@ mod tests {
     use crate::analysis::diff::{ChangedFile, ChangedLine};
     use crate::analysis::facts::{FunctionSourceRole, FunctionSummary, RustIndex, TestFact};
     use crate::analysis::language::{LanguageAdapter, LanguageId};
-    use crate::analysis::{AnalysisMode, AnalysisOptions, diff};
+    use crate::analysis::{AnalysisMode, AnalysisOptions, classify, diff, rust_index};
     use crate::config::OraclePolicy;
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, OracleKind,
@@ -3760,6 +3760,98 @@ mod tests {
             finding.canonical_gap
         );
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn repo_operator_cap_uses_uncapped_direct_relations() -> Result<(), String> {
+        for (label, named, ignored) in [
+            ("hidden-named", true, false),
+            ("operator-only", false, false),
+            ("ignored-named", true, true),
+        ] {
+            let root = temp_root(label)?;
+            fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+            fs::write(
+                root.join("Cargo.toml"),
+                "[package]\nname = \"repo-operator-cap\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n",
+            ).map_err(|error| error.to_string())?;
+            let mut source = "use std::ops::*;\n#[derive(Debug, Clone, Copy, PartialEq)]\npub struct Money(pub i64);\nimpl Add for Money {\n    type Output = Money;\n    fn add(self, other: Money) -> Money {\n        Self(other.0 + self.0)\n    }\n}\n#[cfg(test)] mod tests {\n    use super::*;\n".to_string();
+            let count = if named && !ignored { 8 } else { 9 };
+            for n in 0..count {
+                source.push_str(&format!("    #[test]\n    fn a{n:02}_operator() {{\n        let sum = Money(1) + Money(1);\n        assert_eq!(sum.0, 2);\n    }}\n"));
+            }
+            if named {
+                source.push_str(if ignored {
+                    "    #[test]\n    #[ignore]\n    fn zz_named() {\n        let sum = Money::add(Money(1), Money(1));\n        assert_eq!(sum.0, 2);\n    }\n"
+                } else {
+                    "    #[test]\n    fn zz_named() {\n        let sum = Money::add(Money(1), Money(1));\n        assert_eq!(sum.0, 2);\n    }\n"
+                });
+            }
+            source.push_str("}\n");
+            fs::write(root.join("src/lib.rs"), &source).map_err(|error| error.to_string())?;
+            let options = AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                perl_producer_failure: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            };
+            let result = RustAdapter.analyze_repo(&options, &OraclePolicy::default())?;
+            let findings: Vec<_> = result
+                .findings
+                .iter()
+                .filter(|finding| finding.probe.expression == "Self(other.0 + self.0)")
+                .collect();
+            assert!(!findings.is_empty(), "{label}: expected operator findings");
+            let files = vec![(PathBuf::from("src/lib.rs"), source.into_bytes())];
+            let mut index =
+                rust_index::build_analysis_index_from_loaded_files(&root, &files, &[])?.index;
+            rust_index::apply_oracle_policy(&mut index, &OraclePolicy::default());
+            for finding in findings {
+                assert!(
+                    finding
+                        .related_tests_matched_total
+                        .is_some_and(|total| total > 8),
+                    "{label}"
+                );
+                assert_eq!(finding.related_tests.len(), 8, "{label}");
+                assert!(
+                    finding
+                        .related_tests
+                        .iter()
+                        .all(|test| test.name != "zz_named"),
+                    "{label}"
+                );
+                if named && !ignored {
+                    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+                    assert!(finding.static_limit_kind.is_none(), "{label}");
+                    let mut fallback = finding.clone();
+                    assert!(
+                        classify::withhold_implicit_call_gap(&mut fallback, &index, None),
+                        "{label}"
+                    );
+                    assert_eq!(fallback.class, ExposureClass::StaticUnknown, "{label}");
+                } else {
+                    assert_eq!(finding.class, ExposureClass::StaticUnknown, "{label}");
+                    assert_eq!(
+                        finding.static_limit_kind.map(|kind| kind.as_str()),
+                        Some("rust_implicit_call_unresolved"),
+                        "{label}"
+                    );
+                }
+            }
+            fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        }
         Ok(())
     }
 

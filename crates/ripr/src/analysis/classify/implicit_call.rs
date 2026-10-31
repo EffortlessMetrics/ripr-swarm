@@ -315,6 +315,9 @@ fn reached_only_through_syntax(
                     && test.start_line == related.line
             })
             .is_none_or(|test| {
+                if is_ignored(test) {
+                    return true;
+                }
                 let code = crate::analysis::extract::mask_comments_and_strings(&test.body);
                 !calls_method_named(&code, &owner.name)
                     && !path_owner.as_ref().is_some_and(|path| {
