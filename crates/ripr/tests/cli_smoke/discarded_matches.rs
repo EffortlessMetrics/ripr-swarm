@@ -233,6 +233,14 @@ fn neutralize_plain_language_wording(bytes: &[u8]) -> Vec<u8> {
             .or_else(|| line.strip_prefix("  Missing check"))
         {
             out.push_str(&format!("  <missing-label>{rest}"));
+        } else if line.starts_with("  Evidence: ") {
+            // The stage column was renamed `discriminator` -> `missing check`;
+            // every other stage token and value stays byte-exact.
+            out.push_str(
+                &line
+                    .replace(" · discriminator ", " · <missing-stage> ")
+                    .replace(" · missing check ", " · <missing-stage> "),
+            );
         } else if line == "Probe\n" || line == "Change type\n" {
             out.push_str("<change-type-heading>\n");
             after_change_type = true;
