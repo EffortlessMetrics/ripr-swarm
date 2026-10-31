@@ -273,8 +273,8 @@ export async function runTimingInstrument(options: TimingOptions): Promise<Timin
     identities: {
       target: identity(options.server),
       probe_wrapper_module: identity(wrapperModule),
-      powershell: isWin
-        ? identity(path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'))
+      powershell: isWin && process.env.SystemRoot
+        ? identity(path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'))
         : null
     },
     summary,
