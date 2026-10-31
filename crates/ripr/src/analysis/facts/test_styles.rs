@@ -114,7 +114,9 @@ fn normalize_indexed_file_test_styles(
         cancellation::checkpoint()?;
         let function = &mut functions[id];
         let existing = existing_tests.remove(&(function.start_line, function.name.clone()));
-        let (defines_test, compiled_out, requires_test) = match lexical_lines.as_deref() {
+        let (defines_test, compiled_out, requires_test, defines_proof_harness) = match lexical_lines
+            .as_deref()
+        {
             Some(lines) => {
                 let attributes = lexical_attributes_before(lines, function.start_line);
                 let gates = lexical_gate_attributes_before(lines, function.start_line);
@@ -123,6 +125,7 @@ fn normalize_indexed_file_test_styles(
                         || attributes_use_local_alias(attributes.iter().copied(), alias_credit),
                     attributes_compile_out_in_test_build(gates.iter().map(String::as_str)),
                     cfg_predicates::attributes_require_test(gates.iter().map(String::as_str)),
+                    attributes_define_proof_harness(attributes.iter().copied()),
                 )
             }
             None => (
@@ -133,6 +136,7 @@ fn normalize_indexed_file_test_styles(
                     ),
                 attributes_compile_out_in_test_build(function.attrs.iter().map(String::as_str)),
                 cfg_predicates::attributes_require_test(function.attrs.iter().map(String::as_str)),
+                attributes_define_proof_harness(function.attrs.iter().map(String::as_str)),
             ),
         };
         let has_test_attribute = defines_test && !compiled_out;
@@ -158,6 +162,10 @@ fn normalize_indexed_file_test_styles(
             }
         } else if preserve_cfg_test_role {
             FunctionSourceRole::CfgTestModule
+        } else if defines_proof_harness {
+            // A proof harness is verification source, not a production seam
+            // and not a test: no `TestFact`, no assertion credit.
+            FunctionSourceRole::ProofHarness
         } else {
             FunctionSourceRole::Production
         };
@@ -604,6 +612,79 @@ pub(crate) const BUILT_IN_TEST_ATTRIBUTE_PATHS: &[&str] = &[
 
 fn is_test_attribute_path(path: &str) -> bool {
     BUILT_IN_TEST_ATTRIBUTE_PATHS.contains(&path)
+}
+
+/// The exact attribute paths that make a Rust function a Kani proof harness
+/// (RIPR-SPEC-0367). Deliberately separate from
+/// [`BUILT_IN_TEST_ATTRIBUTE_PATHS`]: a proof harness is verification source,
+/// never an executable test, so a path added here registers no `TestFact`,
+/// credits no assertion and is not walked as a test-bearing marker. Matching
+/// is exact on the written path, so `my::kani::proof` and an unimported
+/// `proof` do not match.
+pub(crate) const PROOF_HARNESS_ATTRIBUTE_PATHS: &[&str] =
+    &["kani::proof", "kani::proof_for_contract"];
+
+/// Whether any attribute declares a proof harness: a literal
+/// `#[kani::proof]` / `#[kani::proof_for_contract(..)]`, or the same path
+/// introduced by `#[cfg_attr(<predicate>, kani::proof)]`. The predicate is not
+/// evaluated: the role records what the function is, not whether a build
+/// compiles it (activation stays unestablished).
+pub(crate) fn attributes_define_proof_harness<'attribute>(
+    attributes: impl IntoIterator<Item = &'attribute str>,
+) -> bool {
+    attributes.into_iter().any(|attribute| {
+        normalized_test_attribute_path(attribute)
+            .as_deref()
+            .is_some_and(|path| PROOF_HARNESS_ATTRIBUTE_PATHS.contains(&path))
+            || cfg_attr_introduced_paths(attribute)
+                .iter()
+                .any(|path| PROOF_HARNESS_ATTRIBUTE_PATHS.contains(&path.as_str()))
+    })
+}
+
+/// The attribute paths a `#[cfg_attr(<predicate>, a, b(..))]` introduces,
+/// split at top-level commas. Empty for anything that is not a plain
+/// `cfg_attr` or that carries a string literal (fail closed rather than
+/// guess a comma inside a literal).
+fn cfg_attr_introduced_paths(attribute: &str) -> Vec<String> {
+    let Some(body) = attribute.trim().strip_prefix("#[") else {
+        return Vec::new();
+    };
+    let Some(body) = body.trim_end().strip_suffix(']') else {
+        return Vec::new();
+    };
+    let compact: String = body.chars().filter(|c| !c.is_whitespace()).collect();
+    let Some(inner) = compact
+        .strip_prefix("cfg_attr(")
+        .and_then(|rest| rest.strip_suffix(')'))
+    else {
+        return Vec::new();
+    };
+    if inner.contains('"') || !attribute_arguments_are_balanced(&format!("({inner})")) {
+        return Vec::new();
+    }
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (offset, character) in inner.char_indices() {
+        match character {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(&inner[start..offset]);
+                start = offset + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&inner[start..]);
+    parts
+        .into_iter()
+        .skip(1)
+        .filter_map(|part| part.split('(').next())
+        .filter(|path| !path.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 #[cfg(test)]
