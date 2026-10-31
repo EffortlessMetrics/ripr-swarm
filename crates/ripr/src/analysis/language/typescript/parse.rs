@@ -327,7 +327,7 @@ where
     F: FnOnce(&Path, &str, &Allocator) -> T + Send + 'static,
     T: Send + 'static,
 {
-    if let Some(estimated) = nesting_over_budget(source) {
+    if let Some(estimated) = nesting_over_budget(source, source_may_contain_jsx(file)) {
         return Err(nesting_budget_refusal_reason(estimated));
     }
     let owned_file = file.to_path_buf();
@@ -416,9 +416,18 @@ fn nesting_budget_refusal_reason(estimated: usize) -> String {
 
 /// `Some(estimated_depth)` when the cheap nesting scan estimates the source
 /// over [`PARSE_NESTING_BUDGET`], else `None`.
-fn nesting_over_budget(source: &str) -> Option<usize> {
-    let estimated = max_expression_nesting_estimate(source);
+fn nesting_over_budget(source: &str, jsx: bool) -> Option<usize> {
+    let estimated = max_expression_nesting_estimate_with(source, jsx);
     (estimated > PARSE_NESTING_BUDGET).then_some(estimated)
+}
+
+/// Whether `file` can hold JSX elements (`.ts`/`.mts`/`.cts` cannot, so a
+/// `<Type>value` assertion there is never an element).
+fn source_may_contain_jsx(file: &Path) -> bool {
+    !matches!(
+        file.extension().and_then(|ext| ext.to_str()),
+        Some("ts" | "mts" | "cts")
+    )
 }
 
 /// What the last significant identifier/number word was, so regex-vs-division
@@ -446,14 +455,24 @@ enum LastWord {
 ///   (object-literal / type-annotation colons can pop a ternary early,
 ///   which under-counts; the bracket terms keep those sources covered);
 /// - prefix-operator run: consecutive `!`/`~`, prefix `+`/`-`, and prefix
-///   `await`/`typeof`/`void`/`delete`/`new` with no operand between them.
+///   `await`/`typeof`/`void`/`delete`/`new` with no operand between them;
+/// - open JSX elements (only when `jsx`): a `<` in expression position
+///   followed by a name or `>` opens one, `</` and `/>` close one; and every
+///   template interpolation `${` adds a level like a bracket does.
 ///
 /// Long binary/member chains are iterative in the parser and contribute
 /// nothing. Line/block comments, string and template literals, and regex
 /// literals are skipped so their contents cannot inflate the estimate; the
 /// regex-vs-division choice uses the standard expression-position heuristic,
 /// and a regex that never terminates on its line falls back to code.
+#[cfg(test)]
 pub(crate) fn max_expression_nesting_estimate(source: &str) -> usize {
+    max_expression_nesting_estimate_with(source, true)
+}
+
+/// [`max_expression_nesting_estimate`] with JSX element counting selected by
+/// `jsx` (off for plain TypeScript files, where `<T>x` is a type assertion).
+pub(crate) fn max_expression_nesting_estimate_with(source: &str, jsx: bool) -> usize {
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum Mode {
         Code,
@@ -475,6 +494,7 @@ pub(crate) fn max_expression_nesting_estimate(source: &str) -> usize {
     let mut depth: usize = 0;
     let mut ternary_open: usize = 0;
     let mut unary_run: usize = 0;
+    let mut jsx_open: usize = 0;
     let mut max_estimate: usize = 0;
     let mut last_word = LastWord::None;
     // Last significant byte inside code, for the position heuristics.
@@ -515,7 +535,16 @@ pub(crate) fn max_expression_nesting_estimate(source: &str) -> usize {
                 }
                 b'$' if bytes.get(index + 1) == Some(&b'{') => {
                     index += 1;
+                    // The interpolation is a nesting level of its own for the
+                    // recursive parser (nested templates parse recursively).
+                    depth = depth.saturating_add(1);
                     interpolations.push(depth);
+                    max_estimate = max_estimate.max(
+                        depth
+                            .saturating_add(ternary_open)
+                            .saturating_add(unary_run)
+                            .saturating_add(jsx_open),
+                    );
                     mode = Mode::Code;
                     last_word = LastWord::None;
                     prev = Some(b'{');
@@ -591,8 +620,12 @@ pub(crate) fn max_expression_nesting_estimate(source: &str) -> usize {
                     }
                     prev = bytes.get(end.wrapping_sub(1)).copied();
                     index = end;
-                    max_estimate = max_estimate
-                        .max(depth.saturating_add(ternary_open).saturating_add(unary_run));
+                    max_estimate = max_estimate.max(
+                        depth
+                            .saturating_add(ternary_open)
+                            .saturating_add(unary_run)
+                            .saturating_add(jsx_open),
+                    );
                     continue;
                 }
                 match byte {
@@ -604,6 +637,31 @@ pub(crate) fn max_expression_nesting_estimate(source: &str) -> usize {
                     }
                     b'`' => {
                         mode = Mode::Template;
+                        unary_run = 0;
+                        last_word = LastWord::None;
+                        prev = Some(byte);
+                    }
+                    b'<' if jsx => {
+                        let next = bytes.get(index + 1).copied();
+                        if next == Some(b'/') {
+                            // `</name>` / `</>`: consume the slash so it is
+                            // not read as a regex start.
+                            jsx_open = jsx_open.saturating_sub(1);
+                            index += 1;
+                        } else if expression_position(prev, last_word)
+                            && next.is_some_and(|n| {
+                                n.is_ascii_alphabetic() || matches!(n, b'>' | b'_' | b'$')
+                            })
+                        {
+                            jsx_open = jsx_open.saturating_add(1);
+                        }
+                        unary_run = 0;
+                        last_word = LastWord::None;
+                        prev = Some(byte);
+                    }
+                    b'/' if jsx && bytes.get(index + 1) == Some(&b'>') => {
+                        // Self-closing `/>`.
+                        jsx_open = jsx_open.saturating_sub(1);
                         unary_run = 0;
                         last_word = LastWord::None;
                         prev = Some(byte);
@@ -633,10 +691,10 @@ pub(crate) fn max_expression_nesting_estimate(source: &str) -> usize {
                     b'}' => {
                         if interpolations.last() == Some(&depth) {
                             interpolations.pop();
+                            depth = depth.saturating_sub(1);
                             mode = Mode::Template;
                             // The interpolation continues template text: this
-                            // brace is template syntax, was never counted,
-                            // and closes no code bracket.
+                            // brace closes the level `${` opened.
                         } else {
                             depth = depth.saturating_sub(1);
                             unary_run = 0;
@@ -683,8 +741,12 @@ pub(crate) fn max_expression_nesting_estimate(source: &str) -> usize {
                         prev = Some(byte);
                     }
                 }
-                max_estimate =
-                    max_estimate.max(depth.saturating_add(ternary_open).saturating_add(unary_run));
+                max_estimate = max_estimate.max(
+                    depth
+                        .saturating_add(ternary_open)
+                        .saturating_add(unary_run)
+                        .saturating_add(jsx_open),
+                );
             }
         }
         index += 1;
@@ -815,7 +877,7 @@ mod parse_depth_tests {
         );
         assert_eq!(
             max_expression_nesting_estimate("const t = `a ${f((g))} b )(` ;"),
-            2
+            3
         );
         assert_eq!(max_expression_nesting_estimate("const r = /a(b)c/ ;"), 0);
         assert_eq!(max_expression_nesting_estimate("return /(((/;"), 0);
@@ -826,6 +888,50 @@ mod parse_depth_tests {
             max_expression_nesting_estimate("a.b + c.d + e.f + g.h + i.j + k.l;"),
             0
         );
+    }
+
+    /// Hostile-input regression: nested template interpolations and JSX
+    /// elements recurse in the parser but were invisible to the estimate, so a
+    /// 50k-deep template hung (quadratic) and a 20k-deep JSX tree overflowed
+    /// the stack.
+    #[test]
+    fn nesting_estimate_counts_template_interpolations_and_jsx_elements() {
+        assert_eq!(max_expression_nesting_estimate("`${`${`${x}`}`}`"), 3);
+        let templates = format!("{}x{}", "`${".repeat(5000), "}`".repeat(5000));
+        assert_eq!(max_expression_nesting_estimate(&templates), 5000);
+        let elements = format!("return {}x{};", "<a>".repeat(5000), "</a>".repeat(5000));
+        assert_eq!(max_expression_nesting_estimate(&elements), 5000);
+        // Siblings, self-closing tags, fragments, comparisons and generics
+        // do not accumulate.
+        let flat = "return <><a/><b></b><c x=\"1\" /></>;";
+        assert_eq!(max_expression_nesting_estimate(flat), 2);
+        assert_eq!(max_expression_nesting_estimate("if (a <b && c > d) {}"), 1);
+        assert_eq!(
+            max_expression_nesting_estimate("const x = f<Array<T>>(y);"),
+            1
+        );
+        // Plain TypeScript: `<T>value` is an assertion, never an element.
+        assert_eq!(
+            max_expression_nesting_estimate_with("x = <T>y; z = <U>w;", false),
+            0
+        );
+        for file in ["deep.ts", "deep.tsx", "deep.js"] {
+            let reason = parse_on_worker(Path::new(file), &templates, |_, _, _| ());
+            assert!(
+                reason.is_err_and(|r| r.contains("expression_nesting_budget")),
+                "{file}"
+            );
+        }
+        let jsx_refused = parse_on_worker(
+            Path::new("deep.tsx"),
+            &format!(
+                "export const v = {}x{};",
+                "<a>".repeat(5000),
+                "</a>".repeat(5000)
+            ),
+            |_, _, _| (),
+        );
+        assert!(jsx_refused.is_err_and(|r| r.contains("expression_nesting_budget")));
     }
 
     #[test]

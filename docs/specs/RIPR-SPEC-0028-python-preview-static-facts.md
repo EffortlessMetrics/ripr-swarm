@@ -481,7 +481,7 @@ comments, strings, and docstrings:
   loop/with header targets too; #9531), loop, `with`, walrus or augmented target
   (`(r) += ...` and `(r): list = ...` included), or not the whole bound value,
   is not credited, as is an augmented assignment after a header or `;`
-  (`if c: r += 1`), an `import r` or `nonlocal r`, and any `case` pattern line that
+  (`if c: r += 1`), an `import r`, `nonlocal r`, `global r`, `del r` or `type r = ...`, and any `case` pattern line that
   mentions the name other than as a dotted value or class pattern (`case (r):`,
   `case {"k": r}:`, `case Foo(x=r):`; a guard read such as `case x if r:` is
   demoted too, a deliberate miss). Within one
