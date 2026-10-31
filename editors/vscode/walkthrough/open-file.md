@@ -4,8 +4,8 @@ matching binary if needed, and analyzes the saved workspace in the background.
 This step completes when the active editor shows a Rust file.
 
 The editor also routes TypeScript/JavaScript and Python files to ripr, but the
-server analyzes a preview language only after you enable it. Create `ripr.toml`
-at the workspace root with
+server analyzes a preview language when it is auto-detected (below) or after you
+enable it. To enable it explicitly, create `ripr.toml` at the workspace root with
 
 ```toml
 [languages]

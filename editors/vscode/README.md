@@ -23,8 +23,9 @@ that server with `cargo install ripr`. Workspace analysis and
 test execution still need their own tooling on the workspace host.
 
 ripr analyzes Rust out of the box. TypeScript/JavaScript and Python are preview
-languages: the editor routes their files to ripr, but the server analyzes them
-only when the language is enabled in a `ripr.toml` file at the workspace root:
+languages: the editor routes their files to ripr, and the server analyzes them
+when the language is auto-detected (see below) or enabled in a `ripr.toml` file
+at the workspace root:
 
 ```toml
 [languages]
