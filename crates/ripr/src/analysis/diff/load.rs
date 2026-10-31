@@ -991,7 +991,7 @@ pub(crate) fn not_a_work_tree_message(root: &Path) -> String {
     // the cause, never the remedy.
     format!(
         "This root is not inside a Git work tree (the analysis did not run). Run from inside a \
-         repository or pass `--root <path>` at one; `{}` works without Git history. \
+         repository or pass `--root <path>` to one; `{}` works without Git history. \
          Root: `{}`",
         crate::domain::WHOLE_REPO_PILOT_COMMAND,
         root.display(),

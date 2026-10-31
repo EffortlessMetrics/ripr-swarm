@@ -221,7 +221,7 @@ pub(super) struct Backend {
     dynamic_file_watch_registration: Mutex<bool>,
     watched_files_relative_pattern_support: AtomicBool,
     /// The diagnostics-input watcher registration (#4896). Those watchers
-    /// are anchored at one root, so they are re-registered on every root
+    /// are anchored to one root, so they are re-registered on every root
     /// transition; the async lock serializes concurrent transitions across
     /// the client round trips.
     diagnostics_input_watch: AsyncMutex<DiagnosticsInputWatch>,
@@ -5461,9 +5461,6 @@ mod interactive_debounce_fold_tests;
 mod bounded_failure_message_tests {
     use super::{analysis_failure_shown_message, bounded_failure_message};
 
-    /// #8584: `ripr/analysisStatus` copies `AnalysisFailure.message`, which
-    /// is bounded here. The wrapper must keep the truncation marker inside
-    /// the 240-character summary bound and still redact path tokens.
     /// A workspace that is not a Git work tree: the shown warning must keep
     /// the remedy (where to run, `--root`, the no-history pilot command)
     /// within the 240-character bound, shortening only the cause. The long
@@ -5487,7 +5484,7 @@ mod bounded_failure_message_tests {
         );
         assert!(shown.contains("is not inside a Git work tree"), "{shown}");
         for remedy in [
-            "pass `--root <path>` at one",
+            "pass `--root <path>` to one",
             "`ripr pilot --root .` works without Git history",
         ] {
             assert!(shown.contains(remedy), "remedy {remedy:?} cut: {shown}");
@@ -5504,6 +5501,32 @@ mod bounded_failure_message_tests {
         Ok(())
     }
 
+    /// The shortest root and a multibyte root go through the same
+    /// composition: the remedy survives and the bound counts scalars.
+    #[test]
+    fn non_git_workspace_warning_keeps_the_remedy_for_short_and_multibyte_roots() {
+        let long_multibyte = format!("/{}", "é ".repeat(200));
+        for root in ["/", long_multibyte.as_str()] {
+            let error = crate::core_error::CoreError::repository_root_unusable(
+                crate::analysis::not_a_work_tree_message(std::path::Path::new(root)),
+            );
+            let shown = analysis_failure_shown_message(
+                &error.with_context("workspace analysis failed").to_string(),
+            );
+            for remedy in [
+                "pass `--root <path>` to one",
+                "`ripr pilot --root .` works without Git history",
+            ] {
+                assert!(shown.contains(remedy), "remedy {remedy:?} cut: {shown}");
+            }
+            assert!(
+                shown.chars().count()
+                    <= super::super::component_outcome::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND,
+                "{shown}"
+            );
+        }
+    }
+
     /// Negative control: a short failure is shown whole and unchanged.
     #[test]
     fn short_analysis_failure_warning_is_unchanged() {
@@ -5513,6 +5536,9 @@ mod bounded_failure_message_tests {
         );
     }
 
+    /// #8584: `ripr/analysisStatus` copies `AnalysisFailure.message`, which
+    /// is bounded here. The wrapper must keep the truncation marker inside
+    /// the 240-character summary bound and still redact path tokens.
     #[test]
     fn analysis_status_failure_message_marks_truncation_inside_the_bound() {
         let message = format!("cargo config error: {}", "x".repeat(400));
@@ -8503,7 +8529,7 @@ fn quarantine_withdrawal_log_message(path: &Path, reason: DocumentStalenessReaso
 /// The quarantine reading for one pre-read document state (#1747): the
 /// lock-free core behind [`Backend::document_quarantine`]. Publish sites
 /// read the state once via `with_document_state` and derive both the
-/// decision and the bound version from that one read, so a concurrent
+/// decision and the bound version from thto one read, so a concurrent
 /// edit cannot slip between them.
 fn quarantine_from_state(state: &DocumentState) -> Option<(PathBuf, DocumentStalenessReason)> {
     let quarantine = state.quarantine.as_ref()?;

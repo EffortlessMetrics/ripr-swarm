@@ -260,7 +260,7 @@ Start-here action owns the remediation instead.
 ### Non-Git root refusal keeps its remedy (#11408)
 
 The not-a-work-tree refusal leads with the remedy (run from inside a
-repository or pass `--root <path>` at one; `ripr pilot --root .` works
+repository or pass `--root <path>` to one; `ripr pilot --root .` works
 without Git history) and trails the root path. The LSP shows it as a
 `window/showMessage` warning bounded to 240 characters, so an over-long
 root is the part shortened, never the remedy. A short failure message is

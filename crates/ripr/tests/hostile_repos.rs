@@ -1787,10 +1787,7 @@ fn missing_gitfile_gitdir_names_worktree_or_submodule_repair() -> Result<(), Str
             return Err(format!("missing `{needle}`\n{}", ran.stderr));
         }
     }
-    for wrong in [
-        "not inside a Git work tree",
-        "run it from inside your repository",
-    ] {
+    for wrong in ["not inside a Git work tree", "Run from inside a repository"] {
         if ran.stderr.contains(wrong) {
             return Err(format!("wrong cause `{wrong}`\n{}", ran.stderr));
         }

@@ -8,6 +8,8 @@ mod source;
 pub(crate) use source::reconstruct_old_source;
 pub mod records;
 
+#[cfg(test)]
+pub(crate) use load::not_a_work_tree_message;
 pub(crate) use load::{
     AnalyzedRevisions, HeadRefState, probe_head_ref_state, resolve_analyzed_revisions,
     working_tree_has_uncommitted_changes,
@@ -15,7 +17,7 @@ pub(crate) use load::{
 pub(crate) use load::{
     another_base_candidate, is_shallow_repository, load_diff_core,
     load_diff_range_with_deadline_core, load_diff_with_effective_base_core,
-    load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis, not_a_work_tree_message,
+    load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis,
     resolve_effective_base_core,
 };
 pub use load::{
