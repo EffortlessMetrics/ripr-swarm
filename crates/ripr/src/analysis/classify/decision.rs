@@ -262,7 +262,7 @@ pub(in crate::analysis) fn recommended_next_step_with_boundary(
     // under test, so the standard code-under-test advice is incoherent for it.
     // The exposure class is unchanged; only the guidance is reframed.
     if owner_assertion_shaped {
-        return assertion_shaped_next_step(class, stop_reasons);
+        return assertion_shaped_next_step(probe, class, stop_reasons);
     }
     match class {
         ExposureClass::Exposed => None,
@@ -304,7 +304,7 @@ pub(in crate::analysis) fn recommended_next_step_with_boundary(
             }
         }
         ExposureClass::NoStaticPath => Some(crate::domain::NO_STATIC_PATH_NEXT_STEP.to_string()),
-        ExposureClass::InfectionUnknown | ExposureClass::PropagationUnknown | ExposureClass::StaticUnknown => Some(uncertainty_next_step(class, stop_reasons, false)),
+        ExposureClass::InfectionUnknown | ExposureClass::PropagationUnknown | ExposureClass::StaticUnknown => Some(uncertainty_next_step(class, stop_reasons, false, &probe.family)),
     }
 }
 
@@ -396,6 +396,7 @@ pub(in crate::analysis) fn exact_oracle_gap_next_step(
 /// Guidance for an assertion-shaped owner, phrased for oracles rather than for
 /// code under test. Unknowns name an inspection, not an established test gap.
 fn assertion_shaped_next_step(
+    probe: &Probe,
     class: &ExposureClass,
     stop_reasons: &[StopReason],
 ) -> Option<String> {
@@ -412,7 +413,37 @@ fn assertion_shaped_next_step(
         }
         ExposureClass::InfectionUnknown
         | ExposureClass::PropagationUnknown
-        | ExposureClass::StaticUnknown => Some(uncertainty_next_step(class, stop_reasons, true)),
+        | ExposureClass::StaticUnknown => Some(uncertainty_next_step(
+            class,
+            stop_reasons,
+            true,
+            &probe.family,
+        )),
+    }
+}
+
+/// #9244 item 5: the inspection a developer performs for an `infection_unknown`
+/// finding. Only a predicate has "sides of a condition"; other families name
+/// what the changed expression produces (a scalar return value, an error
+/// variant) or which arm an input selects, so the wording never asks for the
+/// "other side" of a comparison that is not there.
+fn infection_unknown_inspection_step(family: &ProbeFamily) -> &'static str {
+    match family {
+        ProbeFamily::Predicate => {
+            "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings."
+        }
+        ProbeFamily::MatchArm => {
+            "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which match arm each input selects, then name an input that would select the changed arm. ripr.toml does not support fixture/builder value mappings."
+        }
+        ProbeFamily::CallDeletion | ProbeFamily::SideEffect => {
+            "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see whether the call runs and what it does or changes that a test could observe, then name an input for which that observable effect would differ between the original and changed code. ripr.toml does not support fixture/builder value mappings."
+        }
+        ProbeFamily::ReturnValue
+        | ProbeFamily::ErrorPath
+        | ProbeFamily::FieldConstruction
+        | ProbeFamily::StaticUnknown => {
+            "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings."
+        }
     }
 }
 
@@ -422,12 +453,13 @@ fn uncertainty_next_step(
     class: &ExposureClass,
     reasons: &[StopReason],
     assertion_shaped: bool,
+    family: &ProbeFamily,
 ) -> String {
     let mut step = if assertion_shaped {
         crate::domain::ASSERTION_SHAPED_INFECTION_UNKNOWN_NEXT_STEP.to_string()
     } else {
         match class {
-            ExposureClass::InfectionUnknown => "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings.",
+            ExposureClass::InfectionUnknown => infection_unknown_inspection_step(family),
             ExposureClass::PropagationUnknown => "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes.",
             _ => "Inspect the changed behavior and its existing tests; ripr has not established a test gap.",
         }.to_string()
@@ -587,6 +619,64 @@ mod tests {
         assert!(
             shaped.starts_with("The changed owner is an assertion helper"),
             "{shaped}"
+        );
+    }
+
+    // #9244 item 5 residual: a scalar return value has no "other side of a
+    // condition"; the wording names what the changed expression produces.
+    #[test]
+    fn infection_unknown_next_step_only_names_condition_sides_for_predicates() {
+        let step_for = |family, expression: &str| {
+            recommended_next_step(
+                &probe(family, expression),
+                &ExposureClass::InfectionUnknown,
+                false,
+                &[],
+            )
+            .unwrap_or_default()
+        };
+        let scalar = step_for(ProbeFamily::ReturnValue, "base_fee * 3");
+        assert!(!scalar.contains("condition"), "{scalar}");
+        assert!(!scalar.contains("other side"), "{scalar}");
+        assert!(
+            scalar.contains("what the changed expression produces for each"),
+            "{scalar}"
+        );
+        assert!(
+            scalar.contains("ripr.toml does not support fixture/builder value mappings."),
+            "{scalar}"
+        );
+        for family in [
+            ProbeFamily::ErrorPath,
+            ProbeFamily::FieldConstruction,
+            ProbeFamily::StaticUnknown,
+        ] {
+            let step = step_for(family, "value");
+            assert!(!step.contains("condition"), "{step}");
+            assert!(step.contains("different results"), "{step}");
+        }
+        // A unit-returning call has no result to compare: name the effect.
+        for (family, expression) in [
+            (ProbeFamily::SideEffect, "client.send(value)"),
+            (ProbeFamily::CallDeletion, "log_audit(&entry);"),
+        ] {
+            let step = step_for(family, expression);
+            assert!(
+                step.contains("what it does or changes that a test could observe"),
+                "{step}"
+            );
+            assert!(step.contains("observable effect would differ"), "{step}");
+            assert!(!step.contains("different results"), "{step}");
+            assert!(!step.contains("produces"), "{step}");
+            assert!(!step.contains("condition"), "{step}");
+        }
+        let arm = step_for(ProbeFamily::MatchArm, "Tier::Pro => 2");
+        assert!(arm.contains("which match arm each input selects"), "{arm}");
+        assert!(!arm.contains("condition"), "{arm}");
+        let predicate = step_for(ProbeFamily::Predicate, "amount >= threshold");
+        assert!(
+            predicate.contains("which side of the changed condition"),
+            "{predicate}"
         );
     }
 
