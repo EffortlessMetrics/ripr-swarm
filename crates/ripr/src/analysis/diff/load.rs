@@ -1397,6 +1397,16 @@ fn damaged_head_message(root: &Path, git_timeout: Option<Duration>) -> Option<St
     }
 }
 
+/// True when `HEAD~1` resolves to a commit in `root`.
+fn head_parent_commit_resolves(root: &Path, git_timeout: Option<Duration>) -> bool {
+    crate::git::run_git_output_with_deadline(
+        root,
+        &["rev-parse", "--verify", "--quiet", "HEAD~1^{commit}"],
+        git_timeout,
+    )
+    .is_ok_and(|output| output.status.success())
+}
+
 /// Repository facts that explain why no default base resolved and which
 /// `--base` would work: an unborn HEAD has nothing to diff, a shallow CI
 /// checkout never fetched its base branch, and a repository whose default
@@ -1489,17 +1499,32 @@ fn default_base_failure_context(root: &Path, git_timeout: Option<Duration>) -> S
             " Other branches here: {}; for example `--base {first}`.",
             listed(&related)
         ),
-        (None, false, _) if all_checked => format!(
-            " No other branch here shares history with HEAD ({}), so none can be a base; \
-             fetch the branch this work started from, or use `--base HEAD~1` for the last \
-             commit.",
-            listed(&unrelated)
-        ),
-        (None, true, Some(only)) => format!(
-            " `{only}` is the only branch, so there is no separate base to compare; use \
-             `--base HEAD~1` for the last commit or `--base HEAD --worktree` for uncommitted \
-             edits."
-        ),
+        (None, false, _) if all_checked => {
+            let parent_recovery = if head_parent_commit_resolves(root, git_timeout) {
+                ", or use `--base HEAD~1` for the last commit"
+            } else {
+                ""
+            };
+            format!(
+                " No other branch here shares history with HEAD ({}), so none can be a base; \
+                 fetch the branch this work started from{parent_recovery}.",
+                listed(&unrelated)
+            )
+        }
+        (None, true, Some(only)) => {
+            if head_parent_commit_resolves(root, git_timeout) {
+                format!(
+                    " `{only}` is the only branch, so there is no separate base to compare; use \
+                     `--base HEAD~1` for the last commit or `--base HEAD --worktree` for \
+                     uncommitted edits."
+                )
+            } else {
+                format!(
+                    " `{only}` is the only branch, so there is no separate base to compare; use \
+                     `--base HEAD --worktree` for uncommitted edits."
+                )
+            }
+        }
         (None, false, _) | (None, true, None) => String::new(),
     }
 }
@@ -4060,8 +4085,37 @@ mod tests {
         init_git_repo(&dir, "trunk")?;
         let err = resolve_default_base(&dir, None).expect_err("trunk is not a default candidate");
         assert!(
-            err.contains("`trunk` is the only branch") && err.contains("--base HEAD~1"),
+            err.contains("`trunk` is the only branch"),
             "a single-branch repository must say so, got: {err}"
+        );
+        assert!(
+            !err.contains("--base HEAD~1"),
+            "the initial commit has no parent to diff against, got: {err}"
+        );
+        assert!(
+            err.contains("--base HEAD --worktree"),
+            "the worktree recovery must remain when HEAD~1 is unavailable, got: {err}"
+        );
+        assert!(
+            resolve_effective_base(&dir, Some("HEAD~1"), None).is_err(),
+            "pasting `--base HEAD~1` must fail on a one-commit repository"
+        );
+        assert!(
+            load_worktree_diff(&dir, Some("HEAD"), None).is_ok(),
+            "pasting `--base HEAD --worktree` must succeed on a one-commit repository"
+        );
+
+        fs::write(dir.join("README"), "second")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "second"])?;
+        let err = resolve_default_base(&dir, None).expect_err("trunk is not a default candidate");
+        assert!(
+            err.contains("`trunk` is the only branch") && err.contains("--base HEAD~1"),
+            "a second commit enables the parent-base suggestion, got: {err}"
+        );
+        assert!(
+            load_diff(&dir, Some("HEAD~1"), None, None).is_ok(),
+            "pasting `--base HEAD~1` must succeed once a parent commit exists"
         );
 
         run_git_checked(&dir, &["checkout", "-b", "feature/discount"])?;
@@ -4098,8 +4152,8 @@ mod tests {
         run_git_checked(&dir, &["branch", "-q", "-D", "trunk", "feature/discount"])?;
         let err = resolve_default_base(&dir, None).expect_err("no default candidate");
         assert!(
-            err.contains("`orphan` is the only branch"),
-            "the lone orphan branch must say so, got: {err}"
+            err.contains("`orphan` is the only branch") && !err.contains("--base HEAD~1"),
+            "the lone orphan branch must say so without an unresolvable parent hint, got: {err}"
         );
         run_git_checked(&dir, &["checkout", "-q", "--orphan", "island"])?;
         run_git_checked(&dir, &["commit", "-q", "-m", "island root"])?;
