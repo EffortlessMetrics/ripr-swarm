@@ -218,7 +218,7 @@ mod tests {
         assert_eq!(
             execute(CliCommand::FirstPr(args(&["--gap-ledger"]))),
             Err(CommandError::Failure(
-                "missing value for --gap-ledger".to_string()
+                "missing value for --gap-ledger; pass a value right after it".to_string()
             ))
         );
         assert_eq!(

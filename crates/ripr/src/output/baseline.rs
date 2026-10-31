@@ -677,7 +677,7 @@ mod tests {
         );
         assert_eq!(
             err,
-            Err("unsupported gate-decision schema_version `9.9`; expected `0.1`".to_string())
+            Err("unsupported gate-decision schema_version `9.9`; expected `0.1`; regenerate the input with the command that wrote it, then rerun".to_string())
         );
     }
 }
