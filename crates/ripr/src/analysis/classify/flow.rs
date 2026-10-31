@@ -809,6 +809,15 @@ fn next_branch_value(
     if chain_repeats_adjacent_value(&function.body, adjacent_offset) {
         return None;
     }
+    // A predicate line that closes its own block (`if c { r = 1; } else { r = 1; }`)
+    // has no branch body on the next line: that line is whatever follows the
+    // statement, so it is not the branch's produced value (#10880).
+    if function.body.lines().nth(start_index).is_some_and(|line| {
+        let masked = crate::analysis::language::mask_rust_comments_and_strings(line);
+        masked.trim().ends_with(['}', ';'])
+    }) {
+        return None;
+    }
     function
         .body
         .lines()
@@ -1754,6 +1763,39 @@ mod tests {
                 "`{body}` must not produce a return-value sink: {sinks:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_closed_one_line_if_statement_does_not_lend_the_next_line_as_its_branch_value() {
+        for tail in ["r + 0", "r * 2", "r.max(0)"] {
+            let body = format!(
+                "pub fn f(x: i32) -> i32 {{\n    let r;\n    if x > 5 {{ r = 1; }} else {{ r = 1; }}\n    {tail}\n}}"
+            );
+            let owner = tail_owner(&body);
+            let probe = probe(ProbeFamily::Predicate, "x > 5", 3);
+
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+
+            assert!(
+                !sinks
+                    .iter()
+                    .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+                "`{body}` must not produce a return-value sink: {sinks:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_open_block_header_still_lends_its_first_line_as_the_branch_value() {
+        let owner = tail_owner(
+            "pub fn f(x: i32) -> i32 {\n    if x > 5 {\n        r + 0\n    } else {\n        2\n    }\n}",
+        );
+        let probe = probe(ProbeFamily::Predicate, "x > 5", 2);
+
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+
+        assert_eq!(sinks.len(), 1);
+        assert_eq!(sinks[0].text, "r + 0");
     }
 
     #[test]

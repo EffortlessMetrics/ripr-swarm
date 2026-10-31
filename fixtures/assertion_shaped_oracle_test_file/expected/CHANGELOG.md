@@ -444,3 +444,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — assertion_shaped_oracle_test_file (29)
+
+Reason:
+RIPR-SPEC-0108: a self-closed let-if statement no longer lends the next line as a branch value, so confidence drops 0.66 to 0.61 and the class stays unknown (#10880)
+
+Command:
+`cargo xtask goldens bless assertion_shaped_oracle_test_file --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
