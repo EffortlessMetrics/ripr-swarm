@@ -5010,6 +5010,26 @@ fn corpus_pins_the_typescript_commit() -> Result<(), String> {
             "expected only the verified defu, ky, h3, execa, destr, zod, valibot, remeda, vscode, typescript-compiler and hono TypeScript rows, got {typescript:?}"
         ));
     }
+    // The large-workspace rows are regression gates (#11676, #11794): the
+    // pin above fixes what is measured, these fix how much slack it gets.
+    for (id, ms, rss) in [
+        ("vscode-typescript", 90_000.0, 1024.0),
+        ("typescript-compiler", 5_000.0, 256.0),
+    ] {
+        let entry = config
+            .corpus
+            .iter()
+            .find(|entry| entry.id == id)
+            .ok_or_else(|| format!("{id} row is missing"))?;
+        if entry.ceilings.get("speed.warm_check_ms") != Some(&ms)
+            || entry.ceilings.get("speed.warm_check_peak_rss_mb") != Some(&rss)
+        {
+            return Err(format!(
+                "{id} must gate warm checks at {ms} ms and {rss} MiB, got {:?}",
+                entry.ceilings
+            ));
+        }
+    }
     Ok(())
 }
 
