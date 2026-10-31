@@ -92,6 +92,7 @@ mod imported_call_operator;
 mod known_equality_helpers;
 mod message_pin;
 mod module_value;
+mod test_local_literal;
 mod type_guard;
 mod wrapped_call;
 use classify::{PythonNoBehaviorContext, classify_change_with_value_origins};
@@ -194,6 +195,7 @@ mod same_class_callees;
 mod static_limits;
 mod term_activation;
 mod test_activation;
+mod truthiness_swap;
 use static_limits::{
     PythonStaticLimit, has_identifier_boundary, line_prefix_before,
     python_callee_start_has_boundary, python_prefix_hides_code,
@@ -1904,6 +1906,8 @@ mod helper_owner_call_tests;
 mod imported_literal_tests;
 #[cfg(test)]
 mod test_body_writer_tests;
+#[cfg(test)]
+mod test_local_literal_tests;
 #[cfg(test)]
 mod trailing_comment_tests;
 
