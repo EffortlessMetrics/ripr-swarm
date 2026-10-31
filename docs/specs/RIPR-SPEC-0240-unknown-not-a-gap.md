@@ -793,7 +793,9 @@ keeps its class. A call that names the owner decides reach itself and is
 judged by its own evidence: `.name(`, `<Money as Trait>::name(` where the
 qualifier is exactly the impl type and `Trait` is the owner's trait, spelled bare
 or under `std::ops`/`core::ops` and implemented once for the type (`Add<f64>`
-beside `Add<Money>` is ambiguous), or
+beside `Add<Money>` is ambiguous; spelled trait arguments, as in
+`<Money as Add<Money>>::name(`, must equal the impl header's, with an omitted
+right-hand side read as the self type), or
 `Money::name(` when the type has no other method of that name (an inherent
 `name` wins the path, and a second trait's `name` makes it ambiguous). Another
 type's `name`, another trait's, a type that only ends in the impl type, a
