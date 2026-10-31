@@ -719,6 +719,53 @@ impl AnalysisHealth {
     pub(super) fn pending(&self) -> bool {
         self.pending_attempt_id.is_some()
     }
+
+    /// Why `allows_current_repairs` is false, as `(refresh_state, recovery)`
+    /// (#4427). `in_flight`: a refresh is queued, running, pending or inside
+    /// the interactive debounce window (`refresh_debounced`), so a retry
+    /// shortly should succeed. `no_snapshot`: nothing has been analyzed yet
+    /// (or the input was invalidated) and nothing failed. `terminal`: the
+    /// latest attempt failed, was cancelled or was superseded without a
+    /// result. `stale_snapshot`: a snapshot is retained but is not current.
+    /// Every case still fails closed.
+    pub(super) fn repair_block_guidance(
+        &self,
+        refresh_debounced: bool,
+    ) -> (&'static str, &'static str) {
+        if refresh_debounced
+            || self.pending()
+            || matches!(
+                self.state,
+                AnalysisAttemptState::Queued | AnalysisAttemptState::Running
+            )
+        {
+            return (
+                "in_flight",
+                "A refresh is in progress; retry the repair packet shortly.",
+            );
+        }
+        if matches!(
+            self.state,
+            AnalysisAttemptState::Failed
+                | AnalysisAttemptState::Cancelled
+                | AnalysisAttemptState::Superseded
+        ) {
+            return (
+                "terminal",
+                "The latest refresh did not produce a result; check ripr status and run a refresh to recover.",
+            );
+        }
+        if self.snapshot_id.is_none() {
+            return (
+                "no_snapshot",
+                "No analysis snapshot exists yet; open or save a Rust file or run a refresh, then retry the repair packet.",
+            );
+        }
+        (
+            "stale_snapshot",
+            "The retained snapshot is not current; run a refresh, then retry the repair packet.",
+        )
+    }
 }
 
 impl RefreshMetadata {

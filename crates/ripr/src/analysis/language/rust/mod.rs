@@ -2568,6 +2568,7 @@ impl RustAdapter {
         // limitation.
         let mut files_with_findings = std::collections::BTreeSet::new();
         let mut seeded_probes = Vec::new();
+        let mut verification_only_files: Vec<(String, usize)> = Vec::new();
         let mut panicked_files: BTreeSet<PathBuf> = BTreeSet::new();
         for changed in analyzable_changed_files
             .iter()
@@ -2607,6 +2608,17 @@ impl RustAdapter {
             // and once per probe so a superseded or deadline-expired refresh
             // exits the classify loop promptly.
             cancellation::checkpoint()?;
+            // RIPR-SPEC-0368: contract attributes and ghost/proof text seed no
+            // probe; count them so the run discloses them instead of reading
+            // as "no behavior changed".
+            let verification_lines =
+                analysis_probes::changed_verification_only_lines(&index, changed);
+            if verification_lines > 0 {
+                verification_only_files.push((
+                    changed.path.to_string_lossy().replace('\\', "/"),
+                    verification_lines,
+                ));
+            }
             let probes = analysis_probes::probes_for_file_with_relations(
                 &options.root,
                 changed,
@@ -2626,6 +2638,8 @@ impl RustAdapter {
                 seeded_probes.push((changed, seeded));
             }
         }
+
+        limitations.extend(verification_only_limitation(&verification_only_files)?);
 
         // Classifying a probe reads the immutable index and the run-shared
         // candidate index, whose memos are thread-safe and pure in their keys
@@ -2905,6 +2919,9 @@ impl RustAdapter {
                     binding_relation.as_ref(),
                     pre_cap_syntax_only,
                 );
+                // RIPR-SPEC-0369: name a `verus!` region by the changed file's
+                // own index key; the probe's file is root-joined.
+                probes::apply_verus_macro_region_limit(&mut finding, &probe, &index, changed);
                 probes::attach_changed_binding_return_evidence(
                     &mut finding,
                     binding_return.as_ref(),
@@ -3194,6 +3211,52 @@ pub(crate) mod injected_classify_panic {
             std::panic::resume_unwind(Box::new("injected classify panic (#11116)"));
         }
     }
+}
+
+/// One aggregate disclosure for changed lines that are verification-erased
+/// text (RIPR-SPEC-0368): contract attributes and Creusot/Prusti ghost items.
+/// A test cannot observe them, so they seed no probe; the disclosure keeps a
+/// contract-only diff from reading as "no behavior changed" and names the
+/// verifier as the authority. It is not an incomplete analysis.
+fn verification_only_limitation(
+    files: &[(String, usize)],
+) -> Result<Option<crate::analysis_outcome::AnalysisLimitation>, String> {
+    use crate::analysis_outcome::{
+        AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
+        AnalysisStage,
+    };
+    if files.is_empty() {
+        return Ok(None);
+    }
+    let lines = files.iter().map(|(_, lines)| lines).sum::<usize>();
+    let paths = files
+        .iter()
+        .map(|(path, _)| path.clone())
+        .collect::<Vec<_>>();
+    let listed = crate::analysis::pipeline::bounded_path_listing(&paths);
+    Ok(Some(
+        AnalysisLimitation::new(
+            AnalysisLimitationKind::VerificationOnlyChange,
+            AnalysisStage::ProbeGeneration,
+            AnalysisRecovery::new(
+                AnalysisRecoveryKind::InspectFailure,
+                "Verification contract or proof text changed. ripr does not evaluate contracts, \
+                 proofs or ghost code and a test cannot observe them; re-run the verifier \
+                 (for example cargo kani, cargo creusot or cargo prusti) on the affected items.",
+            )?,
+        )
+        .with_affected_items(files.len() as u64)?
+        .with_detail(
+            format!(
+                "{lines} changed line(s) in {} file(s) are verification-only text (contract \
+                 attribute, logic/ghost item or proof macro) and were not probed: {listed}",
+                files.len()
+            )
+            .chars()
+            .take(crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS)
+            .collect::<String>(),
+        )?,
+    ))
 }
 
 /// One typed limitation per changed Rust file whose facts came from the

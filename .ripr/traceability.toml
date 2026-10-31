@@ -19034,6 +19034,15 @@ id = "RIPR-SPEC-0240"
 name = "Unknown, not a gap"
 spec = "docs/specs/RIPR-SPEC-0240-unknown-not-a-gap.md"
 tests = [
+  "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_literal_pin_reads_helper_data",
+  "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_credit_requires_readable_carried_data",
+  "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_projection_edit_needs_distinct_literal_totals",
+  "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_cfg_rows_do_not_supply_literal_data",
+  "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_raw_rival_method_does_not_pin_the_owner",
+  "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_unread_old_pipeline_supplies_no_pin",
+  "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_equivalent_binding_edits_keep_degenerate_literals",
+  "crates/ripr/tests/framework_oracle_limit.rs::a_fixture_receiver_shape_that_differs_keeps_the_finding",
+  "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_gate_does_not_lend_propagation_to_a_forwarding_entry_pin",
   "crates/ripr/tests/operator_call_credit.rs::block_statements_followed_by_minus_stay_unrelated",
   "crates/ripr/tests/operator_call_credit.rs::standalone_add_assign_keeps_typed_operand_and_unique_impl_gates",
   "crates/ripr/tests/proximity_oracle_credit.rs::unrelated_same_file_assertion_cannot_supply_the_oracle",
@@ -19189,6 +19198,9 @@ tests = [
   "crates/ripr/src/analysis/classify/pinned_shape.rs::tests::a_closure_bound_by_let_in_the_tail_block_is_not_a_closure_tail",
 ]
 fixtures = [
+  "fixtures/fixture_receiver_extension_iter",
+  "fixtures/fixture_receiver_coincident_data",
+  "fixtures/fixture_receiver_unread_data",
   "fixtures/proximity_unrelated_oracle_not_credited",
   "fixtures/macro_site_scoped_rest_limit",
   "fixtures/parser_formatted_input_provenance",
@@ -19196,6 +19208,8 @@ fixtures = [
   "fixtures/gap_kept_ignored_test",
 ]
 code = [
+  "crates/ripr/src/analysis/classify/owner_pin/fixture_receiver.rs",
+  "crates/ripr/src/analysis/classify/owner_pin/fixture_receiver/dispatch.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/classify/gap_admission.rs",
   "crates/ripr/src/analysis/classify/pinned_shape.rs",
