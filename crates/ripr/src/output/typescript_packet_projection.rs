@@ -1282,10 +1282,8 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
     // G-D: oracle-eligible relation is guaranteed by G-A (ambiguous_related_test
     // is a different category and is excluded above). Verify also that there is
     // actually a related test with an oracle-eligible file we can use.
-    let related_test = finding
-        .related_tests
-        .iter()
-        .max_by_key(|t| t.oracle_strength.rank())?;
+    let related_test =
+        crate::output::related_test_miss::strongest_related_test(&finding.related_tests)?;
     let test_file = related_test.file.display().to_string().replace('\\', "/");
     if test_file.is_empty() {
         return None;

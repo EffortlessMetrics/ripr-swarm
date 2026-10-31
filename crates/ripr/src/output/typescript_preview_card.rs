@@ -331,10 +331,7 @@ fn suggested_assertion_shape(
 }
 
 fn strongest_related_test(finding: &Finding) -> Option<&RelatedTest> {
-    finding
-        .related_tests
-        .iter()
-        .max_by_key(|test| test.oracle_strength.rank())
+    crate::output::related_test_miss::strongest_related_test(&finding.related_tests)
 }
 
 fn evidence_value<'a>(finding: &'a Finding, prefix: &str) -> Option<&'a str> {
@@ -893,6 +890,29 @@ mod tests {
         assert_eq!(json["repair_packet_ready"], false);
         assert_eq!(json["related_test"]["name"], "discount smoke");
         assert_eq!(json["missing_discriminator"], "amount == threshold");
+        Ok(())
+    }
+
+    /// #11228: with two equally strong tests the card names the same row the
+    /// check headline names (the first), not the last.
+    #[test]
+    fn typescript_preview_card_names_the_headline_test_when_oracles_tie() -> Result<(), String> {
+        let mut finding = sample_finding(OracleKind::ExactValue, OracleStrength::Strong);
+        let mut second = finding.related_tests[0].clone();
+        second.name = "discount small".to_string();
+        second.line = 8;
+        finding.related_tests[0].name = "discount big".to_string();
+        finding.related_tests.push(second);
+        let card = typescript_preview_card(&finding)
+            .ok_or_else(|| "expected TypeScript preview card".to_string())?;
+        let json = typescript_preview_card_json_value(&card);
+        assert_eq!(json["related_test"]["name"], "discount big");
+        // Negative: a strictly stronger later row still wins.
+        finding.related_tests[0].oracle_strength = OracleStrength::Smoke;
+        let card = typescript_preview_card(&finding)
+            .ok_or_else(|| "expected TypeScript preview card".to_string())?;
+        let json = typescript_preview_card_json_value(&card);
+        assert_eq!(json["related_test"]["name"], "discount small");
         Ok(())
     }
 
