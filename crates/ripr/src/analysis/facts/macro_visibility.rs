@@ -123,6 +123,12 @@ fn may_call_generator(source: &str, names: &BTreeSet<String>) -> bool {
     })
 }
 
+/// ASCII whitespace as the lexer reads it: `is_ascii_whitespace` plus the
+/// vertical tab.
+fn is_lexer_whitespace(c: char) -> bool {
+    c.is_ascii_whitespace() || c == '\u{b}'
+}
+
 /// Whether `source` could declare an out-of-line module `name` (`mod name;`),
 /// with an attribute in front of it when `attributed`. A superset of what
 /// `macro_scope` lists, so a `false` skips its parse without changing the
@@ -151,11 +157,11 @@ fn may_declare_module_named(source: &str, name: &str, attributed: bool) -> bool 
         if source[..head].ends_with("r#") {
             head -= 2;
         }
-        let before = source[..head].trim_end_matches(|c: char| c.is_ascii_whitespace());
+        let before = source[..head].trim_end_matches(is_lexer_whitespace);
         let own_line = source[..head]
             .rsplit('\n')
             .next()
-            .is_some_and(|line| line.bytes().all(|byte| byte.is_ascii_whitespace()));
+            .is_some_and(|line| line.chars().all(is_lexer_whitespace));
         if ends_in_comment_or_unicode(before, own_line) {
             return true;
         }
@@ -189,24 +195,33 @@ fn ends_in_comment_or_unicode(text: &str, own_line: bool) -> bool {
 /// `deny(..)` or `doc..`. A comment, a non-ASCII byte, a keyword or an
 /// attribute this does not model is a maybe.
 fn may_follow_attribute(item: &str) -> bool {
-    let mut item = item.trim_end_matches(|c: char| c.is_ascii_whitespace());
+    let mut item = item.trim_end_matches(is_lexer_whitespace);
     if ends_in_comment_or_unicode(item, true) || item.ends_with("unsafe") {
         return true;
     }
     if item.ends_with(')') {
+        // Only a plain `pub(<path>)` is modelled; a comment, quote or paren
+        // inside or around it is a maybe.
         let Some(open) = item.rfind('(') else {
-            return false;
+            return true;
         };
-        let visibility = item[..open].trim_end_matches(|c: char| c.is_ascii_whitespace());
+        let body = &item[open + 1..item.len() - 1];
+        if body
+            .bytes()
+            .any(|b| matches!(b, b'/' | b'(' | b')' | b'"' | b'\'') || b >= 0x80)
+        {
+            return true;
+        }
+        let visibility = item[..open].trim_end_matches(is_lexer_whitespace);
         let Some(rest) = visibility.strip_suffix("pub") else {
-            return false;
+            return true;
         };
         item = rest;
     } else if let Some(rest) = item.strip_suffix("pub") {
         item = rest;
     }
     loop {
-        item = item.trim_end_matches(|c: char| c.is_ascii_whitespace());
+        item = item.trim_end_matches(is_lexer_whitespace);
         if ends_in_comment_or_unicode(item, true) {
             return true;
         }

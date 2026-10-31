@@ -70,7 +70,7 @@ fn resolving_one_file_parses_only_files_that_can_declare_its_modules() {
     assert!(imported.definitions.contains("macro_rules! t "));
     // cases.rs (own scope), lib.rs (the declarer and its attributed check).
     // None of the filler files can spell an attributed `mod cases`.
-    assert!(parsed <= 3, "parsed {parsed} scopes");
+    assert_eq!(parsed, 3, "parsed {parsed} scopes");
     // A second ask for the same file re-parses nothing.
     let again = scope_parses();
     let _ = visibility.imported_macros(Path::new("src/cases.rs"));
@@ -88,7 +88,7 @@ fn the_lookup_matches_the_whole_workspace_index() {
         "#[cfg(test)]\nmod cases;\n",
         "#[cfg(test)] #[path = \"x.rs\"] mod cases;\n",
         "#[path = \"x.rs\"] #[cfg(test)] mod cases;\n",
-        "#[macro_use] #[allow(dead_code)] pub(crate) mod cases;\n",
+        "#[macro_use] #[allow(unused)] pub(crate) mod cases;\n",
         "#[ cfg ( test ) ]\nmod cases;\n",
         "#![allow(unused)]\nmod cases;\n",
         "#[doc = \"a]b\"] #[cfg(feature = \"x\")] mod cases;\n",
@@ -163,6 +163,8 @@ fn the_text_gate_never_hides_a_declaration_the_parser_lists() {
             "\u{0085}",
             "\u{200e}",
             "\u{2028}",
+            "\u{b}",
+            " \u{b} ",
         ] {
             for prefix in [
                 "",
@@ -173,13 +175,21 @@ fn the_text_gate_never_hides_a_declaration_the_parser_lists() {
                 "// c\n",
                 "/* c */ pub ",
                 "unsafe ",
+                "pub /* c */ ",
+                "pub(in /* ( */ crate) ",
+                "pub\u{b}(crate) ",
                 "#[cfg(test)] ",
                 "#[macro_use] pub ",
-                "#[allow(dead_code)]\n",
+                "#[allow(unused)]\n",
             ] {
                 for spelled in [name, bare] {
                     let source = format!("#[path = \"p.rs\"] {prefix}mod{gap}{spelled};\n");
                     let Some(scope) = macro_scope(&source) else {
+                        // Only a keyword name or `unsafe mod` fails to parse.
+                        assert!(
+                            spelled == "type" || prefix == "unsafe ",
+                            "unexpected parse failure: {source:?}"
+                        );
                         continue;
                     };
                     for module in scope.modules.iter().filter(|module| !module.plain) {
@@ -206,7 +216,7 @@ fn the_text_gate_never_hides_a_declaration_the_parser_lists() {
         "#[derive(Debug)] struct S; mod cases;",
         "fn f() {}\nmod cases;",
         "#[cfg(test)] mod cases;",
-        "#[cfg(test)]\n#[allow(dead_code)] pub(crate) mod cases;",
+        "#[cfg(test)]\n#[allow(unused)] pub(crate) mod cases;",
         "#[ macro_use ] mod cases;",
         "#[doc(hidden)] mod cases;",
     ] {
@@ -260,4 +270,45 @@ fn the_attributed_lookup_stops_at_the_second_declarer() {
     let lone = self::visibility(&files[..2]);
     assert!(!lone.attributed_elsewhere("cases", Path::new("src/decl0.rs")));
     assert!(lone.attributed_elsewhere("cases", Path::new("src/cases.rs")));
+}
+
+#[test]
+fn the_text_gate_keeps_every_contrived_attributed_declaration() {
+    let vt = "\u{b}";
+    let sources = [
+        "#[path = \"x.rs\"] pub /* c */ (crate) mod cases;\n".to_string(),
+        "#[path = \"x.rs\"] pub // c\n (crate) mod cases;\n".to_string(),
+        "#[path = \"x.rs\"] pub(in /* ( */ crate) mod cases;\n".to_string(),
+        "#[path = \"x.rs\"] pub(in crate /* ) */) mod cases;\n".to_string(),
+        "#[path = \"x.rs\"] pub (in crate) mod cases;\n".to_string(),
+        format!("#[path = \"x.rs\"] mod{vt}cases;\n"),
+        format!("#[path = \"x.rs\"]{vt}mod cases;\n"),
+        format!("#[path = \"x.rs\"] pub{vt}(crate){vt}mod{vt}cases;\n"),
+        "#[path = \"x.rs\"]\nmod cases;\n".to_string(),
+        "#[cfg(unix)] mod cases;\n".to_string(),
+        "#[cfg_attr(unix, path = \"x.rs\")] mod cases;\n".to_string(),
+        "#[doc = \"]\"] #[path = \"x.rs\"] mod cases;\n".to_string(),
+        "#[path = \"a[0]\"] mod cases;\n".to_string(),
+        "#[path =\n    \"x.rs\"\n] mod cases;\n".to_string(),
+        "# [path = \"x.rs\"] mod cases;\n".to_string(),
+        "#[ path = \"x.rs\" ]\n#[allow(unused)]\nmod cases;\n".to_string(),
+        "#[allow(unused)]\n#[path = \"x.rs\"]\nmod cases;\n".to_string(),
+    ];
+    for source in &sources {
+        let listed = macro_scope(source)
+            .map(|scope| {
+                scope
+                    .modules
+                    .iter()
+                    .any(|module| !module.plain && module.name == "cases")
+            })
+            .unwrap_or(false);
+        assert!(listed, "parser premise: {source:?}");
+        for attributed in [true, false] {
+            assert!(
+                may_declare_module_named(source, "cases", attributed),
+                "false negative ({attributed}): {source:?}"
+            );
+        }
+    }
 }
