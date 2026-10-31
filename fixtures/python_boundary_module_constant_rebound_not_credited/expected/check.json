@@ -38,17 +38,17 @@
        },
       "ripr": {
         "reach": {"state":"yes","confidence":"low","summary":"2 related Python test(s) found for owner `tier`"},
-        "infect": {"state":"weak","confidence":"low","summary":"Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary."},
+        "infect": {"state":"weak","confidence":"low","summary":"Related tests reach the changed predicate, but static evidence does not place a strong related test input at the changed boundary."},
         "propagate": {"state":"weak","confidence":"low","summary":"Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink."},
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
        },
-      "evidence_path": ["reach yes: 2 related Python test(s) found for owner `tier`", "infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary.", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches unknown sink: if score >= 50: (line 2)", "related test tests/test_pricing.py:11 test_edge uses strong exact value oracle: assert tier(THRESHOLD) == \"basic\"", "related test tests/test_pricing.py:7 test_gold uses strong exact value oracle: assert tier(80) == \"gold\"", "source function argument value score = 80 at line 8", "missing discriminator score == 50: No strong related test call places score equal to 50; observed score values: 80"],
+      "evidence_path": ["reach yes: 2 related Python test(s) found for owner `tier`", "infection weak: Related tests reach the changed predicate, but static evidence does not place a strong related test input at the changed boundary.", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches unknown sink: if score >= 50: (line 2)", "related test tests/test_pricing.py:11 test_edge uses strong exact value oracle: assert tier(THRESHOLD) == \"basic\"", "related test tests/test_pricing.py:7 test_gold uses strong exact value oracle: assert tier(80) == \"gold\"", "source function argument value score = 80 at line 8"],
       "flow_sinks": [
         {"kind":"unknown","text":"if score >= 50:","line":2}
       ],
-      "evidence": ["owner: tier", "owner_kind: function", "missing_discriminator: score == 50", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_pricing.py", "suggested_test_name: test_edge", "suggested_test_node_id: tests/test_pricing.py::test_edge", "suggested_verify_command: python -m pytest tests/test_pricing.py::test_edge", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_edge)", "test_verify_command: python -m pytest tests/test_pricing.py::test_edge (test_edge)", "related_test_relation: syntactic_call (test_edge)", "test_oracle: exact_value strong (test_edge)", "test_framework: pytest (test_gold)", "test_verify_command: python -m pytest tests/test_pricing.py::test_gold (test_gold)", "related_test_relation: syntactic_call (test_gold)", "test_oracle: exact_value strong (test_gold)"],
-      "missing": ["A strong Python oracle reaches `tier`, but static evidence does not place a related test input at the changed predicate boundary `score == 50`. No strong related test call places score equal to 50; observed score values: 80."],
+      "evidence": ["owner: tier", "owner_kind: function", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_pricing.py", "suggested_test_name: test_edge", "suggested_test_node_id: tests/test_pricing.py::test_edge", "suggested_verify_command: python -m pytest tests/test_pricing.py::test_edge", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_edge)", "test_verify_command: python -m pytest tests/test_pricing.py::test_edge (test_edge)", "related_test_relation: syntactic_call (test_edge)", "test_oracle: exact_value strong (test_edge)", "test_framework: pytest (test_gold)", "test_verify_command: python -m pytest tests/test_pricing.py::test_gold (test_gold)", "related_test_relation: syntactic_call (test_gold)", "test_oracle: exact_value strong (test_gold)"],
+      "missing": ["A strong Python oracle reaches `tier`, but static evidence does not place a related test input at the changed predicate boundary. Some strong related calls have unresolved inputs, so static evidence cannot determine whether they reach the changed boundary of `score >= 50`."],
       "assertion_texts": {
         "8": "assert tier(80) == \"gold\""
       },
@@ -61,11 +61,6 @@
           }
         ],
         "missing_discriminators": [
-          {
-            "value": "score == 50",
-            "reason": "No strong related test call places score equal to 50; observed score values: 80",
-            "flow_sink": {"kind":"unknown","text":"if score >= 50:","line":2}
-          }
         ]
       },
       "observed_values": [
@@ -76,11 +71,6 @@
         }
       ],
       "missing_discriminators": [
-        {
-          "value": "score == 50",
-          "reason": "No strong related test call places score equal to 50; observed score values: 80",
-          "flow_sink": {"kind":"unknown","text":"if score >= 50:","line":2}
-        }
       ],
       "related_tests_total": 2,
       "related_tests": [
@@ -100,7 +90,7 @@
           "oracle_kind": "exact_value",
           "oracle": "assert tier(80) == \"gold\"",
           "miss": "missing_input",
-          "why": "no test input reaches `score == 50`"
+          "why": "no test input reaches the changed boundary"
         }
       ],
       "repair_placement": {
@@ -110,42 +100,11 @@
         "verify_command": "python -m pytest tests/test_pricing.py::test_edge",
         "verify_command_confidence": "high"
        },
-      "python_repair_card": {
-        "card_version": "python_repair_card.v1",
-        "source": "check_python_preview",
-        "canonical_gap_id": "gap:python:src/pricing.py:tier:predicate_boundary:predicate:score>=50",
-        "language": "python",
-        "language_status": "preview",
-        "authority_boundary": "preview_advisory_only",
-        "repair_action": "strengthen_existing_test",
-        "changed_owner": "tier",
-        "changed_behavior": "predicate_boundary changed at src/pricing.py:2: `if score >= 50:`",
-        "current_test_evidence": "tests/test_pricing.py:11 test_edge currently has oracle_strength=strong, oracle_kind=exact_value: assert tier(THRESHOLD) == \"basic\"",
-        "missing_discriminator": "score == 50",
-        "recommended_test_shape": "Strengthen the existing pytest boundary assertion for `score == 50`. Keep the equality case as the minimum repair; optional pytest parameterization can add `49`, `50`, and `51` rows when expected values are clear.",
-        "suggested_assertion": "Assert the owner result or effect at `score == 50` first. Optional pytest shape: @pytest.mark.parametrize(\"score, expected\", [(49, ...), (50, ...), (51, ...)]); fill expected values from domain behavior only.",
-        "suggested_location": {
-          "test_file": "tests/test_pricing.py",
-          "test_name": "test_edge",
-          "pytest_node_id": "tests/test_pricing.py::test_edge"
-         },
-        "verify": {
-          "command": "python -m pytest tests/test_pricing.py::test_edge",
-          "confidence": "high"
-         },
-        "receipt": {
-          "command": null,
-          "status": "unavailable_until_python_gap_ledger",
-          "guidance": "Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command."
-         },
-        "stop_conditions": ["Stop if imports, fixtures, or test setup cannot call the changed owner.", "Stop if the expected value for the missing discriminator is ambiguous.", "Stop if adding the test appears to require a production-code edit.", "Stop before adding parametrized below/above rows if their expected values are not clear; keep only the equality-boundary assertion."],
-        "limits": ["Syntax-first Python preview evidence only.", "No source edits, generated tests, mutation execution, provider calls, or gate authority.", "Verify success alone is not a gap-closure receipt."]
-       },
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `score == 50`.",
-      "suggested_next_action": "Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `score == 50`.",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
       "language": "python",
       "language_status": "preview",
       "owner_kind": "function",
@@ -167,5 +126,5 @@
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
   ],
-  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/pricing.py","digest":"sha256:0d7ae1682e948ec694e3b6e5f630c58da1573cbbf9e660b4b100aca06cf333e9"},{"path":"tests/test_pricing.py","digest":"sha256:d9d4f0eaf8e38cabd943fc63c4ae850e2b377d027a98b97e8ea2a24c0d3b6ecb"}]}
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/pricing.py","digest":"sha256:0d7ae1682e948ec694e3b6e5f630c58da1573cbbf9e660b4b100aca06cf333e9"}]}
 }
