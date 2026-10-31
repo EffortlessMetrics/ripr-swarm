@@ -133,8 +133,22 @@ rule_id | finding_id | probe_id | normalized_file | line
 Seam fingerprints should prefer:
 
 ```text
-rule_id | seam_id | normalized_file | line
+rule_id | normalized_file | identity_hash | ordinal
 ```
+
+A seam fingerprint is independent of the display line, the byte offset and the
+offset-derived `seam_id` (#11219), so an unrelated edit above a seam keeps its
+code-scanning alert. `identity_hash` is a 128-bit stable hash (32 lowercase hex
+characters) over the length-prefixed seam owner, seam kind and
+whitespace-collapsed expression. `ordinal` is the zero-based source-order rank
+among seams of the same file, owner, kind and expression in the classified
+set, assigned before severity filtering so another seam's class or `off`
+setting never renumbers it. Distinct seams therefore never share a
+fingerprint; textual duplicates are told apart by ordinal. The grip class
+stays in `rule_id`, so a reclassified seam is a new alert. Reordering
+identical duplicate seams, or a seam-limit cap that changes which duplicates
+are analyzed, can swap ordinals because static evidence cannot tell them
+apart. `properties.seam_id` is unchanged.
 
 `normalized_file` and the physical location `uri` do not depend on how
 `--root` is spelled: `.`, `./` and the checkout's absolute path render the
