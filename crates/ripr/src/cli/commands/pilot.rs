@@ -291,8 +291,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // Apply the pilot artifact seam budget.  The inventory may already have
     // been capped by the repo-exposure seam limit; we then further cap the
     // classified slice for the two pilot artifacts so they stay under a
-    // manageable size.  `limit_info` carries whichever cap fired (pilot
-    // budget wins when both fire; inventory limit is the outer bound).
+    // manageable size. Preserve both cuts when each independently fires;
+    // the inventory limit is the outer bound.
     let mut classified = report.classified;
     let corpus_key = report.corpus_key;
     let analyzed_production_files = report.analyzed_production_files;
@@ -421,14 +421,14 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         }),
         (budget, inventory) => budget.clone().or_else(|| inventory.clone()),
     };
-    let limit_info = pilot_budget_info.or(inventory_limit_info);
-    let repo_exposure_limit = limit_info.as_ref().map(|info| {
-        if pilot_budget_truncated {
-            RepoExposureLimit::PilotBudget(info)
-        } else {
-            RepoExposureLimit::Inventory(info)
+    let repo_exposure_limit = match (&pilot_budget_info, &inventory_limit_info, &summary_limit) {
+        (Some(_), Some(inventory), Some(summary)) => {
+            Some(RepoExposureLimit::Both(summary, inventory))
         }
-    });
+        (Some(budget), None, _) => Some(RepoExposureLimit::PilotBudget(budget)),
+        (None, Some(inventory), _) => Some(RepoExposureLimit::Inventory(inventory)),
+        _ => None,
+    };
     let (causal_projection, causal_projection_warning) =
         crate::app::causal_projection::CausalDeltaArtifact::load_optional(&input.root);
     if let Some(warning) = causal_projection_warning {

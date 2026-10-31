@@ -4612,7 +4612,9 @@ Field contract:
     budget cut, with the same count/source fields and `control:
     "RIPR_PILOT_SEAM_BUDGET"`. Its default is 2,000; a configured value
     retains `limit_source: "configured"`. The repair route names the pilot
-    budget that actually fired, even when an inventory cap also applied.
+    budget that actually fired. When an independent inventory cap also
+    applies, a separate `repo_seam_limit_applied` entry names its own control
+    and the outer inventory total; the pilot entry also reports that total.
     An inactive pilot budget does not relabel an inventory limitation.
   - `category: "typescript_diff_first"` appears when a TS/JS-predominant
     workspace has TS/JS files, no Rust files, and zero classified seams.
@@ -16500,16 +16502,17 @@ Field contract:
   `limitations[]` (`declined_file_count`, up to three `declined_files[]` of
   `{path, reason}`, `repair_route`). Packet admission remains independent of
   this status.
-- `limitations[]` — present for a pilot artifact cap, with one object carrying
+- `limitations[]` — present for a pilot artifact cap, with each object carrying
   `category`, `seams_analyzed`, `seams_total`, `limit_source`, `control` and
   `repair_route`. An inventory-only cut names `"repo_seam_limit_applied"` and
   `"RIPR_REPO_EXPOSURE_SEAM_LIMIT"`; a pilot cut names
   `"pilot_seam_budget_applied"` and `"RIPR_PILOT_SEAM_BUDGET"`.
   The existing repo-exposure cap authority supplies the same default/configured
   repair routes. An inactive pilot budget cannot relabel the inventory cut.
-  When both fire, the pilot cut's total is the already-capped inventory; its
-  route describes lifting only the pilot budget. Full recovery requires
-  disabling every active cap. Uncapped output has no stale cap limitation.
+  When both independently fire, both entries are present; the pilot entry
+  reports the outer inventory total, and each entry names its own recovery
+  control. Full recovery requires lifting every active cap. Uncapped output
+  has no stale cap limitation.
 - `analysis_outcome_status` — the producer outcome projection state. It is
   `"complete"` or `"incomplete"` when a typed diff outcome is present,
   `"missing"` or `"invalid"` when a required producer artifact cannot be
