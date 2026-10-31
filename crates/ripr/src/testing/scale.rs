@@ -93,7 +93,7 @@ fn assert_measured_growth(
 
 #[cfg(test)]
 mod tests {
-    use super::{assert_growth_with_clock, assert_measured_growth};
+    use super::{assert_growth_with_clock, assert_growth_within, assert_measured_growth};
     use std::cell::{Cell, RefCell};
     use std::time::Duration;
 
@@ -205,5 +205,21 @@ mod tests {
         assert_measured_growth("over boundary", 1, 2, 3, |size, _| {
             Duration::from_micros(if size == 1 { 100_000 } else { 310_001 })
         });
+    }
+
+    fn spin(units: usize) {
+        let mut acc = 0usize;
+        for i in 0..units {
+            acc = std::hint::black_box(acc.wrapping_add(i));
+        }
+        std::hint::black_box(acc);
+    }
+
+    #[test]
+    #[should_panic(expected = "quadratic stand-in: growth exceeded")]
+    fn real_clock_rejects_quadratic_work_at_the_guard_sizes() {
+        // Deliberately quadratic work through the real wall clock: doubling
+        // the size quadruples the cost, so the 3x guard must still fail.
+        assert_growth_within("quadratic stand-in", 1_000, 2_000, 3, |n| spin(n * n / 4));
     }
 }
