@@ -1098,14 +1098,14 @@ available or explains why it is unavailable: `not_published_before_deadline`,
 `not_computed_for_source`, or `published_after_deadline`. Each reason belongs
 to its producing stage, so a completed loader cannot stand in for the intake.
 
-`recovery` provides one bounded retry with the effective mode and other
-finding-affecting settings, raw root, source, scope and output choices. It
-uses a doubled timeout and names the refs, worktree bytes, or diff file it
-re-reads. A mutable candidate-base treeish is re-resolved and is not pinned;
-full object IDs and the empty base have no live base ref. An occupied output
-directory is not reused. A consumed stdin diff has no literal command: its
-kind is `save_stdin_diff_to_named_file` and `command` is null. The complete
-contract, including unchanged refusal semantics, is in
+`recovery` provides a bounded `retry_with_larger_budget` action with the
+effective mode and other finding-affecting settings, raw root, source, scope
+and output choices. The doubled timeout is finite; `rereads` names refs,
+worktree bytes, or the diff file. A mutable candidate-base treeish is
+re-resolved and is not pinned; full object IDs and the empty base have no live
+base ref. An occupied output directory is not reused. A consumed stdin diff has
+no literal command: its kind is `save_stdin_diff_to_named_file` and `command`
+is null. The complete contract is in
 [RIPR-SPEC-0241](specs/RIPR-SPEC-0241-check-json-refusal-envelope.md).
 
 The same envelope covers the other `--json` commands (#7331): `ripr diff
