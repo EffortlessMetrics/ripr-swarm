@@ -1506,22 +1506,31 @@ fn terminate_then_classify(
     }
 }
 
+type PipeReader = (
+    std::thread::JoinHandle<()>,
+    mpsc::Receiver<Result<Vec<u8>, String>>,
+);
+
 /// Read one piped child stream to EOF on a helper thread so the poll loop
 /// never deadlocks against a full OS pipe buffer.
-fn spawn_pipe_reader(
-    mut pipe: impl std::io::Read + Send + 'static,
-) -> (std::thread::JoinHandle<()>, mpsc::Receiver<Vec<u8>>) {
+fn spawn_pipe_reader(mut pipe: impl std::io::Read + Send + 'static) -> PipeReader {
     let (sender, receiver) = mpsc::channel();
     let handle = std::thread::spawn(move || {
         let mut buffer = Vec::new();
-        let _ = pipe.read_to_end(&mut buffer);
-        let _ = sender.send(buffer);
+        // A read error after a valid prefix is not EOF (the bounded reader
+        // at spawn_bounded_pipe_reader keeps the same contract): forward it
+        // so the drain cannot present truncated output as complete.
+        let result = pipe
+            .read_to_end(&mut buffer)
+            .map(|_| buffer)
+            .map_err(|error| error.to_string());
+        let _ = sender.send(result);
     });
     (handle, receiver)
 }
 
 fn drain_pipe_reader(
-    reader: Option<(std::thread::JoinHandle<()>, mpsc::Receiver<Vec<u8>>)>,
+    reader: Option<PipeReader>,
     timed_out: bool,
     deadline: Option<Instant>,
     stream_name: &str,
@@ -1537,11 +1546,13 @@ fn drain_pipe_reader(
             .map_err(|_receive_error| mpsc::RecvTimeoutError::Disconnected),
     };
     match received {
-        Ok(buffer) => {
+        Ok(result) => {
             handle.join().map_err(|_panic_payload| {
                 format!("{stream_name} pipe reader panicked while collecting {describe}")
             })?;
-            Ok(buffer)
+            result.map_err(|error| {
+                format!("failed while reading {stream_name} from {describe}: {error}")
+            })
         }
         Err(mpsc::RecvTimeoutError::Timeout) if timed_out => {
             // The process was already terminated and reaped. Dropping the
@@ -2696,6 +2707,34 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
 
         let reader = spawn_bounded_pipe_reader(PrefixThenError { emitted: false }, 1_024);
         let error = drain_bounded_pipe_reader(Some(reader), false, None, "stdout", "error-test")
+            .err()
+            .ok_or_else(|| "pipe read error was accepted as EOF".to_string())?;
+        if !error.contains("injected pipe failure") {
+            return Err(format!("unexpected pipe read error: {error}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unbounded_pipe_reader_propagates_error_after_valid_prefix() -> Result<(), String> {
+        struct PrefixThenError {
+            emitted: bool,
+        }
+
+        impl std::io::Read for PrefixThenError {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if self.emitted {
+                    return Err(std::io::Error::other("injected pipe failure"));
+                }
+                self.emitted = true;
+                let prefix = b"complete\0";
+                buffer[..prefix.len()].copy_from_slice(prefix);
+                Ok(prefix.len())
+            }
+        }
+
+        let reader = spawn_pipe_reader(PrefixThenError { emitted: false });
+        let error = drain_pipe_reader(Some(reader), false, None, "stdout", "error-test")
             .err()
             .ok_or_else(|| "pipe read error was accepted as EOF".to_string())?;
         if !error.contains("injected pipe failure") {
