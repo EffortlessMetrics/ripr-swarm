@@ -234,9 +234,19 @@ impl SourceSnapshot {
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             compute()
         };
+        // Compute outside the lock: a miss parses and scans the file, and a
+        // guard held across that stalled every other worker that needed any
+        // key of this snapshot. The answer is pure in the snapshot and the
+        // key, so workers that miss together agree and the first insert wins.
+        if let Ok(memo) = self.shadows.lock()
+            && let Some(found) = memo.get(&key)
+        {
+            return *found;
+        }
+        let answer = compute();
         match self.shadows.lock() {
-            Ok(mut memo) => *memo.entry(key).or_insert_with(compute),
-            Err(_) => compute(),
+            Ok(mut memo) => *memo.entry(key).or_insert(answer),
+            Err(_) => answer,
         }
     }
 
