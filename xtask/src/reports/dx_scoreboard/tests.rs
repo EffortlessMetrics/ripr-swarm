@@ -405,6 +405,30 @@ fn a_ceilinged_row_fails_the_gate_above_its_ceiling_whatever_the_baseline() -> R
         other["gate"]["ceiling_breaches"].as_array().map(Vec::len),
         Some(0)
     );
+    // A row the run measured (another of its metrics has a sample) whose
+    // ceilinged metric has no sample at all is a missing measurement.
+    let missing = gate(
+        &[sample(
+            "first_run.friction_events",
+            Some("serde"),
+            SampleOutcome::Value(1.0),
+        )],
+        "runner-a",
+        Some(&baseline),
+    );
+    assert_eq!(
+        missing["gate"]["status"].as_str(),
+        Some("fail"),
+        "{}",
+        missing["gate"]
+    );
+    let breaches = missing["gate"]["ceiling_breaches"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(breaches.len(), 1, "{breaches:?}");
+    assert_eq!(breaches[0]["repo"], "serde");
+    assert!(breaches[0]["value"].is_null());
     // Without --gate a breach is reported but nothing fails.
     let ungated = build_report(
         &config,

@@ -578,12 +578,15 @@ fn validate_ceilings(config: &Config) -> Result<(), String> {
 }
 
 /// The ceilinged samples this run breached: a value above its row's
-/// ceiling, or a sample of a ceilinged row that produced no value. Rows this
-/// run did not sample at all (a heavy row without `--include-heavy`) are not
+/// ceiling, a sample of a ceilinged row that produced no value, or a row this
+/// run measured that has no sample of its ceilinged metric at all. Rows this
+/// run did not measure at all (a heavy row without `--include-heavy`) are not
 /// breaches; their absence is visible in the per-repo view.
 fn ceiling_breaches(config: &Config, boards: &[String], samples: &[Sample]) -> Vec<Value> {
     let mut breaches = Vec::new();
     for entry in &config.corpus {
+        let of_row = |sample: &&Sample| sample.repo.as_deref() == Some(entry.id.as_str());
+        let measured = samples.iter().any(|sample| of_row(&sample));
         for (metric_id, ceiling) in &entry.ceilings {
             let in_run = config
                 .metric
@@ -592,11 +595,13 @@ fn ceiling_breaches(config: &Config, boards: &[String], samples: &[Sample]) -> V
             if !in_run {
                 continue;
             }
+            let mut sampled = false;
             for sample in samples
                 .iter()
                 .filter(|sample| &sample.metric == metric_id)
-                .filter(|sample| sample.repo.as_deref() == Some(entry.id.as_str()))
+                .filter(of_row)
             {
+                sampled = true;
                 let reason = match &sample.outcome {
                     SampleOutcome::Value(value) if value <= ceiling => continue,
                     SampleOutcome::Value(value) => format!("{value} exceeds ceiling {ceiling}"),
@@ -614,6 +619,19 @@ fn ceiling_breaches(config: &Config, boards: &[String], samples: &[Sample]) -> V
                         _ => Value::Null,
                     },
                     "reason": reason,
+                }));
+            }
+            // A measured row whose ceilinged metric has no sample is a
+            // missing measurement, not a pass.
+            if measured && !sampled {
+                breaches.push(json!({
+                    "metric": metric_id,
+                    "repo": entry.id,
+                    "ceiling": ceiling,
+                    "value": Value::Null,
+                    "reason": format!(
+                        "was measured but produced no sample, so ceiling {ceiling} is not established"
+                    ),
                 }));
             }
         }
