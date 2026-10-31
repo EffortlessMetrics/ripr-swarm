@@ -1531,8 +1531,8 @@ collapsed block; when any `RIPR_GATE_MODE` value is set they are not folded.
 The fold stays open ("needs attention") when a folded report is unreadable,
 has an unexpected shape, omits an expected count, or states a warning,
 unknown, blocker, config-error, stale or ownerless-suppression count that is
-not `0`. It folds with the "no warnings or unknowns" label only when every
-the readiness, operations, history, promotion and suppression-health report
+not `0`. It folds with the "no warnings or unknowns" label only when the
+readiness, operations, history, promotion and suppression-health report
 categories each parsed with all expected counts at `0` (preview-promotion and
 waiver-aging reports are conditional and keep it open only when present and not
 clean); it stays open ("some policy reports not found") when a required

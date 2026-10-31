@@ -202,7 +202,9 @@ struct Summary {
     out: Vec<u8>,
     /// A folded governance section carried a count that is not exactly `0`.
     attention: bool,
-    /// How many folded sections read a policy JSON report.
+    /// Bitmask of the required policy report categories read so far (one bit
+    /// per category, OR-ed in by `note_attention`); compared against
+    /// `REQUIRED_POLICY_REPORTS` to tell a complete read from a partial one.
     policy_reports_read: u8,
 }
 
