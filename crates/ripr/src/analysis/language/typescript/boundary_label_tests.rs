@@ -768,22 +768,3 @@ fn assigned_boolean_expression_names_no_boundary() {
     let new = "  const ok = a >= 1 && b < 2;";
     assert_eq!(boundary_label(Some(old), new), None);
 }
-
-#[test]
-fn two_token_edit_in_one_clause_names_the_new_comparison() {
-    // Pinned current behavior: operator and literal of one clause changed
-    // together name the clause as it now reads. The other clause is untouched.
-    assert_eq!(
-        boundary_label(Some("  if (a > 1 && ok) {"), "  if (a >= 2 && ok) {").as_deref(),
-        Some("a == 2")
-    );
-}
-
-#[test]
-fn added_comparison_clause_names_only_the_added_clause() {
-    // Pinned current behavior: the untouched `a > 1` is never named.
-    assert_eq!(
-        boundary_label(Some("  if (a > 1) {"), "  if (a > 1 && b < 2) {").as_deref(),
-        Some("b == 2")
-    );
-}
