@@ -301,21 +301,7 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
 
 /// Words after which a `-`, `*`, `&` or `!` is a prefix operator.
 fn is_expression_keyword(word: &str) -> bool {
-    matches!(
-        word,
-        "return"
-            | "break"
-            | "yield"
-            | "become"
-            | "in"
-            | "if"
-            | "else"
-            | "match"
-            | "while"
-            | "let"
-            | "mut"
-            | "move"
-    )
+    is_recursive_prefix_keyword(word) || matches!(word, "in" | "else" | "let" | "mut" | "move")
 }
 
 /// Keywords whose operand is parsed by recursing into the expression parser,
