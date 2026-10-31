@@ -15,6 +15,7 @@ use super::{
     COPY_AGENT_PACKET_COMMAND, COPY_AGENT_RECEIPT_COMMAND, COPY_AGENT_REPAIR_COMMAND,
     COPY_AGENT_VERIFY_COMMAND, COPY_CONTEXT_COMMAND, COPY_SUGGESTED_ASSERTION_COMMAND,
     COPY_TARGETED_TEST_BRIEF_COMMAND, OPEN_RELATED_TEST_COMMAND, REFRESH_COMMAND,
+    SHOW_RELATED_TEST_COMMAND,
 };
 use crate::agent::loop_commands;
 use crate::analysis::ClassifiedSeam;
@@ -153,7 +154,7 @@ fn kind_matches_only(action: &CodeActionOrCommand, only: &[CodeActionKind]) -> b
 /// `lsp/capabilities.rs`. They run inside the server through
 /// `workspace/executeCommand`, so every client can run them regardless of
 /// the negotiated `riprEditor` advertisement (#1776).
-pub(super) const SERVER_EXECUTED_COMMANDS: [&str; 7] = [
+pub(super) const SERVER_EXECUTED_COMMANDS: [&str; 8] = [
     REFRESH_COMMAND,
     COLLECT_CONTEXT_COMMAND,
     COLLECT_EVIDENCE_CONTEXT_COMMAND,
@@ -161,6 +162,7 @@ pub(super) const SERVER_EXECUTED_COMMANDS: [&str; 7] = [
     COLLECT_REPAIR_PACKET_COMMAND,
     COLLECT_TOP_LIMITATION_COMMAND,
     COLLECT_RECEIPT_STATUS_COMMAND,
+    SHOW_RELATED_TEST_COMMAND,
 ];
 
 /// A code action survives the client-command filter when its command
@@ -841,10 +843,11 @@ fn push_seam_actions(
     if let Some(related) = related_test
         && let Some(target) = related_test_target(context.snapshot, related)
     {
-        actions.push(open_related_test_action(
+        actions.extend(open_related_test_action(
             target,
             context.diagnostic,
             Some(context.snapshot),
+            client_features,
         ));
     }
 }
@@ -928,10 +931,11 @@ fn push_gap_actions(
             ));
         }
         if let Some(target) = gap_related_test_target(context.snapshot, context.data) {
-            actions.push(open_related_test_action(
+            actions.extend(open_related_test_action(
                 target,
                 context.diagnostic,
                 Some(context.snapshot),
+                client_features,
             ));
         }
         let verify_command = first_safe_command_at(
@@ -2256,24 +2260,120 @@ fn open_related_test_action(
     target: LSPAny,
     diagnostic: &Diagnostic,
     snapshot: Option<&AnalysisSnapshot>,
-) -> CodeActionOrCommand {
-    CodeActionOrCommand::CodeAction(CodeAction {
+    client_features: &ClientFeatureProfile,
+) -> Option<CodeActionOrCommand> {
+    // Generic-client navigation (RIPR-SPEC-0129): a client that did not
+    // advertise the client-side `ripr.openRelatedTest` command but does
+    // advertise `window/showDocument` gets the same navigation through the
+    // server-executed `ripr.showRelatedTest` command. The server answers it
+    // with a `window/showDocument` request; it never edits or runs a test.
+    let (command_id, action_name, arguments) = if !client_features
+        .supports_client_command(OPEN_RELATED_TEST_COMMAND)
+        && client_features.show_document
+    {
+        // The server command is bound to the snapshot input identity; a
+        // snapshot without one cannot bind it, so no action is offered.
+        let identity = snapshot.and_then(AnalysisSnapshot::input_identity_id)?;
+        let mut target = target;
+        target
+            .as_object_mut()?
+            .insert("input_identity".to_string(), Value::String(identity));
+        (SHOW_RELATED_TEST_COMMAND, "show_related_test", target)
+    } else {
+        (OPEN_RELATED_TEST_COMMAND, "open_related_test", target)
+    };
+    Some(CodeActionOrCommand::CodeAction(CodeAction {
         title: OPEN_RELATED_TEST_TITLE.to_string(),
         kind: Some(CodeActionKind::new("quickfix.ripr.navigate")),
         diagnostics: Some(vec![diagnostic.clone()]),
         command: Some(Command {
             title: OPEN_RELATED_TEST_TITLE.to_string(),
-            command: OPEN_RELATED_TEST_COMMAND.to_string(),
-            arguments: Some(vec![target]),
+            command: command_id.to_string(),
+            arguments: Some(vec![arguments]),
         }),
         data: Some(action_data_payload(
             "quickfix.ripr.navigate",
-            "open_related_test",
-            OPEN_RELATED_TEST_COMMAND,
+            action_name,
+            command_id,
             Some(diagnostic),
             snapshot,
         )),
         ..CodeAction::default()
+    }))
+}
+
+/// Validates a `ripr.showRelatedTest` request and builds the
+/// `window/showDocument` parameters (RIPR-SPEC-0129). Fail closed: the
+/// client must have advertised `window/showDocument`, a current analysis
+/// snapshot must exist, the action's input identity must still match it
+/// (a stale action never navigates to an old line), and the target must be
+/// an existing file inside the workspace root. Navigation only: no edit and
+/// no test execution.
+pub(super) fn show_related_test_params(
+    arguments: &[LSPAny],
+    snapshot: Option<&AnalysisSnapshot>,
+    client_features: &ClientFeatureProfile,
+) -> Result<tower_lsp_server::ls_types::ShowDocumentParams, String> {
+    use tower_lsp_server::ls_types::{Position, Range, ShowDocumentParams, Uri};
+    if !client_features.show_document {
+        return Err(format!(
+            "`{SHOW_RELATED_TEST_COMMAND}` needs a client that advertises window/showDocument"
+        ));
+    }
+    let Some(snapshot) = snapshot else {
+        return Err(format!(
+            "`{SHOW_RELATED_TEST_COMMAND}` needs a current analysis snapshot; run `{REFRESH_COMMAND}`"
+        ));
+    };
+    let target = arguments
+        .first()
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            format!("`{SHOW_RELATED_TEST_COMMAND}` expects one object: {{\"uri\", \"line\", \"input_identity\"}}")
+        })?;
+    let uri = target
+        .get("uri")
+        .and_then(Value::as_str)
+        .and_then(|raw| raw.parse::<Uri>().ok())
+        .ok_or_else(|| format!("`{SHOW_RELATED_TEST_COMMAND}` needs a file `uri`"))?;
+    let line = target
+        .get("line")
+        .and_then(Value::as_u64)
+        .filter(|line| *line >= 1)
+        .and_then(|line| u32::try_from(line - 1).ok())
+        .ok_or_else(|| format!("`{SHOW_RELATED_TEST_COMMAND}` needs a 1-based `line`"))?;
+    // Both sides must carry an identity: an absent identity is a refusal,
+    // never a match (`None == None` would fail open).
+    match (
+        target.get("input_identity").and_then(Value::as_str),
+        snapshot.input_identity_id(),
+    ) {
+        (Some(supplied), Some(current)) if supplied == current => {}
+        (Some(_), Some(_)) => {
+            return Err(format!(
+                "stale `{SHOW_RELATED_TEST_COMMAND}` target: the analysis input changed; run `{REFRESH_COMMAND}`"
+            ));
+        }
+        _ => {
+            return Err(format!(
+                "`{SHOW_RELATED_TEST_COMMAND}` target carries no `input_identity` bound to the current snapshot; run `{REFRESH_COMMAND}`"
+            ));
+        }
+    }
+    let inside_root = super::uri::path_from_file_uri(&uri).is_some_and(|path| {
+        super::uri::path_is_within_root(snapshot.root.as_path(), &path) && path.is_file()
+    });
+    if !inside_root {
+        return Err(format!(
+            "`{SHOW_RELATED_TEST_COMMAND}` target is not an existing file inside the workspace"
+        ));
+    }
+    let position = Position::new(line, 0);
+    Ok(ShowDocumentParams {
+        uri,
+        external: Some(false),
+        take_focus: Some(true),
+        selection: Some(Range::new(position, position)),
     })
 }
 
