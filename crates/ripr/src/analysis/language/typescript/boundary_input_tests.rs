@@ -540,6 +540,33 @@ fn whole_side_comparisons_accept_common_line_shapes() {
     }
 }
 
+/// #11628: a plain division on the changed comparison line keeps the boundary
+/// input through the full source-level path, not just the line gate.
+#[test]
+fn division_on_the_changed_line_keeps_its_boundary_input() -> Result<(), String> {
+    let source = "export function discount(amount: number): number {\n  if (amount >= 100) { return Math.floor(amount / 10); }\n  return 0;\n}\n";
+    let owners = extract_owners(Path::new("src/discount.ts"), source);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.name == "discount")
+        .ok_or_else(|| "discount owner extracted".to_string())?;
+    assert_eq!(
+        ts_boundary_input_in_source(
+            source,
+            2,
+            "  if (amount >= 100) { return Math.floor(amount / 10); }",
+            owner
+        ),
+        Some(TypeScriptBoundaryInput {
+            parameter: "amount".to_string(),
+            index: 0,
+            operand: "100".to_string(),
+            value: 100,
+        })
+    );
+    Ok(())
+}
+
 /// A compound line whose single comparison sits next to the statement
 /// opening resolves its boundary input from the full source line. The
 /// narrowed label text (`total > 100`) carries no statement context, so the
