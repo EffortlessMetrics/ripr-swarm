@@ -3856,10 +3856,6 @@ fn a_sole_object_base_edit_to_a_class_header_earns_no_probe() {
         ("class Box:", "class Box(object):"),
         ("class Box(object):", "class Box():"),
         ("class Box(object):  # legacy", "class Box:"),
-        (
-            "class Box(object, metaclass=Meta):",
-            "class Box(metaclass=Meta):",
-        ),
     ] {
         assert!(
             class_header_case(after, before).is_none(),
@@ -3885,6 +3881,13 @@ fn a_class_header_edit_beyond_the_sole_object_base_keeps_its_probe() -> Result<(
         ("class Box(object):", "class Box(builtins.object):"),
         ("class Box(object):", "class Box(object, object):"),
         ("class Box(object):", "class Box(*bases):"),
+        // A metaclass can observe the bases, so dropping `object` beside a
+        // keyword is not a no-op.
+        (
+            "class Box(object, metaclass=Meta):",
+            "class Box(metaclass=Meta):",
+        ),
+        ("class Box(object, flag=True):", "class Box(flag=True):"),
     ] {
         let finding = class_header_case(after, before)
             .ok_or_else(|| format!("{before} -> {after} must keep a probe"))?;
@@ -3898,4 +3901,66 @@ fn a_class_header_edit_beyond_the_sole_object_base_keeps_its_probe() -> Result<(
         assert_eq!(finding.class, expected, "{before} -> {after}");
     }
     Ok(())
+}
+
+// The guard is bound to the same preconditions as the comment/whitespace
+// guard: a line inside a multi-line string (or an unlexable file) is data, not
+// a header, so it keeps its probe.
+#[test]
+fn a_class_header_lookalike_inside_a_multiline_string_keeps_its_probe() -> Result<(), String> {
+    let source = "class Box:\n    def double(self):\n        return self.value * 2\n";
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(Path::new("tests/test_subject.py"), OBJECT_BASE_TESTS);
+    for in_string in [false, true] {
+        let no_behavior = super::PythonNoBehaviorContext {
+            new_line_in_multiline_string: in_string,
+            ..Default::default()
+        };
+        let finding = super::classify_change_full(
+            file,
+            1,
+            "class Box:",
+            Some("class Box(object):"),
+            &owners,
+            &tests,
+            no_behavior,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(finding.is_none(), !in_string, "in_string={in_string}");
+    }
+    Ok(())
+}
+
+// Pinned shapes the allow-list must not widen to.
+#[test]
+fn object_base_class_change_pins_indentation_nesting_and_header_shapes() {
+    use super::super::no_behavior::is_object_base_only_class_change as noop;
+    // Indentation mismatch is a moved statement: the classify guard refuses it.
+    let source = "class Box:\n    def double(self):\n        return 1\n";
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(Path::new("tests/test_subject.py"), OBJECT_BASE_TESTS);
+    assert!(
+        classify_change_with_old(
+            file,
+            1,
+            "    class Box:",
+            Some("class Box(object):"),
+            &owners,
+            &tests
+        )
+        .is_some()
+    );
+    // A nested class edit is the same no-op as a top-level one.
+    assert!(noop("    class Inner(object):", "    class Inner:"));
+    // One-line bodies, multi-line headers and PEP 695 headers fail closed.
+    assert!(!noop("class Box(object): pass", "class Box: pass"));
+    assert!(!noop("class Box(object,", "class Box("));
+    // PEP 695 headers parse; the type parameters must match exactly.
+    assert!(noop("class A[T](object):", "class A[T]:"));
+    assert!(!noop("class A[T](object):", "class A[U]:"));
+    assert!(!noop("class A[T](object):", "class A:"));
 }

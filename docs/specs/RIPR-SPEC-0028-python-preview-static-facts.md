@@ -1592,8 +1592,10 @@ the same indentation, the same class name, an identical list of other bases and
 identical keyword arguments (`metaclass=...`), and a header that parses as one
 statement on its own. A different base, `object` among several bases
 (`class X(Base, object):`), `builtins.object`, a starred base, a changed
-keyword, a decorated or multi-line header and a one-line `class X: pass` all
-keep their probe. A module that rebinds the name `object` is not read; the
+keyword, any keyword beside a dropped `object` (a metaclass can observe the
+bases), a changed PEP 695 type parameter, a decorated or multi-line header and a one-line
+`class X: pass` all keep their probe. A line inside a multi-line string, or in
+a file that cannot be lexed, keeps its probe as well. A module that rebinds the name `object` is not read; the
 edit is treated as the builtin.
 
 ## Metrics

@@ -285,7 +285,7 @@ pub(super) fn is_annotation_only_def_change(old_line: &str, new_line: &str) -> b
 /// with a lone bare `object` base dropped. Python 3 gives `class X(object):` and
 /// `class X:` the same bases, so that one base carries no runtime behavior
 /// (#11888).
-type ClassHeaderSkeleton = (String, Vec<String>, Vec<String>);
+type ClassHeaderSkeleton = (String, Vec<String>, Vec<String>, Vec<String>);
 
 fn class_header_skeleton(line: &str) -> Option<ClassHeaderSkeleton> {
     let trimmed = line.trim_start();
@@ -316,6 +316,11 @@ fn class_header_skeleton(line: &str) -> Option<ClassHeaderSkeleton> {
         class.bases.as_slice(),
         [Expr::Name(name)] if name.id.as_str() == "object"
     );
+    // With a keyword present (`metaclass=...`, `__init_subclass__` arguments) the
+    // bases are observable by the metaclass, so dropping `object` is not a no-op.
+    if lone_object && !class.keywords.is_empty() {
+        return None;
+    }
     let bases = if lone_object {
         Vec::new()
     } else {
@@ -326,7 +331,13 @@ fn class_header_skeleton(line: &str) -> Option<ClassHeaderSkeleton> {
         .iter()
         .map(|keyword| slice(keyword.range()))
         .collect();
-    Some((class.name.to_string(), bases, keywords))
+    // PEP 695 type parameters (`class A[T]:`) are part of the header's meaning.
+    let type_params: Vec<String> = class
+        .type_params
+        .iter()
+        .map(|param| slice(param.range()))
+        .collect();
+    Some((class.name.to_string(), type_params, bases, keywords))
 }
 
 /// Whether the `class`-header change only adds or drops a sole `object` base
@@ -334,7 +345,8 @@ fn class_header_skeleton(line: &str) -> Option<ClassHeaderSkeleton> {
 /// identically, so the edit has no behavior delta (#11888). Fails closed: false
 /// when either line is not a parseable single-line `class` header, when the
 /// lines are identical, or when anything else differs (name, any other base,
-/// `object` among several bases, a keyword such as `metaclass=`).
+/// `object` among several bases, any keyword such as `metaclass=` beside the
+/// `object` base, which a metaclass can observe).
 pub(super) fn is_object_base_only_class_change(old_line: &str, new_line: &str) -> bool {
     if old_line.trim() == new_line.trim() {
         return false;

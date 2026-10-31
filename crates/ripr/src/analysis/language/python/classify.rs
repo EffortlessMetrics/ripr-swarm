@@ -301,6 +301,7 @@ fn classify_change_full<'a>(
     // or drops that one base has no behavior delta. Requires the paired old line
     // and fails closed on any other base, a keyword or a multi-line header.
     if let Some(old) = old_line_text
+        && !no_behavior.new_line_in_multiline_string
         && same_indentation(old, line_text)
         && is_object_base_only_class_change(old, line_text)
     {
