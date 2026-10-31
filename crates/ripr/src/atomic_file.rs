@@ -469,10 +469,13 @@ mod tests {
         CreateNewError, STALE_TEMP_GRACE, TEMP_FILE_SEQUENCE, create_new, is_stranded_temp_name,
         sweep_stale_temp_files, write, write_cache,
     };
-    // The unix symlink-escape tests and the platform-independent enumeration
-    // test (#9339) both call this, so the import is unconditional: gating it
-    // to unix left the Windows test build without the function.
+    // `ensure_default_output_contained_with` is called by tests on every
+    // platform, so its import is unconditional: gating it to unix left the
+    // Windows test build without the function (#9339).
     use super::ensure_default_output_contained_with;
+    // Only the unix symlink-escape test calls this one; unconditional, it is an
+    // unused import (`-D warnings`) in the Windows test build.
+    #[cfg(unix)]
     use super::ensure_relative_output_contained_in;
     use std::path::{Path, PathBuf};
 
