@@ -258,6 +258,11 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
                 unary_run = unary_run.saturating_add(1);
                 estimate.depth = estimate.depth.max(depth.saturating_add(unary_run));
             }
+            if word == "as" {
+                // `x as T as U ..` nests one cast expression per `as`, exactly
+                // like a binary-operator run (#11572).
+                count_operator(&mut operators, depth, &mut open_operators, &mut estimate);
+            }
             after_operand = !is_expression_keyword(word);
             if after_operand {
                 unary_run = 0;
@@ -267,6 +272,11 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
         previous_word_was_else = false;
         match byte {
             b'(' | b'[' | b'{' => {
+                if byte != b'{' && after_operand {
+                    // Postfix call or index: `f()()..` and `x[0][0]..` nest one
+                    // call or index expression per bracket pair (#11572).
+                    count_operator(&mut operators, depth, &mut open_operators, &mut estimate);
+                }
                 depth = depth.saturating_add(1);
                 else_if.push(0);
                 operators.push(0);
@@ -307,12 +317,8 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
             // Postfix `.` and `?` count too: a long method or field chain is
             // a left-nested tree just like a binary-operator run.
             b'.' | b'?' | b'+' | b'-' | b'*' | b'/' | b'%' | b'^' | b'|' | b'&' | b'<' | b'>'
-            | b'=' => {
-                if let Some(run) = operators.get_mut(depth) {
-                    *run = run.saturating_add(1);
-                    open_operators = open_operators.saturating_add(1);
-                    estimate.operator_run = estimate.operator_run.max(open_operators);
-                }
+            | b'=' | b'@' => {
+                count_operator(&mut operators, depth, &mut open_operators, &mut estimate);
                 after_operand = byte == b'?';
             }
             _ => {
@@ -322,6 +328,20 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
         index += 1;
     }
     estimate
+}
+
+/// Record one more link in the left-nested chain the current token extends.
+fn count_operator(
+    operators: &mut [usize],
+    depth: usize,
+    open_operators: &mut usize,
+    estimate: &mut NestingEstimate,
+) {
+    if let Some(run) = operators.get_mut(depth) {
+        *run = run.saturating_add(1);
+        *open_operators = open_operators.saturating_add(1);
+        estimate.operator_run = estimate.operator_run.max(*open_operators);
+    }
 }
 
 /// Words after which a `-`, `*`, `&` or `!` is a prefix operator.
@@ -334,7 +354,7 @@ fn is_expression_keyword(word: &str) -> bool {
 fn is_recursive_prefix_keyword(word: &str) -> bool {
     matches!(
         word,
-        "return" | "break" | "yield" | "become" | "if" | "match" | "while"
+        "return" | "break" | "yield" | "become" | "if" | "match" | "while" | "box"
     )
 }
 
@@ -697,6 +717,30 @@ mod tests {
                 "{keyword} x3000 must be refused"
             );
         }
+    }
+
+    /// #11572: left-nested cast, call and index chains nest the tree once per
+    /// link and used to bypass the operator-run budget.
+    #[test]
+    fn cast_call_index_binding_and_box_chains_are_refused() {
+        let chains = [
+            ("as", " as u8".repeat(5_000)),
+            ("call", "()".repeat(5_000)),
+            ("index", "[0]".repeat(5_000)),
+            ("at", "y @ ".repeat(5_000)),
+            ("box", "box ".repeat(5_000)),
+        ];
+        for (name, chain) in chains {
+            let source = format!("fn f() {{ let _v = x{chain}z; }}\n");
+            assert!(
+                rust_nesting_refusal(&source)
+                    .is_some_and(|reason| reason.contains("rust_nesting_budget")),
+                "{name} chain must be refused"
+            );
+        }
+        let ordinary =
+            "fn f(v: &[u8]) -> usize { make()(1)[0] as usize + v[1] as usize }\n".repeat(5_000);
+        assert_eq!(rust_nesting_refusal(&ordinary), None);
     }
 
     #[test]
