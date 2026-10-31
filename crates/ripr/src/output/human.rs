@@ -250,6 +250,18 @@ fn empty_scope_note(output: &CheckOutput) -> Option<String> {
     ))
 }
 
+/// The empty-findings headline. An incomplete analysis checked less than it
+/// was asked to, so claiming it "checked no changed behavior" would contradict
+/// the `Analysis outcome` disclosure printed just above it.
+fn no_findings_line(output: &CheckOutput) -> &'static str {
+    match &output.analysis_outcome {
+        Some(outcome) if !outcome.kind.is_complete() => {
+            "No findings reported: the analysis was incomplete, so this is not a clean result.\n"
+        }
+        _ => "No findings: ripr checked no changed behavior.\n",
+    }
+}
+
 pub(crate) fn render_bounded_with_config_and_navigation(
     output: &CheckOutput,
     config: &RiprConfig,
@@ -262,7 +274,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
     render_partial_scope_disclosure(&mut out, output);
 
     if output.findings.is_empty() {
-        out.push_str("No findings: ripr checked no changed behavior.\n");
+        out.push_str(no_findings_line(output));
         if output.no_scope_provided {
             let triage = triage::select_human_triage(output, config);
             triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
@@ -318,7 +330,7 @@ pub(crate) fn render_full_with_config_and_navigation(
     render_partial_scope_disclosure(&mut out, output);
 
     if output.findings.is_empty() {
-        out.push_str("No findings: ripr checked no changed behavior.\n");
+        out.push_str(no_findings_line(output));
         // RIPR-SPEC-0083: disclose when no analysis scope was provided
         // (#4012: or when the established range is empty — the note then
         // names the compared base instead of claiming no scope).
@@ -1450,6 +1462,41 @@ mod tests {
                 working_tree: false,
             }),
         })
+    }
+
+    /// An incomplete analysis must not headline "checked no changed behavior":
+    /// that contradicts the `Analysis outcome` line above it, so both human
+    /// forms say the result is not clean instead.
+    #[test]
+    fn incomplete_analysis_does_not_claim_no_changed_behavior() -> Result<(), String> {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+            AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+            AnalysisStage,
+        };
+        let mut output = empty_range_output(None, AnalysisOutcomeKind::NoScope, 0)?;
+        output.analysis_outcome = Some(AnalysisOutcome::new(
+            AnalysisOutcomeKind::UnsupportedInput,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts::default(),
+            vec![AnalysisLimitation::new(
+                AnalysisLimitationKind::MalformedDiff,
+                AnalysisStage::DiffParse,
+                AnalysisRecovery::new(
+                    AnalysisRecoveryKind::Retry,
+                    "Provide a valid unified diff and re-run the analysis.",
+                )?,
+            )],
+        )?);
+        for rendered in [
+            render(&output),
+            render_full_with_config(&output, &RiprConfig::default()),
+        ] {
+            assert!(rendered.contains("analysis incomplete"));
+            assert!(rendered.contains("this is not a clean result"));
+            assert!(!rendered.contains("ripr checked no changed behavior"));
+        }
+        Ok(())
     }
 
     /// #9033: an explicit `--base` whose range holds no analyzable changed

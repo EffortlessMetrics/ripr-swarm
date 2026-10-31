@@ -337,8 +337,8 @@ unavailable-adapter guidance, not the Rust repair sequence.
 Python analysis is `preview`: its evidence is advisory, not Rust-grade. A
 Python project needs no `ripr.toml` — when the repository root has a Python
 project marker (`pyproject.toml`, `setup.py`, `setup.cfg`,
-`requirements.txt`, `pytest.ini`, `tox.ini`, or `noxfile.py`), the CLI
-auto-enables the preview. Work from a Python repository on a branch with a change
+`requirements.txt`, `pytest.ini`, `tox.ini`, or `noxfile.py`) or Python source
+under `src/` or `tests/`, the CLI auto-enables the preview. Work from a Python repository on a branch with a change
 to inspect.
 
 Before the first run, add `/target/ripr/` (or `/target/`) to `.gitignore`:
@@ -364,7 +364,8 @@ repair card (`language: python (preview)`) and its `Next, in order:` route;
 run the steps it prints. Both commands write under `target/ripr/` (see the `.gitignore` note above;
 doctor and pilot also say so on the first run when no ignore rule covers it).
 
-A repository with no marker leaves the preview disabled; `check` then skips
+A repository with no marker and no Python source under `src/` or `tests/`
+leaves the preview disabled; `check` then skips
 Python files and prints:
 
 ```text
@@ -376,7 +377,7 @@ To enable, add to ripr.toml:
 enabled = ["python"]
 ```
 
-Enable it exactly as printed when the repository has no marker. Python
+Enable it exactly as printed when the preview is not auto-enabled. Python
 repair routes and their evidence limits are described in
 [Known Limits](#known-limits) and
 [Language adapters](LANGUAGE_ADAPTER_PREVIEW.md).
@@ -425,8 +426,9 @@ ripr continue --attempt repair-attempt-...
 
 `continue` runs the after phase: when the gap reads `exposed` it writes the
 receipt under `target/ripr/reports/`. It compares static evidence only and
-does not run your tests, so run the verify command from `check` yourself and
-keep the test only if it passes.
+does not run your tests, so run the verify command from `check` yourself after
+`continue` succeeds (some TypeScript runners write cache files that the attempt
+would otherwise observe) and keep the test only if it passes.
 
 `ripr repair` (seam-based) and `ripr agent stub` are Rust-only: on a
 TypeScript path `ripr repair` points back to `ripr check`, and `ripr agent
@@ -470,9 +472,13 @@ Generate the advisory GitHub workflow:
 ripr init --ci github
 ```
 
-Review the generated files before committing them. The workflow installs the
-ripr version that generated it. An unreleased development build instead pins
-the latest release and says so in a warning; after
+Review the generated files before committing them: `init` writes a `ripr.toml`
+beside the workflow. That file pins `[languages] enabled = ["rust"]`, which
+turns off the Python and TypeScript previews for the repository. `init` warns
+when the root looks like a Python or TypeScript project; add that language to
+`enabled` or delete the `[languages]` section. The workflow
+installs the ripr version that generated it. An unreleased development build
+instead pins the latest release and says so in a note; after
 upgrading ripr, refresh with `ripr init --ci github --force`. Preview the
 files first with `--dry-run`. On a PR, read the summary comment it posts on the
 conversation (one comment, updated on every push; same-repository PRs only), then the job summary
@@ -617,12 +623,13 @@ PR-facing packet. It does not run analysis or repair the code. See
 [First successful PR workflow](FIRST_PR_WORKFLOW.md) for the inputs and
 `ripr help first-pr` for its options.
 
-On a fresh checkout the first `first-pr` run lists the whole missing chain in
-dependency order: a `Missing artifact` command, then `Also missing` entries
-with their `Then run` commands (repo exposure, gap ledger, and review cards
-via `ripr review-comments --root . --base BASE --head HEAD --out
-target/ripr/review/comments.json`). Run the printed commands, then rerun
-`first-pr`; it reads artifact presence only and runs none of them. Commit your test first, because the
+On a fresh checkout the first `first-pr` run prints one next command (the
+`Missing artifact` regeneration command for repo exposure) and names the later
+steps (gap ledger, then review cards) on a `Later steps` line without their
+commands. Run the printed command, then rerun `first-pr`; it prints the next
+command each time. It reads artifact presence only and runs none of them. The
+packet JSON (`selected.also_missing`) still carries every later step with its
+literal command. Commit your test first, because the
 committed diff does not include uncommitted edits. After a successful repair
 the final state `no actionable gap` is expected: the gap is already addressed.
 It also appears when no repairable PR-local gap was selected; read the printed
