@@ -226,8 +226,8 @@ cargo xtask release-readiness --version 0.11.0
 ```
 
 The readiness report must show that generated GitHub CI includes `#### First-run
-status`, `missing_start_here`, and `target/ripr/reports/start-here.md`; it must
-also verify that the VS Code manifest contributes `ripr: Start Current Repair`.
+status`, `missing_start_here`, `start-here.md` in the `ripr-reports` artifact, and
+the `ripr first-pr` safe next action; it must also verify that the VS Code manifest contributes `ripr: Start Current Repair`.
 
 ## Public Cargo Install Proof
 

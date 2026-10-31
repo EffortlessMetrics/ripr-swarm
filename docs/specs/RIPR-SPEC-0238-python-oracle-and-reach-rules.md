@@ -253,6 +253,18 @@ as strong for one credit branch only; its table row is unchanged.
    syntax in a pattern, a non-literal pattern, a comparison of `str(exc.value)`,
    an f-string message and an exception class change fail open and keep the
    existing verdict.
+   The two-step form reads the same way: when the changed line is a plain
+   `name = "..."` assignment (one name, one string literal on each side, the
+   same name) and the owner function mentions `name` as a whole identifier
+   exactly twice, the assignment and one later single-line
+   `raise Exc(name)` with no cause and no keyword, the message is resolved
+   through that raise and the rule above applies to the old and the new
+   literal. Any other mention of the name (a rebind, a second use, a
+   transforming call, a parameter, a nested scope, a raise before the
+   assignment), a dynamic scope read (`locals`, `vars`, `globals`, `exec`,
+   `eval`, `setattr`) or a non-function owner leaves the message unresolved
+   and keeps the existing verdict (#9185, the attrs `default_if_none`
+   instance).
 3. **A fluent helper chain is a custom helper.** A call statement whose
    callee chain contains a call whose last segment starts with `assert_`
    or equals `assert_that` (`assert_that(x).is_equal_to(y)`) assigns

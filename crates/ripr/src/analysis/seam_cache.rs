@@ -594,7 +594,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// no longer reads as comparing by its fields (#10684).
 /// `1.123`: return/error matches! assertions require shared test execution
 /// admission. Older entries may credit ignored or broad expected-panic tests.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.123";
+/// `1.124`: retain the opaque assertion-macro limit beside nested expected
+/// macros when a bare owner call sits outside their inputs (#9644).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.124";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -763,7 +765,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.123";
 /// `0.127`: same literal fold and sole-glob reach as full `1.120` (#10479).
 /// `0.128`: same Display placeholder-edit refusal as full `1.121` (#9836).
 /// `0.130`: same matches! execution admission as full `1.123`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.130";
+/// `0.131`: same nested expected-macro limitation as full `1.124` (#9644).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.131";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -934,7 +937,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.130";
 /// `0.127`: same literal fold and sole-glob reach as full `1.120` (#10479).
 /// `0.128`: same Display placeholder-edit refusal as full `1.121` (#9836).
 /// `0.130`: same matches! execution admission as full `1.123`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.130";
+/// `0.131`: same nested expected-macro limitation as full `1.124` (#9644).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.131";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -2976,11 +2980,15 @@ impl RepoFileFactCache {
             stage: FileFactStoreStage::CreateDir,
             message: format!("create file fact cache dir failed: {err}"),
         })?;
-        let envelope = FileFactCacheEnvelope::new(key.clone(), facts.clone());
-        let bytes = codec::encode_file_facts(&envelope).map_err(|message| FileFactStoreError {
-            stage: FileFactStoreStage::Encode,
-            message,
-        })?;
+        // Borrow the key and facts: the owned envelope deep-cloned the whole
+        // `FileFacts` (and four key strings) for every cold write only to
+        // serialize it once for the digest and once for the entry.
+        let envelope = FileFactCacheEnvelopeRef::new(key, facts);
+        let bytes =
+            codec::encode_file_facts_ref(&envelope).map_err(|message| FileFactStoreError {
+                stage: FileFactStoreStage::Encode,
+                message,
+            })?;
         crate::atomic_file::write_cache(&self.entry_path(key), &bytes, "file fact cache").map_err(
             |message| FileFactStoreError {
                 stage: FileFactStoreStage::Write,
@@ -3111,6 +3119,36 @@ struct FileFactCacheEnvelope {
     file_facts: FileFacts,
 }
 
+/// Borrowing write-side twin of [`FileFactCacheEnvelope`]. Field names, order
+/// and the omitted `payload_digest` match the owned envelope exactly, so the
+/// digest and the entry bytes are identical; it only avoids cloning the facts.
+#[derive(serde::Serialize)]
+struct FileFactCacheEnvelopeRef<'a> {
+    file_fact_cache_schema_version: &'a str,
+    analyzer_version: &'a str,
+    file_path: &'a Path,
+    content_hash: &'a str,
+    file_facts: &'a FileFacts,
+}
+
+impl<'a> FileFactCacheEnvelopeRef<'a> {
+    fn new(key: &'a RepoFileFactCacheKey, file_facts: &'a FileFacts) -> Self {
+        Self {
+            file_fact_cache_schema_version: &key.schema_version,
+            analyzer_version: &key.analyzer_version,
+            file_path: &key.file_path,
+            content_hash: &key.content_hash,
+            file_facts,
+        }
+    }
+
+    fn expected_digest(&self) -> Result<String, String> {
+        semantic_body_digest(FILE_FACT_ENVELOPE_DIGEST_DOMAIN, self)
+    }
+}
+
+const FILE_FACT_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:FileFactCacheEnvelope:v1";
+
 /// The envelope fields the inventory needs; serde skips the rest.
 #[derive(serde::Deserialize)]
 struct FileFactCacheHeader {
@@ -3222,6 +3260,7 @@ impl KnownFilePaths {
 }
 
 impl FileFactCacheEnvelope {
+    #[cfg(test)]
     fn new(key: RepoFileFactCacheKey, file_facts: FileFacts) -> Self {
         Self {
             payload_digest: None,
@@ -3655,7 +3694,7 @@ impl FileFactCacheEnvelope {
     /// Unsigned typed body binds identity and all serialized served fields in fixed order.
     /// Nested serde-skipped derived state is excluded by the existing serialization contract.
     fn expected_digest(&self) -> Result<String, String> {
-        semantic_body_digest("ripr-cache:FileFactCacheEnvelope:v1", self)
+        semantic_body_digest(FILE_FACT_ENVELOPE_DIGEST_DOMAIN, self)
     }
     fn validate_integrity(&self) -> Result<(), String> {
         let expected = self.expected_digest()?;
@@ -3724,8 +3763,8 @@ mod codec {
     #[cfg(test)]
     use super::CountCacheEnvelope;
     use super::{
-        CacheEnvelope, CorpusFingerprintEnvelope, FileFactCacheEnvelope, ShardedCacheEnvelope,
-        ShardedCacheManifest,
+        CacheEnvelope, CorpusFingerprintEnvelope, FileFactCacheEnvelope, FileFactCacheEnvelopeRef,
+        ShardedCacheEnvelope, ShardedCacheManifest,
     };
 
     #[cfg(test)]
@@ -3769,7 +3808,14 @@ mod codec {
         serde_json::from_slice(bytes).map_err(|err| format!("decode counts failed: {err}"))
     }
 
+    #[cfg(test)]
     pub(super) fn encode_file_facts(envelope: &FileFactCacheEnvelope) -> Result<Vec<u8>, String> {
+        super::encode_integrity_body(envelope, envelope.expected_digest()?)
+    }
+
+    pub(super) fn encode_file_facts_ref(
+        envelope: &FileFactCacheEnvelopeRef<'_>,
+    ) -> Result<Vec<u8>, String> {
         super::encode_integrity_body(envelope, envelope.expected_digest()?)
     }
 
@@ -5361,7 +5407,8 @@ mod tests {
         // 1.120 -> 1.121: Display placeholder-edit refusal (#9836).
         // 1.121 -> 1.122: foreign embedded-type equality reading (#10684).
         // 1.122 -> 1.123: return/error matches! execution admission.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.123");
+        // 1.123 -> 1.124: nested expected-macro limit (#9644).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.124");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5471,8 +5518,9 @@ mod tests {
         // 0.127 -> 0.128: same Display placeholder-edit refusal as full 1.121.
         // 0.128 -> 0.129: same foreign embedded-type reading as full 1.122.
         // 0.129 -> 0.130: same matches! admission as full 1.123.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.130");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.130");
+        // 0.130 -> 0.131: same nested expected-macro limit as full 1.124 (#9644).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.131");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.131");
     }
 
     #[test]
@@ -5509,6 +5557,26 @@ mod tests {
             CacheLoad::Hit(facts) => assert_eq!(facts, current_facts),
             other => return Err(format!("quarantined facts did not round trip: {other:?}")),
         }
+        Ok(())
+    }
+
+    #[test]
+    fn store_file_facts_writes_the_owned_envelope_bytes() -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        // The store path borrows the key and facts instead of cloning them
+        // into an owned envelope; the entry on disk must stay byte-identical
+        // to what the owned envelope encodes.
+        let scratch = integrity_scratch("store-owned-bytes")?;
+        let cache = RepoFileFactCache::at_dir(scratch.0.clone());
+        let file = Path::new("src/lib.rs");
+        let source = "pub fn f(x: u32) -> u32 { if x > 0 { x + 1 } else { 0 } }\n\
+                      #[test] fn t() { assert_eq!(f(1), 2); }\n";
+        let facts = RaRustSyntaxAdapter.summarize_file(file, source)?;
+        let key = RepoFileFactCacheKey::new(file, source.as_bytes());
+        cache.store_file_facts(&key, &facts)?;
+        let owned = FileFactCacheEnvelope::new(key.clone(), facts);
+        let on_disk = std::fs::read(cache.entry_path(&key)).map_err(|err| err.to_string())?;
+        assert_eq!(on_disk, codec::encode_file_facts(&owned)?);
         Ok(())
     }
 
