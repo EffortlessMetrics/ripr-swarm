@@ -1042,15 +1042,35 @@ fn macro_binding_sites_in_tree(
                 let word = token.text().trim_start_matches("r#");
                 matches!(word, "macro_use" | "no_implicit_prelude").then_some(word)
             }) {
-                return all(
-                    line_of(node),
-                    MacroBindingKind::ArgumentAttribute {
-                        wrapper: path.syntax().text().to_string(),
-                        attribute: attribute.to_string(),
-                    },
-                    // The expansion may export what it defines.
-                    false,
-                );
+                // The one exception (#5993): a verified registry
+                // `cfg_if::cfg_if!` emits its branch items as written, so a
+                // `#[macro_use] mod NAME;` there is that item written
+                // directly, admitted like it when the module file resolves.
+                // Everything else the macro's arguments mention is still
+                // judged below.
+                let wrapper = path.syntax().text().to_string();
+                let wrapper: String = wrapper.chars().filter(|c| !c.is_whitespace()).collect();
+                let external = wrapper.starts_with("::");
+                let cfg_if_admitted = matches!(wrapper.trim_start_matches("::"), "cfg_if::cfg_if")
+                    && !drop_in_shadowed("cfg_if", external)
+                    && drop_in_verified("cfg_if")
+                    && cfg_if_macro_use_modules(&tree).is_some_and(|modules| {
+                        modules.iter().all(|(offset, name)| {
+                            let line = lines.get_or_init(|| LineIndex::new(source)).line(*offset);
+                            module_resolved(line, &cfg_if_module_declaration(name))
+                        })
+                    });
+                if !cfg_if_admitted {
+                    return all(
+                        line_of(node),
+                        MacroBindingKind::ArgumentAttribute {
+                            wrapper: path.syntax().text().to_string(),
+                            attribute: attribute.to_string(),
+                        },
+                        // The expansion may export what it defines.
+                        false,
+                    );
+                }
             }
             // Every mention counts, a plain `assert_eq!(..)` included: to the
             // macro it is only tokens, and `define!(assert_eq!(mod tests;))`
@@ -4662,6 +4682,149 @@ fn is_trusted_macro(path: &str, trusted: &[&str]) -> bool {
     // Qualified roots can themselves be rebound. Without name resolution,
     // only bare names with the workspace binding check are established.
     trusted.contains(&path)
+}
+
+/// The `module_resolved` key for a `mod NAME;` the parser sees only as
+/// tokens in a verified `cfg_if::cfg_if!` (#5993). It never matches a parsed
+/// module edge; the resolver answers it by looking for the module file beside
+/// the declaring crate-root or `mod.rs` file.
+pub(crate) fn cfg_if_module_declaration(name: &str) -> String {
+    format!("{CFG_IF_MODULE_PREFIX}mod {name};")
+}
+
+/// The module name inside a [`cfg_if_module_declaration`] key.
+pub(crate) fn cfg_if_module_name(declaration: &str) -> Option<&str> {
+    declaration
+        .strip_prefix(CFG_IF_MODULE_PREFIX)?
+        .strip_prefix("mod ")?
+        .strip_suffix(';')
+}
+
+const CFG_IF_MODULE_PREFIX: &str = "cfg_if ";
+
+/// The `#[macro_use] mod NAME;` items (offset of the `mod` keyword and name)
+/// a `cfg_if!` argument tree carries, when its arguments are exactly the
+/// `if #[cfg(..)] { .. } else if #[cfg(..)] { .. } else { .. }` shape and
+/// every `macro_use` in them is such an item written directly in a branch.
+/// `None` when any `macro_use` or `no_implicit_prelude` is anywhere else (an
+/// `extern crate`, an inline module body, a nested macro's arguments, after
+/// another attribute such as `#[path]`) or the shape is not recognized.
+fn cfg_if_macro_use_modules(tree: &ast::TokenTree) -> Option<Vec<(TextSize, String)>> {
+    use ra_ap_syntax::{NodeOrToken, SyntaxElement};
+    let text = |element: &SyntaxElement| match element {
+        NodeOrToken::Token(token) => token.text().trim_start_matches("r#").to_string(),
+        NodeOrToken::Node(node) => node.text().to_string(),
+    };
+    let is_tree = |element: &SyntaxElement, open: char| {
+        element
+            .as_node()
+            .and_then(|node| ast::TokenTree::cast(node.clone()))
+            .and_then(|tree| tree.syntax().first_token())
+            .is_some_and(|token| token.text().starts_with(open))
+    };
+    let significant = |tree: &SyntaxNode| -> Vec<SyntaxElement> {
+        let mut elements: Vec<_> = tree
+            .children_with_tokens()
+            .filter(|element| {
+                !element
+                    .as_token()
+                    .is_some_and(|token| token.kind().is_trivia())
+            })
+            .collect();
+        // The outer delimiters are not part of the contents.
+        elements.pop();
+        if !elements.is_empty() {
+            elements.remove(0);
+        }
+        elements
+    };
+    let top = significant(tree.syntax());
+    let mut bodies = Vec::new();
+    let mut at = 0;
+    loop {
+        if text(top.get(at)?) != "if"
+            || text(top.get(at + 1)?) != "#"
+            || !is_tree(top.get(at + 2)?, '[')
+            || !is_tree(top.get(at + 3)?, '{')
+        {
+            return None;
+        }
+        bodies.push(top[at + 3].as_node()?.clone());
+        at += 4;
+        match top.get(at) {
+            None => break,
+            Some(element) if text(element) == "else" => {
+                at += 1;
+                if top.get(at).is_some_and(|next| text(next) == "if") {
+                    continue;
+                }
+                if !is_tree(top.get(at)?, '{') || top.len() != at + 1 {
+                    return None;
+                }
+                bodies.push(top[at].as_node()?.clone());
+                break;
+            }
+            Some(_) => return None,
+        }
+    }
+    let words = |word: &str| {
+        tree.syntax()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .filter(|token| token.text().trim_start_matches("r#") == word)
+            .count()
+    };
+    if words("no_implicit_prelude") != 0 {
+        return None;
+    }
+    let mut modules = Vec::new();
+    for body in &bodies {
+        let items = significant(body);
+        for (index, element) in items.iter().enumerate() {
+            let is_attribute = text(element) == "#"
+                && items.get(index + 1).is_some_and(|next| {
+                    is_tree(next, '[')
+                        && significant(next.as_node().unwrap_or(body))
+                            .iter()
+                            .map(&text)
+                            .collect::<Vec<_>>()
+                            == ["macro_use"]
+                });
+            if !is_attribute {
+                continue;
+            }
+            // Directly after another item, never after an attribute that
+            // could redirect the module (`#[path = ".."]`).
+            let boundary = index == 0
+                || items
+                    .get(index - 1)
+                    .is_some_and(|previous| text(previous) == ";" || is_tree(previous, '{'));
+            let (Some(keyword), Some(name), Some(semicolon)) = (
+                items.get(index + 2),
+                items.get(index + 3),
+                items.get(index + 4),
+            ) else {
+                return None;
+            };
+            let name_token = name.as_token()?;
+            if !boundary
+                || text(keyword) != "mod"
+                || text(semicolon) != ";"
+                || !name_token
+                    .text()
+                    .trim_start_matches("r#")
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_')
+            {
+                return None;
+            }
+            modules.push((
+                keyword.text_range().start(),
+                name_token.text().trim_start_matches("r#").to_string(),
+            ));
+        }
+    }
+    (words("macro_use") == modules.len()).then_some(modules)
 }
 
 /// The assertion macros the owner-pin collectors read (#8983), in the test body

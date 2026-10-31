@@ -5548,6 +5548,105 @@ fn any_mention_in_another_macros_arguments_stays_ambiguous() {
     );
 }
 
+/// #5993: `#[macro_use] mod NAME;` written directly in the branches of a
+/// verified registry `cfg_if::cfg_if!` is that item written directly; any
+/// other `macro_use`, any `no_implicit_prelude`, and an unverified or
+/// shadowed `cfg_if` keep the attribute ambiguous for every trusted name.
+#[test]
+fn cfg_if_macro_use_module_is_admitted_only_as_the_plain_item() {
+    let argument_attribute = |source: &str, resolves: bool, verified: bool, packages: &[&str]| {
+        let packages: BTreeSet<String> = packages.iter().map(|name| name.to_string()).collect();
+        trusted_macro_binding_sites(
+            source,
+            &packages,
+            &["assert_eq"],
+            &|_, declaration| resolves && cfg_if_module_name(declaration).is_some(),
+            &|krate| verified && krate == "cfg_if",
+        )
+        .into_iter()
+        .any(|(_, site)| matches!(site.kind, MacroBindingKind::ArgumentAttribute { .. }))
+    };
+    let admitted = |source: &str| !argument_attribute(source, true, true, &[]);
+    for source in [
+        "cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        "::cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        "cfg_if::cfg_if! {\n    if #[cfg(unix)] {\n        #[macro_use]\n        mod macros;\n    } else if #[cfg(windows)] {\n        #[macro_use]\n        mod win;\n        fn f() {}\n    } else {\n        #[macro_use]\n        mod other;\n    }\n}",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { mod a; #[macro_use] mod macros; mod b; } }",
+        // No `macro_use` at all was never an argument attribute.
+        "cfg_if::cfg_if! { if #[cfg(unix)] { mod macros; } }",
+    ] {
+        assert!(admitted(source), "{source}");
+    }
+    // Each discriminator alone flips the admission.
+    let source = "cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }";
+    assert!(
+        argument_attribute(source, false, true, &[]),
+        "unresolved module"
+    );
+    assert!(
+        argument_attribute(source, true, false, &[]),
+        "unverified crate"
+    );
+    assert!(
+        argument_attribute(source, true, true, &["cfg-if"]),
+        "workspace package named cfg-if"
+    );
+    for refused in [
+        "mod cfg_if {}\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        "use other::thing as cfg_if;\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        "extern crate other as cfg_if;\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        // A bare name could be any macro in scope.
+        "cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        "other::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] extern crate other; } }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros { macro_rules! m { () => {}; } } } }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] #[path = \"x.rs\"] mod macros; } }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { #[path = \"x.rs\"] #[macro_use] mod macros; } }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { #[cfg(a)] #[macro_use] mod macros; } }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] pub mod macros; } }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use(m)] mod macros; } }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; #[no_implicit_prelude] mod quiet; } }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { mod macros; } else { #![no_implicit_prelude] } }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { inner! { #[macro_use] mod macros; } } }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { mod m { #[macro_use] mod macros; } } }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { fn f() { #[macro_use] mod macros; } } }",
+        // Not the `if #[cfg(..)] { .. } else { .. }` shape.
+        "cfg_if::cfg_if! { #[macro_use] mod macros; }",
+        "cfg_if::cfg_if! { if cfg!(unix) { #[macro_use] mod macros; } }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } else }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } else { } extra }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] ( #[macro_use] mod macros; ) }",
+    ] {
+        assert!(!admitted(refused), "{refused}");
+    }
+    // The module name and the item boundary are read from the tokens.
+    let sites = |source: &str| {
+        trusted_macro_binding_sites(
+            source,
+            &BTreeSet::new(),
+            &["assert_eq"],
+            &|_, declaration| cfg_if_module_name(declaration) == Some("macros"),
+            &|krate| krate == "cfg_if",
+        )
+    };
+    assert!(
+        sites("cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }").is_empty(),
+        "premise: the named module resolves"
+    );
+    assert!(
+        !sites("cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod elsewhere; } }").is_empty(),
+        "a module the resolver does not know stays refused"
+    );
+    // Admission removes only the attribute refusal: a mention of the
+    // assertion in the arguments still binds it.
+    assert!(
+        !sites(
+            "cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; macro_rules! assert_eq { () => {}; } } }"
+        )
+        .is_empty()
+    );
+}
+
 #[test]
 fn a_bound_trusted_call_hides_attributes_and_nested_calls_from_the_pin() {
     // #8446: the second pass over a bound trusted name's calls must read an

@@ -2345,7 +2345,16 @@ receiving call is itself resolved.
   macros elsewhere in the file stay invisible, as for every other site.
   `macro_use` or `no_implicit_prelude` anywhere in a non-trusted macro's
   arguments makes every trusted name ambiguous (stricter than the same
-  attribute written on an item, which a resolved module can admit). A
+  attribute written on an item, which a resolved module can admit). The one
+  exception (#5993) is `#[macro_use] mod NAME;` written directly in the
+  branches of `cfg_if::cfg_if! { if #[cfg(..)] { .. } else { .. } }`, where
+  `cfg_if` is a manifest-verified registry crate no module, alias or
+  workspace package takes the name of: that is the same item written
+  directly, admitted when `NAME.rs` or `NAME/mod.rs` beside the declaring
+  crate-root or `mod.rs` file is indexed. An `extern crate`, an inline module
+  body, a `#[path]` or other attribute on the item, a bare `cfg_if!`, any
+  `no_implicit_prelude`, and a mention of the assertion in the arguments stay
+  ambiguous. A
   `macro_rules!` confined to an inline module or function body (no
   `#[macro_use]` on any enclosing module, no out-of-line child module)
   refuses only tests inside that item; a glob import from a workspace member
