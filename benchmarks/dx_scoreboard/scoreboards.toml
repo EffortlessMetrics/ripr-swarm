@@ -390,6 +390,19 @@ source = "measured"
 per_repo = true
 
 [[metric]]
+id = "trust.editor_resilience_failures"
+board = "trust"
+title = "Editor-server resilience checks that failed (save burst, restart after termination)"
+unit = "checks"
+direction = "lower_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "measured"
+per_repo = true
+
+[[metric]]
 id = "trust.false_verdict_rate"
 board = "trust"
 title = "Wrong verdicts on the hand-checked verdict corpus"
