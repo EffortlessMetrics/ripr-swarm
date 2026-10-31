@@ -1,4 +1,0 @@
-case = "mined-snapshot-helper-negative-zero"
-issue = 9644
-accepted_growth = 9644
-reason = "mined-snapshot-helper-negative-zero: exact inline snapshot compared through a local assert_data_eq!/snap_str! helper read as gap (#9644)."

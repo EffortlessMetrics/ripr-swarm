@@ -108,7 +108,7 @@ pub(in crate::analysis) use helper_transfer::{
 };
 pub(in crate::analysis) use hop_polling::{PolledHops, related_through_polled_hops};
 pub(in crate::analysis) use implicit_call::{
-    withhold_destructor_credit, withhold_implicit_call_gap,
+    pre_cap_syntax_only, withhold_destructor_credit, withhold_implicit_call_gap,
 };
 pub(in crate::analysis) use indirect_owner::{
     related_tests_reach_owner_indirectly, withhold_indirect_owner_gap,
@@ -157,11 +157,10 @@ pub(in crate::analysis) use related_tests::{
     free_helper_call_resolves, impl_self_type_name, inherent_owner_call_resolves,
     is_display_fmt_owner, is_drop_destructor, is_partial_eq_method, manifests_with_unindexed_files,
     method_call_resolves_to_impl, module_stem, owner_call_text, owner_dispatch_trait,
-    package_prefix, requires_inherent_receiver_identity, resolves_method_in_prefix,
-    test_calls_free_function,
+    owner_impl_identity_shadowed, package_prefix, requires_inherent_receiver_identity,
+    resolves_method_in_prefix, test_calls_free_function,
 };
 pub(in crate::analysis) use reveal::is_inline_expect_snapshot;
-pub(in crate::analysis) use reveal::reveal_outcome;
 pub(in crate::analysis) use reveal::unconditional_owner_insert_field;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;
 pub(in crate::analysis) use reveal::{
@@ -171,6 +170,7 @@ pub(in crate::analysis) use reveal::{
     NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY, NO_REACHABLE_TEST_OBSERVE_SUMMARY,
 };
 pub(in crate::analysis) use reveal::{ReturnOracleAdmission, contains_as_whole_word};
+pub(in crate::analysis) use reveal::{only_proximity_oracles, reveal_outcome};
 pub(in crate::analysis) use slice_boundary::refine_slice_boundary;
 // RIPR-SPEC-0106: re-export the variant parsers so test_grip_evidence.rs can
 // apply variant-binding without reaching into the private `text` submodule.

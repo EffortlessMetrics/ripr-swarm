@@ -47,6 +47,8 @@ Write a test for it:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:2 (unknown); kind: predicate; reason: No detected boundary input for the changed predicate
+    - ./src/lib.rs:2 (unknown: infection unclear); kind: predicate; reason: No detected boundary input for the changed predicate
+  Hidden classes:
+    unknown: infection unclear = ripr could not tell what input makes the change take effect
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

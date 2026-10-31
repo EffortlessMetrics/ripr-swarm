@@ -195,3 +195,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_trait_impl_shadow (16)
+
+Reason:
+seam-side shadow guard: the file's seam is no longer tied to the changed line (#11382); formatting-only drift, one human.txt line, check.json unchanged
+
+Command:
+`cargo xtask goldens bless rust_trait_impl_shadow --reason "..."`
+
+Updated:
+- `expected/human.txt`

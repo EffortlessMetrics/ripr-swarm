@@ -5,6 +5,35 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
+      "id": "py_while_counter_past_bound",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_while_counter_past_bound",
+      "vector": "rebound_unit_step_counter_cannot_reach_boundary_from_far_side",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        }
+      ]
+    },
+    {
       "id": "rust_matches_panic_message_return_value",
       "language": "rust",
       "tier": "pure",
@@ -4554,6 +4583,37 @@
       "source_fixture": "fixtures/python_message_pin_no_exposed_credit",
       "vector": "a_literal_match_pattern_fits_the_old_and_new_message_so_the_message_change_is_not_exposed",
       "probe_family": "error_path",
+      "assertions": [
+       {
+        "type": "must_not_report_clean"
+       },
+       {
+        "type": "must_disclose_scope"
+       },
+       {
+        "type": "expected_finding_count",
+        "count": 1
+       },
+       {
+        "type": "must_not_promote"
+       },
+       {
+        "type": "expected_class",
+        "class": "weakly_exposed"
+       },
+       {
+        "type": "maximum_class",
+        "class": "weakly_exposed"
+       }
+      ]
+     },
+    {
+      "id": "py_message_only_local_raise_pattern_fits_both_no_exposed_credit",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_message_pin_local_no_exposed_credit",
+      "vector": "a_literal_match_pattern_fits_the_old_and_new_message_of_a_local_raised_through_so_the_message_change_is_not_exposed",
+      "probe_family": "predicate",
       "assertions": [
        {
         "type": "must_not_report_clean"
