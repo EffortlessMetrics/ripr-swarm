@@ -1,8 +1,8 @@
-# ADR 0024: Windows probe job helper is a small native binary, not a PowerShell compile
+# ADR 0024: Windows probe job helper is a small native binary built on the safe process-wrap Job Object
 
-- Status: Proposed (acceptance is the architect's call; no FFI crate or `unsafe` is added until it is accepted)
+- Status: Proposed (safe design: no `unsafe` and no exception to `unsafe_code = "forbid"` is requested)
 - Date: 2026-10-25
-- Related: #9631, #9526, #5891, #9625, #9654
+- Related: #9631, #9526, #5891, #9625, #9654, #3803
 
 ## Context
 
@@ -21,9 +21,17 @@ itself takes 10 to 35 ms. The editor journey hung at the former 10 s budget (#95
 #9654 added a timing diagnostic; both bound the damage, neither removes the
 cost.
 
-The workspace sets `unsafe_code = "forbid"`. A native Job-object helper needs
-Win32 calls, so avoiding the PowerShell compile cannot be done without a
-documented exception.
+The workspace sets `unsafe_code = "forbid"`, and `docs/ENGINEERING.md` says to
+keep it. The repository documents no exception process for it: no ADR, policy
+file or `check-*` gate admits an `unsafe` island, and the root manifest's
+unsafe-hygiene lints are kept only for a hypothetical future one. The
+containment already shipped for the product's own bounded subprocesses (#3803,
+`crates/ripr/src/process_owner.rs`) takes the other route: it uses
+`process-wrap` (reviewed safe wrapper, already in `Cargo.lock` and
+`crates/ripr/Cargo.toml`) for assign-before-execution Job Object ownership, and
+its manifest comment records that `windows` and `windows-sys` are `unsafe fn`
+surfaces excluded by the forbid. This ADR follows the same route, so the helper
+needs no `unsafe` and no exception.
 
 ## Alternatives Considered
 
@@ -33,32 +41,44 @@ documented exception.
 2. **Precompile the C# helper once and `Add-Type -Path` it.** Removes the
    compile but retains PowerShell startup; that startup's contribution to the
    whole-wrapper cost remains unisolated.
-3. **Small native helper binary using the Win32 Job API.** Startup cost is one
-   process start. Keeps the Job contract. Needs `unsafe` for the FFI calls.
+3. **Small native helper binary using the Win32 Job API directly through
+   `windows-sys`.** Startup cost is one process start and the Job contract is
+   kept, but every call is `unsafe`. That needs the repository's first
+   exception to the workspace forbid and, because Cargo cannot override an
+   inherited `forbid` per crate, a helper that opts out of workspace lint
+   inheritance and duplicates the lint tables. Rejected: option 5 gives the
+   same behavior without it.
 4. **A Node native addon.** Same `unsafe` need plus a per-ABI build matrix;
-   rejected as heavier than option 3.
+   rejected as heavier than option 5.
+5. **Small native helper binary using `process-wrap` (safe API) for the Job
+   Object.** Startup cost is one process start. Keeps the Job contract. The
+   `unsafe` lives inside the reviewed dependency, as it does for `winsafe` and
+   for `process_owner`, so the helper keeps `unsafe_code = "forbid"` and
+   inherits the workspace lints unchanged.
 
 ## Decision
 
-Proposed, not accepted.
+Proposed, not accepted. Adopt option 5, narrowly.
 
-Adopt option 3 from the alternatives above, narrowly.
-
-- An unpublished helper crate outside the `ripr` package, so the published
-  package, binary and library stay as ADR 0001 describes. Windows-only target.
-- One dependency, `windows-sys`, with only the Job-object and process features
-  it needs. All `unsafe` lives in one small module with a safety comment per
-  call. Cargo has no per-crate exception to an inherited workspace `forbid`:
-  a member with `[lints] workspace = true` cannot override it in its manifest,
-  and an in-code `#[allow(unsafe_code)]` fails with E0453 (reproduced on the
-  pinned 1.95.0). The helper crate therefore opts out of workspace lint
-  inheritance and re-declares the other workspace lints in its own `[lints.rust]` and
-  `[lints.clippy]` tables (the hygiene lints span both),
-  including the unsafe-hygiene lints (`undocumented_unsafe_blocks`,
-  `multiple_unsafe_ops_per_block`, `repr_packed_without_abi`,
-  `unsafe_op_in_unsafe_fn`) that the root
-  manifest keeps for a future unsafe island. Accepting the exception implies
-  keeping those duplicate tables in step with the workspace.
+- A small helper that creates the Job Object through `process-wrap` and
+  contains no `unsafe`. It is either an unpublished Windows-only crate outside
+  the `ripr` package or a mode of the existing binary; that choice stays open
+  (see "Not decided here"), and in both cases the published package, binary
+  and library stay as ADR 0001 describes. Workspace lint inheritance, including
+  `unsafe_code = "forbid"` and the unsafe-hygiene lints, is unchanged.
+- Kill-on-close is part of the contract (#5891): a probe must not outlive an
+  extension host that died. The `process_owner` configuration uses
+  `process_wrap::std::JobObject`, whose Job is created without
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` (process-wrap 10.0.1,
+  `src/std/job_object.rs` passes `kill_on_drop = false`; `process_owner` records
+  the same). That is sufficient for its Drop-driven cleanup but not for a
+  helper that can itself be killed. The helper therefore uses process-wrap's
+  `tokio` `JobObject` together with `KillOnDrop`, which sets the flag through
+  the same safe API. That adds the `tokio1` feature of `process-wrap` and a
+  `tokio` `process` feature to the helper's dependency set. If that, or the
+  flag's effect, cannot be shown under the Job-contract tests, the design
+  returns to the architect: the fallback is option 3 with its `unsafe`
+  exception, not a silent loss of kill-on-close.
 - Shipped only in the win32 VSIX. The PowerShell wrapper remains as the
   fallback when the helper is missing or fails to start, so a packaging mistake
   degrades to today's behavior rather than to no probe.
@@ -101,8 +121,12 @@ Adopt option 3 from the alternatives above, narrowly.
     qualification fails or reports not established.
   - The target-start-failure and nonzero-target controls stay typed target
     outcomes, distinct from a helper launch failure.
-- A new dependency and the repository's first `unsafe` exception, which is the
-  reason this is an ADR and not a PR.
+- No `unsafe` exception. The dependency set changes only by enabling more
+  features of `process-wrap` (already approved by #3803) and `tokio`; the
+  dependency allowlist and `cargo-deny` checks are the review point for that
+  slice. No architect acceptance of an exception is needed, though this ADR
+  records a product decision (a second native binary or mode) and is
+  merged as Proposed until the first slice lands.
 - Per-platform VSIX packaging and a Windows-qualified build and test lane for
   the helper.
 - The 30 s Windows probe budget stays until the measurement passes, then can be
@@ -110,7 +134,9 @@ Adopt option 3 from the alternatives above, narrowly.
 
 ## Not decided here
 
-Crate location and name, the exact `windows-sys` feature list, and whether the
-helper also serves the CLI. Those are implementation choices for the slices
+Crate location and name (or a hidden mode of `ripr`, which would avoid VSIX
+packaging of a second binary but adds a command-catalog entry), the exact
+`process-wrap` and `tokio` feature list, and whether the helper also serves the
+CLI. Those are implementation choices for the slices
 after acceptance: timing-instrument repair, helper plus tests, VSIX packaging,
 the `spawnProbeProcess` switch, then the validated timing check.
