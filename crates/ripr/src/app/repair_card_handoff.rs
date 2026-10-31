@@ -37,7 +37,8 @@ use crate::domain::{
 use crate::output::agent_seam_packets::{
     EDIT_CAGE_PRODUCTION_STATEMENT, EDIT_CAGE_TERMINALITY_WARNING, PacketCommandContext,
     TASK_WRITE_TARGETED_TEST, inline_test_module_edit_statement, recommended_inline_test_module,
-    recommended_test_for, render_agent_seam_packet_json_with_context, task_for,
+    recommended_test_for, render_agent_seam_packet_json_with_context,
+    suggested_assertion_for_classified_seam, task_for,
 };
 use crate::output::path::display_path;
 use crate::repair_card_budget::RepairCardDetailSource;
@@ -456,10 +457,16 @@ pub(crate) fn assemble_repair_card(
     let entry = facts.entry;
     let eligibility = repair_packet_eligibility(entry);
     let readiness = &eligibility.readiness;
-    let instruction = facts
+    // The check finding's witness carries no assertion template, but the seam
+    // packet (and `ripr pilot`, hover and the editor actions) name one through
+    // the shared seam producer. The card reads that same producer so a repair
+    // that prints an assertion shape never also says there is none.
+    let seam_assertion = suggested_assertion_for_classified_seam(entry);
+    let mut instruction = facts
         .witness
         .map(FixInstructionSummary::from_witness)
         .unwrap_or_else(FixInstructionSummary::unavailable);
+    instruction.has_suggested_assertion |= seam_assertion.is_some();
 
     // Edit cage: the exact derivation the seam packet states (#4330), so the
     // card cannot promise a different edit surface than the attempt enforces.
@@ -540,7 +547,8 @@ pub(crate) fn assemble_repair_card(
         .is_some_and(|witness| witness.expected_sink.is_some());
     let assertion_goal_detail = facts
         .witness
-        .and_then(|witness| witness.suggested_assertion.clone());
+        .and_then(|witness| witness.suggested_assertion.clone())
+        .or(seam_assertion);
     let limitations: Vec<String> = facts
         .witness
         .map(|witness| {
@@ -1488,6 +1496,29 @@ mod tests {
                     "{family:?} must record an exact unavailable reason"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn card_assertion_matches_the_seam_producer_when_the_witness_has_none() -> Result<(), String> {
+        let entry = weakly_gripped_entry();
+        let packet = packet_for(&entry);
+        let facts = facts_for(&entry, &packet);
+        if facts.witness.is_some() {
+            return Err("fixture must exercise a card with no witness".to_string());
+        }
+        let expected = suggested_assertion_for_classified_seam(&entry)
+            .ok_or_else(|| "fixture seam must have a seam-producer assertion".to_string())?;
+        let card = assemble_repair_card(&facts)?;
+        if card.assertion_goal_detail.as_deref() != Some(expected.as_str()) {
+            return Err(format!(
+                "card assertion {:?} disagrees with the seam producer {expected:?}",
+                card.assertion_goal_detail
+            ));
+        }
+        if !card.instruction.has_suggested_assertion {
+            return Err("card must report the seam producer's assertion".to_string());
         }
         Ok(())
     }
