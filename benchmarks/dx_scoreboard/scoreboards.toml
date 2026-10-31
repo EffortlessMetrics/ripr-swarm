@@ -130,6 +130,9 @@ sha = "ecdb4258a39cdfc8ba70ce1aa3edda1615b1defc"
 language = "python"
 note = "large Python library (~1500 .py files, ~23k tests); commit edits scripts/validate_min_versions_in_sync.py and its test"
 heavy = true
+# Held under 512 MiB by #10914; a run above it fails the gate whatever the
+# baseline holds (hosted runner at 7c322a51: pandas 500 MiB, Django 357 MiB).
+ceilings = { "speed.warm_check_peak_rss_mb" = 512 }
 
 # The largest real Python workspace pinned (#10785): Django's own tree, a
 # 27-file edit across django/ and tests/ (14.4 s, 390 MiB peak on 4 cores).
@@ -140,6 +143,9 @@ sha = "5c13b5a19864807cae7266339554c14e151e5961"
 language = "python"
 note = "large Python framework (2,937 .py files); commit adds HTTP QUERY method support across django/ and its tests"
 heavy = true
+# Held under 512 MiB by #10914; a run above it fails the gate whatever the
+# baseline holds (hosted runner at 7c322a51: pandas 500 MiB, Django 357 MiB).
+ceilings = { "speed.warm_check_peak_rss_mb" = 512 }
 
 # TypeScript diffs. `defu`, `ky`, `h3`, `execa`, `destr` and `zod` complete under `--mode draft` for their
 # pinned diffs. Partial-extraction gaps (#10436) are omitted only when their test
