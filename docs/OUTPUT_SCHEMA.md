@@ -8722,6 +8722,14 @@ Field contract:
   remembered at production time does not participate in that
   classification, so a historical artifact produced on a dirty worktree
   still renders a `historical_*` pair token (#3229).
+  That production-time fact is preserved separately (#3056): when the
+  before (or after) artifact is classified historical and its envelope
+  declared `analysis.worktree: "dirty"`, the document carries the additive
+  top-level `before_produced_from_dirty` (or `after_produced_from_dirty`)
+  member set to `true`. The members are absent otherwise — for current,
+  dirty-worktree, and clean-produced historical artifacts — so existing
+  documents and pair tokens are byte-stable. They are a read-time observation
+  derived from the same historical classification as `artifact_currentness`.
   `current_before_historical_after` is a reachable accepted outcome when the
   checked-out HEAD is the before artifact's revision and the after artifact
   is bound to a descendant revision. A fully current pair (both artifacts

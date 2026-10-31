@@ -1518,6 +1518,10 @@ pub(crate) fn canonically_admit_terminal_pair(
     for document in [&mut supplied, &mut expected] {
         if let Some(object) = document.as_object_mut() {
             object.remove("artifact_currentness");
+            // #3056: derived from the same read-time Historical
+            // classification, so it is equally a HEAD observation.
+            object.remove("before_produced_from_dirty");
+            object.remove("after_produced_from_dirty");
         }
     }
     if supplied == expected {
