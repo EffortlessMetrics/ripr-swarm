@@ -784,7 +784,7 @@ fn non_source_disclosure_message(changed_files: &[diff::ChangedFile]) -> Option<
     }
     let summary = summary.join(", ");
     let verdict = if truncated_paths.is_empty() {
-        "The empty result is correct — ripr cannot analyze non-source files.".to_string()
+        "Nothing was analyzed: ripr cannot analyze non-source files, so this is not a statement about changed behavior.".to_string()
     } else {
         let listed = truncated_paths
             .iter()
@@ -3396,7 +3396,7 @@ mod tests {
         if message.contains(".md, .md") {
             return Err(format!("extensions must be deduplicated: {message}"));
         }
-        if !message.contains("empty result is correct") {
+        if !message.contains("Nothing was analyzed") {
             return Err(format!("disclosure must carry the non-claim: {message}"));
         }
         Ok(())
@@ -3444,7 +3444,7 @@ mod tests {
         if message.contains("(.)") {
             return Err(format!("disclosure must not render a bare `.`: {message}"));
         }
-        if message.contains("empty result is correct") {
+        if message.contains("Nothing was analyzed") {
             return Err(format!(
                 "a truncated source header must not be called correct: {message}"
             ));
@@ -3468,7 +3468,7 @@ mod tests {
                 "disclosure must name path and extension: {message}"
             ));
         }
-        if !message.contains("empty result is correct") {
+        if !message.contains("Nothing was analyzed") {
             return Err(format!("genuine non-source keeps the non-claim: {message}"));
         }
         Ok(())
@@ -4251,7 +4251,7 @@ mod tests {
         let files = vec![changed_file("pkg/calc.go"), changed_file("README.md")];
         let message = non_source_disclosure_message(&files)
             .ok_or_else(|| "a Go-only diff must disclose".to_string())?;
-        assert!(!message.contains("empty result is correct"), "{message}");
+        assert!(!message.contains("Nothing was analyzed"), "{message}");
         assert!(
             message.contains("(Go)") && message.contains("not a clean pass"),
             "{message}"
@@ -4715,7 +4715,7 @@ mod tests {
     #[test]
     fn truncated_diff_disclosure_names_truncated_sections_and_truncation() -> Result<(), String> {
         // #4375: the stderr disclosure names the exact evidence and never
-        // claims the empty result is correct. Per-section counts, so the
+        // claims that nothing was analyzed. Per-section counts, so the
         // message stays truthful for mixed diffs.
         let message = truncated_diff_disclosure_message(2).ok_or_else(|| {
             "a positive truncated-section count must produce the disclosure".to_string()
@@ -4729,8 +4729,8 @@ mod tests {
             "the disclosure must name the truncation, got: {message}"
         );
         assert!(
-            !message.contains("The empty result is correct"),
-            "a truncated stream must never claim the empty result is correct, got: {message}"
+            !message.contains("Nothing was analyzed"),
+            "a truncated stream must never claim that nothing was analyzed, got: {message}"
         );
         assert!(
             truncated_diff_disclosure_message(0).is_none(),
