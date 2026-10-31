@@ -1516,6 +1516,11 @@ const INERT_ATTRIBUTES: &[&str] = &[
 /// File-scoped nodes [`binding_free_local_wrapper`] filters per call.
 /// Collected once per parse; walking them per untrusted macro is quadratic.
 struct BindingFreeFileIndex {
+    /// Names a `use` in this file brings into scope: each rename and the last
+    /// path segment's name, `r#` stripped. [`binding_free_local_wrapper`]
+    /// asks for one name per untrusted macro call, so a set replaces a walk of
+    /// every use tree per call (#11613).
+    imported_names: BTreeSet<String>,
     uses: Vec<ast::UseTree>,
     rules: Vec<ast::MacroRules>,
     modules: Vec<SyntaxNode>,
@@ -1544,6 +1549,7 @@ impl BindingFreeFileIndex {
     fn collect(root: &SyntaxNode) -> Self {
         #[cfg(test)]
         BINDING_FREE_INDEX_COUNT.with(|count| count.set(count.get() + 1));
+        let mut imported_names = BTreeSet::new();
         let mut uses = Vec::new();
         let mut rules = Vec::new();
         let mut modules = Vec::new();
@@ -1569,6 +1575,16 @@ impl BindingFreeFileIndex {
                 _ => {}
             }
             if let Some(tree) = ast::UseTree::cast(node.clone()) {
+                if let Some(rename) = tree.rename().and_then(|rename| rename.name()) {
+                    imported_names.insert(rename.text().trim_start_matches("r#").to_string());
+                }
+                if let Some(segment) = tree
+                    .path()
+                    .and_then(|path| path.segment())
+                    .and_then(|segment| segment.name_ref())
+                {
+                    imported_names.insert(segment.text().trim_start_matches("r#").to_string());
+                }
                 uses.push(tree);
                 continue;
             }
@@ -1585,6 +1601,7 @@ impl BindingFreeFileIndex {
             }
         }
         Self {
+            imported_names,
             uses,
             rules,
             modules,
@@ -1624,14 +1641,7 @@ fn binding_free_local_wrapper(
     let named = |candidate: Option<ast::Name>| {
         candidate.is_some_and(|candidate| candidate.text().trim_start_matches("r#") == name)
     };
-    let imported = facts.uses.iter().any(|tree| {
-        tree.rename().is_some_and(|rename| named(rename.name()))
-            || tree
-                .path()
-                .and_then(|path| path.segment())
-                .and_then(|segment| segment.name_ref())
-                .is_some_and(|segment| segment.text().trim_start_matches("r#") == name)
-    });
+    let imported = facts.imported_names.contains(name.as_str());
     if imported {
         return false;
     }
@@ -6025,6 +6035,35 @@ mod binding_free_index_tests {
             take_binding_free_index_count(),
             1,
             "wrapper facts must be collected once per parsed file, not once per macro"
+        );
+    }
+
+    /// A wrapper named by a `use` in the file is not the binding-free local
+    /// definition (#11613): the import is read from the once-per-file name set,
+    /// by rename or by last path segment, with `r#` stripped.
+    #[test]
+    fn an_imported_wrapper_name_is_never_a_binding_free_local_wrapper() {
+        let sites = |imports: &str| {
+            let src = format!(
+                "{imports}macro_rules! wrap {{ ($e:expr) => {{ $e }}; }}\nfn f() {{\n    wrap!(assert_eq!(1, 1));\n}}\n"
+            );
+            trusted_macro_binding_sites(
+                &src,
+                &BTreeSet::new(),
+                &["assert_eq", "assert"],
+                &|_, _| true,
+                &|_| false,
+            )
+            .len()
+        };
+        assert_eq!(sites(""), 0, "the local wrapper binds nothing");
+        assert_eq!(sites("use other::wrap;\n"), 1, "named by the last segment");
+        assert_eq!(sites("use other::thing as wrap;\n"), 1, "named by a rename");
+        assert_eq!(sites("use other::r#wrap;\n"), 1, "raw identifier stripped");
+        assert_eq!(
+            sites("use other::wrapped;\n"),
+            0,
+            "a different name is not it"
         );
     }
 }
