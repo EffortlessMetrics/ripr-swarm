@@ -39,7 +39,7 @@ use crate::verification_contracts::{
 };
 
 const REPORT_PATH: &str = "target/ripr/reports/schema-producer-sweep.json";
-const USAGE: &str = "usage: cargo xtask schema-producer-sweep [--rev REV] [--artifact SCHEMA[#POINTER]=FILE[#POINTER]]...";
+const USAGE: &str = "usage: cargo xtask schema-producer-sweep [--rev REV] [--live-replay [--ripr BINARY]] [--artifact SCHEMA[#POINTER]=FILE[#POINTER]]...";
 /// Every JSON file under this directory is a published schema, the same rule
 /// `check-verification-contracts` applies to the working tree.
 const SCHEMAS_PREFIX: &str = "schemas/";
@@ -289,9 +289,21 @@ struct Artifact {
 }
 
 pub(crate) fn schema_producer_sweep(args: &[String]) -> Result<(), String> {
-    let options = parse_args(args)?;
+    let mut options = parse_args(args)?;
     let root = crate::repo_root()?;
     let tree = load_tree(&root, &options.rev)?;
+    if options.live_replay {
+        // Exact-cut replay: run every live producer against the fixture from
+        // this commit, then validate their bytes alongside the corpus.
+        let ripr = options
+            .ripr
+            .clone()
+            .unwrap_or_else(|| root.join("target/debug/ripr"));
+        let specs = crate::schema_cut_replay::produce(&root, &tree.commit, &ripr)?;
+        for spec in &specs {
+            options.artifacts.push(parse_artifact(spec)?);
+        }
+    }
     let report = sweep(&tree, BINDINGS, &options.artifacts)?;
     let text = serde_json::to_string_pretty(&report.packet)
         .map_err(|error| format!("serialize schema producer sweep: {error}"))?;
@@ -327,36 +339,53 @@ pub(crate) fn schema_producer_sweep(args: &[String]) -> Result<(), String> {
 struct Options {
     rev: String,
     artifacts: Vec<Artifact>,
+    live_replay: bool,
+    ripr: Option<PathBuf>,
 }
 
 fn parse_args(args: &[String]) -> Result<Options, String> {
     let mut rev = "HEAD".to_string();
     let mut artifacts = Vec::new();
+    let mut live_replay = false;
+    let mut ripr = None;
     let mut remaining = args.iter();
     while let Some(arg) = remaining.next() {
-        let value = remaining.next().ok_or_else(|| USAGE.to_string())?;
-        if arg == "--rev" && !value.is_empty() {
-            rev = value.clone();
+        if arg == "--live-replay" {
+            live_replay = true;
             continue;
         }
-        if arg != "--artifact" {
-            return Err(USAGE.to_string());
+        let value = remaining.next().ok_or_else(|| USAGE.to_string())?;
+        match arg.as_str() {
+            "--rev" if !value.is_empty() => rev = value.clone(),
+            "--ripr" if !value.is_empty() => ripr = Some(PathBuf::from(value)),
+            "--artifact" => artifacts.push(parse_artifact(value)?),
+            _ => return Err(USAGE.to_string()),
         }
-        let spec = value;
-        let (schema, file) = spec.split_once('=').ok_or_else(|| USAGE.to_string())?;
-        let (schema_path, schema_pointer) = split_pointer(schema);
-        let (file, subject_pointer) = split_pointer(file);
-        if schema_path.is_empty() || file.is_empty() {
-            return Err(USAGE.to_string());
-        }
-        artifacts.push(Artifact {
-            schema_path: schema_path.to_string(),
-            schema_pointer,
-            file: PathBuf::from(file),
-            subject_pointer,
-        });
     }
-    Ok(Options { rev, artifacts })
+    if ripr.is_some() && !live_replay {
+        return Err("--ripr only applies with --live-replay".to_string());
+    }
+    Ok(Options {
+        rev,
+        artifacts,
+        live_replay,
+        ripr,
+    })
+}
+
+fn parse_artifact(spec: &str) -> Result<Artifact, String> {
+    let (schema, file) = spec.split_once('=').ok_or_else(|| USAGE.to_string())?;
+    let (schema_path, schema_pointer) = split_pointer(schema);
+    let (file, subject_pointer) = split_pointer(file);
+    if schema_path.is_empty() || file.is_empty() {
+        return Err(USAGE.to_string());
+    }
+    Ok(Artifact {
+        schema_path: schema_path.to_string(),
+        schema_pointer,
+        file: PathBuf::from(file),
+        subject_pointer,
+    })
 }
 
 fn split_pointer(text: &str) -> (&str, Option<String>) {
@@ -1755,6 +1784,24 @@ mod tests {
     /// The sweep is only a control if the required gate runs it. Pin the
     /// wiring: the step exists and feeds every runtime row the gate can
     /// produce, so deleting the step or an `--artifact` fails here (#9505).
+    #[test]
+    fn live_replay_flags_parse_and_ripr_requires_replay() -> Result<(), String> {
+        let args = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let parsed = parse_args(&args(&[
+            "--live-replay",
+            "--ripr",
+            "bin/ripr",
+            "--rev",
+            "abc",
+        ]))?;
+        assert!(parsed.live_replay);
+        assert_eq!(parsed.ripr, Some(PathBuf::from("bin/ripr")));
+        assert_eq!(parsed.rev, "abc");
+        assert!(parse_args(&args(&["--ripr", "bin/ripr"])).is_err());
+        assert!(parse_args(&args(&["--live-replay", "--bogus", "x"])).is_err());
+        Ok(())
+    }
+
     #[test]
     fn the_required_rust_gate_runs_the_sweep_with_live_producer_artifacts() -> Result<(), String> {
         let gates = include_str!("../../.github/workflows/rust-gates.yml");
