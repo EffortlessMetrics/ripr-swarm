@@ -16997,6 +16997,108 @@ fn baseline_create_warns_when_source_predates_build_identity() -> Result<(), Str
 }
 
 #[test]
+fn baseline_create_from_check_baselines_a_whole_repo_artifact_and_refuses_a_scoped_one()
+-> Result<(), String> {
+    // Issue #11206 item 3: the whole-repository route goes through the real
+    // binary, and a diff-scoped artifact is refused with the producer command.
+    let workspace = unique_temp_workspace("baseline-create-from-check");
+    std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
+    let artifact = |name: &str, base_tree: &str| -> Result<String, String> {
+        let path = workspace.join(name);
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "root": ".",
+  "analysis_outcome": {{
+    "analysis_complete": true,
+    "outcome": {{
+      "kind": "complete_with_findings",
+      "identity": {{"git_candidate_subject": {{"base_tree": "{base_tree}"}}}}
+    }}
+  }},
+  "findings": [
+    {{
+      "canonical_gap_id": "gap:rust:src/lib.rs:price:predicate_boundary:predicate:n==10",
+      "classification": "reachable_unrevealed",
+      "severity": "warning",
+      "probe": {{"file": "./src/lib.rs", "line": 2}},
+      "missing_discriminators": [{{"value": "n == 10"}}]
+    }},
+    {{
+      "canonical_gap_id": "gap:rust:src/lib.rs:other:predicate_boundary:predicate:x==1",
+      "classification": "static_unknown",
+      "probe": {{"file": "src/lib.rs", "line": 5}}
+    }}
+  ]
+}}"#
+            ),
+        )
+        .map_err(|e| format!("write artifact: {e}"))?;
+        Ok(path.display().to_string())
+    };
+    let whole = artifact(
+        "check-whole.json",
+        "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+    )?;
+    let scoped = artifact(
+        "check-scoped.json",
+        "1f0f141e3f5501c293980d256a55df8bbda6b24c",
+    )?;
+    let out = workspace.join(".ripr/gate-baseline.json");
+    let out_arg = out.display().to_string();
+
+    let output = run_ripr(&[
+        "baseline",
+        "create",
+        "--from-check",
+        &whole,
+        "--out",
+        &out_arg,
+    ]);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Entries: 1"), "{stdout}");
+    let baseline = std::fs::read_to_string(&out).map_err(|e| format!("read baseline: {e}"))?;
+    assert!(
+        baseline.contains("gap:rust:src/lib.rs:price:predicate_boundary:predicate:n==10"),
+        "{baseline}"
+    );
+    assert!(
+        !baseline.contains("other:predicate_boundary"),
+        "an unknown-class finding must not be baselined: {baseline}"
+    );
+    assert!(
+        baseline.contains("\"mode\": \"whole_repo_check\""),
+        "{baseline}"
+    );
+
+    let refused_out = workspace.join("refused.json");
+    let refused_arg = refused_out.display().to_string();
+    let refused = run_ripr(&[
+        "baseline",
+        "create",
+        "--from-check",
+        &scoped,
+        "--out",
+        &refused_arg,
+    ]);
+    assert!(
+        !refused.status.success(),
+        "a scoped artifact must fail closed"
+    );
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("not a whole-repository run"), "{stderr}");
+    assert!(stderr.contains("--candidate-tree HEAD^{tree}"), "{stderr}");
+    assert!(!refused_out.exists(), "no baseline is written on refusal");
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
 fn baseline_diff_writes_debt_delta_json_and_markdown() -> Result<(), String> {
     let workspace = unique_temp_workspace("baseline-diff");
     std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
