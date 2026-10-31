@@ -268,9 +268,7 @@ impl Summary {
         } else if self.policy_reports_read > 0 {
             self.line("<details open><summary>Policy and governance (advisory; no gate configured; some policy reports not found)</summary>");
         } else {
-            self.line(
-                "<details><summary>Policy and governance (advisory; no gate configured; no policy reports found)</summary>",
-            );
+            self.line("<details open><summary>Policy and governance (advisory; no gate configured; no policy reports found)</summary>");
         }
         self.blank();
         self.out.extend(body);

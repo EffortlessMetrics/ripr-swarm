@@ -1400,11 +1400,13 @@ fn conditional_preview_and_waiver_reports_are_not_required_for_a_clean_fold() ->
 }
 
 #[test]
-fn no_policy_reports_is_neither_clean_nor_open() -> TestResult {
+fn no_policy_reports_keeps_the_fold_open_and_not_clean() -> TestResult {
     let fixture = Fixture::new("fold-none")?;
     let summary = render_gate(&fixture, false)?;
     assert!(
-        summary.contains("no gate configured; no policy reports found)"),
+        summary.contains(
+            "<details open><summary>Policy and governance (advisory; no gate configured; no policy reports found)"
+        ),
         "{summary}"
     );
     assert!(!summary.contains(CLEAN), "{summary}");
