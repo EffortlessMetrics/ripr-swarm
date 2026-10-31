@@ -13237,8 +13237,12 @@ fn fixture_output_normalization_keeps_json_escapes_readable() {
         if cfg!(windows) { folded } else { json }
     );
     assert_eq!(
-        normalize_fixture_human_output("fixtures\\example\\input\\src/lib.rs"),
-        "fixtures/example/input/src/lib.rs\n"
+        normalize_fixture_human_output("root: fixtures\\example\\input\\src/lib.rs"),
+        if cfg!(windows) {
+            "root: fixtures/example/input/src/lib.rs\n"
+        } else {
+            "root: fixtures\\example\\input\\src/lib.rs\n"
+        }
     );
 }
 

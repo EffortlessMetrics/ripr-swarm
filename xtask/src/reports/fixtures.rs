@@ -1821,11 +1821,61 @@ fn is_path_bearing_json_key(key: &str) -> bool {
 }
 
 pub(crate) fn normalize_fixture_human_output(value: &str) -> String {
-    let normalized = project_renderer_cwd(&normalize_separators(value));
+    normalize_fixture_human_output_for_host(value, cfg!(windows))
+}
+
+/// Human text has no key structure, so the Windows separator fold is scoped to
+/// the lines and tokens that carry filesystem paths (see
+/// [`fold_human_path_separators`]). Every other line quotes asserted source
+/// text (`read \"error\"`, `\u{7b}`) and stays byte-identical, so the
+/// checked-in goldens hold the real source on every host (#11178).
+fn normalize_fixture_human_output_for_host(value: &str, windows: bool) -> String {
+    let folded = if windows {
+        value
+            .split('\n')
+            .map(fold_human_path_separators)
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        value.to_string()
+    };
+    let normalized = project_renderer_cwd(&folded);
     let trimmed = normalized.trim_end_matches(['\r', '\n']);
     let mut output = trimmed.to_string();
     output.push('\n');
     output
+}
+
+/// Fold `\` to `/` only where the human renderer prints a path: the
+/// `LEVEL path:line` header token, `root:`/`owner:` lines, the `related test
+/// path:line` token, and `ripr ...` drill-in command lines. Everything else
+/// (assertion text, before/after code, evidence prose) is source text.
+fn fold_human_path_separators(line: &str) -> String {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with("root:") || trimmed.starts_with("owner:") || trimmed.starts_with("ripr ")
+    {
+        return normalize_separators(line);
+    }
+    let is_header = line.split_once(' ').is_some_and(|(level, rest)| {
+        !level.is_empty()
+            && level.chars().all(|c| c.is_ascii_uppercase())
+            && !rest.contains(' ')
+            && rest.contains(':')
+    });
+    if is_header {
+        return normalize_separators(line);
+    }
+    if let Some(at) = line.find("related test ") {
+        let start = at + "related test ".len();
+        let end = line[start..].find(' ').map_or(line.len(), |n| start + n);
+        return format!(
+            "{}{}{}",
+            &line[..start],
+            normalize_separators(&line[start..end]),
+            &line[end..]
+        );
+    }
+    line.to_string()
 }
 
 /// Turn Windows separators into `/` while keeping the shell's `'\''`
@@ -3309,6 +3359,18 @@ mod tests {
             ),
             "--root <cwd>/fixtures/x/input --diff d"
         );
+    }
+
+    #[test]
+    fn human_normalizer_keeps_source_text_backslashes_and_folds_paths_on_windows() {
+        let human = "root: fixtures\\x\\input\nWARNING .\\src\\lib.rs:5\n  - related test src\\lib.rs:14 t uses oracle: assert_eq!(a, 1, \"read \\\"error\\\" \\u{7b}\");\n  ripr explain --root <cwd>\\fixtures --diff d";
+        let win = normalize_fixture_human_output_for_host(human, true);
+        assert!(win.contains("root: fixtures/x/input\n"));
+        assert!(win.contains("WARNING ./src/lib.rs:5\n"));
+        assert!(win.contains("related test src/lib.rs:14 t uses oracle: assert_eq!(a, 1, \"read \\\"error\\\" \\u{7b}\");"));
+        assert!(win.contains("--root <cwd>/fixtures --diff d"));
+        let host = normalize_fixture_human_output_for_host(human, false);
+        assert!(host.contains("\\u{7b}") && host.contains("fixtures\\x"));
     }
 
     /// Unique per process and per call. Fixed names under the shared temp
