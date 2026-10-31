@@ -15637,7 +15637,9 @@ vocabulary and `final_tree_effect` is a separate closed field backed by an
 same `source`, `range` and `merged_prs` shapes plus `alive_paths_at_cut`,
 `blamed_paths` and one `commits` entry per reachable commit (`paths`,
 `final_tree_effect`, `effect_basis`, `pr_refs` from the trailing `(#N)` of a
-first-parent subject, `issue_refs` for other `#N` mentions).
+first-parent subject, `issue_refs` for other `#N` mentions). `capture` and
+`finalize` need a full clone and refuse a shallow repository; run
+`git fetch --unshallow` first.
 
 `release-ledger derive` writes the `release_ledger` DTO that `release-ledger
 --input` validates: `rule_version` `v1`, `adjudication_basis` `rule_derived`,
