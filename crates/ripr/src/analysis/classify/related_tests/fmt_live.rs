@@ -33,7 +33,7 @@ pub(super) fn live_body(body: &str) -> String {
     dead_conditions(bytes, &mut dead);
     dead_cfg_statements(bytes, &mut dead);
     let scope = outer_scope(bytes);
-    dead_nested_fns(bytes, &scope, &mut dead);
+    dead_nested_fns(bytes, body.as_bytes(), &scope, &mut dead);
     dead_closures(bytes, &mut dead);
     dead_after_return(bytes, scope.statements, &mut dead);
     if dead.is_empty() {
@@ -170,7 +170,7 @@ fn occurrences(bytes: &[u8], name: &str) -> Vec<usize> {
         .collect()
 }
 
-fn dead_nested_fns(bytes: &[u8], scope: &Scope, dead: &mut Vec<(usize, usize)>) {
+fn dead_nested_fns(bytes: &[u8], raw: &[u8], scope: &Scope, dead: &mut Vec<(usize, usize)>) {
     // A leading fn header this reader did not parse may hide the test's own
     // name: judge no nested fn rather than blank the test.
     if scope.unrecognised_header {
@@ -197,7 +197,10 @@ fn dead_nested_fns(bytes: &[u8], scope: &Scope, dead: &mut Vec<(usize, usize)>) 
         let Some(end) = close_of(bytes, open) else {
             continue;
         };
-        if occurrences(bytes, name)
+        // Mentions count in the raw text too: a fn named only in a string
+        // (`#[serde(default = "make_default")]`) or a comment may be called
+        // by name through the attribute, so it is not provably dead.
+        if occurrences(raw, name)
             .into_iter()
             .all(|found| found == name_at || (open < found && found < end))
         {
@@ -241,31 +244,42 @@ enum ItemBody {
 }
 
 /// The `{` that opens the body of the `impl`/`trait`/`mod` at `at`. A `;`
-/// inside brackets (`G<[u8; 4]>`) does not end the header, and a brace that
-/// follows `<`, `,` or `=` is a const generic argument (`Foo<{ 1 }>`), not the
-/// body.
+/// inside brackets (`G<[u8; 4]>`) does not end the header. A brace that
+/// follows `<`, `,` or `=` while an angle bracket is open is a const generic
+/// argument (`Foo<{ 1 }>`), not the body; outside angle brackets a `,` is a
+/// where-clause separator (`where T: Clone,\n{`) and the brace is the body.
 fn item_body(bytes: &[u8], at: usize) -> ItemBody {
     let mut depth = 0usize;
-    for index in at..bytes.len() {
+    let mut angle = 0usize;
+    let mut index = at;
+    while index < bytes.len() {
         match bytes[index] {
             b'(' | b'[' => depth += 1,
             b')' | b']' => depth = depth.saturating_sub(1),
+            b'<' if depth == 0 => angle += 1,
+            // `->` and `=>` are not closing angle brackets.
+            b'>' if depth == 0 && !(index > 0 && matches!(bytes[index - 1], b'-' | b'=')) => {
+                angle = angle.saturating_sub(1);
+            }
             b';' if depth == 0 => return ItemBody::Semicolon(index),
             b'{' if depth == 0 => {
-                let const_argument = prev_non_ws(bytes, index)
-                    .is_some_and(|prev| matches!(bytes[prev], b'<' | b',' | b'='));
-                if const_argument {
-                    match close_of(bytes, index) {
-                        Some(end) => {
-                            return item_body(bytes, end);
-                        }
-                        None => return ItemBody::Missing,
-                    }
+                let const_argument = angle > 0
+                    && prev_non_ws(bytes, index)
+                        .is_some_and(|prev| matches!(bytes[prev], b'<' | b',' | b'='));
+                if !const_argument {
+                    return ItemBody::Open(index);
                 }
-                return ItemBody::Open(index);
+                match close_of(bytes, index) {
+                    Some(end) => {
+                        index = end;
+                        continue;
+                    }
+                    None => return ItemBody::Missing,
+                }
             }
             _ => {}
         }
+        index += 1;
     }
     ItemBody::Missing
 }
@@ -752,6 +766,34 @@ mod tests {
             out.contains("impl Foo") && !out.contains("b.to_string"),
             "{out}"
         );
+    }
+
+    #[test]
+    fn rustfmt_where_clauses_with_trailing_commas_do_not_hide_the_body() {
+        for body in [
+            "a(); impl<T> Drop for G<T>\nwhere\n    T: Clone,\n{\n    fn drop(&mut self) { m.to_string(); }\n}",
+            "a(); trait Tr<T>\nwhere\n    T: Clone,\n{\n    fn go(&self) { m.to_string(); }\n}",
+            "a(); impl<F> Run for G<F>\nwhere\n    F: Fn() -> u8,\n{\n    fn run(&self) { m.to_string(); }\n}",
+            "a(); return; impl<T> Drop for G<T>\nwhere\n    T: Clone,\n{\n    fn drop(&mut self) { m.to_string(); }\n}",
+        ] {
+            assert_eq!(live(body), body, "{body}");
+        }
+        let out = live(
+            "a(); impl<T> Drop for G<T>\nwhere\n    T: Clone,\n{\n    fn drop(&mut self) {}\n}\nfn unused() { m.to_string(); }",
+        );
+        assert!(!out.contains("m.to_string"), "{out}");
+    }
+
+    #[test]
+    fn a_nested_fn_named_only_in_a_string_or_comment_stays_live() {
+        for body in [
+            "#[serde(default = \"make_default\")] struct S; fn make_default() { m.to_string(); }",
+            "a(); // keep make_default\nfn make_default() { m.to_string(); }",
+        ] {
+            assert_eq!(live(body), body, "{body}");
+        }
+        let out = live("a(); fn unmentioned() { m.to_string(); }");
+        assert!(!out.contains("m.to_string"), "{out}");
     }
 
     #[test]
