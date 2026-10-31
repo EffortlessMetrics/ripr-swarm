@@ -1919,7 +1919,7 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:agent.stub",
-        summary: "Write a compiling Rust test stub for one gap, ready to fill and run.",
+        summary: "Write a compiling Rust test stub for one gap, ready to fill and run (Rust files only).",
         task: "Repair a selected Rust gap",
         workflows: &["repair-loop", "editor-agent"],
         operation: CommandOperation::StateChanging,
