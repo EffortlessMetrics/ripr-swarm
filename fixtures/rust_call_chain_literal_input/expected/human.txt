@@ -50,6 +50,8 @@ Write a test for it:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:2 (unknown); kind: return_value; reason: Changed boundary input is unresolved: a related test passes `age` the result of a call (`age_from_env(18)`), whose value ripr does not evaluate statically, so it cannot tell which…
+    - ./src/lib.rs:2 (unknown: infection unclear); kind: return_value; reason: Changed boundary input is unresolved: a related test passes `age` the result of a call (`age_from_env(18)`), whose value ripr does not evaluate statically, so it cannot tell which…
+  Hidden classes:
+    unknown: infection unclear = ripr could not tell what input makes the change take effect
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

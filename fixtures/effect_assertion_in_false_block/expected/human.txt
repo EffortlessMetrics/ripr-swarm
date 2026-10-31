@@ -46,5 +46,7 @@ Write this test by hand: call the function, then assert the visible change the c
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
     - ./src/lib.rs:18 (unrevealed); kind: side_effect; reason: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
+  Hidden classes:
+    unrevealed = tests reach it but nothing appears to notice a change
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

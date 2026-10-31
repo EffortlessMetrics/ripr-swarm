@@ -4,6 +4,9 @@ CI should protect correctness without making ordinary contribution slow or
 noisy. Default CI is advisory for static exposure findings until calibration and
 configuration are mature enough to support opt-in failure policies.
 
+New to RIPR in CI? Start with the short ordered path in
+[Adopting RIPR in CI](ADOPTING_IN_CI.md); this page is the long reference.
+
 ## Python wheel applicability (#4987)
 
 The Python wheel workflow retains its broad PR paths and ordinary manual
@@ -89,6 +92,11 @@ number, whatever the newer run's own outcome; the read uses the existing
 `actions: read` permission and changes no trigger or required context. It is a
 non-atomic read, not proof that the hosted race is closed or of which check
 GitHub selects for protection.
+
+The admission job also refuses a `merge-ready` pull-request request whose PR has
+unresolved review threads, naming each thread, so the author learns in seconds
+instead of after the roughly hour-long run. It is an early courtesy only: a read
+failure is a warning, and the late recheck above remains the authority.
 
 This is a late eligibility check, not queue-cutover acceptance. The tree match
 binds the queued commit to the head GitHub reports live at admission; it does not
@@ -1524,7 +1532,23 @@ log instead of leaving the summary empty. When `target/ripr/review/comments.json
 exists, the summary opens with "What RIPR found in this pull request": the count
 of changed-behavior spots where the tests may not notice a wrong result, the first
 spot with its missing check, and the `ripr agent repair` start when it is a plain
-`ripr agent repair ...` command (an unfinished analysis is never reported as clean). The summary then continues with
+`ripr agent repair ...` command (an unfinished analysis is never reported as clean). With no gate configured (`RIPR_GATE_MODE`
+unset or empty), the policy and governance sections (readiness, operations,
+history, promotion, waiver aging, suppression health) are folded into one
+collapsed block; when any `RIPR_GATE_MODE` value is set they are not folded.
+The fold stays open ("needs attention") when a folded report is unreadable,
+has an unexpected shape, omits an expected count, or states a warning,
+unknown, blocker, config-error, stale or ownerless-suppression count that is
+not `0`. It folds with the "no warnings or unknowns" label only when the
+readiness, operations, history, promotion and suppression-health report
+categories each parsed with all expected counts at `0` (preview-promotion and
+waiver-aging reports are conditional and keep it open only when present and not
+clean); it stays open ("some policy reports not found") when a required
+category is missing, and says
+"no policy reports found" (also open) when none was read. First-run status rows
+whose value is only the `not_available` placeholder are omitted, and the
+start-here packet is named as a file in the `ripr-reports` artifact rather than
+a `target/` path. The summary then continues with
 the `start-here` first-run packet when `ripr first-pr` can compose one from
 explicit artifacts, then includes the PR review front panel, first useful
 action fallback, a language preview grouping section when `[languages]` enables
@@ -1644,6 +1668,34 @@ gate-denominator consumer — must refuse fail-closed. The override covers only
 that child, so hand-run `ripr check` output keeps the ambient budget; set
 `RIPR_CHECK_FINDINGS_BYTES=0` yourself (or raise the byte value) when an
 outside-the-packet hand-off needs the full findings array.
+
+#### Large pull requests
+
+A PR whose diff exceeds a scope budget is a declined run, not a clean result:
+`ripr check` refuses before analyzing anything (exit 2) and writes a typed
+refusal envelope to `target/ripr/pr/check.json` — for example
+`analysis_scope.run_status = diff_scope_oversized` with the producer's message
+naming the measured lines and the `RIPR_MAX_DIFF_CHANGED_RUST_LINES` limit
+(currently 2000). The envelope also carries its repair route
+(`analysis_scope.repair_route` and `run_limitations[].repair_route`).
+
+Downstream packets name the refusal instead of discarding it (#11161):
+
+- The job summary (`ripr reports ci-summary`) opens First-run status with
+  `#### PR analysis did not run`, quoting the typed run status, the
+  producer's message, that nothing was analyzed, and the next step.
+- `ripr review-comments --check-output` rejects the refusal envelope with a
+  `producer refusal (run_status: …)` error carrying the same message and
+  next step, instead of the generic `missing analysis_outcome`.
+
+Under a blocking `RIPR_GATE_MODE` the refusal still fails the gate closed —
+naming the cause does not admit the PR. To get guidance on a large PR,
+either split it into smaller stacked PRs, run a narrower diff
+(`ripr check --path <glob>` and/or `--exclude <glob>` to analyze a subset;
+files left out are reported as not analyzed), or raise the limit for a single
+command on a machine with enough memory
+(`RIPR_MAX_DIFF_CHANGED_RUST_LINES=<number>`). See
+[Configuration](CONFIGURATION.md) for the budget variables.
 
 ```yaml
       - name: Run RIPR

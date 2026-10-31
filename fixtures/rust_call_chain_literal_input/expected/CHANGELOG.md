@@ -80,7 +80,20 @@ Updated:
 ## Pending — rust_call_chain_literal_input (7)
 
 Reason:
-\RIPR-SPEC-0158: the #10046 computed-call admission no longer credits a literal inside a helper call as the owner call's input, so the return-value probe reads infection_unknown with the call-chain input unresolved; check.json still pinned the pre-change exposed reading while the corpus pins infection_unknown (#10484)\
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
+
+Command:
+`cargo xtask goldens bless rust_call_chain_literal_input --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_call_chain_literal_input (8)
+
+Reason:
+RIPR-SPEC-0197: #10046 returned comparisons share the predicate lens's unresolved-input reading, so a returned comparison whose boundary input is a computed call result or an unresolved owner call is infection_unknown instead of the inherited exposed fallback; no gap or equality is invented
 
 Command:
 `cargo xtask goldens bless rust_call_chain_literal_input --reason "..."`
