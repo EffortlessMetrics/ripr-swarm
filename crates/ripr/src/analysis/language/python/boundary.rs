@@ -1587,9 +1587,18 @@ fn candidate_call_rows(
     for name in owner_call_names(owner, candidate.test, method_call) {
         for (first_line, text) in &sources {
             for (offset, arglist) in call_arglists_with_offsets(text, &name, method_call) {
-                let Some((bindings, case_arguments, elements)) =
-                    bind_call_arguments(owner, constants, candidate.test, skip, arglist)
-                else {
+                // A name's value is only read from the test body itself, at
+                // the call's position in it (#10707).
+                let call_start = std::ptr::eq(*text, candidate.test.body_text.as_str())
+                    .then(|| arglist.as_ptr().addr() - text.as_ptr().addr());
+                let Some((bindings, case_arguments, elements)) = bind_call_arguments(
+                    owner,
+                    constants,
+                    candidate.test,
+                    skip,
+                    arglist,
+                    call_start,
+                ) else {
                     gaps = true;
                     continue;
                 };
@@ -1732,6 +1741,7 @@ fn bind_call_arguments(
     test: &PythonTest,
     skip: usize,
     arglist: &str,
+    call_start: Option<usize>,
 ) -> Option<BoundArguments> {
     let positional: Vec<&str> = owner
         .parameters
@@ -1787,6 +1797,16 @@ fn bind_call_arguments(
             elements.insert(name, literals);
         } else if let Some(value) =
             literal_value(value).or_else(|| imported_constant_value(owner, constants, test, value))
+        {
+            bindings.insert(
+                name,
+                Binding {
+                    value,
+                    from_default: false,
+                },
+            );
+        } else if let Some(value) = call_start
+            .and_then(|start| super::test_local_literal::test_local_literal(test, value, start))
         {
             bindings.insert(
                 name,
