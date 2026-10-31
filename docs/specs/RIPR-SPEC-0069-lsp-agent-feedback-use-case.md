@@ -402,6 +402,20 @@ only word about a live preview finding. These findings are disjoint from the
 `*_unknown` set and remain listed under `hidden_gaps` by
 `ripr/listActionableItems`.
 
+The editor surface must not end on an empty list either. Each file with
+withheld preview gap findings carries exactly one passive Hint diagnostic,
+code `ripr-diagnostic-preview-withheld`, anchored on the first withheld
+finding, with a `preview:`-prefixed message such as `preview: 1 preview python
+finding(s) not shown in the editor; set diagnosticProfile: full or run
+`ripr check``. It carries no finding identity, repair data, witness,
+`delivery_eligible` or `preview_actionability`, offers no code action beyond
+refresh, and is exempt from the diagnostic delivery budget: it takes no slot
+and the eligible-diagnostic caps are unchanged. It exists only under the
+`actionable` profile (the `full` profile publishes the real INFORMATION
+diagnostics instead), is replaced with the snapshot so it clears when no
+withheld preview gap remains, and is withdrawn with the document's other
+diagnostics while the buffer is quarantined.
+
 ## Non-Goals
 
 - No autonomous edits. The LSP never modifies source; every command

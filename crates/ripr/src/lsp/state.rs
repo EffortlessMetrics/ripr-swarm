@@ -978,6 +978,20 @@ impl AnalysisSnapshot {
                 )
             })
             .count();
+        // Preview-withheld markers (#11296) are governed, code-marked
+        // disclosures for a file whose preview findings the actionable
+        // profile withheld; they are not findings, seams, or gap records.
+        let preview_withheld_disclosures = self
+            .diagnostics_by_uri
+            .values()
+            .flatten()
+            .filter(|diagnostic| {
+                diagnostic_has_code(
+                    diagnostic,
+                    super::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE,
+                )
+            })
+            .count();
         let published_finding_count = super::diagnostics::canonical_finding_groups(&self.findings)
             .into_iter()
             .filter(|(primary, _)| {
@@ -995,6 +1009,7 @@ impl AnalysisSnapshot {
                 + gap_diagnostics
                 + scope_guard_disclosures
                 + language_not_analyzed_disclosures
+                + preview_withheld_disclosures
                 == diagnostic_count
             && self
                 .gap_artifacts

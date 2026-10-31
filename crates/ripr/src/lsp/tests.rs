@@ -22777,6 +22777,72 @@ fn open_document_entry<'a>(
         .ok_or_else(|| format!("missing open_documents entry for {uri}: {status}"))
 }
 
+/// #11296: the passive preview-withheld marker is served on a clean
+/// document next to the real diagnostics, and a dirty (quarantined) buffer
+/// withdraws it with the rest, leaving only the quarantine marker.
+#[tokio::test]
+async fn preview_withheld_marker_respects_document_quarantine() -> Result<(), String> {
+    let fixture = quarantine_fixture("preview-withheld-quarantine")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
+        .await;
+    let mut workspace = quarantine_workspace_diagnostics(&fixture, QUARANTINE_TEXT_A);
+    let marker = super::diagnostics::withheld_preview_diagnostic(
+        Range::default(),
+        "python",
+        1,
+        "set diagnosticProfile: full or run `ripr check`",
+        "src/a.rs",
+    );
+    workspace
+        .snapshot
+        .diagnostics_by_uri
+        .entry(fixture.uri_a.clone())
+        .or_default()
+        .push(marker.clone());
+    workspace.batches[0].diagnostics.push(marker.clone());
+    backend
+        .refresh_plan(workspace)
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+
+    let has_marker = |report: &serde_json::Value| {
+        report
+            .get("items")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|items| {
+                items.iter().any(|item| {
+                    item.get("code").and_then(serde_json::Value::as_str)
+                        == Some("ripr-diagnostic-preview-withheld")
+                })
+            })
+    };
+    let served = pull_document_json(backend, &fixture.uri_a, None).await?;
+    if !has_marker(&served) {
+        return Err(format!("a clean document must serve the marker: {served}"));
+    }
+    if report_kind_and_items(&served).1 < 2 {
+        return Err(format!("the real diagnostic must be served too: {served}"));
+    }
+
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.uri_a,
+            2,
+            QUARANTINE_TEXT_A_DIRTY,
+        ))
+        .await;
+    let withdrawn = pull_document_json(backend, &fixture.uri_a, None).await?;
+    if !report_is_quarantine_withdrawal(&withdrawn) || has_marker(&withdrawn) {
+        return Err(format!(
+            "a quarantined document must withdraw the marker too: {withdrawn}"
+        ));
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn dirty_document_withdraws_line_local_diagnostics_and_discloses() -> Result<(), String> {
     let fixture = quarantine_fixture("dirty-withdraw")?;

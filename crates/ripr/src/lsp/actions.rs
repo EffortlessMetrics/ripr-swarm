@@ -2288,6 +2288,7 @@ fn is_delivery_limitation(diagnostic: &Diagnostic) -> bool {
             if code == super::diagnostic_catalog::DIAGNOSTIC_BUDGET_OMITTED_CODE
                 || code == super::diagnostic_catalog::DIAGNOSTIC_QUARANTINE_WITHDRAWN_CODE
                 || code == super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE
+                || code == super::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE
     )
 }
 
@@ -2531,6 +2532,29 @@ mod tests {
                 super::super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
             )),
             data: Some(serde_json::json!({"kind": "language_not_analyzed"})),
+            ..Default::default()
+        };
+        let mut features = ClientFeatureProfile::unsupported();
+        features.ripr_editor = Some(
+            super::super::client_features::RiprEditorClientCapabilities {
+                version: "test".to_string(),
+                commands: vec![COPY_CONTEXT_COMMAND.to_string()],
+                guarded_test_edit: false,
+            },
+        );
+        let actions = code_action_response(&code_action_params(vec![marker])?, None, &features);
+        assert_eq!(action_titles(&actions), vec![REFRESH_ANALYSIS_TITLE]);
+        Ok(())
+    }
+
+    #[test]
+    fn preview_withheld_marker_has_no_finding_context_action() -> Result<(), String> {
+        let marker = Diagnostic {
+            source: Some("ripr".to_string()),
+            code: Some(tower_lsp_server::ls_types::NumberOrString::String(
+                super::super::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE.to_string(),
+            )),
+            data: Some(serde_json::json!({"kind": "preview_findings_withheld"})),
             ..Default::default()
         };
         let mut features = ClientFeatureProfile::unsupported();

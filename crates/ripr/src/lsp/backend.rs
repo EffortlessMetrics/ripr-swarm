@@ -7835,47 +7835,19 @@ fn withheld_unknown_summary(snapshot: &AnalysisSnapshot) -> Option<(usize, Vec<&
     Some((count, classes.into_iter().collect()))
 }
 
-/// A preview-language (`language_status = "preview"`) finding of a gap
-/// class that the actionable profile withheld from diagnostics because it
-/// lacks a producer-backed fix route (#11296). Preview findings keep the
-/// actionable eligibility predicate unchanged; they are disclosed, never
-/// promoted. The `*_unknown` classes are counted by
-/// `finding_is_withheld_unknown`, so the two sets are disjoint.
-fn finding_is_withheld_preview_gap(finding: &crate::domain::Finding) -> bool {
-    finding.language_status == Some(crate::domain::LanguageStatus::Preview)
-        && finding.is_candidate_actionable()
-        && matches!(
-            finding.class,
-            crate::domain::ExposureClass::WeaklyExposed
-                | crate::domain::ExposureClass::ReachableUnrevealed
-                | crate::domain::ExposureClass::NoStaticPath
-        )
-}
-
 /// Count/class summary of the preview-language gap-class findings the
 /// actionable profile withholds (#11296). Counted per canonical group, like
 /// `withheld_unknown_summary`. A non-actionable profile withholds nothing.
 fn withheld_preview_summary(snapshot: &AnalysisSnapshot) -> (usize, Vec<&'static str>) {
-    let mut count = 0usize;
-    let mut classes = std::collections::BTreeSet::new();
-    if snapshot.diagnostic_profile != LspDiagnosticProfile::Actionable {
-        return (0, Vec::new());
-    }
-    for (primary, members) in super::diagnostics::canonical_group_members(&snapshot.findings) {
-        if super::diagnostics::finding_is_visible_in_profile(
-            LspDiagnosticProfile::Actionable,
-            primary,
-        ) {
-            continue;
-        }
-        for finding in members {
-            if finding_is_withheld_preview_gap(finding) {
-                count += 1;
-                classes.insert(finding.class.as_str());
-            }
-        }
-    }
-    (count, classes.into_iter().collect())
+    let withheld = super::diagnostics::withheld_preview_gap_findings(
+        snapshot.diagnostic_profile,
+        &snapshot.findings,
+    );
+    let classes = withheld
+        .iter()
+        .map(|finding| finding.class.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    (withheld.len(), classes.into_iter().collect())
 }
 
 /// Combined disclosure summary (#5276, #11296): `*_unknown` plus preview gap
