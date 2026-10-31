@@ -584,21 +584,35 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.119`: a direct bare boolean assertion can grip its whole primitive
 /// integer boundary after owner admission, consistency and exact-call pairing
 /// (#8610). Old entries retain the missed weak repair result.
+/// `1.124`: item declarations no longer read as function-value uses; bare
+/// references follow the innermost item scope while qualified owner values,
+/// owner-preserving imports and unresolved reexports keep the indirect-owner
+/// safeguard (RIPR-SPEC-0240, #10162).
+/// `1.123`: return/error matches! assertions require shared test execution
+/// admission. Older entries may credit ignored or broad expected-panic tests.
+/// `1.122`: a pushed element embedding a type from outside the scanned workspace
+/// no longer reads as comparing by its fields (#10684).
+/// `1.121`: a Display `write!` tail whose format template changed beyond
+/// fixed text no longer borrows an exact output pin (#9836).
 /// `1.120`: a literal-only integer expression that folds exactly adds its value
 /// as an owner-scoped probe token, and the sole glob of the owner's declared
 /// dependency reaches a `T::name(..)` owner (RIPR-SPEC-0158, RIPR-SPEC-0172,
 /// #10479). Old entries keep the missed observation and the abstain.
-/// `1.121`: a Display `write!` tail whose format template changed beyond
-/// fixed text no longer borrows an exact output pin (#9836).
-/// `1.122`: a pushed element embedding a type from outside the scanned workspace
-/// no longer reads as comparing by its fields (#10684).
-/// `1.123`: return/error matches! assertions require shared test execution
-/// admission. Older entries may credit ignored or broad expected-panic tests.
+/// `1.125`: item declarations no longer read as function-value uses; bare
+/// references follow the innermost item scope while qualified owner values,
+/// owner-preserving imports and unresolved reexports keep the indirect-owner
+/// safeguard (RIPR-SPEC-0240, #10162).
 /// `1.124`: retain the opaque assertion-macro limit beside nested expected
 /// macros when a bare owner call sits outside their inputs (#9644). The same
 /// version also covers a Kani proof harness getting its own source role
 /// instead of reading as a production function (RIPR-SPEC-0367).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.124";
+/// `1.123`: return/error matches! assertions require shared test execution
+/// admission. Older entries may credit ignored or broad expected-panic tests.
+/// `1.122`: a pushed element embedding a type from outside the scanned workspace
+/// no longer reads as comparing by its fields (#10684).
+/// `1.121`: a Display `write!` tail whose format template changed beyond
+/// fixed text no longer borrows an exact output pin (#9836).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.125";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -768,7 +782,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.124";
 /// `0.128`: same Display placeholder-edit refusal as full `1.121` (#9836).
 /// `0.130`: same matches! execution admission as full `1.123`.
 /// `0.131`: same nested expected-macro limitation as full `1.124` (#9644).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.131";
+/// `0.132`: same indirect-owner item scope decisions as full `1.125` (#10162).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.132";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -940,7 +955,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.131";
 /// `0.128`: same Display placeholder-edit refusal as full `1.121` (#9836).
 /// `0.130`: same matches! execution admission as full `1.123`.
 /// `0.131`: same nested expected-macro limitation as full `1.124` (#9644).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.131";
+/// `0.132`: same indirect-owner item scope decisions as full `1.125` (#10162).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.132";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5398,6 +5414,8 @@ mod tests {
         // 1.104 -> 1.106: table-driven loop-accumulator pin (#6485).
         // 1.106 -> 1.108: literal-row `#[test_case]` bodies (#10190); 1.107 is #10298's.
         // 1.108 -> 1.109: indirect-owner limit and `cfg_attr` test (RIPR-SPEC-0240).
+        // 1.120 -> 1.121: item-scope and import-identity reading (#10162).
+
         // 1.110 -> 1.111: polling-helper owner pin (RIPR-SPEC-0197, #9478).
         // 1.111 -> 1.112: arrow-separated macro table rows (#10298).
         // 1.112 -> 1.113: arrow-row oracles (RIPR-SPEC-0231 rule 9, #9619).
@@ -5413,7 +5431,8 @@ mod tests {
         // 1.122 -> 1.123: return/error matches! execution admission.
         // 1.123 -> 1.124: nested expected-macro limit (#9644) and the
         // proof-harness source role (RIPR-SPEC-0367).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.124");
+        // 1.124 -> 1.125: indirect-owner item scope decisions (#10162).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.125");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5510,6 +5529,8 @@ mod tests {
         // 0.111 -> 0.113: same table-driven loop-accumulator pin as full 1.106.
         // 0.113 -> 0.115: same `#[test_case]` transition as the outer cache.
         // 0.115 -> 0.116: same indirect-owner limit and `cfg_attr` test as full 1.109.
+        // 0.127 -> 0.128: same item-scope transition as full 1.121.
+
         // 0.117 -> 0.118: same polling-helper owner pin as full 1.111.
         // 0.118 -> 0.119: same arrow-row transition as full 1.112.
         // 0.119 -> 0.120: same arrow-row oracle as full 1.113.
@@ -5524,8 +5545,9 @@ mod tests {
         // 0.128 -> 0.129: same foreign embedded-type reading as full 1.122.
         // 0.129 -> 0.130: same matches! admission as full 1.123.
         // 0.130 -> 0.131: same nested expected-macro limit as full 1.124 (#9644).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.131");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.131");
+        // 0.131 -> 0.132: same indirect-owner item scope decisions as full 1.125 (#10162).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.132");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.132");
     }
 
     #[test]
