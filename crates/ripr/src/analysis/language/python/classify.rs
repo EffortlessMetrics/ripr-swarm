@@ -741,7 +741,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     // arguments, `exposed` requires one of those calls to bind both operands
     // to equal values (or, for `==` -> `==`, either compared literal).
     // Unresolved operands never count as observed, so this fails closed to
-    // `weakly_exposed` and names the missing `left == right` boundary. With no
+    // `weakly_exposed` without naming a boundary they may already reach. With no
     // literal owner inputs at all the gate cannot see the activation either
     // way; that case keeps the oracle verdict and carries a named
     // `boundary_activation_unresolved` limitation instead.
@@ -852,14 +852,19 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     // message and rejects the other. When every strong related error
     // assertion pins the exception with a literal pattern that matches the old
     // and the new message alike, it pins only the exception class. Unreadable
-    // patterns, non-literal messages and other assertion shapes fail open.
+    // patterns, non-literal messages and other assertion shapes fail open. The
+    // two-step `msg = "..."` / `raise Exc(msg)` form is a plain assignment
+    // (predicate family) that the gate resolves through the owner's raise.
     let message_pin_gap = (static_limit.is_none()
-        && matches!(family, ProbeFamily::ErrorPath)
+        && matches!(family, ProbeFamily::ErrorPath | ProbeFamily::Predicate)
         && !no_behavior.multi_line_def_header_line)
         .then(|| {
             message_pin::python_message_pin_gap(
                 line_text,
                 old_line_text,
+                owner,
+                owner_source,
+                line,
                 &related_candidates,
                 &focus,
             )
@@ -1074,8 +1079,8 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         && let Some(gap) = boundary_gap
     {
         // A strong oracle observes the owner's output, but no strong related
-        // call places the comparison operands on the changed boundary, so the
-        // changed predicate is never activated where old and new disagree.
+        // call is statically placed on the changed boundary. Unresolved calls
+        // may still reach it at runtime.
         boundary_downgraded = true;
         (
             ExposureClass::WeaklyExposed,
@@ -1322,7 +1327,11 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                 limit.kind.as_str()
             )
         } else if boundary_downgraded {
-            "Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary.".to_string()
+            if boundary_gap.is_some_and(|gap| gap.discriminator.is_none()) {
+                "Related tests reach the changed predicate, but static evidence does not place a strong related test input at the changed boundary.".to_string()
+            } else {
+                "Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary.".to_string()
+            }
         } else if guarded_arm_downgraded
             && guarded_arm_gap
                 .as_ref()

@@ -69,11 +69,10 @@ fn sample_order_is_deterministic_per_seed_and_rotates_across_seeds() -> Result<(
 
 #[test]
 fn test_command_args_accepts_only_plain_cargo_test() -> Result<(), String> {
-    assert_eq!(
-        test_command_args("cargo test -p serde_core --lib")?,
-        strings(&["test", "-p", "serde_core", "--lib"])
-    );
-    assert_eq!(test_command_args("cargo test")?, strings(&["test"]));
+    let parsed = test_command_args("cargo test -p serde_core --lib")?;
+    assert!(parsed.env.is_empty());
+    assert_eq!(parsed.args, strings(&["test", "-p", "serde_core", "--lib"]));
+    assert_eq!(test_command_args("cargo test")?.args, strings(&["test"]));
     assert!(test_command_args("cargo build").err().is_some());
     assert!(test_command_args("make test").err().is_some());
     assert!(test_command_args("cargo test; rm -rf /").err().is_some());
@@ -104,9 +103,72 @@ fn test_command_args_accepts_only_plain_cargo_test() -> Result<(), String> {
     }
     // Arguments after `--` go to the test binary, not cargo.
     assert_eq!(
-        test_command_args("cargo test -- --skip a -Z")?,
+        test_command_args("cargo test -- --skip a -Z")?.args,
         strings(&["test", "--", "--skip", "a", "-Z"])
     );
+    Ok(())
+}
+
+#[test]
+fn test_command_args_peels_leading_env_assignments() -> Result<(), String> {
+    let parsed = test_command_args("CI=true INSTA_UPDATE=no cargo test")?;
+    assert_eq!(
+        parsed.env,
+        vec![
+            ("CI".to_string(), "true".to_string()),
+            ("INSTA_UPDATE".to_string(), "no".to_string()),
+        ]
+    );
+    assert_eq!(parsed.args, strings(&["test"]));
+
+    let rustflags = test_command_args("RUSTFLAGS=-Dwarnings cargo test")
+        .err()
+        .ok_or_else(|| "RUSTFLAGS=-Dwarnings cargo test should be refused".to_string())?;
+    if !rustflags.contains("RUSTFLAGS") || !rustflags.contains("scrub") {
+        return Err(format!("expected scrub-owns-key error, got {rustflags}"));
+    }
+
+    let shell = test_command_args("FOO=$(x) cargo test")
+        .err()
+        .ok_or_else(|| "FOO=$(x) cargo test should be refused".to_string())?;
+    if !shell.contains("shell syntax") {
+        return Err(format!("expected shell-syntax error, got {shell}"));
+    }
+
+    let not_cargo = test_command_args("FOO=bar make test")
+        .err()
+        .ok_or_else(|| "FOO=bar make test should be refused".to_string())?;
+    if !not_cargo.contains("is not a cargo command") {
+        return Err(format!(
+            "expected not-a-cargo-command error, got {not_cargo}"
+        ));
+    }
+
+    // A leaked RUSTFLAGS pair is still overwritten by the scrub list.
+    let pairs = replay_env_pairs(
+        &[
+            ("CI".to_string(), "true".to_string()),
+            ("RUSTFLAGS".to_string(), "-Dwarnings".to_string()),
+        ],
+        "/tmp/target",
+        "1.95.0",
+    );
+    if !pairs
+        .iter()
+        .any(|(key, value)| key == "CI" && value == "true")
+    {
+        return Err("case env CI=true should appear before the scrub".to_string());
+    }
+    let last_rustflags = pairs
+        .iter()
+        .filter(|(key, _)| key == "RUSTFLAGS")
+        .map(|(_, value)| value.as_str())
+        .next_back();
+    if last_rustflags != Some("") {
+        return Err(format!(
+            "scrub RUSTFLAGS should win, last value was {last_rustflags:?}"
+        ));
+    }
     Ok(())
 }
 

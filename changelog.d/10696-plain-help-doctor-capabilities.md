@@ -1,2 +1,0 @@
-<!-- section: Changed -->
-- `ripr --help` exit-code line, `ripr help check/explain/context`, `ripr doctor`, `ripr capabilities`, `ripr explain` selector errors, a fresh-repo `ripr status` and the `ripr first-pr` summary now use everyday words instead of "typed refusal", "fails closed", MSRV, RIPR-SPEC ids and snake_case state tokens. `ripr capabilities` leads with one sentence per language; the full table stays in `--json` and `--markdown`. JSON output, exit codes and classification are unchanged (#10696).

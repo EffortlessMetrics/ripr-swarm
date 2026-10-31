@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- `cargo xtask verdict-corpus check` now fails when a diff adds a `known-false/<case>.toml` for a row that was not a false verdict at the merge base, so a re-bless can no longer list its own regression (#8577 did this for four Rust rows and passed). Accepting a new false verdict takes `accepted_growth = <issue>` on the entry and the case id in its `reason`; an unreadable base fails in hosted runs (#10986).
