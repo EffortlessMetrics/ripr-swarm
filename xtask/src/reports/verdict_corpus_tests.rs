@@ -2488,7 +2488,7 @@ fn case_output_refuses_an_unavailable_perl_run_only_for_packet_cases() -> Result
         {"language": "perl", "status": "unavailable", "reason": "ingestion: packet is not valid JSON"}
     ]})
     .to_string();
-    let Err(err) = case_check_output(&stdout, packet_case, "ripr-lang-perl") else {
+    let Err(err) = case_check_output(&stdout, packet_case, "ripr-lang-perl", "perl") else {
         return Err("a packet case with an unavailable Perl run must be refused".to_string());
     };
     assert!(
@@ -2497,8 +2497,149 @@ fn case_output_refuses_an_unavailable_perl_run_only_for_packet_cases() -> Result
     );
     let mut plain_case = packet_case.clone();
     plain_case.perl_facts = None;
-    let check = case_check_output(&stdout, &plain_case, "ripr")?;
+    // The Perl-specific refusal does not apply to a case without a packet; its
+    // own expected language (rust) completed, and the Perl limitation stays.
+    let stdout = json!({"findings": [],
+        "language_completeness": completeness(&[("rust", "complete_zero")]),
+        "language_runs": [
+            {"language": "perl", "status": "unavailable", "reason": "ingestion: packet is not valid JSON"}
+        ]})
+    .to_string();
+    let check = case_check_output(&stdout, &plain_case, "ripr", "rust")?;
     assert_eq!(check["language_runs"][0]["status"], json!("unavailable"));
+    Ok(())
+}
+
+fn completeness(rows: &[(&str, &str)]) -> Value {
+    json!({
+        "mode": "diff",
+        "scope": "diff",
+        "completeness": "complete",
+        "total_findings": 0,
+        "languages": rows
+            .iter()
+            .map(|(language, status)| json!({"language": language, "status": status, "findings": 0}))
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn corpus_cases() -> Result<(Case, Case), String> {
+    let rust: Corpus =
+        serde_json::from_value(corpus_value(&repo_corpus_dir())?).map_err(|err| err.to_string())?;
+    let perl: Corpus =
+        serde_json::from_value(corpus_value(&perl_corpus_dir())?).map_err(|err| err.to_string())?;
+    let rust_case = rust
+        .cases
+        .first()
+        .ok_or("the Rust corpus has no case")?
+        .clone();
+    let packet_case = perl
+        .cases
+        .iter()
+        .find(|case| case.perl_facts.is_some())
+        .ok_or("the Perl corpus has no packet case")?
+        .clone();
+    Ok((rust_case, packet_case))
+}
+
+/// #11272: a case is scored only with affirmative expected-language
+/// completion. These run at `case_check_output`, the call `run_case` reads
+/// every live result through, so deleting the admission call fails them.
+#[test]
+fn case_output_admits_completed_expected_language_including_complete_zero() -> Result<(), String> {
+    let (rust_case, packet_case) = corpus_cases()?;
+    for status in ["complete", "complete_zero", "partial"] {
+        let stdout = json!({"findings": [],
+            "language_completeness": completeness(&[("rust", status)])})
+        .to_string();
+        case_check_output(&stdout, &rust_case, "ripr", "rust")?;
+    }
+    let stdout = json!({"findings": [],
+        "language_completeness": completeness(&[("perl", "complete_zero"), ("rust", "complete")])})
+    .to_string();
+    case_check_output(&stdout, &packet_case, "ripr-lang-perl", "perl")?;
+    Ok(())
+}
+
+#[test]
+fn case_output_refuses_empty_findings_without_expected_language_evidence() -> Result<(), String> {
+    let (rust_case, packet_case) = corpus_cases()?;
+    let refused = [
+        // No affirmative evidence at all.
+        json!({"findings": []}),
+        // A skipped dispatch is also silent in `language_runs`.
+        json!({"findings": [], "language_runs": []}),
+        json!({"findings": [], "language_completeness": null}),
+        json!({"findings": [], "language_completeness": {"languages": "rust"}}),
+        // Wrong-language-only output.
+        json!({"findings": [], "language_completeness": completeness(&[("typescript", "complete_zero")])}),
+        json!({"findings": [], "language_completeness": completeness(&[("perl", "complete_zero")])}),
+        // Missing expected-language outcome.
+        json!({"findings": [], "language_completeness": completeness(&[])}),
+        // Duplicate or conflicting expected-language rows.
+        json!({"findings": [], "language_completeness": completeness(&[("rust", "complete"), ("rust", "failed")])}),
+        json!({"findings": [], "language_completeness": {"languages": [{"language": "rust"}]}}),
+    ];
+    for output in &refused {
+        let Err(err) = case_check_output(&output.to_string(), &rust_case, "ripr", "rust") else {
+            return Err(format!("a Rust case must refuse {output}"));
+        };
+        assert!(
+            err.contains(&rust_case.case_id) && err.contains("cannot be scored"),
+            "{err}"
+        );
+    }
+    // The returned label does not select the expected identity: Rust output
+    // does not satisfy a Perl packet case.
+    let rust_only = json!({"findings": [], "language_completeness": completeness(&[("rust", "complete_zero")])});
+    let Err(err) = case_check_output(
+        &rust_only.to_string(),
+        &packet_case,
+        "ripr-lang-perl",
+        "perl",
+    ) else {
+        return Err("Rust-only output must not admit a Perl packet case".to_string());
+    };
+    assert!(err.contains("`perl`"), "{err}");
+    Ok(())
+}
+
+#[test]
+fn case_output_refuses_non_completed_expected_language_statuses() -> Result<(), String> {
+    let (rust_case, _) = corpus_cases()?;
+    for status in [
+        "unavailable",
+        "invalid",
+        "failed",
+        "unsupported",
+        "not_selected",
+        "no_current_scope",
+        "future_status",
+    ] {
+        let stdout = json!({"findings": [],
+            "language_completeness": completeness(&[("rust", status)])})
+        .to_string();
+        let Err(err) = case_check_output(&stdout, &rust_case, "ripr", "rust") else {
+            return Err(format!("a `{status}` Rust outcome cannot be scored"));
+        };
+        assert!(err.contains(status), "{err}");
+    }
+    Ok(())
+}
+
+#[test]
+fn case_output_preserves_an_unrelated_sibling_limitation() -> Result<(), String> {
+    let (rust_case, _) = corpus_cases()?;
+    let stdout = json!({"findings": [],
+        "language_completeness": completeness(&[("rust", "complete_zero"), ("typescript", "failed")]),
+        "language_runs": [{"language": "typescript", "status": "failed", "reason": "boom"}]})
+    .to_string();
+    let check = case_check_output(&stdout, &rust_case, "ripr", "rust")?;
+    assert_eq!(check["language_runs"][0]["language"], json!("typescript"));
+    assert_eq!(
+        check["language_completeness"]["languages"][1]["status"],
+        json!("failed")
+    );
     Ok(())
 }
 
@@ -2517,7 +2658,7 @@ fn case_output_refuses_incomplete_perl_runs() -> Result<(), String> {
             {"language": "perl", "status": status, "reason": "packet rejected"}
         ]})
         .to_string();
-        let Err(err) = case_check_output(&stdout, case, "ripr-lang-perl") else {
+        let Err(err) = case_check_output(&stdout, case, "ripr-lang-perl", "perl") else {
             return Err(format!("a `{status}` Perl run cannot be scored as silent"));
         };
         assert!(
@@ -2530,7 +2671,8 @@ fn case_output_refuses_incomplete_perl_runs() -> Result<(), String> {
         json!({"findings": [], "language_runs": [{"language": "perl"}]}),
         json!({"findings": [], "language_runs": [{"status": "ok"}]}),
     ] {
-        let Err(_err) = case_check_output(&malformed.to_string(), case, "ripr-lang-perl") else {
+        let Err(_err) = case_check_output(&malformed.to_string(), case, "ripr-lang-perl", "perl")
+        else {
             return Err(format!(
                 "malformed language_runs must be refused: {malformed}"
             ));

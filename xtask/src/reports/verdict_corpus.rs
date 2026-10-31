@@ -2517,7 +2517,7 @@ fn run_case(dir: &Path, case: &Case, work_root: &Path) -> Result<(Value, Option<
     }
     let cache_value = cache.to_string_lossy().into_owned();
     let stdout = run_output_owned_with_envs(&binary, &args, &[(CACHE_ENV, &cache_value)])?;
-    let mut check = case_check_output(&stdout, case, &binary)?;
+    let mut check = case_check_output(&stdout, case, &binary, &corpus_language(dir)?)?;
     relativize_probe_files(&mut check, &work);
     // ripr may report the canonical root (macOS `/var` is `/private/var`);
     // strip that spelling too so findings still land on their anchors.
@@ -2529,7 +2529,15 @@ fn run_case(dir: &Path, case: &Case, work_root: &Path) -> Result<(Value, Option<
 
 /// Parse one case's `ripr check --json` output. Refuse a failed Perl packet
 /// run before any row can be scored.
-pub(crate) fn case_check_output(stdout: &str, case: &Case, binary: &str) -> Result<Value, String> {
+///
+/// `expected_language` is the language of the validated corpus the case came
+/// from (`corpus_language`); the output's own labels never select it.
+pub(crate) fn case_check_output(
+    stdout: &str,
+    case: &Case,
+    binary: &str,
+    expected_language: &str,
+) -> Result<Value, String> {
     let check: Value = serde_json::from_str(stdout).map_err(|err| {
         format!(
             "case `{}`: ripr check did not emit JSON: {err}",
@@ -2539,7 +2547,55 @@ pub(crate) fn case_check_output(stdout: &str, case: &Case, binary: &str) -> Resu
     if case.perl_facts.is_some() {
         refuse_incomplete_perl_run(&check, &case.case_id, binary)?;
     }
+    admit_expected_language_completion(&check, &case.case_id, expected_language, binary)?;
     Ok(check)
+}
+
+/// Require affirmative expected-language evidence before a case can be scored
+/// (#11272). `language_runs` omits successful rows by design, so an empty
+/// `findings` array alone cannot tell a completed zero-result run from a
+/// skipped or missing dispatch. The canonical `language_completeness` member
+/// (the `LanguageCompletenessView` projection) names every dispatched language
+/// with its status; admit only a single row for the expected language whose
+/// status is `complete`, `complete_zero` or `partial` (a partial run keeps its
+/// existing bounded scoring disposition; a partial Perl `language_runs` row is
+/// already refused above). Sibling languages never decide the expected one.
+///
+/// This is a completion gate, not a source or snapshot binding: it does not
+/// prove the output belongs to the materialized source, diff or packet.
+pub(crate) fn admit_expected_language_completion(
+    check: &Value,
+    case_id: &str,
+    expected: &str,
+    binary: &str,
+) -> Result<(), String> {
+    let refuse = |why: &str| {
+        Err(format!(
+            "case `{case_id}`: {binary} gave no affirmative `{expected}` completion evidence ({why}); the case is an unestablished measurement and cannot be scored"
+        ))
+    };
+    let Some(completeness) = check.get("language_completeness") else {
+        return refuse(
+            "`language_completeness` is absent, so an empty result cannot be told from a skipped dispatch",
+        );
+    };
+    let Some(rows) = completeness.get("languages").and_then(Value::as_array) else {
+        return refuse("`language_completeness.languages` is missing or malformed");
+    };
+    let mut expected_rows = rows
+        .iter()
+        .filter(|row| row.get("language").and_then(Value::as_str) == Some(expected));
+    let Some(row) = expected_rows.next() else {
+        return refuse("no row for the expected language");
+    };
+    if expected_rows.next().is_some() {
+        return refuse("duplicate rows for the expected language");
+    }
+    match row.get("status").and_then(Value::as_str) {
+        Some("complete" | "complete_zero" | "partial") => Ok(()),
+        Some(status) => refuse(&format!("status `{status}`")),
+        None => refuse("the expected language row has no status"),
+    }
 }
 
 /// A non-aborting Perl failure can exit zero with no findings. It is a failed
