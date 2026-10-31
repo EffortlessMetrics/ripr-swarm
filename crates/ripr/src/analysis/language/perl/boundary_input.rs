@@ -150,6 +150,20 @@ fn operand_before(chars: &[char], operator_start: usize) -> Option<String> {
     if lead > 0 && is_arithmetic(chars[lead - 1]) {
         return None;
     }
+    // `$s x 3 > 100`: a repetition operator before the literal.
+    if lead > 1
+        && chars[lead - 1] == 'x'
+        && !(is_word(chars[lead - 2]) || matches!(chars[lead - 2], '$' | '@' | '%' | '&'))
+    {
+        return None;
+    }
+    // `$x | 3 > 5`: a bitwise operator, but not the `||` or `&&` of a condition.
+    if lead > 0
+        && matches!(chars[lead - 1], '|' | '&')
+        && !(lead > 1 && chars[lead - 2] == chars[lead - 1])
+    {
+        return None;
+    }
     numeric_literal(&token, negative)
 }
 
@@ -172,7 +186,11 @@ fn operand_after(chars: &[char], operator_end: usize) -> Option<String> {
         trail += 1;
     }
     // `$x > 10 + $y`: the `10` is part of a larger operand, not a side.
+    let bitwise = chars
+        .get(trail)
+        .is_some_and(|c| matches!(c, '|' | '&') && chars.get(trail + 1) != Some(c));
     if chars.get(trail).is_some_and(|c| is_arithmetic(*c))
+        || bitwise
         || (chars.get(trail) == Some(&'x') && !chars.get(trail + 1).is_some_and(|c| is_word(*c)))
     {
         return None;
@@ -182,7 +200,7 @@ fn operand_after(chars: &[char], operator_end: usize) -> Option<String> {
 
 /// An operator that makes a neighboring literal only part of an operand.
 fn is_arithmetic(c: char) -> bool {
-    matches!(c, '+' | '-' | '*' | '/' | '%' | '.')
+    matches!(c, '+' | '-' | '*' | '/' | '%' | '.' | '^')
 }
 
 /// A plain decimal literal (`100`, `1_000`, `0.5`), normalized: no `_`, a
@@ -219,6 +237,7 @@ fn owner_call_literal_args(expression: &str, owner_id: &str) -> Vec<String> {
     let chars = mask_strings_and_comments(expression);
     let needle: Vec<char> = name.chars().collect();
     let mut literals = Vec::new();
+    let mut calls = 0usize;
     let mut i = 0;
     while i + needle.len() <= chars.len() {
         let before_ok =
@@ -232,12 +251,18 @@ fn owner_call_literal_args(expression: &str, owner_id: &str) -> Vec<String> {
                 open += 1;
             }
             if chars.get(open) == Some(&'(') {
+                calls += 1;
                 literals.extend(top_level_literal_args(&chars, open + 1));
             }
             i += needle.len();
         } else {
             i += 1;
         }
+    }
+    // `is(tier_label(2000), tier_label(5))`: with the owner called twice, the
+    // read cannot tell the asserted call from the expected-side one.
+    if calls > 1 {
+        return Vec::new();
     }
     literals
 }
@@ -252,7 +277,13 @@ fn owner_call_literal_args(expression: &str, owner_id: &str) -> Vec<String> {
 /// parser: it over-withholds (a `/` in a message, a bare `s,`), which only
 /// costs a missed credit, never grants `exposed`.
 fn has_regex_or_heredoc(text: &str) -> bool {
-    if text.contains('/') || text.contains("=~") || text.contains("!~") {
+    if text.contains('/')
+        || text.contains("=~")
+        || text.contains("!~")
+        || text.contains('`')
+        || text.contains("$\"")
+        || text.contains("$'")
+    {
         return true;
     }
     let chars: Vec<char> = text.chars().collect();
@@ -282,7 +313,7 @@ fn has_regex_or_heredoc(text: &str) -> bool {
             if !named
                 && matches!(
                     word.as_str(),
-                    "q" | "qq" | "qw" | "qr" | "m" | "s" | "tr" | "y"
+                    "q" | "qq" | "qw" | "qx" | "qr" | "m" | "s" | "tr" | "y"
                 )
             {
                 let mut open = i;
@@ -310,7 +341,7 @@ fn has_regex_or_heredoc(text: &str) -> bool {
 /// is never read as a call. Quote delimiters stay (argument splitting still
 /// sees one quoted argument); their contents become `x`. Comments become
 /// spaces. `q`, `qq` and `qw` spans are masked to their closing delimiter. An
-/// unterminated span masks to the end: uncertainty only withholds `exposed`.
+/// unterminated span masks to the end, which withholds rather than credits.
 fn mask_strings_and_comments(text: &str) -> Vec<char> {
     let chars: Vec<char> = text.chars().collect();
     let mut out = chars.clone();
@@ -725,26 +756,81 @@ mod tests {
     }
 
     #[test]
+    fn each_remaining_leak_withholds_on_its_own() {
+        // A: the owner called on the expected side as well.
+        assert_eq!(
+            input("$x > 5", "is(tier_label(2000), tier_label(5), 'msg')"),
+            BoundaryInput::Unestablished
+        );
+        // C: a bitwise neighbour, on either side.
+        for observable in [
+            "$x > 5 | 3",
+            "$x > 5 ^ 3",
+            "$x > 5 & 3",
+            "3 | 5 < $x",
+            "$m ^ 5 < $x",
+        ] {
+            assert_eq!(
+                input(observable, "is(tier_label(5), 1)"),
+                BoundaryInput::Unestablished,
+                "{observable}"
+            );
+        }
+        // D: a repetition operator before the literal.
+        assert_eq!(
+            input("$s x 3 > 100", "is(tier_label(3), 1)"),
+            BoundaryInput::Unestablished
+        );
+        // E: command and quote-like forms that run or build text.
+        for expression in [
+            "is(qx(tier_label(5)), 1)",
+            "is(qx,tier_label(5),, 1)",
+            "is(`tier_label(5)`, 1)",
+            "is(1, $\" . \"tier_label(5)\")",
+            "is(1, $' . 'tier_label(5)')",
+        ] {
+            assert_eq!(
+                input("$x >= 5", expression),
+                BoundaryInput::Unestablished,
+                "{expression}"
+            );
+        }
+        // Controls: `&&` and `||` conditions and a single owner call keep the read.
+        for (observable, expression) in [
+            ("$ok && $x > 5 || $y", "is(tier_label(5), 1)"),
+            ("$x > 5 && $ok", "is(tier_label(5), 1)"),
+            ("$b > -5", "is(tier_label(-5), 1)"),
+            ("$x >= 5", "is(tier_label(5), $x, $s x 3)"),
+        ] {
+            assert_eq!(
+                input(observable, expression),
+                BoundaryInput::OnThreshold,
+                "{observable}"
+            );
+        }
+    }
+
+    #[test]
     fn each_unparsed_construct_withholds_the_owner_call_on_its_own() {
         // A real far call plus 1000 only inside a non-call span; none of
         // these has `=~`, so each branch of the guard stands alone.
         for expression in [
-            "is(tier_label(2000), 1); grep /tier_label(1000)/, @x",
-            "is(tier_label(2000), 1); split /tier_label(1000)/, $x",
-            "is(tier_label(2000), 1); my @l = map { m/tier_label(1000)/ } @x",
-            "is(tier_label(2000), 1); $v ? 1 :s/a/tier_label(1000)/",
-            "is(tier_label(2000), 1); {m,tier_label(1000),}",
-            "is(tier_label(2000), 1); $v ? 1 :s,a,tier_label(1000),",
-            "is(tier_label(2000), 1); s=a=tier_label(1000)=",
-            "is(tier_label(2000), 1); y;a;tier_label(1000);",
-            "is(tier_label(2000), 1); qq^tier_label(1000)^",
-            "is(tier_label(2000), 1); q,tier_label(1000),",
-            "is(tier_label(2000), <<EOT)\ntier_label(1000)\nEOT",
-            "is(tier_label(2000), << \"EOT\")\ntier_label(1000)\nEOT",
-            "is(tier_label(2000), <<'EOT')\ntier_label(1000)\nEOT",
-            "is(tier_label(2000), <<~EOT)\ntier_label(1000)\nEOT",
-            "is(tier_label(2000), 1) =~ tier_label(1000)",
-            "is(tier_label(2000), 1) !~ tier_label(1000)",
+            "is(1, 1); grep /tier_label(1000)/, @x",
+            "is(1, 1); split /tier_label(1000)/, $x",
+            "is(1, 1); my @l = map { m/tier_label(1000)/ } @x",
+            "is(1, 1); $v ? 1 :s/a/tier_label(1000)/",
+            "is(1, 1); {m,tier_label(1000),}",
+            "is(1, 1); $v ? 1 :s,a,tier_label(1000),",
+            "is(1, 1); s=a=tier_label(1000)=",
+            "is(1, 1); y;a;tier_label(1000);",
+            "is(1, 1); qq^tier_label(1000)^",
+            "is(1, 1); q,tier_label(1000),",
+            "is(1, <<EOT)\ntier_label(1000)\nEOT",
+            "is(1, << \"EOT\")\ntier_label(1000)\nEOT",
+            "is(1, <<'EOT')\ntier_label(1000)\nEOT",
+            "is(1, <<~EOT)\ntier_label(1000)\nEOT",
+            "is(1, 1) =~ tier_label(1000)",
+            "is(1, 1) !~ tier_label(1000)",
         ] {
             assert_eq!(
                 input("$points >= 1000", expression),
@@ -755,13 +841,13 @@ mod tests {
         // Each quote-like word on its own, with a delimiter the quote mask
         // does not know, so only the word list can withhold it.
         for word in ["q", "qq", "qw", "qr", "m", "s", "tr", "y"] {
-            let expression = format!("is(tier_label(2000), 1); {word};tier_label(1000);");
+            let expression = format!("is(1, 1); {word};tier_label(1000);");
             assert_eq!(
                 input("$points >= 1000", &expression),
                 BoundaryInput::Unestablished,
                 "{expression}"
             );
-            let spaced = format!("is(tier_label(2000), 1); {word} ,tier_label(1000),");
+            let spaced = format!("is(1, 1); {word} ,tier_label(1000),");
             assert_eq!(
                 input("$points >= 1000", &spaced),
                 BoundaryInput::Unestablished,

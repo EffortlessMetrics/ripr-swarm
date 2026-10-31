@@ -440,7 +440,8 @@ For each change, the first match wins:
     settles it; `static_limit_kind` still comes from the existing projection. A
     nested call, a variable, a string and any other argument form
     contribute no input, and a literal that is not directly beside the
-    operator is not a threshold, so uncertainty only withholds `exposed`.
+    operator is not a threshold; each of those choices withholds `exposed`
+    rather than granting it.
     The threshold hit is not a claim that the test also asserts a value on
     the other side of the boundary. Equality tests (`==`, `eq`) are not
     ordering comparisons and keep rule 9. A row credited only by equal sink
@@ -449,13 +450,23 @@ For each change, the first match wins:
     sum) reads `limited` until the producer emits the fact; that is an
     accepted missed credit, not a claim that the test fails to
     discriminate.
-    Known limits: the guard is a fail-closed scan, not a parser, and
-    over-withholds (a `/` inside a message withholds the expression); and the read does not check
-    argument position (any top-level
-    literal argument of the owner call counts), a `-->` or other operator
-    spelling is not specially recognized, and a `<` or `>` inside a string
-    in `changed_observable` can demote a non-comparison; each only withholds
-    `exposed`, never grants it.
+    Known limits, stated honestly: the read is lexical and approximate. It
+    does not know which argument position the threshold literal sits in (any
+    top-level literal argument of the owner call counts). It does not know
+    which owner call the assertion is about: when the owner sub name appears
+    as a call more than once in one oracle expression it withholds, but a
+    call elsewhere in the same test file is not distinguished. It reads a
+    changed expression as text, so a `<` or `>` inside a string in
+    `changed_observable` (`$x == 3 ? 'a > 5' : 0`) can be read as a
+    comparison, and a `-->` or other operator spelling is not specially
+    recognized. An observable with more than one ordering comparison
+    supplies no threshold. The oracle-expression guard is a fail-closed scan,
+    not a parser: it withholds on any `/`, `` ` ``, `$"`, `$'`, `=~`, `!~`,
+    heredoc introducer or quote-like word (`q`, `qq`, `qw`, `qx`, `qr`, `m`,
+    `s`, `tr`, `y`) and treats `| & ^ x` and arithmetic neighbours as part
+    of a larger operand, so it over-withholds. These choices are meant to
+    only withhold, but the read is not proven complete: a construct it does
+    not know could still be read as a call.
 
 ### Decisions
 
