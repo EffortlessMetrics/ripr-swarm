@@ -12,7 +12,11 @@
 //! eliminate asymmetric scheduling delays or establish a universal bound.
 //! Nontermination is handled by the test runner, not by this assertion.
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
+
+#[cfg(test)]
+static MEASUREMENT_PASS: AtomicU32 = AtomicU32::new(0);
 
 const NOISE_ALLOWANCE: Duration = Duration::from_millis(2);
 const MIN_SAMPLE: Duration = Duration::from_millis(20);
@@ -53,6 +57,42 @@ fn assert_growth_with_clock(
     });
 }
 
+fn measure_batch(
+    small: usize,
+    large: usize,
+    repetitions: usize,
+    runs: usize,
+    measure: &mut impl FnMut(usize, usize) -> Duration,
+) -> (Duration, Duration) {
+    let mut small_time = Duration::MAX;
+    let mut large_time = Duration::MAX;
+    let mut sample = 0;
+    let mut effective_runs = runs;
+    while sample < effective_runs {
+        // Alternate order without dividing by independently calibrated
+        // repetition counts: both samples must represent identical work.
+        let (s, l) = if sample % 2 == 0 {
+            (measure(small, repetitions), measure(large, repetitions))
+        } else {
+            let l = measure(large, repetitions);
+            (measure(small, repetitions), l)
+        };
+        small_time = small_time.min(s);
+        large_time = large_time.min(l);
+        // A first slice already far above the floor needs no more samples
+        // than the original long-batch design took.
+        if sample == 0 && s >= LONG_SLICE {
+            effective_runs = LONG_RUNS;
+        }
+        sample += 1;
+    }
+    (small_time, large_time)
+}
+
+fn growth_within_factor(small_time: Duration, large_time: Duration, factor: u32) -> bool {
+    large_time <= small_time * factor + NOISE_ALLOWANCE
+}
+
 fn assert_measured_growth(
     label: &str,
     small: usize,
@@ -61,39 +101,34 @@ fn assert_measured_growth(
     mut measure: impl FnMut(usize, usize) -> Duration,
 ) {
     assert!(small > 0 && large > small && factor > 0);
+    #[cfg(test)]
+    MEASUREMENT_PASS.store(0, Ordering::Relaxed);
     let mut repetitions = 1;
     loop {
-        let mut small_time = Duration::MAX;
-        let mut large_time = Duration::MAX;
-        let mut runs = RUNS;
-        let mut sample = 0;
-        while sample < runs {
-            // Alternate order without dividing by independently calibrated
-            // repetition counts: both samples must represent identical work.
-            let (s, l) = if sample % 2 == 0 {
-                (measure(small, repetitions), measure(large, repetitions))
-            } else {
-                let l = measure(large, repetitions);
-                (measure(small, repetitions), l)
-            };
-            small_time = small_time.min(s);
-            large_time = large_time.min(l);
-            // A first slice already far above the floor needs no more samples
-            // than the original long-batch design took.
-            if sample == 0 && s >= LONG_SLICE {
-                runs = LONG_RUNS;
-            }
-            sample += 1;
-        }
+        let (small_time, large_time) = measure_batch(small, large, repetitions, RUNS, &mut measure);
         if small_time >= MIN_SAMPLE {
             eprintln!(
                 "{label}: {repetitions} repetitions, size {small} {small_time:?}, \
                  size {large} {large_time:?}, factor {factor}, allowance {NOISE_ALLOWANCE:?}"
             );
+            if growth_within_factor(small_time, large_time, factor) {
+                return;
+            }
+            let retry_repetitions = repetitions * 2;
+            #[cfg(test)]
+            MEASUREMENT_PASS.store(1, Ordering::Relaxed);
+            eprintln!(
+                "{label}: ratio check failed; remeasuring once at {retry_repetitions} repetitions"
+            );
+            let (small_retry, large_retry) =
+                measure_batch(small, large, retry_repetitions, RUNS, &mut measure);
+            eprintln!(
+                "{label}: remeasure size {small} {small_retry:?}, size {large} {large_retry:?}"
+            );
             assert!(
-                large_time <= small_time * factor + NOISE_ALLOWANCE,
-                "{label}: growth exceeded {factor}x plus {NOISE_ALLOWANCE:?}: \
-                 {small_time:?} -> {large_time:?}"
+                growth_within_factor(small_retry, large_retry, factor),
+                "{label}: growth exceeded {factor}x plus {NOISE_ALLOWANCE:?} after remeasure: \
+                 {small_retry:?} -> {large_retry:?}"
             );
             return;
         }
@@ -108,8 +143,11 @@ fn assert_measured_growth(
 
 #[cfg(test)]
 mod tests {
-    use super::{assert_growth_with_clock, assert_growth_within, assert_measured_growth};
+    use super::{
+        MEASUREMENT_PASS, assert_growth_with_clock, assert_growth_within, assert_measured_growth,
+    };
     use std::cell::{Cell, RefCell};
+    use std::sync::atomic::Ordering;
     use std::time::Duration;
 
     #[test]
@@ -190,6 +228,18 @@ mod tests {
                 Duration::from_secs(1)
             } else {
                 Duration::from_micros(2 * (size * size * repetitions) as u64)
+            }
+        });
+    }
+
+    #[test]
+    fn one_stalled_large_sample_is_remeasured_before_failing() {
+        assert_measured_growth("stalled large remeasure", 1, 2, 3, |size, repetitions| {
+            let base = Duration::from_millis(20 * size as u64 * repetitions as u64);
+            if MEASUREMENT_PASS.load(Ordering::Relaxed) == 0 && size == 2 {
+                base * 4
+            } else {
+                base
             }
         });
     }
