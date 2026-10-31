@@ -37,3 +37,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_changed_boundary_dead_expected (4)
+
+Reason:
+RIPR-SPEC-0027: reconcile dead-expected fixture golden with main confidence_basis preview findings #10700
+
+Command:
+`cargo xtask goldens bless typescript_changed_boundary_dead_expected --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

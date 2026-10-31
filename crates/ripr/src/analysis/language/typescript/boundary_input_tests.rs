@@ -524,15 +524,15 @@ fn whole_side_comparisons_accept_common_line_shapes() {
 /// gates refuse it and the fact caller must supply the source-line identity
 /// (#10399 sweep review).
 #[test]
-fn one_comparison_compound_line_resolves_its_boundary_input() {
+fn one_comparison_compound_line_resolves_its_boundary_input() -> Result<(), String> {
     let source = "export function gate(total: number, ready: boolean): number {\n  if (total > 100 && ready) {\n    return total * 0.9;\n  }\n  return total;\n}\n";
     let owners = extract_owners(Path::new("src/gate.ts"), source);
     let owner = owners
         .iter()
         .find(|owner| owner.name == "gate")
-        .expect("gate owner extracted");
+        .ok_or_else(|| "gate owner extracted".to_string())?;
     assert_eq!(
-        ts_boundary_input_in_source(&source, 2, "  if (total > 100 && ready) {", owner),
+        ts_boundary_input_in_source(source, 2, "  if (total > 100 && ready) {", owner),
         Some(TypeScriptBoundaryInput {
             parameter: "total".to_string(),
             index: 0,
@@ -541,10 +541,11 @@ fn one_comparison_compound_line_resolves_its_boundary_input() {
         })
     );
     assert_eq!(
-        ts_boundary_input_in_source(&source, 2, "total > 100", owner),
+        ts_boundary_input_in_source(source, 2, "total > 100", owner),
         None,
         "narrowed label text must not produce a fact on its own"
     );
+    Ok(())
 }
 
 /// A compared value derived from the parameter (`scaled = amount * 10`) is

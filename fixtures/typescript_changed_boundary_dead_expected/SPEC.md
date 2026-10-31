@@ -1,6 +1,11 @@
 # Fixture: typescript_changed_boundary_dead_expected
 
-Spec: RIPR-SPEC-0027, RIPR-SPEC-0108
+Spec: RIPR-SPEC-0027
+
+This fixture is also registered as the
+`typescript_changed_boundary_dead_expected` vector in the
+evidence-promotion-honesty corpus (`fixtures/evidence-promotion-honesty-corpus`),
+whose independent invariant contract is RIPR-SPEC-0108.
 
 ## Given
 
