@@ -9,9 +9,9 @@ use std::sync::OnceLock;
 #[test]
 fn perl_variant_routing_simulation_records_no_shared_write() -> Result<(), String> {
     use crate::reports::{ripr_perl_fixture_binary, variant_test};
-    let root = std::env::current_dir()
-        .map_err(|e| e.to_string())?
-        .join("guard-target");
+    // Identity only: nothing is created under this path, and it must not depend
+    // on the process working directory, which other tests change.
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("guard-target");
     let shared = crate::ripr_debug_binary_in(Some(root.clone()));
     let variant_root =
         std::path::absolute(root.join("fixture-variants")).map_err(|e| e.to_string())?;
