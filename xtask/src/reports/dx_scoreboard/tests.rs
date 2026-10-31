@@ -4855,8 +4855,12 @@ fn corpus_pins_python_commits_and_rejects_unknown_languages() -> Result<(), Stri
     if python[0].heavy || python[1..].iter().any(|entry| !entry.heavy) {
         return Err("click must be the light Python row and the larger ones heavy".to_string());
     }
-    // #10914: the large Python rows were cut under 512 MiB and stay guarded.
+    // #10914: the large Python rows were cut under 2 s and 512 MiB and stay
+    // guarded.
     for entry in &python[2..] {
+        if entry.ceilings.get("speed.warm_check_ms") != Some(&2000.0) {
+            return Err(format!("{} lost its 2 s warm-check ceiling", entry.id));
+        }
         if entry.ceilings.get("speed.warm_check_peak_rss_mb") != Some(&512.0) {
             return Err(format!("{} lost its 512 MiB peak-memory ceiling", entry.id));
         }
