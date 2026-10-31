@@ -93,6 +93,11 @@ number, whatever the newer run's own outcome; the read uses the existing
 non-atomic read, not proof that the hosted race is closed or of which check
 GitHub selects for protection.
 
+The admission job also refuses a `merge-ready` pull-request request whose PR has
+unresolved review threads, naming each thread, so the author learns in seconds
+instead of after the roughly hour-long run. It is an early courtesy only: a read
+failure is a warning, and the late recheck above remains the authority.
+
 This is a late eligibility check, not queue-cutover acceptance. The tree match
 binds the queued commit to the head GitHub reports live at admission; it does not
 establish that this is the head a reviewer judged ready, and its premise (GitHub's
