@@ -37,15 +37,19 @@ pub(crate) fn produce(root: &Path, rev: &str, ripr: &Path) -> Result<Vec<String>
         root,
         &["rev-parse", "--verify", &format!("{rev}^{{commit}}")],
     )?;
-    let version = capture(ripr, root, &["--version"])?;
-    if !version.contains(&commit) {
+    let ripr = &if ripr.is_absolute() {
+        ripr.to_path_buf()
+    } else {
+        root.join(ripr)
+    };
+    if !ripr.is_file() {
         return Err(format!(
-            "{} reports `{}` but the replay commit is {commit}; build the binary from that commit \
-             (`cargo build -p ripr` at {rev}) or pass --ripr",
-            ripr.display(),
-            version.trim()
+            "--ripr {} is not a file; build it first",
+            ripr.display()
         ));
     }
+    let version = capture(ripr, root, &["--version"])?;
+    check_identity(&version, &commit, ripr, rev)?;
 
     let work = root.join(WORK_DIR);
     if work.exists() {
@@ -258,6 +262,24 @@ pub(crate) fn produce(root: &Path, rev: &str, ripr: &Path) -> Result<Vec<String>
     ])
 }
 
+/// The binary's `--version` line is `ripr X (<sha>[-dirty])`. Only an exact,
+/// clean match of the replayed commit binds the bytes to the cut.
+fn check_identity(version: &str, commit: &str, ripr: &Path, rev: &str) -> Result<(), String> {
+    let reported = version
+        .split_once('(')
+        .and_then(|(_, rest)| rest.split_once(')'))
+        .map(|(inside, _)| inside);
+    if reported == Some(commit) {
+        return Ok(());
+    }
+    Err(format!(
+        "{} reports `{}` but the replay needs a clean build of {commit}; build the binary from that commit \
+         (`cargo build -p ripr` at {rev}) or pass --ripr",
+        ripr.display(),
+        version.trim()
+    ))
+}
+
 fn rel(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
@@ -312,6 +334,8 @@ fn git_commit(repo: &Path, message: &str) -> Result<(), String> {
             "user.name=RIPR cut replay",
             "-c",
             "user.email=ripr@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
             "commit",
             "-q",
             "--allow-empty",
@@ -353,8 +377,12 @@ fn run(program: &Path, cwd: &Path, args: &[&str]) -> Result<(), String> {
 /// stderr, so a producer that starts failing names itself instead of turning
 /// into a `not_run` row.
 fn capture(program: &Path, cwd: &Path, args: &[&str]) -> Result<String, String> {
+    // Scratch repositories must not inherit an outer repository's identity.
     let output = Command::new(program)
         .current_dir(cwd)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .args(args)
         .output()
         .map_err(|e| format!("spawn {}: {e}", program.display()))?;
@@ -377,15 +405,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_binary_from_another_commit_is_refused() -> Result<(), String> {
-        let root = crate::repo_root()?;
-        let error = produce(&root, "HEAD", Path::new("/bin/echo"))
-            .err()
-            .ok_or("echo cannot report the commit")?;
-        assert!(
-            error.contains("build the binary from that commit"),
-            "{error}"
-        );
-        Ok(())
+    fn only_an_exact_clean_commit_identity_is_accepted() {
+        let sha = "a".repeat(40);
+        let other = "b".repeat(40);
+        let check = |line: &str| check_identity(line, &sha, Path::new("ripr"), "HEAD");
+        assert!(check(&format!("ripr 0.11.0 ({sha})\n")).is_ok());
+        assert!(check(&format!("ripr 0.11.0 ({sha}-dirty)")).is_err());
+        assert!(check(&format!("ripr 0.11.0 ({other})")).is_err());
+        assert!(check("ripr 0.11.0").is_err());
+        let error = check("echo").err().unwrap_or_default();
+        assert!(error.contains("clean build"), "{error}");
     }
 }

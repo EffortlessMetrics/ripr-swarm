@@ -1781,9 +1781,6 @@ mod tests {
         Ok(())
     }
 
-    /// The sweep is only a control if the required gate runs it. Pin the
-    /// wiring: the step exists and feeds every runtime row the gate can
-    /// produce, so deleting the step or an `--artifact` fails here (#9505).
     #[test]
     fn live_replay_flags_parse_and_ripr_requires_replay() -> Result<(), String> {
         let args = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
@@ -1802,6 +1799,9 @@ mod tests {
         Ok(())
     }
 
+    /// The sweep is only a control if the required gate runs it. Pin the
+    /// wiring: the step exists and feeds every runtime row the gate can
+    /// produce, so deleting the step or an `--artifact` fails here (#9505).
     #[test]
     fn the_required_rust_gate_runs_the_sweep_with_live_producer_artifacts() -> Result<(), String> {
         let gates = include_str!("../../.github/workflows/rust-gates.yml");
