@@ -107,3 +107,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_wrapper_user_macro_guard (9)
+
+Reason:
+#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to missing-check wording (safe, observed-advisory and exact-error-variant)
+
+Command:
+`cargo xtask goldens bless rust_wrapper_user_macro_guard --reason "..."`
+
+Updated:
+- `expected/human.txt`

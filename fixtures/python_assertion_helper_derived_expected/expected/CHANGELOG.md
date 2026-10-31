@@ -38,3 +38,14 @@ reconciliation leaves fixture inputs, `expected/check.json` and the
 Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_assertion_helper_derived_expected (4)
+
+Reason:
+#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to missing-check wording (safe, observed-advisory and exact-error-variant)
+
+Command:
+`cargo xtask goldens bless python_assertion_helper_derived_expected --reason "..."`
+
+Updated:
+- `expected/human.txt`

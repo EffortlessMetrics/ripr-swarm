@@ -187,7 +187,7 @@ impl RepairRouteRefusal {
             ),
             Self::NoCanonicalGap => {
                 "no repair start offered: this finding has no gap ID, so there is \
-                 no seam to start a repair from; follow the Next step above"
+                 no gap to start a repair from; follow the Next step above"
                     .to_string()
             }
             Self::PreviewPacketNotComplete { language, reason } => format!(
@@ -945,7 +945,7 @@ mod tests {
         assert_eq!(
             no_gap,
             "no repair start offered: this finding has no gap ID, so there is no \
-             seam to start a repair from; follow the Next step above"
+             gap to start a repair from; follow the Next step above"
         );
         assert!(
             !no_gap.contains("ripr repair") && !no_gap.contains("full gate's answer"),

@@ -27,3 +27,14 @@ Updated:
 - `expected/human-full.txt`
 
 Verification note: This update also restores two previously stale full-human Next guidance lines. The frozen BE75 producer and integrated renderer produce identical full-human bytes after the fixture runner's path normalization; classifications and assertions are unchanged.
+
+## Pending — python_dunder_truthiness_replaced_test (3)
+
+Reason:
+#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to missing-check wording (safe, observed-advisory and exact-error-variant)
+
+Command:
+`cargo xtask goldens bless python_dunder_truthiness_replaced_test --reason "..."`
+
+Updated:
+- `expected/human.txt`
