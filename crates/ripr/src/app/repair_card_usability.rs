@@ -244,7 +244,7 @@ fn measure_profile(profile: &SyntheticProfile) -> Result<Value, String> {
     // Measure the default brief a person reads, not the `--verbose` ledger
     // card (#10693). The measurement has no checkout to bind, so the closing
     // packet line carries the typed command's portable display.
-    let human_lines = agent_card_plain_lines(&card, &next_command_display, None);
+    let human_lines = agent_card_plain_lines(&card, &next_command_display, None, None);
     let human_rendered = format!("{}\n", human_lines.join("\n"));
     let packet_surfaces_seam = {
         let envelope: Value = serde_json::from_str(&packet_json)

@@ -3084,4 +3084,180 @@ mod tests {
             Err("unknown agent review-summary argument \"--xml\". Run `ripr agent review-summary --help`.".to_string())
         );
     }
+
+    fn stub_options(
+        selector: crate::app::test_stub::TestStubSelector,
+        root: &str,
+        root_explicit: bool,
+        write: bool,
+        json: bool,
+    ) -> AgentStubOptions {
+        AgentStubOptions {
+            root: PathBuf::from(root),
+            root_explicit,
+            selector,
+            write,
+            json,
+        }
+    }
+
+    #[test]
+    fn agent_stub_parses_seam_id_and_at_selectors_with_flags() {
+        use crate::app::test_stub::TestStubSelector;
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--seam-id", "abc123def456"])),
+            Ok(stub_options(
+                TestStubSelector::SeamId("abc123def456".to_string()),
+                ".",
+                false,
+                false,
+                false,
+            ))
+        );
+        assert_eq!(
+            parse_agent_args(&args(&[
+                "stub",
+                "--root",
+                "repo",
+                "--at",
+                "src/lib.rs:42",
+                "--write",
+                "--json",
+            ])),
+            Ok(AgentCommand::Stub(stub_options(
+                TestStubSelector::At {
+                    file: "src/lib.rs".to_string(),
+                    line: 42,
+                    kind: None,
+                },
+                "repo",
+                true,
+                true,
+                true,
+            )))
+        );
+    }
+
+    #[test]
+    fn agent_stub_requires_a_selector_and_exactly_one() {
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--json"])),
+            Err("agent stub requires --seam-id ID or --at FILE:LINE (the location `ripr check` prints)".to_string())
+        );
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--seam-id", "a", "--at", "src/lib.rs:3"])),
+            Err("agent stub takes one of --seam-id or --at".to_string())
+        );
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--at", "src/lib.rs:3", "--at", "src/lib.rs:4"])),
+            Err("agent stub takes one of --seam-id or --at".to_string())
+        );
+    }
+
+    #[test]
+    fn agent_stub_rejects_blank_missing_and_malformed_selector_values() {
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--seam-id", "  "])),
+            Err("agent stub --seam-id requires a non-empty value".to_string())
+        );
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--at", ""])),
+            Err("agent stub --at requires a non-empty value".to_string())
+        );
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--at"])),
+            Err("missing value for --at".to_string())
+        );
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--kind"])),
+            Err("missing value for --kind".to_string())
+        );
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--at", "src/lib.rs"])),
+            Err("--at expects FILE:LINE, got \"src/lib.rs\"".to_string())
+        );
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--at", "src/lib.rs:abc"])),
+            Err("--at expects FILE:LINE with a line number, got \"src/lib.rs:abc\"".to_string())
+        );
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--at", "src/lib.rs:0"])),
+            Err("--at expects FILE:LINE, got \"src/lib.rs:0\"".to_string())
+        );
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--at", " :7"])),
+            Err("--at expects FILE:LINE, got \" :7\"".to_string())
+        );
+    }
+
+    #[test]
+    fn agent_stub_kind_applies_to_at_only_and_must_be_a_probe_family() {
+        use crate::app::test_stub::TestStubSelector;
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--at", "src/lib.rs:9", "--kind", "predicate"])),
+            Ok(stub_options(
+                TestStubSelector::At {
+                    file: "src/lib.rs".to_string(),
+                    line: 9,
+                    kind: Some("predicate".to_string()),
+                },
+                ".",
+                false,
+                false,
+                false,
+            ))
+        );
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--kind", "match_arm", "--at", "a.rs:1"])),
+            Ok(stub_options(
+                TestStubSelector::At {
+                    file: "a.rs".to_string(),
+                    line: 1,
+                    kind: Some("match_arm".to_string()),
+                },
+                ".",
+                false,
+                false,
+                false,
+            ))
+        );
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--seam-id", "abc", "--kind", "predicate"])),
+            Err("agent stub --kind applies to --at only".to_string())
+        );
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--at", "src/lib.rs:9", "--kind", "bogus"])),
+            Err("--kind expects a probe family such as predicate, return_value, error_path, match_arm, call_deletion, field_construction, or side_effect, got \"bogus\"".to_string())
+        );
+        assert_eq!(
+            parse_agent_stub_options(&args(&[
+                "--at",
+                "src/lib.rs:9",
+                "--kind",
+                "predicate",
+                "--kind",
+                "predicate",
+            ])),
+            Err("agent stub takes --kind once".to_string())
+        );
+    }
+
+    #[test]
+    fn agent_stub_help_and_unknown_arguments() {
+        assert_eq!(
+            parse_agent_args(&args(&["stub", "--seam-id", "x", "-h"])),
+            Ok(AgentCommand::StubHelp)
+        );
+        assert_eq!(
+            parse_agent_args(&args(&["stub", "--help"])),
+            Ok(AgentCommand::StubHelp)
+        );
+        assert_eq!(
+            parse_agent_stub_options(&args(&["--seam-id", "x", "--force"])),
+            Err(
+                "unknown agent stub argument \"--force\". Run `ripr agent stub --help`."
+                    .to_string()
+            )
+        );
+    }
 }

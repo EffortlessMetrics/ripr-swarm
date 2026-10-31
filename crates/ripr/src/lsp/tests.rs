@@ -16253,6 +16253,102 @@ fn canonical_finding_groups_collapse_same_gap_and_preserve_raw_signals() -> Resu
     Ok(())
 }
 
+/// Two gap-less probes of different families on one expression (#11453).
+fn overlapping_family_pair() -> (Finding, Finding) {
+    let first = sample_finding();
+    let mut second = first.clone();
+    second.id = "probe:pricing:88:return_value".to_string();
+    second.probe.id = ProbeId(second.id.clone());
+    second.probe.family = ProbeFamily::ReturnValue;
+    second.probe.delta = DeltaKind::Value;
+    second.probe.expected_sinks = vec!["return value".to_string()];
+    second.probe.required_oracles = vec!["exact return".to_string()];
+    (first, second)
+}
+
+fn overlap_diagnostics(findings: &[Finding]) -> Result<Vec<Diagnostic>, String> {
+    let config = LspAnalysisConfig::default();
+    let grouped = finding_diagnostics_by_uri(
+        Path::new("/workspace"),
+        findings,
+        config.repo_config().severity(),
+        true,
+        None,
+    )?;
+    Ok(grouped.into_values().flatten().collect())
+}
+
+#[test]
+fn gapless_family_overlap_publishes_one_diagnostic_with_every_probe_listed() -> Result<(), String> {
+    let (first, second) = overlapping_family_pair();
+    // Fixture construction: distinct ids/families, same site, no canonical gap.
+    assert_ne!(first.id, second.id);
+    assert_ne!(first.probe.family, second.probe.family);
+    assert_eq!(first.probe.location, second.probe.location);
+    assert_eq!(first.probe.expression, second.probe.expression);
+    assert!(first.canonical_gap.is_none() && second.canonical_gap.is_none());
+
+    // Input order must not change which finding is primary.
+    for findings in [
+        vec![first.clone(), second.clone()],
+        vec![second.clone(), first.clone()],
+    ] {
+        let diagnostics = overlap_diagnostics(&findings)?;
+        assert_eq!(diagnostics.len(), 1, "overlapping probes must collapse");
+        let data = diagnostics[0].data.as_ref().ok_or("missing data")?;
+        assert_eq!(data["finding_id"], serde_json::json!(first.id));
+        assert_eq!(data["group_reason"], "same_site_and_repair_signal");
+        assert_eq!(data["raw_signal_count"], 2);
+        let raw_ids = data["raw_findings"]
+            .as_array()
+            .ok_or("missing raw_findings")?
+            .iter()
+            .map(|raw| raw["finding_id"].as_str().unwrap_or(""))
+            .collect::<Vec<_>>();
+        assert_eq!(raw_ids, vec![first.id.as_str(), second.id.as_str()]);
+    }
+    Ok(())
+}
+
+#[test]
+fn gapless_overlap_keeps_findings_apart_when_any_repair_signal_differs() -> Result<(), String> {
+    let (first, second) = overlapping_family_pair();
+    let mut variants = Vec::new();
+    let mut other_class = second.clone();
+    other_class.class = ExposureClass::StaticUnknown;
+    variants.push(other_class);
+    let mut other_step = second.clone();
+    other_step.recommended_next_step = Some("assert the exact boundary".to_string());
+    variants.push(other_step);
+    let mut other_evidence = second.clone();
+    other_evidence
+        .evidence
+        .push("extra static fact".to_string());
+    variants.push(other_evidence);
+    let mut other_line = second.clone();
+    other_line.probe.location.line = 89;
+    variants.push(other_line);
+    let mut other_column = second.clone();
+    other_column.probe.location.column = 5;
+    variants.push(other_column);
+    let mut other_expression = second.clone();
+    other_expression.probe.expression = "amount > threshold".to_string();
+    variants.push(other_expression);
+    let mut other_owner = second.clone();
+    other_owner.probe.owner = Some(crate::domain::SymbolId("src/pricing.rs::other".to_string()));
+    variants.push(other_owner);
+    let mut gapped = second.clone();
+    gapped.canonical_gap = Some(sample_canonical_gap());
+    variants.push(gapped);
+
+    for variant in variants {
+        assert_ne!(variant, second, "fixture must actually differ");
+        let diagnostics = overlap_diagnostics(&[first.clone(), variant])?;
+        assert_eq!(diagnostics.len(), 2, "a distinct finding must stay visible");
+    }
+    Ok(())
+}
+
 #[test]
 fn canonical_group_mixed_classes_are_detected_without_promotion() {
     let mut first = sample_finding();
