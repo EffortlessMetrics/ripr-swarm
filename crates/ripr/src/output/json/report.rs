@@ -752,6 +752,19 @@ pub(crate) fn render_with_config(
         }
         out.push_str("  ]");
     }
+    // Additive per-language completeness projection (#11272): the shared
+    // `LanguageCompletenessView` owner's rows, so a completed zero-finding run
+    // reads differently from a skipped or unavailable adapter. Appended last
+    // as one compact line; classification goldens strip it like
+    // `canonical_next_action` (dedicated schema tests own the field).
+    if let Some(view) = output
+        .analysis_outcome
+        .as_ref()
+        .and_then(|outcome| outcome.language_view.as_ref())
+    {
+        out.push_str(",\n  \"language_completeness\": ");
+        out.push_str(&view.to_json_value().to_string());
+    }
     out.push_str("}\n");
     out
 }
@@ -1280,6 +1293,17 @@ fn evidence_path_values(finding: &Finding) -> Vec<String> {
 }
 
 fn strongest_related_test(finding: &Finding) -> Option<&RelatedTest> {
+    // #11228: TypeScript and JavaScript findings use the one shared selection
+    // rule (first of equal strength) so the oracle summary describes the row
+    // the headline, card and packet name. Other languages keep their existing
+    // last-of-equal-strength summary; moving them is a separate, golden-wide
+    // change.
+    if matches!(
+        finding.language,
+        Some(crate::domain::LanguageId::TypeScript | crate::domain::LanguageId::JavaScript)
+    ) {
+        return crate::output::related_test_miss::strongest_related_test(&finding.related_tests);
+    }
     finding
         .related_tests
         .iter()

@@ -1,2 +1,0 @@
-crates/ripr/src/analysis/language/typescript/bounded_read.rs|{env_name} must be a positive integer
-crates/ripr/src/analysis/language/typescript/bounded_read.rs|{env_name} must be a positive integer: {err}

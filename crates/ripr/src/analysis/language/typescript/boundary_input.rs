@@ -383,7 +383,7 @@ pub(super) fn comparison_has_whole_sides(line: &str, parameter: &str, operand: &
     // The line tokenizer does not know literal or comment spans, so a string,
     // template, regular expression, or comment could carry a look-alike
     // comparison (`"over: amount >= LIMIT"`). Refuse any line that has one.
-    if line.contains(['"', '\'', '`', '/']) {
+    if line.contains(['"', '\'', '`']) || !slashes_are_plain_division(line) {
         return false;
     }
     let tokens = line_tokens(line);
@@ -427,6 +427,54 @@ pub(super) fn comparison_has_whole_sides(line: &str, parameter: &str, operand: &
         found += 1;
     }
     found == 1
+}
+
+/// Whether every `/` on the line is a plain division: it follows an
+/// identifier, number, `)` or `]` (never a keyword such as `return`), and the
+/// line has no `//` or `/*` comment opener. A regular expression literal can
+/// only start where a value is expected, so a `/` in division position cannot
+/// open one; any other `/` keeps the line refused (#11628).
+fn slashes_are_plain_division(line: &str) -> bool {
+    if line.contains("//") || line.contains("/*") {
+        return false;
+    }
+    const VALUE_KEYWORDS: &[&str] = &[
+        "return",
+        "typeof",
+        "case",
+        "do",
+        "else",
+        "in",
+        "instanceof",
+        "of",
+        "void",
+        "delete",
+        "throw",
+        "new",
+        "yield",
+        "await",
+    ];
+    line.char_indices()
+        .filter(|(_, ch)| *ch == '/')
+        .all(|(at, _)| {
+            let before = line[..at].trim_end();
+            match before.chars().next_back() {
+                Some(')' | ']') => true,
+                Some(ch) if ch.is_alphanumeric() || ch == '_' || ch == '$' => {
+                    let is_word = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+                    // `rfind` yields the separator's start byte; step over its
+                    // whole UTF-8 width so a multibyte separator (`€`, `…`)
+                    // cannot split a character.
+                    let word_start = before
+                        .char_indices()
+                        .rev()
+                        .find(|(_, c)| !is_word(*c))
+                        .map_or(0, |(i, c)| i + c.len_utf8());
+                    !VALUE_KEYWORDS.contains(&&before[word_start..])
+                }
+                _ => false,
+            }
+        })
 }
 
 /// Whether `prefix`, the line tokens before a comparison's first side, is

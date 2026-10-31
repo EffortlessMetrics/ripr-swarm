@@ -1570,7 +1570,39 @@ fn apply_rust_no_static_path_limit(
         // a harness exists that ripr does not evaluate.
         replace_witnessed_no_path_infection_summary(finding);
         proof_harness::apply_limit(finding, &owner_name, &harness);
+    } else if let Some(ambiguity) = transitive_reach.trait_dispatch_ambiguity(&owner_name) {
+        // #11719: last, so no traced or structural witness is displaced.
+        replace_witnessed_no_path_infection_summary(finding);
+        apply_rust_trait_dispatch_ambiguity_limit(finding, &owner_name, &ambiguity);
     }
+}
+
+/// RIPR-SPEC-0114 (#11719): the owner is called from several impls of one
+/// implicit-dispatch trait method, so ripr names the ambiguity and lists
+/// candidate impls instead of guessing one. No witness test, no reach
+/// credit, no related-test relation, no class change.
+fn apply_rust_trait_dispatch_ambiguity_limit(
+    finding: &mut Finding,
+    owner_name: &str,
+    ambiguity: &classify::TraitDispatchAmbiguity,
+) {
+    finding.static_limit_kind = Some(StaticLimitKind::RustTransitiveReachUnresolved);
+    finding
+        .stop_reasons
+        .push(StopReason::TransitiveReachUnresolved);
+    finding
+        .evidence
+        .push(classify::RUST_TRAIT_DISPATCH_AMBIGUITY_MESSAGE.to_string());
+    finding
+        .evidence
+        .push(classify::trait_dispatch_ambiguity_pointer(
+            ambiguity, owner_name,
+        ));
+    finding
+        .evidence
+        .extend(classify::trait_dispatch_ambiguity_detail_lines(
+            ambiguity, owner_name,
+        ));
 }
 
 /// #9982: the same named limitation a traced integration-test witness gets,

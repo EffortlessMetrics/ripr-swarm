@@ -8,6 +8,7 @@ Created: 2026-06-15
 
 Linked issues:
 
+- [#11719](https://github.com/EffortlessMetrics/ripr-swarm/issues/11719) - trait-dispatch ambiguity limit for a helper called from `impl Trait for X { fn fmt }` (semver `display::pad`).
 - dtolnay/semver dogfood: `pub(crate) matches_greater` reached only via `VersionReq::matches`
   (pub → pub(crate) helper chain) — ripr returned bare `no_static_path` with empty stop_reasons,
   misleading new users into thinking tests are absent.
@@ -105,6 +106,14 @@ all proximity-only; RIPR-SPEC-0117 states the rule. The class stays
 #10127 extends it to `reachable_unrevealed` findings, but only when a witness test lives in a different workspace package than the owner (a cross-crate wrapper). A witness counts only when its package (attributed through the discovered manifests, so a declared `[lib] path` root is not misread as foreign) directly declares the owner's package as a dependency, the path-dependency graph is complete, and that package defines no other function of the owner's name. Same-package, unrelated, transitive-dependent, unattributable and shadowing witnesses keep the existing reading. The class stays `reachable_unrevealed`; the finding gains the named limit.
 
 #11481 extends it to `infection_unknown` findings with `weak` reach whose related tests are all proximity-only or related only by an owner-named test (`owner_named_test`, which never has to call the owner). A private helper reached only through a public entry (the `numeric_identifier` -> `Version::from_str` -> `Version::parse` shape) now names the same limit. The class stays `infection_unknown`; reach stays `weak`; the witness is a candidate path, not a related test. No witness leaves the finding unchanged. RIPR-SPEC-0117 ("`infection_unknown` with an owner-named test") states the admission rule. `weakly_exposed` with only `owner_named_test` is intentionally not limited here (follow-up), and a mixed set holding a non-proximity relation stays unlimited. Known limit: the witness walk is name-only, so a same-named function in another module can name the limit (advisory only).
+
+#11719 adds a witness-less trait-dispatch ambiguity limit for `no_static_path` findings (dtolnay/semver `display::pad`: a private helper called from `impl Display for Version { fn fmt }` while the crate has many `fmt` impls). A test reaches such an impl through `format!`, `==` or `to_string`, which leave no call fact, and the by-name walk cannot tell which of several same-named trait-impl methods a test reaches. It is the last reach witness tried, after the facade witness, so no traced or structural witness is displaced:
+
+1. The owner is called directly (a non-macro call fact) from a method of an `impl Trait for X` block.
+2. The method's name is one the language calls without naming it (`fmt`, `eq`, `partial_cmp`, `add`, `next`, `from`, ...; the implicit-dispatch list), and the crate has two or more trait-impl methods of that name. A name with one impl identifies it (the unique-impl rule) and a method outside the list is not dispatched implicitly, so neither fires. An owner that is itself an implicit-dispatch method does not fire.
+3. The index holds at least one test.
+
+When it fires the finding gets `static_limit_kind = rust_transitive_reach_unresolved`, the `transitive_reach_unresolved` stop reason, and evidence: the ambiguity message, a `Trait-dispatch ambiguity: owner `pad` is called from 1 impl of `fmt` (Version), one of 7 `fmt` impls in this crate; ripr cannot tell whether any test reaches one of these impls.` line (at most five candidate impls named, then "and N more"; `Trait for Type` labels only when the callers span traits), and the four `limitation_*` detail lines. There is no witness test, so no `For example, the test ...` line is written and no test is related. Class, reach, related tests, confidence and actionability are unchanged, and no runtime claim is made. The candidates are the calling impls, never a reach credit. Known limit: only direct callers are listed (a chain `fmt -> helper -> owner` is covered by the name walk only when a test calls a name on it).
 
 ### When NOT found
 
