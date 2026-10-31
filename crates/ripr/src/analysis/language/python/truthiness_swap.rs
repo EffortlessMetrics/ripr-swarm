@@ -439,11 +439,8 @@ fn owner_call_nested_in_owner_call(text: &str, names: &[String], method_call: bo
 /// Whether a call's callee is itself a subscript or a call result
 /// (`RUNNERS[0](0)`, `make()(0)`): a callable the reader cannot name.
 fn calls_through_a_result(text: &str) -> bool {
-    text.match_indices('(').any(|(index, _)| {
-        text[..index]
-            .trim_end()
-            .ends_with(|ch: char| ch == ')' || ch == ']')
-    })
+    text.match_indices('(')
+        .any(|(index, _)| text[..index].trim_end().ends_with([')', ']']))
 }
 
 const UNITTEST_ASSERTS: &[&str] = &[
@@ -737,6 +734,44 @@ mod tests {
         ));
         assert!(has_assignment("x <<= 1"));
         assert!(!has_assignment("a >= b and c <= d != e == f"));
+    }
+
+    #[test]
+    fn parameter_only_read_refuses_every_alias_or_rebind_of_the_parameter() {
+        let changed = "    return 1 if not x else 2";
+        let owner_for = |lines: usize| {
+            let mut owner = super::super::static_limits::tests::owner_with(&[], Vec::new());
+            owner.start_line = 1;
+            owner.end_line = lines;
+            owner
+        };
+        let check = |body: &str| {
+            let source = format!("def f(x):\n{body}\n{changed}\n");
+            let owner = owner_for(source.lines().count());
+            parameter_only_read(&source, &owner, "x", changed)
+        };
+        // Positive control: a plain read elsewhere in the body is accepted.
+        assert!(check("    if x is None:\n        pass"));
+        for shape in [
+            "    y = x",
+            "    y = [x]",
+            "    x = x or 1",
+            "    x = other",
+            "    x: int = x",
+            "    for x in range(3):",
+            "    with ctx() as x:",
+            "    del x",
+            "    global x",
+            "    nonlocal x",
+            "    a, x = pair",
+            "    (a, x) = pair",
+            "    x += 1",
+            "    x",
+            "    other = lambda: x",
+            "    if (y := x):",
+        ] {
+            assert!(!check(shape), "{shape}");
+        }
     }
 
     #[test]
