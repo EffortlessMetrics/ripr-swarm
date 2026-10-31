@@ -461,8 +461,19 @@ fn route_not_ready_reason(
     }
     // #10701: a changed return value or error with no test ripr can
     // safely strengthen has a working manual route too.
-    if let [missing] = missing_evidence
-        && let Some(kind) = crate::analysis::repair_route::stub_kind_for_missing_evidence(missing)
+    // Once the module blocker is routed and nothing else is missing (#11466),
+    // only the test home is absent and the stub adds it, so the seam kind
+    // alone picks the stub kind.
+    let manual_stub_kind = match missing_evidence {
+        [missing] => crate::analysis::repair_route::stub_kind_for_missing_evidence(missing),
+        [] if adds_module => match entry.seam.kind() {
+            crate::analysis::seams::SeamKind::ReturnValue => Some("return_value"),
+            crate::analysis::seams::SeamKind::ErrorVariant => Some("error_path"),
+            _ => None,
+        },
+        _ => None,
+    };
+    if let Some(kind) = manual_stub_kind
         && matches!(
             (entry.seam.kind(), kind),
             (
@@ -704,11 +715,12 @@ const REPAIR_SEAM_CEILING: usize = 2 * crate::analysis::DEFAULT_REPO_EXPOSURE_SE
 /// is unchanged: an explicit
 /// `RIPR_REPO_EXPOSURE_SEAM_LIMIT` or a larger repository still refuses.
 ///
-/// Only the one-shot CLI resolvers call this. `load_gate_state` stays on the
-/// plain inventory because MCP status reads reach it on concurrent worker
-/// threads, which must not share the process-wide cap; there a cut inventory
-/// still withholds the start with the wider-budget recovery.
-fn inventory_for_repair(
+/// The CLI resolvers, the repair-start gate behind `ripr agent status` and the
+/// MCP completeness check all call this, so every surface agrees on whether a
+/// 10k to 20k seam repository can start a repair. Widening holds the
+/// process-wide cap exclusively, so concurrent MCP worker threads serialize
+/// their reruns instead of stranding the cap.
+pub(crate) fn inventory_for_repair(
     root: &Path,
     config: &crate::config::RiprConfig,
 ) -> Result<
@@ -736,7 +748,7 @@ fn inventory_for_repair(
 /// The cap a repair resolver reruns with, or `None` when the cut stands: only
 /// a built-in default cut of a repository within [`REPAIR_SEAM_CEILING`]
 /// widens, to its exact total. An explicit limit is the operator's choice.
-fn repair_widened_cap(info: &crate::analysis::SeamLimitInfo) -> Option<usize> {
+pub(crate) fn repair_widened_cap(info: &crate::analysis::SeamLimitInfo) -> Option<usize> {
     (info.is_truncated()
         && info.source == crate::analysis::SeamLimitSource::Default
         && info.total <= REPAIR_SEAM_CEILING)
@@ -1660,7 +1672,7 @@ fn load_gate_state(root: &Path) -> GateState {
             ));
         }
     };
-    match crate::analysis::inventory_classified_seams_at_with_config(root, &config) {
+    match inventory_for_repair(root, &config) {
         Ok((classified, limit_info)) => GateState::Loaded {
             truncated: limit_info.as_ref().is_some_and(|info| info.is_truncated()),
             config: Box::new(config),
@@ -2858,6 +2870,100 @@ pub(crate) mod tests {
         );
     }
 
+    /// End to end over a real repository above the 10,000-seam default cap
+    /// (#1887): the plain inventory is cut, while the repair inventory, the
+    /// gate behind `ripr agent status` and the MCP completeness read all
+    /// rerun at the exact total and agree the inventory is complete. The cap
+    /// is restored afterwards, and a repository past the ceiling still cuts.
+    #[test]
+    fn repair_surfaces_agree_on_a_repository_above_the_default_seam_cap() -> Result<(), String> {
+        use crate::analysis::{DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, SeamLimitSource};
+        if std::env::var_os("RIPR_REPO_EXPOSURE_SEAM_LIMIT").is_some() {
+            return Ok(());
+        }
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ripr-widen-{}-{stamp}", std::process::id()));
+        let _guard = TempRootGuard { root: root.clone() };
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"wide\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let write_module = |file: usize| -> Result<(), String> {
+            let mut body = String::new();
+            for item in 0..100 {
+                body.push_str(&format!(
+                    "pub fn f{file}_{item}(x: i32) -> bool {{ x > {item} }}\n"
+                ));
+            }
+            std::fs::write(root.join(format!("src/m{file}.rs")), body)
+                .map_err(|error| error.to_string())
+        };
+        let write_lib = |modules: usize| -> Result<(), String> {
+            let lib: String = (0..modules)
+                .map(|file| format!("pub mod m{file};\n"))
+                .collect();
+            std::fs::write(root.join("src/lib.rs"), lib).map_err(|error| error.to_string())
+        };
+        // Calibrate the seams one 100-function module yields, so the fixture
+        // lands between the default cap and the repair ceiling whatever the
+        // extractor's per-function count is.
+        write_module(0)?;
+        write_lib(1)?;
+        let config = load_for_root(&root)?;
+        let per_module =
+            crate::analysis::inventory_classified_seams_at_with_config(&root, &config)?
+                .0
+                .len();
+        assert!(per_module > 0, "calibration module yields seams");
+        let modules = (DEFAULT_REPO_EXPOSURE_SEAM_LIMIT + per_module) / per_module + 5;
+        for file in 1..modules {
+            write_module(file)?;
+        }
+        write_lib(modules)?;
+
+        // Plain inventory: cut by the default cap.
+        let (_, plain) =
+            crate::analysis::inventory_classified_seams_at_with_config(&root, &config)?;
+        let plain = plain.ok_or("expected a limit fact")?;
+        assert!(plain.is_truncated(), "fixture must exceed the default cap");
+        assert_eq!(plain.analyzed, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT);
+        assert_eq!(plain.source, SeamLimitSource::Default);
+        assert!(plain.total <= REPAIR_SEAM_CEILING, "fixture stays in range");
+
+        // Repair inventory: widened, complete.
+        let (classified, info) = inventory_for_repair(&root, &config)?;
+        assert!(info.is_none_or(|info| !info.is_truncated()));
+        assert_eq!(classified.len(), plain.total);
+
+        // Agent-status gate: same answer, not withheld as truncated.
+        let gate = load_gate_state(&root);
+        assert!(
+            matches!(
+                gate,
+                GateState::Loaded {
+                    truncated: false,
+                    ..
+                }
+            ),
+            "the status gate must use the widened inventory"
+        );
+
+        // The cap is restored for later plain reads.
+        let (_, after) =
+            crate::analysis::inventory_classified_seams_at_with_config(&root, &config)?;
+        assert!(after.is_some_and(|info| info.is_truncated()));
+        assert_eq!(
+            crate::analysis::repo_exposure_seam_limit()?,
+            Some((DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, SeamLimitSource::Default))
+        );
+        Ok(())
+    }
+
     fn key<'a>(
         kind: crate::analysis::seams::SeamKind,
         file: &'a str,
@@ -3764,6 +3870,100 @@ pub(crate) mod tests {
         let plain = gate_entry(SeamGripClass::Ungripped, Vec::new());
         let reason = route_not_ready_reason(&plain, "repair route not ready", &[], root);
         assert!(!reason.contains("--kind predicate"), "{reason}");
+        Ok(())
+    }
+
+    /// #11466: a return-value or error-path seam whose only blocker is the
+    /// missing test module names its stub route too (the stub adds the module);
+    /// a seam kind with no stub kind stays bare.
+    #[test]
+    fn module_only_blocker_names_the_return_and_error_stub_routes() -> Result<(), String> {
+        use crate::analysis::new_test_target::{NewTestProposalBlocker, NewTestTargetAdmission};
+        use crate::analysis::seams::{
+            ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
+        };
+        let root = RefusalRoot::named(Path::new("/repo"));
+        let build = |kind, required| {
+            let mut entry = gate_entry(SeamGripClass::Ungripped, Vec::new());
+            entry.seam = RepoSeam::new(
+                "src/pricing.rs",
+                "pricing::discounted_total",
+                kind,
+                42,
+                88,
+                "changed value",
+                required,
+                ExpectedSink::ReturnValue,
+            );
+            entry.evidence.new_test_target = Some(NewTestTargetAdmission {
+                blocker: Some(NewTestProposalBlocker::NoTestModule),
+                ..NewTestTargetAdmission::default()
+            });
+            entry
+        };
+        let only_target = |entry: &crate::analysis::ClassifiedSeam| -> Result<Vec<String>, String> {
+            let blocked = entry
+                .evidence
+                .new_test_target
+                .as_ref()
+                .and_then(|admission| admission.missing_reason())
+                .ok_or("the module blocker must name a missing reason")?;
+            Ok(vec![
+                crate::analysis::repair_route::SAFE_TEST_TARGET_EVIDENCE.to_string(),
+                blocked,
+            ])
+        };
+
+        let ret = build(
+            SeamKind::ReturnValue,
+            RequiredDiscriminator::ReturnValue {
+                description: "changed value".to_string(),
+            },
+        );
+        let missing = only_target(&ret)?;
+        let reason = route_not_ready_reason(&ret, "repair route not ready", &missing, root);
+        assert!(
+            reason.contains("--at src/pricing.rs:88 --kind return_value")
+                && reason.contains("no test module yet"),
+            "{reason}"
+        );
+
+        let err = build(
+            SeamKind::ErrorVariant,
+            RequiredDiscriminator::ErrorVariant {
+                variant: "Bad".to_string(),
+            },
+        );
+        let missing = only_target(&err)?;
+        let reason = route_not_ready_reason(&err, "repair route not ready", &missing, root);
+        assert!(reason.contains("--kind error_path"), "{reason}");
+
+        // Negatives: another missing fact keeps the bare label, and a seam
+        // kind without a stub kind names no route.
+        let mut more = only_target(&ret)?;
+        more.push("incomplete evidence stage: propagation".to_string());
+        let reason = route_not_ready_reason(&ret, "repair route not ready", &more, root);
+        assert!(!reason.contains("ripr agent stub"), "{reason}");
+        // Negative: no module blocker and nothing missing names no route.
+        let mut plain = build(
+            SeamKind::ReturnValue,
+            RequiredDiscriminator::ReturnValue {
+                description: "changed value".to_string(),
+            },
+        );
+        plain.evidence.new_test_target = None;
+        let reason = route_not_ready_reason(&plain, "repair route not ready", &[], root);
+        assert!(!reason.contains("ripr agent stub"), "{reason}");
+        let field = build(
+            SeamKind::SideEffect,
+            RequiredDiscriminator::Effect {
+                sink: "log".to_string(),
+            },
+        );
+        let missing = only_target(&field)?;
+        let reason = route_not_ready_reason(&field, "repair route not ready", &missing, root);
+        assert!(!reason.contains("--kind return_value"), "{reason}");
+        assert!(!reason.contains("--kind error_path"), "{reason}");
         Ok(())
     }
 
