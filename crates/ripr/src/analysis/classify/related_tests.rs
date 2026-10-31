@@ -4366,9 +4366,9 @@ fn declared_return_names_type(function: &FunctionSummary, index: &RustIndex, ty:
     // A type parameter named like the impl type is not that type.
     if ast::HasGenericParams::generic_param_list(&declared).is_some_and(|params| {
         params.generic_params().any(|param| match param {
-            ast::GenericParam::TypeParam(param) => {
-                param.name().is_some_and(|name| name.text() == ty)
-            }
+            ast::GenericParam::TypeParam(param) => param
+                .name()
+                .is_some_and(|name| name.text().trim_start_matches("r#") == ty),
             _ => false,
         })
     }) {

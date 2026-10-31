@@ -14463,7 +14463,12 @@ pub(super) fn imported_enum_variant_value(
             && (rooted(&import.path, &enum_glob) || rooted(&import.path, &enum_variant))
         {
             admitted += 1;
-        } else if binds_name {
+        } else if binds_name || import.path.ends_with("::*") || import.path == "*" {
+            // Another binding of the name, or any other glob that could
+            // supply it: the use items are read file-wide rather than by the
+            // test's lexical scope, so a second glob keeps the spelling
+            // ambiguous (e.g. `std::cmp::Ordering::*` beside a sibling
+            // module's `E::*`).
             return false;
         }
     }
@@ -14473,6 +14478,14 @@ pub(super) fn imported_enum_variant_value(
     // A same-named item (other than the enum's own variant list) would shadow
     // the glob; refuse any item keyword directly before the spelling.
     !whole_word_offsets(&masked, name).into_iter().any(|offset| {
+        // A parameter or closure parameter of the same name shadows the
+        // variant: `name:` (a single colon) or a leading `|` binds it.
+        let after = masked[offset + name.len()..].trim_start();
+        if (after.starts_with(':') && !after.starts_with("::"))
+            || masked[..offset].trim_end().ends_with('|')
+        {
+            return true;
+        }
         let before = masked[..offset].trim_end();
         [
             "const", "static", "fn", "struct", "union", "type", "mod", "trait", "enum", "let",

@@ -731,6 +731,20 @@ fn imported_enum_variant_value_admits_only_the_single_unambiguous_import() {
         "Upper",
         "use crate::Rule::*;\n#[test]\nfn t() { let Upper = 1; }\n"
     ));
+    // A second glob (file-wide use scan) or a same-named parameter keeps the
+    // spelling ambiguous.
+    assert!(!decide(
+        "Upper",
+        "use std::cmp::Ordering::*;\nuse crate::Rule::*;\n#[test]\nfn t() { assert_eq!(Upper.apply(1), 1); }\n"
+    ));
+    assert!(!decide(
+        "Upper",
+        "use crate::Rule::*;\n#[test]\nfn t(Upper: u32) { assert_eq!(Upper.apply(1), 1); }\n"
+    ));
+    assert!(!decide(
+        "Upper",
+        "use crate::Rule::*;\n#[test]\nfn t() { let f = |Upper| Upper; f(1); }\n"
+    ));
     // Two declarations of the enum make it ambiguous.
     let two = index(&[(HELPERS, ENUM), (LIB, glob), ("src/other.rs", ENUM)]);
     assert!(!imported_enum_variant_value(

@@ -20500,7 +20500,7 @@ tests = [
   "crates/ripr/tests/receiver_unestablished_limit.rs::a_qualified_associated_factory_keeps_the_gap",
   "crates/ripr/tests/receiver_unestablished_limit.rs::an_unauthoritative_inherent_factory_declaration_keeps_the_gap",
   "crates/ripr/src/analysis/classify/receiver_unestablished.rs::tests::a_related_row_names_one_of_two_same_named_tests_by_its_start_line",
-  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::imports_visible_at_a_line_exclude_sibling_modules_and_other_blocks",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::imported_enum_variant_value_admits_only_the_single_unambiguous_import",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::imported_crate_roots_read_through_whitespace_and_comments",
 ]
 code = [
