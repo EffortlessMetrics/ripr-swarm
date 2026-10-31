@@ -3318,7 +3318,8 @@ mod tests {
         unresolved_call.missing = vec!["A strong Python oracle reaches `f`, but static evidence does not place a related test input at the changed predicate boundary. Some strong related calls have unresolved inputs, so static evidence cannot determine whether they reach the changed boundary of `x >= y`".to_string()];
         let unresolved_action = python_preview_safe_action(&unresolved_call, false);
         assert!(
-            unresolved_action.contains("static evidence cannot place every strong related test input"),
+            unresolved_action
+                .contains("static evidence cannot place every strong related test input"),
             "{unresolved_action}"
         );
         assert!(
