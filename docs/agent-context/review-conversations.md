@@ -3,7 +3,7 @@
 Use this read-only recipe before finish-pr's thread-disposition step and refresh
 it immediately before merge convergence. It complements `gh-pr-status`; that
 advisory packet does not enumerate inline conversations. It does not grant
-`REVIEW_READY` or replace required checks, protection/ruleset reads or substantive
+`REVIEW_READY` or replace required checks, normal server enforcement or substantive
 review. The existing finish-pr procedure remains the decision owner.
 
 ## Collect (PowerShell 7)
@@ -97,7 +97,7 @@ do {
     threads_inspected = $conversationIds.Count
     unresolved_count = $conversationThreads.Count
     unresolved = @($conversationThreads)
-    next_action = $(if ($conversationThreads.Count) { 'Disposition unresolved conversations through finish-pr; merge preparation remains blocked' } else { 'Refresh exact-head review, required checks and applicable protections through finish-pr; zero threads is not review or merge permission' })
+    next_action = $(if ($conversationThreads.Count) { 'Disposition unresolved conversations through finish-pr; merge preparation remains blocked' } else { 'Refresh exact-head review and required checks through finish-pr; zero threads is not review or merge permission' })
 } | ConvertTo-Json -Depth 12
 ```
 
@@ -160,8 +160,8 @@ Challenge the same block with each fixture variant:
 | Null, empty, short, non-hex or newline-suffixed reviewed SHA | Error before any request, no success packet |
 | All pages consistently return a different head | Error on page 1, no success packet |
 | Empty complete inventory for a different head | Error on page 1, never a clear inventory |
-| Empty complete inventory | 0 inspected, 0 unresolved; review/check/protection obligations remain |
-| Resolve both open threads | 3 inspected, 0 unresolved; next action still requires review/checks/protections |
+| Empty complete inventory | 0 inspected, 0 unresolved; review/check obligations and server enforcement remain |
+| Resolve both open threads | 3 inspected, 0 unresolved; next action still requires review/checks and server enforcement |
 | Keep only page 1 (`hasNextPage=true`) | Error, no success packet |
 | Missing/empty or repeated nonterminal cursor; a cursor cycle | Error before another request, no success packet |
 | Repeated or absent terminal cursor | Accepted; terminal cursors are unused |

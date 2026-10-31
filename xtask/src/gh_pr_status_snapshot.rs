@@ -128,7 +128,7 @@ fn unchanged(number: u64, before: &Subject, after: &Subject) -> Result<(), Strin
     let affected = if before.head != after.head {
         "refresh affected head-bound proof/review and integration judgment"
     } else if before.target != after.target {
-        "refresh target protection and integration judgment; retain unchanged-head proof/review"
+        "refresh target and integration judgment; retain unchanged-head proof/review"
     } else {
         "refresh integration judgment; retain unchanged-head proof/review"
     };
@@ -141,20 +141,16 @@ fn unchanged(number: u64, before: &Subject, after: &Subject) -> Result<(), Strin
 pub(crate) fn collect_current(
     number: u64,
     mut collect: impl FnMut() -> Result<Value, String>,
-    mut contexts: impl FnMut(&str) -> Result<Vec<String>, String>,
 ) -> Result<Observation, String> {
     let first = collect()?;
     let before = Subject::read(&first, number)?;
-    let (contexts, contexts_available, mut warnings) = match contexts(&before.target) {
-        Ok(contexts) => (contexts, true, Vec::new()),
-        Err(error) => (
-            Vec::new(),
-            false,
-            vec![format!(
-                "required status context lookup failed; using status rollup only: {error}"
-            )],
-        ),
-    };
+    // Routine PR progression does not inspect repository settings. The rollup
+    // cannot establish the complete required-check set; keep that unknown.
+    let contexts = Vec::new();
+    let contexts_available = false;
+    let mut warnings = vec![
+        "Required-check completeness is unknown from the status rollup alone; GitHub enforces applicable requirements on the normal merge request".to_string(),
+    ];
     // Refresh the full response: unchanged identities do not imply unchanged checks/review.
     let pr = collect().map_err(|error| format!("final PR snapshot unavailable: {error}"))?;
     let after = Subject::read(&pr, number)
@@ -194,34 +190,28 @@ mod tests {
     ) -> (Result<Observation, String>, Vec<String>) {
         let calls = RefCell::new(Vec::new());
         let mut responses = vec![Ok(first), last].into_iter();
-        let result = collect_current(
-            42,
-            || {
-                calls.borrow_mut().push("pr".to_string());
-                responses.next().ok_or("unexpected third read")?
-            },
-            |target| {
-                calls.borrow_mut().push(format!("contexts:{target}"));
-                Ok(vec!["rust".to_string()])
-            },
-        );
+        let result = collect_current(42, || {
+            calls.borrow_mut().push("pr".to_string());
+            responses.next().ok_or("unexpected third read")?
+        });
         (result, calls.into_inner())
     }
 
     #[test]
-    fn unchanged_subject_uses_final_facts_after_context_lookup() -> Result<(), String> {
+    fn unchanged_subject_uses_final_facts_without_settings_lookup() -> Result<(), String> {
         let mut last = snapshot();
         last["statusCheckRollup"][0]["status"] = json!("IN_PROGRESS");
         last["reviewDecision"] = json!("CHANGES_REQUESTED");
         let (result, calls) = run(snapshot(), Ok(last.clone()));
         let observation = result?;
-        assert_eq!(calls, ["pr", "contexts:main", "pr"]);
+        assert_eq!(calls, ["pr", "pr"]);
         assert_eq!(observation.pr, last);
-        assert_eq!(observation.contexts, ["rust"]);
-        assert!(observation.contexts_available);
-        assert_eq!(observation.warnings.len(), 1);
-        assert!(observation.warnings[0].contains(H1) && observation.warnings[0].contains(B1));
-        assert!(observation.warnings[0].contains("not atomic"));
+        assert!(observation.contexts.is_empty());
+        assert!(!observation.contexts_available);
+        assert_eq!(observation.warnings.len(), 2);
+        assert!(observation.warnings[0].contains("unknown"));
+        assert!(observation.warnings[1].contains(H1) && observation.warnings[1].contains(B1));
+        assert!(observation.warnings[1].contains("not atomic"));
         Ok(())
     }
 
@@ -255,11 +245,11 @@ mod tests {
     }
 
     #[test]
-    fn retarget_refuses_former_protection_contexts() -> Result<(), String> {
+    fn retarget_refuses_old_snapshot() -> Result<(), String> {
         let mut last = snapshot();
         last["baseRefName"] = json!("release");
         let (result, _) = run(snapshot(), Ok(last));
-        let error = result.err().ok_or("retarget accepted former contexts")?;
+        let error = result.err().ok_or("retarget accepted former snapshot")?;
         assert!(
             error.contains("main") && error.contains("release"),
             "{error}"
@@ -288,31 +278,12 @@ mod tests {
     }
 
     #[test]
-    fn invalid_initial_identity_never_reads_contexts() {
+    fn invalid_initial_identity_never_reads_again() {
         let mut first = snapshot();
         first["headRefOid"] = Value::Null;
         let (result, calls) = run(first, Ok(snapshot()));
         assert!(result.is_err());
         assert_eq!(calls, ["pr"]);
-    }
-
-    #[test]
-    fn unavailable_protection_still_refreshes_final_snapshot() -> Result<(), String> {
-        let mut reads = 0;
-        let observation = collect_current(
-            42,
-            || {
-                reads += 1;
-                Ok(snapshot())
-            },
-            |_| Err("denied".to_string()),
-        )?;
-        assert_eq!(reads, 2);
-        assert!(!observation.contexts_available);
-        assert!(observation.contexts.is_empty());
-        assert_eq!(observation.warnings.len(), 2);
-        assert!(observation.warnings[0].contains("denied"));
-        Ok(())
     }
 
     fn graphql(identity: Value) -> Value {
