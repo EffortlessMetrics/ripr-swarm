@@ -146,12 +146,16 @@ receipt strength, and currentness as separate facts:
 
 - That diff's base is inferred the way a bare `ripr check` infers it, through
   the shared base resolver (#11246), so a change committed on a branch scopes
-  repair like the same change left uncommitted. Inference only narrows: when
+  repair like the same change left uncommitted (already true before #11246;
+  pinned by regression tests). Inference only narrows: when
   no base resolves, or nothing differs from the inferred base (for example on
   the default branch itself), the selection stays unscoped and the refusal
   says first that ripr could not tell which lines changed. `--base REF`, as on
   `ripr check`, names the base explicitly and wins over inference; it is
-  refused together with an item, which is never scoped.
+  refused together with an item, which is never scoped. The note appears only
+  in a refusal (including the zero-seam one); a selection or start that is
+  shown does not repeat it. The MCP repair route builds its own diff-scoped
+  inventory and does not call this selector, so it needs no `--base`.
 
 - A restart or fresh-start route is named only when the shared repair
   eligibility gate admits the seam (#8766): `repair_refusal` (the gate
@@ -284,6 +288,11 @@ store.
 - `crates/ripr/src/app/task_first.rs::unscoped_note_tests::unreadable_diff_says_no_base_could_be_found`
 - `crates/ripr/src/app/task_first.rs::unscoped_note_tests::empty_diff_says_nothing_differs_from_the_base`
 - `crates/ripr/src/app/task_first.rs::unscoped_note_tests::a_readable_nonempty_diff_adds_no_note`
+- `crates/ripr/tests/repair_infer_base.rs::an_explicit_base_narrows_a_selection_to_the_changed_spot`
+- `crates/ripr/tests/repair_infer_base.rs::an_explicit_base_reads_the_dirty_working_tree_too`
+- `crates/ripr/tests/repair_infer_base.rs::zero_seam_refusal_leads_with_the_unscoped_note`
+- `crates/ripr/tests/repair_infer_base.rs::an_explicit_base_reaches_the_non_rust_guidance`
+- `crates/ripr/src/app/task_first.rs::unscoped_note_tests::an_explicit_base_is_named_when_its_diff_cannot_be_read`
 
 ## Implementation Mapping
 

@@ -560,8 +560,8 @@ pub(crate) fn resolve_repair_start(
     // #11246: inference only narrows. When no changed line could be read, the
     // spots above are not scoped to the change, and the text says so first
     // (the reason list is capped, so it is placed where it survives).
-    if let Some(note) = unscoped_diff_note(diff.as_deref()) {
-        refusal_reasons.insert(0, note.to_string());
+    if let Some(note) = unscoped_diff_note(diff.as_deref(), base) {
+        refusal_reasons.insert(0, note);
     }
     let (reasons, reasons_total) =
         collect_no_eligible_reasons(refusal_reasons.iter().map(String::as_str));
@@ -1807,15 +1807,24 @@ pub(crate) struct ChangedNonRust {
 /// Why repair could not narrow its spots to the change, when it could not
 /// (#11246): no diff was readable (no base resolved), or the diff against the
 /// base changed nothing. A readable diff with changes is not unscoped here.
-fn unscoped_diff_note(diff: Option<&[crate::analysis::ChangedFile]>) -> Option<&'static str> {
-    match diff {
-        None => Some(
-            "ripr could not tell which lines you changed, because no base to compare against could be found (the same base `ripr check` uses), so the spots below are not narrowed to your change; pass `--base <ref>` to name it",
+fn unscoped_diff_note(
+    diff: Option<&[crate::analysis::ChangedFile]>,
+    base: Option<&str>,
+) -> Option<String> {
+    match (diff, base) {
+        (None, Some(base)) => Some(format!(
+            "ripr could not tell which lines you changed, because it could not read a diff against `{base}`, so the spots below are not narrowed to your change; check that `{base}` names a ref that exists here"
+        )),
+        (None, None) => Some(
+            "ripr could not tell which lines you changed, because no base to compare against could be found (the same base `ripr check` uses), so the spots below are not narrowed to your change; pass `--base <ref>` to name it".to_string(),
         ),
-        Some([]) => Some(
-            "ripr could not tell which lines you changed, because nothing differs from the base `ripr check` compares against (for example, you are on the default branch itself), so the spots below are not narrowed to your change; pass `--base <ref>` to name another base",
+        (Some([]), Some(base)) => Some(format!(
+            "ripr could not tell which lines you changed, because nothing differs from `{base}`, so the spots below are not narrowed to your change; pass `--base <ref>` to name another base"
+        )),
+        (Some([]), None) => Some(
+            "ripr could not tell which lines you changed, because nothing differs from the base `ripr check` compares against (for example, you are on the default branch itself), so the spots below are not narrowed to your change; pass `--base <ref>` to name another base".to_string(),
         ),
-        Some(_) => None,
+        (Some(_), _) => None,
     }
 }
 
@@ -1825,15 +1834,24 @@ mod unscoped_note_tests {
 
     #[test]
     fn unreadable_diff_says_no_base_could_be_found() {
-        let note = unscoped_diff_note(None).unwrap_or_default();
+        let note = unscoped_diff_note(None, None).unwrap_or_default();
         assert!(note.contains("could not tell which lines you changed"));
         assert!(note.contains("no base to compare against could be found"));
         assert!(note.contains("--base <ref>"));
     }
 
     #[test]
+    fn an_explicit_base_is_named_when_its_diff_cannot_be_read() {
+        let unreadable = unscoped_diff_note(None, Some("no-such-ref")).unwrap_or_default();
+        assert!(unreadable.contains("could not read a diff against `no-such-ref`"));
+        assert!(!unreadable.contains("no base to compare against could be found"));
+        let empty = unscoped_diff_note(Some(&[]), Some("main")).unwrap_or_default();
+        assert!(empty.contains("nothing differs from `main`"));
+    }
+
+    #[test]
     fn empty_diff_says_nothing_differs_from_the_base() {
-        let note = unscoped_diff_note(Some(&[])).unwrap_or_default();
+        let note = unscoped_diff_note(Some(&[]), None).unwrap_or_default();
         assert!(note.contains("could not tell which lines you changed"));
         assert!(note.contains("nothing differs from the base"));
     }
@@ -1844,7 +1862,8 @@ mod unscoped_note_tests {
             "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-a\n+b\n",
         );
         assert!(!files.is_empty(), "fixture must parse to a changed file");
-        assert_eq!(unscoped_diff_note(Some(&files)), None);
+        assert_eq!(unscoped_diff_note(Some(&files), None), None);
+        assert_eq!(unscoped_diff_note(Some(&files), Some("main")), None);
     }
 }
 
@@ -1878,8 +1897,8 @@ fn live_check_diff_files(
 /// decoding, so a committed-only branch, a package root and a C-quoted
 /// filename agree with `check`. Best effort: an unreadable diff reads as no
 /// such languages, so the caller keeps its generic message.
-pub(crate) fn changed_non_rust_languages(root: &Path) -> Vec<ChangedNonRust> {
-    let Some(files) = live_check_diff_files(root, None) else {
+pub(crate) fn changed_non_rust_languages(root: &Path, base: Option<&str>) -> Vec<ChangedNonRust> {
+    let Some(files) = live_check_diff_files(root, base) else {
         return Vec::new();
     };
     let mut found: Vec<ChangedNonRust> = Vec::new();

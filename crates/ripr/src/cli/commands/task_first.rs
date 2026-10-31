@@ -345,6 +345,7 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
                 // setup/limitation message on stderr, stdout empty.
                 return Err(CommandError::Decision(no_eligible_seam_message(
                     &options.root,
+                    options.base.as_deref(),
                     total_seams,
                     &reasons,
                     reasons_total,
@@ -672,7 +673,7 @@ fn start_with_repair_clause(root: &std::path::Path, root_arg: &str) -> String {
             reasons_total,
         }) => format!(
             "`ripr repair` starts nothing right now: {}",
-            no_eligible_seam_message(root, total_seams, &reasons, reasons_total)
+            no_eligible_seam_message(root, None, total_seams, &reasons, reasons_total)
         ),
         // The auto selector uses only the packet-eligibility gate; the start
         // itself also applies the edit-target and held-inline checks, so the
@@ -700,12 +701,13 @@ fn start_with_repair_clause(root: &std::path::Path, root_arg: &str) -> String {
 
 fn no_eligible_seam_message(
     root: &std::path::Path,
+    base: Option<&str>,
     total_seams: usize,
     reasons: &[String],
     reasons_total: usize,
 ) -> String {
     let changed_non_rust = if total_seams == 0 {
-        crate::app::task_first::changed_non_rust_languages(root)
+        crate::app::task_first::changed_non_rust_languages(root, base)
     } else {
         Vec::new()
     };
@@ -716,8 +718,15 @@ fn no_eligible_seam_message(
         if !changed_non_rust.is_empty() {
             return crate::app::task_first::non_rust_repair_guidance(&root, &changed_non_rust);
         }
+        // #11246: with no seams there is no list to narrow, but a missing diff
+        // still decides what the reader may conclude, so the unscoped note
+        // (the only reason a zero-seam run carries) leads the message.
+        let unscoped = reasons
+            .iter()
+            .map(|reason| format!(" ({reason})"))
+            .collect::<String>();
         return format!(
-            "no seams visible under {root}; `ripr repair` selects repository seams and does not reuse the diff or base from an earlier `ripr check`. If that check printed a gap-bound repair start, use the start printed by that check; rerun the same check, including its original --base if supplied, if needed. To explore repository seams, run `ripr pilot --root {root}`"
+            "no seams visible under {root}{unscoped}; `ripr repair` selects repository seams and does not reuse the diff or base from an earlier `ripr check`. If that check printed a gap-bound repair start, use the start printed by that check; rerun the same check, including its original --base if supplied, if needed. To explore repository seams, run `ripr pilot --root {root}`"
         );
     }
     let noun = if total_seams == 1 { "seam" } else { "seams" };
@@ -928,7 +937,7 @@ mod tests {
             "cross-language oracle visibility unresolved".to_string(),
             "repair target unresolved".to_string(),
         ];
-        let truncated = no_eligible_seam_message(Path::new("."), 9, &reasons, 5);
+        let truncated = no_eligible_seam_message(Path::new("."), None, 9, &reasons, 5);
         for expected in ["(and 2 more", "ripr pilot"] {
             if !truncated.contains(expected) {
                 return Err(format!(
@@ -936,7 +945,7 @@ mod tests {
                 ));
             }
         }
-        let complete = no_eligible_seam_message(Path::new("."), 9, &reasons, 3);
+        let complete = no_eligible_seam_message(Path::new("."), None, 9, &reasons, 3);
         if complete.contains("and 2 more") {
             return Err(format!(
                 "complete list must not claim a remainder: {complete}"
@@ -1061,8 +1070,8 @@ mod tests {
         for (body, usage, flags) in [
             (
                 REPAIR_HELP,
-                "Usage: ripr repair [<item>] [--root PATH]",
-                &["--root"][..],
+                "Usage: ripr repair [<item>] [--root PATH] [--base REF]",
+                &["--root", "--base"][..],
             ),
             (
                 CONTINUE_HELP,
@@ -1234,15 +1243,15 @@ mod tests {
     #[test]
     fn no_eligible_seam_message_separates_setup_from_limitation() -> Result<(), String> {
         let root = Path::new("/ripr-task-first-root");
-        let setup = no_eligible_seam_message(root, 0, &["ignored reason".to_string()], 1);
+        let setup = no_eligible_seam_message(root, None, 0, &["unscoped note".to_string()], 1);
         if !setup.starts_with("no seams visible under ")
             || setup.contains("none repair-eligible")
-            || setup.contains("ignored reason")
+            || !setup.contains(" (unscoped note); ")
             || !setup.contains("`ripr pilot --root ")
         {
             return Err(format!("zero seams must be the setup outcome:\n{setup}"));
         }
-        let one = no_eligible_seam_message(root, 1, &[], 0);
+        let one = no_eligible_seam_message(root, None, 1, &[], 0);
         if !one.starts_with("1 visible seam under ") || one.contains("seams under") {
             return Err(format!("one seam must be singular:\n{one}"));
         }
@@ -1251,6 +1260,7 @@ mod tests {
         }
         let several = no_eligible_seam_message(
             root,
+            None,
             3,
             &[
                 "repair route not ready".to_string(),
@@ -1268,7 +1278,8 @@ mod tests {
             }
         }
         // A bounded reason list discloses the omitted remainder (#8728).
-        let bounded = no_eligible_seam_message(root, 5, &["repair route not ready".to_string()], 4);
+        let bounded =
+            no_eligible_seam_message(root, None, 5, &["repair route not ready".to_string()], 4);
         if !bounded.contains("(and 3 more; run `ripr pilot --root ") {
             return Err(format!(
                 "bounded reasons must disclose the rest:\n{bounded}"

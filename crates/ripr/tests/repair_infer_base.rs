@@ -58,6 +58,21 @@ impl Repo {
         Ok(repo)
     }
 
+    /// A package with no Rust seam whose only change is to a Python file.
+    fn python_only(form: Form) -> Result<Self, String> {
+        let repo = Self::empty()?;
+        repo.write(
+            "Cargo.toml",
+            "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        repo.write("src/lib.rs", "pub struct Marker;\n")?;
+        repo.write("tools/x.py", "def f(x):\n    return x\n")?;
+        repo.commit_base(form)?;
+        repo.write("tools/x.py", "def f(x):\n    return x + 1\n")?;
+        repo.land_change(form)?;
+        Ok(repo)
+    }
+
     /// A workspace: `wscore` changes, `app` depends on it, and the test lives
     /// with the changed crate.
     fn workspace(form: Form) -> Result<Self, String> {
@@ -283,7 +298,7 @@ fn a_spot_outside_the_changed_lines_is_not_offered_as_the_start() -> Result<(), 
     on_default.assert_changed_paths(Form::OnDefaultBranch, "src/lib.rs")?;
     let unscoped = on_default.ripr(&["repair", "--root", "."])?;
     assert!(
-        unscoped.contains("7 visible seams") && unscoped.contains("repair route not ready"),
+        unscoped.contains(" visible seams under ") && unscoped.contains("repair route not ready"),
         "control: with nothing to scope by, repair lists the repository's spots:\n{unscoped}"
     );
 
@@ -315,7 +330,7 @@ fn no_resolvable_base_keeps_the_unscoped_list_and_says_so() -> Result<(), String
     // by the plain statement that nothing could be scoped.
     let repair = repo.ripr(&["repair", "--root", "."])?;
     assert!(
-        repair.contains("7 visible seams")
+        repair.contains(" visible seams under ")
             && repair.contains("repair route not ready")
             && repair.contains("could not tell which lines you changed"),
         "no base means no narrowing:\n{repair}"
@@ -379,7 +394,7 @@ fn an_explicit_base_wins_over_inference() -> Result<(), String> {
         "an explicit base scopes the refusal:\n{explicit}"
     );
     assert!(
-        explicit.contains("already grip it (exposed)") || explicit.contains("already grip"),
+        explicit.contains("already grip it"),
         "the gripped change is named:\n{explicit}"
     );
     assert!(offered_starts(&explicit).is_empty(), "{explicit}");
@@ -387,8 +402,10 @@ fn an_explicit_base_wins_over_inference() -> Result<(), String> {
     // unreadable, so the refusal says it could not scope.
     let bogus = repo.ripr(&["repair", "--root", ".", "--base", "no-such-ref"])?;
     assert!(
-        bogus.contains("could not tell which lines you changed"),
-        "{bogus}"
+        bogus.contains("could not tell which lines you changed")
+            && bogus.contains("could not read a diff against `no-such-ref`")
+            && !bogus.contains("no base to compare against could be found"),
+        "an explicit ref that fails is named, not blamed on inference:\n{bogus}"
     );
     Ok(())
 }
@@ -398,5 +415,82 @@ fn repair_base_is_refused_with_an_item() -> Result<(), String> {
     let repo = all_gripped(Form::FeatureBranch)?;
     let text = repo.ripr(&["repair", "some-item", "--base", "main"])?;
     assert!(text.contains("drop `--base` when naming an item"), "{text}");
+    Ok(())
+}
+
+const TWO_SPOTS_BASE: &str = "pub fn chk(x: i32) -> i32 {\n    if x < 0 {\n        return -1;\n    }\n    if x > 100 {\n        return 1;\n    }\n    0\n}\n";
+const TWO_SPOTS_TEST: &str = "use fx::chk;\n\n#[test]\nfn t() {\n    assert_eq!(chk(5), 0);\n}\n";
+
+#[test]
+fn an_explicit_base_narrows_a_selection_to_the_changed_spot() -> Result<(), String> {
+    let new = TWO_SPOTS_BASE.replace("x > 100", "x >= 100");
+    let repo = Repo::package(TWO_SPOTS_BASE, &new, TWO_SPOTS_TEST, Form::NoResolvableBase)?;
+    repo.assert_changed_paths(Form::NoResolvableBase, "src/lib.rs")?;
+    let wide = repo.ripr(&["repair", "--root", "."])?;
+    assert!(
+        wide.contains("different repairs")
+            && wide.contains("src/lib.rs:2")
+            && wide.contains("src/lib.rs:5"),
+        "control: unscoped, both spots are offered:\n{wide}"
+    );
+    let narrow = repo.ripr(&["repair", "--root", ".", "--base", "HEAD~1"])?;
+    assert!(
+        !narrow.contains("different repairs") && !narrow.contains("src/lib.rs:2"),
+        "the spot outside the changed line must not be offered or started:\n{narrow}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_explicit_base_reads_the_dirty_working_tree_too() -> Result<(), String> {
+    let repo = all_gripped(Form::NoResolvableBase)?;
+    // An uncommitted edit makes check's default source the working tree, whose
+    // diff is read against the explicit base.
+    repo.write(
+        "tests/t.rs",
+        "use fx::dbl;\n\n#[test]\nfn exact() {\n    assert_eq!(dbl(2), 6);\n    assert_eq!(dbl(3), 9);\n}\n",
+    )?;
+    assert_eq!(
+        repo.git_out(&["status", "--porcelain", "--untracked-files=no"])?
+            .trim(),
+        "M tests/t.rs",
+        "fixture must hold the uncommitted edit"
+    );
+    let dirty = repo.ripr(&["repair", "--root", ".", "--base", "HEAD~1"])?;
+    assert!(
+        !dirty.contains("could not tell which lines you changed")
+            && dirty.contains("already grip it"),
+        "the working-tree diff against the explicit base scopes the refusal:\n{dirty}"
+    );
+    let unscoped = repo.ripr(&["repair", "--root", "."])?;
+    assert!(
+        unscoped.contains("could not tell which lines you changed"),
+        "control: without it no base resolves:\n{unscoped}"
+    );
+    Ok(())
+}
+
+#[test]
+fn zero_seam_refusal_leads_with_the_unscoped_note() -> Result<(), String> {
+    let repo = Repo::python_only(Form::NoResolvableBase)?;
+    repo.assert_changed_paths(Form::NoResolvableBase, "tools/x.py")?;
+    let repair = repo.ripr(&["repair", "--root", "."])?;
+    assert!(
+        repair.contains("no seams visible under ")
+            && repair.contains("could not tell which lines you changed"),
+        "{repair}"
+    );
+    assert!(!repair.contains("works from Rust seams only"), "{repair}");
+    Ok(())
+}
+
+#[test]
+fn an_explicit_base_reaches_the_non_rust_guidance() -> Result<(), String> {
+    let repo = Repo::python_only(Form::NoResolvableBase)?;
+    let explicit = repo.ripr(&["repair", "--root", ".", "--base", "HEAD~1"])?;
+    assert!(
+        explicit.contains("is Python") && explicit.contains("works from Rust seams only"),
+        "the named base finds the Python change:\n{explicit}"
+    );
     Ok(())
 }
