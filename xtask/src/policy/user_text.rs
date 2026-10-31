@@ -226,6 +226,9 @@ pub(crate) fn golden_human_files(root: &Path) -> Result<Vec<PathBuf>, String> {
                     .and_then(Path::file_name)
                     .is_some_and(|name| name == "expected")
             {
+                if !kind.is_file() {
+                    return Err(format!("golden {} is not a regular file", path.display()));
+                }
                 out.push(path);
             }
         }
@@ -459,7 +462,7 @@ fn git_run(root: &Path, args: &[&str], stdin: Option<Vec<u8>>) -> Result<Vec<u8>
     if let Some(writer) = writer {
         writer
             .join()
-            .map_err(|_| "git stdin writer panicked".to_string())?
+            .map_err(|_panic| "git stdin writer panicked".to_string())?
             .map_err(|err| format!("git {} stdin: {err}", args.join(" ")))?;
     }
     if !output.status.success() {
@@ -567,6 +570,17 @@ fn resolve_sha(root: &Path, args: &[&str]) -> Result<String, String> {
     Ok(sha)
 }
 
+/// A golden entry that is not a regular file (symlink, submodule): blob reads
+/// would see link text while the working tree follows the link, so fail closed.
+fn irregular_golden_entry(ls_tree_z: &str) -> Option<String> {
+    ls_tree_z.split('\0').find_map(|entry| {
+        let (meta, path) = entry.split_once('\t')?;
+        let mode = meta.split_whitespace().next()?;
+        (is_golden_human_path(path) && mode != "100644" && mode != "100755")
+            .then(|| format!("golden {path} has git mode {mode}; only regular files are supported"))
+    })
+}
+
 /// Golden counts per `(path, term)` and the set of golden paths in the tree of
 /// the commit `sha`, read through Git objects only.
 fn golden_counts_at(root: &Path, sha: &str) -> Result<(Counts, BTreeSet<String>), String> {
@@ -575,6 +589,10 @@ fn golden_counts_at(root: &Path, sha: &str) -> Result<(Counts, BTreeSet<String>)
         &["ls-tree", "-r", "-z", "--name-only", sha, "--", "fixtures"],
     )?;
     let paths = golden_paths_from_ls_tree_z(&listing);
+    let modes = git_text(root, &["ls-tree", "-r", "-z", sha, "--", "fixtures"])?;
+    if let Some(odd) = irregular_golden_entry(&modes) {
+        return Err(odd);
+    }
     if paths.is_empty() {
         return Err(format!("no default human.txt goldens found at {sha}"));
     }
@@ -606,21 +624,36 @@ pub(crate) enum Mode {
     Ci { event: Result<CiEvent, String> },
 }
 
+/// GitHub Actions must identify a real event; other CI environments may not
+/// provide GitHub metadata and retain their existing advisory ref fallback.
+fn ci_event_name(github: bool, name: Option<String>) -> Result<String, String> {
+    let name = name.unwrap_or_default();
+    if github
+        && (name.is_empty()
+            || !name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'))
+    {
+        return Err("GITHUB_EVENT_NAME is missing or invalid under GitHub Actions".into());
+    }
+    Ok(name)
+}
+
 impl Mode {
     pub(crate) fn from_env() -> Mode {
-        let github = std::env::var("GITHUB_ACTIONS").is_ok_and(|value| !value.is_empty());
-        let ci = github || std::env::var("CI").is_ok_and(|value| value == "true");
+        Mode::from_lookup(&|key| std::env::var(key).ok())
+    }
+
+    /// Environment-free core of `from_env`, so every branch is testable.
+    pub(crate) fn from_lookup(lookup: &dyn Fn(&str) -> Option<String>) -> Mode {
+        let github = lookup("GITHUB_ACTIONS").is_some_and(|value| !value.is_empty());
+        let ci = github || lookup("CI").is_some_and(|value| value == "true");
         if !ci {
             return Mode::Local;
         }
-        let name = match std::env::var("GITHUB_EVENT_NAME") {
+        let name = match ci_event_name(github, lookup("GITHUB_EVENT_NAME")) {
             Ok(name) => name,
-            Err(_) if github => {
-                return Mode::Ci {
-                    event: Err("GITHUB_EVENT_NAME is missing under GitHub Actions".into()),
-                };
-            }
-            Err(_) => String::new(),
+            Err(reason) => return Mode::Ci { event: Err(reason) },
         };
         if name != "pull_request" && name != "merge_group" {
             return Mode::Ci {
@@ -631,14 +664,14 @@ impl Mode {
                 }),
             };
         }
-        let event = std::env::var("GITHUB_EVENT_PATH")
-            .map_err(|_| "GITHUB_EVENT_PATH is missing".to_string())
+        let event = lookup("GITHUB_EVENT_PATH")
+            .ok_or_else(|| "GITHUB_EVENT_PATH is missing".to_string())
             .and_then(|path| {
                 fs::read_to_string(path).map_err(|err| format!("read GitHub event payload: {err}"))
             })
             .and_then(|payload| {
                 let checkout =
-                    std::env::var("GITHUB_SHA").map_err(|_| "GITHUB_SHA is missing".to_string())?;
+                    lookup("GITHUB_SHA").ok_or_else(|| "GITHUB_SHA is missing".to_string())?;
                 Ok(CiEvent {
                     name,
                     payload,
@@ -1628,10 +1661,19 @@ mod tests {
         assert!(!counts.keys().any(|(path, _)| path == B));
 
         let missing = format!("{}:{A} missing\n", "a".repeat(40));
-        assert!(scan_cat_file_batch(missing.as_bytes(), &[A]).is_err());
-        assert!(scan_cat_file_batch(b"", &[A]).is_err());
+        assert!(
+            rejected(scan_cat_file_batch(missing.as_bytes(), &[A]))
+                .is_some_and(|reason| reason.contains("not a blob"))
+        );
+        assert!(
+            rejected(scan_cat_file_batch(b"", &[A]))
+                .is_some_and(|reason| reason.contains("truncated header"))
+        );
         let truncated = format!("{} blob 99\nshort\n", "a".repeat(40));
-        assert!(scan_cat_file_batch(truncated.as_bytes(), &[A]).is_err());
+        assert!(
+            rejected(scan_cat_file_batch(truncated.as_bytes(), &[A]))
+                .is_some_and(|reason| reason.contains("truncated body"))
+        );
         Ok(())
     }
 
@@ -1820,11 +1862,31 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn github_event_name_requires_nonempty_valid_name() {
+        assert!(rejected(ci_event_name(true, None)).is_some());
+        assert!(rejected(ci_event_name(true, Some(String::new()))).is_some());
+        assert!(rejected(ci_event_name(true, Some("  ".into()))).is_some());
+        assert!(rejected(ci_event_name(true, Some("pull-request".into()))).is_some());
+        assert_eq!(ci_event_name(true, Some("push".into())), Ok("push".into()));
+        assert_eq!(
+            ci_event_name(true, Some("workflow_dispatch".into())),
+            Ok("workflow_dispatch".into())
+        );
+        assert_eq!(ci_event_name(false, None), Ok(String::new()));
+    }
+
+    /// The error text of a failed result, `None` when it succeeded; keeps
+    /// negative assertions free of unwrap-family calls.
+    fn rejected<T>(result: Result<T, String>) -> Option<String> {
+        result.err()
+    }
+
     /// CI run with no pull_request/merge_group identity (for example `push`).
     fn ci_other() -> Mode {
         Mode::Ci {
             event: Ok(CiEvent {
-                name: String::new(),
+                name: "push".into(),
                 payload: String::new(),
                 checkout: String::new(),
             }),
@@ -1884,6 +1946,32 @@ mod tests {
         Ok(())
     }
 
+    /// Negative: a symlinked golden would read as link text from blobs but follow
+    /// the link in the working tree, so CI rejects it.
+    #[test]
+    fn ci_rejects_a_symlinked_golden() -> Result<(), String> {
+        let (root, base, pr, _) = pr_event_repo("ci-link", &[(A, "plain\n")], &[(A, "plain\n")])?;
+        run_git(&root, &["checkout", "-q", "--detach", &pr])?;
+        write_file(&root.join("fixtures/a/expected/real.txt"), "a seam\n")?;
+        let link = root.join(A);
+        fs::remove_file(&link).map_err(|err| format!("rm: {err}"))?;
+        std::os::unix::fs::symlink("real.txt", &link).map_err(|err| format!("link: {err}"))?;
+        run_git(&root, &["add", "-A"])?;
+        run_git(&root, &["commit", "-q", "-m", "link"])?;
+        let head = git_text(&root, &["rev-parse", "HEAD"])?.trim().to_string();
+        let (evaluation, note) = gate_in_ci(&root, "main", &mg_mode(&base, &head, &head))?;
+        let mut local = Counts::new();
+        let local_reason = rejected(scan_goldens(&root, &mut local));
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(evaluation.violations.len(), 1, "{evaluation:?}");
+        assert!(note.contains("git mode 120000"), "{note}");
+        assert!(
+            local_reason.is_some_and(|reason| reason.contains("not a regular file")),
+            "local scans must reject a symlinked golden too"
+        );
+        Ok(())
+    }
+
     /// Negative: under CI an edited working-tree golden fails closed, even when
     /// the edit hides the committed growth.
     #[test]
@@ -1907,27 +1995,196 @@ mod tests {
         let (root, base, pr, merge) =
             pr_event_repo("ci-ident", &[(A, "a seam\n")], &[(A, "a seam\n")])?;
         let good = gate_in_ci(&root, "main", &pr_mode(&base, &pr, &merge))?.0;
-        let wrong_base = gate_in_ci(&root, "main", &pr_mode(&pr, &pr, &merge))?.0;
-        let wrong_head = gate_in_ci(&root, "main", &pr_mode(&base, &base, &merge))?.0;
-        let wrong_checkout = gate_in_ci(&root, "main", &pr_mode(&base, &pr, &base))?.0;
+        let wrong_base = gate_in_ci(&root, "main", &pr_mode(&pr, &pr, &merge))?;
+        let wrong_head = gate_in_ci(&root, "main", &pr_mode(&base, &base, &merge))?;
+        let wrong_checkout = gate_in_ci(&root, "main", &pr_mode(&base, &pr, &base))?;
         let missing = gate_in_ci(
             &root,
             "main",
             &Mode::Ci {
-                event: Err("GITHUB_EVENT_NAME is missing under GitHub Actions".into()),
+                event: Err("GITHUB_EVENT_NAME is missing or invalid under GitHub Actions".into()),
             },
-        )?
-        .0;
+        )?;
         let _ = fs::remove_dir_all(&root);
         assert!(good.violations.is_empty(), "{good:?}");
-        for (label, evaluation) in [
-            ("wrong base", wrong_base),
-            ("wrong head", wrong_head),
-            ("wrong checkout", wrong_checkout),
-            ("missing event", missing),
+        for (label, (evaluation, note), reason) in [
+            ("wrong base", wrong_base, "two parents"),
+            ("wrong head", wrong_head, "two parents"),
+            (
+                "wrong checkout",
+                wrong_checkout,
+                "does not match event checkout",
+            ),
+            ("missing event", missing, "GITHUB_EVENT_NAME is missing"),
         ] {
             assert_eq!(evaluation.violations.len(), 1, "{label}: {evaluation:?}");
+            assert!(note.contains(reason), "{label}: {note}");
         }
+        Ok(())
+    }
+
+    fn mg_mode(base: &str, head: &str, checkout: &str) -> Mode {
+        Mode::Ci {
+            event: Ok(CiEvent {
+                name: "merge_group".into(),
+                payload: serde_json::json!({
+                    "merge_group": {"base_sha": base, "head_sha": head}
+                })
+                .to_string(),
+                checkout: checkout.into(),
+            }),
+        }
+    }
+
+    /// merge_group binding: HEAD is the event head and the event base is its
+    /// ancestor; growth against that base fails, wrong identities fail closed.
+    #[test]
+    fn ci_merge_group_binds_head_and_base_ancestry() -> Result<(), String> {
+        let (root, base, pr, _) =
+            pr_event_repo("ci-mg", &[(A, "a seam\n")], &[(A, "a seam\nmore seam\n")])?;
+        let head = pr.clone();
+        run_git(&root, &["checkout", "-q", "--detach", &head])?;
+        let good = gate_in_ci(&root, "main", &mg_mode(&base, &head, &head))?;
+        let wrong_head = gate_in_ci(&root, "main", &mg_mode(&base, &base, &head))?;
+        run_git(&root, &["checkout", "-q", "-b", "side", &base])?;
+        run_git(&root, &["commit", "-q", "--allow-empty", "-m", "diverge"])?;
+        let side = git_text(&root, &["rev-parse", "HEAD"])?.trim().to_string();
+        run_git(&root, &["checkout", "-q", "--detach", &head])?;
+        let not_ancestor = gate_in_ci(&root, "main", &mg_mode(&side, &head, &head))?;
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(good.0.violations.len(), 1, "{good:?}");
+        assert!(
+            good.1.contains("verified GitHub event identity"),
+            "{good:?}"
+        );
+        assert!(
+            !good.1.contains("unavailable"),
+            "growth must come from the delta, not a fallback: {good:?}"
+        );
+        assert_eq!(wrong_head.0.violations.len(), 1, "{wrong_head:?}");
+        assert!(
+            wrong_head.1.contains("does not match event head"),
+            "{wrong_head:?}"
+        );
+        assert_eq!(not_ancestor.0.violations.len(), 1, "{not_ancestor:?}");
+        assert!(
+            not_ancestor.1.contains("not an ancestor"),
+            "{not_ancestor:?}"
+        );
+        Ok(())
+    }
+
+    /// merge_group positive: a clean head against an ancestor base passes.
+    #[test]
+    fn ci_merge_group_passes_a_clean_head() -> Result<(), String> {
+        let (root, base, pr, _) =
+            pr_event_repo("ci-mg-ok", &[(A, "a seam\n")], &[(A, "a seam\n")])?;
+        run_git(&root, &["checkout", "-q", "--detach", &pr])?;
+        let (evaluation, note) = gate_in_ci(&root, "main", &mg_mode(&base, &pr, &pr))?;
+        let _ = fs::remove_dir_all(&root);
+        assert!(evaluation.violations.is_empty(), "{evaluation:?} {note}");
+        Ok(())
+    }
+
+    fn lookup_of(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let owned: Vec<(String, String)> = pairs
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect();
+        move |key| {
+            owned
+                .iter()
+                .find(|(name, _)| name == key)
+                .map(|(_, value)| value.clone())
+        }
+    }
+
+    #[test]
+    fn mode_from_lookup_covers_every_environment_branch() -> Result<(), String> {
+        assert_eq!(Mode::from_lookup(&lookup_of(&[])), Mode::Local);
+        assert_eq!(
+            Mode::from_lookup(&lookup_of(&[("GITHUB_ACTIONS", "")])),
+            Mode::Local
+        );
+        assert_eq!(
+            Mode::from_lookup(&lookup_of(&[("GITHUB_ACTIONS", "true")])),
+            Mode::Ci {
+                event: Err("GITHUB_EVENT_NAME is missing or invalid under GitHub Actions".into())
+            }
+        );
+        assert_eq!(
+            Mode::from_lookup(&lookup_of(&[
+                ("GITHUB_ACTIONS", "true"),
+                ("GITHUB_EVENT_NAME", "")
+            ])),
+            Mode::Ci {
+                event: Err("GITHUB_EVENT_NAME is missing or invalid under GitHub Actions".into())
+            }
+        );
+        assert_eq!(
+            Mode::from_lookup(&lookup_of(&[("CI", "true"), ("GITHUB_EVENT_NAME", "push")])),
+            Mode::Ci {
+                event: Ok(CiEvent {
+                    name: "push".into(),
+                    payload: String::new(),
+                    checkout: String::new(),
+                })
+            }
+        );
+        assert_eq!(
+            Mode::from_lookup(&lookup_of(&[("CI", "true")])),
+            Mode::Ci {
+                event: Ok(CiEvent {
+                    name: String::new(),
+                    payload: String::new(),
+                    checkout: String::new(),
+                })
+            }
+        );
+        let no_path = Mode::from_lookup(&lookup_of(&[
+            ("GITHUB_ACTIONS", "true"),
+            ("GITHUB_EVENT_NAME", "pull_request"),
+        ]));
+        assert_eq!(
+            no_path,
+            Mode::Ci {
+                event: Err("GITHUB_EVENT_PATH is missing".into())
+            }
+        );
+        let dir = std::env::temp_dir().join(format!("ripr-mode-lookup-{}", std::process::id()));
+        fs::create_dir_all(&dir).map_err(|err| format!("mkdir: {err}"))?;
+        let path = dir.join("event.json");
+        write_file(&path, "{\"k\":1}")?;
+        let path_text = path.to_string_lossy().to_string();
+        let sha = "a".repeat(40);
+        let ok = Mode::from_lookup(&lookup_of(&[
+            ("GITHUB_ACTIONS", "true"),
+            ("GITHUB_EVENT_NAME", "merge_group"),
+            ("GITHUB_EVENT_PATH", &path_text),
+            ("GITHUB_SHA", &sha),
+        ]));
+        let no_sha = Mode::from_lookup(&lookup_of(&[
+            ("GITHUB_ACTIONS", "true"),
+            ("GITHUB_EVENT_NAME", "pull_request"),
+            ("GITHUB_EVENT_PATH", &path_text),
+        ]));
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(
+            ok,
+            Mode::Ci {
+                event: Ok(CiEvent {
+                    name: "merge_group".into(),
+                    payload: "{\"k\":1}".into(),
+                    checkout: sha,
+                })
+            }
+        );
+        assert_eq!(
+            no_sha,
+            Mode::Ci {
+                event: Err("GITHUB_SHA is missing".into())
+            }
+        );
         Ok(())
     }
 
