@@ -158,9 +158,9 @@ fn rereads(self_: &TimeoutRefusalProjection) -> Vec<&'static str> {
             reads
         }
         InputSource::SuppliedDiff => vec!["diff-file-bytes"],
-        // Exact-tree object identities are immutable; a retry re-resolves
-        // the same objects rather than live bytes.
-        InputSource::GitCandidate => vec!["none (immutable git objects)"],
+        // The candidate tree and `--candidate-base` are caller-named
+        // revisions; a branch or `HEAD` can move before the retry.
+        InputSource::GitCandidate => vec!["candidate-base-ref"],
     }
 }
 
@@ -176,7 +176,7 @@ fn retry_note(self_: &TimeoutRefusalProjection) -> String {
             "the retry re-reads the named diff file; edit the file in place to retry different input".to_string()
         }
         InputSource::GitCandidate => {
-            "the retry re-resolves the named immutable git objects; the input identity is unchanged".to_string()
+            "the retry re-resolves the named git revisions; a branch, tag or HEAD can move, so the retry may resolve a different input".to_string()
         }
     };
     if let Some(output_dir) = &self_.output_dir {
