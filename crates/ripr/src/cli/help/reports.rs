@@ -195,7 +195,7 @@ Start-here vocabulary:
 "#;
 pub(super) const CALIBRATE_HELP: &str = r#"Import cargo-mutants outcomes as advisory calibration over static evidence.
 
-Usage: ripr calibrate cargo-mutants --mutants-json PATH --repo-exposure-json PATH [--format md|json] [--out PATH]
+Usage: ripr calibrate cargo-mutants --mutants-json PATH --repo-exposure-json PATH [--format md|markdown|text|json] [--out PATH]
 
 Options:
   --mutants-json PATH          cargo-mutants JSON file, or mutants.out directory containing outcomes.json and/or mutants.json. A mutants.json-only import counts unexecuted candidates in matched_total.

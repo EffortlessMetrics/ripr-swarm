@@ -514,6 +514,59 @@ impl GapItem {
     }
 }
 
+/// Most `observed_values` entries one gap document carries.
+pub(crate) const MAX_OBSERVED_VALUES: usize = 12;
+/// A value fact counts as near a related test when its line falls within this
+/// many lines after the test's start line.
+const RELATED_TEST_VALUE_WINDOW: usize = 40;
+
+/// The activation block with `observed_values` bounded. The producer lists
+/// every literal it saw across the test surface, which for a heavily tested
+/// file is ~10 KB of values from unrelated tests (agent-experience MCP audit
+/// finding 3). Entries on or just after a related test's line come first,
+/// the rest follow in producer order, the list is capped, and the omission is
+/// disclosed with a total and an omitted count; no entry is rewritten and
+/// `missing_discriminators` is untouched.
+fn bounded_activation(
+    activation: &crate::domain::ActivationEvidence,
+    related_tests: &[crate::domain::RelatedTest],
+) -> Result<Value, String> {
+    let mut value = serde_json::to_value(activation)
+        .map_err(|error| format!("serialize activation evidence: {error}"))?;
+    let total = activation.observed_values.len();
+    let near_related = |line: usize| {
+        related_tests
+            .iter()
+            .any(|test| line >= test.line && line - test.line <= RELATED_TEST_VALUE_WINDOW)
+    };
+    let mut ranked: Vec<&crate::domain::ValueFact> = activation
+        .observed_values
+        .iter()
+        .filter(|fact| near_related(fact.line))
+        .collect();
+    ranked.extend(
+        activation
+            .observed_values
+            .iter()
+            .filter(|fact| !near_related(fact.line)),
+    );
+    ranked.truncate(MAX_OBSERVED_VALUES);
+    let kept = ranked.len();
+    if let Some(object) = value.as_object_mut() {
+        object.insert(
+            "observed_values".to_string(),
+            serde_json::to_value(&ranked)
+                .map_err(|error| format!("serialize observed values: {error}"))?,
+        );
+        object.insert("observed_values_total".to_string(), json!(total));
+        object.insert(
+            "observed_values_omitted".to_string(),
+            json!(total.saturating_sub(kept)),
+        );
+    }
+    Ok(value)
+}
+
 /// Producer-owned evidence fields, projected once per finding. Fields the
 /// producer does not populate stay typed `null`/`absent` states in the
 /// serialized finding values rather than being back-filled here.
@@ -523,8 +576,7 @@ fn gap_evidence_core(
     root: &Path,
     readiness: &RepairReadiness,
 ) -> Result<Value, String> {
-    let activation = serde_json::to_value(&finding.activation)
-        .map_err(|error| format!("serialize activation evidence: {error}"))?;
+    let activation = bounded_activation(&finding.activation, &finding.related_tests)?;
     let related_tests = finding
         .related_tests
         .iter()
@@ -901,6 +953,54 @@ mod tests {
 
     fn finding() -> Result<Finding, String> {
         test_finding()
+    }
+
+    fn value_fact(line: usize) -> crate::domain::ValueFact {
+        crate::domain::ValueFact {
+            line,
+            text: format!("assert_eq!(f({line}), {line})"),
+            value: line.to_string(),
+            context: crate::domain::ValueContext::AssertionArgument,
+        }
+    }
+
+    /// Audit finding 3: `observed_values` is the producer's dump of literals
+    /// across the test surface. The projection ranks entries at or just after
+    /// a related test first, caps the list, and discloses what it dropped;
+    /// `missing_discriminators` is untouched.
+    #[test]
+    fn observed_values_are_ranked_toward_related_tests_capped_and_disclosed() -> Result<(), String>
+    {
+        let mut finding = finding()?;
+        // The fixture's one related test starts at line 40. Unrelated values
+        // come first in producer order; the two related ones come last.
+        let mut lines: Vec<usize> = (200..240).collect();
+        lines.extend([41, 44]);
+        finding.activation.observed_values = lines.iter().copied().map(value_fact).collect();
+        let activation = bounded_activation(&finding.activation, &finding.related_tests)?;
+        let kept = activation["observed_values"]
+            .as_array()
+            .ok_or("observed_values lost")?;
+        if kept.len() != MAX_OBSERVED_VALUES
+            || kept[0]["line"] != 41
+            || kept[1]["line"] != 44
+            || activation["observed_values_total"] != 42
+            || activation["observed_values_omitted"] != 42 - MAX_OBSERVED_VALUES
+        {
+            return Err(format!(
+                "observed values not bounded and ranked: {activation}"
+            ));
+        }
+        // Negative: a short list is unchanged and discloses zero omitted.
+        finding.activation.observed_values = vec![value_fact(7)];
+        let short = bounded_activation(&finding.activation, &finding.related_tests)?;
+        if short["observed_values"].as_array().map(Vec::len) != Some(1)
+            || short["observed_values_omitted"] != 0
+            || short["missing_discriminators"] != serde_json::json!([])
+        {
+            return Err(format!("short list must pass through whole: {short}"));
+        }
+        Ok(())
     }
 
     #[cfg(feature = "lang-rust")]
@@ -1611,6 +1711,7 @@ mod tests {
                 &crate::config::RiprConfig::default(),
             ),
             &crate::mcp::repair_admission::InventoryCompleteness::Complete,
+            Path::new("."),
         );
         match evaluated.verdict("probe:uncovered") {
             Some(SeamVerdict::Refused { code, .. })
@@ -1633,8 +1734,13 @@ mod tests {
         let policy = crate::app::agent_brief::AgentBriefPolicy::from_config(&config);
         let findings = [finding()?];
         let id = findings[0].id.as_str();
-        let complete =
-            SeamAdmission::evaluate(&findings, &[], policy, &InventoryCompleteness::Complete);
+        let complete = SeamAdmission::evaluate(
+            &findings,
+            &[],
+            policy,
+            &InventoryCompleteness::Complete,
+            Path::new("."),
+        );
         match complete.verdict(id) {
             Some(SeamVerdict::Refused { code, .. }) if code != SEAM_INVENTORY_TRUNCATED => {}
             other => return Err(format!("complete inventory must not truncate: {other:?}")),
@@ -1646,7 +1752,8 @@ mod tests {
             },
             InventoryCompleteness::Unverified("inventory failed".to_string()),
         ] {
-            let evaluated = SeamAdmission::evaluate(&findings, &[], policy, &completeness);
+            let evaluated =
+                SeamAdmission::evaluate(&findings, &[], policy, &completeness, Path::new("."));
             match evaluated.verdict(id) {
                 Some(SeamVerdict::Refused { code, detail }) if code == SEAM_INVENTORY_TRUNCATED => {
                     if matches!(completeness, InventoryCompleteness::Truncated { .. })

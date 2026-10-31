@@ -350,9 +350,13 @@ fn issue_terminal_receipt_with_grip(
         crate::agent::artifact::validate_repo_exposure_artifact(root, &before, "fixture before")?;
     let after_identity =
         crate::agent::artifact::validate_repo_exposure_artifact(root, &after, "fixture after")?;
+    let before_produced_from_dirty = before_identity.historical_produced_from_dirty();
+    let after_produced_from_dirty = after_identity.historical_produced_from_dirty();
     let binding = crate::output::outcome::AgentVerifyArtifactBinding {
         before_content_sha256: before_identity.content_sha256,
         after_content_sha256: after_identity.content_sha256,
+        before_produced_from_dirty,
+        after_produced_from_dirty,
     };
     // Production digest shape (`sha256:`-prefixed): the receipt's recorded
     // verify digest must match the retained verify bytes exactly.
