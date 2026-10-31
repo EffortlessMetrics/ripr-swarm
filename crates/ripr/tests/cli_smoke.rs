@@ -34395,3 +34395,93 @@ fn declined_rust_file_is_a_limitation_in_check_and_pilot_json() -> Result<(), St
     ignore_remove_dir_all(&root);
     Ok(())
 }
+
+/// #11477 item 3: `RIPR_CACHE_DIR` redirects only the cache, so `feedback`
+/// must still refuse a committed `target` link that escapes the workspace.
+#[cfg(unix)]
+#[test]
+fn feedback_export_refuses_target_link_even_with_cache_dir_override() -> Result<(), String> {
+    let base = unique_temp_workspace("feedback-link-cache-env");
+    let ws = base.join("ws");
+    let outside = base.join("outside");
+    std::fs::create_dir_all(&ws).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&outside).map_err(|e| e.to_string())?;
+    std::os::unix::fs::symlink(&outside, ws.join("target")).map_err(|e| e.to_string())?;
+    let cache = base.join("cache");
+    let output = run_ripr_with_env(
+        &["feedback", "export", "--root", &ws.to_string_lossy()],
+        &[("RIPR_CACHE_DIR", &cache.to_string_lossy())],
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let leaked = tree_entries(&outside)?;
+    let _ = std::fs::remove_dir_all(&base);
+    assert!(!output.status.success(), "link must be refused: {stderr}");
+    assert!(
+        stderr.contains("resolves outside the workspace"),
+        "{stderr}"
+    );
+    assert!(leaked.is_empty(), "written through the link: {leaked:?}");
+    Ok(())
+}
+
+/// #11477 item 3: `feedback record` writes under `target/ripr/feedback`, so it
+/// gets the same refusal under a `RIPR_CACHE_DIR` override.
+#[cfg(unix)]
+#[test]
+fn feedback_record_refuses_target_link_even_with_cache_dir_override() -> Result<(), String> {
+    let base = unique_temp_workspace("feedback-record-link-cache-env");
+    let ws = base.join("ws");
+    let outside = base.join("outside");
+    std::fs::create_dir_all(&ws).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&outside).map_err(|e| e.to_string())?;
+    std::os::unix::fs::symlink(&outside, ws.join("target")).map_err(|e| e.to_string())?;
+    let cache = base.join("cache");
+    let output = run_ripr_with_env(
+        &[
+            "feedback",
+            "record",
+            "--root",
+            &ws.to_string_lossy(),
+            "--snapshot",
+            "snap-1",
+            "--reason",
+            "useful_limitation",
+            "--idempotency-key",
+            "k",
+            "--actor",
+            "human",
+        ],
+        &[("RIPR_CACHE_DIR", &cache.to_string_lossy())],
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let leaked = tree_entries(&outside)?;
+    let _ = std::fs::remove_dir_all(&base);
+    assert!(!output.status.success(), "link must be refused: {stderr}");
+    assert!(
+        stderr.contains("resolves outside the workspace"),
+        "{stderr}"
+    );
+    assert!(leaked.is_empty(), "written through the link: {leaked:?}");
+    Ok(())
+}
+
+/// Every path below `dir`, recursively (links are listed, not followed), so a
+/// write that created nested entries through a link is named in the failure.
+#[cfg(unix)]
+fn tree_entries(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut found = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(next) = pending.pop() {
+        for entry in std::fs::read_dir(&next).map_err(|e| e.to_string())? {
+            let path = entry.map_err(|e| e.to_string())?.path();
+            let is_real_dir = std::fs::symlink_metadata(&path)
+                .map_err(|e| e.to_string())?
+                .is_dir();
+            if is_real_dir {
+                pending.push(path.clone());
+            }
+            found.push(path);
+        }
+    }
+    Ok(found)
+}

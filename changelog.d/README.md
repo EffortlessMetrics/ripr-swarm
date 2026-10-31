@@ -74,6 +74,21 @@ after a snapshot stays until the next snapshot or the cut. After the final
 fold, `cargo xtask check-changelog-fragments --release-cut` must pass: it
 fails on any fragment still here.
 
+On cut day use one command. `--release-cut` folds every fragment (it cannot be
+combined with `--limit` or `--keep-fragments`), deletes them, and then requires
+`check-changelog-fragments --release-cut` to pass, so a leftover or malformed
+fragment fails the same step:
+
+```bash
+cargo xtask fold-changelog --release-cut           # dry run: plan only
+cargo xtask fold-changelog --write --release-cut   # fold, delete, verify
+```
+
+It prints a warning when the PR (every fragment plus `CHANGELOG.md`) would exceed
+the 160-file admission cap; fold a snapshot ahead of the cut in that case. The
+fold appends entries verbatim, so run the correctness pass over `Unreleased`
+(duplicates, sections, claims that overstate what shipped) after it.
+
 Both ordinary and `--release-cut` checks reject repeated column-zero
 `### <Section>` headings within the first `## Unreleased` block. The diagnostic
 names the first heading and each duplicate line. Combine those entries under
