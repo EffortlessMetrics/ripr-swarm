@@ -978,6 +978,13 @@ impl FileFacts {
 ///   runs libtest collection, so an attribute alone never makes a member
 ///   an executable test. Executable subjects come only from the harness
 ///   registry's adapter.
+/// - `ProofHarness` is a function carrying an exact Kani proof-harness
+///   attribute (RIPR-SPEC-0367): neither an executable test nor a
+///   production seam, so it adds no `TestFact`, no assertion credit and no
+///   production probe.
+/// - `KaniProofHarness` refines that source-only role with an explicitly
+///   declared native context. `KaniProofLocal` excludes nested functions
+///   from ordinary evidence without declaring another harness.
 /// - `Production` is ordinary non-evidence source and remains a
 ///   production-subject candidate. Production-subject *eligibility* is
 ///   still the consumer-side composition of this role with the file-level
@@ -1022,6 +1029,13 @@ pub enum FunctionSourceRole {
     /// executable `TestFact` is registered for this variant alone.
     /// Executable subjects are the adapter-established harness subjects.
     HarnessHelper,
+    /// Carries an exact proof-harness attribute (`#[kani::proof]`,
+    /// `#[kani::proof_for_contract(..)]`, or the same path under
+    /// `cfg_attr`; RIPR-SPEC-0367). Verification source, not a test and not a
+    /// production seam: it registers no `TestFact`, earns no assertion
+    /// credit and seeds no production probe. A changed harness is disclosed
+    /// as `proof_harness_not_evaluated`; ripr does not evaluate proofs.
+    ProofHarness,
     /// Canonical ordinary Kani proof in an explicitly declared native source
     /// context. Source evidence only: never a Cargo test or assertion donor.
     KaniProofHarness,
@@ -1041,6 +1055,18 @@ impl FunctionSourceRole {
     /// the file-level `SourceRole` instead of widening this predicate.
     pub fn is_evidence_role(self) -> bool {
         !matches!(self, Self::Production)
+    }
+
+    /// A proof declaration, with or without a declared native context.
+    /// Nested proof-local functions are not independent harnesses.
+    pub fn is_proof_harness(self) -> bool {
+        matches!(self, Self::ProofHarness | Self::KaniProofHarness)
+    }
+
+    /// Verification source is not ordinary test evidence, including local
+    /// functions whose role comes from an enclosing admitted proof.
+    pub fn is_proof_source(self) -> bool {
+        self.is_proof_harness() || self == Self::KaniProofLocal
     }
 
     /// Whether functions with this role register executable `TestFact`s —

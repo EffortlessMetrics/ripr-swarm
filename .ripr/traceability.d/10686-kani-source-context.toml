@@ -6,6 +6,8 @@ code = [
   "crates/ripr/src/analysis/facts/kani.rs",
   "crates/ripr/src/analysis/facts/cfg_predicates.rs",
   "crates/ripr/src/analysis/facts/mod.rs",
+  "crates/ripr/src/analysis/facts/model.rs",
+  "crates/ripr/src/analysis/language/rust/proof_harness.rs",
   "crates/ripr/src/analysis/probes/classify.rs",
   "crates/ripr/src/analysis/probes/diff.rs",
   "crates/ripr/src/analysis/test_changes.rs",
@@ -22,6 +24,20 @@ tests = [
   "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::removed_kani_source_preserves_external_include_refusal",
   "crates/ripr/src/cli/commands/review_comments.rs::review_comments_kani_include_role_cannot_claim_unchanged_tests",
   "crates/ripr/src/mcp/workspace.rs::kani_source_inventory_cli_and_mcp_share_real_producer_capture",
+  "crates/ripr/tests/proof_harness_limit.rs::declared_context_keeps_proof_disclosure_and_real_test_priority",
+  "crates/ripr/tests/proof_harness_limit.rs::declared_context_keeps_harness_and_local_edits_out_of_production",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0367"
+code = [
+  "crates/ripr/src/analysis/facts/model.rs",
+  "crates/ripr/src/analysis/language/rust/proof_harness.rs",
+  "crates/ripr/src/analysis/test_changes.rs",
+]
+tests = [
+  "crates/ripr/tests/proof_harness_limit.rs::declared_context_keeps_proof_disclosure_and_real_test_priority",
+  "crates/ripr/tests/proof_harness_limit.rs::declared_context_keeps_harness_and_local_edits_out_of_production",
 ]
 
 [[extend]]

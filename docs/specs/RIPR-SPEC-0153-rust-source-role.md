@@ -71,7 +71,11 @@ Role is derived from authoritative context in priority order:
    a cargo-fuzz harness (`fuzz/fuzz_targets/**`, consecutive `fuzz` then
    `fuzz_targets` components) is `test_evidence` even when its package
    declares it as a `[[bin]]` root, so it seeds no production findings
-   (#11293);
+   (#11293). The pair must precede any `src` component: an ordinary
+   library module at `<pkg>/src/fuzz/fuzz_targets/**` is a production
+   subject and keeps its findings. Harness layouts outside
+   `fuzz/fuzz_targets/` are not guessed from the name; register them as
+   test harnesses in configuration;
 4. everything else is a production subject. A filename convention alone
    (`*_test.rs`, `test_*.rs`) never classifies.
 
@@ -163,7 +167,9 @@ and macro suffixes never classify.
 The optional `[languages.rust.kani]` table selects the closed
 `kani_ordinary_proof_v1` source profile. It requires one repository-relative
 Rust `source` unit and an explicit Boolean `tests`. Absence preserves ordinary
-indexing. This is a declaration of the native analysis context, not discovery
+indexing, including the unconditional `ProofHarness` floor and
+`proof_harness_not_evaluated` disclosure from RIPR-SPEC-0367. This is a
+declaration of the native analysis context, not discovery
 of an installed verifier, a Cargo target, or a successful native build.
 
 The facts owner admits exact `#[kani::proof]` free, synchronous, nongeneric,
@@ -194,6 +200,13 @@ becoming independent proof declarations. An ambiguous nested source identity
 refuses the enclosing admission. Native source edits do not become affirmative
 ordinary-test-edit disclosures. Unrelated production functions and ordinary
 tests retain their roles.
+
+An admitted `KaniProofHarness` retains the proof-aware owner and edit
+disclosures of the unconditional role. A changed nested local names the
+enclosing proof through that same run limitation; it is not an independent
+harness declaration. Removing the context reconstructs the ordinary roles,
+including `ProofHarness`, instead of leaving native roles behind or turning
+an exact proof attribute back into production source.
 
 The review-comment route reads individual Git source objects without full
 include-composition authority. A changed source unit with apparent native roles

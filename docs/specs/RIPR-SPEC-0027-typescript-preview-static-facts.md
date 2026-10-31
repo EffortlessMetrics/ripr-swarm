@@ -498,6 +498,16 @@ and refuses on narrowed text alone or on a line holding several comparisons.
 Returned-ternary arm edits retain their sole condition boundary only when the
 condition tokens are unchanged.
 
+Clause-level selection on `&&` / `||` / `??` conditions is decided by the parse
+tree, not by token order, so `a && b > 1 || c` and `a || b > 1 && c` each name
+`b == 1` when only that comparison's tokens changed (#11196). A reordered or
+removed clause, a moved parenthesis, a swapped
+logical operator, an edit to a non-comparison clause, a clause quoted in a
+string or template literal, and a clause with a call, computed or nullish
+operand each name no boundary. The named clause is a boundary fact only: under
+`&&` it is observable when the other clauses hold, so it never claims that a
+test can drive that clause independently.
+
 Three one-hop input resolutions credit the idiom shapes that reach the same
 boundary without changing the guards (#4104 E):
 

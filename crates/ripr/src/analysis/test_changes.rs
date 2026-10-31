@@ -189,13 +189,7 @@ fn touches_test(
             .iter()
             .filter(|function| function.start_line <= line.line && line.line <= function.end_line)
         {
-            if function.source_role.is_evidence_role()
-                && !matches!(
-                    function.source_role,
-                    super::facts::FunctionSourceRole::KaniProofHarness
-                        | super::facts::FunctionSourceRole::KaniProofLocal
-                )
-            {
+            if function.source_role.is_evidence_role() && !function.source_role.is_proof_source() {
                 return Some(true);
             }
         }

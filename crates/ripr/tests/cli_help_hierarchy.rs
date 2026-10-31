@@ -1641,6 +1641,15 @@ fn check_help_chooses_one_format_per_task() -> Result<(), String> {
     if readme_span.contains("badge-shields (diff)") {
         return Err("the README mapping must not include the diff format".to_string());
     }
+    // #6180: the diff-scoped badge group must not claim README status.
+    if check.contains("diff-scoped, for README") {
+        return Err("the diff-scoped badge group must not be labeled for README".to_string());
+    }
+    assert_contains(
+        "check help (`ripr check --help`)",
+        &check,
+        "Badge (diff-scoped, for PR/CI status):",
+    )?;
     Ok(())
 }
 
@@ -1705,6 +1714,7 @@ const CHECK_REFERENCE_FORMATS: &[&str] = &[
     "json",
     "github",
     "sarif",
+    "agent",
     "badge-json",
     "badge-shields",
     "badge-plus-json",
@@ -1730,6 +1740,7 @@ const CHECK_REFERENCE_ENVIRONMENT: &[&str] = &[
     "RIPR_DIFF_DEPENDENT_SCOPE",
     "RIPR_PARTIAL_DIFF_FILE_BUDGET",
     "RIPR_PARTIAL_DIFF_LINE_BUDGET",
+    "RIPR_QUIET",
     "RIPR_GIT_TIMEOUT",
     "RIPR_REPO_EXPOSURE_LATENCY_TRACE",
     "RIPR_ALLOW_REPO_PERL_EXECUTABLE",

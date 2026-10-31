@@ -770,6 +770,20 @@ After partial publication, stop later channels, record public state, and obtain
 a corrective-release decision through #1470. Never delete or retarget a public
 tag, or claim a complete release.
 
+### Channels outside `CHANNEL_ORDER`
+
+The source repository also carries `publish-npm.yml` (environment `npm`,
+`@effortlessmetrics/ripr` under the `next` dist-tag) and `publish-pypi.yml`
+(environment `pypi`, `ripr-rs`). Both are dispatched from `main`, not from the
+release tag, and both admit **prereleases only** (`docs/NPM_BOOTSTRAP.md` and
+`docs/PYPI_BOOTSTRAP.md` in the source repository). Neither can publish a
+stable `0.11.0` until its admission contract is extended and stable authority
+is granted, so neither is in `CHANNEL_ORDER` and a stable 0.11.0 release does
+not claim an npm or PyPI install route. Do not rename a prerelease artifact into
+a stable one. Their environments are separate operator setup from the
+`vs-marketplace-publish` and `open-vsx-publish` environments the extension
+workflow needs; the npm environment was absent at the 2026-09-30 inspection.
+
 ## 7. Construct and transport K after public verification
 
 Freeze exact post-publication inputs:

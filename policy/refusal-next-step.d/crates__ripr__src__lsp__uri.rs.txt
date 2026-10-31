@@ -1,0 +1,6 @@
+crates/ripr/src/lsp/uri.rs|failed to build LSP file URI for {}: {err}
+crates/ripr/src/lsp/uri.rs|failed to build LSP file URI for {}: {err} refusing to build a local file URI for the non-UTF-8 path {}
+crates/ripr/src/lsp/uri.rs|refusing to build a local file URI for a relative path that escapes its prefix {}
+crates/ripr/src/lsp/uri.rs|refusing to build a local file URI for the Windows-style spelling {} on a non-Windows host
+crates/ripr/src/lsp/uri.rs|refusing to build a local file URI for the network-share path {}
+crates/ripr/src/lsp/uri.rs|refusing to build a local file URI for the non-UTF-8 path {}

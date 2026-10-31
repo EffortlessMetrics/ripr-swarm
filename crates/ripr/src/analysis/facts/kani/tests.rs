@@ -135,6 +135,16 @@ fn ordinary_kani_source_has_separate_identity_and_no_test_or_seam_membership() -
     let plain = fixture.index(None)?;
     assert!(plain.kani_source_inventory.is_none());
     assert_eq!(plain.tests().len(), 1);
+    assert_eq!(
+        plain
+            .functions()
+            .iter()
+            .find(|function| function.name == "exact")
+            .ok_or("unconfigured proof missing")?
+            .source_role,
+        FunctionSourceRole::ProofHarness,
+        "removing the declared context must retain the unconditional proof-source floor"
+    );
     Ok(())
 }
 
@@ -199,6 +209,10 @@ fn native_cfg_is_declared_and_unknown_atoms_never_become_host_truth() -> Result<
     );
     for (predicate, expected) in [
         ("not(kani)", KaniApplicability::Disabled),
+        ("not(kani_host)", KaniApplicability::Enabled),
+        ("all(kani, not(kani_host))", KaniApplicability::Enabled),
+        ("any(not(kani), custom)", KaniApplicability::Unknown),
+        ("all(not(kani), custom)", KaniApplicability::Disabled),
         ("feature = \"x\"", KaniApplicability::Unknown),
     ] {
         let source = format!(
@@ -341,6 +355,10 @@ fn unsupported_native_forms_stay_limitations_and_modifiers_give_no_credit() -> R
             "ordinary_free_unit_proof_required",
         ),
         ("mod external;\n", "out_of_line_module_not_expanded"),
+        (
+            "mod outer { mod external; }\n",
+            "out_of_line_module_not_expanded",
+        ),
     ] {
         let fixture = Fixture::new(source)?;
         let index = fixture.index(Some(&context(false)))?;
@@ -400,6 +418,21 @@ fn native_context_cache_rebuilds_on_remove_flip_revert_and_provider_edits() -> R
         assert_eq!(
             serde_json::to_value(&cached.index).map_err(|error| error.to_string())?,
             serde_json::to_value(&cold).map_err(|error| error.to_string())?
+        );
+        assert_eq!(
+            cached
+                .index
+                .functions()
+                .iter()
+                .find(|function| function.name == "exact")
+                .ok_or("proof missing after context transition")?
+                .source_role,
+            if selected.is_some_and(|selected| selected.source == PathBuf::from("src/lib.rs")) {
+                FunctionSourceRole::KaniProofHarness
+            } else {
+                FunctionSourceRole::ProofHarness
+            },
+            "context removal or an unindexed configured source must restore the ordinary proof floor"
         );
     }
     let streamed = build_index_from_paths_with_kani_context(

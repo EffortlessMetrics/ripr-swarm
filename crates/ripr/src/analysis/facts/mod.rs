@@ -40,7 +40,7 @@ mod harness_registry;
 mod includes;
 mod index;
 mod kani;
-pub use kani::{KaniApplicability, KaniHarnessSource, KaniSourceInventory, KaniSourceLimitation};
+pub use kani::KaniSourceInventory;
 mod local_test_alias;
 mod macro_generated_tests;
 pub(crate) mod macro_visibility;
