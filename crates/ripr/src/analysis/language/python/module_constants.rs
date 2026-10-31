@@ -530,6 +530,11 @@ pub(super) struct PythonTestRebinding {
     /// One import and one argument-free test with no definition-time
     /// expressions; only bounded dunder truthiness consumes this fact.
     pub(super) plain_test_module: bool,
+    /// A fixture, setup hook or class decorator that reaches the test
+    /// substitutes the owner or its module (`fixture_substitution.rs`), so the
+    /// test may assert on a stand-in rather than the changed code. Filled by
+    /// the workspace pass.
+    pub(super) fixture_substitution: bool,
 }
 
 impl PythonTestRebinding {
@@ -572,6 +577,7 @@ pub(super) fn python_test_rebinding(
         implicit_reach: false,
         header_reach: false,
         plain_test_module: false,
+        fixture_substitution: false,
     }
 }
 

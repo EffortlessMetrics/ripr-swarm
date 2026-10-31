@@ -296,6 +296,10 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
     let mut implicit_conftests: BTreeSet<PathBuf> = BTreeSet::new();
     let mut reach_conftests: BTreeSet<PathBuf> = BTreeSet::new();
     let mut read_conftests: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut substitution_by_file: std::collections::BTreeMap<
+        PathBuf,
+        super::super::fixture_substitution::SubstitutionScope,
+    > = std::collections::BTreeMap::new();
 
     // Evidence sources first, so production items can relate against the
     // full test pool. Owners are intentionally NOT harvested from
@@ -319,6 +323,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
                             reach_conftests.insert(relative.clone());
                         }
                     }
+                    substitution_by_file.insert(relative.clone(), facts.substitution_scope.clone());
                     files.push(PythonRepoFileRecord {
                         path: normalized_path(relative),
                         role: role.as_str(),
@@ -348,6 +353,10 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
         }
     }
 
+    super::super::fixture_substitution::apply_fixture_substitution(
+        &mut all_tests,
+        &substitution_by_file,
+    );
     super::super::fixtures::taint_admission_by_conftest(
         &mut all_tests,
         &implicit_conftests,
