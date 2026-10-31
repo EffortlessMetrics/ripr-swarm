@@ -103,7 +103,11 @@ cause.
   assert_eq`, and the factory-declaration, shadow, qualifier and generic
   boundaries of the identity gate.
 - The serde rows `serde-derive-rename-field-upper` and
-  `serde-derive-rename-variant-lower` read `limited`.
+  `serde-derive-rename-variant-lower` keep their main reading (`gap`, tracked
+  known-false under #8782): their receiver is a bare-imported unit variant
+  (`UpperCase.apply_to_field`), which the identity gate does not resolve even
+  with the standard macro trusted, so the placement input alone does not lift
+  them and this rule never withholds them.
 - Unexercised guards, not claimed proved here (the hardening follow-up, #10666
   and PR3, adds their controls and mutation experiments): the own-scope
   negatives for a `#[path]` mount, glob or explicit import of a dependency
