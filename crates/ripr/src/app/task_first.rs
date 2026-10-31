@@ -3731,7 +3731,7 @@ pub(crate) mod tests {
         use crate::analysis::seams::{
             ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
         };
-        let root = Some(Path::new("/repo"));
+        let root = RefusalRoot::named(Path::new("/repo"));
         let build = |kind, required| {
             let mut entry = gate_entry(SeamGripClass::Ungripped, Vec::new());
             entry.seam = RepoSeam::new(
