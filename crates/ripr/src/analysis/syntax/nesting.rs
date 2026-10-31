@@ -515,27 +515,59 @@ fn skip_raw_string(bytes: &[u8], mut index: usize) -> Option<usize> {
 }
 
 /// A char literal (`'x'`, `'\n'`, `'é'`) or a lifetime/label (`'a`).
+///
+/// Mirrors `rustc_lexer`: a `'` that cannot start a lifetime opens a char
+/// literal that runs to the closing `'`, and an unterminated one ends at the
+/// end of the line (or a `/`). The suffix of a malformed literal such as
+/// `'git version ...', got: {x}"` therefore stays inside the token; treating
+/// the lone `'` as a lifetime let the scan open a string at a quote the
+/// parser never lexes as one, inverting string parity for the rest of the
+/// file and hiding thousands of nested parens from the budget.
 fn skip_char_or_lifetime(text: &str, index: usize) -> usize {
     let bytes = text.as_bytes();
-    if bytes.get(index + 1) == Some(&b'\\') {
-        // Skip the escaped character itself so `'\''` closes correctly.
-        let mut cursor = index + 3;
-        while bytes
-            .get(cursor)
-            .is_some_and(|b| *b != b'\'' && *b != b'\n')
-        {
-            cursor += 1;
-        }
-        return cursor + 1;
+    let mut rest = text.get(index + 1..).unwrap_or("").chars();
+    let first = rest.next();
+    let can_be_lifetime = first.is_some_and(|c| {
+        c != '\'' && (c == '_' || c.is_ascii_digit() || unicode_ident::is_xid_start(c))
+    });
+    if !can_be_lifetime {
+        return skip_single_quoted(text, index + 1);
     }
-    let width = text
-        .get(index + 1..)
-        .and_then(|rest| rest.chars().next())
-        .map_or(0, char::len_utf8);
-    if width > 0 && bytes.get(index + 1 + width) == Some(&b'\'') {
-        return index + 2 + width;
+    // A lifetime, or a multi-character char literal such as `'ab'`.
+    let ident_len = first.map_or(0, char::len_utf8)
+        + rest
+            .take_while(|c| unicode_ident::is_xid_continue(*c))
+            .map(char::len_utf8)
+            .sum::<usize>();
+    if bytes.get(index + 1 + ident_len) == Some(&b'\'') {
+        return index + 2 + ident_len;
     }
     index + 1
+}
+
+/// `index` is just past the opening `'` of a char literal. Returns the index
+/// past its closing `'`, or where the lexer gives up on an unterminated one.
+fn skip_single_quoted(text: &str, mut index: usize) -> usize {
+    let bytes = text.as_bytes();
+    if bytes.get(index) == Some(&b'\'') && bytes.get(index + 1) == Some(&b'\'') {
+        index += 1;
+    }
+    while let Some(&byte) = bytes.get(index) {
+        match byte {
+            b'\'' => return index + 1,
+            b'/' => break,
+            b'\n' if bytes.get(index + 1) != Some(&b'\'') => break,
+            b'\\' => {
+                let escaped = text
+                    .get(index + 1..)
+                    .and_then(|tail| tail.chars().next())
+                    .map_or(0, char::len_utf8);
+                index += 1 + escaped;
+            }
+            _ => index += 1,
+        }
+    }
+    index
 }
 
 #[cfg(test)]
@@ -858,5 +890,35 @@ mod tests {
         let estimate = estimate_rust_nesting(&source);
         assert!(estimate.operator_run < 32, "{estimate:?}");
         assert!(rust_nesting_refusal(&source).is_none());
+    }
+
+    /// Fuzz finding: a lone `'` in a message (`'git version ...', got: {x}"`)
+    /// is an unterminated char literal to the parser, so the quote after it is
+    /// not a string opener. The scan used to treat it as a lifetime, invert
+    /// string parity, and hide a 4,000-deep paren chain from the budget (stack
+    /// overflow in `ra_ap_parser`).
+    #[test]
+    fn an_unterminated_char_literal_does_not_invert_string_parity() {
+        let source = format!(
+            "fn f(r: &str) -> String {{ format!(\"expected 'git version ...', got: {{r}}\") }}\nfn g(x: i32) -> i32 {{ {}x {{ 1 }} }}\n",
+            "(".repeat(4_000)
+        );
+        assert!(rust_nesting_refusal(&source).is_some());
+        assert!(parse_clean_source_file(&source).is_none());
+        // Real chars and lifetimes still close where the lexer closes them.
+        for ok in [
+            "let c = '\\'';",
+            "let c = 'é';",
+            "fn f<'a>(x: &'a str) {}",
+            "let c = '\\u{1F600}';",
+            "let l = 'outer: loop {};",
+        ] {
+            let at = ok.find('\'').unwrap();
+            assert!(skip_char_or_lifetime(ok, at) > at, "{ok}");
+        }
+        assert_eq!(skip_char_or_lifetime("'a' x", 0), 3);
+        assert_eq!(skip_char_or_lifetime("'a x", 0), 1);
+        assert_eq!(skip_char_or_lifetime("'\\'' x", 0), 4);
+        assert_eq!(skip_char_or_lifetime("', got\n\"y", 0), 6);
     }
 }
