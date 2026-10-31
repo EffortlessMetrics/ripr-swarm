@@ -415,13 +415,50 @@ fn collect_no_eligible_reasons<'a>(
 /// the same actionable recovery. The cap is an environment variable, not a flag.
 pub(crate) const WIDEN_SEAM_BUDGET: &str = "rerun with a wider seam budget (set RIPR_REPO_EXPOSURE_SEAM_LIMIT to a larger count, or 0 to remove the cap)";
 
+/// Largest repository a repair start widens the built-in seam cap to cover.
+/// Past it the refusal stands, so the cap still bounds pathological monorepos.
+const REPAIR_SEAM_CEILING: usize = 4 * crate::analysis::DEFAULT_REPO_EXPOSURE_SEAM_LIMIT;
+
+/// Seam inventory for a repair resolver. A repository only just past the
+/// built-in cap (tokio: 12,754 seams) would otherwise refuse every repair, so
+/// a default-source cut within [`REPAIR_SEAM_CEILING`] reruns once with the cap
+/// raised to the exact total. The rerun is complete, not partial, so the
+/// fail-closed truncation gate below is unchanged: an explicit
+/// `RIPR_REPO_EXPOSURE_SEAM_LIMIT` or a larger repository still refuses.
+fn inventory_for_repair(
+    root: &Path,
+    config: &crate::config::RiprConfig,
+) -> Result<
+    (
+        Vec<crate::analysis::ClassifiedSeam>,
+        Option<crate::analysis::SeamLimitInfo>,
+    ),
+    String,
+> {
+    let first = crate::analysis::inventory_classified_seams_at_with_config(root, config)?;
+    if let Some(cap) = first.1.as_ref().and_then(repair_widened_cap) {
+        let _widened = crate::analysis::PilotInventoryDefault::widen_to(cap);
+        return crate::analysis::inventory_classified_seams_at_with_config(root, config);
+    }
+    Ok(first)
+}
+
+/// The cap a repair resolver reruns with, or `None` when the cut stands: only
+/// a built-in default cut of a repository within [`REPAIR_SEAM_CEILING`]
+/// widens, to its exact total. An explicit limit is the operator's choice.
+fn repair_widened_cap(info: &crate::analysis::SeamLimitInfo) -> Option<usize> {
+    (info.is_truncated()
+        && info.source == crate::analysis::SeamLimitSource::Default
+        && info.total <= REPAIR_SEAM_CEILING)
+        .then_some(info.total)
+}
+
 /// Gather the live authorities and decide one repair start. A truncated seam
 /// inventory fails closed: selecting from a partial list could hide
 /// candidates and silently pick first.
 pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, String> {
     let config = load_for_root(root)?;
-    let (classified, limit_info) =
-        crate::analysis::inventory_classified_seams_at_with_config(root, &config)?;
+    let (classified, limit_info) = inventory_for_repair(root, &config)?;
     if let Some(info) = &limit_info
         && info.is_truncated()
     {
@@ -1059,8 +1096,7 @@ pub(crate) fn resolve_repair_subject_outcome(
     item: &str,
 ) -> Result<RepairSubjectOutcome, String> {
     let config = load_for_root(root)?;
-    let (classified, limit_info) =
-        crate::analysis::inventory_classified_seams_at_with_config(root, &config)?;
+    let (classified, limit_info) = inventory_for_repair(root, &config)?;
     if let Some(info) = &limit_info
         && info.is_truncated()
     {
@@ -1296,7 +1332,7 @@ fn load_gate_state(root: &Path) -> GateState {
             ));
         }
     };
-    match crate::analysis::inventory_classified_seams_at_with_config(root, &config) {
+    match inventory_for_repair(root, &config) {
         Ok((classified, limit_info)) => GateState::Loaded {
             truncated: limit_info.as_ref().is_some_and(|info| info.is_truncated()),
             config: Box::new(config),
@@ -2338,6 +2374,51 @@ fn held_inline_target(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// A default-cap cut within the ceiling reruns at its exact total; an
+    /// explicit limit, a repository past the ceiling and a complete inventory
+    /// are left alone, so the truncation refusal still guards them.
+    #[test]
+    fn repair_widens_only_a_default_cut_within_the_ceiling() {
+        use crate::analysis::{SeamLimitInfo, SeamLimitSource};
+        let cut = |analyzed, total, source| SeamLimitInfo {
+            analyzed,
+            total,
+            source,
+        };
+        let default_cap = crate::analysis::DEFAULT_REPO_EXPOSURE_SEAM_LIMIT;
+        assert_eq!(
+            repair_widened_cap(&cut(default_cap, 12_754, SeamLimitSource::Default)),
+            Some(12_754)
+        );
+        assert_eq!(
+            repair_widened_cap(&cut(
+                default_cap,
+                REPAIR_SEAM_CEILING,
+                SeamLimitSource::Default
+            )),
+            Some(REPAIR_SEAM_CEILING)
+        );
+        assert_eq!(
+            repair_widened_cap(&cut(
+                default_cap,
+                REPAIR_SEAM_CEILING + 1,
+                SeamLimitSource::Default
+            )),
+            None,
+            "past the ceiling the refusal stands"
+        );
+        assert_eq!(
+            repair_widened_cap(&cut(default_cap, 12_754, SeamLimitSource::Configured)),
+            None,
+            "an explicit RIPR_REPO_EXPOSURE_SEAM_LIMIT is never overridden"
+        );
+        assert_eq!(
+            repair_widened_cap(&cut(500, 500, SeamLimitSource::Default)),
+            None,
+            "a complete inventory needs no rerun"
+        );
+    }
 
     fn key<'a>(
         kind: crate::analysis::seams::SeamKind,

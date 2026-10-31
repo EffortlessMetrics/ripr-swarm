@@ -106,6 +106,18 @@ impl PilotInventoryDefault {
 }
 
 impl PilotInventoryDefault {
+    /// Raises the built-in inventory cap to `cap` for the guard's lifetime, so
+    /// an in-process rerun can cover a repository the product default cut. An
+    /// explicit `RIPR_REPO_EXPOSURE_SEAM_LIMIT` still wins. The cap is the
+    /// same process-wide static as the pilot's, so only the one-shot CLI
+    /// repair resolvers hold it.
+    pub(crate) fn widen_to(cap: usize) -> Self {
+        let previous = PILOT_INVENTORY_DEFAULT.swap(cap, Ordering::Relaxed);
+        Self { previous }
+    }
+}
+
+impl PilotInventoryDefault {
     /// Re-labels an inventory cut made by the pilot-scoped default cap as the
     /// pilot budget cut it stands in for: same analyzed and total counts, the
     /// budget's own source. `None` for any other cut (an explicit
