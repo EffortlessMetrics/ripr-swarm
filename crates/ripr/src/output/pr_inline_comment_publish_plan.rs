@@ -65,8 +65,10 @@ impl CommentMode {
                  `--mode` out, or pass `off`, to publish no comments)"
                     .to_string(),
             ),
-            _ => Err(format!(
-                "unknown pr-comments plan mode {value:?}; expected `off`, `plan`, or `inline`"
+            _ => Err(crate::cli::unknown_value(
+                "pr-comments plan mode",
+                value,
+                &["off", "plan", "inline"],
             )),
         }
     }
@@ -1987,6 +1989,10 @@ mod tests {
             "{unknown}"
         );
         assert!(!unknown.contains("is empty"), "{unknown}");
+        assert_eq!(
+            CommentMode::parse("inlin").err().unwrap_or_default(),
+            "unknown pr-comments plan mode \"inlin\". Did you mean `inline`? Accepted: off, plan, inline."
+        );
     }
 
     #[test]
