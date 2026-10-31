@@ -1588,6 +1588,7 @@ dependencies = [
  "tower",
  "tower-lsp-server",
  "unicode-ident",
+ "unicode-properties",
  "unicode-segmentation",
  "unicode-width",
  "win32job",

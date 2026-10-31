@@ -593,7 +593,7 @@ pub(crate) fn render_human_triage(
                 finding.probe.location.line,
                 finding.class.plain_label_with_stage(),
                 currentness,
-                finding.probe.family.as_str(),
+                super::evidence_lines::plain_probe_family(&finding.probe.family),
                 hidden_finding_reason(finding)
             ));
             if offers_test_stub(finding)
@@ -807,7 +807,7 @@ fn hidden_finding_reason(finding: &Finding) -> String {
             }
             ExposureClass::StaticUnknown => &finding.ripr.infect.summary,
         });
-    one_line(reason)
+    one_line(&super::evidence_lines::plain_default_missing(reason))
 }
 
 /// The currentness mix of the omitted set. `unresolved_subject` is the
@@ -1660,7 +1660,7 @@ fn has_repair_route(finding: &Finding) -> bool {
             .any(|line| line.starts_with("suggested_verify_command: "))
 }
 
-fn is_static_limited(finding: &Finding) -> bool {
+pub(super) fn is_static_limited(finding: &Finding) -> bool {
     // The producer's named limitation remains authoritative even when its
     // conservative class is reachable_unrevealed or weakly_exposed.
     finding.static_limit_kind.is_some()
@@ -1673,7 +1673,7 @@ fn is_static_limited(finding: &Finding) -> bool {
         )
 }
 
-fn is_preview_limited(finding: &Finding) -> bool {
+pub(super) fn is_preview_limited(finding: &Finding) -> bool {
     finding
         .language_status
         .is_some_and(|status| status.as_str() == "preview")

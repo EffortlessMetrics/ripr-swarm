@@ -10,6 +10,7 @@ mod dependency_expiry;
 pub(crate) mod distribution;
 mod doc_roles;
 pub(crate) mod droid_review;
+pub(crate) mod evidence_state_literals;
 mod executable_files;
 mod file_policy;
 mod fold_changelog;
