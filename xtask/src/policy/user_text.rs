@@ -250,7 +250,16 @@ pub(crate) fn scan_goldens(root: &Path, counts: &mut Counts) -> Result<usize, St
             .unwrap_or(path)
             .to_string_lossy()
             .replace('\\', "/");
-        scan_text(GOLDEN_SURFACE, &label, &text, counts);
+        // One golden is one subject: the ceiling bounds the worst single file,
+        // not a repository total that every landing golden would race to raise.
+        let mut file_counts = Counts::new();
+        scan_text(GOLDEN_SURFACE, &label, &text, &mut file_counts);
+        for (key, found) in file_counts {
+            let entry = counts.entry(key).or_default();
+            if found.lines > entry.lines {
+                *entry = found;
+            }
+        }
     }
     Ok(files.len())
 }
@@ -301,15 +310,15 @@ pub(crate) fn parse_baseline(text: &str) -> Result<Baseline, String> {
 fn render_baseline(baseline: &Baseline) -> String {
     let mut out = String::from(
         "# Ceilings for banned plain-language terms in default human output (#10697).\n\
-         # Each number is a ceiling on output lines containing the term; `main` may sit\n\
-         # above it after parallel merges, which is reported as a warning.\n\
-         # Golden rows (`golden-human`) gate each PR on its own delta against the\n\
-         # merge-base, so a PR never edits this file to pass; a golden count above\n\
-         # its ceiling is only a warning. Live-surface rows fail above their ceiling\n\
-         # (raising one needs an explicit reviewed reason), as do golden rows when\n\
-         # the merge-base is unreadable (shallow clone).\n\
-         # Lower ceilings with `cargo xtask check-user-text --ratchet` (lowering only);\n\
-         # never raise one. A term with no row has a ceiling of 0.\n\
+         # Each number is the count of output lines containing the term on `main`; for\n\
+         # `golden-human` it is the most lines any single golden may hold (one golden is\n\
+         # one subject, so landing goldens never races on a shared total). Golden rows\n\
+         # also gate each PR on its own per-file delta against the merge-base, so a PR\n\
+         # never edits this file to pass; a golden above its ceiling is only a warning.\n\
+         # Live-surface rows fail above their ceiling (raising one needs an explicit\n\
+         # reviewed reason), as do golden rows when the merge-base is unreadable.\n\
+         # Lower a ceiling with `cargo xtask check-user-text --ratchet`; never raise one\n\
+         # without a reviewed reason in the PR. A term with no row has a ceiling of 0.\n\
          # See docs/USER_TEXT_GLOSSARY.md.\n\
          schema_version = \"1.0\"\n",
     );
@@ -1959,7 +1968,14 @@ mod tests {
         run_git(&root, &["add", "-A"])?;
         run_git(&root, &["commit", "-q", "-m", "link"])?;
         let head = git_text(&root, &["rev-parse", "HEAD"])?.trim().to_string();
-        let (evaluation, note) = gate_in_ci(&root, "main", &mg_mode(&base, &head, &head))?;
+        let (evaluation, note) = gate_goldens(
+            &root,
+            "main",
+            &mg_mode(&base, &head, &head),
+            &Counts::new(),
+            &Counts::new(),
+            &Baseline::new(),
+        );
         let mut local = Counts::new();
         let local_reason = rejected(scan_goldens(&root, &mut local));
         let _ = fs::remove_dir_all(&root);
@@ -2430,6 +2446,37 @@ mod tests {
         Ok(())
     }
 
+    /// One golden is one subject: the ceiling bounds the worst single file, so
+    /// adding goldens never raises a shared total, and a golden that grows past
+    /// the per-file ceiling fails on its own.
+    #[test]
+    fn golden_ceiling_bounds_the_worst_single_file_not_the_sum() -> Result<(), String> {
+        let root = temp_root("goldens-per-file")?;
+        for name in ["a", "b", "c"] {
+            let expected = root.join(format!("fixtures/{name}/expected"));
+            write_file(
+                &expected.join("human.txt"),
+                "a discriminator\nanother discriminator\n",
+            )?;
+        }
+        let mut counts = Counts::new();
+        scan_goldens(&root, &mut counts)?;
+        let key = (GOLDEN_SURFACE.to_string(), "discriminator".to_string());
+        assert_eq!(counts.get(&key).map(|c| c.lines), Some(2));
+        let two: Baseline = [(key.clone(), 2)].into_iter().collect();
+        assert!(evaluate(&counts, &two).violations.is_empty());
+        write_file(
+            &root.join("fixtures/d/expected/human.txt"),
+            "discriminator\ndiscriminator\ndiscriminator\n",
+        )?;
+        let mut grown = Counts::new();
+        scan_goldens(&root, &mut grown)?;
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(grown.get(&key).map(|c| c.lines), Some(3));
+        assert!(!evaluate(&grown, &two).violations.is_empty());
+        Ok(())
+    }
+
     #[test]
     fn gap_id_is_read_from_pilot_output() {
         let text = "Top recommendation:\n  gap 2377230e7659a2e1: src/lib.rs:2 discount (x)\n";
@@ -2497,5 +2544,31 @@ mod tests {
             "committed goldens scanned to zero banned lines"
         );
         Ok(())
+    }
+
+    /// The committed goldens must already sit within the committed per-file
+    /// ceilings (#11372), so a stale baseline cannot hide growth.
+    #[test]
+    fn committed_goldens_stay_within_the_committed_baseline() -> Result<(), String> {
+        let root = repo_root()?;
+        let baseline = parse_baseline(
+            &fs::read_to_string(root.join(BASELINE_PATH))
+                .map_err(|err| format!("read baseline: {err}"))?,
+        )?;
+        let mut counts = Counts::new();
+        let scanned = scan_goldens(&root, &mut counts)?;
+        if scanned == 0 {
+            return Err("no default human.txt goldens were scanned".into());
+        }
+        let golden_only: Baseline = baseline
+            .into_iter()
+            .filter(|((surface, _), _)| surface == GOLDEN_SURFACE)
+            .collect();
+        let evaluation = evaluate(&counts, &golden_only);
+        if evaluation.violations.is_empty() {
+            Ok(())
+        } else {
+            Err(evaluation.violations.join("\n"))
+        }
     }
 }
