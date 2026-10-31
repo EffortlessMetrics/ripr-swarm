@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- Every `ripr agent` value flag now refuses a repeat instead of silently last-winning: `agent verify --before a --before b` errors with `agent verify takes --before once` instead of comparing `b` against itself. `--root` stays last-win by family contract, and `agent receipt --command` stays a repeatable accumulator. `agent verify --gap-id` also gains the non-empty validation its siblings have (#10542).
