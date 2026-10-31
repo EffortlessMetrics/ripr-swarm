@@ -39,10 +39,10 @@ use super::refresh_scheduler::{
 };
 use super::state::{
     AnalysisAttemptState, AnalysisFailure, AnalysisFailureKind, AnalysisHealth, AnalysisSnapshot,
-    ConfigPullState, DocumentStalenessReason, DocumentState, DocumentStore, QuarantineTransition,
-    WorkspaceFolderEntry, WorkspaceFolderEventRejection, WorkspaceFolderSelection,
-    WorkspaceFolderSet, WorkspaceRootAuthority, WorkspaceRootState, content_digest,
-    format_duration,
+    ConfigPullState, DocumentStalenessReason, DocumentState, QuarantineLedger,
+    QuarantineTransition, WorkspaceFolderEntry, WorkspaceFolderEventRejection,
+    WorkspaceFolderSelection, WorkspaceFolderSet, WorkspaceRootAuthority, WorkspaceRootState,
+    content_digest, format_duration,
 };
 use super::uri::{
     CappedArtifactRead, absolute_join, display_path, file_uri_for_path, file_uri_is_within_root,
@@ -165,11 +165,9 @@ pub(super) struct Backend {
     /// optional full-list reconciliation query is a separately versioned
     /// confirmation step bound to the folder-set epoch.
     workspace_folders: Mutex<WorkspaceFolderSet>,
-    documents: Mutex<DocumentStore>,
-    /// Per-document save digest plus the workspace revision that save
-    /// produced; the revision lets a failed refresh drop only the digests no
-    /// successful snapshot has covered yet.
-    saved_content_digests: Mutex<BTreeMap<tower_lsp_server::ls_types::Uri, (String, u64)>>,
+    /// Owns open documents, save digests and the last published
+    /// diagnostics (#2941).
+    quarantine: QuarantineLedger,
     /// Highest workspace revision a published snapshot analyzed.
     last_published_workspace_revision: AtomicU64,
     analysis_config: Mutex<LspAnalysisConfig>,
@@ -202,7 +200,6 @@ pub(super) struct Backend {
     /// (or a root/shutdown clear) must retract the marker with the
     /// established empty-clear so the pending state never outlives it.
     pending_push_marker_uris: Mutex<BTreeMap<Uri, String>>,
-    last_diagnostics: Mutex<BTreeMap<Uri, Vec<Diagnostic>>>,
     latest_analysis: Mutex<Option<Arc<AnalysisSnapshot>>>,
     diagnostic_result_ids: Mutex<Option<Arc<DiagnosticResultIdCache>>>,
     analysis_health: Mutex<AnalysisHealth>,
@@ -369,8 +366,7 @@ impl Backend {
             workspace_root_epoch: AtomicU64::new(0),
             workspace_root_transition: AsyncMutex::new(()),
             workspace_folders: Mutex::new(WorkspaceFolderSet::default()),
-            documents: Mutex::new(DocumentStore::default()),
-            saved_content_digests: Mutex::new(BTreeMap::new()),
+            quarantine: QuarantineLedger::default(),
             last_published_workspace_revision: AtomicU64::new(0),
             analysis_config: Mutex::new(LspAnalysisConfig::default()),
             configuration_failure: Mutex::new(None),
@@ -382,7 +378,6 @@ impl Backend {
             config_pull_scope_root: Mutex::new(None),
             last_diagnostic_uris: Mutex::new(BTreeSet::new()),
             pending_push_marker_uris: Mutex::new(BTreeMap::new()),
-            last_diagnostics: Mutex::new(BTreeMap::new()),
             latest_analysis: Mutex::new(None),
             diagnostic_result_ids: Mutex::new(None),
             analysis_health: Mutex::new(AnalysisHealth::default()),
@@ -1130,7 +1125,7 @@ impl Backend {
     }
 
     fn open_rust_index_paths_for_root(&self, root: &Path) -> std::collections::BTreeSet<PathBuf> {
-        let Ok(documents) = self.documents.lock() else {
+        let Ok(documents) = self.quarantine.documents.lock() else {
             return Default::default();
         };
         documents
@@ -1280,7 +1275,7 @@ impl Backend {
         }
         bind_seam_evidence_identity(&mut snapshot, &mut batches);
         snapshot.prepare_diagnostic_uri_index();
-        let Ok(last_diagnostics) = self.last_diagnostics.lock() else {
+        let Ok(last_diagnostics) = self.quarantine.last_diagnostics.lock() else {
             return None;
         };
         if snapshot.diagnostics_by_uri != diagnostics_by_uri_from_batches(&batches) {
@@ -1296,7 +1291,7 @@ impl Backend {
         // Rust uses the raw-byte commitments carried by the completed producer,
         // never a reread after analysis. Other languages retain their existing
         // saved-content identity behavior. State advances only at commit.
-        let Ok(documents) = self.documents.lock() else {
+        let Ok(documents) = self.quarantine.documents.lock() else {
             return None;
         };
         let (pending_analyzed, pending_entered) =
@@ -1345,7 +1340,7 @@ impl Backend {
         let Ok(mut last_diagnostic_uris) = self.last_diagnostic_uris.lock() else {
             return None;
         };
-        let Ok(mut last_diagnostics) = self.last_diagnostics.lock() else {
+        let Ok(mut last_diagnostics) = self.quarantine.last_diagnostics.lock() else {
             return None;
         };
         let Ok(mut latest_analysis) = self.latest_analysis.lock() else {
@@ -1354,7 +1349,7 @@ impl Backend {
         let Ok(mut stored_result_ids) = self.diagnostic_result_ids.lock() else {
             return None;
         };
-        let Ok(mut documents) = self.documents.lock() else {
+        let Ok(mut documents) = self.quarantine.documents.lock() else {
             return None;
         };
         // Advance document identities atomically with the snapshot commit.
@@ -1452,7 +1447,7 @@ impl Backend {
         let Ok(mut last_diagnostic_uris) = self.last_diagnostic_uris.lock() else {
             return Vec::new();
         };
-        if let Ok(mut last_diagnostics) = self.last_diagnostics.lock() {
+        if let Ok(mut last_diagnostics) = self.quarantine.last_diagnostics.lock() {
             last_diagnostics.clear();
         }
         if let Ok(mut latest_analysis) = self.latest_analysis.lock() {
@@ -1509,6 +1504,7 @@ impl Backend {
         };
         let signature = Self::pending_push_marker_signature(&recovery, withdrawn);
         let uris = self
+            .quarantine
             .documents
             .lock()
             .map(|documents| documents.documents.keys().cloned().collect::<Vec<_>>())
@@ -1787,7 +1783,12 @@ impl Backend {
         uri: &Uri,
         project: impl FnOnce(&DocumentState) -> R,
     ) -> Option<R> {
-        self.documents.lock().ok()?.state_for_uri(uri).map(project)
+        self.quarantine
+            .documents
+            .lock()
+            .ok()?
+            .state_for_uri(uri)
+            .map(project)
     }
 
     /// Clears intentionally bind no version (#1747): a clear must apply
@@ -1901,12 +1902,22 @@ impl Backend {
 
     #[cfg(test)]
     pub(super) fn document_state_for_test(&self, uri: &Uri) -> Option<super::state::DocumentState> {
-        self.documents.lock().ok()?.state_for_uri(uri).cloned()
+        self.quarantine
+            .documents
+            .lock()
+            .ok()?
+            .state_for_uri(uri)
+            .cloned()
     }
 
     #[cfg(test)]
     pub(super) fn last_diagnostics_for_uri_for_test(&self, uri: &Uri) -> Option<Vec<Diagnostic>> {
-        self.last_diagnostics.lock().ok()?.get(uri).cloned()
+        self.quarantine
+            .last_diagnostics
+            .lock()
+            .ok()?
+            .get(uri)
+            .cloned()
     }
 
     fn analysis_health_snapshot(&self) -> AnalysisHealth {
@@ -3532,7 +3543,8 @@ impl Backend {
         params: DidOpenTextDocumentParams,
     ) -> Option<(Uri, QuarantineTransition)> {
         let uri = params.text_document.uri.clone();
-        self.documents
+        self.quarantine
+            .documents
             .lock()
             .ok()
             .map(|mut documents| (uri, documents.open(params)))
@@ -3543,7 +3555,8 @@ impl Backend {
     /// store lock is treated as a changed input: the conservative route is
     /// the interactive refresh, never silently skipping it.
     fn open_document_matches_saved_content(&self, uri: &Uri) -> bool {
-        self.documents
+        self.quarantine
+            .documents
             .lock()
             .ok()
             .map(|documents| documents.open_matches_persisted_saved_content(uri))
@@ -3564,9 +3577,13 @@ impl Backend {
         let Some((digest, input_identity)) = committed else {
             return false;
         };
-        self.documents.lock().ok().is_some_and(|mut documents| {
-            documents.adopt_committed_identity(uri, &digest, input_identity)
-        })
+        self.quarantine
+            .documents
+            .lock()
+            .ok()
+            .is_some_and(|mut documents| {
+                documents.adopt_committed_identity(uri, &digest, input_identity)
+            })
     }
 
     /// Whether a clean open still carries an input the committed snapshot
@@ -3589,6 +3606,7 @@ impl Backend {
             return false;
         };
         let saved_digest_matches = self
+            .quarantine
             .documents
             .lock()
             .ok()
@@ -3615,7 +3633,7 @@ impl Backend {
         let uri = params.text_document.uri.clone();
         let version = params.text_document.version;
         let position_encoding = self.selected_position_encoding();
-        let mut documents = self.documents.lock().ok()?;
+        let mut documents = self.quarantine.documents.lock().ok()?;
         let transition = match position_encoding {
             Some(position_encoding) => documents.change(params, &position_encoding),
             None => documents.invalidate_change(&uri, version),
@@ -3634,7 +3652,7 @@ impl Backend {
         saved_digest: Option<String>,
         text: Option<String>,
     ) -> Option<(QuarantineTransition, Option<i32>)> {
-        self.documents.lock().ok().map(|mut documents| {
+        self.quarantine.documents.lock().ok().map(|mut documents| {
             let transition = documents.save(uri, saved_digest, text);
             let version = documents.state_for_uri(uri).and_then(|state| state.version);
             (transition, version)
@@ -3642,14 +3660,15 @@ impl Backend {
     }
 
     fn close_document(&self, params: DidCloseTextDocumentParams) {
-        let Ok(mut documents) = self.documents.lock() else {
+        let Ok(mut documents) = self.quarantine.documents.lock() else {
             return;
         };
         documents.close(params);
     }
 
     fn document_text(&self, uri: &tower_lsp_server::ls_types::Uri) -> Option<String> {
-        self.documents
+        self.quarantine
+            .documents
             .lock()
             .ok()?
             .documents
@@ -3661,7 +3680,8 @@ impl Backend {
     /// (#1746): after a rejected incremental change the retained text is not
     /// the client's document and must never supply a save identity.
     fn document_buffer_authority_unknown(&self, uri: &tower_lsp_server::ls_types::Uri) -> bool {
-        self.documents
+        self.quarantine
+            .documents
             .lock()
             .ok()
             .and_then(|documents| {
@@ -3795,31 +3815,18 @@ impl Backend {
         &self,
         uri: &Uri,
     ) -> Option<(PathBuf, DocumentStalenessReason)> {
-        let documents = self.documents.lock().ok()?;
-        let state = documents.state_for_uri(uri)?;
-        quarantine_from_state(state)
+        self.quarantine.document_quarantine(uri)
     }
 
     fn document_path_for_uri(&self, uri: &Uri) -> Option<PathBuf> {
-        self.documents
-            .lock()
-            .ok()?
-            .state_for_uri(uri)
-            .map(|state| state.path.clone())
+        self.quarantine.document_path_for_uri(uri)
     }
 
     /// Mark the document's withdrawal as disclosed, returning `(path,
     /// reason)` only on the first disclosure of the episode so one episode
     /// emits exactly one disclosure.
     fn mark_withdrawal_disclosed(&self, uri: &Uri) -> Option<(PathBuf, DocumentStalenessReason)> {
-        let mut documents = self.documents.lock().ok()?;
-        let state = documents.state_for_uri_mut(uri)?;
-        let quarantine = state.quarantine.as_mut()?;
-        if quarantine.withdrawal_disclosed {
-            return None;
-        }
-        quarantine.withdrawal_disclosed = true;
-        Some((state.path.clone(), quarantine.reason))
+        self.quarantine.mark_withdrawal_disclosed(uri)
     }
 
     /// Mark the pull-side partial-delivery disclosures for one snapshot input
@@ -3868,7 +3875,8 @@ impl Backend {
     }
 
     fn last_diagnostics_has_any(&self, uri: &Uri) -> bool {
-        self.last_diagnostics
+        self.quarantine
+            .last_diagnostics
             .lock()
             .ok()
             .and_then(|last| last.get(uri).map(|diagnostics| !diagnostics.is_empty()))
@@ -3876,7 +3884,7 @@ impl Backend {
     }
 
     fn set_last_diagnostics_for_uri(&self, uri: &Uri, diagnostics: Vec<Diagnostic>) {
-        if let Ok(mut last) = self.last_diagnostics.lock() {
+        if let Ok(mut last) = self.quarantine.last_diagnostics.lock() {
             last.insert(uri.clone(), diagnostics);
         }
     }
@@ -4071,11 +4079,7 @@ impl Backend {
         uri: &tower_lsp_server::ls_types::Uri,
         digest: &str,
     ) -> bool {
-        self.saved_content_digests
-            .lock()
-            .ok()
-            .and_then(|digests| digests.get(uri).map(|(recorded, _)| recorded.clone()))
-            .is_some_and(|recorded| recorded == digest)
+        self.quarantine.saved_content_digest_matches(uri, digest)
     }
 
     /// Record a save digest and advance the workspace revision as one step,
@@ -4092,9 +4096,8 @@ impl Backend {
             return;
         };
         let next = revision.saturating_add(1);
-        if let Ok(mut digests) = self.saved_content_digests.lock() {
-            digests.insert(uri.clone(), (digest, next));
-        }
+        self.quarantine
+            .record_saved_content_digest(uri, digest, next);
         *revision = next;
     }
 
@@ -4107,9 +4110,7 @@ impl Backend {
         let covered = self
             .last_published_workspace_revision
             .load(Ordering::Acquire);
-        if let Ok(mut digests) = self.saved_content_digests.lock() {
-            digests.retain(|_, (_, revision)| *revision <= covered);
-        }
+        self.quarantine.retain_covered_digests(covered);
     }
 
     pub(super) fn hover_for_position(&self, params: &HoverParams) -> Option<Hover> {
@@ -4223,7 +4224,7 @@ impl Backend {
             }
         }
 
-        let Ok(last_diagnostics) = self.last_diagnostics.lock() else {
+        let Ok(last_diagnostics) = self.quarantine.last_diagnostics.lock() else {
             return None;
         };
         let diagnostics = last_diagnostics.get(uri)?;
@@ -6712,9 +6713,8 @@ impl LanguageServer for Backend {
             self.verbose_params_bytes(&params),
         )
         .await;
-        if let Ok(mut digests) = self.saved_content_digests.lock() {
-            digests.remove(&params.text_document.uri);
-        }
+        self.quarantine
+            .forget_saved_content_digest(&params.text_document.uri);
         // #8732: the closing client clears its own view; drop the URI from
         // the pending-marker set so a later commit or shutdown does not
         // publish a retraction for a document nobody tracks. Push clients
@@ -7721,7 +7721,7 @@ impl Backend {
         &self,
         snapshot: Option<&AnalysisSnapshot>,
     ) -> serde_json::Value {
-        let Ok(documents) = self.documents.lock() else {
+        let Ok(documents) = self.quarantine.documents.lock() else {
             return serde_json::json!([]);
         };
         let statuses = documents
@@ -13085,13 +13085,8 @@ mod work_done_progress_guard_tests {
             backend.record_health_outcome(&first, RefreshAttemptOutcome::Published);
             // `uncovered` is saved afterwards; the still-active refresh is aborted.
             backend.record_saved_content_digest_and_advance(&uncovered_uri, "u".to_string());
-            let held = |backend: &Backend| -> Vec<Uri> {
-                backend
-                    .saved_content_digests
-                    .lock()
-                    .map(|digests| digests.keys().cloned().collect())
-                    .unwrap_or_default()
-            };
+            let held =
+                |backend: &Backend| -> Vec<Uri> { backend.quarantine.saved_content_digest_uris() };
             if held(backend).len() != 2 {
                 return Err("precondition: both digests recorded".to_string());
             }
