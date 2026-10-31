@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A `no_static_path` finding whose owner is called from an `impl Trait for X` method with an implicit-dispatch name (`fmt`, `eq`, ...) that the crate implements more than once (dtolnay/semver `display::pad`) now names a trait-dispatch ambiguity limit with the calling impls as bounded candidates, instead of a bare "no related test was found" (#11719). ripr does not guess which impl a test reaches, and cannot tell whether any does; the class, reach, related tests and actionability are unchanged and no runtime claim is made.

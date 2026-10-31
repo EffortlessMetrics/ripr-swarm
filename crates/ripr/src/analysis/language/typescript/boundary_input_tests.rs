@@ -504,6 +504,28 @@ fn whole_side_comparisons_accept_common_line_shapes() {
         ),
         ("  ok = amount > CAP; // note: amount >= LIMIT ;", false),
         ("  ok = amount > CAP; /* amount >= LIMIT ; */", false),
+        // #11628: a plain division after the comparison does not hide it,
+        // but a regex-position `/` and a keyword-led `/` still do.
+        (
+            "  if (amount >= LIMIT) { return Math.floor(amount / 10); }",
+            true,
+        ),
+        ("  if (amount >= LIMIT) { return (amount) / 10; }", true),
+        ("  if (amount >= LIMIT) { return 1 / 2; }", true),
+        ("  if (amount >= LIMIT) { y = list[0] / 2; }", true),
+        // A multibyte separator before the word must not split a character.
+        ("  if (amount >= LIMIT) { y = \u{20ac}abc / 2; }", true),
+        ("  if (amount >= LIMIT) { x = a++ / 2; }", false),
+        ("  if (amount >= LIMIT) { x = a /* c */ / b; }", false),
+        ("  if (amount >= LIMIT) { x = s.return / 2; }", false),
+        (
+            "  if (amount >= LIMIT) { return /LIMIT >= amount/.test(s); }",
+            false,
+        ),
+        (
+            "  if (amount >= LIMIT) { s.replace(/amount >= LIMIT/, x); }",
+            false,
+        ),
     ] {
         let operand = if line.contains("5_000") {
             "5_000"
@@ -516,6 +538,33 @@ fn whole_side_comparisons_accept_common_line_shapes() {
             "{line}"
         );
     }
+}
+
+/// #11628: a plain division on the changed comparison line keeps the boundary
+/// input through the full source-level path, not just the line gate.
+#[test]
+fn division_on_the_changed_line_keeps_its_boundary_input() -> Result<(), String> {
+    let source = "export function discount(amount: number): number {\n  if (amount >= 100) { return Math.floor(amount / 10); }\n  return 0;\n}\n";
+    let owners = extract_owners(Path::new("src/discount.ts"), source);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.name == "discount")
+        .ok_or_else(|| "discount owner extracted".to_string())?;
+    assert_eq!(
+        ts_boundary_input_in_source(
+            source,
+            2,
+            "  if (amount >= 100) { return Math.floor(amount / 10); }",
+            owner
+        ),
+        Some(TypeScriptBoundaryInput {
+            parameter: "amount".to_string(),
+            index: 0,
+            operand: "100".to_string(),
+            value: 100,
+        })
+    );
+    Ok(())
 }
 
 /// A compound line whose single comparison sits next to the statement

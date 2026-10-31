@@ -2590,3 +2590,114 @@ mod unanalyzed_file_cause_tests {
         }
     }
 }
+
+/// #11821: the top limitation of one finding reads the same on every surface
+/// the shared owner feeds — MCP `ripr_get_top_limitation`, the LSP hover and
+/// the CLI explanation — and none renders a stronger claim than the MCP result.
+#[cfg(test)]
+mod top_limitation_parity_tests {
+    use super::*;
+    use crate::domain::{ProbeFamily, StaticLimitKind};
+    use crate::mcp::gaps::{GapItem, test_finding};
+    use tower_lsp_server::ls_types::{Position, Range};
+
+    fn hover_text(finding: &Finding) -> String {
+        let diagnostic = Diagnostic {
+            range: Range {
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 0,
+                    character: 1,
+                },
+            },
+            source: Some("ripr".to_string()),
+            message: "limited".to_string(),
+            ..Diagnostic::default()
+        };
+        match finding_hover_response(finding, &diagnostic).contents {
+            HoverContents::Markup(markup) => markup.value,
+            HoverContents::Scalar(_) | HoverContents::Array(_) => String::new(),
+        }
+    }
+
+    fn limitation_field(finding: &Finding, field: &str) -> Result<String, String> {
+        let item = GapItem::from_finding(finding, Path::new("."))?;
+        let document = item.limitation_document("snap");
+        document
+            .pointer(&format!("/limitation/{field}"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| format!("limitation document has no {field}: {document}"))
+    }
+
+    #[test]
+    fn one_limitation_reads_the_same_on_mcp_hover_and_cli() -> Result<(), String> {
+        // `RustAssertionContextUnresolved` on a match arm is the one kind whose
+        // wording depends on the probe family, so it catches a surface that
+        // describes the kind without the family.
+        for (family, kind) in [
+            (
+                ProbeFamily::MatchArm,
+                StaticLimitKind::RustAssertionContextUnresolved,
+            ),
+            (
+                ProbeFamily::Predicate,
+                StaticLimitKind::RustAssertionContextUnresolved,
+            ),
+            (ProbeFamily::Predicate, StaticLimitKind::UnsupportedSyntax),
+        ] {
+            let mut finding = test_finding()?;
+            finding.probe.family = family.clone();
+            finding.static_limit_kind = Some(kind);
+
+            let mcp_kind = limitation_field(&finding, "kind")?;
+            let mcp_reason = limitation_field(&finding, "reason")?;
+            let mcp_recovery = limitation_field(&finding, "recovery")?;
+            let mcp_stage = limitation_field(&finding, "stage")?;
+            assert_eq!(mcp_stage, "producer_static_limit");
+            assert_eq!(mcp_kind, kind.as_str());
+
+            let hover = hover_text(&finding);
+            let hover_line = format!("Static limit: {mcp_kind} \u{2014} {mcp_reason}");
+            assert!(
+                hover.contains(&hover_line),
+                "hover must carry the MCP kind and reason for {family:?}/{kind:?}\nexpected line: {hover_line}\nhover:\n{hover}"
+            );
+
+            let cli = crate::output::human::render_finding(&finding);
+            let cli_line = format!("  {mcp_kind} \u{2014} {mcp_reason}\n");
+            assert!(
+                cli.contains(&cli_line),
+                "CLI must carry the MCP kind and reason for {family:?}/{kind:?}\nexpected: {cli_line}\ncli:\n{cli}"
+            );
+            assert!(
+                cli.contains(&format!("  Next: {mcp_recovery}\n")),
+                "CLI next step must equal the MCP recovery for {family:?}/{kind:?}\n{cli}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_limited_finding_never_reads_as_repair_ready_on_any_surface() -> Result<(), String> {
+        let mut finding = test_finding()?;
+        finding.static_limit_kind = Some(StaticLimitKind::UnsupportedSyntax);
+        let item = GapItem::from_finding(&finding, Path::new("."))?;
+        assert_ne!(
+            item.limitation_document("snap")
+                .pointer("/limitation/kind")
+                .and_then(Value::as_str),
+            Some("no_limitation_established"),
+            "a producer static limit must outrank the absence of a limitation"
+        );
+        let hover = hover_text(&finding);
+        assert!(
+            hover.contains("Static limit: unsupported_syntax"),
+            "hover must disclose the same limit the MCP result names:\n{hover}"
+        );
+        Ok(())
+    }
+}
