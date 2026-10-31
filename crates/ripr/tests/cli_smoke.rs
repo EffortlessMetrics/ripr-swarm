@@ -430,6 +430,58 @@ fn run_command_with_env(
     spawn_command(program, Some(current_dir), args, env, None, None)
 }
 
+/// Place the built `ripr` at `destination` without ever opening a writable
+/// descriptor on it (#11449). `std::fs::copy` holds a write handle on the new
+/// file, and a sibling test thread that forks in that window leaks the handle
+/// into its child until the child reaches `exec`; executing the copy then
+/// fails with `ETXTBSY`. A hard link shares the already-sealed built inode, so
+/// no writer exists to leak. Only when the filesystem refuses the link
+/// (for example across devices) does this fall back to a byte copy.
+fn install_ripr_binary(source: &Path, destination: &Path) -> std::io::Result<()> {
+    match std::fs::hard_link(source, destination) {
+        Ok(()) => Ok(()),
+        Err(_) => std::fs::copy(source, destination).map(|_| ()),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn install_ripr_binary_links_the_built_inode_without_a_writer() -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+    let dir = unique_temp_workspace("install-ripr-link");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
+    let built = Path::new(env!("CARGO_BIN_EXE_ripr"));
+    let installed = dir.join("ripr");
+    let result = (|| -> Result<(), String> {
+        install_ripr_binary(built, &installed).map_err(|e| format!("install: {e}"))?;
+        let built_meta = std::fs::metadata(built).map_err(|e| format!("stat built: {e}"))?;
+        let installed_meta =
+            std::fs::metadata(&installed).map_err(|e| format!("stat installed: {e}"))?;
+        // On one filesystem the install must be a link (same inode), so no
+        // writable descriptor was ever opened. A cross-device temp dir takes
+        // the documented copy fallback, where the link claim does not apply.
+        if built_meta.dev() == installed_meta.dev()
+            && built_meta.ino() != installed_meta.ino()
+            && std::fs::metadata(&dir)
+                .map(|m| m.dev() == built_meta.dev())
+                .unwrap_or(false)
+        {
+            return Err("installed ripr is a separate file, not a link to the built inode".into());
+        }
+        let output = run_command(&installed.display().to_string(), None, &["--version"])
+            .map_err(|e| format!("spawn installed: {e}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "installed ripr --version failed: {:?}",
+                output.status
+            ));
+        }
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&dir);
+    result
+}
+
 /// Retry only `ETXTBSY` (`ExecutableFileBusy`). Copying `ripr` and executing
 /// the copy can fail while another test still holds a writable descriptor
 /// from a `fork` that has not reached `exec` (#4296). Three attempts and a
@@ -1776,7 +1828,7 @@ fn isolated_installed_binary_version_contract_is_side_effect_free() -> Result<()
         std::fs::create_dir_all(&bin_dir)?;
         let source_binary = std::path::Path::new(env!("CARGO_BIN_EXE_ripr"));
         let installed_binary = bin_dir.join(if cfg!(windows) { "ripr.exe" } else { "ripr" });
-        std::fs::copy(source_binary, &installed_binary)?;
+        install_ripr_binary(source_binary, &installed_binary)?;
 
         let config_path = root.join("ripr.toml");
         std::fs::write(&config_path, "this is not valid TOML\n")?;
@@ -13281,7 +13333,7 @@ fn doctor_names_workspace_build_first_on_path() -> Result<(), String> {
         let built = Path::new(env!("CARGO_BIN_EXE_ripr"));
         let built_dir = built.parent().ok_or("built ripr has no parent")?;
         let installed = installed_dir.join(built.file_name().ok_or("built ripr has no name")?);
-        std::fs::copy(built, &installed).map_err(|error| format!("install copy: {error}"))?;
+        install_ripr_binary(built, &installed).map_err(|error| format!("install copy: {error}"))?;
 
         let (installed_ok, report) =
             doctor_json_with_path_prefix(&installed, &workspace, &[&installed_dir])?;
@@ -22752,7 +22804,7 @@ fn context_reuse_matches_fresh(fresh: &[u8], reused: &[u8]) -> Result<(), String
 /// is not weakened.
 fn stable_ripr_copy(workspace: &Path) -> Result<PathBuf, String> {
     let copy = workspace.join(format!("ripr{}", std::env::consts::EXE_SUFFIX));
-    std::fs::copy(env!("CARGO_BIN_EXE_ripr"), &copy)
+    install_ripr_binary(Path::new(env!("CARGO_BIN_EXE_ripr")), &copy)
         .map_err(|err| format!("copy suite binary to {}: {err}", copy.display()))?;
     Ok(copy)
 }
