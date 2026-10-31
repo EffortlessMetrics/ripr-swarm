@@ -22,8 +22,9 @@ pub(crate) fn top_actionable_seams<'a>(
     // leads one without. The headline otherwise promised a gap on crates (the
     // regex-family `src/tests.rs` layout) where the ranked top seam could never
     // start `ripr agent repair`, while a routable seam sat lower in the list.
-    // The route is decided by the shared repair-start owner, never re-derived
-    // here, so this only reorders and cannot widen what is offered.
+    // The route is pilot's one `has_repair_route`, which mirrors the two
+    // conjuncts of `repair_start_command_for`, so this only reorders and
+    // cannot widen what is offered.
     let mut actionable = classified
         .iter()
         .filter(|entry| class_rank(entry.class).is_some())

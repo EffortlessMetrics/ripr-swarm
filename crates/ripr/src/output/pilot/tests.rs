@@ -2202,6 +2202,36 @@ fn pilot_offers_agent_repair_only_past_the_repair_packet_flip() -> Result<(), St
     Ok(())
 }
 
+/// #11292: `has_repair_route` mirrors the two conjuncts of
+/// `repair_start_command_for`; this keeps the two from drifting.
+#[test]
+fn has_repair_route_agrees_with_repair_start_command_for() -> Result<(), String> {
+    use super::commands::has_repair_route;
+    use crate::output::evidence_record::repair_start_command_for;
+
+    let mut routable = route_ready_entry_at(&["tests/pricing.rs"], "src/zeta.rs", 5);
+    routable.class = SeamGripClass::Ungripped;
+    let entries = [
+        route_ready_entry(&["src/pricing.rs"]),
+        route_ready_entry(&[]),
+        route_ready_entry(&["tests/pricing.rs"]),
+        routable,
+        classified_in_owner(SeamGripClass::WeaklyGripped, "src/a.rs", "f", 1),
+    ];
+    let mut routes = 0;
+    for entry in &entries {
+        let expected = repair_start_command_for(entry, ".").is_some();
+        if has_repair_route(entry) != expected {
+            return Err(format!("predicates disagree for {:?}", entry.seam.id()));
+        }
+        routes += usize::from(expected);
+    }
+    if routes == 0 || routes == entries.len() {
+        return Err("fixtures must include both routable and unroutable seams".to_string());
+    }
+    Ok(())
+}
+
 /// #11292: a gap with a repair route outranks one without, even at a weaker
 /// class, because a headline the repair loop cannot start from reads as a
 /// broken loop. The unroutable seam is `weakly_gripped` (the better class) and

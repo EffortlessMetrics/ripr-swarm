@@ -1697,8 +1697,8 @@ fn terminal_why_line(entry: &ClassifiedSeam) -> String {
 /// Shown when no actionable gap has a repair route (#11292). It names no
 /// cause: why a route is missing varies per gap (no tests at all, `mod tests;`
 /// files, doctests, no exact check named) and the top gap's own reason is
-/// already printed on its `test to add` line. The remedy is by hand.
-const NO_ROUTABLE_GAP_NOTE: &str = "none of the gaps pilot found has a route to a repair attempt, so ripr will not start one (the top gap's own reason is on the `test to add` line above); add the tests by hand, in the crate's test module or under `tests/`, then compare with `ripr check` and `ripr outcome`";
+/// already printed in the lines above it. The remedy is by hand.
+const NO_ROUTABLE_GAP_NOTE: &str = "none of the gaps pilot found has a route to a repair attempt, so ripr will not start one (see the lines above for the top gap's own reason); add the tests by hand, in the crate's test module or under `tests/`, then compare with `ripr check` and `ripr outcome`";
 
 const TERMINAL_NO_REPAIR_TARGET_TEST: &str = "none: `ripr agent repair` has no test file to use for this gap (for example, the only tests are inline `#[cfg(test)]` in a file outside the test paths, or live in another crate), so it will not start a repair here";
 

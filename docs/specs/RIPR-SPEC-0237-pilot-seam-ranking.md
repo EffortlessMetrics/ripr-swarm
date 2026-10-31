@@ -38,8 +38,9 @@ Linked PRs:
 Support-tier impact:
 
 - No tier change. No seam changes class and no seam gains credit. Only
-  the order of `top_actionable_seams[]` changes (the #6294 owner spread),
-  and the Markdown "Also in this function" line counts the same ranked
+  the order of `top_actionable_seams[]` changes (the #6294 owner spread and
+  the #11292 route bucket; `next.repair_command` can therefore name a
+  different seam), and the Markdown "Also in this function" line counts the same ranked
   population as the list beside it, as #6294 does. Claim boundaries remain
   governed by [support tiers](../status/SUPPORT_TIERS.md).
 
@@ -48,7 +49,8 @@ Policy impact:
 - Register this spec in `policy/doc-artifacts.toml` and
   `.ripr/traceability.toml`.
 - No schema version bump. `pilot-summary.json` fields are unchanged; only
-  the array order changes. The Markdown line is prose.
+  the array order changes (and with it which seam `next.repair_command`
+  names). The Markdown line is prose.
 - Class membership of the ranked set is RIPR-SPEC-0236's. This spec owns
   only the order among admitted seams and the "Also in this function"
   count.
@@ -235,24 +237,24 @@ gains no line.
 
 Given distinct seam ids, the final order depends only on the set of
 ranked seams, not on their input order: the rank key is total, the round
-walk follows the rank key, and the second sort is stable. Paths are
+walk follows the (change, route, rank-key) order, and the second sort is stable. Paths are
 compared after `/` normalization, so the order is the same on Windows and
 Unix.
 
 ### Repair-route preference
 
 Within a current-change bucket, a seam that has a repair route leads a seam
-that does not, ahead of the class order (#11292). The route is
-`repair_start_command_for(entry, ".").is_some()`: the repair-packet flip
-plus an edit target the cage can route. The ranking reads that shared
-owner and never re-derives it, so the preference only reorders; it cannot
-make a seam repairable. The sort key becomes
+that does not, ahead of the class order (#11292). The route is the
+repair-packet flip plus an edit target the cage can route. The preference
+only reorders; it cannot make a seam repairable. The sort key becomes
 ((in change, no route), class rank, round), with the rank key breaking ties
 inside it. Owner rounds walk in that route-then-rank-key order, and a
 routable lower-class seam can outrank an unroutable weaker-grip seam on
 purpose. The route is decided by pilot's one local predicate
 (`output/pilot/commands.rs::has_repair_route`), which the offered repair
-start also uses.
+start also uses. It mirrors the two conjuncts of `repair_start_command_for`
+(the repair-packet flip and `recommended_test_is_repair_edit_target`), and
+a unit test pins `has_repair_route(e) == repair_start_command_for(e, ".").is_some()`.
 
 The reason is a user-facing one: on crates whose tests live in `mod tests;`
 files (`src/tests.rs`) or doctests, the top-ranked gap had no route while a
@@ -369,7 +371,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 - A permutation test: shuffling the input of example 13 does not change
   the output.
 - No change to any seam's class, `actionable_seams_total`, the JSON field
-  set or `next.repair_command` from this spec.
+  set from this spec; `next.repair_command` can name a different seam when
+  the route bucket reorders the list (#11292).
 - A class set to `off` under `[severity.seams]` is still ranked. Order
   reads neither severity config nor headline eligibility.
 
@@ -413,10 +416,11 @@ unless stated. Output lists `file:line` in final order. "today" is main
    `src/b.rs:5` (unchanged).
 7. Evidence precedence. `W src/a.rs f 1 [a]`, `W src/b.rs g 1 [r]`,
    `W src/c.rs h 1 [m]`, `W src/d.rs k 1 [r,a]`; N = 4: `c`, `d`, `b`, `a`
-   (unchanged by class and evidence alone; since #11292 a seam with a
-   repair route, such as `a` with its producer-owned target, leads the
-   seams without one, so the buildable variant in the test ranks `a` ahead
-   of `b`).
+   by class and evidence alone. Since #11292 a seam with a repair route
+   leads the seams without one, so the buildable test variant uses six
+   seams (`a [a]`, `b [m,r]`, `c [m]`, `d [r,a]`, `e [r]`, `f`) and pins
+   `d`, `a`, `b`, `c`, `e`, `f`: `d` (related test plus a route) and `a`
+   (producer-owned target) lead the unroutable rest.
 8. Path and line order. `W src/z.rs f 1`, `W src/ab.rs g 1`,
    `W src/a/b.rs h 1`, `W src/a.rs p 10`, `W src/a.rs q 9`; N = 5:
    `src/a.rs:9`, `src/a.rs:10`, `src/a/b.rs:1`, `src/ab.rs:1`,
@@ -449,7 +453,7 @@ unless stated. Output lists `file:line` in final order. "today" is main
     `W src/lib.rs A::fmt 2`, `W src/lib.rs B::fmt 10`; N = 3:
     `src/lib.rs:1`, `src/lib.rs:10`, `src/lib.rs:2` (today `1`, `2`,
     `10`).
-17. Top pick never moves. Any input above with N = 1 gives the first seam
+17. Top pick is the first of the order. Any input above with N = 1 gives the first seam
     of the (change, route, rank-key) order: example 14 gives `src/a.rs:1`,
     example 12 gives `src/a.rs:1` (unchanged; none of these inputs has a
     repair route). The terminal shows that seam whatever
