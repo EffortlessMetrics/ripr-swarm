@@ -1122,6 +1122,15 @@ export class RiprClientController {
     if (this.client !== client || this.stoppingClient) {
       return;
     }
+    if (event.newState === State.Running) {
+      this.lastCrashCloseAction = undefined;
+      return;
+    }
+    if (event.newState === State.StartFailed) {
+      this.lastCrashCloseAction = undefined;
+      this.markServerStoppedUnexpectedly();
+      return;
+    }
     if (event.newState !== State.Stopped) {
       return;
     }

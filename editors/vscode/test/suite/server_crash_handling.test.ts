@@ -52,6 +52,7 @@ interface CrashHarness {
   errorCalls: Array<{ message: string; items: string[] }>;
   restartCalls: number;
   outputLines: string[];
+  stopClosed?: { action: CloseAction; handled?: boolean };
   resolveError: (choice: string | undefined) => void;
   closed(): { action: CloseAction; handled?: boolean };
 }
@@ -74,6 +75,7 @@ function crashHarness(): CrashHarness {
   const outputLines: string[] = [];
   const answers: Array<ReturnType<typeof pendingChoice>> = [];
   let restartCalls = 0;
+  let stopClosed: { action: CloseAction; handled?: boolean } | undefined;
   const stateListeners: Array<(event: { oldState: State; newState: State }) => void> = [];
   let state = State.Stopped;
 
@@ -123,6 +125,13 @@ function crashHarness(): CrashHarness {
           fake.setState(State.Running);
         },
         stop: async () => {
+          const handler = capturedOptions?.errorHandler;
+          if (handler) {
+            const result = handler.closed();
+            if (result && typeof result === 'object' && !('then' in result)) {
+              stopClosed = result as { action: CloseAction; handled?: boolean };
+            }
+          }
           fake.setState(State.Stopped);
         }
       };
@@ -166,6 +175,9 @@ function crashHarness(): CrashHarness {
     errorCalls,
     get restartCalls() {
       return restartCalls;
+    },
+    get stopClosed() {
+      return stopClosed;
     },
     outputLines,
     resolveError: (choice) => {
@@ -249,5 +261,36 @@ suite('Server crash handling (#9370 section 1)', () => {
     assert.strictEqual(h.errorCalls.length, 0);
     h.client.setState(State.Starting);
     assert.ok(h.controller.isRunning(), 'Starting after an automatic restart still counts as running');
+  });
+
+  test('StartFailed after an automatic restart paints serverFailed and is not running', async () => {
+    const h = crashHarness();
+    await h.controller.start();
+    const result = h.closed();
+    assert.strictEqual(result.action, CloseAction.Restart);
+    h.client.setState(State.StartFailed);
+    assert.strictEqual(h.controller.isRunning(), false);
+    assert.strictEqual(controllerStatus(h.controller).kind, 'serverFailed');
+    assert.strictEqual(h.errorCalls.length, 0, 'a failed auto-restart uses status, not a second toast');
+  });
+
+  test('Stopped without closed() after a live session paints serverFailed', async () => {
+    const h = crashHarness();
+    await h.controller.start();
+    h.client.setState(State.Stopped);
+    assert.strictEqual(h.controller.isRunning(), false);
+    assert.strictEqual(controllerStatus(h.controller).kind, 'serverFailed');
+    assert.strictEqual(h.errorCalls.length, 0);
+  });
+
+  test('closed during an intentional stop does not restart or notify', async () => {
+    const h = crashHarness();
+    await h.controller.start();
+    await h.controller.stop();
+    assert.ok(h.stopClosed, 'client.stop must observe errorHandler.closed');
+    assert.strictEqual(h.stopClosed.action, CloseAction.DoNotRestart);
+    assert.strictEqual(h.stopClosed.handled, true);
+    assert.strictEqual(h.errorCalls.length, 0);
+    assert.strictEqual(h.controller.isRunning(), false);
   });
 });
