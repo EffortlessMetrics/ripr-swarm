@@ -262,6 +262,75 @@ fn before_phase_dirty_premise_refusal_names_paths_and_commit_first_recovery() {
     }
 }
 
+/// #11458 red control: a dirty tracked production file must refuse the
+/// before phase with the dirty-premise text before the seam inventory
+/// loads. On the pre-fix driver the inventory/packet path answers first
+/// (an unknown-seam or config error here, never the premise text), so this
+/// fails until the pre-inventory preflight lands.
+#[test]
+fn before_phase_refuses_dirty_production_premise_before_the_seam_inventory() -> Result<(), String> {
+    let root = unique_command_test_dir("before-preflight-dirty-premise");
+    let result = (|| -> Result<(), String> {
+        std::fs::create_dir_all(root.join("src"))
+            .map_err(|error| format!("create src: {error}"))?;
+        std::fs::write(root.join("src/lib.rs"), "pub fn f() -> i32 {\n    1\n}\n")
+            .map_err(|error| format!("write source: {error}"))?;
+        crate::testing::fixture_git::fixture_git_ok(&root, &["init"])?;
+        crate::testing::fixture_git::fixture_git_ok(
+            &root,
+            &["config", "user.email", "ripr-test@example.invalid"],
+        )?;
+        crate::testing::fixture_git::fixture_git_ok(&root, &["config", "user.name", "RIPR Test"])?;
+        crate::testing::fixture_git::fixture_git_ok(&root, &["add", "."])?;
+        crate::testing::fixture_git::fixture_git_ok(
+            &root,
+            &["commit", "--no-gpg-sign", "-m", "initial"],
+        )?;
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub fn f() -> i32 {\n    1\n}\n\npub fn g() -> i32 {\n    2\n}\n",
+        )
+        .map_err(|error| format!("dirty source: {error}"))?;
+        let seam_id = "0123456789abcdef";
+        let identity =
+            crate::app::repair_attempt::BeforeRepairAttemptIdentity::prepare(&root, seam_id)?;
+        let options = AgentRepairOptions {
+            root: root.clone(),
+            root_explicit: true,
+            seam_id: Some(seam_id.to_string()),
+            gap_id: None,
+            base: None,
+            attempt_id: None,
+            phase: AgentRepairPhase::Before,
+            python_repair_trust: None,
+            edit_authorization: crate::app::python_repair_binding::EditAuthorization {
+                authorized: false,
+                authority: None,
+            },
+            verify_authorization: crate::app::python_repair_verification::VerifyAuthorization {
+                authorized: false,
+                authority: None,
+            },
+            verify_rollback: false,
+            store: None,
+            json: false,
+        };
+        let mut refusal = AfterPhaseRefusalContext::default();
+        match run_agent_repair_phase(options, &mut refusal, Some(&identity)) {
+            Err(error) => require_contains(
+                &error,
+                &[
+                    "differ from HEAD: src/lib.rs",
+                    "No workflow was prepared and no repair attempt was started.",
+                ],
+            ),
+            Ok(()) => Err("a dirty production premise must refuse the before phase".to_string()),
+        }
+    })();
+    let _ = std::fs::remove_dir_all(&root);
+    result
+}
+
 #[test]
 fn seam_id_translation_passes_plain_ids_through_without_resolving() -> Result<(), String> {
     // A plain structured seam id has no namespace marker, so it must reach

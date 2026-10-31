@@ -1800,6 +1800,25 @@ fn run_agent_repair_phase(
                 "agent repair --phase before lost its parsed seam identity".to_string()
             })?;
             ensure_command_root(&root, "agent repair --phase before")?;
+            // #11458: policy-free dirty-premise preflight. An obviously
+            // production dirty file refuses here in git time, before the
+            // seam inventory below; any doubt falls through to the exact
+            // policy check, which refuses late with the same text.
+            if let Ok(preflight_head) = crate::agent::artifact::current_git_head(&root)
+                && let Ok(preflight_violations) =
+                    crate::app::repair_attempt::conservative_dirty_premise_violations(
+                        &root,
+                        &preflight_head,
+                    )
+                && !preflight_violations.is_empty()
+            {
+                return Err(before_phase_dirty_premise_refusal(
+                    &seam_id,
+                    &root,
+                    store_ref,
+                    &preflight_violations,
+                ));
+            }
             let identity = identity.ok_or_else(|| {
                 "repair before requires its identity from the locked CLI publication driver"
                     .to_string()
@@ -3304,6 +3323,19 @@ fn run_gap_bound_before_phase(
     let root_display = bound_root(&root.to_string_lossy());
     let store_flag = crate::app::repair_attempt::quoted_store_flag(store_ref);
     let restart = gap_bound_start_command(&root_display, &store_flag, gap_id, base);
+    // #11458: policy-free dirty-premise preflight, mirroring the seam arm:
+    // refuse an obviously production dirty file before the gap snapshot;
+    // any doubt falls through to the exact policy check below.
+    if let Ok(preflight_head) = crate::agent::artifact::current_git_head(root)
+        && let Ok(preflight_violations) =
+            crate::app::repair_attempt::conservative_dirty_premise_violations(root, &preflight_head)
+        && !preflight_violations.is_empty()
+    {
+        return Err(before_phase_dirty_premise_refusal_with_restart(
+            &restart,
+            &preflight_violations,
+        ));
+    }
     // The snapshot is produced against the commit the base resolves to, and
     // the after phase uses the same commit: the two artifacts record the same
     // base revision, and a relative spelling cannot drift between them.

@@ -3822,13 +3822,8 @@ pub(crate) const TRUSTED_SURFACE_REFUSAL_TAIL: &str = "outside trusted edit surf
 /// HEAD to refuse a dirty production premise before any attempt exists
 /// (#5262), where a dirty allowed-surface test file stays allowed because the
 /// loop expects the focused test edit.
-pub(crate) fn trusted_head_surface_violations(
-    root: &Path,
-    policy: &EditCagePolicy,
-    observed_changes: &[String],
-    head: &str,
-) -> Result<Vec<String>, String> {
-    let tracked = git_paths(
+fn tracked_dirty_paths(root: &Path, head: &str) -> Result<Vec<String>, String> {
+    git_paths(
         root,
         &[
             "diff",
@@ -3839,7 +3834,87 @@ pub(crate) fn trusted_head_surface_violations(
             head,
             "--",
         ],
-    )?;
+    )
+}
+
+/// Policy-free early subset of [`trusted_head_surface_violations`] (#11458):
+/// tracked dirty paths that cannot be any seam's repair target, so the before
+/// phase can refuse a dirty production premise before the classified-seam
+/// inventory. Conservative by construction: test-shaped paths,
+/// preview-language test-support names (`*.spec.*`, `conftest.py`) and files
+/// containing an inline `#[cfg(test)]` module are never named here, and an
+/// unreadable or oversized path is never named either. The exact policy check remains the
+/// backstop for every other case, so this function can only refuse early what
+/// that check would refuse late.
+pub(crate) fn conservative_dirty_premise_violations(
+    root: &Path,
+    head: &str,
+) -> Result<Vec<String>, String> {
+    Ok(tracked_dirty_paths(root, head)?
+        .into_iter()
+        .filter(|path| dirty_path_cannot_be_repair_target(root, path))
+        .collect())
+}
+
+fn dirty_path_cannot_be_repair_target(root: &Path, path: &str) -> bool {
+    let candidate = Path::new(path);
+    if candidate.components().any(|part| {
+        matches!(
+            part.as_os_str().to_str(),
+            Some("tests" | "test" | "__tests__")
+        )
+    }) {
+        return false;
+    }
+    let Some(name) = candidate.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let lower = name.to_ascii_lowercase();
+    let stem = lower.split('.').next().unwrap_or(&lower);
+    if stem == "conftest" {
+        // pytest fixture support is test routing, never a production seam
+        // target; matching the stem keeps every `conftest.*` spelling on the
+        // same fall-through path.
+        return false;
+    }
+    if stem == "test"
+        || stem == "tests"
+        || stem.starts_with("test_")
+        || stem.ends_with("_test")
+        || stem.ends_with("_tests")
+        || lower.contains(".test.")
+        || lower.contains("_test.")
+        || lower.contains(".spec.")
+        || lower.contains("_spec.")
+    {
+        return false;
+    }
+    let candidate_path = root.join(candidate);
+    if std::fs::metadata(&candidate_path)
+        .map(|metadata| metadata.len() > DIRTY_PREMISE_PREFLIGHT_MAX_SNIFF_BYTES)
+        .unwrap_or(true)
+    {
+        return false;
+    }
+    match std::fs::read_to_string(&candidate_path) {
+        Ok(content) => !content.contains("#[cfg(test)]"),
+        Err(_) => false,
+    }
+}
+
+/// Upper bound for the preflight's content sniff above: the marker search
+/// must not load an arbitrarily large dirty file into memory. An oversized
+/// candidate falls through to the exact policy check, which never reads
+/// file content, so the bound only costs earliness, never correctness.
+const DIRTY_PREMISE_PREFLIGHT_MAX_SNIFF_BYTES: u64 = 256 * 1024;
+
+pub(crate) fn trusted_head_surface_violations(
+    root: &Path,
+    policy: &EditCagePolicy,
+    observed_changes: &[String],
+    head: &str,
+) -> Result<Vec<String>, String> {
+    let tracked = tracked_dirty_paths(root, head)?;
     let untracked = git_paths(root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
     let observed = observed_changes
         .iter()
@@ -5259,6 +5334,62 @@ mod tests {
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
         Ok(())
+    }
+
+    /// #11458: the pre-inventory preflight names only plain production
+    /// paths. Anything test-shaped, preview test-support naming
+    /// (`*.spec.*`, `conftest.*`), an inline `#[cfg(test)]` module, or an
+    /// unreadable or oversized path falls through to the exact policy check, so the
+    /// preflight can only refuse early what that check would refuse late.
+    #[test]
+    fn dirty_premise_preflight_only_names_plain_production_paths() -> Result<(), String> {
+        let root = test_repo_root("dirty-preflight")?;
+        let result = (|| -> Result<(), String> {
+            for (name, content) in [
+                ("src/lib.rs", "pub fn f() {}\n"),
+                ("src/main.py", "def f():\n    return 1\n"),
+                ("src/pricing.ts", "export function f() { return 1; }\n"),
+            ] {
+                let path = root.join(name);
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+                std::fs::write(&path, content).map_err(|e| e.to_string())?;
+                if !dirty_path_cannot_be_repair_target(&root, name) {
+                    return Err(format!("preflight must name {name}"));
+                }
+            }
+            for name in [
+                "src/inline.rs",
+                "tests/pricing.rs",
+                "src/lib_test.rs",
+                "src/pricing.spec.ts",
+                "conftest.py",
+                "conftest.pyc",
+                "src/missing.rs",
+            ] {
+                if dirty_path_cannot_be_repair_target(&root, name) {
+                    return Err(format!("preflight must not name {name}"));
+                }
+            }
+            // An oversized production-shaped file falls through instead of
+            // being sniffed: the bound only costs earliness, never correctness.
+            let big = root.join("src/big.rs");
+            std::fs::write(&big, "x\n".repeat(300 * 1024)).map_err(|e| e.to_string())?;
+            if dirty_path_cannot_be_repair_target(&root, "src/big.rs") {
+                return Err("preflight must not name src/big.rs".to_string());
+            }
+            // The inline `#[cfg(test)]` module reads as a test target even
+            // though the file itself is production-shaped (#5210).
+            std::fs::write(root.join("src/inline.rs"), "#[cfg(test)]\nmod t {}\n")
+                .map_err(|e| e.to_string())?;
+            if dirty_path_cannot_be_repair_target(&root, "src/inline.rs") {
+                return Err("preflight must not name src/inline.rs".to_string());
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
     }
 
     /// The receipt's tracked-surface check compares with the prepared head,
