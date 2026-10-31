@@ -562,7 +562,8 @@ direction = "lower_is_better"
 target = 0.05
 # Perl metrics read producer-packet cases only: edited packets carry facts the
 # pinned producer does not emit, so they say nothing about what a Perl user
-# gets today. Floors are 0 because each Perl case is a large share of 27.
+# gets today. Floors are 0 because one case moves a rate by 1/54 to 1/26, so a
+# single case regressing must fail the comparison.
 regression_pct = 0
 regression_floor = 0
 runner_dependent = false

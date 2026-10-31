@@ -784,7 +784,7 @@ fn non_source_disclosure_message(changed_files: &[diff::ChangedFile]) -> Option<
     }
     let summary = summary.join(", ");
     let verdict = if truncated_paths.is_empty() {
-        "The empty result is correct — ripr cannot analyze non-source files.".to_string()
+        "Nothing was analyzed: ripr cannot analyze non-source files, so this is not a statement about changed behavior.".to_string()
     } else {
         let listed = truncated_paths
             .iter()
@@ -1994,7 +1994,13 @@ fn run_pipeline_for_diff_text_with_language_config(
             .all(|(_, count)| *count == 0)
         && !diff_text.trim().is_empty()
     {
-        eprintln!("{}", zero_file_diff_disclosure(diff_text));
+        eprintln!(
+            "{}",
+            zero_file_diff_disclosure(
+                diff_text,
+                options.diff_file.as_deref() == Some(std::path::Path::new("-"))
+            )
+        );
     }
 
     // Disclose a truncated diff stream (#4375): at least one file section
@@ -3270,11 +3276,15 @@ fn is_binary_sentinel(line: &str) -> bool {
 }
 
 /// Stderr note for a non-empty diff that parsed to zero changed files.
-fn zero_file_diff_disclosure(diff_text: &str) -> &'static str {
+fn zero_file_diff_disclosure(diff_text: &str, from_stdin: bool) -> &'static str {
     if has_only_non_text_changes(diff_text) {
         "ripr: the diff changes only binary files or file modes; there are no text hunks to analyze. \
          This empty result reflects an empty analysis scope, not sufficient tests. \
          Run ripr on a diff that includes the source changes."
+    } else if from_stdin {
+        "ripr: the diff input contained no parseable file changes (0 hunks, 0 files). \
+         If this is unexpected, verify the diff piped on stdin is a valid unified diff. \
+         The empty result may not reflect sufficient tests \u{2014} it reflects an empty analysis scope."
     } else {
         "ripr: the diff input contained no parseable file changes (0 hunks, 0 files). \
          If this is unexpected, verify the --diff path points to a valid unified diff. \
@@ -3386,7 +3396,7 @@ mod tests {
         if message.contains(".md, .md") {
             return Err(format!("extensions must be deduplicated: {message}"));
         }
-        if !message.contains("empty result is correct") {
+        if !message.contains("Nothing was analyzed") {
             return Err(format!("disclosure must carry the non-claim: {message}"));
         }
         Ok(())
@@ -3434,7 +3444,7 @@ mod tests {
         if message.contains("(.)") {
             return Err(format!("disclosure must not render a bare `.`: {message}"));
         }
-        if message.contains("empty result is correct") {
+        if message.contains("Nothing was analyzed") {
             return Err(format!(
                 "a truncated source header must not be called correct: {message}"
             ));
@@ -3458,7 +3468,7 @@ mod tests {
                 "disclosure must name path and extension: {message}"
             ));
         }
-        if !message.contains("empty result is correct") {
+        if !message.contains("Nothing was analyzed") {
             return Err(format!("genuine non-source keeps the non-claim: {message}"));
         }
         Ok(())
@@ -4241,7 +4251,7 @@ mod tests {
         let files = vec![changed_file("pkg/calc.go"), changed_file("README.md")];
         let message = non_source_disclosure_message(&files)
             .ok_or_else(|| "a Go-only diff must disclose".to_string())?;
-        assert!(!message.contains("empty result is correct"), "{message}");
+        assert!(!message.contains("Nothing was analyzed"), "{message}");
         assert!(
             message.contains("(Go)") && message.contains("not a clean pass"),
             "{message}"
@@ -4610,10 +4620,13 @@ mod tests {
     #[test]
     fn zero_file_disclosure_names_non_text_diffs_and_keeps_generic_wording() {
         let binary = "diff --git a/x.bin b/x.bin\nBinary files a/x.bin and b/x.bin differ\n";
-        assert!(zero_file_diff_disclosure(binary).contains("no text hunks to analyze"));
-        let garbage = zero_file_diff_disclosure("not a diff\n");
-        assert!(garbage.contains("valid unified diff"));
+        assert!(zero_file_diff_disclosure(binary, false).contains("no text hunks to analyze"));
+        let garbage = zero_file_diff_disclosure("not a diff\n", false);
+        assert!(garbage.contains("verify the --diff path points to a valid unified diff"));
         assert!(!garbage.contains("no text hunks"));
+        let piped = zero_file_diff_disclosure("not a diff\n", true);
+        assert!(piped.contains("verify the diff piped on stdin is a valid unified diff"));
+        assert!(!piped.contains("--diff path"));
     }
 
     #[test]
@@ -4702,7 +4715,7 @@ mod tests {
     #[test]
     fn truncated_diff_disclosure_names_truncated_sections_and_truncation() -> Result<(), String> {
         // #4375: the stderr disclosure names the exact evidence and never
-        // claims the empty result is correct. Per-section counts, so the
+        // claims that nothing was analyzed. Per-section counts, so the
         // message stays truthful for mixed diffs.
         let message = truncated_diff_disclosure_message(2).ok_or_else(|| {
             "a positive truncated-section count must produce the disclosure".to_string()
@@ -4716,8 +4729,8 @@ mod tests {
             "the disclosure must name the truncation, got: {message}"
         );
         assert!(
-            !message.contains("The empty result is correct"),
-            "a truncated stream must never claim the empty result is correct, got: {message}"
+            !message.contains("Nothing was analyzed"),
+            "a truncated stream must never claim that nothing was analyzed, got: {message}"
         );
         assert!(
             truncated_diff_disclosure_message(0).is_none(),

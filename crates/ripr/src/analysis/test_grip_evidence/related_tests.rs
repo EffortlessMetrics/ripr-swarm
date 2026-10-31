@@ -2,7 +2,7 @@ use super::*;
 use crate::analysis::classify::{
     CallTarget, call_text_may_call_free_function, free_helper_call_resolves, impl_self_type_name,
     inherent_owner_call_resolves, method_call_resolves_to_impl, module_stem, owner_dispatch_trait,
-    requires_inherent_receiver_identity, test_calls_free_function,
+    owner_impl_identity_shadowed, requires_inherent_receiver_identity, test_calls_free_function,
 };
 use crate::analysis::facts::FunctionImplContext;
 use std::sync::Arc;
@@ -148,6 +148,8 @@ pub(super) struct OwnerContext<'index> {
     free_function: bool,
     inherent_receiver: bool,
     inherent_owner: Option<&'index FunctionSummary>,
+    /// The seam's owning function, for the shadowed-impl-identity refusal.
+    function: Option<&'index FunctionSummary>,
     impl_trait: Option<String>,
     same_name_count: usize,
     identity: Option<std::sync::Arc<crate::analysis::classify::OwnerCallIdentity>>,
@@ -196,6 +198,7 @@ impl<'index> OwnerContext<'index> {
             free_function,
             inherent_receiver,
             inherent_owner: owner_fn.filter(|owner| requires_inherent_receiver_identity(owner)),
+            function: owner_fn,
             impl_trait,
             same_name_count,
             identity,
@@ -354,6 +357,15 @@ pub(super) fn match_direct_owner_call(
                 .get(*test_index)
                 .is_some_and(|indexed| test_calls_free_function(indexed.test, &owner.name))
         {
+            continue;
+        }
+        // #11382: a test whose own scope rebinds the owner's impl type or
+        // trait calls the test-local item, not the production owner; the
+        // finding-level relation refuses the same call. Refusal only removes
+        // the direct-call credit, so this can only lower a relation.
+        if owner.function.is_some_and(|function| {
+            owner_impl_identity_shadowed(indexed.test, function, context.index)
+        }) {
             continue;
         }
         insert_related_candidate(
