@@ -494,7 +494,7 @@ pub enum StaticLimitKind {
     /// so the test universe is incomplete. A finding that would say no test
     /// reaches the change is withheld and the class is `static_unknown`: the
     /// missing test may be one the walk never read. See RIPR-SPEC-0240.
-    TypeScriptWorkspaceDiscoveryTruncated,
+    TypescriptWorkspaceDiscoveryTruncated,
 }
 
 impl StaticLimitKind {
@@ -566,7 +566,7 @@ impl StaticLimitKind {
                 "rust_caller_loop_selector_unresolved"
             }
             StaticLimitKind::ProofHarnessNotEvaluated => "proof_harness_not_evaluated",
-            StaticLimitKind::TypeScriptWorkspaceDiscoveryTruncated => {
+            StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => {
                 "typescript_workspace_discovery_truncated"
             }
         }
@@ -749,7 +749,7 @@ impl StaticLimitKind {
                  passing verifier run is a separate authority ripr does not read. This is a \
                  named limitation, not a coverage claim."
             }
-            StaticLimitKind::TypeScriptWorkspaceDiscoveryTruncated => {
+            StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => {
                 "TypeScript workspace discovery stopped at its entry cap before it covered the \
                  workspace, so tests past the cap were never read. ripr cannot say that no test \
                  reaches this change, so it does not claim a gap; this is a named limitation, \
@@ -1115,7 +1115,7 @@ mod tests {
             "proof_harness_not_evaluated"
         );
         assert_eq!(
-            StaticLimitKind::TypeScriptWorkspaceDiscoveryTruncated.as_str(),
+            StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated.as_str(),
             "typescript_workspace_discovery_truncated"
         );
     }
@@ -1154,7 +1154,7 @@ mod tests {
             StaticLimitKind::RustIndirectOwnerCallUnresolved,
             StaticLimitKind::RustCallerLoopSelectorUnresolved,
             StaticLimitKind::ProofHarnessNotEvaluated,
-            StaticLimitKind::TypeScriptWorkspaceDiscoveryTruncated,
+            StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by

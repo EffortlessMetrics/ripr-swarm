@@ -2261,7 +2261,7 @@ fn known_static_limit_kind(kind: &str) -> bool {
         StaticLimitKind::RustIndirectOwnerCallUnresolved,
         StaticLimitKind::RustCallerLoopSelectorUnresolved,
         StaticLimitKind::ProofHarnessNotEvaluated,
-        StaticLimitKind::TypeScriptWorkspaceDiscoveryTruncated,
+        StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated,
     ]
     .iter()
     .any(|known| known.as_str() == kind)

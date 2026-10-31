@@ -87,7 +87,7 @@ pub(in crate::analysis) fn withhold_truncated_discovery_gap(
     );
     withhold_gap(
         finding,
-        StaticLimitKind::TypeScriptWorkspaceDiscoveryTruncated,
+        StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated,
         &first_unresolved_edge,
         next_step,
         &[],
