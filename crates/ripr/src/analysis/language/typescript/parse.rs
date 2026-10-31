@@ -16,6 +16,7 @@
 //!    files that previously aborted the process.
 
 use super::*;
+use crate::domain::EvidenceState;
 
 /// Stack size for the dedicated parse worker thread.
 ///
@@ -182,7 +183,7 @@ pub(crate) fn unsupported_syntax_finding(
         confidence: 0.2,
         evidence: vec![
             format!("static_limit unsupported_syntax: {}", limit.reason),
-            "gap_state: static_limitation".to_string(),
+            format!("gap_state: {}", EvidenceState::StaticLimitation.as_str()),
             "actionability_category: unsupported_syntax".to_string(),
             format!("why_not_actionable: {why_not_actionable}"),
             format!("repair_route: {repair_route}"),
@@ -288,7 +289,7 @@ pub(crate) fn enum_member_finding(
         confidence: 0.2,
         evidence: vec![
             "static_limit typescript_owner_extraction_partial: enum member".to_string(),
-            "gap_state: static_limitation".to_string(),
+            format!("gap_state: {}", EvidenceState::StaticLimitation.as_str()),
             "actionability_category: owner_shape_unextracted".to_string(),
             format!("why_not_actionable: {why_not_actionable}"),
             format!("repair_route: {repair_route}"),

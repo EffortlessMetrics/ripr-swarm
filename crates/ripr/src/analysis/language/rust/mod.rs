@@ -19,6 +19,7 @@ mod dependent_scope;
 pub(crate) mod oracles;
 mod probe_shape;
 pub(crate) mod probes;
+mod proof_harness;
 
 pub(crate) use probe_shape::producer_gap_names_seam_shape;
 pub(crate) use probes::{
@@ -1566,6 +1567,12 @@ fn apply_rust_no_static_path_limit(
         // displaced by this broader structural one.
         replace_witnessed_no_path_infection_summary(finding);
         apply_rust_facade_reach_limit(finding, &owner_name, &witness);
+    } else if let Some(harness) = proof_harness::harness_calling_owner(index, &owner_name) {
+        // RIPR-SPEC-0367: last, so any traced test path wins. A proof
+        // harness is not a test; the finding stays `no_static_path` and says
+        // a harness exists that ripr does not evaluate.
+        replace_witnessed_no_path_infection_summary(finding);
+        proof_harness::apply_limit(finding, &owner_name, &harness);
     }
 }
 
@@ -2561,6 +2568,12 @@ impl RustAdapter {
             if absent_changed_set.contains(&workspace::normalize_path(&changed.path)) {
                 continue;
             }
+            // RIPR-SPEC-0367: lines changed inside a proof harness seed no
+            // production probe; the run names them instead of reading clean.
+            limitations.extend(proof_harness::edit_limitations(
+                std::iter::once(changed),
+                &index,
+            )?);
             // Cooperative cancellation (#1972): check once per changed file
             // and once per probe so a superseded or deadline-expired refresh
             // exits the classify loop promptly.

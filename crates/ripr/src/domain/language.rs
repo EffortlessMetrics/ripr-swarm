@@ -483,6 +483,12 @@ pub enum StaticLimitKind {
     /// or that the arm's value reaches the compared items. The gap is
     /// withheld and the class is `static_unknown`. See RIPR-SPEC-0240 / #5503.
     RustCallerLoopSelectorUnresolved,
+    /// A Rust proof harness (`#[kani::proof]`, `#[kani::proof_for_contract]`)
+    /// calls the changed owner and no test reaches it. ripr does not evaluate
+    /// proofs: the harness is neither a test nor oracle evidence, so the
+    /// class stays `no_static_path`. This label names the unevaluated proof,
+    /// not a coverage claim. See RIPR-SPEC-0367.
+    ProofHarnessNotEvaluated,
     /// A Rust test calls an inherent method of the changed owner through a
     /// standard assertion, and the call resolves if the assertion macro is the
     /// standard one, but ripr cannot verify the macro binding because
@@ -564,6 +570,7 @@ impl StaticLimitKind {
             StaticLimitKind::RustCallerLoopSelectorUnresolved => {
                 "rust_caller_loop_selector_unresolved"
             }
+            StaticLimitKind::ProofHarnessNotEvaluated => "proof_harness_not_evaluated",
         }
     }
 
@@ -744,6 +751,13 @@ impl StaticLimitKind {
                  ripr reads the loop's selector range but does not prove the loop runs for the \
                  test's input or that the arm's value reaches the compared items, so it does not \
                  claim a gap; this is a named limitation, not a coverage claim."
+            }
+            StaticLimitKind::ProofHarnessNotEvaluated => {
+                "A Rust proof harness (`#[kani::proof]` or `#[kani::proof_for_contract]`) calls \
+                 this code, but ripr does not evaluate proofs: a harness is not a test and \
+                 its assertions are not oracle evidence, so no test path is established. A \
+                 passing verifier run is a separate authority ripr does not read. This is a \
+                 named limitation, not a coverage claim."
             }
         }
     }
@@ -1101,6 +1115,8 @@ mod tests {
             "rust_indirect_owner_call_unresolved"
         );
         assert_eq!(
+            StaticLimitKind::ProofHarnessNotEvaluated.as_str(),
+            "proof_harness_not_evaluated"
             StaticLimitKind::RustInherentReceiverUnestablished.as_str(),
             "rust_inherent_receiver_unestablished"
         );
@@ -1139,6 +1155,7 @@ mod tests {
             StaticLimitKind::RustImplicitCallUnresolved,
             StaticLimitKind::RustIndirectOwnerCallUnresolved,
             StaticLimitKind::RustCallerLoopSelectorUnresolved,
+            StaticLimitKind::ProofHarnessNotEvaluated,
             StaticLimitKind::RustInherentReceiverUnestablished,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative

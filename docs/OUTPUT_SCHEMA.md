@@ -2554,6 +2554,7 @@ JSON fields:
   `rust_caller_loop_selector_unresolved`, or
   `rust_pinned_shape_unresolved`, or
   `rust_indirect_owner_call_unresolved`, or
+  `proof_harness_not_evaluated`, or
   `rust_inherent_receiver_unestablished`.
 - `rust_field_match_selector_unresolved`: a plain owner-parameter field selects a changed statement-free tail match. A strong oracle in a directly calling test exists, but the field value at that invocation and whether an assertion observes that invocation's return are unresolved. The match header and unique direct-arm lines may carry this metadata; computed selectors, local bindings, nested matches, guarded arms and ambiguous same-line subjects are excluded. This does not establish an `Option` type, same-invocation proof, coverage, or absence of a test gap. Finding/probe IDs, classes, RIPR stages, missing discriminators and raw class counts are unchanged. The existing typed-limitation contract withholds canonical repair-gap projection and can change repair readiness and derived gate routing; this names uncertainty, not resolved test debt. Inspect the existing call/assertion before adding a test. The optional kind uses the existing wire shape/version; consumers still require their own producer compatibility qualification.
 - `static_limitation` is an additive optional per-finding object emitted only
@@ -3157,6 +3158,7 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 - `rust_implicit_call_unresolved` -- (RIPR-SPEC-0240, additive, #9441) A test names the self type of a changed trait-impl method that the language calls from syntax (an operator trait, `Drop`, an iterator trait, `Deref`, `Index`, `PartialOrd`), or calls a same-named method on a receiver ripr does not type (`dyn Trait`, a second impl of the trait). ripr does not follow that call to the changed method, so a `weakly_exposed` or `reachable_unrevealed` gap whose reach rests on a shared file or name token is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
 - `rust_indirect_owner_call_unresolved` -- (RIPR-SPEC-0240, additive, #9442, #9443) A test reaches the changed owner without a call ripr can pair with its assertion: it passes the owner as a function value (`.map(owner)`, an untyped `let f = owner;` binding; a typed `fn` pointer binding is left to the typed function-pointer reading), the changed line is an item-position macro invocation that generates the owner, or the owner call is the only argument of `block_on` or a local helper polling a `Future`. A verified polling helper whose call and standard primitives resolve under RIPR-SPEC-0197 supplies an owner-return pin instead; unsupported or shadowed wrappers receive no polling-helper pin and remain subject to the existing unresolved-executor limitations. A `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
 - `rust_caller_loop_selector_unresolved` -- (RIPR-SPEC-0240, additive, #5503) The changed integer match arm is fed by a bounded `for` loop inside an `Iterator::next` whose selector range includes the arm, and a related test collects the iterator and compares the whole collection. ripr reads the range (with its file and line) but does not prove the loop runs for the test's input or that the arm's value reaches the compared items, so a `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
+- `proof_harness_not_evaluated` -- (RIPR-SPEC-0367, additive) A Rust function carrying `#[kani::proof]` or `#[kani::proof_for_contract]` (or the same path under `cfg_attr`) calls the changed owner and no test path is established. The harness is neither a test nor oracle evidence and gains no credit; the class stays `no_static_path` and the next step says a proof harness exists that ripr does not evaluate. Not a coverage claim.
 - `rust_inherent_receiver_unestablished` -- (RIPR-SPEC-0352, additive) A related test calls the changed inherent method inside a standard assertion macro and the receiver resolves to the owner's type if that macro is the standard one, but ripr cannot verify the macro binding because target-root placement is unavailable (an unresolved `include!` or `#[path]` in the workspace), so a `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited, and a receiver that would not resolve even with the macro trusted keeps its gap; this is a named limitation, not a coverage claim.
 
 Reserved `flow_sink` values:
@@ -8760,6 +8762,14 @@ Field contract:
   remembered at production time does not participate in that
   classification, so a historical artifact produced on a dirty worktree
   still renders a `historical_*` pair token (#3229).
+  That production-time fact is preserved separately (#3056): when the
+  before (or after) artifact is classified historical and its envelope
+  declared `analysis.worktree: "dirty"`, the document carries the additive
+  top-level `before_produced_from_dirty` (or `after_produced_from_dirty`)
+  member set to `true`. The members are absent otherwise — for current,
+  dirty-worktree, and clean-produced historical artifacts — so existing
+  documents and pair tokens are byte-stable. They are a read-time observation
+  derived from the same historical classification as `artifact_currentness`.
   `current_before_historical_after` is a reachable accepted outcome when the
   checked-out HEAD is the before artifact's revision and the after artifact
   is bound to a descendant revision. A fully current pair (both artifacts
@@ -19821,7 +19831,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.50",
+    "schema_version": "1.51",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
