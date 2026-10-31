@@ -1,4 +1,3 @@
-crates/ripr/src/cli/commands/baseline.rs|baseline create requires --from <path>
 crates/ripr/src/cli/commands/baseline.rs|baseline diff requires --baseline <path> baseline diff requires --current <path> -- missing value for {flag}
 crates/ripr/src/cli/commands/baseline.rs|baseline diff requires --current <path> -- missing value for {flag}
 crates/ripr/src/cli/commands/baseline.rs|baseline update requires --baseline <path> baseline update requires --current <path>
