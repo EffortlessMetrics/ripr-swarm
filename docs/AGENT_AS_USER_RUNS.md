@@ -538,9 +538,11 @@ Negative experiments (xtask tests): `agent_gate_fails_when_command_output_grows_
 shows growth equal to the margin passes and one byte more fails, naming the
 metric and repository, for each format; the existing
 `agent_coverage_check_names_dropped_metrics_and_samples` now also covers the
-three size metrics, so a receipt that stops reporting a measured size or
-target is listed as lost evidence instead of passing (the generic gate lists
-it as uncompared and does not fail).
+three size metrics, and `agent_receipt_check_fails_when_a_measured_sample_disappears`
+shows the committed-receipt check (gate plus coverage) fails, rather than
+passes, when a measured metric or one target's sample is deleted. The
+`dx-scoreboard --gate` command alone still lists a missing sample as
+uncompared and exits 0; the enforcement is the xtask test run in CI.
 
 Run against the prior baseline, the new receipt passes with the four new
 metrics listed as uncompared (no prior sample). The baseline was then rebuilt

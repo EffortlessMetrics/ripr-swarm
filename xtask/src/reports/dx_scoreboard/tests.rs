@@ -4605,17 +4605,57 @@ fn committed_agent_receipt() -> Result<Value, String> {
     serde_json::from_str(COMMITTED_AGENT_RECEIPT).map_err(|err| err.to_string())
 }
 
+/// The check the committed receipt must pass: the gate passes and no
+/// baseline-measured metric or repository is missing. A missing sample is an
+/// `Err` here, never a pass, even though the generic gate only lists it as
+/// uncompared.
+fn agent_receipt_check(receipt: &Value) -> Result<(), String> {
+    let report = agent_gate_report(receipt)?;
+    if report["gate"]["status"].as_str() != Some("pass") {
+        return Err(gate_failure_message(&report));
+    }
+    let gaps = agent_coverage_gaps(&report, &agent_baseline()?);
+    if gaps.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("receipt lost baseline coverage: {gaps:?}"))
+    }
+}
+
 #[test]
 fn committed_agent_receipt_does_not_regress_the_agent_baseline() -> Result<(), String> {
-    let report = agent_gate_report(&committed_agent_receipt()?)?;
-    assert_eq!(
-        report["gate"]["status"].as_str(),
-        Some("pass"),
-        "{}",
-        gate_failure_message(&report)
-    );
-    let gaps = agent_coverage_gaps(&report, &agent_baseline()?);
-    assert!(gaps.is_empty(), "receipt lost baseline coverage: {gaps:?}");
+    agent_receipt_check(&committed_agent_receipt()?)
+}
+
+/// Deleting a measured metric, or one repository's sample of it, must fail
+/// the receipt check (not merely be listed), for every size metric and the
+/// agent-format gap count.
+#[test]
+fn agent_receipt_check_fails_when_a_measured_sample_disappears() -> Result<(), String> {
+    for id in [
+        "agent.check_bytes_human",
+        "agent.check_bytes_agent_format",
+        "agent.check_bytes_json",
+        "agent.agent_format_gaps_before_fix",
+    ] {
+        let mut whole = committed_agent_receipt()?;
+        let rows = whole["metrics"].as_array_mut().ok_or("no metrics")?;
+        rows.retain(|row| row["id"].as_str() != Some(id));
+        let err = agent_receipt_check(&whole)
+            .err()
+            .ok_or_else(|| format!("dropping {id} passed the receipt check"))?;
+        assert!(err.contains(id), "{id} not named in: {err}");
+
+        let mut one = committed_agent_receipt()?;
+        let rows = one["metrics"].as_array_mut().ok_or("no metrics")?;
+        rows.retain(|row| {
+            !(row["id"].as_str() == Some(id) && row["repo"].as_str() == Some("humantime"))
+        });
+        let err = agent_receipt_check(&one)
+            .err()
+            .ok_or_else(|| format!("dropping {id} for humantime passed the receipt check"))?;
+        assert!(err.contains(id), "{id} not named in: {err}");
+    }
     Ok(())
 }
 
