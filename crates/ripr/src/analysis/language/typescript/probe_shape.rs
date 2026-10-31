@@ -27,6 +27,112 @@ impl TypeScriptProbeShape {
     }
 }
 
+/// Index of the delimiter that closes the `open` delimiter `text` starts with,
+/// skipping quoted strings. `None` when it never closes.
+fn closing_delimiter(text: &str, open: char, close: char) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (idx, ch) in text.char_indices() {
+        if let Some(opener) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == opener {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            c if c == open => depth += 1,
+            c if c == close => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(idx);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The first statement of a one-line function body (`if (a > 1) { return 1 }`
+/// out of `if (a > 1) { return 1 } return 0 }`), whole enough to parse on its
+/// own. A line that is not a one-line function is returned unchanged; a body
+/// whose first statement is not an `if` is the body without the function's
+/// closing brace (#11487).
+pub(crate) fn one_line_function_first_statement(line_text: &str) -> &str {
+    let body = one_line_function_body(line_text);
+    if body.len() == line_text.len() {
+        return line_text;
+    }
+    let body = body.trim();
+    if let Some(rest) = body.strip_prefix("if")
+        && let rest = rest.trim_start()
+        && rest.starts_with('(')
+        && let Some(cond_end) = closing_delimiter(rest, '(', ')')
+    {
+        let after = rest.get(cond_end + 1..).unwrap_or_default().trim_start();
+        let consequent_len = if after.starts_with('{') {
+            closing_delimiter(after, '{', '}').map(|end| end + 1)
+        } else {
+            None
+        };
+        if let Some(len) = consequent_len {
+            let consumed = body.len() - after.len() + len;
+            return body.get(..consumed).unwrap_or(body);
+        }
+    }
+    body.strip_suffix('}').map_or(body, str::trim_end)
+}
+
+/// The statement list of a function declared and closed on one line
+/// (`export function f(a: number) { if (a > 1) { return 1 } return 0 }`), so
+/// the changed statement is read the way it would be on its own line. The
+/// parameter list is matched by parentheses (an annotation may hold braces),
+/// and any other line shape comes back unchanged (#11487).
+pub(crate) fn one_line_function_body(line_text: &str) -> &str {
+    let mut text = line_text.trim();
+    for prefix in ["export ", "default ", "async "] {
+        text = text.strip_prefix(prefix).map_or(text, str::trim_start);
+    }
+    let Some(rest) = text.strip_prefix("function") else {
+        return line_text;
+    };
+    let Some(open) = rest.find('(') else {
+        return line_text;
+    };
+    let mut depth = 0usize;
+    let mut close = None;
+    for (idx, ch) in rest.char_indices().skip_while(|(idx, _)| *idx < open) {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    close = Some(idx);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(after_params) = close.and_then(|idx| rest.get(idx + 1..)) else {
+        return line_text;
+    };
+    let Some(brace) = after_params.find('{') else {
+        return line_text;
+    };
+    // A body that continues on later lines has nothing after the brace to read.
+    match after_params.get(brace + 1..).map(str::trim) {
+        Some(body) if !body.is_empty() => body,
+        _ => line_text,
+    }
+}
+
 /// Syntax-first probe-family classifier for a changed line of TypeScript
 /// or JavaScript source.
 ///
@@ -39,7 +145,7 @@ impl TypeScriptProbeShape {
 /// the historical `Predicate` / `Control` fallback but are marked
 /// non-specific so later repair guidance does not invent discriminators.
 pub(crate) fn classify_probe_shape_detail(line_text: &str) -> TypeScriptProbeShape {
-    let trimmed = line_text.trim_start();
+    let trimmed = one_line_function_body(line_text).trim_start();
     // Strip a leading `} ` (e.g., `} else if (...)`, `} else {`) so the
     // dedicated-keyword check still fires on close-brace-continuation
     // shapes that are common in JavaScript-style if/else ladders.
@@ -315,6 +421,7 @@ pub(crate) fn typescript_boundary_discriminator_with_shape(
 ) -> Option<(String, bool)> {
     // Only the condition of `return cond ? a : b` is the boundary; a
     // comparison inside an arm is not what selects the branch.
+    let line_text = one_line_function_body(line_text);
     let expression = return_predicate_condition(line_text.trim())
         .map(str::to_string)
         .unwrap_or_else(|| strip_typescript_control_prefix(line_text));

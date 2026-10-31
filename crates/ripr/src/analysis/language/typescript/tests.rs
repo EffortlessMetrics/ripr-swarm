@@ -6681,6 +6681,53 @@ fn analyze_diff_keeps_single_occurrence_probe_ids_stable() -> Result<(), String>
 }
 
 #[test]
+fn a_one_line_function_body_classifies_like_the_same_statement_on_its_own_line() {
+    // #11487: formatting must not change the shape or the boundary.
+    let one_line =
+        "export function disc(a: number, t: number) { if (a >= t) { return 10 } return 0 }";
+    let (family, delta) = classify_probe_shape(one_line);
+    assert_eq!(family, ProbeFamily::Predicate);
+    assert_eq!(delta, DeltaKind::Control);
+    assert_eq!(
+        typescript_boundary_discriminator(one_line),
+        typescript_boundary_discriminator("  if (a >= t) {"),
+    );
+    assert!(typescript_boundary_discriminator(one_line).is_some());
+    // Braces inside the parameter annotation are not the body.
+    let annotated = "function f(o: { a: number }, t: number): boolean { return o.a > t }";
+    assert_eq!(
+        typescript_boundary_discriminator(annotated),
+        typescript_boundary_discriminator("return o.a > t"),
+    );
+    // A signature whose body continues on later lines has nothing to read
+    // after the brace, so it yields no boundary of its own.
+    assert_eq!(
+        typescript_boundary_discriminator("export function disc(a: number, t: number) {"),
+        None
+    );
+}
+
+#[test]
+fn one_line_function_first_statement_is_parseable_on_its_own() {
+    use super::probe_shape::one_line_function_first_statement as first;
+    assert_eq!(
+        first("export function d(a: number, t: number) { if (a >= t) { return 10 } return 0 }"),
+        "if (a >= t) { return 10 }"
+    );
+    assert_eq!(
+        first("function f(o: { a: number }, t: number): boolean { return o.a > t }"),
+        "return o.a > t"
+    );
+    // A brace inside a string does not close the consequent early.
+    assert_eq!(
+        first("function f(a) { if (a > 1) { return \"}\" } return 0 }"),
+        "if (a > 1) { return \"}\" }"
+    );
+    // Not a one-line function: unchanged.
+    assert_eq!(first("  if (a >= t) {"), "  if (a >= t) {");
+}
+
+#[test]
 fn classify_probe_shape_recognises_if_predicate() {
     let (family, delta) = classify_probe_shape("    if (amount >= threshold) {");
     assert_eq!(family, ProbeFamily::Predicate);
