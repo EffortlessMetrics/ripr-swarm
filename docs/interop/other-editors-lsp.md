@@ -27,8 +27,9 @@ analysis of the saved workspace against the base ref. Typing without saving
 does not re-analyze: the edited file's diagnostics are withdrawn, and hover
 says its evidence is paused until the file is saved. A file that no refresh
 has analyzed yet says so, and its evidence appears after the next refresh. Save to get fresh
-evidence, or run the `ripr.refresh` command. The server advertises full
-document sync and relies on `textDocument/didSave`.
+evidence, or run the `ripr.refresh` command. The server advertises incremental
+document sync (so it can tell when an open buffer diverges from the analyzed
+saved content) and relies on `textDocument/didSave`.
 
 **Few diagnostics is normal.** The default `actionable` profile publishes only
 `weakly_exposed`, `reachable_unrevealed`, and `no_static_path` findings that

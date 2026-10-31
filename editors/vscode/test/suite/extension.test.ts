@@ -2121,7 +2121,7 @@ suite('Extension Smoke', () => {
       assertDegraded([
         'ripr analysis completed on a bounded partition of the diff.',
         'the remainder was not evaluated',
-        'Next safe action: Run ripr: Show Top Limitation to see which budget stopped the run (RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET), raise it or narrow the diff'
+        'Next safe action: Run ripr: Show Main Analysis Limit to see which budget stopped the run (RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET), raise it or narrow the diff'
       ]);
 
       emitSucceededWithRunStatus('limited_incomplete_input');
@@ -2362,7 +2362,7 @@ suite('Extension Smoke', () => {
       // The artifact recovery does not widen the diff partition, so the canned
       // budget remedy must survive composition with the component recovery.
       assert.ok(
-        tooltip.includes('Next safe action: Run ripr: Show Top Limitation to see which budget stopped the run (RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET), raise it or narrow the diff, then run ripr: Refresh Diagnostics. Run ripr check to regenerate the gap decision ledger'),
+        tooltip.includes('Next safe action: Run ripr: Show Main Analysis Limit to see which budget stopped the run (RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET), raise it or narrow the diff, then run ripr: Refresh Diagnostics. Run ripr check to regenerate the gap decision ledger'),
         tooltip
       );
     } finally {
