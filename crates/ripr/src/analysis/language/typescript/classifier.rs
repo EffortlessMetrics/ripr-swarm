@@ -6386,6 +6386,7 @@ pub(crate) fn classify_change_with_alias_state(
         reexport_index,
         alias_map,
         alias_unavailable,
+        None,
     )
 }
 
@@ -6676,7 +6677,7 @@ fn decorated_return_changed(owner: &TypeScriptOwner, line: usize) -> bool {
 /// for the deleted-lines closure and the test-only wrapper.
 #[allow(
     clippy::too_many_arguments,
-    reason = "12 structurally-distinct context tokens; bundling forces heap allocation; count is stable"
+    reason = "13 structurally-distinct context tokens; bundling forces heap allocation; count is stable"
 )]
 pub(crate) fn classify_resolved_owner(
     file: &Path,
@@ -6691,6 +6692,7 @@ pub(crate) fn classify_resolved_owner(
     reexport_index: &ReExportIndex,
     alias_map: Option<&TsAliasMap>,
     alias_unavailable: Option<&TsAliasMapLoadGap>,
+    ast_shape: Option<TypeScriptProbeShape>,
 ) -> Option<Finding> {
     // RIPR-SPEC-0243 rule 21: a decorated-method reach observes only an edit
     // to the wrapper's pass-through return. Any other line of the decorator
@@ -6726,7 +6728,10 @@ pub(crate) fn classify_resolved_owner(
     // `ts_oracle_kind_matches_seam` filter that `strongest_family_matching_oracle`
     // applies below, so a row never displays a wrong-family assertion while
     // classification judges another.
-    let probe_shape = classify_probe_shape_detail(line_text);
+    // #11250: the AST-derived shape for this line wins when the single
+    // parse produced one; absent facts (old-side lines, parse errors,
+    // test-only paths) keep the line-text classification.
+    let probe_shape = ast_shape.unwrap_or_else(|| classify_probe_shape_detail(line_text));
     // A one-line guard whose condition is unchanged was edited in its
     // statement (`if (n > 100) return n - 20;`), so the guard's boundary is not
     // the changed behavior; the shape stays unrecognised rather than crediting

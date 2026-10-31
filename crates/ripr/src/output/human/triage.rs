@@ -591,7 +591,7 @@ pub(crate) fn render_human_triage(
                 "    - {}:{} ({}{}); kind: {}; reason: {}\n",
                 crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
                 finding.probe.location.line,
-                finding.class.plain_label(),
+                finding.class.plain_label_with_stage(),
                 currentness,
                 finding.probe.family.as_str(),
                 hidden_finding_reason(finding)
@@ -618,6 +618,30 @@ pub(crate) fn render_human_triage(
                     }
                     _ => {}
                 }
+            }
+        }
+        // #9373: gloss each class named by a listed row, once, in the plain
+        // vocabulary, so a run with several classes needs no `human-full`
+        // rerun to read them.
+        let mut listed_classes: Vec<&ExposureClass> = Vec::new();
+        for class in ExposureClass::ALL.iter() {
+            if triage
+                .omitted
+                .iter()
+                .take(listed)
+                .any(|finding| finding.class == *class)
+            {
+                listed_classes.push(class);
+            }
+        }
+        if !listed_classes.is_empty() {
+            out.push_str("  Hidden classes:\n");
+            for class in listed_classes {
+                out.push_str(&format!(
+                    "    {} = {}\n",
+                    class.plain_label_with_stage(),
+                    class.plain_gloss()
+                ));
             }
         }
         let remaining = triage.omitted.len() - listed;

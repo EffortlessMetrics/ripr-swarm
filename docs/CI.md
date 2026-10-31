@@ -4,6 +4,9 @@ CI should protect correctness without making ordinary contribution slow or
 noisy. Default CI is advisory for static exposure findings until calibration and
 configuration are mature enough to support opt-in failure policies.
 
+New to RIPR in CI? Start with the short ordered path in
+[Adopting RIPR in CI](ADOPTING_IN_CI.md); this page is the long reference.
+
 ## Python wheel applicability (#4987)
 
 The Python wheel workflow retains its broad PR paths and ordinary manual
@@ -1531,8 +1534,8 @@ collapsed block; when any `RIPR_GATE_MODE` value is set they are not folded.
 The fold stays open ("needs attention") when a folded report is unreadable,
 has an unexpected shape, omits an expected count, or states a warning,
 unknown, blocker, config-error, stale or ownerless-suppression count that is
-not `0`. It folds with the "no warnings or unknowns" label only when every
-the readiness, operations, history, promotion and suppression-health report
+not `0`. It folds with the "no warnings or unknowns" label only when the
+readiness, operations, history, promotion and suppression-health report
 categories each parsed with all expected counts at `0` (preview-promotion and
 waiver-aging reports are conditional and keep it open only when present and not
 clean); it stays open ("some policy reports not found") when a required
@@ -1660,6 +1663,34 @@ gate-denominator consumer — must refuse fail-closed. The override covers only
 that child, so hand-run `ripr check` output keeps the ambient budget; set
 `RIPR_CHECK_FINDINGS_BYTES=0` yourself (or raise the byte value) when an
 outside-the-packet hand-off needs the full findings array.
+
+#### Large pull requests
+
+A PR whose diff exceeds a scope budget is a declined run, not a clean result:
+`ripr check` refuses before analyzing anything (exit 2) and writes a typed
+refusal envelope to `target/ripr/pr/check.json` — for example
+`analysis_scope.run_status = diff_scope_oversized` with the producer's message
+naming the measured lines and the `RIPR_MAX_DIFF_CHANGED_RUST_LINES` limit
+(currently 2000). The envelope also carries its repair route
+(`analysis_scope.repair_route` and `run_limitations[].repair_route`).
+
+Downstream packets name the refusal instead of discarding it (#11161):
+
+- The job summary (`ripr reports ci-summary`) opens First-run status with
+  `#### PR analysis did not run`, quoting the typed run status, the
+  producer's message, that nothing was analyzed, and the next step.
+- `ripr review-comments --check-output` rejects the refusal envelope with a
+  `producer refusal (run_status: …)` error carrying the same message and
+  next step, instead of the generic `missing analysis_outcome`.
+
+Under a blocking `RIPR_GATE_MODE` the refusal still fails the gate closed —
+naming the cause does not admit the PR. To get guidance on a large PR,
+either split it into smaller stacked PRs, run a narrower diff
+(`ripr check --path <glob>` and/or `--exclude <glob>` to analyze a subset;
+files left out are reported as not analyzed), or raise the limit for a single
+command on a machine with enough memory
+(`RIPR_MAX_DIFF_CHANGED_RUST_LINES=<number>`). See
+[Configuration](CONFIGURATION.md) for the budget variables.
 
 ```yaml
       - name: Run RIPR
