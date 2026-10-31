@@ -786,6 +786,15 @@ reason = "Sample JSON packets proving portable verification schemas are executab
 covered_by = ["cargo xtask check-verification-contracts"]
 
 [[allow]]
+glob = "crates/ripr/src/app/kani_import/fixtures/*.json"
+kind = "kani_import_contract_fixture"
+owner = "verification/kani-import"
+surface = "fixtures"
+classification = "fixture"
+reason = "Pinned upstream Kani contract examples and an authored no-promotion report projection; no native-run capture claim."
+covered_by = ["cargo test -p ripr --lib kani_import", "cargo test -p ripr --lib kani_report"]
+
+[[allow]]
 glob = "crates/ripr/tests/fixtures/causal-attribution/*.json"
 kind = "causal_attribution_fixture"
 owner = "analysis/causal-attribution"

@@ -9,6 +9,8 @@ mod diagnostic_witness;
 mod evidence;
 mod evidence_state;
 pub(crate) mod executed_control;
+pub(crate) mod external_verification;
+pub(crate) mod external_verification_native;
 mod feedback;
 mod finding_test_evidence;
 mod fix_instruction;
