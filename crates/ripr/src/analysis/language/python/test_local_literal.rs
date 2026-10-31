@@ -27,11 +27,16 @@ pub(super) fn test_local_literal(
     let ast::Mod::Module(module) = &module else {
         return None;
     };
-    let function = module.body.iter().find_map(|statement| match statement {
-        Stmt::FunctionDef(function) => Some((&function.args, &function.body)),
-        Stmt::AsyncFunctionDef(function) => Some((&function.args, &function.body)),
-        _ => None,
-    })?;
+    // The body text is the candidate test alone; refuse anything else so a
+    // sibling function's assignment can never supply the value.
+    let [statement] = module.body.as_slice() else {
+        return None;
+    };
+    let function = match statement {
+        Stmt::FunctionDef(function) => (&function.args, &function.body),
+        Stmt::AsyncFunctionDef(function) => (&function.args, &function.body),
+        _ => return None,
+    };
     let (arguments, body) = function;
     if arguments_name(arguments, name) {
         return None;
