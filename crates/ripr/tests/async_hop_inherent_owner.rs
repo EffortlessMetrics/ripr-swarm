@@ -572,7 +572,7 @@ fn review_import_alias_shadow_control() -> Result<(), String> {
     let got = both_owner_kinds(&inherent, &free, test, Harness::AsyncTest)?;
     assert_both("import alias shadows the callee", got, "same_test_file");
     // Controls: an import that binds a different name leaves the real call
-    // credited; the callee's own path with no alias is pinned below.
+    // credited; importing the callee's own path is refused by design (below).
     let (inherent, free) = hops(
         "    use other::different as elsewhere;\n    let _ = elsewhere(qty).await;\n    inner(qty).await",
     );
@@ -580,9 +580,101 @@ fn review_import_alias_shadow_control() -> Result<(), String> {
     assert_both("import under another name", got, "helper_owner_call");
     let (inherent, free) = hops("    use crate::inner;\n    inner(qty).await");
     let got = both_owner_kinds(&inherent, &free, test, Harness::AsyncTest)?;
-    // Observed, not required by this guard (it does not refuse a plain
-    // import): the chain resolver upstream does not credit through a hop that
-    // imports its callee, so this stays a conservative recall gap.
+    // By design: import identity is not preserved, so a hop that imports a
+    // name equal to its callee refuses, including the callee's own path.
     assert_both("unaliased import of the callee", got, "same_test_file");
+    Ok(())
+}
+
+#[test]
+fn hop_imports_that_may_bind_the_callee_refuse_by_design() -> Result<(), String> {
+    let test = "        assert_eq!(load(10).await, true);";
+    let hops = |entry_body: &str| {
+        (
+            format!(
+                "async fn inner(qty: u32) -> bool {{\n    Meter {{ limit: 10 }}.over(qty)\n}}\nasync fn load(qty: u32) -> bool {{\n{entry_body}\n}}\n"
+            ),
+            format!(
+                "async fn inner(qty: u32) -> bool {{\n    over(qty)\n}}\nasync fn load(qty: u32) -> bool {{\n{entry_body}\n}}\n"
+            ),
+        )
+    };
+    // Control: no import, credited.
+    let (inherent, free) = hops("    inner(qty).await");
+    let got = both_owner_kinds(&inherent, &free, test, Harness::AsyncTest)?;
+    assert_both("no import", got, "helper_owner_call");
+    for (case, body) in [
+        (
+            "unaliased external import",
+            "    use ext::inner;\n    inner(qty).await",
+        ),
+        (
+            "grouped external import",
+            "    use ext::{other, inner};\n    inner(qty).await",
+        ),
+        (
+            "glob import inside the hop",
+            "    use ext::*;\n    inner(qty).await",
+        ),
+    ] {
+        let (inherent, free) = hops(body);
+        let got = both_owner_kinds(&inherent, &free, test, Harness::AsyncTest)?;
+        assert_both(case, got, "same_test_file");
+    }
+    // A name the import does not bind leaves the call credited.
+    let (inherent, free) = hops("    use ext::unrelated;\n    inner(qty).await");
+    let got = both_owner_kinds(&inherent, &free, test, Harness::AsyncTest)?;
+    assert_both("import of another name", got, "helper_owner_call");
+    Ok(())
+}
+
+#[test]
+fn only_the_hop_that_calls_the_owner_may_discard_it_in_a_two_hop_chain() -> Result<(), String> {
+    // `hops[0]` is the caller of the owner (owner-upward). Here the lowest hop
+    // `inner` builds the async owner's future and drops it while the entry
+    // `load` awaits `inner`: the owner never runs.
+    let test = "        assert_eq!(load(10).await, true);";
+    let got = async_owner_relations(
+        "async fn inner(qty: u32) -> bool {\n    let _ = Meter { limit: 10 }.over(qty);\n    true\n}\nasync fn load(qty: u32) -> bool {\n    inner(qty).await\n}\n",
+        "async fn inner(qty: u32) -> bool {\n    let _ = over(qty);\n    true\n}\nasync fn load(qty: u32) -> bool {\n    inner(qty).await\n}\n",
+        test,
+    )?;
+    assert_both(
+        "lowest hop discards the owner future",
+        got,
+        "same_test_file",
+    );
+    // Mirror: the lowest hop awaits the owner, the entry discards `inner`.
+    let got = async_owner_relations(
+        "async fn inner(qty: u32) -> bool {\n    Meter { limit: 10 }.over(qty).await\n}\nasync fn load(qty: u32) -> bool {\n    let _ = inner(qty);\n    true\n}\n",
+        "async fn inner(qty: u32) -> bool {\n    over(qty).await\n}\nasync fn load(qty: u32) -> bool {\n    let _ = inner(qty);\n    true\n}\n",
+        test,
+    )?;
+    assert_both("entry hop discards the lower future", got, "same_test_file");
+    // Control: both await.
+    let got = async_owner_relations(
+        "async fn inner(qty: u32) -> bool {\n    Meter { limit: 10 }.over(qty).await\n}\nasync fn load(qty: u32) -> bool {\n    inner(qty).await\n}\n",
+        "async fn inner(qty: u32) -> bool {\n    over(qty).await\n}\nasync fn load(qty: u32) -> bool {\n    inner(qty).await\n}\n",
+        test,
+    )?;
+    assert_both("both hops await", got, "helper_owner_call");
+    Ok(())
+}
+
+#[test]
+fn a_same_named_method_on_another_type_is_not_the_hop_call() -> Result<(), String> {
+    let test = "        assert_eq!(load(10).await, true);";
+    let other = "pub struct Other;\nimpl Other {\n    pub async fn inner(&self, _qty: u32) -> bool {\n        true\n    }\n}\n";
+    let got = both_owner_kinds(
+        &format!(
+            "{other}async fn inner(qty: u32) -> bool {{\n    Meter {{ limit: 10 }}.over(qty)\n}}\nasync fn load(qty: u32) -> bool {{\n    Other.inner(qty).await\n}}\n"
+        ),
+        &format!(
+            "{other}async fn inner(qty: u32) -> bool {{\n    over(qty)\n}}\nasync fn load(qty: u32) -> bool {{\n    Other.inner(qty).await\n}}\n"
+        ),
+        test,
+        Harness::AsyncTest,
+    )?;
+    assert_both("method of another type awaited", got, "same_test_file");
     Ok(())
 }

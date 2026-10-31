@@ -28,9 +28,12 @@
 //! whose body holds an `async` block or closure (`fn f() -> impl Future { async
 //! move { .. } }` runs its changed line only when polled). A return type behind
 //! a type alias is not seen. The hop-side shadow guard is name-based: it sees
-//! local bindings, nested `fn`s and any `as` rename to the callee's name in
-//! the hop's file. It does not see a glob import, a module-level import in
-//! another file, or an external item of the same name.
+//! local bindings, nested `fn`s and any `use` that binds the callee's name (by
+//! final segment or `as` rename) in the hop's file, so a hop that imports its callee at all (`use ext::inner;`, `use crate::inner;`)
+//! is refused by design, as is a glob import inside the hop or anywhere in its
+//! file when the callee is defined elsewhere. It does not see imports in other
+//! files, a qualified path to an external item of the same name, or a `use`
+//! inside a `macro_rules!` body.
 
 use super::helper_transfer::HelperChain;
 use super::owner_pin::{OwnerPinSyntax, function_declaration_is_async};
@@ -352,22 +355,50 @@ fn hop_call_sites(caller: &FunctionSummary, callee: &str, index: &RustIndex) -> 
                     && item.name().is_some_and(|name| name.text() == callee)
             })
     });
-    // An `as` rename to the callee's name (`use other::different as inner;`) in
-    // the hop's file, at any level, binds something else under that name. A
-    // plain `use ..::inner;` names the workspace-unique callee the chain
-    // followed, so this guard does not refuse it (the chain resolver
-    // upstream currently does not credit through such a hop).
-    let renamed_to_callee = index
+    // Import identity is not preserved, so any import that may bind the
+    // callee's name refuses (fail closed, by design): a `use` tree whose bound
+    // name is the callee, by final segment (`use ext::inner;`, which includes
+    // the callee's own `use crate::inner;`) or by `as` rename; a glob import
+    // inside the hop (a block-scoped glob shadows the enclosing module); and a
+    // glob anywhere in the hop's file when the callee is not defined in that
+    // same file. Not seen: imports in other files, a qualified path to an
+    // external item of the same name, and a `use` inside a `macro_rules!` body.
+    let imports_may_bind_callee = index
         .source_syntax
         .get(index, &caller.file)
         .and_then(|snapshot| snapshot.tree())
         .is_none_or(|tree| {
-            tree.syntax().descendants().any(|node| {
-                ast::Rename::cast(node)
-                    .and_then(|rename| rename.name())
-                    .is_some_and(|name| name.text() == callee)
-            })
+            let binds = |tree: &ast::UseTree| {
+                tree.use_tree_list().is_none()
+                    && tree.star_token().is_none()
+                    && match tree.rename() {
+                        Some(rename) => rename.name().is_some_and(|name| name.text() == callee),
+                        None => tree
+                            .path()
+                            .and_then(|path| path.segment())
+                            .and_then(|segment| segment.name_ref())
+                            .is_some_and(|name| name.text() == callee),
+                    }
+            };
+            let is_glob = |tree: &ast::UseTree| tree.star_token().is_some();
+            let file_trees: Vec<ast::UseTree> = tree
+                .syntax()
+                .descendants()
+                .filter_map(ast::UseTree::cast)
+                .collect();
+            let defined_here = tree.syntax().descendants().any(|node| {
+                ast::Fn::cast(node)
+                    .is_some_and(|item| item.name().is_some_and(|name| name.text() == callee))
+            });
+            file_trees.iter().any(binds)
+                || (!defined_here && file_trees.iter().any(is_glob))
+                || function
+                    .syntax()
+                    .descendants()
+                    .filter_map(ast::UseTree::cast)
+                    .any(|tree| is_glob(&tree))
         });
+    let renamed_to_callee = imports_may_bind_callee;
     if rebinds_callee || renamed_to_callee {
         return Sites::Unpolled;
     }
