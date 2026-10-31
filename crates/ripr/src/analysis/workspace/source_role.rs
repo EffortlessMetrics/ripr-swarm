@@ -235,6 +235,16 @@ pub(crate) fn classify(path: &Path) -> SourceRole {
     if has_component("tests") {
         return SourceRole::TestEvidence;
     }
+    // A cargo-fuzz harness (`fuzz/fuzz_targets/<name>.rs`) is test-like
+    // surface: its `[[bin]]` roots are Cargo-compiled, but a harness arm is
+    // not product behavior a test is meant to pin (#11293). Decided at the
+    // layout level so a declared `[[bin]] path` cannot promote it back to a
+    // production edit target.
+    if components.windows(2).any(|pair| {
+        component_name(&pair[0]) == "fuzz" && component_name(&pair[1]) == "fuzz_targets"
+    }) {
+        return SourceRole::TestEvidence;
+    }
     // Cargo autodiscovery shapes govern `benches/` and `examples/`:
     // Cargo only finds `<dir>/<name>.rs` and `<dir>/<name>/main.rs`. A
     // path like `examples/sample/src/lib.rs` is NOT discoverable as an
@@ -434,6 +444,36 @@ mod tests {
 
     fn role(path: &str) -> SourceRole {
         classify(Path::new(path))
+    }
+
+    #[test]
+    fn cargo_fuzz_harness_is_test_evidence_even_when_declared_as_a_bin() {
+        // #11293: `fuzz/fuzz_targets/<name>.rs` is a declared `[[bin]]` of
+        // the nested cargo-fuzz package, but it is harness surface and must
+        // not seed production findings.
+        for path in [
+            "fuzz/fuzz_targets/fuzz_ryu.rs",
+            "crates/core/fuzz/fuzz_targets/parse.rs",
+            "fuzz\\fuzz_targets\\fuzz_ryu.rs",
+            "./fuzz/fuzz_targets/fuzz_ryu.rs",
+        ] {
+            assert_eq!(role(path), SourceRole::TestEvidence, "{path}");
+            let mut context = SourceRoleContext::empty();
+            context
+                .declared_production_sources
+                .insert(PathBuf::from(path.replace('\\', "/")));
+            assert!(!seeds_diff_probes(Path::new(path), &context), "{path}");
+        }
+        // Negative: lookalikes and ordinary production stay as they were.
+        for path in [
+            "src/fuzz/fuzz_targets_helper.rs",
+            "fuzz_targets/standalone.rs",
+            "src/fuzz_targets/lib.rs",
+            "fuzz/src/lib.rs",
+        ] {
+            assert_ne!(role(path), SourceRole::TestEvidence, "{path}");
+        }
+        assert_eq!(role("fuzz/src/lib.rs"), SourceRole::ProductionSubject);
     }
 
     #[test]

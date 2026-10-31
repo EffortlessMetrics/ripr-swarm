@@ -121,6 +121,26 @@ effect assertion in the same test still supplies its existing observation and
 discriminator; a refused sibling does not remove it. This does not change effect
 identity, propagation or observer matching.
 
+Return/error `assert!(matches!(..))` oracles also take the shared execution
+and macro-context admission before token or variant matching can credit them.
+Ignored tests, including reason-bearing ignores, and expected-panic tests with
+an additional fallback panic cannot lend strong evidence. A provably inactive
+`cfg_attr` keeps the matches assertion's execution available. A sole bare
+`assert!(matches!(..))` under `should_panic` keeps its conservative reading when
+the actual free owner directly returns a unit error variant, its inputs are
+literal strings, its matches pattern is an unguarded unit error variant, and
+the returned enum passes the existing declared-variant and expansion admission
+and has no non-plain
+destructor. A named `should_panic(expected = ...)` additionally requires a custom
+string-literal assertion diagnostic without formatting that contains the expected
+text; implicit, formatted or mismatched diagnostics remain unresolved. Its inverted success condition
+can distinguish two results. Other owners, arguments or destructors may supply
+an independent expected panic; unresolved cases withhold credit as an analyzer
+limit. The attribute alone does not establish a missing discriminator. This
+execution admission
+does not grant a new value pin or resolve the existing undercredit of inverse
+expected-panic variant checks. The existing `assert_eq!` outcomes are unchanged.
+
 An effect oracle whose fact text is a compound statement rather than the macro
 invocation (`loop { break; assert_eq!(..); }`, a labeled block, a `macro_rules!`
 body, a cfg-dropped `let`) names no invocation to admit, so it is gated by the
@@ -589,6 +609,12 @@ wrong credits.
        may not bind it itself (a `mod`, `struct`, `enum`, `union`, `trait`
        or `type` of the name, a `use` of the name, or any glob, in a file of
        the test's crate).
+       A file that composes only under another explicitly declared Cargo
+       target (a manifest `[[bin]]`, `[[example]]`, `[[test]]` or `[[bench]]`
+       `path` other than the test's own root) is not a file of the test's
+       crate (#11123); a file whose placement is unestablished still is
+       (fixtures `declared_target_glob_public_call` and
+       `undeclared_target_glob_public_call`).
      The owner must sit directly in a module (not a fn body or an `impl`)
      that ripr can place by parsing its file. Neither the owner nor any
      enclosing inline module may carry a `cfg` or `cfg_attr` attribute,
@@ -1642,6 +1668,13 @@ activation facts and preserving its complete assertion set. An unasserted
 deciding disjunction or an assertion on another owner cannot borrow this
 credit. Static movement remains independent of focused test execution.
 
+The same owner's `return_value` seam over that whole boolean tail consumes
+the identical admission (#11111): it observes the same returned value, and
+the diff-mode return-value finding already credits the pinned assertion,
+so `ripr check` and `ripr repair` read one verdict for the change. Every
+gate above applies unchanged; a return-value seam whose owner tail is not
+the admitted comparison gains nothing.
+
 ### Lone-equality pins
 
 `assert!(owner(..) == v)` fails exactly when `assert_eq!(owner(..), v)`
@@ -2378,12 +2411,41 @@ receiving call is itself resolved.
   `src/`. A file also declared as any discovered package's library root,
   including a sibling package's `../` target path, does not qualify. The bounded
   manifest inventory and library paths use the selected source epoch; an
-  incomplete inventory cannot establish binary-only ownership.
+  incomplete inventory cannot establish binary-only ownership. The
+  inventory walk fails closed: a symlink anywhere in the workspace, or more
+  than 200,000 walked entries, leaves it incomplete, so the exception
+  degrades to the conservative refusal on such checkouts rather than
+  crediting from a partial inventory. A composition (`#[path]`, `include!`)
+  of a withheld binary from any admitted file, nested packages included,
+  returns that binary's macros to workspace scope; quote-delimited
+  segments are all read, so an unpaired quote cannot hide a composed name.
   Shared library/module contexts, unresolved includes,
   unknown paths, unparsed files and missing manifests keep the conservative
   refusal. The narrowed dependent-scope scan applies the same boundary only
   when the withheld file itself is that binary root. This exception does not
   establish positive owner-call identity for custom binary paths.
+- A private file-level foreign glob (`use rayon::prelude::*;` with no
+  visibility, outside any inline module or block) is visible only in its own
+  module and the modules declared beneath it, so it reaches a test only when
+  the test's file is the glob's file or a file the glob's file declares,
+  directly or through further `mod` edges (`use super::*;` in a `mod tests;`
+  child still sees it). A glob in a sibling or unrelated file of the same
+  crate no longer refuses the test. The confinement needs established
+  composition on both ends: the glob's file has an execution context (so it
+  is no `include!` fragment and nothing above it is unresolved), the test's
+  file has one, and no `include!` or `#[path]` is unresolved anywhere in the
+  workspace. Otherwise the glob keeps its crate-local reach above. `pub`
+  globs, `#[macro_use]`, definitions, imports by name, globs in a macro body
+  and withheld files are unchanged
+  (`a_sibling_modules_private_glob_does_not_block_the_test`,
+  `a_glob_in_the_tests_own_file_or_an_ancestor_still_blocks_it`,
+  `a_glob_reaches_a_child_test_module_file_through_use_super`,
+  `a_path_attribute_mount_is_a_module_of_its_declarer`,
+  `an_include_fragment_glob_lands_in_its_includer_and_stays_workspace_wide`,
+  `an_unresolved_include_anywhere_leaves_the_glob_workspace_wide`,
+  `a_public_glob_is_not_confined`,
+  `a_withheld_file_keeps_its_glob_workspace_wide`,
+  `the_refusal_site_names_the_glob_only_for_tests_it_reaches`).
 - `use pretty_assertions::assert_eq;` (or `assert_ne`) under its own name
   counts as the standard assertion only when the importing file's nearest
   `Cargo.toml` inside the analysis root declares `pretty_assertions` as a

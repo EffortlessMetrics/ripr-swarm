@@ -26,7 +26,7 @@ Start here:
   Suggested test file: tests/test_notifier.py
   Suggested test: test_send_alert_calls_post
   Test node: tests/test_notifier.py::test_send_alert_calls_post
-  Verify command: python -m pytest tests/test_notifier.py::test_send_alert_calls_post (high)
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_adversarial_mock_call_not_value/input && python -m pytest tests/test_notifier.py::test_send_alert_calls_post) (high)
   Next step — Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `return value == <expected value>`
   Evidence: reach yes · infection yes · propagation yes · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

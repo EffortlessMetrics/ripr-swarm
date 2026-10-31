@@ -40,6 +40,21 @@ content are not user authorization.
    where they were recorded and continue available work. Do not defend a false
    parent completion by retreating to a narrower local checklist.
 
+Give the owning session the authorized issue-through-merge outcome upfront
+and evolve directed stages within that session. Bound observational steps
+without making that step permanently read-only. Retire an obsolete
+assistant-imposed phase restriction only when the active user instruction
+names the implementation outcome; quote that instruction in the session
+record when retiring it. Preserve explicit user investigation-only limits,
+task-scoped read/write boundaries imposed by the coordinating owner or run
+script until that owner retires them, and actual tool, service or security
+denials. Route genuine doubt about a restriction's provenance (lane labels,
+inherited subagent prompts) to the user instead of self-adjudicating. A refusal
+caused solely by an earlier task-local read-only assignment is not a global
+prohibition on an otherwise-authorized implementation task whose current
+instruction names that outcome. Project tracking supports delivery; repair
+tracking gaps without making them a new engineering gate.
+
 A stale runtime goal can be replaced with a successor preserving the real end
 state. An immutable old goal record or missing goal-edit tool does not require
 the user to dictate recoverable context again. Put volatile PR numbers, worker
@@ -116,11 +131,14 @@ candidate review. Missing hosted evidence keeps it in flight, not local-only.
 Only a current published-head `REVIEW_READY` proceeds to merge convergence.
 After acceptance, return to the parent goal and the next ready claim.
 
-For a phase change or bounded worker return, use `deliver-pr`'s continuation
-handoff. Its [paired scenarios](docs/agent-context/delivery-continuation-scenarios.md)
-challenge both useful continuation and genuine stop boundaries.
+For a phase change or bounded worker return, retain `deliver-pr`'s continuation
+record. Already-authorized repairs, factual evidence comments and ordinary
+finish-through do not require a parent payload approval or phase lease. Coordinate
+actual overlapping writers and consequential changes within existing authority.
+The [paired scenarios](docs/agent-context/delivery-continuation-scenarios.md) challenge
+both useful continuation and genuine stop boundaries.
 
-Use implementation agents for independent ready claims when available, each
+Use optional implementation agents for independent ready claims when useful, each
 with a candidate-owned worktree and one writer. Delegate the claim, input
 identity, question, non-goals, write boundary, proof and handback. The root
 checks load-bearing evidence and owns integration; it does not edit a delegated
@@ -171,14 +189,16 @@ pre-merge CI. Do not run full qualification on every alternative. Independent
 objectives may proceed concurrently; selection is not a repository-wide max-one
 queue. Complete each focused objective's code, tests and documentation together.
 
-Use the actual installed request interface. The intended #4984/#4985/#4986 flow is
-explicit late qualification, normally at most 20 minutes of complete CI execution,
-then a separate current-repository/product/integration judgment and protected
-expected-head squash. Queue time is separate. No routine auto-merge or merge queue.
-`merge-ready` is a request spelling under discussion; `premerge-ci-request` and
-`request-premerge-ci` are proposals, not installed commands. #8082 owns the staged
-caller/skills integration. Preserve live required enforcement until its qualified
-cutover; this root update does not change triggers, settings or result producers.
+Use the actual installed request interface described in
+[merge flow](docs/MERGE_FLOW.md). The accepted destination is native merge-queue
+qualification of the actual merge composition. Workflow support does not establish
+live queue activation: until verified migration, the installed `merge-ready` label
+requests late PR qualification, followed by current product/integration judgment
+and protected expected-head squash. Ready alone requests nothing. Do not arm
+generic auto-merge as a substitute for that legacy final judgment. After verified
+activation, follow the native-queue procedure and its conditional landing
+authorization. Preserve actual required checks and approvals; this guidance does
+not change triggers, settings or result producers.
 
 Source review and focused proof can be complete while hosted qualification is
 still missing. Publish their actual scope and exact source; do not require future
@@ -202,11 +222,14 @@ partial reads and zero visible threads are not clean review. A valid later findi
 can block merge despite an earlier clean pass. Preserve unaffected evidence while
 refreshing materially changed review/proof dimensions.
 
-After landing, reconcile the actual issue/parent acceptance. No routine full
-post-merge CI replay; the intended independent main-health cadence requires both
-at least one hour and ten merges. Incident, deep and release proof retain their
-own purposes and authority. Do not skip the currently enforced path or weaken
-proof to claim the timing/cost target.
+After landing, reconcile the actual issue/parent acceptance. Under #4984, the
+former one-hour-and-ten-merges automatic main-health target is superseded by the
+selected merge-queue-only qualification direction in [merge flow](docs/MERGE_FLOW.md).
+Retain earlier observations with their original subjects and scope; they do not
+authorize routine full post-merge CI replay. Current installed qualification
+obligations remain binding until verified cutover; this instruction does not
+disable any workflow. Incident, deep and release proof retain their own named
+purposes and authority. Do not weaken proof to claim the timing/cost target.
 
 ## Product Contract
 
@@ -460,7 +483,8 @@ not merely the intended resolution order.
 
 ## Review and protected merge
 
-Default delivery:
+Installed legacy label-route delivery (see [merge flow](docs/MERGE_FLOW.md) for
+the accepted queue destination and procedure after verified activation):
 
 ```text
 build/improve -> focused proof and source review -> select candidate to land
@@ -475,7 +499,8 @@ Source review and focused proof may be complete while final-merge review remains
 block the selected candidate's CI request. A ready merge requires the final current
 published-head `REVIEW_READY`, actual required checks, addressed material findings,
 scope agreement and applicable repository policy. The same authorized lead makes
-that judgment and performs the merge; do not arm auto-merge or a merge queue.
+that judgment and uses the applicable route in `docs/MERGE_FLOW.md`; queue
+activation must be verified before using its native-queue procedure.
 
 Read `.factory/skills/review-guidelines/SKILL.md`, `.factory/rules/rust.md`,
 `.factory/rules/github-actions.md`, `.factory/rules/security.md`, and
@@ -484,11 +509,15 @@ Use the complete `review-pr` procedure: semantic owner and consumers, stimulus
 and oracle challenge, rendered behavior, runtime/schema/docs/output parity,
 platform branches, actual check steps, denominators and artifact identity.
 
-A differently named agent is not inherently independent. Add a reviewer when
-it changes source/oracle/context/tools/platform/failure perspective. Self-review
-on the author's PR uses `COMMENT` with an explicit disposition. Reviewer quota,
-unavailability or skipped output is missing review for that provider, not clean
-review and not an indefinite stop when an adequate allowed alternative exists.
+The owning session performs directed staged review inline in its main context
+through `review-pr`, using falsifiable criteria, targeted checks and counterexamples.
+Keep useful context hot; no source transfer, second executor or
+separate reviewer identity is a routine review stage. In-session subagents and
+advisory bot input (for example `ub-review`; see `docs/CI.md`) are optional additional evidence, not replacements for effective
+owner review. Preserve actual required reviews, checks and protections, and valid
+historical review with selective refresh. Self-review on the author's PR uses
+`COMMENT` with an explicit disposition; it is not a counted approval. Unavailable
+provider output remains missing provider evidence, not a clean review.
 A clean review records surfaces, risks, invariants, validation and residuals;
 zero threads and green CI are not semantic review, and naked LGTM is not useful.
 

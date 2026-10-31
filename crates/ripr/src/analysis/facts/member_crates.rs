@@ -768,6 +768,43 @@ impl MemberCrates {
         }
         true
     }
+
+    /// Whether `file` (root-relative) is the entry file of an explicit
+    /// `[[bin]]`, `[[example]]`, `[[test]]` or `[[bench]]` target whose
+    /// `path` the nearest package manifest names (#11123). Such a file roots
+    /// a crate of its own, so a module tree rooted there is not part of any
+    /// other target's crate. It says nothing about a file the manifest does
+    /// not name: an undeclared orphan stays unplaced. The manifest is read
+    /// through the committed-source overlay; a missing, unreadable or
+    /// virtual manifest, or absent manifest authority, answers no.
+    pub(crate) fn is_declared_target_entry(&self, file: &Path) -> bool {
+        let Some(root) = &self.root else {
+            return false;
+        };
+        let root = lexical(root);
+        let file_abs = lexical(&root.join(file));
+        let Some(directory) = file_abs.parent() else {
+            return false;
+        };
+        let Some((package, manifest)) =
+            committed_package(self.root.as_deref().unwrap_or(&root), &root, directory)
+        else {
+            return false;
+        };
+        ["bin", "example", "test", "bench"].iter().any(|kind| {
+            manifest
+                .get(*kind)
+                .and_then(toml::Value::as_array)
+                .is_some_and(|targets| {
+                    targets.iter().any(|target| {
+                        target
+                            .get("path")
+                            .and_then(toml::Value::as_str)
+                            .is_some_and(|path| lexical(&package.join(path)) == file_abs)
+                    })
+                })
+        })
+    }
 }
 
 /// The nearest package manifest at or above `directory`, read through the
@@ -1357,6 +1394,39 @@ mod tests {
 
     const PM: &str =
         "[package]\nname = \"derive\"\nversion = \"0.1.0\"\n[lib]\nproc-macro = true\n";
+
+    /// #11123: only a file the manifest names as an explicit target entry is
+    /// a declared target root; neighbours, the autodiscovered layout, a file
+    /// in another package and a missing manifest authority are not.
+    #[test]
+    fn only_an_explicit_target_path_is_a_declared_target_entry() -> Result<(), String> {
+        let manifest = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[[bin]]\nname = \"xtask\"\npath = \"xtask/main.rs\"\n\n[[example]]\nname = \"tour\"\npath = \"./tour/./demo.rs\"\n";
+        let root = temp_workspace(
+            "declared-target-entry",
+            &[
+                ("demo/Cargo.toml", manifest),
+                ("other/Cargo.toml", PRICING),
+                ("demo/xtask/main.rs", ""),
+            ],
+        )?;
+        let members = MemberCrates::new(&root);
+        let answers: Vec<bool> = [
+            "demo/xtask/main.rs",
+            "demo/tour/demo.rs",
+            "demo/xtask/other.rs",
+            "demo/src/main.rs",
+            "demo/src/lib.rs",
+            "other/xtask/main.rs",
+            "missing/xtask/main.rs",
+        ]
+        .iter()
+        .map(|file| members.is_declared_target_entry(Path::new(file)))
+        .collect();
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(answers, [true, true, false, false, false, false, false]);
+        assert!(!MemberCrates::default().is_declared_target_entry(Path::new("demo/xtask/main.rs")));
+        Ok(())
+    }
 
     #[test]
     fn only_proc_macro_library_modules_are_proc_macro_library_files() -> Result<(), String> {

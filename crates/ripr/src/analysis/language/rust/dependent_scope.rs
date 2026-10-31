@@ -725,6 +725,7 @@ pub(super) fn admit_dependents(
                     .extend(crate::analysis::syntax::local_empty_macro_names(&source));
             }
             query.note_trait_receivers(&source);
+            note_composed_names(&bytes, &mut composed_names);
             admitted.push(file.clone());
         }
     }
@@ -1473,7 +1474,11 @@ fn note_composed_names(bytes: &[u8], names: &mut BTreeSet<String>) {
     }
     let text = String::from_utf8_lossy(bytes);
     let mut spelled = false;
-    for literal in text.split('"').skip(1).step_by(2) {
+    // Every quote-delimited segment is read, not only the odd ones: an
+    // earlier unpaired quote (an escaped quote in a string or comment) flips
+    // parity, and a skipped real literal would leave a composed binary
+    // confined. A code segment that happens to end in `.rs` only widens.
+    for literal in text.split('"') {
         if let Some(name) = literal.strip_suffix(".rs") {
             let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
             names.insert(format!("{base}.rs"));
@@ -1511,6 +1516,16 @@ thread_local! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An earlier unpaired quote must not hide a real `#[path]` literal.
+    #[test]
+    fn composed_names_survive_an_unpaired_quote_before_the_path_literal() {
+        let source = b"// it\"s\n#[path = \"../fuzz/parse.rs\"]\nmod shadow;\nconst X: &str = \"other.rs\";\n";
+        let mut names = BTreeSet::new();
+        note_composed_names(source, &mut names);
+        assert!(names.contains("parse.rs"), "{names:?}");
+        assert!(!names.contains("*"), "{names:?}");
+    }
 
     /// The seed scan reads the main index once per scope, and for every
     /// owner (ASCII, Unicode, absent) it finds the macros the old per-owner

@@ -304,3 +304,19 @@ fn test_that_composes_the_shadowing_binary_loses_credit() -> Result<(), String> 
     assert_ne!(finding["classification"], "exposed", "{finding}");
     Ok(())
 }
+
+#[test]
+fn nested_package_test_that_composes_the_shadowing_binary_loses_credit() -> Result<(), String> {
+    let nested_manifest = "[package]\nname = 'nested'\nversion = '0.0.0'\nedition = '2024'\n[dependencies]\ndemo = { path = '..' }\n[workspace]\n";
+    let composing = "#[macro_use]\n#[path = \"../../fuzz/parse_version.rs\"]\nmod shadow;\nuse demo::answer;\n#[test]\nfn pins() { assert_eq!(answer(), 7); }\n";
+    let finding = Subject::new(&[
+        ("nested/Cargo.toml", nested_manifest),
+        ("nested/src/lib.rs", "pub fn unrelated() {}\n"),
+        ("nested/tests/pin.rs", composing),
+        ("fuzz/Cargo.toml", BIN),
+        ("fuzz/parse_version.rs", SHADOW_FUZZ),
+    ])?
+    .finding()?;
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}

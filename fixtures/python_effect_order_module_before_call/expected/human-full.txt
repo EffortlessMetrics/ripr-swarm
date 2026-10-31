@@ -63,7 +63,7 @@ Python repair card (preview/advisory)
   suggested file: tests/test_route.py
   suggested test: test_checkout
   pytest node: tests/test_route.py::test_checkout
-  verify: python -m pytest tests/test_route.py::test_checkout (high)
+  verify (Bash): (cd -P -- <cwd>/fixtures/python_effect_order_module_before_call/input && python -m pytest tests/test_route.py::test_checkout) (high)
   receipt: unavailable_until_python_gap_ledger
   receipt guidance: Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.
   stop conditions:

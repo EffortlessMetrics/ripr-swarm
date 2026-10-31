@@ -1,0 +1,88 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_truthiness_swap_no_exposed_credit/input
+config: <cwd>/fixtures/python_truthiness_swap_no_exposed_credit/input/ripr.toml
+
+Summary: 1 changed behavior(s) checked: 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+WARNING src/lib.py:2
+  id: probe:src_lib.py:python_preview:fc6faa73
+
+Changed
+  after:      if not x:
+
+Change type
+  a condition or comparison changed
+  family: predicate
+  delta:  control (changes which code path runs)
+  owner:  python:src/lib.py::pick
+  gap id (for scripts): gap:python:src/lib.py:pick:predicate_boundary:predicate:not_x
+
+Language
+  language: python
+  status: preview
+  owner kind: function
+
+Static exposure
+  weakly_exposed (warning, confidence 0.40)
+
+Evidence
+  - reach yes: 1 related Python test(s) found for owner `pick`
+  - infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary
+  - propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink
+  - observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)
+  - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
+  - local flow reaches unknown sink: if not x: (line 2) — ripr could not classify where the changed value ends up; propagation confidence is limited
+  - related test tests/test_lib.py:4 test_pick uses strong exact value oracle: assert pick(5, 3) == 5
+  - source function argument value x = None at line 5
+  - source function argument value x = 5 at line 6
+
+Weakness
+  - A strong Python oracle reaches `pick`, but static evidence does not place a related test input at the changed predicate boundary `x == 0`. Every strong related test call gives `x` a value on which `x is None` and `not x` agree, so no observed input selects a different branch
+  - missing discriminator x == 0: Every strong related test call gives `x` a value on which `x is None` and `not x` agree, so no observed input selects a different branch
+
+Python repair card (preview/advisory)
+  card version: python_repair_card.v1
+  canonical gap: gap:python:src/lib.py:pick:predicate_boundary:predicate:not_x
+  authority: preview_advisory_only (python/preview)
+  repair action: strengthen_existing_test
+  changed owner: pick
+  changed behavior: predicate_boundary changed at src/lib.py:2: `if not x:`
+  current test evidence: tests/test_lib.py:4 test_pick currently has oracle_strength=strong, oracle_kind=exact_value: assert pick(5, 3) == 5
+  missing discriminator: x == 0
+  recommended test shape: Strengthen the existing pytest boundary assertion for `x == 0`. Keep the equality case as the minimum repair; optional pytest parameterization can add `-1`, `0`, and `1` rows when expected values are clear.
+  suggested assertion: Assert the owner result or effect at `x == 0` first. Optional pytest shape: @pytest.mark.parametrize("x, expected", [(-1, ...), (0, ...), (1, ...)]); fill expected values from domain behavior only.
+  suggested file: tests/test_lib.py
+  suggested test: test_pick
+  pytest node: tests/test_lib.py::test_pick
+  verify (Bash): (cd -P -- <cwd>/fixtures/python_truthiness_swap_no_exposed_credit/input && python -m pytest tests/test_lib.py::test_pick) (high)
+  receipt: unavailable_until_python_gap_ledger
+  receipt guidance: Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.
+  stop conditions:
+    - Stop if imports, fixtures, or test setup cannot call the changed owner.
+    - Stop if the expected value for the missing discriminator is ambiguous.
+    - Stop if adding the test appears to require a production-code edit.
+    - Stop before adding parametrized below/above rows if their expected values are not clear; keep only the equality-boundary assertion.
+  limits:
+    - Syntax-first Python preview evidence only.
+    - No source edits, generated tests, mutation execution, provider calls, or gate authority.
+    - Verify success alone is not a gap-closure receipt.
+
+Next step
+  Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `x == 0`
+Drill in:
+  ripr explain --root <cwd>/fixtures/python_truthiness_swap_no_exposed_credit/input --diff <cwd>/fixtures/python_truthiness_swap_no_exposed_credit/diff.patch --mode fast probe:src_lib.py:python_preview:fc6faa73
+  ripr context --root <cwd>/fixtures/python_truthiness_swap_no_exposed_credit/input --diff <cwd>/fixtures/python_truthiness_swap_no_exposed_credit/diff.patch --mode fast --at probe:src_lib.py:python_preview:fc6faa73
+
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

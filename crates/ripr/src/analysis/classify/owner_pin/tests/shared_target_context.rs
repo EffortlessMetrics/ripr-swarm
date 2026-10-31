@@ -657,3 +657,67 @@ mod fixture_ownership {
         Ok(())
     }
 }
+
+/// #11123: a glob in a file that composes only under another explicitly
+/// declared Cargo target is not a file of the test's crate, so it cannot bind
+/// the library's name there. Every control where the file may still be the
+/// test crate's keeps the glob binding.
+#[test]
+fn a_glob_under_another_declared_target_does_not_bind_the_test_crate_root() -> Result<(), String> {
+    const BASE: &str = "[package]\nname = \"demo\"\nversion = \"0.0.0\"\nedition = \"2024\"\n";
+    const DECLARED: &str = "\n[[bin]]\nname = \"tool\"\npath = \"tool/main.rs\"\n";
+    const MOUNT: &str = "#[path = \"../src/reader.rs\"]\nmod reader;\nfn main() {}\n";
+    const GLOB_READER: &str = "pub fn read() {}\n#[cfg(test)]\nmod tests {\n    use super::*;\n}\n";
+    const LIB: &str = "pub fn weight(x: u32) -> u32 { 3 * x }\n";
+    const TEST: &str = "#[test]\nfn pin() {\n    assert_eq!(demo::weight(4), 12);\n}\n";
+    const GLOB_TEST: &str =
+        "use std::collections::*;\n#[test]\nfn pin() {\n    assert_eq!(demo::weight(4), 12);\n}\n";
+    let binds = |manifest: &str, tests: &str, tool: &str, reader: &str| -> Result<bool, String> {
+        let manifest = format!("{BASE}{manifest}");
+        let fixture = fixture_from_files(
+            "declared-target-glob",
+            &[
+                ("Cargo.toml", manifest.as_str()),
+                ("src/lib.rs", LIB),
+                ("tests/it.rs", tests),
+                ("tool/main.rs", tool),
+                ("src/reader.rs", reader),
+            ],
+        )?;
+        let roots = TargetRoots::new(&fixture);
+        assert_eq!(
+            roots.root(Path::new("tests/it.rs"), &fixture),
+            Some(PathBuf::from("tests/it.rs")),
+            "the integration test is its own recognized root"
+        );
+        Ok(test_crate_may_bind(
+            Path::new("tests/it.rs"),
+            "demo",
+            &fixture,
+            &roots,
+        ))
+    };
+    // The tool root and its mounted module are unplaced to the autodiscovered
+    // layout. Declared, they are another crate's; undeclared, they may be any.
+    assert!(!binds(DECLARED, TEST, MOUNT, GLOB_READER)?);
+    assert!(!binds(
+        DECLARED,
+        TEST,
+        "use std::collections::*;\nfn main() {}\n",
+        ""
+    )?);
+    assert!(binds("", TEST, MOUNT, GLOB_READER)?);
+    assert!(binds(
+        "",
+        TEST,
+        "use std::collections::*;\nfn main() {}\n",
+        ""
+    )?);
+    // The test crate's own glob still binds beside a declared target.
+    assert!(binds(DECLARED, GLOB_TEST, MOUNT, "")?);
+    // A file the test crate also mounts is the test crate's.
+    let shared_mount = "#[path = \"../src/reader.rs\"]\nmod reader;\n";
+    let both = format!("{shared_mount}{TEST}");
+    assert!(binds(DECLARED, &both, MOUNT, GLOB_READER)?);
+    Ok(())
+}
