@@ -1182,26 +1182,93 @@ pub(crate) fn ripr_fixture_binary() -> Result<String, String> {
 /// process owes the Perl verdict corpus. See [`ripr_perl_fixture_binary`].
 static RIPR_PERL_BINARY_BUILD: OnceLock<Result<(), String>> = OnceLock::new();
 
-/// Target directory for in-suite fixture variant builds (#11197): a
-/// `fixture-variants` sibling under the resolved shared target root, so
-/// building a variant never rewrites the shared `target/debug/ripr` the
-/// running suite executes. Honors `CARGO_TARGET_DIR` like
-/// [`ripr_debug_binary`], so routed CI jobs build and cache it in the same
-/// restored target and `cargo clean` clears it with the rest of the
-/// artifacts.
-fn fixture_variant_target_dir() -> Result<PathBuf, String> {
-    let mut root = std::env::var_os("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("target"));
-    root.push("fixture-variants");
-    std::path::absolute(&root)
-        .map_err(|err| format!("resolve variant target dir {}: {err}", root.display()))
+#[cfg(test)]
+pub(crate) mod variant_test {
+    use super::*;
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+    use std::rc::Rc;
+
+    type RecordedCommand = (String, Vec<String>, Option<PathBuf>);
+
+    pub(crate) struct Context {
+        pub(crate) shared: PathBuf,
+        pub(crate) once: OnceLock<Result<(), String>>,
+        pub(crate) files: RefCell<BTreeMap<PathBuf, Vec<u8>>>,
+        pub(crate) commands: RefCell<Vec<RecordedCommand>>,
+        pub(crate) writes: RefCell<Vec<PathBuf>>,
+    }
+
+    impl Context {
+        pub(crate) fn write(&self, path: PathBuf, bytes: Vec<u8>) {
+            self.writes.borrow_mut().push(path.clone());
+            self.files.borrow_mut().insert(path, bytes);
+        }
+
+        pub(crate) fn shared_generation(&self) -> usize {
+            self.writes
+                .borrow()
+                .iter()
+                .filter(|p| **p == self.shared)
+                .count()
+        }
+    }
+
+    thread_local! { static ACTIVE: RefCell<Option<Rc<Context>>> = const { RefCell::new(None) }; }
+
+    pub(crate) fn active() -> Option<Rc<Context>> {
+        ACTIVE.with(|slot| slot.borrow().clone())
+    }
+
+    pub(crate) fn with_context<T>(context: Rc<Context>, f: impl FnOnce() -> T) -> T {
+        struct Restore(Option<Rc<Context>>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                ACTIVE.with(|slot| *slot.borrow_mut() = self.0.take());
+            }
+        }
+        let old = ACTIVE.with(|slot| slot.borrow_mut().replace(context));
+        let _restore = Restore(old);
+        f()
+    }
+
+    pub(super) fn run(
+        program: &str,
+        args: &[&str],
+        envs: &[(&str, &str)],
+    ) -> Option<Result<(), String>> {
+        let context = active()?;
+        let target = envs
+            .iter()
+            .rev()
+            .find(|(key, _)| *key == "CARGO_TARGET_DIR")
+            .map(|(_, value)| PathBuf::from(value));
+        context.commands.borrow_mut().push((
+            program.into(),
+            args.iter().map(|s| (*s).into()).collect(),
+            target.clone(),
+        ));
+        let output = target
+            .map(|dir| crate::ripr_debug_binary_in(Some(dir)))
+            .unwrap_or_else(|| context.shared.clone());
+        context.write(output, b"perl".to_vec());
+        Some(Ok(()))
+    }
+
+    pub(super) fn copy(source: &Path, destination: &Path) -> Option<Result<(), String>> {
+        let context = active()?;
+        let Some(bytes) = context.files.borrow().get(source).cloned() else {
+            return Some(Err(format!("missing source {}", source.display())));
+        };
+        context.write(destination.to_path_buf(), bytes);
+        Some(Ok(()))
+    }
 }
 
 /// The debug binary with the `lang-perl` preview adapter compiled in, for the
 /// Perl verdict corpus (RIPR-SPEC-0245): the default build refuses Perl
 /// packets. The variant builds in a dedicated target directory
-/// ([`fixture_variant_target_dir`], #11197): it used to relink the shared
+/// (#11197): it used to relink the shared
 /// `target/debug/ripr` to the Perl feature set mid-suite and restore it
 /// afterwards, so a cross-process consumer of the suite binary could observe
 /// a different analyzer identity between two execs. The built variant is
@@ -1211,22 +1278,52 @@ fn fixture_variant_target_dir() -> Result<PathBuf, String> {
 /// to wait there. Once the variant target is warm, only the `ripr` crate
 /// recompiles.
 pub(crate) fn ripr_perl_fixture_binary() -> Result<String, String> {
-    let shared = ripr_debug_binary();
+    #[cfg(test)]
+    let context = variant_test::active();
+    #[cfg(test)]
+    let (shared, once) = context.as_ref().map_or_else(
+        || (ripr_debug_binary(), &RIPR_PERL_BINARY_BUILD),
+        |context| (context.shared.clone(), &context.once),
+    );
+    #[cfg(not(test))]
+    let (shared, once) = (ripr_debug_binary(), &RIPR_PERL_BINARY_BUILD);
+    fixture_variant_binary_built_by(
+        shared,
+        once,
+        &preparation::build_perl_variant,
+        &|source, destination| {
+            #[cfg(test)]
+            if let Some(result) = variant_test::copy(source, destination) {
+                return result;
+            }
+            fs::copy(source, destination).map(|_| ()).map_err(|err| {
+                format!(
+                    "copy {} to {} failed: {err}",
+                    source.display(),
+                    destination.display()
+                )
+            })
+        },
+    )
+}
+
+pub(crate) fn fixture_variant_binary_built_by(
+    shared: PathBuf,
+    build_once: &OnceLock<Result<(), String>>,
+    build: &(dyn Fn(&Path) -> Result<(), String> + Sync),
+    copy: &(dyn Fn(&Path, &Path) -> Result<(), String> + Sync),
+) -> Result<String, String> {
+    let target = shared
+        .parent()
+        .and_then(Path::parent)
+        .ok_or("missing shared target root")?;
+    let variant_target = std::path::absolute(target.join("fixture-variants"))
+        .map_err(|err| format!("resolve variant target: {err}"))?;
     let perl = shared.with_file_name(format!("ripr-lang-perl{}", std::env::consts::EXE_SUFFIX));
-    let variant_target = fixture_variant_target_dir()?;
     let variant = ripr_debug_binary_in(Some(variant_target.clone()));
-    ripr_fixture_binary_built_by(perl.clone(), &RIPR_PERL_BINARY_BUILD, &|| {
-        preparation::build_in_target_dir(
-            &["build", "-p", "ripr", "--features", "lang-perl"],
-            &variant_target,
-        )?;
-        fs::copy(&variant, &perl).map(|_| ()).map_err(|err| {
-            format!(
-                "copy {} to {} failed: {err}",
-                variant.display(),
-                perl.display()
-            )
-        })
+    ripr_fixture_binary_built_by(perl.clone(), build_once, &|| {
+        build(&variant_target)?;
+        copy(&variant, &perl)
     })
 }
 
