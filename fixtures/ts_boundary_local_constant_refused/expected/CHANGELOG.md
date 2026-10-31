@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_boundary_local_constant_refused (3)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording names the changed behavior, not a branch
+
+Command:
+`cargo xtask goldens bless ts_boundary_local_constant_refused --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

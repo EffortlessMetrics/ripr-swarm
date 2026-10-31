@@ -64,3 +64,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_call_removal_throwing_method (6)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording names the changed behavior, not a branch
+
+Command:
+`cargo xtask goldens bless typescript_call_removal_throwing_method --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

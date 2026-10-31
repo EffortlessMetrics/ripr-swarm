@@ -221,3 +221,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — ts_dead_assertion_after_return (18)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording names the changed behavior, not a branch
+
+Command:
+`cargo xtask goldens bless ts_dead_assertion_after_return --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

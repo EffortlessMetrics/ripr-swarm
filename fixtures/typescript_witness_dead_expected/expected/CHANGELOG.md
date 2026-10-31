@@ -374,3 +374,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_witness_dead_expected (32)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording names the changed behavior, not a branch
+
+Command:
+`cargo xtask goldens bless typescript_witness_dead_expected --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

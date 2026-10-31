@@ -613,3 +613,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_tothrow_exact_oracle (38)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording names the changed behavior, not a branch
+
+Command:
+`cargo xtask goldens bless typescript_tothrow_exact_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

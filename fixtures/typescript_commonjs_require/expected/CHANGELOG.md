@@ -615,3 +615,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_commonjs_require (33)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording names the changed behavior, not a branch
+
+Command:
+`cargo xtask goldens bless typescript_commonjs_require --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

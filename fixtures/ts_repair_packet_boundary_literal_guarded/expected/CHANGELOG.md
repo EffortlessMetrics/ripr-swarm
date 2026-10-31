@@ -349,3 +349,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_literal_guarded (30)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording names the changed behavior, not a branch
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_literal_guarded --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

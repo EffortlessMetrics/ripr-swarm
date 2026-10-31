@@ -7,7 +7,7 @@
 use crate::domain::{ProbeFamily, RelatedTest, RelatedTestMiss, RelationReason};
 
 /// Why a TypeScript or JavaScript assertion's observation stays unconfirmed.
-const SCRIPT_OBSERVATION_UNCONFIRMED: &str = "the preview adapter does not run the code, so it cannot tell whether this test's input reaches the changed branch";
+const SCRIPT_OBSERVATION_UNCONFIRMED: &str = "the preview adapter does not run the code, so it cannot tell whether this test's input reaches the changed behavior";
 
 /// Short reason the test misses the changed behavior, or `None` when the
 /// analyzer did not establish one.
@@ -253,7 +253,7 @@ mod tests {
             assert_eq!(
                 reason(&test, &ProbeFamily::Predicate).as_deref(),
                 Some(
-                    "the preview adapter does not run the code, so it cannot tell whether this test's input reaches the changed branch"
+                    "the preview adapter does not run the code, so it cannot tell whether this test's input reaches the changed behavior"
                 ),
                 "{file}"
             );

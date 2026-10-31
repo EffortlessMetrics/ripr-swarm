@@ -23,7 +23,7 @@ Start here:
   Missing check (1 of 2): propagation_unknown: changed value sinks to a non-escaping call effect
     (`"audit"`); all strong assertions observe the owner return value, not this call effect;
     propagation unknown
-  Related test: tests/receipt.test.ts:4 unchanged return is not the audit event (the preview adapter does not run the code, so it cannot tell whether this test's input reaches the changed branch)
+  Related test: tests/receipt.test.ts:4 unchanged return is not the audit event (the preview adapter does not run the code, so it cannot tell whether this test's input reaches the changed behavior)
   Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `log contains "audit"`; no actionable repair packet is emitted until verify,
     receipt, and edit-boundary fields are available
