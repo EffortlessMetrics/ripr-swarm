@@ -141,8 +141,10 @@ with `result_too_large` instead of shipping a success without
 `structuredContent` (#7768; details in
 [MCP workspace status server](interop/mcp.md)). `content[0].text` is the
 compact JSON copy by default; `RIPR_MCP_TEXT_CONTENT=summary` opts a server
-process into a digest instead while `structuredContent` stays the one
-complete result (#9360).
+process into a digest instead (`brief` gives one line per gap) while
+`structuredContent` stays the one complete result (#9360, #11621). Argument
+errors on a known tool are `invalid_argument` tool failures (`isError: true`),
+not JSON-RPC errors (#11621).
 
 The published JSON Schemas have these current versions. Each row is checked
 against the schema's pinned `const` and every named producer source by

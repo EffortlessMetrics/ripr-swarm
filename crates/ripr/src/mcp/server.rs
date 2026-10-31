@@ -48,7 +48,9 @@ impl McpServer {
             ..Default::default()
         };
         let mut server = Self {
-            tools: typed(protocol::tools_list_result())?,
+            tools: typed(protocol::tools_list_result_for(
+                protocol::ToolsListMode::from_env(),
+            ))?,
             resources: typed(protocol::resources_list_result())?,
             resource_templates: typed(protocol::resource_templates_list_result())?,
             profile,
@@ -227,7 +229,11 @@ impl McpServer {
         let requested = optional_string_argument(&arguments, "snapshot_id")?;
         let offset = optional_nonnegative_argument(&arguments, "offset")?;
         let omitted_offset = optional_nonnegative_argument(&arguments, "omitted_offset")?;
-        let limit = optional_positive_argument(&arguments, "limit")?;
+        let limit = optional_capped_page_limit(
+            &arguments,
+            "limit",
+            crate::lsp::diagnostic_budget::DEFAULT_MAX_ITEMS_PER_WORKSPACE_RESPONSE,
+        )?;
         let file = optional_nonempty_string_argument(&arguments, "file")?;
         let class = optional_nonempty_string_argument(&arguments, "class")?;
         // An unknown class token would narrow to an empty page that reads like
@@ -537,6 +543,33 @@ impl McpServer {
     /// (`tools/list`, `resources/read`) are contained by
     /// `contain_request`. An unknown tool never reaches a handler.
     async fn call_tool_contained(
+        &self,
+        request: CallToolRequestParams,
+        max_envelope_bytes: usize,
+    ) -> Result<CallToolResponse, ErrorData> {
+        let name = request.name.to_string();
+        match self
+            .call_tool_panic_contained(request, max_envelope_bytes)
+            .await
+        {
+            // A model-fixable argument problem on a known tool is a typed
+            // `invalid_argument` tool failure (`isError: true`), not a
+            // JSON-RPC error many hosts flatten to an opaque failure
+            // (#11621). An unknown tool and a malformed `tools/call` shape
+            // stay protocol errors: no tool ran, so no tool result exists.
+            Err(error) if error.code == ErrorCode::INVALID_PARAMS => {
+                match contained_tool_schema_version(&name) {
+                    Some(schema_version) => {
+                        self.typed_failure(invalid_argument_failure(&error), schema_version)
+                    }
+                    None => Err(error),
+                }
+            }
+            other => other,
+        }
+    }
+
+    async fn call_tool_panic_contained(
         &self,
         request: CallToolRequestParams,
         max_envelope_bytes: usize,
@@ -1094,6 +1127,32 @@ fn required_string_argument(
 /// Failure schema version of each tool whose handler panics are contained at
 /// the call boundary, `ripr_refresh` included: its `InFlightAttempt` guard
 /// clears `in_flight` on unwind, so a glue panic leaves the session usable.
+/// The typed failure for a rejected argument. `message` becomes `detail`;
+/// the machine-readable `data` (`argument`, `expected`, `allowed`, ...) rides
+/// through unchanged, and `data.recovery` (when the validator named one)
+/// becomes the top-level `recovery` so the model reads one shape.
+fn invalid_argument_failure(error: &ErrorData) -> workspace::AttemptFailure {
+    let data = match &error.data {
+        Some(data @ Value::Object(_)) => data.clone(),
+        _ => serde_json::json!({}),
+    };
+    let recovery = data
+        .get("recovery")
+        .and_then(Value::as_str)
+        .map_or_else(
+            || {
+                "correct the named argument as described in `detail` and `data` (see the tool's inputSchema) and call the tool again".to_string()
+            },
+            str::to_string,
+        );
+    workspace::AttemptFailure::new(
+        workspace::CODE_INVALID_ARGUMENT,
+        error.message.to_string(),
+        recovery,
+    )
+    .with_data(data)
+}
+
 fn contained_tool_schema_version(name: &str) -> Option<&'static str> {
     match name {
         protocol::STATUS_TOOL_NAME => Some(workspace::SESSION_SCHEMA_VERSION),

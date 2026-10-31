@@ -41,6 +41,10 @@ pub(crate) const CODE_NO_SNAPSHOT: &str = "no_snapshot";
 pub(crate) const CODE_ANALYSIS_IN_FLIGHT: &str = "analysis_in_flight";
 pub(crate) const CODE_STALE_SNAPSHOT: &str = "stale_snapshot";
 pub(crate) const CODE_ITEM_NOT_FOUND: &str = "item_not_found";
+/// A call argument the model can correct (unknown name, wrong type, out of
+/// range, bad enum token). Returned as an `isError: true` tool result
+/// instead of a JSON-RPC `-32602`, which many hosts flatten (#11621).
+pub(crate) const CODE_INVALID_ARGUMENT: &str = "invalid_argument";
 /// #8736 review follow-up: one raw resource-id segment can resolve both as
 /// captured (legacy raw URI for a literal-`%` file) and as its percent-
 /// decoded form (a URI-emitting client addressing the decoded file) when
