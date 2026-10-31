@@ -159,7 +159,13 @@ fn exposed_change_says_nothing_to_repair_in_both_commands() -> Result<(), String
             && check.contains("already notice this change (exposed)"),
         "check must say there is nothing to repair:\n{check}"
     );
-    for leak in ["no seam in this finding's file", "missing", "found no seam"] {
+    for leak in [
+        "no seam in this finding's file",
+        "no repairable spot in this finding's file",
+        "missing",
+        "found no seam",
+        "found no repairable spot",
+    ] {
         let advisory: Vec<&str> = check
             .lines()
             .filter(|line| line.contains("no repair start offered"))
@@ -191,12 +197,13 @@ fn check_never_reports_no_seam_where_repair_lists_seams_in_the_file() -> Result<
     );
     let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
     assert!(
-        !check.contains("found no seam") && !check.contains("no seam in this finding's file"),
+        !check.contains("found no repairable spot")
+            && !check.contains("no repairable spot in this finding's file"),
         "check must not claim there is no seam while repair lists seams:\n{check}"
     );
     assert!(
         check.contains(
-            "seams in this finding's file, but could not tie one to this finding's changed line"
+            "repairable spots in this finding's file, but could not tie one to this finding's changed line"
         ),
         "check must name the one reason it cannot bind a seam:\n{check}"
     );

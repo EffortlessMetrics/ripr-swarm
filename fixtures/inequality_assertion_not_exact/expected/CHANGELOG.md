@@ -206,3 +206,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — inequality_assertion_not_exact (17)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless inequality_assertion_not_exact --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

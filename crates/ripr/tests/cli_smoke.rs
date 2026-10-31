@@ -6181,7 +6181,7 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
     assert!(
         stderr.contains("run `ripr pilot --root ")
             && stderr.contains("agent-packet-unknown-seam")
-            && stderr.contains("to list current seam IDs"),
+            && stderr.contains("to list current gap IDs"),
         "{stderr}"
     );
 
@@ -6282,7 +6282,7 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
     let stderr = String::from_utf8_lossy(&packet.stderr);
     assert!(!stderr.contains("not a seam ID"), "{stderr}");
     assert!(
-        stderr.contains("Run `ripr pilot --root ") && stderr.contains("to list current seam IDs"),
+        stderr.contains("Run `ripr pilot --root ") && stderr.contains("to list current gap IDs"),
         "{stderr}"
     );
     std::fs::remove_dir_all(root)?;
@@ -6400,7 +6400,8 @@ fn agent_card_hands_off_one_seam_as_the_default_repair_card()
     assert_success(&plain);
     let plain_stdout = String::from_utf8_lossy(&plain.stdout);
     for needle in [
-        "Repair brief for gap 67fc764ba37d77bd",
+        "Repair brief for this gap",
+        "  Gap ID: 67fc764ba37d77bd",
         "  Files you may change: ",
         "  Do not change: ",
         "  Done when: ",
@@ -8521,7 +8522,7 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
     assert_success(&after);
     let after_stderr = String::from_utf8_lossy(&after.stderr);
     assert!(
-        after_stderr.contains("ripr: result for seam `67fc764ba37d77bd`: weak -> "),
+        after_stderr.contains("ripr: result for gap `67fc764ba37d77bd`: weak -> "),
         "after phase must name the seam's movement:\n{after_stderr}"
     );
     assert!(
@@ -9105,7 +9106,7 @@ fn agent_repair_default_stdout_is_a_summary_naming_root_resolved_files()
     assert!(!stdout.trim_start().starts_with('{'), "{stdout}");
     assert!(
         stdout.contains(&format!(
-            "Result for seam `{BOUNDARY_GAP_SEAM_ID}`: weak -> exposed (weakly_gripped -> strongly_gripped, improved)"
+            "Result for gap `{BOUNDARY_GAP_SEAM_ID}`: weak -> exposed (weakly_gripped -> strongly_gripped, improved)"
         )),
         "{stdout}"
     );
@@ -9142,7 +9143,7 @@ fn agent_repair_admits_cargo_build_output_and_unchanged_untracked_lockfile()
     let after_stderr = String::from_utf8_lossy(&after.stderr);
     assert!(
         after_stderr.contains(&format!(
-            "result for seam `{BOUNDARY_GAP_SEAM_ID}`: weak -> exposed (weakly_gripped -> strongly_gripped, improved)"
+            "result for gap `{BOUNDARY_GAP_SEAM_ID}`: weak -> exposed (weakly_gripped -> strongly_gripped, improved)"
         )),
         "after phase must report the movement:\n{after_stderr}"
     );
@@ -9491,7 +9492,7 @@ fn agent_repair_admits_a_cargo_lock_first_generated_between_the_phases()
     let stderr = String::from_utf8_lossy(&after.stderr);
     assert!(
         stderr.contains(&format!(
-            "result for seam `{BOUNDARY_GAP_SEAM_ID}`: weak -> exposed (weakly_gripped -> strongly_gripped, improved)"
+            "result for gap `{BOUNDARY_GAP_SEAM_ID}`: weak -> exposed (weakly_gripped -> strongly_gripped, improved)"
         )),
         "{stderr}"
     );
@@ -10461,7 +10462,7 @@ fn agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids()
     let stderr = String::from_utf8_lossy(&ambiguous.stderr);
     assert!(
         stderr.contains(&format!(
-            "receipt requires exactly one repair attempt for seam `{BOUNDARY_GAP_SEAM_ID}`"
+            "receipt requires exactly one repair attempt for gap `{BOUNDARY_GAP_SEAM_ID}`"
         )),
         "the ambiguity refusal must fire:\n{stderr}"
     );
@@ -10496,7 +10497,7 @@ fn agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids()
     assert_failure(&found_zero);
     let stderr = String::from_utf8_lossy(&found_zero.stderr);
     let expected_zero = format!(
-        "no repair attempt exists for seam `no-attempts-seam`; start one with `ripr agent repair --root {} --seam-id no-attempts-seam --phase before`",
+        "no repair attempt exists for gap `no-attempts-seam`; start one with `ripr agent repair --root {} --seam-id no-attempts-seam --phase before`",
         // The refusal names the root the caller typed (stable separators).
         root.display().to_string().replace('\\', "/")
     );
@@ -21803,7 +21804,7 @@ fn calibration_match_confidence<'a>(
                     .flatten()
             })
         })
-        .ok_or_else(|| format!("missing calibration match for seam `{seam_id}`"))
+        .ok_or_else(|| format!("missing calibration match for gap `{seam_id}`"))
 }
 
 fn write_outcome_snapshots(workspace: &Path) -> Result<(), String> {

@@ -23,3 +23,15 @@ This manual human-output reconciliation leaves fixture inputs,
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_len_local_boundary_repair_gap (3)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless python_len_local_boundary_repair_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

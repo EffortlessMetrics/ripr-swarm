@@ -654,7 +654,7 @@ pub(super) fn unknown_seam_id_hint(root: &Path, seam_id: &str) -> String {
         &root.to_string_lossy(),
     ));
     let pilot = format!(
-        "`ripr pilot --root {root}` to list current seam IDs with their exact `ripr agent repair` commands."
+        "`ripr pilot --root {root}` to list current gap IDs with their exact `ripr agent repair` commands."
     );
     if seam_id.starts_with("probe:") {
         format!(
@@ -708,7 +708,7 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
                 &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
             );
             Err(crate::cli::CommandError::Decision(format!(
-                "agent repair seam_id `{seam_id}` names seam `{resolved}`, which is not repair-eligible: {reason}; no repair attempt was started. Run `ripr pilot --root {root_arg}` to list current seam IDs"
+                "agent repair seam_id `{seam_id}` names gap `{resolved}`, which is not repair-eligible: {reason}; no repair attempt was started. Run `ripr pilot --root {root_arg}` to list current gap IDs"
             )))
         }
         Ok(RepairSubjectOutcome::Ambiguous(seam_ids)) => {
@@ -739,7 +739,7 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
             let root_arg = crate::agent::loop_commands::shell_arg(
                 &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
             );
-            let list = format!("`ripr pilot --root {root_arg}` to list current seam IDs");
+            let list = format!("`ripr pilot --root {root_arg}` to list current gap IDs");
             // The shared resolver just ran and returned `Unknown`, so the
             // packet surface's `ripr repair <finding-id>` recovery route
             // would repeat the refusal that failed; name the stale state in
@@ -2172,7 +2172,7 @@ fn run_agent_repair_phase(
             eprintln!(
                 "{}",
                 terminal_safe(format!(
-                    "ripr: agent repair --phase before for seam `{seam_id}` at {}",
+                    "ripr: agent repair --phase before for gap `{seam_id}` at {}",
                     crate::output::path::human_path(&root)
                 ))
             );
@@ -4063,7 +4063,7 @@ fn repair_receipt_summary_lines(receipt: &str) -> Vec<String> {
             }
             _ => format!("{before} -> {after} ({movement})"),
         };
-        lines.push(format!("result for seam `{seam_id}`: {words}.{summary}"));
+        lines.push(format!("result for gap `{seam_id}`: {words}.{summary}"));
     }
     // Static movement is not a test result: a failing focused test still
     // reads `improved`. Say so before the next step, not only inside it.
@@ -5422,7 +5422,7 @@ mod repair_summary_tests {
         assert_eq!(
             repair_receipt_summary_lines(receipt),
             vec![
-                "result for seam `67fc764ba37d77bd`: weak -> exposed (weakly_gripped -> strongly_gripped, improved). Static grip improved.".to_string(),
+                "result for gap `67fc764ba37d77bd`: weak -> exposed (weakly_gripped -> strongly_gripped, improved). Static grip improved.".to_string(),
                 "next: Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review.".to_string(),
             ]
         );
@@ -5437,7 +5437,7 @@ mod repair_summary_tests {
         assert_eq!(
             repair_receipt_summary_lines(receipt),
             vec![
-                "result for seam `s`: weak -> weak (weakly_gripped -> weakly_gripped, unchanged)."
+                "result for gap `s`: weak -> weak (weakly_gripped -> weakly_gripped, unchanged)."
                     .to_string()
             ]
         );
@@ -5448,7 +5448,7 @@ mod repair_summary_tests {
         let movement = r#""seam": {"seam_id": "s"},
             "provenance": {"before_class": "weakly_gripped", "after_class": "strongly_gripped", "movement": "improved"}"#;
         let result =
-            "result for seam `s`: weak -> exposed (weakly_gripped -> strongly_gripped, improved). Static grip improved."
+            "result for gap `s`: weak -> exposed (weakly_gripped -> strongly_gripped, improved). Static grip improved."
                 .to_string();
         let step = "This receipt is not review evidence because its status is `invalid` (Analysis outcome artifact base does not match its typed identity); do not include it in review.";
         let invalid = format!(
@@ -6091,7 +6091,7 @@ mod before_phase_stdout_tests {
     fn after_phase_default_stdout_leads_with_the_movement_and_names_the_artifacts() {
         let out = super::after_phase_human_stdout(
             &[
-                "result for seam `s`: weak -> exposed (weakly_gripped -> strongly_gripped, improved)."
+                "result for gap `s`: weak -> exposed (weakly_gripped -> strongly_gripped, improved)."
                     .to_string(),
                 "next: Keep the focused test.".to_string(),
             ],
@@ -6100,7 +6100,7 @@ mod before_phase_stdout_tests {
         );
         assert_eq!(
             out,
-            "Result for seam `s`: weak -> exposed (weakly_gripped -> strongly_gripped, improved).\n\
+            "Result for gap `s`: weak -> exposed (weakly_gripped -> strongly_gripped, improved).\n\
              Next: Keep the focused test.\n  \
              receipt: /repo/target/ripr/reports/agent-receipt.json\n  \
              verify result (JSON): /repo/target/ripr/workflow/agent-verify.json; add --json to print the result document here\n"

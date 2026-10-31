@@ -454,7 +454,7 @@ pub(crate) fn agent_card_plain_lines(
     packet_command: &str,
     paste_root: Option<&std::path::Path>,
 ) -> Vec<String> {
-    let mut lines = vec![format!("Repair brief for gap {}", card.subject.seam_id)];
+    let mut lines = vec!["Repair brief for this gap".to_string()];
     lines.push(format!("  Changed behavior: {}", card.changed_behavior));
     if card.readiness.repair_ready {
         lines.push("  Ready to repair.".to_string());
@@ -554,6 +554,9 @@ pub(crate) fn agent_card_plain_lines(
             format!("  Limits: {shown}; and {more} more (see --verbose)")
         });
     }
+    // The raw gap id is a copy-paste handle, not a title: it sits below the
+    // actionable lines, next to the machine-readable route that takes it.
+    lines.push(format!("  Gap ID: {}", card.subject.seam_id));
     lines.push("  This is a suggestion; ripr has not run or verified anything.".to_string());
     lines.push(format!(
         "  Machine-readable details (JSON): {packet_command}"
@@ -1104,8 +1107,8 @@ mod tests {
         Ok(())
     }
 
-    /// #10693: the default brief is short, plain, and projects the same typed
-    /// fields; the ledger rows and internal vocabulary are `--verbose` only.
+    /// #10693: a card that is not ready names its missing evidence in plain
+    /// words and the default brief stays within its line cap.
     #[test]
     fn plain_brief_not_ready_uses_plain_words_and_stays_capped() -> Result<(), String> {
         let mut card = prose_test_card();
@@ -1130,6 +1133,9 @@ mod tests {
         Ok(())
     }
 
+    /// #10693: the default brief is short, plain, and projects the same typed
+    /// fields; the ledger rows and internal vocabulary are `--verbose` only.
+    /// The title is a plain label; the raw gap id is demoted to a `Gap ID:` row.
     #[test]
     fn plain_brief_is_short_and_free_of_ledger_vocabulary() -> Result<(), String> {
         let mut card = prose_test_card();
@@ -1139,7 +1145,8 @@ mod tests {
             agent_card_plain_lines(&card, "ripr agent packet --seam-id seam:demo --json", None);
         let text = lines.join("\n");
         for needle in [
-            "Repair brief for gap ",
+            "Repair brief for this gap",
+            "  Gap ID: ",
             "  Files you may change: tests/t.rs",
             "  Do not change: src/lib.rs",
             "  Done when: ",

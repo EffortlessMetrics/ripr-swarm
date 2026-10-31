@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- Default `ripr` text now says "gap" where it said "seam", and "assertion" where it said "discriminator", in the help screens (`--help`, `help pilot`, `help repair`, `help agent`), the `ripr check` Evidence row and legend, repair and status refusals, and the "no repair start offered" lines. The `ripr agent card` brief is titled "Repair brief for this gap" and shows the gap ID on its own `Gap ID:` row instead of in the title. JSON fields, machine tokens, flag spellings and exit codes are unchanged (#10692, #10693).

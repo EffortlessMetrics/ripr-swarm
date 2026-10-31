@@ -1579,6 +1579,14 @@ const REPAIR_REFUSAL_RULES: &[RefusalRule] = &[
     rule("the seam budget left"),
     rule("the root's config could not be read"),
     rule("classifying the finding's seams failed"),
+    // #10692: the same variants under their plain wording. The earlier
+    // openings stay listed so retained captures that still carry them mask
+    // the same way.
+    rule("ripr found no repairable spot in this finding's file to bind it to"),
+    rule("several gaps bind this finding"),
+    rule("the gap inventory behind `ripr repair`"),
+    rule("the limit on how many gaps ripr analyzes left"),
+    rule("classifying the finding's repairable spots failed"),
     rule("ripr cannot build a repair packet for this finding yet because the static evidence"),
     RefusalRule {
         prefix: "ripr cannot build a repair packet for this finding yet because it is still missing: ",

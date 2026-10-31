@@ -369,3 +369,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — proximity_name_oracle_not_credited (31)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless proximity_name_oracle_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
