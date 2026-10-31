@@ -113,7 +113,9 @@ fn findings_with_files(
             "changed line {changed_line} is not {new:?}: {lines:?}"
         ));
     }
-    if lines.len() != changed_line + suffix.lines().count() + 1 {
+    // A caller may append unchanged items after the function (an inline
+    // `#[cfg(test)]` module) through `extra`; they sit outside the hunk.
+    if lines.len() < changed_line + suffix.lines().count() + 1 {
         return Err(format!(
             "unexpected source length for hunk counts: {lines:?}"
         ));
@@ -1524,4 +1526,25 @@ fn nested_use_groups_preserve_cfg_refusals() -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+/// An inline `#[cfg(test)] mod tests { use super::*; .. }` in the owner's own
+/// file still supplies the bare-call boundary input: the identity check
+/// resolves the glob import of the file's root, not only integration-test
+/// imports (#10046).
+#[test]
+fn an_inline_unit_test_bare_call_is_still_a_boundary_input() -> Result<(), String> {
+    let lib = format!(
+        "pub fn thr(x: i32) -> bool {{\n{NEW}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn at() {{\n        assert!(!thr(101));\n    }}\n}}\n"
+    );
+    let results = findings_with_files(
+        "x: i32",
+        "",
+        "",
+        NEW,
+        OLD,
+        "",
+        &[("src/lib.rs", lib.as_str())],
+    )?;
+    assert_boundary_credited(&results)
 }
