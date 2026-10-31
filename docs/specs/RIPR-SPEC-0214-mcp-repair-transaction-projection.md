@@ -140,7 +140,8 @@ read-only and without execution authority (ADR 0022):
   it. A finding-ready item the validator refuses is not ready and keeps the
   validator's own explanation: `seam_already_gripped` (the seam's existing
   tests already check it), `seam_gate_refused` (route not ready, unresolved
-  cross-language visibility or target, policy omission), `seam_ambiguous`
+  cross-language visibility or target, policy omission, uncommitted inline
+  test target), `seam_ambiguous`
   (several seams name the finding; the resolver never picks) or
   `seam_not_found` (no classified seam names it). Before any item is
   resolved, the refresh also reads the truncation fact from the same repo-wide

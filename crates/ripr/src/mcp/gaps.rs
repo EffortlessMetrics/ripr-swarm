@@ -1499,7 +1499,7 @@ mod tests {
                 &crate::config::RiprConfig::default(),
             ),
             &crate::mcp::repair_admission::InventoryCompleteness::Complete,
-            None,
+            Path::new("."),
         );
         match evaluated.verdict("probe:uncovered") {
             Some(SeamVerdict::Refused { code, .. })
@@ -1527,7 +1527,7 @@ mod tests {
             &[],
             policy,
             &InventoryCompleteness::Complete,
-            None,
+            Path::new("."),
         );
         match complete.verdict(id) {
             Some(SeamVerdict::Refused { code, .. }) if code != SEAM_INVENTORY_TRUNCATED => {}
@@ -1540,7 +1540,8 @@ mod tests {
             },
             InventoryCompleteness::Unverified("inventory failed".to_string()),
         ] {
-            let evaluated = SeamAdmission::evaluate(&findings, &[], policy, &completeness, None);
+            let evaluated =
+                SeamAdmission::evaluate(&findings, &[], policy, &completeness, Path::new("."));
             match evaluated.verdict(id) {
                 Some(SeamVerdict::Refused { code, detail }) if code == SEAM_INVENTORY_TRUNCATED => {
                     if matches!(completeness, InventoryCompleteness::Truncated { .. })

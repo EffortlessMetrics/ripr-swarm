@@ -182,6 +182,17 @@ pub(crate) fn javascript_led_manifest_name(name: &str) -> Option<&'static str> {
     canonical_marker_name(JAVASCRIPT_LED_MANIFESTS, name)
 }
 
+/// Canonical root source-directory marker (`src`, `test` or `tests`) for a
+/// path component, with the same host path rule as the TypeScript and Python
+/// marker names. The detector resolves these directories through the
+/// filesystem (`root.join(dir)`), so on a case-insensitive host a
+/// differently-cased spelling (`Test`, `Src`) detects the same source the
+/// watcher must classify (#11419).
+#[cfg(any(feature = "lang-typescript", test))]
+pub(crate) fn javascript_led_source_dir_marker_name(name: &str) -> Option<&'static str> {
+    canonical_marker_name(JAVASCRIPT_LED_SOURCE_DIRS, name)
+}
+
 #[cfg(any(feature = "lang-typescript", test))]
 pub(crate) fn is_detectable_package_source_name(name: &str) -> bool {
     let is_javascript = Path::new(name)
@@ -320,7 +331,21 @@ pub(crate) fn typescript_source_dir_marker_name(name: &str) -> Option<&'static s
 
 #[cfg(any(feature = "lang-typescript", test))]
 fn canonical_marker_name(candidates: &[&'static str], name: &str) -> Option<&'static str> {
-    let case_insensitive = crate::output::path::host_paths_case_insensitive();
+    canonical_marker_name_on(
+        candidates,
+        name,
+        crate::output::path::host_paths_case_insensitive(),
+    )
+}
+
+/// Explicit-rule form of [`canonical_marker_name`] so tests discriminate the
+/// case-insensitive spelling on any host, mirroring the Python helper.
+#[cfg(any(feature = "lang-typescript", test))]
+fn canonical_marker_name_on(
+    candidates: &[&'static str],
+    name: &str,
+    case_insensitive: bool,
+) -> Option<&'static str> {
     candidates.iter().copied().find(|candidate| {
         if case_insensitive {
             candidate.eq_ignore_ascii_case(name)
@@ -588,6 +613,42 @@ mod tests {
         write(&root, "test/unit.mjs")?;
         assert!(detect_typescript_project(&root), "JavaScript under test/");
         std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
+    }
+
+    /// #11419: package-led source-directory markers canonicalize with the
+    /// host path rule, like the manifest and the other marker names. On a
+    /// case-insensitive host (`Test`, `Src`) canonicalizes; on a
+    /// case-sensitive host only the canonical spelling does.
+    #[test]
+    fn javascript_led_source_dir_markers_canonicalize_with_the_host_path_rule() {
+        for dir in JAVASCRIPT_LED_SOURCE_DIRS {
+            assert_eq!(javascript_led_source_dir_marker_name(dir), Some(*dir));
+        }
+        assert_eq!(javascript_led_source_dir_marker_name("lib"), None);
+        let insensitive = crate::output::path::host_paths_case_insensitive();
+        for (spelling, canonical) in [("Src", "src"), ("Test", "test"), ("TESTS", "tests")] {
+            assert_eq!(
+                javascript_led_source_dir_marker_name(spelling),
+                insensitive.then_some(canonical),
+                "{spelling} canonicalizes only on a case-insensitive host"
+            );
+        }
+        // Explicit-rule form discriminates on any host, mirroring the Python
+        // marker test: the exact pre-fix comparison rejected these outright.
+        for (spelling, canonical) in [("Src", "src"), ("Test", "test"), ("TESTS", "tests")] {
+            assert_eq!(
+                canonical_marker_name_on(JAVASCRIPT_LED_SOURCE_DIRS, spelling, true),
+                Some(canonical)
+            );
+            assert_eq!(
+                canonical_marker_name_on(JAVASCRIPT_LED_SOURCE_DIRS, spelling, false),
+                None
+            );
+        }
+        assert_eq!(
+            canonical_marker_name_on(JAVASCRIPT_LED_SOURCE_DIRS, "src", false),
+            Some("src")
+        );
     }
 
     #[test]

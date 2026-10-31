@@ -491,6 +491,20 @@ impl WorkspaceSession {
                 ),
             )));
         }
+        // A committed snapshot over uncommitted tracked edits withholds cards
+        // for the same reason: the findings read HEAD, the cards live files.
+        if let super::workspace::SourceCustody::CommittedOverUncommitted { reason } =
+            &snapshot.custody
+        {
+            return Err(agent_card_failure(AgentCardError::refusal(
+                AgentCardRefusalKind::IncompleteInventory,
+                format!(
+                    "repair card for canonical item {} is unavailable: {}",
+                    item.canonical_id,
+                    super::workspace::committed_card_withheld_detail(reason)
+                ),
+            )));
+        }
         let Some(producers) = &snapshot.card_producers else {
             return Err(AttemptFailure::new(
                 CODE_NO_SNAPSHOT,
