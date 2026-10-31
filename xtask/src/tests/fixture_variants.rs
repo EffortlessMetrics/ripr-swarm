@@ -18,10 +18,14 @@ impl OwnedTarget {
             .duration_since(UNIX_EPOCH)
             .map_err(|e| e.to_string())?
             .as_nanos();
-        let parent = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
-            .ok_or("missing repository root")?
-            .join("target/ripr/variant-guard-tests");
+            .ok_or("missing repository root")?;
+        // Resolve relative Cargo target paths from the child’s repository cwd.
+        let target = std::env::var_os("CARGO_TARGET_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("target"));
+        let parent = root.join(target).join("ripr/variant-guard-tests");
         fs::create_dir_all(&parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
         let path = parent.join(format!(
             "ripr-variant-guard-{}-{stamp}-{}",
