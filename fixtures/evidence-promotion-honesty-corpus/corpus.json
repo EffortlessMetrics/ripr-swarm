@@ -4608,6 +4608,37 @@
       ]
      },
     {
+      "id": "py_message_only_local_raise_pattern_fits_both_no_exposed_credit",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_message_pin_local_no_exposed_credit",
+      "vector": "a_literal_match_pattern_fits_the_old_and_new_message_of_a_local_raised_through_so_the_message_change_is_not_exposed",
+      "probe_family": "predicate",
+      "assertions": [
+       {
+        "type": "must_not_report_clean"
+       },
+       {
+        "type": "must_disclose_scope"
+       },
+       {
+        "type": "expected_finding_count",
+        "count": 1
+       },
+       {
+        "type": "must_not_promote"
+       },
+       {
+        "type": "expected_class",
+        "class": "weakly_exposed"
+       },
+       {
+        "type": "maximum_class",
+        "class": "weakly_exposed"
+       }
+      ]
+     },
+    {
      "id": "py_protocol_entry_bracketed_rebind_no_exposed_credit",
      "language": "python",
      "tier": "pure",
@@ -6479,6 +6510,45 @@
       "tier": "pure",
       "source_fixture": "fixtures/match_arm_tuple_derived_return_before_assertion",
       "vector": "relation_assertion_after_direct_return_does_not_certify_derived_tuple_arm",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_tuple_derived_conditional_exit_before_assertion_no_promotion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/match_arm_tuple_derived_conditional_exit_before_assertion",
+      "vector": "relation_assertion_after_conditional_exit_does_not_certify_derived_tuple_arm",
       "assertions": [
         {
           "type": "must_not_report_clean"

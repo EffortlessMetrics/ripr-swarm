@@ -212,6 +212,12 @@ pub(crate) fn probes_for_file_with_relations(
     // lazily, only when a line sits in a wrapped signature (#8999).
     let signature_cx = SignatureContext::default();
     for (added_index, added) in changed.added_lines.iter().enumerate() {
+        // #11439: a cancelled run stops seeding. The result is discarded by
+        // the caller's next (sticky) checkpoint, so the partial list is never
+        // published.
+        if crate::analysis::cancellation::checkpoint().is_err() {
+            break;
+        }
         let text = added.text.trim();
         // Blank and comment-only lines are never probed. The other
         // `should_ignore_changed_line` exclusions (`#`, `use`, `mod`) apply
@@ -552,6 +558,9 @@ pub(crate) fn probes_for_file_with_relations(
 
     let represented_short_lines = represented_short_replacements(changed, &probes);
     for (removed_index, removed) in changed.removed_lines.iter().enumerate() {
+        if crate::analysis::cancellation::checkpoint().is_err() {
+            break;
+        }
         let text = removed.text.trim();
         if text.is_empty()
             || text.starts_with("//")

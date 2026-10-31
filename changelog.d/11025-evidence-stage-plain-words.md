@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- The human repair advisory and repair card no longer print `incomplete evidence stage: activation` (or `propagation`, `observation`, `discrimination`, `opaque`, `unknown`) as an internal code: each stage now reads as the test evidence it still needs, such as "a test input that reaches the changed code". Machine fields (`missing_evidence`, JSON, MCP) keep the stable string, and an unrecognized stage passes through unchanged (#11025).

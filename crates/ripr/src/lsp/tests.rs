@@ -16253,6 +16253,102 @@ fn canonical_finding_groups_collapse_same_gap_and_preserve_raw_signals() -> Resu
     Ok(())
 }
 
+/// Two gap-less probes of different families on one expression (#11453).
+fn overlapping_family_pair() -> (Finding, Finding) {
+    let first = sample_finding();
+    let mut second = first.clone();
+    second.id = "probe:pricing:88:return_value".to_string();
+    second.probe.id = ProbeId(second.id.clone());
+    second.probe.family = ProbeFamily::ReturnValue;
+    second.probe.delta = DeltaKind::Value;
+    second.probe.expected_sinks = vec!["return value".to_string()];
+    second.probe.required_oracles = vec!["exact return".to_string()];
+    (first, second)
+}
+
+fn overlap_diagnostics(findings: &[Finding]) -> Result<Vec<Diagnostic>, String> {
+    let config = LspAnalysisConfig::default();
+    let grouped = finding_diagnostics_by_uri(
+        Path::new("/workspace"),
+        findings,
+        config.repo_config().severity(),
+        true,
+        None,
+    )?;
+    Ok(grouped.into_values().flatten().collect())
+}
+
+#[test]
+fn gapless_family_overlap_publishes_one_diagnostic_with_every_probe_listed() -> Result<(), String> {
+    let (first, second) = overlapping_family_pair();
+    // Fixture construction: distinct ids/families, same site, no canonical gap.
+    assert_ne!(first.id, second.id);
+    assert_ne!(first.probe.family, second.probe.family);
+    assert_eq!(first.probe.location, second.probe.location);
+    assert_eq!(first.probe.expression, second.probe.expression);
+    assert!(first.canonical_gap.is_none() && second.canonical_gap.is_none());
+
+    // Input order must not change which finding is primary.
+    for findings in [
+        vec![first.clone(), second.clone()],
+        vec![second.clone(), first.clone()],
+    ] {
+        let diagnostics = overlap_diagnostics(&findings)?;
+        assert_eq!(diagnostics.len(), 1, "overlapping probes must collapse");
+        let data = diagnostics[0].data.as_ref().ok_or("missing data")?;
+        assert_eq!(data["finding_id"], serde_json::json!(first.id));
+        assert_eq!(data["group_reason"], "same_site_and_repair_signal");
+        assert_eq!(data["raw_signal_count"], 2);
+        let raw_ids = data["raw_findings"]
+            .as_array()
+            .ok_or("missing raw_findings")?
+            .iter()
+            .map(|raw| raw["finding_id"].as_str().unwrap_or(""))
+            .collect::<Vec<_>>();
+        assert_eq!(raw_ids, vec![first.id.as_str(), second.id.as_str()]);
+    }
+    Ok(())
+}
+
+#[test]
+fn gapless_overlap_keeps_findings_apart_when_any_repair_signal_differs() -> Result<(), String> {
+    let (first, second) = overlapping_family_pair();
+    let mut variants = Vec::new();
+    let mut other_class = second.clone();
+    other_class.class = ExposureClass::StaticUnknown;
+    variants.push(other_class);
+    let mut other_step = second.clone();
+    other_step.recommended_next_step = Some("assert the exact boundary".to_string());
+    variants.push(other_step);
+    let mut other_evidence = second.clone();
+    other_evidence
+        .evidence
+        .push("extra static fact".to_string());
+    variants.push(other_evidence);
+    let mut other_line = second.clone();
+    other_line.probe.location.line = 89;
+    variants.push(other_line);
+    let mut other_column = second.clone();
+    other_column.probe.location.column = 5;
+    variants.push(other_column);
+    let mut other_expression = second.clone();
+    other_expression.probe.expression = "amount > threshold".to_string();
+    variants.push(other_expression);
+    let mut other_owner = second.clone();
+    other_owner.probe.owner = Some(crate::domain::SymbolId("src/pricing.rs::other".to_string()));
+    variants.push(other_owner);
+    let mut gapped = second.clone();
+    gapped.canonical_gap = Some(sample_canonical_gap());
+    variants.push(gapped);
+
+    for variant in variants {
+        assert_ne!(variant, second, "fixture must actually differ");
+        let diagnostics = overlap_diagnostics(&[first.clone(), variant])?;
+        assert_eq!(diagnostics.len(), 2, "a distinct finding must stay visible");
+    }
+    Ok(())
+}
+
 #[test]
 fn canonical_group_mixed_classes_are_detected_without_promotion() {
     let mut first = sample_finding();
@@ -23287,13 +23383,139 @@ async fn hover_without_evidence_routes_an_unanalyzed_file_to_refresh() -> Result
         Some(HoverContents::Markup(markup)) => markup.value,
         other => return Err(format!("expected a markdown hover, got {other:?}")),
     };
-    if !text.contains("has not analyzed this file's saved content")
-        || !text.contains("ripr.refresh")
+    if !text.contains("is not on disk")
+        || !text.contains("save it, then refresh (`ripr.refresh`)")
         || text.contains("save the file to refresh")
+        || text.contains("in this session")
     {
         return Err(format!(
-            "unanalyzed file hover must route to refresh, not the divergent-buffer text: {text}"
+            "unanalyzed new file hover must name the observed cause, not the divergent-buffer text: {text}"
         ));
+    }
+    Ok(())
+}
+
+/// Hover text for `c.rs` (on disk, never analyzed) opened under a fresh server whose
+/// analysis health is `state` (or untouched when `None`) and, when
+/// `commit_snapshot`, a committed snapshot that records only `a.rs`.
+async fn unanalyzed_hover_text(
+    name: &str,
+    state: Option<AnalysisAttemptState>,
+    commit_snapshot: bool,
+) -> Result<String, String> {
+    let fixture = quarantine_fixture(name)?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .initialize(initialize_params(
+            None,
+            Some(
+                file_uri_for_path(&fixture.root)
+                    .map_err(|err| format!("root URI failed: {err}"))?,
+            ),
+        ))
+        .await
+        .map_err(|err| format!("initialize failed: {err}"))?;
+    // The first open starts the session's real refresh; let it settle so a
+    // later open schedules nothing and the cause under test is pinned below.
+    backend
+        .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
+        .await;
+    let mut settled = false;
+    for _ in 0..200 {
+        if !matches!(
+            backend.analysis_attempt_state_for_test(),
+            AnalysisAttemptState::Queued | AnalysisAttemptState::Running
+        ) {
+            settled = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    if !settled {
+        return Err("the opening refresh did not settle".to_string());
+    }
+    // `c.rs` is on disk but no analysis read it.
+    let path_c = fixture.root.join("src").join("c.rs");
+    std::fs::write(&path_c, QUARANTINE_TEXT_B)
+        .map_err(|err| format!("write c.rs failed: {err}"))?;
+    let uri_c = file_uri_for_path(&path_c).map_err(|err| format!("c.rs URI failed: {err}"))?;
+    backend
+        .did_open(quarantine_open_params(&uri_c, QUARANTINE_TEXT_B))
+        .await;
+    if commit_snapshot {
+        commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
+    } else {
+        backend.clear_latest_analysis_for_test();
+    }
+    if let Some(state) = state {
+        backend.set_analysis_attempt_state_for_test(state);
+    }
+    match backend.document_quarantine(&uri_c) {
+        Some((_, DocumentStalenessReason::NoAnalyzedSavedContent)) => {}
+        other => {
+            return Err(format!(
+                "fixture must quarantine c.rs without an analyzed baseline, got {other:?}"
+            ));
+        }
+    }
+    let hover = backend
+        .hover(hover_params(uri_c.clone(), 0, 4))
+        .await
+        .map_err(|err| format!("hover failed: {err}"))?;
+    match hover.map(|hover| hover.contents) {
+        Some(HoverContents::Markup(markup)) => Ok(markup.value),
+        other => Err(format!("expected a markdown hover, got {other:?}")),
+    }
+}
+
+#[tokio::test]
+async fn unanalyzed_file_hover_names_only_the_observed_cause() -> Result<(), String> {
+    // #11452: one fixed text used to cover several different causes. Each
+    // observed cause gets its own wording; none may assert an unobserved
+    // cause, and none may use the false "in this session" claim.
+    let none = unanalyzed_hover_text("unanalyzed-none", None, false).await?;
+    let running = unanalyzed_hover_text(
+        "unanalyzed-running",
+        Some(AnalysisAttemptState::Running),
+        false,
+    )
+    .await?;
+    let failed = unanalyzed_hover_text(
+        "unanalyzed-failed",
+        Some(AnalysisAttemptState::Failed),
+        false,
+    )
+    .await?;
+    let unrecorded = unanalyzed_hover_text("unanalyzed-unrecorded", None, true).await?;
+
+    if !none.contains("no analysis has committed") || none.contains("already queued") {
+        return Err(format!("no-analysis cause misworded: {none}"));
+    }
+    if !running.contains("already queued or running") || running.contains("failed") {
+        return Err(format!("in-progress cause misworded: {running}"));
+    }
+    if !failed.contains("latest analysis attempt failed") || failed.contains("already queued") {
+        return Err(format!("failed cause misworded: {failed}"));
+    }
+    if !unrecorded.contains("did not record this file's saved content")
+        || unrecorded.contains("no analysis has committed")
+    {
+        return Err(format!(
+            "unrecorded-by-snapshot cause misworded: {unrecorded}"
+        ));
+    }
+    let all = [&none, &running, &failed, &unrecorded];
+    for (index, text) in all.iter().enumerate() {
+        if text.contains("in this session") || text.contains("save the file to refresh") {
+            return Err(format!("unobserved or divergent-buffer claim: {text}"));
+        }
+        for other in &all[index + 1..] {
+            if text == other {
+                return Err("distinct causes must not share one text".to_string());
+            }
+        }
     }
     Ok(())
 }

@@ -71,6 +71,32 @@ impl ConsumedRustSources {
         }
     }
 
+    /// Re-verify, at request time, that the bytes behind `paths` still match
+    /// what this carrier captured while the producer ran (#7357 card
+    /// currentness). `read` returns the path's current raw bytes, or `None`
+    /// when they cannot be read. Only paths with a captured commitment are
+    /// checked: an uncommitted path (non-Rust, outside the inventory corpus)
+    /// makes no claim and cannot drift. A captured path that is now unreadable
+    /// or hashes differently is `Drifted`. Nothing is rescanned or minted: the
+    /// caller names the paths, this owner decides.
+    pub(crate) fn first_drift<'a>(
+        &self,
+        paths: impl IntoIterator<Item = &'a Path>,
+        mut read: impl FnMut(&Path) -> Option<Vec<u8>>,
+    ) -> Option<CustodyRefusal> {
+        for path in paths {
+            let Some(expected) = self.digest(path) else {
+                continue;
+            };
+            let unchanged =
+                read(path).is_some_and(|bytes| format!("{:x}", Sha256::digest(&bytes)) == expected);
+            if !unchanged {
+                return Some(CustodyRefusal::Drifted(path.to_path_buf()));
+            }
+        }
+        None
+    }
+
     /// Establish that two producers consumed the same Rust bytes (#7357).
     ///
     /// `findings` is the carrier the findings producer observed while it loaded
@@ -154,6 +180,9 @@ pub(crate) enum CustodyRefusal {
     /// The two producers read different bytes for this path: the saved source
     /// moved between them.
     Moved(PathBuf),
+    /// A request-time re-read found this path's bytes differ from (or are
+    /// missing against) what the snapshot's producer captured.
+    Drifted(PathBuf),
 }
 
 impl CustodyRefusal {
@@ -164,18 +193,28 @@ impl CustodyRefusal {
             }
             Self::FindingsUnobserved(path) => format!(
                 "the findings producer has no captured observation of `{}`",
-                path.display()
+                shown(path)
             ),
             Self::InventoryUnobserved(path) => format!(
                 "the seam inventory has no captured observation of `{}`",
-                path.display()
+                shown(path)
             ),
             Self::Moved(path) => format!(
                 "`{}` changed between the findings pass and the seam inventory pass",
+                shown(path)
+            ),
+            Self::Drifted(path) => format!(
+                "`{}` changed on disk after the snapshot captured it",
                 path.display()
             ),
         }
     }
+}
+
+/// Repo-relative paths read with `/` separators in every user-facing reason,
+/// on Windows too, matching how the rest of the output names files.
+fn shown(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 fn is_normal_relative_path(path: &Path) -> bool {
@@ -188,6 +227,22 @@ fn is_normal_relative_path(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #11444: a refusal names the changed file with `/` separators on every
+    /// host (a Windows path arrives with `\`).
+    #[test]
+    fn refusal_reasons_name_paths_with_forward_slashes() {
+        let path = || PathBuf::from("src\\lib.rs");
+        for refusal in [
+            CustodyRefusal::FindingsUnobserved(path()),
+            CustodyRefusal::InventoryUnobserved(path()),
+            CustodyRefusal::Moved(path()),
+        ] {
+            let text = refusal.describe();
+            assert!(text.contains("`src/lib.rs`"), "{text}");
+            assert!(!text.contains('\\'), "{text}");
+        }
+    }
 
     #[test]
     fn raw_encoding_and_conflicting_observations_remain_distinct() -> Result<(), String> {
@@ -207,6 +262,37 @@ mod tests {
         sources.record(path, Some(raw));
         if sources.digest(path).is_some() {
             return Err("conflicting observation regained authority".into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn first_drift_flags_changed_or_unreadable_captured_paths_only() -> Result<(), String> {
+        let lib = Path::new("src/lib.rs");
+        let other = Path::new("src/other.rs");
+        let mut sources = ConsumedRustSources::default();
+        sources.record(lib, Some(b"fn a() {}\n"));
+        sources.record(Path::new("src/unavailable.rs"), None);
+        let same = |_: &Path| Some(b"fn a() {}\n".to_vec());
+        if sources.first_drift([lib], same).is_some() {
+            return Err("identical bytes must not drift".into());
+        }
+        let edited = |_: &Path| Some(b"fn a() { 1; }\n".to_vec());
+        if sources.first_drift([lib], edited) != Some(CustodyRefusal::Drifted(lib.to_path_buf())) {
+            return Err("changed bytes must drift naming the path".into());
+        }
+        if sources.first_drift([lib], |_: &Path| None)
+            != Some(CustodyRefusal::Drifted(lib.to_path_buf()))
+        {
+            return Err("an unreadable captured path must drift".into());
+        }
+        // Paths without a captured commitment make no claim and cannot drift.
+        let unreadable = |_: &Path| None;
+        if sources
+            .first_drift([other, Path::new("src/unavailable.rs")], unreadable)
+            .is_some()
+        {
+            return Err("an uncommitted path must not drift".into());
         }
         Ok(())
     }

@@ -16,7 +16,7 @@
   "fact_producer": {
     "name": "perl-ripr-facts",
     "repository": "https://github.com/EffortlessMetrics/perl-lsp-swarm",
-    "commit": "60473e5515f199c8db5127f669d40d5c2a50600d",
+    "commit": "43336765bfff10e02325b3f7ea2aa0ff60eff2ff",
     "command": "perl-ripr-facts ripr-facts --root <subject> --base base --head HEAD --diff <case>.diff --out <case>.json, run from the subject's parent directory with the subject committed as `base` and the rewrite as HEAD"
   }
 }
