@@ -3334,13 +3334,19 @@ fn structured_tool_success(reply: &Value, context: &str) -> Result<Value, String
     let result = reply
         .get("result")
         .ok_or_else(|| format!("{context} lost its result: {reply}"))?;
-    if result
+    // A refresh document whose attempt failed is data (the typed failure and
+    // the last-known-good snapshot) AND an error on the wire: `isError` must
+    // be true exactly then (#11571). Every other success must be isError:false.
+    let failed_refresh = result.pointer("/structuredContent/attempt/state")
+        == Some(&json!("failed"))
+        && result.pointer("/structuredContent/verify").is_some();
+    let is_error = result
         .pointer("/isError")
         .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
+        .unwrap_or(false);
+    if is_error != failed_refresh {
         return Err(format!(
-            "{context} returned an error instead of a card: {result}"
+            "{context} returned an error instead of a card (or a failed refresh was not isError): {result}"
         ));
     }
     result
@@ -4980,11 +4986,13 @@ fn mcp_readiness_never_exceeds_the_cli_repair_gate() -> Result<(), String> {
             {
                 return Err(format!("CLI refusal changed shape: {refusal}"));
             }
-            // An exposed (already gripped) item has nothing left to do, and
-            // the refusal says so as data rather than as a prose retry hint.
-            if prepare["next"]["kind"] != "nothing_to_do"
+            // The gripped arm is a weak finding over a gripped seam: the gate
+            // refuses it, so the typed next step is a by-hand test with the
+            // worktree re-check, as data rather than a prose retry hint.
+            if prepare["next"]["kind"] != "write_test_by_hand"
                 || prepare["next"]["reason"] != "seam_already_gripped"
-                || !prepare["next"]["after_editing_tests"].is_null()
+                || prepare["next"]["after_editing_tests"]["mcp"]["arguments"]["source"]
+                    != "worktree"
             {
                 return Err(format!("gripped arm refusal lost its next step: {prepare}"));
             }
