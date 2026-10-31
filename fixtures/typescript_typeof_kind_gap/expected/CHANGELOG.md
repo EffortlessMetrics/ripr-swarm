@@ -35,3 +35,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_typeof_kind_gap (4)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording says the adapter cannot confirm observation, not reach
+
+Command:
+`cargo xtask goldens bless typescript_typeof_kind_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -386,3 +386,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_witness_nested_expression (33)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording says the adapter cannot confirm observation, not reach
+
+Command:
+`cargo xtask goldens bless typescript_witness_nested_expression --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

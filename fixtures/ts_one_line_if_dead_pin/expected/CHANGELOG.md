@@ -71,3 +71,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_one_line_if_dead_pin (7)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording says the adapter cannot confirm observation, not reach
+
+Command:
+`cargo xtask goldens bless ts_one_line_if_dead_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

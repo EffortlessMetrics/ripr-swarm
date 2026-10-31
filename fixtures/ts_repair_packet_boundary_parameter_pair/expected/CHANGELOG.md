@@ -325,3 +325,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_parameter_pair (28)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording says the adapter cannot confirm observation, not reach
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_parameter_pair --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

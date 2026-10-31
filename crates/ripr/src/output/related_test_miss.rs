@@ -7,7 +7,7 @@
 use crate::domain::{ProbeFamily, RelatedTest, RelatedTestMiss, RelationReason};
 
 /// Why a TypeScript or JavaScript assertion's observation stays unconfirmed.
-const SCRIPT_OBSERVATION_UNCONFIRMED: &str = "the preview adapter does not run the code, so it cannot tell whether this test's input reaches the changed behavior";
+const SCRIPT_OBSERVATION_UNCONFIRMED: &str = "the preview adapter does not run the code, so it cannot confirm that this assertion observes the changed behavior";
 
 /// Short reason the test misses the changed behavior, or `None` when the
 /// analyzer did not establish one.
@@ -245,18 +245,25 @@ mod tests {
 
     #[test]
     fn observation_unconfirmed_names_the_preview_adapter_only_for_script_files() {
+        assert!(
+            !SCRIPT_OBSERVATION_UNCONFIRMED.contains("branch")
+                && !SCRIPT_OBSERVATION_UNCONFIRMED.contains("reaches"),
+            "the unknown is observation, not reach or a branch"
+        );
         // #11229: script rows explain why; Rust and Python keep the generic
         // sentence, and the verdict-carrying `miss` is untouched.
         for file in ["tests/a.test.ts", "web/a.spec.tsx", "t/a.mjs", "t/A.JS"] {
             let mut test = test_with(Some(RelatedTestMiss::ObservationUnconfirmed), None);
             test.file = PathBuf::from(file);
-            assert_eq!(
-                reason(&test, &ProbeFamily::Predicate).as_deref(),
-                Some(
-                    "the preview adapter does not run the code, so it cannot tell whether this test's input reaches the changed behavior"
-                ),
-                "{file}"
-            );
+            // Predicate and side-effect rows say the same thing: the
+            // unknown is observation, never reach or a branch.
+            for family in [ProbeFamily::Predicate, ProbeFamily::SideEffect] {
+                assert_eq!(
+                    reason(&test, &family).as_deref(),
+                    Some(SCRIPT_OBSERVATION_UNCONFIRMED),
+                    "{file}"
+                );
+            }
             assert_eq!(test.miss, Some(RelatedTestMiss::ObservationUnconfirmed));
         }
         for file in ["tests/a.rs", "tests/test_a.py", "tests/a.pl"] {
