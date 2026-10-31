@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Python: an exact comparison whose expected side is computed from the changed owner (a `setUp` attribute, class attribute, module constant or local bound to `f(2)`, a forwarder of the owner, `f(2) + 0`, `f(1) * 2`, or `f(2) - f(2)`) no longer reads `exposed`; it is a weak relational check like `assertEqual(f(2), f(2))`. Literal and independent-reference expectations keep their credit (#11531).

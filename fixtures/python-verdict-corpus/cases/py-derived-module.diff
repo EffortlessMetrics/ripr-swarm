@@ -1,0 +1,9 @@
+diff --git a/derived/core.py b/derived/core.py
+--- a/derived/core.py
++++ b/derived/core.py
+@@ -9,4 +9,4 @@
+ def scale_module(x):
+-    return x * 2
++    return 2 * x
+ 
+ 
