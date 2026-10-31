@@ -94,6 +94,19 @@ Updated:
 ## Pending — rust_macro_transcriber_own_call (8)
 
 Reason:
+RIPR-SPEC-0114: proximity-only reach limit now also applies to infection_unknown findings (#11481); class, stages and related tests unchanged, finding gains macro_reach_unresolved
+
+Command:
+`cargo xtask goldens bless rust_macro_transcriber_own_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_macro_transcriber_own_call (9)
+
+Reason:
 #10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to missing-check wording (safe, observed-advisory and exact-error-variant)
 
 Command:
