@@ -254,9 +254,9 @@ impl TargetAssertionShape {
                 discriminator,
                 ..
             } => Some(format!(
-                "observed call input `{observed_call}` does not reach the missing \
-                 discriminator `{discriminator}`; derive an input that hits the \
-                 boundary before the packet is delegatable"
+                "derive an input that hits the boundary before this repair can be \
+                 handed to an agent: observed call input `{observed_call}` does not \
+                 reach the missing discriminator `{discriminator}`"
             )),
             Self::UnresolvedBoundary {
                 observed_call,
@@ -264,10 +264,10 @@ impl TargetAssertionShape {
                 constant,
                 ..
             } => Some(format!(
-                "boundary constant `{constant}` in the missing discriminator \
-                 `{discriminator}` is not resolved to a concrete value, so the observed \
-                 call input `{observed_call}` is not shown to hit it; derive an input \
-                 equal to `{constant}` before the packet is delegatable"
+                "derive an input equal to `{constant}` before this repair can be \
+                 handed to an agent: boundary constant `{constant}` in the missing \
+                 discriminator `{discriminator}` is not resolved to a concrete value, \
+                 so the observed call input `{observed_call}` is not shown to hit it"
             )),
             Self::UnboundOperand {
                 observed_call,
@@ -1419,8 +1419,8 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
     // of a non-discriminating assertion.
     let target_ineligibility = if unconfirmed_effect {
         Some(
-            "the strong borrowed assertion is not confirmed to observe the changed effect; \
-             identify an effect-observing assertion before the packet is delegatable"
+            "identify an effect-observing assertion before this repair can be handed to an \
+             agent: the strong borrowed assertion is not confirmed to observe the changed effect"
                 .to_string(),
         )
     } else {
