@@ -143,7 +143,7 @@ Editor & Agent:
 
 PR & Review:
   ripr outcome --before PATH --after PATH [--format md|markdown|text|json] [--out PATH]
-  ripr first-pr [--root .] [--base REV] [--head HEAD] [--gap-ledger target/ripr/reports/gap-decision-ledger.json] [--out-dir target/ripr/reports] [--check]
+  ripr first-pr [--root .] [--base REV] [--head HEAD] [--gap-ledger target/ripr/reports/gap-decision-ledger.json] [--out-dir target/ripr/reports] [--check|--run-chain]
   ripr start-here [same options as first-pr]   [compatibility]
   ripr first-action [--root .] (--pr-guidance target/ripr/review/comments.json|--assistant-proof target/ripr/reports/test-oracle-assistant-proof.json|--gap-ledger target/ripr/reports/gap-decision-ledger.json|--ledger target/ripr/reports/pr-evidence-ledger.json) [--out target/ripr/reports/first-useful-action.json]
   ripr review-comments --root . --base SHA --head SHA [--out target/ripr/review/comments.json]

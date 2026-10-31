@@ -580,7 +580,7 @@ ineligible seam — the drill-down prints one advisory line of the shape
 still answer, the recovery is ``run `ripr repair <item> --root <root>` for the
 full gate's answer``. A refusal whose gate answer would only repeat it names
 its own recovery instead (#9244): a finding with no canonical gap says there
-is no spot to start a repair from and sends the reader to the Next step above
+is no gap to start a repair from and sends the reader to the Next step above
 (it makes no claim about missing discriminators, which other languages can
 name without a Rust canonical gap), except a TypeScript or JavaScript preview
 finding whose repair packet is blocked by an unresolved expected value or a

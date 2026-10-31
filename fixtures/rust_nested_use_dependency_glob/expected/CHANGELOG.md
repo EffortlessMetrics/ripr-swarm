@@ -106,7 +106,7 @@ Updated:
 ## Pending — rust_nested_use_dependency_glob (9)
 
 Reason:
-RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+RIPR-SPEC-0122: plain wording for seam and state token in the check digest
 
 Command:
 `cargo xtask goldens bless rust_nested_use_dependency_glob --reason "..."`

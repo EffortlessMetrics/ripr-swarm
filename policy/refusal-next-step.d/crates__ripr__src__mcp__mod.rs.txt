@@ -1,2 +1,0 @@
-crates/ripr/src/mcp/mod.rs|missing value for --root
-crates/ripr/src/mcp/mod.rs|missing value for --root; found option {unexpected:?}
