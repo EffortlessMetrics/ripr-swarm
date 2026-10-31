@@ -1,0 +1,12 @@
+diff --git a/src/nested/child.rs b/src/nested/child.rs
+--- a/src/nested/child.rs
++++ b/src/nested/child.rs
+@@ -1,7 +1,7 @@
+ use super::*;
+ 
+ fn nested_base() -> u32 {
+-    4
++    2 + 2
+ }
+ 
+ #[test]

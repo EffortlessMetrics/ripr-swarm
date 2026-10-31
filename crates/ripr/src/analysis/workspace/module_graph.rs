@@ -393,11 +393,32 @@ struct WorkspaceListing {
     symlink_targets: Vec<PathBuf>,
 }
 
+/// Complete manifest-directory inventory for negative target-identity checks.
+/// Reuse the bounded module-graph listing, including normally skipped source
+/// directories and the committed-source missing-file guard. A symlink can
+/// hide another manifest owner, so it cannot establish a closed inventory.
+pub(crate) fn target_manifest_directories(workspace_root: &Path) -> Option<Vec<PathBuf>> {
+    // A declared Cargo package may itself live below `target/`; generated
+    // output exclusions cannot establish absence of an importable owner.
+    let listing = list_workspace_including_targets(workspace_root, true)?;
+    listing
+        .symlink_targets
+        .is_empty()
+        .then_some(listing.manifest_dirs)
+}
+
 /// Lists the workspace, or `None` when the listing is cut short or cannot
 /// describe the tree the analysis reads: under a committed-source overlay,
 /// a Rust file or manifest that exists only at `HEAD` is missing from the
 /// working-tree listing.
 fn list_workspace(workspace_root: &Path) -> Option<WorkspaceListing> {
+    list_workspace_including_targets(workspace_root, false)
+}
+
+fn list_workspace_including_targets(
+    workspace_root: &Path,
+    include_targets: bool,
+) -> Option<WorkspaceListing> {
     if !crate::analysis::committed_source::committed_workspace_paths_missing_on_disk(workspace_root)
         .is_empty()
     {
@@ -434,7 +455,7 @@ fn list_workspace(workspace_root: &Path) -> Option<WorkspaceListing> {
                     listing.symlink_targets.push(target);
                 }
             } else if file_type.is_dir() {
-                if !escaping_scan_skips(&path) {
+                if !escaping_scan_skips(&path) || (include_targets && entry.file_name() != ".git") {
                     pending.push(path);
                 }
             } else if path.file_name().is_some_and(|name| name == "Cargo.toml") {
