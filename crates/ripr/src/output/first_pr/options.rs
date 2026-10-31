@@ -150,10 +150,10 @@ pub(super) fn parse_options(args: &[String]) -> Result<FirstPrOptions, String> {
         i += 1;
     }
     if options.run_chain && options.check {
-        return Err("first-pr --run-chain cannot be combined with --check: --check only validates an existing packet and never runs analysis".to_string());
+        return Err("first-pr --run-chain cannot be combined with --check: --check only validates an existing packet and never runs analysis; run first-pr with only one of the two".to_string());
     }
     if options.run_chain && options.check_output.is_some() {
-        return Err("first-pr --run-chain cannot be combined with --check-output: a supplied check output already provides the gap ledger input, so there is no chain to run".to_string());
+        return Err("first-pr --run-chain cannot be combined with --check-output: a supplied check output already provides the gap ledger input, so there is no chain to run; run first-pr with only one of the two".to_string());
     }
     Ok(options)
 }

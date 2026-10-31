@@ -109,8 +109,11 @@ pub(super) fn plan_chain(root: &Path, options: &FirstPrOptions) -> Result<ChainP
 
 /// Split a printed compound command at its unquoted `&&`.
 fn split_chain(command: &str) -> Result<Vec<String>, String> {
-    let words = tokenize_command_words(command)
-        .ok_or_else(|| format!("cannot read the printed command `{command}`"))?;
+    let words = tokenize_command_words(command).ok_or_else(|| {
+        format!(
+            "cannot read the printed command `{command}`; run the printed commands yourself instead"
+        )
+    })?;
     // Re-render per segment from the original text: find each `&&` outside
     // quotes by walking the same quoting rules the tokenizer applies.
     let mut segments = Vec::new();
@@ -155,14 +158,16 @@ fn split_chain(command: &str) -> Result<Vec<String>, String> {
         .filter(|(word, quoted)| !quoted && word == "&&")
         .count();
     if segments.len() != operators + 1 {
-        return Err(format!("cannot split the printed command `{command}`"));
+        return Err(format!(
+            "cannot split the printed command `{command}`; run the printed commands yourself instead"
+        ));
     }
     Ok(segments)
 }
 
 fn step_from_display(label: &'static str, display: &str) -> Result<ChainStep, String> {
     let words = tokenize_command_words(display)
-        .ok_or_else(|| format!("cannot read the printed {label} command `{display}`"))?;
+        .ok_or_else(|| format!("cannot read the printed {label} command `{display}`; run the printed commands yourself instead"))?;
     let mut args = Vec::new();
     let mut stdout_to = None;
     let mut iter = words.iter().enumerate();
@@ -170,7 +175,7 @@ fn step_from_display(label: &'static str, display: &str) -> Result<ChainStep, St
         Some((_, (program, _))) if program == "ripr" => {}
         _ => {
             return Err(format!(
-                "the printed {label} command does not start with `ripr`"
+                "the printed {label} command does not start with `ripr`; run the printed commands yourself instead"
             ));
         }
     }
@@ -178,7 +183,7 @@ fn step_from_display(label: &'static str, display: &str) -> Result<ChainStep, St
         if !quoted && word == ">" {
             let Some((_, (target, _))) = iter.next() else {
                 return Err(format!(
-                    "the printed {label} command has a redirect with no target"
+                    "the printed {label} command has a redirect with no target; run the printed commands yourself instead"
                 ));
             };
             if iter.next().is_some() {
@@ -191,7 +196,7 @@ fn step_from_display(label: &'static str, display: &str) -> Result<ChainStep, St
         }
         if !quoted && matches!(word.as_str(), ">>" | "|" | "&&" | "||" | ";") {
             return Err(format!(
-                "the printed {label} command uses shell operator `{word}` at word {index}, which --run-chain does not execute"
+                "the printed {label} command uses shell operator `{word}` at word {index}, which --run-chain does not execute; run the printed commands yourself instead"
             ));
         }
         // The control-character quoting form needs a shell to evaluate;
@@ -207,7 +212,7 @@ fn step_from_display(label: &'static str, display: &str) -> Result<ChainStep, St
         Some(path) => path.clone(),
         None => ripr_flag_value(&words, "--out")
             .map(PathBuf::from)
-            .ok_or_else(|| format!("the printed {label} command names no output file"))?,
+            .ok_or_else(|| format!("the printed {label} command names no output file; run the printed commands yourself instead"))?,
     };
     let companions = ripr_flag_value(&words, "--out-md")
         .map(PathBuf::from)
