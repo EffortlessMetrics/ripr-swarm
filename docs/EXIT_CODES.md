@@ -249,6 +249,43 @@ reached the caller.
   has selected a current attempt then follows the same
   `ripr agent repair --phase after` refusals above.
 
+- **Typed reason codes for `repair` and `continue` (#11597)**: beside the
+  unchanged prose, every `ripr repair` / `ripr continue` refusal (and the
+  matching `ripr agent repair` phases) writes one stderr line
+  `ripr: refusal code=<code> disposition=<disposition>`, so a script
+  switches on the state instead of parsing prose. `disposition` is
+  `retryable` (the same attempt proceeds after the stated action),
+  `terminal` (the attempt is over; start a fresh `ripr repair`),
+  `needs_selection` (name one of several), or `not_started` (nothing
+  started). The codes are closed:
+
+  | code | exit | disposition | state |
+  |---|---|---|---|
+  | `item_names_no_seam` | 3 | `not_started` | `repair <item>` names no current seam |
+  | `item_names_several_seams` | 3 | `needs_selection` | the item names several seams |
+  | `seam_not_repair_eligible` | 3 | `not_started` | the one seam named is not repair-eligible |
+  | `no_eligible_seam` | 3 | `not_started` | bare `repair`: no seam is eligible |
+  | `several_eligible_seams` | 3 | `needs_selection` | bare `repair`: choose from the printed list |
+  | `repair_needs_item` | 3 | `needs_selection` | bare `repair` binds no seam by itself |
+  | `start_refused_uncommitted_target` | 3 | `not_started` | the focused test file has uncommitted changes |
+  | `no_test_route` | 2 | `not_started` | no test file or module ripr can safely edit |
+  | `awaiting_edit` | 3 | `retryable` | `continue`: edit the focused test, then rerun |
+  | `retry_budget_exhausted` | 3 | `terminal` | `continue`: the retry budget is spent |
+  | `no_current_attempt` | 3 | `not_started` | `continue`: no attempt to continue |
+  | `ambiguous_attempts` | 3 | `needs_selection` | `continue`: pass `--attempt` |
+  | `attempt_ended_without_receipt` | 3 | `terminal` | the attempt failed, went stale, or is incomparable |
+  | `attempt_completion_unconfirmed` | 3 | `terminal` | finished, but no compliant receipt confirms it |
+  | `edit_cage_violation` | 2 | `terminal` | the edit cage rejected the edit |
+  | `attempt_stale` | 2 | `terminal` | HEAD moved after the repair started |
+  | `attempt_incomparable` | 2 | `terminal` | the cage could not compare the files |
+
+  A repeated `ripr continue` after a confirmed-complete attempt reports
+  that attempt's already-complete status and exits `0`: with `--attempt`,
+  or without it when the newest attempt (the only one with the latest
+  creation time) is the confirmed-complete one and no prepared or
+  trust-bound attempt remains. A cage violation is exit `2` and terminal;
+  a missing focused edit is exit `3` and retryable.
+
 These are findings- and policy-driven exits, not operational failures; a
 monitoring system should page on `2`, not on `3`.
 

@@ -1405,6 +1405,7 @@ fn run_agent_repair_with_identity_ctx(
                 "resolve shared workflow artifacts failed: {error}{previous}"
             ));
             refusal.typed = false;
+            refusal.code = None;
             refusal.pending_stdout = if json {
                 match (&result, &refusal.selected_attempt) {
                     (Err(error), Some((_, _, attempt_id))) => render_repair_after_refusal_json(
@@ -1469,6 +1470,11 @@ fn run_agent_repair_with_identity_ctx(
             Ok(rendered) => print!("{rendered}"),
             Err(render_error) => eprintln!("ripr: {render_error}"),
         }
+    }
+    if result.is_err()
+        && let Some(code) = refusal.code
+    {
+        eprintln!("{}", code.stderr_line());
     }
     let start_refused = refusal.start_refused;
     let result = if refusal.typed {
@@ -1564,6 +1570,9 @@ struct AfterPhaseRefusalContext {
     /// target is an uncommitted production file (#9033), before any
     /// workflow artifact or attempt existed.
     start_refused: bool,
+    /// The typed reason of the refusal (#11597), printed once on stderr
+    /// beside the unchanged prose when the phase ends in an error.
+    code: Option<crate::app::task_first::RepairRefusalCode>,
     /// Set once the phase printed its one stdout document (the bare verify
     /// document on a post-verify refusal), so a refusal never prints a
     /// second document.
@@ -2260,6 +2269,8 @@ fn run_agent_repair_phase(
                 &before_report.classified,
             ) {
                 refusal.start_refused = true;
+                refusal.code =
+                    Some(crate::app::task_first::RepairRefusalCode::StartRefusedUncommittedTarget);
                 return Err(crate::app::task_first::uncommitted_start_refusal_message(
                     &root, &seam_id, &file,
                 ));
@@ -2273,6 +2284,7 @@ fn run_agent_repair_phase(
                         if !crate::app::task_first::is_missing_edit_target_error(&error) {
                             return error;
                         }
+                        refusal.code = Some(crate::app::task_first::RepairRefusalCode::NoTestRoute);
                         // #10978: say where the change is and what to do next.
                         // The exact diagnostic stays last, because `ripr agent
                         // card` reports the same text as its blocker.
@@ -2455,6 +2467,8 @@ fn run_agent_repair_phase(
                     refusal.narrate(line);
                 }
                 refusal.typed = true;
+                refusal.code =
+                    Some(crate::app::task_first::RepairRefusalCode::RetryBudgetExhausted);
                 refusal.stop_unrecorded = true;
                 return Err(format!(
                     "repair attempt `{}` has spent its after-phase retry budget ({} refusals)",
@@ -2658,6 +2672,8 @@ fn run_agent_repair_phase(
                             // never open, or still reads open. Counts against
                             // the same retry budget as a no-movement refusal.
                             refusal.narrate(format!("{error}."));
+                            refusal.code =
+                                Some(crate::app::task_first::RepairRefusalCode::AwaitingEdit);
                             for line in repair_after_no_movement_lines(
                                 &caller_root,
                                 store_ref,
@@ -2668,6 +2684,8 @@ fn run_agent_repair_phase(
                                 refusal.narrate(line);
                             }
                         } else if error.starts_with(AGENT_VERIFY_NO_MOVEMENT_PREFIX) {
+                            refusal.code =
+                                Some(crate::app::task_first::RepairRefusalCode::AwaitingEdit);
                             for line in repair_after_no_movement_lines(
                                 &caller_root,
                                 store_ref,
@@ -2779,12 +2797,16 @@ fn run_agent_repair_phase(
                 // the typed failure envelope and withdraw this phase's
                 // shared artifacts instead of the success-shaped document.
                 if cage_after.verdict.status != crate::edit_cage::EditCageVerdictStatus::Compliant {
+                    let finished_state =
+                        crate::app::repair_attempt::repair_attempt_state_for_finish(&cage_after);
+                    refusal.code = Some(
+                        crate::app::task_first::RepairRefusalCode::for_finished_state(
+                            &finished_state,
+                        ),
+                    );
                     refusal.terminal_finish = Some(TerminalAttemptFinish {
                         attempt_id: cage_after.attempt_id.as_str().to_string(),
-                        attempt_state: crate::app::repair_attempt::repair_attempt_state_for_finish(
-                            &cage_after,
-                        )
-                        .as_label(),
+                        attempt_state: finished_state.as_label(),
                         edit_cage_verdict: cage_after.verdict.status.as_label(),
                     });
                 }
