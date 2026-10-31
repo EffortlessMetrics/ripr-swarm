@@ -333,6 +333,8 @@ shown unchanged.
 - `crates/ripr/tests/cli_smoke.rs::history_commands_resolve_the_default_base_without_origin`
 - `crates/ripr/src/lsp/backend.rs::bounded_failure_message_tests::non_git_workspace_warning_keeps_the_remedy_inside_the_bound`
   — positive: a long root keeps the remedy inside the 240-character bound.
+- `crates/ripr/src/lsp/backend.rs::bounded_failure_message_tests::non_git_workspace_warning_keeps_the_remedy_for_short_and_multibyte_roots`
+  — the shortest root and a multibyte root keep the remedy inside the bound.
 - `crates/ripr/src/lsp/backend.rs::bounded_failure_message_tests::short_analysis_failure_warning_is_unchanged`
   — negative control: a short failure is shown unchanged.
 - `crates/ripr/tests/cli_smoke.rs::history_commands_without_a_resolvable_default_base_fail_named`

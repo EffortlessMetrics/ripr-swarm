@@ -5378,7 +5378,7 @@ mod tests {
                 );
                 assert!(
                     !err.contains("not inside a Git work tree")
-                        && !err.contains("run it from inside your repository"),
+                        && !err.contains("Run from inside a repository"),
                     "generic work-tree advice must not be given for a missing gitdir in {}, got: {err}",
                     dir.display()
                 );

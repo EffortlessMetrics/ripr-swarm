@@ -221,7 +221,7 @@ pub(super) struct Backend {
     dynamic_file_watch_registration: Mutex<bool>,
     watched_files_relative_pattern_support: AtomicBool,
     /// The diagnostics-input watcher registration (#4896). Those watchers
-    /// are anchored to one root, so they are re-registered on every root
+    /// are anchored at one root, so they are re-registered on every root
     /// transition; the async lock serializes concurrent transitions across
     /// the client round trips.
     diagnostics_input_watch: AsyncMutex<DiagnosticsInputWatch>,
@@ -8529,7 +8529,7 @@ fn quarantine_withdrawal_log_message(path: &Path, reason: DocumentStalenessReaso
 /// The quarantine reading for one pre-read document state (#1747): the
 /// lock-free core behind [`Backend::document_quarantine`]. Publish sites
 /// read the state once via `with_document_state` and derive both the
-/// decision and the bound version from thto one read, so a concurrent
+/// decision and the bound version from that one read, so a concurrent
 /// edit cannot slip between them.
 fn quarantine_from_state(state: &DocumentState) -> Option<(PathBuf, DocumentStalenessReason)> {
     let quarantine = state.quarantine.as_ref()?;
