@@ -1,6 +1,19 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
+// Counts producer visits and map lookups for the focused scale test. Tree
+// comparisons are outside this counter and remain covered by the timing test.
+#[cfg(test)]
+thread_local! {
+    static RUN_WORK: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+macro_rules! run_work {
+    () => {
+        #[cfg(test)]
+        RUN_WORK.with(|counter| counter.update(|count| count.map(|n| n + 1)));
+    };
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ChangedFile {
     pub path: PathBuf,
@@ -343,15 +356,20 @@ impl ChangedFile {
         let added: BTreeSet<usize> = self
             .added_lines
             .iter()
-            .map(|line| line.new_side_line)
+            .map(|line| {
+                run_work!();
+                line.new_side_line
+            })
             .collect();
         let mut starts = BTreeMap::new();
         let mut lines = added.iter().copied().peekable();
         while let Some(start) = lines.next() {
             let mut end = start;
+            run_work!();
             starts.insert(start, start);
             while lines.next_if(|&next| next == end + 1).is_some() {
                 end += 1;
+                run_work!();
                 starts.insert(end, start);
             }
         }
@@ -373,6 +391,7 @@ impl ChangedFile {
         starts: &BTreeMap<usize, usize>,
         added_new_side_line: usize,
     ) -> usize {
+        run_work!();
         starts
             .get(&added_new_side_line)
             .copied()
@@ -635,6 +654,25 @@ mod tests {
         assert_eq!(text(4), Some("a"));
         assert_eq!(text(5), Some("b"));
         assert_eq!(changed.added_run_start(5), 4);
+    }
+
+    #[test]
+    fn added_run_start_work_is_bounded() {
+        for n in [128, 256] {
+            let changed = ChangedFile {
+                path: PathBuf::from("src/long.rs"),
+                added_lines: (1..=n).map(|i| line(i, i, "x();")).collect(),
+                removed_lines: Vec::new(),
+            };
+            RUN_WORK.set(Some(0));
+            let starts = changed.added_run_starts();
+            for i in 1..=n {
+                assert_eq!(ChangedFile::added_run_start_from(&starts, i), 1);
+            }
+            let work = RUN_WORK.replace(None).unwrap_or_default();
+            eprintln!("added run {n}: {work} visits");
+            assert!((n..=n * 4).contains(&work), "added run {n}: {work} visits");
+        }
     }
 
     #[test]

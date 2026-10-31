@@ -398,7 +398,12 @@ fn unbound_item_refusal(item: &GapItem, producers: &SnapshotCardProducers) -> At
             "read the item's evidence with ripr_get_gap, or run `ripr agent card` in the repository",
         )
     };
-    match resolve_repair_subject_in(&producers.candidate_seams, policy, &item.finding_id, None) {
+    match resolve_repair_subject_in(
+        &producers.candidate_seams,
+        policy,
+        &item.finding_id,
+        crate::app::task_first::RefusalRoot::implicit(None),
+    ) {
         RepairSubjectOutcome::Seam(seam_id) | RepairSubjectOutcome::Ineligible { seam_id, .. } => {
             producers
                 .candidate_seams
@@ -496,6 +501,20 @@ impl WorkspaceSession {
                     "repair card for canonical item {} is unavailable: {}",
                     item.canonical_id,
                     super::workspace::worktree_card_withheld_detail(reason)
+                ),
+            )));
+        }
+        // A committed snapshot over uncommitted tracked edits withholds cards
+        // for the same reason: the findings read HEAD, the cards live files.
+        if let super::workspace::SourceCustody::CommittedOverUncommitted { reason } =
+            &snapshot.custody
+        {
+            return Err(agent_card_failure(AgentCardError::refusal(
+                AgentCardRefusalKind::IncompleteInventory,
+                format!(
+                    "repair card for canonical item {} is unavailable: {}",
+                    item.canonical_id,
+                    super::workspace::committed_card_withheld_detail(reason)
                 ),
             )));
         }

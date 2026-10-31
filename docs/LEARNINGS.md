@@ -3299,3 +3299,40 @@ both disabled, and there the same deny is enforced. The sharded workflow
 therefore runs the real-ACL tests in a pwsh step and excludes them from the
 bash shards. `File::create` was never affected (the `(WD)` deny was
 enforced). The failure message still records the privilege state.
+
+## 2026-10-31: Goldens blessed on one platform fail on the Linux arbiter platform
+
+`goldens check` is the merge arbiter for output contracts, and hosted Linux
+is the arbiter for goldens: the repo is continuously validated on Linux only,
+and the advisory Windows lane deliberately runs no golden gate and no
+blessing (#2337; `docs/CI.md`, "Advisory Windows Lane"). A bless rendered on
+Windows fails on that arbiter in recorded shapes: 43 local Windows drift
+entries against 35 hosted Linux entries for the same tree, so the eight
+Windows-only fixtures must never be blessed from a Windows run (#8437);
+Windows renders a base-side evidence suffix the committed Linux goldens do
+not carry (#8525); and a bless from a CRLF working tree embedded
+`input_identity` hashes that no `eol=lf` checkout reproduces, burning a
+hosted qualification run on PR #8559 (run 39072364336) until the fixtures
+were re-blessed from an LF tree (#8614; the bless-time guard now refuses that
+shape, `xtask/src/reports/fixtures.rs`).
+
+Durable rules:
+
+- Never bless or hand-edit golden expected-files from a Windows host. The
+  re-bless route is WSL Ubuntu with the pinned toolchain
+  (`rust-toolchain.toml`, channel 1.95.0) or hosted Linux qualification —
+  never a Windows renderer. Run the failing check under WSL, confirm the
+  drift is `formatting_only` (or semantically justified per the output
+  contract), then bless from the WSL checkout so expected-file bytes come
+  from the Linux renderer.
+- A renderer-wording re-bless records classifications unchanged: diff the
+  blessed fixtures' `expected/check.json` and keep it empty, citing the
+  landed renderer change in the blessing reason. A `check.json` change is
+  semantic drift and needs the fixture's own justification;
+  `check-evidence-promotion-honesty` (RIPR-SPEC-0108) still rejects a
+  dishonest re-bless.
+- Attribute the cost lines correctly: the three blocked merge-ref
+  qualification runs on PR #10532 (runs 41000730801, 41008685127,
+  41022609903) are the #11197 binary-swap class (in-suite xtask builds
+  replacing `target/debug/ripr` mid-run), not a golden bless; the recorded
+  Windows-bless qualification cost is #8614/PR #8559.

@@ -1,2 +1,0 @@
-<!-- section: Changed -->
-- A changed associated constant in `impl Trait for Type` is now decided by evaluating the trait's default method (`Self::NAME`, `if`/`else`) on the literal calls tests make as `Type::method(..)`: `exposed` when an assertion notices the change or every neighbour of a value-keeping rewrite, `weakly_exposed` when none can. Generic or `cfg`-gated impls, overridden or helper-conditioned default methods, calls through another type or path, and expectations computed from the constant keep `static_unknown` (#9871, RIPR-SPEC-0048).
