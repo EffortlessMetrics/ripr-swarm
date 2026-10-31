@@ -2569,7 +2569,7 @@ mod tests {
         // home, leaner routing surface.
         let status_description = json_str(
             &tools,
-            "/tools/6/outputSchema/oneOf/0/properties/status/description",
+            "/tools/7/outputSchema/oneOf/0/properties/status/description",
         )?;
         for required in [
             "advisory plus improved static grip reports improved",
