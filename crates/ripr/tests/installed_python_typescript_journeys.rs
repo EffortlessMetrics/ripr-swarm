@@ -826,9 +826,13 @@ fn python_receipt_route_consumes_the_bound_verify_and_refuses_forgery() -> Resul
     )?;
     let control = std::fs::read_to_string(workflow.join("control.receipt.json"))
         .map_err(|error| format!("receipt not written at the --out target: {error}"))?;
-    need(&control, "\"closed\": true", "receipt carries closure")?;
-    if control.contains("\"status\": \"passed\"") {
-        return Err(format!("receipt claims a passed test run:\n{control}"));
+    let receipt: serde_json::Value =
+        serde_json::from_str(&control).map_err(|error| format!("receipt json: {error}"))?;
+    if !control.contains("\"closed\": true") {
+        return Err(format!("receipt carries no closure:\n{control}"));
+    }
+    if control.contains("\"status\": \"passed\"") || receipt.get("test_run").is_some() {
+        return Err(format!("receipt claims a test run:\n{control}"));
     }
 
     // Negative 1: a missing verify document is refused, no receipt written.
@@ -843,6 +847,11 @@ fn python_receipt_route_consumes_the_bound_verify_and_refuses_forgery() -> Resul
     }
 
     // Negative 2: a forged closure naming a gap that never closed.
+    if verify["bound_gap"]["gap_id"].as_str() != Some(gap.as_str()) {
+        return Err(format!(
+            "verify is not bound to the started gap:\n{verify_text}"
+        ));
+    }
     let mut forged = verify.clone();
     forged["bound_gap"]["gap_id"] = serde_json::json!("gap:python:pricing/core.py:x:deadbeef");
     let forged_path = workflow.join("forged-verify.json");
@@ -860,13 +869,36 @@ fn python_receipt_route_consumes_the_bound_verify_and_refuses_forgery() -> Resul
         "forged closure refused",
     )?;
 
-    // Negative 3: the real gap with an edited classification.
-    let mut edited = verify;
-    edited["bound_gap"]["before_classification"] = serde_json::json!("exposed");
+    // Negative 3: the real gap with an edited classification. The edit is a
+    // textual replacement on the original bytes so reformatting alone cannot
+    // explain a refusal; a re-serialized but unedited document is a control.
+    let original_class = verify["bound_gap"]["before_classification"]
+        .as_str()
+        .ok_or_else(|| format!("verify has no bound before_classification:\n{verify_text}"))?;
+    if original_class == "exposed" {
+        return Err("the edit would not change before_classification".to_string());
+    }
+    let reserialized_path = workflow.join("reserialized-verify.json");
+    std::fs::write(
+        &reserialized_path,
+        serde_json::to_string_pretty(&verify).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("write reserialized verify: {error}"))?;
+    let reserialized = receipt_for(&reserialized_path, "reserialized")?;
+    let (_, reserialized_err) = text_of(&reserialized);
+    expect_exit(
+        reserialized.status.success(),
+        true,
+        &format!("receipt over an unedited re-serialized verify: {reserialized_err}"),
+    )?;
+    let from = format!("\"before_classification\": \"{original_class}\"");
+    if verify_text.matches(&from).count() != 1 {
+        return Err(format!("expected one `{from}` in the verify document"));
+    }
     let edited_path = workflow.join("edited-verify.json");
     std::fs::write(
         &edited_path,
-        serde_json::to_string_pretty(&edited).map_err(|error| error.to_string())?,
+        verify_text.replacen(&from, "\"before_classification\": \"exposed\"", 1),
     )
     .map_err(|error| format!("write edited verify: {error}"))?;
     let refused = receipt_for(&edited_path, "edited")?;
@@ -2670,7 +2702,6 @@ impl GapAttempt {
     }
 }
 
-#[cfg(feature = "lang-typescript")]
 fn text_of(output: &std::process::Output) -> (String, String) {
     (
         String::from_utf8_lossy(&output.stdout).into_owned(),
