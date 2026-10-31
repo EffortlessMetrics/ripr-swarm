@@ -2856,7 +2856,7 @@ fn workspace_macro_binding_site_for(
         } else {
             chunk.iter().map(scan).collect()
         };
-        for ((path, _, _, _), (rebinding, site)) in chunk.iter().zip(per_file) {
+        for ((path, _, _), (rebinding, site)) in chunk.iter().zip(per_file) {
             if let Some(site) = rebinding {
                 return Some(((*path).clone(), site));
             }
