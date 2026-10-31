@@ -422,7 +422,10 @@ For each change, the first match wins:
     `$total / 100 >= 5` for the `100`) is only part of an operand and is not a
     threshold. Quoted strings and `#` comments in the oracle expression are
     masked before the owner call is read, so a call named inside a message is
-    never an input. An exact oracle on one
+    never an input. An oracle expression that holds a regex literal (`qr`,
+    `m`, `s`, `tr`, `y` with a delimiter), a `=~` or `!~` binding or a
+    heredoc introducer (`<<EOT`) is not masked at all: it supplies no input.
+    A `-` after an operand is subtraction, not a sign. An exact oracle on one
     input observes the value at that input, not whether the input sits near
     the threshold: moving `>= 1000` changes no asserted value when the test
     asserts only 2000 and 10. The packet carries no row-owned predicate-input
@@ -443,7 +446,9 @@ For each change, the first match wins:
     sum) reads `limited` until the producer emits the fact; that is an
     accepted missed credit, not a claim that the test fails to
     discriminate.
-    Known limits: the read does not check argument position (any top-level
+    Known limits: regex literals, heredocs and `=~` withhold the whole
+    expression's input rather than being parsed, the read does not check
+    argument position (any top-level
     literal argument of the owner call counts), a `-->` or other operator
     spelling is not specially recognized, and a `<` or `>` inside a string
     in `changed_observable` can demote a non-comparison; each only withholds

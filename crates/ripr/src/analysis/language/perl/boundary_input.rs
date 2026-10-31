@@ -131,9 +131,15 @@ fn operand_before(chars: &[char], operator_start: usize) -> Option<String> {
     if start > 0 && matches!(chars[start - 1], '$' | '@' | '%' | '&') {
         return None;
     }
-    let negative = start > 0
-        && chars[start - 1] == '-'
-        && (start == 1 || matches!(chars[start - 2], ' ' | '\t' | '(' | ','));
+    // A `-` is a sign only when no operand precedes it: `$a -5 < $b` and
+    // `$n - 5 < $b` are subtraction.
+    let negative = start > 0 && chars[start - 1] == '-' && {
+        let mut before = start - 1;
+        while before > 0 && chars[before - 1].is_whitespace() {
+            before -= 1;
+        }
+        before == 0 || !(is_word(chars[before - 1]) || matches!(chars[before - 1], ')' | ']' | '}'))
+    };
     let token: String = chars[start..end].iter().collect();
     let literal_start = if negative { start - 1 } else { start };
     let mut lead = literal_start;
@@ -205,6 +211,11 @@ fn owner_call_literal_args(expression: &str, owner_id: &str) -> Vec<String> {
     let Some((package, name)) = owner_sub_name(owner_id) else {
         return Vec::new();
     };
+    // Regex literals and heredoc bodies are not masked: a call spelled inside
+    // one, or a quote inside a regex, would misread everything after it.
+    if has_regex_or_heredoc(expression) {
+        return Vec::new();
+    }
     let chars = mask_strings_and_comments(expression);
     let needle: Vec<char> = name.chars().collect();
     let mut literals = Vec::new();
@@ -229,6 +240,59 @@ fn owner_call_literal_args(expression: &str, owner_id: &str) -> Vec<String> {
         }
     }
     literals
+}
+
+/// Whether the expression holds a pattern or heredoc this read does not
+/// mask: a `=~` or `!~` binding, a `<<` heredoc introducer (`<<EOT`, `<<"EOT"`,
+/// `<<~EOT`), or a `qr`, `m`, `s`, `tr` or `y` word that opens a delimited
+/// pattern. A word after a sigil, `->`, `::` or `{`, one before a fat comma,
+/// and a longer name (`tier_label`) are not operators. It errs toward true:
+/// the only effect of a false positive is that no owner call is read.
+fn has_regex_or_heredoc(text: &str) -> bool {
+    if text.contains("=~") || text.contains("!~") {
+        return true;
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '<' && chars.get(i + 1) == Some(&'<') {
+            let next = chars.get(i + 2).copied();
+            if next.is_some_and(|n| {
+                (is_word(n) && !n.is_ascii_digit()) || matches!(n, '"' | '\'' | '~')
+            }) {
+                return true;
+            }
+            i += 2;
+        } else if is_word(c) {
+            let start = i;
+            while i < chars.len() && is_word(chars[i]) {
+                i += 1;
+            }
+            let word: String = chars[start..i].iter().collect();
+            let named =
+                start > 0 && matches!(chars[start - 1], '$' | '@' | '%' | '&' | '>' | ':' | '{');
+            if !named && matches!(word.as_str(), "qr" | "m" | "s" | "tr" | "y") {
+                let mut open = i;
+                while open < chars.len() && chars[open].is_whitespace() {
+                    open += 1;
+                }
+                let fat_comma = chars.get(open) == Some(&'=') && chars.get(open + 1) == Some(&'>');
+                let delimiter = chars.get(open).is_some_and(|d| {
+                    matches!(
+                        d,
+                        '/' | '{' | '(' | '[' | '<' | '|' | '!' | '#' | '^' | '~' | '\'' | '"'
+                    )
+                });
+                if delimiter && !fat_comma {
+                    return true;
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
+    false
 }
 
 /// The expression's characters with quoted spans and `#` comments blanked, so
@@ -648,5 +712,78 @@ mod tests {
                 "{observable}"
             );
         }
+    }
+
+    #[test]
+    fn a_call_inside_a_regex_or_heredoc_is_not_an_input() {
+        for expression in [
+            "like($s, qr/tier_label(1000)/)",
+            "ok($s =~ m{tier_label(1000)})",
+            "is(tier_label(2000),1,'x'); $s =~ s/a/tier_label(1000)/",
+            "is(tier_label(2000), 1); $s !~ /tier_label(1000)/",
+            "like($s, qr/it's/), is(tier_label(1000),'a','x')",
+            "like($s, qr/it's/), is(tier_label(2000),'a','tier_label(1000)')",
+            "is(tier_label(1000), <<EOT)\nbody\nEOT",
+            "is(tier_label(1000), <<\"EOT\")\nbody\nEOT",
+            "is(tier_label(1000), <<~EOT)\nbody\nEOT",
+            "is(tier_label(2000), 1); ($t = $u) =~ tr/a/b/; tier_label(1000)",
+        ] {
+            assert_eq!(
+                input("$points >= 1000", expression),
+                BoundaryInput::Unestablished,
+                "{expression}"
+            );
+        }
+        assert_eq!(
+            input(
+                "$p >= 100",
+                "is(tier_label(5), <<EOT)\ntier_label(100)\nEOT"
+            ),
+            BoundaryInput::Unestablished
+        );
+        // Controls: `s`, `m`, `y`, `tr` as variables, hash keys, methods or
+        // inside longer words are not pattern operators.
+        for expression in [
+            "is(tier_label(1000), $s, $y, $m)",
+            "is(tier_label(1000), { s => 1, y => 2, m => 3 })",
+            "is(tier_label(1000), $h{s}, $obj->y, $obj->s(1))",
+            "is(tier_label(1000), 'gold', 'tr is a word')",
+            "is(tier_label(1000), 1 << 2)",
+        ] {
+            assert_eq!(
+                input("$points >= 1000", expression),
+                BoundaryInput::OnThreshold,
+                "{expression}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_minus_after_an_operand_is_subtraction_not_a_sign() {
+        for observable in [
+            "$a -5 < $b",
+            "$a - 5 < $b",
+            "$f(1) -5 < $b",
+            "$a[0] -5 < $b",
+        ] {
+            for argument in ["-5", "5"] {
+                assert_eq!(
+                    input(observable, &format!("is(tier_label({argument}), 1)")),
+                    BoundaryInput::Unestablished,
+                    "{observable} / {argument}"
+                );
+            }
+        }
+        for observable in ["$b > -5", "($b) > -5", "$b < -5 ? 1 : 0"] {
+            assert_eq!(
+                input(observable, "is(tier_label(-5), 1)"),
+                BoundaryInput::OnThreshold,
+                "{observable}"
+            );
+        }
+        assert_eq!(
+            input("-5 < $b", "is(tier_label(-5), 1)"),
+            BoundaryInput::OnThreshold
+        );
     }
 }
