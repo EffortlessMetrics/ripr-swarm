@@ -6319,6 +6319,104 @@ mod tests {
         Ok(())
     }
 
+    /// #10709: the TypeScript ledger record carries the producer's
+    /// `source_currentness` and the run's `analysis_outcome`, which the shared
+    /// agent-packet validator and `first-pr` read before they recommend the
+    /// gap-bound `ripr agent repair` start. The checked-in portable ledger must
+    /// agree with what the producer emits for the saved check output, and a
+    /// finding without an established candidate-current source must not form
+    /// an agent-packet-eligible record.
+    #[test]
+    fn typescript_preview_fixture_ledger_carries_producer_currentness_and_outcome()
+    -> Result<(), String> {
+        fn produce(payload: &Value) -> GapDecisionLedgerReport {
+            build_gap_decision_ledger_report(GapDecisionLedgerInput {
+                root: ".".to_string(),
+                generated_at: "test".to_string(),
+                source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+                records_path: "typescript-check.json".to_string(),
+                records_json: Ok(payload.to_string()),
+            })
+        }
+        let payload: Value = serde_json::from_str(&typescript_preview_gap_before_check_output())
+            .map_err(|error| format!("parse TypeScript fixture: {error}"))?;
+        let report = produce(&payload);
+        let record = report
+            .records
+            .first()
+            .ok_or("TypeScript fixture produced no record")?;
+        assert_eq!(
+            record.source_currentness.as_deref(),
+            Some("candidate_current")
+        );
+        assert!(projection_eligible(record, "agent_packet"));
+        assert_eq!(
+            report
+                .analysis_outcome
+                .as_ref()
+                .and_then(|outcome| outcome.get("analysis_complete"))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+
+        let ledger: Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/first_successful_pr/typescript-preview-gap/inputs/reports/gap-decision-ledger.json"
+        ))
+        .map_err(|error| format!("parse checked-in TypeScript ledger: {error}"))?;
+        assert_eq!(
+            ledger["analysis_outcome"],
+            report.analysis_outcome.clone().unwrap_or(Value::Null)
+        );
+        let produced = gap_record_json_value(record)?;
+        for key in [
+            "canonical_gap_id",
+            "source_currentness",
+            "language",
+            "repairability",
+        ] {
+            assert_eq!(
+                ledger["records"][0][key], produced[key],
+                "checked-in ledger record drifted from the producer on `{key}`"
+            );
+        }
+
+        // Discriminating negatives: no established candidate-current source
+        // (missing or unknown) keeps the record but turns the authority
+        // projection off; a stale (moved) source forms no record at all.
+        for currentness in [None, Some("unknown")] {
+            let mut stale = payload.clone();
+            let finding = stale["findings"][0]
+                .as_object_mut()
+                .ok_or("TypeScript finding must be an object")?;
+            match currentness {
+                Some(value) => {
+                    finding.insert("source_currentness".to_string(), Value::from(value));
+                }
+                None => {
+                    finding.remove("source_currentness");
+                }
+            }
+            let report = produce(&stale);
+            let record = report
+                .records
+                .first()
+                .ok_or("a non-current TypeScript finding still forms an advisory record")?;
+            assert_ne!(
+                record.source_currentness.as_deref(),
+                Some("candidate_current"),
+                "{currentness:?}"
+            );
+            assert!(
+                !projection_eligible(record, "agent_packet"),
+                "{currentness:?}"
+            );
+        }
+        let mut moved = payload;
+        moved["findings"][0]["source_currentness"] = Value::from("moved_or_renamed");
+        assert!(produce(&moved).records.is_empty());
+        Ok(())
+    }
+
     #[test]
     fn check_output_perl_preview_card_becomes_markdown_advisory_gap_record() -> Result<(), String> {
         let payload = r#"{

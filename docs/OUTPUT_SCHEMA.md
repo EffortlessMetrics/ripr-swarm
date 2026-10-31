@@ -14361,7 +14361,16 @@ Field contract:
   `canonical_gap_id` that no other record shares; it passes the shared
   `validate_agent_gap_record_packet` validator; and the ledger's recorded
   `analysis_outcome` is complete with no `run_limitations`, judged by the
-  predicate `ripr check` applies. The command is
+  predicate `ripr check` applies. The validator's candidate-current
+  requirement reads the record's `source_currentness`, which the ledger
+  producer (`ripr reports gap-ledger --check-output`, and `first-pr
+  --check-output`) copies from the check finding for Python and TypeScript
+  alike, and `analysis_outcome` is copied from the same check document. A
+  record whose `source_currentness` is missing, `unknown` or stale (a finding
+  that is `base_deleted` or `moved_or_renamed` forms no record), or a ledger
+  whose `analysis_outcome` is missing or incomplete, recommends nothing. The
+  checked-in TypeScript `first_successful_pr` ledger carries both fields so
+  its start-here packet recommends the same route as the Python case. The command is
   `ripr agent repair --gap-id <id> --base <base> --root <root> --phase before`.
   `ripr check` may print the resolved dirty origin as `--base` where first-pr
   prints its own `--base`, and first-pr cannot see the working tree, so the
