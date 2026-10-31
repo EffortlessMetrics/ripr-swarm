@@ -419,16 +419,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_an_exact_clean_commit_identity_is_accepted() {
+    fn only_an_exact_clean_commit_identity_is_accepted() -> Result<(), String> {
         let sha = "a".repeat(40);
         let other = "b".repeat(40);
         let check = |line: &str| check_identity(line, &sha, Path::new("ripr"), "HEAD");
-        assert!(check(&format!("ripr 0.11.0 ({sha})\n")).is_ok());
+        check(&format!("ripr 0.11.0 ({sha})\n"))?;
         assert!(check(&format!("ripr 0.11.0 ({sha}-dirty)")).is_err());
         assert!(check(&format!("ripr 0.11.0 ({other})")).is_err());
         assert!(check("ripr 0.11.0").is_err());
         let error = check("echo").err().unwrap_or_default();
         assert!(error.contains("clean build"), "{error}");
+        Ok(())
     }
 
     #[test]
