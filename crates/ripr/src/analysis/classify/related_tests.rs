@@ -5228,8 +5228,7 @@ fn inherent_receiver_call_resolves_with(
                 scope,
                 method,
                 impl_type,
-                &unit_struct,
-                &unit_variant,
+                (&unit_struct, &unit_variant),
                 &factory,
                 &owner_unrebound,
             )
@@ -5360,8 +5359,7 @@ fn inherent_call_node_resolves(
     original_scope: Option<&SyntaxNode>,
     method: &str,
     impl_type: &str,
-    unit_struct: &dyn Fn(&str) -> bool,
-    unit_variant: &dyn Fn(&str) -> bool,
+    (unit_struct, unit_variant): (&dyn Fn(&str) -> bool, &dyn Fn(&str) -> bool),
     factory: &dyn Fn(&str, &str) -> bool,
     owner_unrebound: &dyn Fn() -> bool,
 ) -> bool {
