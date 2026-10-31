@@ -2770,47 +2770,8 @@ impl Backend {
     }
 
     async fn apply_workspace_root_resolution(&self, resolution: WorkspaceRootResolution) {
-        self.apply_workspace_root_authority(Self::workspace_root_authority_for_resolution(
-            resolution,
-        ))
-        .await;
-    }
-
-    fn workspace_root_authority_for_resolution(
-        resolution: WorkspaceRootResolution,
-    ) -> WorkspaceRootAuthority {
-        match resolution {
-            WorkspaceRootResolution::Selected(root) => {
-                if !root.is_absolute() {
-                    WorkspaceRootAuthority::unavailable(format!(
-                        "workspace root is not absolute: {}",
-                        root.display()
-                    ))
-                } else if !root.is_dir() {
-                    WorkspaceRootAuthority::unavailable(format!(
-                        "workspace root is inaccessible or not a directory: {}",
-                        root.display()
-                    ))
-                } else {
-                    WorkspaceRootAuthority::selected(root)
-                }
-            }
-            WorkspaceRootResolution::Ambiguous(candidates) => {
-                if candidates
-                    .iter()
-                    .any(|root| !root.is_absolute() || !root.is_dir())
-                {
-                    WorkspaceRootAuthority::unavailable(
-                        "one or more workspace folders are inaccessible or not directories",
-                    )
-                } else {
-                    WorkspaceRootAuthority::ambiguous(candidates)
-                }
-            }
-            WorkspaceRootResolution::Unavailable(detail) => {
-                WorkspaceRootAuthority::unavailable(detail)
-            }
-        }
+        self.apply_workspace_root_authority(WorkspaceRootAuthority::from_resolution(resolution))
+            .await;
     }
 
     async fn apply_workspace_root_authority(&self, authority: WorkspaceRootAuthority) {
@@ -6533,7 +6494,7 @@ impl LanguageServer for Backend {
         }
         let authority = match derived.0 {
             None => WorkspaceRootAuthority::removed(self.effective_root()),
-            Some(resolution) => Self::workspace_root_authority_for_resolution(resolution),
+            Some(resolution) => WorkspaceRootAuthority::from_resolution(resolution),
         };
         let previous = self.workspace_root_authority();
         self.apply_workspace_folder_set_authority(authority, folder_set_epoch)

@@ -1,3 +1,4 @@
+use super::capabilities::WorkspaceRootResolution;
 use super::component_outcome::ComponentOutcome;
 use super::gap_artifacts::{GapArtifactRejection, ValidatedGapArtifact};
 use super::input_identity::LspAnalysisInputIdentity;
@@ -90,6 +91,39 @@ impl WorkspaceRootAuthority {
             detail: Some(
                 "the selected workspace root was removed; select a root and restart".into(),
             ),
+        }
+    }
+
+    pub(super) fn from_resolution(resolution: WorkspaceRootResolution) -> Self {
+        match resolution {
+            WorkspaceRootResolution::Selected(root) => {
+                if !root.is_absolute() {
+                    Self::unavailable(format!(
+                        "workspace root is not absolute: {}",
+                        root.display()
+                    ))
+                } else if !root.is_dir() {
+                    Self::unavailable(format!(
+                        "workspace root is inaccessible or not a directory: {}",
+                        root.display()
+                    ))
+                } else {
+                    Self::selected(root)
+                }
+            }
+            WorkspaceRootResolution::Ambiguous(candidates) => {
+                if candidates
+                    .iter()
+                    .any(|root| !root.is_absolute() || !root.is_dir())
+                {
+                    Self::unavailable(
+                        "one or more workspace folders are inaccessible or not directories",
+                    )
+                } else {
+                    Self::ambiguous(candidates)
+                }
+            }
+            WorkspaceRootResolution::Unavailable(detail) => Self::unavailable(detail),
         }
     }
 
