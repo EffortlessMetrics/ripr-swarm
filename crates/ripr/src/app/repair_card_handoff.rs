@@ -1502,7 +1502,7 @@ mod tests {
 
     #[test]
     fn card_assertion_matches_the_seam_producer_when_the_witness_has_none() -> Result<(), String> {
-        let entry = weakly_gripped_entry();
+        let entry = own_file_inline_entry();
         let packet = packet_for(&entry);
         let facts = facts_for(&entry, &packet);
         if facts.witness.is_some() {
