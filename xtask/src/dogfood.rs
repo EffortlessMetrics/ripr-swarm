@@ -10918,7 +10918,8 @@ pub(crate) fn dogfood_typescript_preview_repair_loop_run(
         ("reason", &scenario.reason),
     ] {
         if value.trim().is_empty()
-            || (value == "unknown" && !matches!(label, "oracle_kind" | "oracle_strength"))
+            || (value == "unknown"
+                && !matches!(label, "oracle_kind" | "oracle_strength" | "gap_state"))
         {
             errors.push(format!("{label} must be present"));
         }
@@ -11069,10 +11070,9 @@ pub(crate) fn dogfood_typescript_preview_repair_loop_run(
                 .to_string(),
         );
     }
-    if scenario.outcome == "unanchored_relation_holds_advisory" && scenario.gap_state != "advisory"
-    {
+    if scenario.outcome == "unanchored_relation_holds_advisory" && scenario.gap_state != "unknown" {
         errors.push(
-            "unanchored_relation_holds_advisory requires gap_state advisory: the #4103 anchor gate withholds exposure credit, so the case must not claim already_observed"
+            "unanchored_relation_holds_advisory requires gap_state unknown: the #4103 anchor gate withholds exposure credit, so the case must not claim already_observed"
                 .to_string(),
         );
     }
@@ -11607,7 +11607,9 @@ pub(crate) fn typescript_preview_false_actionable_audit_case_errors(
         ),
         ("reason", &case.reason),
     ] {
-        if value.trim().is_empty() || value == "unknown" {
+        // `unknown` is a real `EvidenceState` value for gap_state (#11691);
+        // everywhere else it is the unfilled-field placeholder.
+        if value.trim().is_empty() || (value == "unknown" && label != "gap_state") {
             errors.push(format!("{label} must be present"));
         }
     }

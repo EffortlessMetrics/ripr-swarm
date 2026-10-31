@@ -598,9 +598,13 @@ pub(crate) struct CachedSeamLimitInfo {
 /// macros when a bare owner call sits outside their inputs (#9644). The same
 /// version also covers a Kani proof harness getting its own source role
 /// instead of reading as a production function (RIPR-SPEC-0367).
-/// `1.125`: a bare imported unit variant receiver resolves to its enum's impl, so
+/// `1.125`: changed lines inside `verus! { .. }` seed one `static_unknown` probe
+/// per region and side and name `verus_macro_region_unsupported`; verification
+/// prelude globs (`vstd`, `creusot_std`, `prusti_contracts`) no longer refuse
+/// assertion credit (RIPR-SPEC-0369, #11703).
+/// `1.126`: a bare imported unit variant receiver resolves to its enum's impl, so
 /// the receiver-unestablished withhold reads where a false gap was cached (#8782).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.125";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.126";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -770,8 +774,10 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.125";
 /// `0.128`: same Display placeholder-edit refusal as full `1.121` (#9836).
 /// `0.130`: same matches! execution admission as full `1.123`.
 /// `0.131`: same nested expected-macro limitation as full `1.124` (#9644).
-/// `0.132`: same imported-variant receiver as full `1.125` (#8782).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.132";
+/// `0.132`: same `verus!` region limit and prelude-glob credit as full `1.125`
+/// (RIPR-SPEC-0369).
+/// `0.133`: same imported-variant receiver as full `1.126` (#8782).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.133";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -943,8 +949,10 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.132";
 /// `0.128`: same Display placeholder-edit refusal as full `1.121` (#9836).
 /// `0.130`: same matches! execution admission as full `1.123`.
 /// `0.131`: same nested expected-macro limitation as full `1.124` (#9644).
-/// `0.132`: same imported-variant receiver as full `1.125` (#8782).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.132";
+/// `0.132`: same `verus!` region limit and prelude-glob credit as full `1.125`
+/// (RIPR-SPEC-0369).
+/// `0.133`: same imported-variant receiver as full `1.126` (#8782).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.133";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5417,6 +5425,8 @@ mod tests {
         // 1.122 -> 1.123: return/error matches! execution admission.
         // 1.123 -> 1.124: nested expected-macro limit (#9644) and the
         // proof-harness source role (RIPR-SPEC-0367).
+        // 1.124 -> 1.125: `verus!` region limit and verification-prelude glob
+        // credit (RIPR-SPEC-0369, #11703).
         // 1.124 -> 1.125: imported unit-variant receiver (#8782).
         assert_eq!(CACHE_SCHEMA_VERSION, "1.125");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
@@ -5529,6 +5539,7 @@ mod tests {
         // 0.128 -> 0.129: same foreign embedded-type reading as full 1.122.
         // 0.129 -> 0.130: same matches! admission as full 1.123.
         // 0.130 -> 0.131: same nested expected-macro limit as full 1.124 (#9644).
+        // 0.131 -> 0.132: same `verus!` region limit as full 1.125 (RIPR-SPEC-0369).
         // 0.131 -> 0.132: same imported-variant receiver as full 1.125 (#8782).
         assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.132");
         assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.132");

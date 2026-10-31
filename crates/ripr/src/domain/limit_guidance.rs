@@ -272,9 +272,9 @@ impl StopReason {
                 "Add a test that calls the changed code and asserts an exact result."
             }
             StopReason::TransitiveReachUnresolved => {
-                "Call the changed owner directly from a test if tests can name it; if the path \
-                 runs through private helpers ripr only matched by name, the edge can stay \
-                 unresolved even with an exact assertion."
+                "Call the changed owner directly from a test if tests can name it; if it is \
+                 private or reached only through private helpers, ripr cannot finish the call \
+                 chain, so the edge can stay unresolved even with an exact assertion."
             }
             StopReason::MacroReachUnresolved => {
                 "Call the changed owner directly from a plain `#[test]` body if tests can name \
