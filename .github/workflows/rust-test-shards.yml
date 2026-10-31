@@ -123,6 +123,14 @@ jobs:
           fi
           exit "$test_exit"
 
+      # The gates job defers the test-valued covered_by enumeration to here
+      # (RIPR_FILE_POLICY_DEFER_TEST_COVERAGE); the nextest build above already
+      # compiled the targets it lists, so this costs about two minutes on a shard
+      # with slack instead of about six on the gates job (#11566).
+      - name: File policy with test coverage enumeration
+        if: ${{ matrix.shard == 1 && !cancelled() }}
+        run: cargo xtask check-file-policy
+
       # A failed or aborted shard keeps its context and status but must not inherit
       # a stale XML; `verify` treats a missing status file as a failed shard.
       - name: Upload shard results

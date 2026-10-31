@@ -398,6 +398,7 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
         "name: ${{ inputs.artifact-name }}-xtask-${{ github.run_attempt }}\n          path: target/xtask-binary/xtask\n",
         "        if: matrix.shard == 1\n        run: |\n          mkdir -p target/xtask-binary\n          strip --strip-debug -o target/xtask-binary/xtask target/debug/xtask\n",
         "if-no-files-found: error\n          retention-days: 1\n",
+        "        if: ${{ matrix.shard == 1 && !cancelled() }}\n        run: cargo xtask check-file-policy\n",
         "            --shards 4 \\\n",
         "            --sha \"$(git rev-parse HEAD)\" \\\n",
         "            --run-id \"$GITHUB_RUN_ID\" \\\n",
@@ -484,6 +485,14 @@ fn sharded_hosted_tests_reject_a_dropped_or_softened_shard_check() {
             "-xtask-${{ github.run_attempt }}\n          path: target",
             "-xtask-0\n          path: target",
         ),
+        (
+            "if: ${{ matrix.shard == 1 && !cancelled() }}\n        run: cargo xtask check-file-policy",
+            "if: ${{ matrix.shard == 1 && !cancelled() }}\n        run: true",
+        ),
+        (
+            "if: ${{ matrix.shard == 1 && !cancelled() }}\n        run: cargo xtask check-file-policy",
+            "if: ${{ matrix.shard == 2 && !cancelled() }}\n        run: cargo xtask check-file-policy",
+        ),
         ("            --shards 4 \\\n", "            --shards 3 \\\n"),
         ("            --sha \"$(git rev-parse HEAD)\" \\\n", ""),
         (
@@ -527,4 +536,11 @@ fn routed_result_cannot_pass_without_the_hosted_shards() {
             "weakening `{from}` was not rejected"
         );
     }
+}
+
+#[test]
+fn gates_defer_test_coverage_enumeration_exactly_when_tests_are_sharded() {
+    assert!(WORKFLOW.contains(
+        "RIPR_FILE_POLICY_DEFER_TEST_COVERAGE: ${{ inputs.test-shards == 1 && '' || '1' }}\n        run: cargo xtask ci-policy"
+    ));
 }
