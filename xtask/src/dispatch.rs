@@ -233,6 +233,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckChangelogFragments(args) => {
             super::policy::check_changelog_fragments_with_args(&args)
         }
+        XtaskCommand::FoldChangelog(args) => super::policy::fold_changelog(&args),
         XtaskCommand::CheckReadmeState => super::check_readme_state(),
         XtaskCommand::MarkdownLinks => super::markdown_links(),
         XtaskCommand::CheckPrShape(args) => super::check_pr_shape_with_args(&args),
@@ -261,6 +262,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckReleaseTargets => super::check_release_targets(),
         XtaskCommand::PackageQualificationGate(args) => super::package_qualification::run(&args),
         XtaskCommand::SizeScaling(args) => super::size_scaling::run(&args),
+        XtaskCommand::WarmAb(args) => super::warm_ab::run(&args),
         XtaskCommand::TerminationQualification(args) => {
             super::termination_qualification::run(&args)
         }

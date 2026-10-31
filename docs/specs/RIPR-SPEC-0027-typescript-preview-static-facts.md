@@ -426,6 +426,15 @@ Probes the adapter must generate (syntax-first):
 - mock-interaction probes for changed call surfaces against identifiers
   resolved through a syntactic `vi.fn()` / `jest.fn()` initializer
 
+A changed line whose old and new text differ only in a trailing `//` comment or
+in trailing whitespace emits no probe (#10706): the statement runs identically,
+so no gap id or discriminator can embed the comment text. The executable text
+of both lines, semicolon included, must be equal and both lines must split into
+code and comment reliably; a changed token, a dropped semicolon, a changed
+indentation, a `//` inside a string, a line inside a template literal, block
+comment, line-continued string or JSX text that crosses a line break, and a
+file that does not parse all keep the probe.
+
 Added lines that are blank, comment-only, or punctuation-only (`}`, `});`,
 `)`) produce no probe. Neither do lines inside a top-level ambient
 declaration found in the parsed syntax tree (`declare function`,
@@ -464,6 +473,40 @@ operands to the same value. Predicates without a comparable boundary (such as
 `Number.isNaN(n)`) and boundaries reached only through locals or computed
 values stay `weakly_exposed`; the literal or operand-pair boundary becomes the
 missing discriminator when one is known.
+
+The named boundary is the comparison the edit changed (#10399). On a compound
+condition (`a > b || c >= d`) the adapter compares parser-owned tokens of the old and new line and reads
+the boundary from the one condition-level comparison whose tokens differ,
+never from a neighbouring comparison on the same line. Literal and comment
+contents, callback bodies, call arguments, computed access and type syntax do
+not supply comparison sites. Unsupported operands and malformed old or new
+syntax retain refusal; whitespace/comment-only edits name no boundary. When the edit
+touches no comparison (an operand such as `isDone ||` is removed), touches
+several, or the line cannot be tokenized, the changed operator cannot be
+located unambiguously, so no boundary is named: no `missing_discriminator`,
+and the limitation reports that the changed line has no statically comparable
+predicate boundary. An added line with several comparisons is likewise
+unlabeled. The selected comparison and full changed source line retain separate
+identities: expected-side branch checks must still find the original owner line,
+so narrowing a label cannot credit an expectation that matches neither outcome.
+The module-bound boundary-input and boundary-parameters facts likewise keep
+reading the full changed source line rather than the selected text: their
+whole-side and verbatim-line gates need the source line's statement context and
+line identity, so a fact stays available on a compound line whose single
+comparison sits next to the statement opening (`if (total > 100 && ready) {`)
+and refuses on narrowed text alone or on a line holding several comparisons.
+Returned-ternary arm edits retain their sole condition boundary only when the
+condition tokens are unchanged.
+
+Clause-level selection on `&&` / `||` / `??` conditions is decided by the parse
+tree, not by token order, so `a && b > 1 || c` and `a || b > 1 && c` each name
+`b == 1` when only that comparison's tokens changed (#11196). A reordered or
+removed clause, a moved parenthesis, a swapped
+logical operator, an edit to a non-comparison clause, a clause quoted in a
+string or template literal, and a clause with a call, computed or nullish
+operand each name no boundary. The named clause is a boundary fact only: under
+`&&` it is observable when the other clauses hold, so it never claims that a
+test can drive that clause independently.
 
 Three one-hop input resolutions credit the idiom shapes that reach the same
 boundary without changing the guards (#4104 E):
@@ -583,6 +626,24 @@ boundary without changing the guards (#4104 E):
   stays unwitnessed. The repair packet's assertion shape asks for a value of
   the kind in place of the argument and never reuses the observed input, and
   the "inputs on one side of the boundary" wording is not used for this shape.
+- **Faithful boundary discriminator** (#11256): a predicate's missing
+  discriminator reads its comparison in code spans only, and a quoted operand
+  is one operand whatever it holds. `arg !== "--"` and `mode === "a b"` are not
+  cut at the `-` or the space (`arg == "`); holding characters the
+  discriminator vocabulary does not carry, they name no discriminator and the
+  finding offers no repair start. A comparison operator inside a string literal
+  is no comparison. `if (arg === "stop")` still names `arg == "stop"`. Which
+  comparison of a compound condition changed is chosen from the old and new
+  line (#10399).
+- **Derived boundary operand** (#11256): when the compared side is a local the
+  owner binds only from a call (`const type = getType(key);`) whose arguments
+  name no owner parameter, and the other side is a literal, no test call can
+  set the value. The finding lists
+  `typescript_boundary_operand_derived_unresolved` and offers no repair start,
+  because the existing tests may already notice the change through the result.
+  A parameter operand, a call over a parameter (`kindOf(name)`), a non-call
+  initializer and an owner without a fixed positional signature keep their
+  previous reading.
 - **Open gap reason in the after phase** (#11196): when `agent verify` refuses
   a gap that still reads open, the refusal appends the missing discriminator
   the before and after check-findings artifacts already state (unchanged, or

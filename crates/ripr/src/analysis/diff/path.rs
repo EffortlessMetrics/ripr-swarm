@@ -56,6 +56,109 @@ pub(super) fn parse_git_old_path(raw: &str) -> Option<PathBuf> {
     confine_to_relative_path(&path)
 }
 
+/// Check both identities against the complete header, using rename metadata to
+/// locate the boundary when unquoted filenames themselves contain ` b/`.
+pub(super) fn git_header_matches_rename(raw: &str, old: &Path, new: &Path) -> bool {
+    if [old, new].iter().any(|path| {
+        path.components()
+            .any(|part| !matches!(part, Component::Normal(_)))
+    }) {
+        return false;
+    }
+    let Some(marker) = raw.strip_prefix("diff --git ") else {
+        return false;
+    };
+    let rest = if let Some(after_quote) = marker.strip_prefix('"') {
+        let Some(end) = quoted_token_end(marker) else {
+            return false;
+        };
+        let Some(decoded) = parse_diff_path_token(&marker[..end]) else {
+            return false;
+        };
+        if confine_to_relative_path(&decoded.without_side_prefix("a/")).as_deref() != Some(old)
+            || !after_quote.starts_with("a/")
+        {
+            return false;
+        }
+        &marker[end..]
+    } else {
+        let Some(unquoted) = marker.strip_prefix("a/") else {
+            return false;
+        };
+        // First prefer the established header parser's confined identity.
+        // This preserves e.g. `a/./src/x` paired with `rename from ./src/x`.
+        // For an embedded ` b/`, that parser returns only a prefix; in that
+        // case use the exact metadata identity to find the real boundary.
+        let first_boundary = unquoted.find(" \"b/").or_else(|| unquoted.find(" b/"));
+        if let Some(boundary) = first_boundary
+            && parse_diff_path_token(&unquoted[..boundary])
+                .and_then(|path| confine_to_relative_path(&path))
+                .as_deref()
+                == Some(old)
+        {
+            &unquoted[boundary..]
+        } else {
+            let mut rest = unquoted;
+            let mut components = old.components().peekable();
+            while let Some(Component::Normal(component)) = components.next() {
+                while let Some(tail) = rest.strip_prefix("./") {
+                    rest = tail;
+                }
+                let Some(component) = component.to_str() else {
+                    return false;
+                };
+                let Some(tail) = rest.strip_prefix(component) else {
+                    return false;
+                };
+                rest = tail;
+                if components.peek().is_some() {
+                    let Some(tail) = rest.strip_prefix('/') else {
+                        return false;
+                    };
+                    rest = tail.trim_start_matches('/');
+                }
+            }
+            rest
+        }
+    };
+    let Some(target) = rest.strip_prefix(' ') else {
+        return false;
+    };
+    let target = target.trim_end_matches('\r');
+    let token = if let Some(after_quote) = target.strip_prefix('"') {
+        let Some(end) = quoted_token_end(target) else {
+            return false;
+        };
+        if end != target.len() || !after_quote.starts_with("b/") {
+            return false;
+        }
+        target
+    } else {
+        if !target.starts_with("b/") || target.contains('\t') {
+            return false;
+        }
+        target
+    };
+    parse_diff_path_token(token)
+        .and_then(|path| confine_to_relative_path(&path.without_side_prefix("b/")))
+        .as_deref()
+        == Some(new)
+}
+
+fn quoted_token_end(raw: &str) -> Option<usize> {
+    let mut escaped = false;
+    for (offset, byte) in raw.as_bytes().iter().enumerate().skip(1) {
+        if escaped {
+            escaped = false;
+        } else if *byte == b'\\' {
+            escaped = true;
+        } else if *byte == b'"' {
+            return Some(offset + 1);
+        }
+    }
+    None
+}
+
 pub(super) fn parse_rename_from_path(raw: &str) -> Option<PathBuf> {
     parse_rename_path_marker(raw, "rename from ")
 }

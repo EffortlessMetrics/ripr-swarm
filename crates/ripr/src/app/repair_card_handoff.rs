@@ -37,7 +37,8 @@ use crate::domain::{
 use crate::output::agent_seam_packets::{
     EDIT_CAGE_PRODUCTION_STATEMENT, EDIT_CAGE_TERMINALITY_WARNING, PacketCommandContext,
     TASK_WRITE_TARGETED_TEST, inline_test_module_edit_statement, recommended_inline_test_module,
-    recommended_test_for, render_agent_seam_packet_json_with_context, task_for,
+    recommended_test_for, render_agent_seam_packet_json_with_context,
+    suggested_assertion_for_classified_seam, task_for,
 };
 use crate::output::path::display_path;
 use crate::repair_card_budget::RepairCardDetailSource;
@@ -46,7 +47,7 @@ use super::repair_attempt::{
     RepairAttemptInventoryEntry, RepairAttemptManifest, inventory_repair_attempts,
 };
 use super::repair_card::{RepairCardInput, build_repair_card};
-use super::{CheckInput, check_workspace_with_config};
+use super::{CheckInput, check_workspace_with_config, check_workspace_worktree_with_config};
 
 /// Producer failure of the `ripr agent card` handoff, split into the two
 /// machine states an orchestrator branches on (#5007, RIPR-SPEC-0202):
@@ -154,12 +155,15 @@ pub(crate) fn repair_card_for_entry(
     candidate_seams: &[ClassifiedSeam],
 ) -> Result<RepairCardV1, AgentCardError> {
     let eligibility = repair_packet_eligibility(entry);
+    let currentness =
+        evidence_tree_currentness(root, entry).map_err(AgentCardError::operational)?;
     let witness_pack = witness_for_seam(
         root,
         config,
         entry,
         eligibility.readiness.canonical_gap_id.as_deref(),
         candidate_seams,
+        currentness == RepairCardSnapshotCurrentness::AcceptedDirtyDraft,
     )
     .map_err(AgentCardError::witness_unavailable)?;
     let SeamWitnessBinding {
@@ -190,8 +194,6 @@ pub(crate) fn repair_card_for_entry(
     )
     .map_err(AgentCardError::identity_unnameable)?;
     let attempt = latest_attempt_for_seam(root, &seam_id).map_err(AgentCardError::operational)?;
-    let currentness =
-        evidence_tree_currentness(root, entry).map_err(AgentCardError::operational)?;
     let packet_json = card_packet_json(entry);
     // The typed args stay portable (`--root .`); only the display a CLI user
     // pastes binds the selected root (#3999). Display never enters identity.
@@ -425,7 +427,7 @@ fn currentness_comparison_key(path: &str) -> String {
 /// presentation renderer (it percent-encodes `%` and rewrites separators);
 /// feeding a display spelling to git would probe a path that does not exist
 /// and silently read a dirty scope as clean.
-fn evidence_probe_paths(entry: &ClassifiedSeam) -> Vec<std::path::PathBuf> {
+pub(crate) fn evidence_probe_paths(entry: &ClassifiedSeam) -> Vec<std::path::PathBuf> {
     let mut paths: Vec<std::path::PathBuf> = vec![entry.seam.file().to_path_buf()];
     for related in &entry.evidence.related_tests {
         if !paths.contains(&related.file) {
@@ -456,10 +458,16 @@ pub(crate) fn assemble_repair_card(
     let entry = facts.entry;
     let eligibility = repair_packet_eligibility(entry);
     let readiness = &eligibility.readiness;
-    let instruction = facts
+    // The check finding's witness carries no assertion template, but the seam
+    // packet (and `ripr pilot`, hover and the editor actions) name one through
+    // the shared seam producer. The card reads that same producer so a repair
+    // that prints an assertion shape never also says there is none.
+    let seam_assertion = suggested_assertion_for_classified_seam(entry);
+    let mut instruction = facts
         .witness
         .map(FixInstructionSummary::from_witness)
         .unwrap_or_else(FixInstructionSummary::unavailable);
+    instruction.has_suggested_assertion |= seam_assertion.is_some();
 
     // Edit cage: the exact derivation the seam packet states (#4330), so the
     // card cannot promise a different edit surface than the attempt enforces.
@@ -540,7 +548,8 @@ pub(crate) fn assemble_repair_card(
         .is_some_and(|witness| witness.expected_sink.is_some());
     let assertion_goal_detail = facts
         .witness
-        .and_then(|witness| witness.suggested_assertion.clone());
+        .and_then(|witness| witness.suggested_assertion.clone())
+        .or(seam_assertion);
     let limitations: Vec<String> = facts
         .witness
         .map(|witness| {
@@ -767,20 +776,27 @@ fn witness_for_seam(
     entry: &ClassifiedSeam,
     canonical_gap_id: Option<&str>,
     candidate_seams: &[ClassifiedSeam],
+    worktree: bool,
 ) -> Result<SeamWitnessBinding, String> {
     // The expensive workspace check only feeds the canonical-gap match; with
     // no gap id the match cannot bind, so skip the analysis entirely.
     if canonical_gap_id.is_none() {
         return Ok(SeamWitnessBinding::default());
     }
-    let output = check_workspace_with_config(
-        CheckInput {
-            root: root.to_path_buf(),
-            git_timeout: Some(super::default_cli_git_timeout()),
-            ..Default::default()
-        },
-        config,
-    )
+    let input = CheckInput {
+        root: root.to_path_buf(),
+        git_timeout: Some(super::default_cli_git_timeout()),
+        ..Default::default()
+    };
+    // #11397: the seam inventory this card was bound from reads the working
+    // tree. When the card's evidence has uncommitted edits, the witness pass
+    // must read them too; a committed-history pass finds "0 findings" for a
+    // gap `ripr check` reports and the card then says it has no witness.
+    let output = if worktree {
+        check_workspace_worktree_with_config(input, config)
+    } else {
+        check_workspace_with_config(input, config)
+    }
     .map_err(|error| format!("agent card could not run the witness analysis: {error}"))?;
     Ok(SeamWitnessBinding {
         witness: witness_from_findings(&output.findings, entry, canonical_gap_id, candidate_seams),
@@ -1488,6 +1504,29 @@ mod tests {
                     "{family:?} must record an exact unavailable reason"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn card_assertion_matches_the_seam_producer_when_the_witness_has_none() -> Result<(), String> {
+        let entry = own_file_inline_entry();
+        let packet = packet_for(&entry);
+        let facts = facts_for(&entry, &packet);
+        if facts.witness.is_some() {
+            return Err("fixture must exercise a card with no witness".to_string());
+        }
+        let expected = suggested_assertion_for_classified_seam(&entry)
+            .ok_or_else(|| "fixture seam must have a seam-producer assertion".to_string())?;
+        let card = assemble_repair_card(&facts)?;
+        if card.assertion_goal_detail.as_deref() != Some(expected.as_str()) {
+            return Err(format!(
+                "card assertion {:?} disagrees with the seam producer {expected:?}",
+                card.assertion_goal_detail
+            ));
+        }
+        if !card.instruction.has_suggested_assertion {
+            return Err("card must report the seam producer's assertion".to_string());
         }
         Ok(())
     }
