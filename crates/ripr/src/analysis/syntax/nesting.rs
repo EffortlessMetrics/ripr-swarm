@@ -218,9 +218,26 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
             continue;
         }
         if byte == b'\'' {
+            let start = index;
             index = skip_char_or_lifetime(text, index);
-            after_operand = true;
-            unary_run = 0;
+            // A char literal is an operand. A lifetime or label (`break 'a`,
+            // `&'a T`) is neither an operand nor a run breaker, so it must
+            // not reset a prefix-keyword run (`break 'a break 'a ..`).
+            let char_literal =
+                index.saturating_sub(start) >= 3 && bytes.get(index - 1) == Some(&b'\'');
+            if char_literal {
+                after_operand = true;
+                unary_run = 0;
+            } else {
+                // `skip_char_or_lifetime` stops after the quote; consume the
+                // name so it is not scanned as an operand word.
+                while bytes
+                    .get(index)
+                    .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b >= 0x80)
+                {
+                    index += 1;
+                }
+            }
             previous_word_was_else = false;
             continue;
         }
@@ -279,8 +296,10 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
         previous_word_was_else = false;
         match byte {
             b'(' | b'[' | b'{' => {
-                if after_operand && byte != b'{' {
-                    // Postfix call or index: `f()()..`, `x[0][0]..` nest left.
+                if after_operand && byte != b'{' && follows_closer(bytes, index) {
+                    // Postfix call or index on a closed group: `f()()..`,
+                    // `x[0][0]..` nest left. A flat run of siblings such as
+                    // the token tree of `m!(foo() foo() ..)` does not.
                     bump_operator_run(&mut operators, depth, &mut open_operators, &mut estimate);
                 }
                 depth = depth.saturating_add(1);
@@ -333,7 +352,7 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
                 after_operand = false;
             }
             b'.' | b'?' | b'+' | b'-' | b'*' | b'/' | b'%' | b'^' | b'|' | b'&' | b'<' | b'>'
-            | b'=' => {
+            | b'=' | b'@' => {
                 if let Some(run) = operators.get_mut(depth) {
                     *run = run.saturating_add(1);
                     open_operators = open_operators.saturating_add(1);
@@ -354,6 +373,15 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
         index += 1;
     }
     estimate
+}
+
+/// True when the last significant byte before `index` closes a group, so a
+/// following `(` or `[` is a postfix call or index on that group's value.
+fn follows_closer(bytes: &[u8], index: usize) -> bool {
+    bytes
+        .get(..index)
+        .and_then(|head| head.iter().rev().find(|b| !b.is_ascii_whitespace()))
+        .is_some_and(|b| matches!(b, b')' | b']'))
 }
 
 /// Words after which a `-`, `*`, `&` or `!` is a prefix operator.
@@ -472,6 +500,50 @@ pub(crate) fn block_comment_only_lines(text: &str) -> std::collections::BTreeSet
             }
             _ => {
                 index += text[index..].chars().next().map_or(1, char::len_utf8);
+            }
+        }
+    }
+    lines
+}
+
+/// 1-based lines of `text` that lie strictly inside a multi-line string
+/// literal, plus a closing line that holds only the literal's end delimiter
+/// (and an optional `;` or `,`). The line where the literal opens is not
+/// listed so a changed literal still seeds one probe on its declaration.
+pub(crate) fn string_literal_continuation_lines(text: &str) -> std::collections::BTreeSet<usize> {
+    use crate::analysis::extract::string_literal_spans;
+
+    let mut lines = std::collections::BTreeSet::new();
+    if !text.contains('"') {
+        return lines;
+    }
+    let mut line_starts = vec![0usize];
+    line_starts.extend(text.match_indices('\n').map(|(offset, _)| offset + 1));
+    let line_of = |offset: usize| line_starts.partition_point(|start| *start <= offset);
+    let line_end = |line: usize| line_starts.get(line).copied().unwrap_or(text.len());
+    for (open, close, raw) in string_literal_spans(text) {
+        let first = line_of(open);
+        let last = line_of(close);
+        if first >= last {
+            continue;
+        }
+        let literal_end = if raw {
+            let mut end = close + 1;
+            while text.as_bytes().get(end) == Some(&b'#') {
+                end += 1;
+            }
+            end
+        } else {
+            close + 1
+        };
+        for line in (first + 1)..=last {
+            if line < last {
+                lines.insert(line);
+                continue;
+            }
+            let tail = text[literal_end..line_end(last)].trim();
+            if tail.is_empty() || tail == ";" || tail == "," {
+                lines.insert(line);
             }
         }
     }
@@ -804,6 +876,46 @@ mod tests {
         assert_eq!(rust_nesting_refusal(ordinary), None);
     }
 
+    /// #11572: left-nested `@` binding chains and `break 'a` label runs, and
+    /// the flat sibling-call controls that must stay accepted.
+    #[test]
+    fn binding_and_label_chains_are_refused_and_flat_runs_are_not() {
+        let refused = [
+            (
+                "binding",
+                format!("fn f() {{ let {}z = 1; }}\n", "y @ ".repeat(5_000)),
+            ),
+            (
+                "label",
+                format!("fn f() {{ let _v = {}x; }}\n", "break 'a ".repeat(5_000)),
+            ),
+        ];
+        for (name, source) in refused {
+            assert!(
+                rust_nesting_refusal(&source)
+                    .is_some_and(|reason| reason.contains("rust_nesting_budget")),
+                "{name}"
+            );
+        }
+        let flat = [
+            (
+                "flat macro calls",
+                format!("fn f() {{ m!({}); }}\n", "foo() ".repeat(5_000)),
+            ),
+            (
+                "flat macro indexes",
+                format!("fn f() {{ m!({}); }}\n", "a[0] ".repeat(5_000)),
+            ),
+            (
+                "flat lifetimes",
+                format!("fn f<{}>() {{}}\n", "'a, ".repeat(5_000)),
+            ),
+        ];
+        for (name, source) in flat {
+            assert_eq!(rust_nesting_refusal(&source), None, "{name}");
+        }
+    }
+
     #[test]
     fn ordinary_keyword_use_stays_within_the_nesting_budget() {
         let source = "fn f(a: bool, b: Option<u8>) -> u8 {\n    if a { return 1; }\n    while a { break; }\n    match b { Some(x) if x > 1 => return x, _ => {} }\n    else_ok(if a { 1 } else if !a { 2 } else { 3 })\n}\n";
@@ -825,6 +937,39 @@ mod tests {
             "/*! crate\n For example:\n*/\n/** doc /* nested */ still\ncomment */\nfn g() {}\n";
         let lines = block_comment_only_lines(source);
         assert_eq!(lines.into_iter().collect::<Vec<_>>(), vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn string_literal_continuation_lines_masks_interior_and_closing_only_lines() {
+        let source = "pub fn value() -> u32 { 1 }\npub const TEMPLATE: &str = \"\\\npub mod generated {\n    pub use crate::value;\n}\n\";\n";
+        let lines = string_literal_continuation_lines(source);
+        assert_eq!(lines.iter().copied().collect::<Vec<_>>(), vec![3, 4, 5, 6]);
+        assert!(!lines.contains(&2), "{lines:?}");
+    }
+
+    #[test]
+    fn string_literal_continuation_lines_covers_raw_and_backslash_continued_strings() {
+        let plain = "let s = \"a\\\nb\";\n";
+        assert_eq!(
+            string_literal_continuation_lines(plain)
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec![2]
+        );
+        let raw = "let s = r#\"line1\nline2\"#;\n";
+        assert_eq!(
+            string_literal_continuation_lines(raw)
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec![2]
+        );
+    }
+
+    #[test]
+    fn string_literal_continuation_lines_leaves_code_after_a_closing_quote_on_the_same_line() {
+        let source = "let s = \"a\nb\"; let live = 1;\n";
+        let lines = string_literal_continuation_lines(source);
+        assert!(lines.is_empty(), "{lines:?}");
     }
 
     #[test]

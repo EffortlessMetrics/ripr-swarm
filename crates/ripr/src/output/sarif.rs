@@ -2138,7 +2138,7 @@ mod tests {
         finding.owner_kind = Some(OwnerKind::Function);
         finding.static_limit_kind = Some(StaticLimitKind::MockedModule);
         finding.evidence = vec![
-            "gap_state: advisory".to_string(),
+            "gap_state: unknown".to_string(),
             "actionability_category: incomplete_repair_packet".to_string(),
             "why_not_actionable: TypeScript preview lacks a complete repair packet contract"
                 .to_string(),
