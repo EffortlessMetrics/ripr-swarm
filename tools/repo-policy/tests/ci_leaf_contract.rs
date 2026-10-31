@@ -572,7 +572,7 @@ fn literal_runtime_commands_propagate_native_failure() -> TestResult {
             }
         }
     }
-    assert_eq!(count, 13, "nonempty payload denominator");
+    assert_eq!(count, 14, "nonempty payload denominator");
     Ok(())
 }
 
