@@ -1182,6 +1182,74 @@ pub(crate) fn ripr_fixture_binary() -> Result<String, String> {
 /// process owes the Perl verdict corpus. See [`ripr_perl_fixture_binary`].
 static RIPR_PERL_BINARY_BUILD: OnceLock<Result<(), String>> = OnceLock::new();
 
+#[cfg(test)]
+pub(crate) mod variant_test {
+    use super::*;
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+    use std::rc::Rc;
+
+    type RecordedCommand = (String, Vec<String>, Option<PathBuf>);
+
+    pub(crate) struct Context {
+        pub(crate) shared: PathBuf,
+        pub(crate) once: OnceLock<Result<(), String>>,
+        pub(crate) files: RefCell<BTreeMap<PathBuf, Vec<u8>>>,
+        pub(crate) commands: RefCell<Vec<RecordedCommand>>,
+    }
+
+    thread_local! { static ACTIVE: RefCell<Option<Rc<Context>>> = const { RefCell::new(None) }; }
+
+    pub(crate) fn active() -> Option<Rc<Context>> {
+        ACTIVE.with(|slot| slot.borrow().clone())
+    }
+
+    pub(crate) fn with_context<T>(context: Rc<Context>, f: impl FnOnce() -> T) -> T {
+        struct Restore(Option<Rc<Context>>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                ACTIVE.with(|slot| *slot.borrow_mut() = self.0.take());
+            }
+        }
+        let old = ACTIVE.with(|slot| slot.borrow_mut().replace(context));
+        let _restore = Restore(old);
+        f()
+    }
+
+    pub(super) fn run(
+        program: &str,
+        args: &[&str],
+        envs: &[(&str, &str)],
+    ) -> Option<Result<(), String>> {
+        let context = active()?;
+        let target = envs
+            .iter()
+            .rev()
+            .find(|(key, _)| *key == "CARGO_TARGET_DIR")
+            .map(|(_, value)| PathBuf::from(value));
+        context.commands.borrow_mut().push((
+            program.into(),
+            args.iter().map(|s| (*s).into()).collect(),
+            target.clone(),
+        ));
+        let output = target
+            .map(|dir| crate::ripr_debug_binary_in(Some(dir)))
+            .unwrap_or_else(|| context.shared.clone());
+        context.files.borrow_mut().insert(output, b"perl".to_vec());
+        Some(Ok(()))
+    }
+
+    pub(super) fn copy(source: &Path, destination: &Path) -> Option<Result<(), String>> {
+        let context = active()?;
+        let mut files = context.files.borrow_mut();
+        let Some(bytes) = files.get(source).cloned() else {
+            return Some(Err(format!("missing source {}", source.display())));
+        };
+        files.insert(destination.to_path_buf(), bytes);
+        Some(Ok(()))
+    }
+}
+
 /// The debug binary with the `lang-perl` preview adapter compiled in, for the
 /// Perl verdict corpus (RIPR-SPEC-0245): the default build refuses Perl
 /// packets. The variant builds in a dedicated target directory
@@ -1195,11 +1263,24 @@ static RIPR_PERL_BINARY_BUILD: OnceLock<Result<(), String>> = OnceLock::new();
 /// to wait there. Once the variant target is warm, only the `ripr` crate
 /// recompiles.
 pub(crate) fn ripr_perl_fixture_binary() -> Result<String, String> {
+    #[cfg(test)]
+    let context = variant_test::active();
+    #[cfg(test)]
+    let (shared, once) = context.as_ref().map_or_else(
+        || (ripr_debug_binary(), &RIPR_PERL_BINARY_BUILD),
+        |context| (context.shared.clone(), &context.once),
+    );
+    #[cfg(not(test))]
+    let (shared, once) = (ripr_debug_binary(), &RIPR_PERL_BINARY_BUILD);
     fixture_variant_binary_built_by(
-        ripr_debug_binary(),
-        &RIPR_PERL_BINARY_BUILD,
+        shared,
+        once,
         &preparation::build_perl_variant,
         &|source, destination| {
+            #[cfg(test)]
+            if let Some(result) = variant_test::copy(source, destination) {
+                return result;
+            }
             fs::copy(source, destination).map(|_| ()).map_err(|err| {
                 format!(
                     "copy {} to {} failed: {err}",

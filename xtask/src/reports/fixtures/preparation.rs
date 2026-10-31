@@ -90,6 +90,10 @@ fn proxy_output(program: &str, args: &[String], offline: bool) -> Result<String,
 }
 
 pub(super) fn build(args: &[&str]) -> Result<(), String> {
+    #[cfg(test)]
+    if let Some(result) = super::variant_test::run("cargo", args, &[]) {
+        return result;
+    }
     let environment = proxy_environment(environment()?, offline_mode(args.contains(&"--offline")));
     let envs = environment
         .iter()
@@ -103,8 +107,19 @@ pub(super) fn build(args: &[&str]) -> Result<(), String> {
 /// matching the child's command line, while the artifacts land outside the
 /// shared target the running suite executes from.
 pub(super) fn build_perl_variant(target_dir: &Path) -> Result<(), String> {
+    #[cfg(test)]
+    let environment = if super::variant_test::active().is_some() {
+        Vec::new()
+    } else {
+        proxy_environment(environment()?, offline_mode(false))
+    };
+    #[cfg(not(test))]
     let environment = proxy_environment(environment()?, offline_mode(false));
     build_perl_variant_with(target_dir, &environment, &|program, args, envs| {
+        #[cfg(test)]
+        if let Some(result) = super::variant_test::run(program, args, envs) {
+            return result;
+        }
         crate::run::run_with_envs(program, args, envs).map(|_| ())
     })
 }

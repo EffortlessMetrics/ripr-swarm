@@ -1,58 +1,70 @@
-//! Fast routing guard for the in-suite fixture variant build (#11197).
-//!
-//! This exercises the production routing with an in-memory builder and copier;
-//! historical real-Cargo runs remain separate integration evidence.
+//! Fast production-entry routing guard (#11197). Historical real Cargo builds
+//! remain separate integration evidence; this test performs no build or copy.
 use super::*;
+use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::sync::{Mutex, OnceLock};
+use std::rc::Rc;
+use std::sync::OnceLock;
 
 #[test]
 fn perl_variant_build_never_rewrites_shared_debug_binary() -> Result<(), String> {
-    let root = PathBuf::from("guard-target");
+    use crate::reports::{ripr_perl_fixture_binary, variant_test};
+    let root = std::env::current_dir()
+        .map_err(|e| e.to_string())?
+        .join("guard-target");
     let shared = crate::ripr_debug_binary_in(Some(root.clone()));
     let variant_root =
         std::path::absolute(root.join("fixture-variants")).map_err(|e| e.to_string())?;
-    let variant = crate::ripr_debug_binary_in(Some(variant_root.clone()));
     let perl = shared.with_file_name(format!("ripr-lang-perl{}", std::env::consts::EXE_SUFFIX));
-    for redirected in [false, true] {
-        let files = Mutex::new(BTreeMap::from([(shared.clone(), b"default".to_vec())]));
-        let cell = OnceLock::new();
-        let result = crate::reports::fixture_variant_binary_built_by(
-            shared.clone(),
-            &cell,
-            &|target| {
-                assert_eq!(target, variant_root);
-                let output = if redirected {
-                    shared.clone()
-                } else {
-                    variant.clone()
-                };
-                let mut files = files.lock().map_err(|e| e.to_string())?;
-                files.insert(output, b"perl".to_vec());
-                // The redirected counterexample also provides the source so copy succeeds.
-                files.insert(variant.clone(), b"perl".to_vec());
-                Ok(())
-            },
-            &|source, destination| {
-                assert_eq!(source, variant);
-                assert_eq!(destination, perl);
-                let mut files = files.lock().map_err(|e| e.to_string())?;
-                let bytes = files.get(source).ok_or("missing variant")?.clone();
-                files.insert(destination.to_path_buf(), bytes);
-                Ok(())
-            },
-        )?;
-        assert!(result.ends_with(&perl.to_string_lossy().to_string()));
-        let files = files.lock().map_err(|e| e.to_string())?;
-        assert_eq!(
-            files.get(&perl).map(Vec::as_slice),
-            Some(b"perl".as_slice())
-        );
-        let unchanged = files.get(&shared).map(Vec::as_slice) == Some(b"default".as_slice());
-        assert_eq!(
-            unchanged, !redirected,
-            "redirected builder must trip the guard"
-        );
-    }
+    let context = Rc::new(variant_test::Context {
+        shared: shared.clone(),
+        once: OnceLock::new(),
+        files: RefCell::new(BTreeMap::from([(shared.clone(), b"default".to_vec())])),
+        commands: RefCell::new(Vec::new()),
+    });
+    let result = variant_test::with_context(context.clone(), || {
+        std::thread::spawn(|| assert!(variant_test::active().is_none()))
+            .join()
+            .map_err(|_panic| "thread isolation check panicked")?;
+        ripr_perl_fixture_binary()
+    })?;
+    assert!(
+        variant_test::active().is_none(),
+        "override must be restored"
+    );
+    assert!(result.ends_with(&perl.to_string_lossy().to_string()));
+    let commands = context.commands.borrow();
+    assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0].0, "cargo");
+    assert_eq!(
+        commands[0].1,
+        ["build", "-p", "ripr", "--features", "lang-perl"]
+    );
+    assert_eq!(commands[0].2.as_ref(), Some(&variant_root));
+    let files = context.files.borrow();
+    assert_eq!(
+        files.get(&shared).map(Vec::as_slice),
+        Some(b"default".as_slice())
+    );
+    assert_eq!(
+        files.get(&perl).map(Vec::as_slice),
+        Some(b"perl".as_slice())
+    );
     Ok(())
+}
+
+#[test]
+fn variant_override_is_restored_after_unwind() {
+    use crate::reports::variant_test;
+    let context = Rc::new(variant_test::Context {
+        shared: PathBuf::from("unused"),
+        once: OnceLock::new(),
+        files: RefCell::new(BTreeMap::new()),
+        commands: RefCell::new(Vec::new()),
+    });
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        variant_test::with_context(context, || std::panic::resume_unwind(Box::new("cleanup")));
+    }));
+    assert!(result.is_err());
+    assert!(variant_test::active().is_none());
 }
