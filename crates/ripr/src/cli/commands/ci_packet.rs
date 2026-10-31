@@ -2948,9 +2948,10 @@ mod tests {
         );
         assert!(message.contains("most likely a shallow clone"), "{message}");
         assert!(message.contains("`fetch-depth: 0`"), "{message}");
+        let refspec =
+            crate::agent::loop_commands::shell_arg("+refs/heads/main:refs/remotes/origin/main");
         assert!(
-            message
-                .contains("fetch --unshallow origin '+refs/heads/main:refs/remotes/origin/main'"),
+            message.contains(&format!("fetch --unshallow origin {refspec}")),
             "{message}"
         );
         assert!(
@@ -2987,10 +2988,11 @@ mod tests {
             message.contains("`origin/no-such-branch` is not in this checkout"),
             "{message}"
         );
+        let refspec = crate::agent::loop_commands::shell_arg(
+            "+refs/heads/no-such-branch:refs/remotes/origin/no-such-branch",
+        );
         assert!(
-            message.contains(
-                "git fetch origin '+refs/heads/no-such-branch:refs/remotes/origin/no-such-branch'"
-            ),
+            message.contains(&format!("git fetch origin {refspec}")),
             "{message}"
         );
         assert!(!message.contains("shallow clone"), "{message}");

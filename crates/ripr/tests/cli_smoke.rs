@@ -9538,9 +9538,16 @@ fn after_phase_redirect_scenario(
     // splitting the printed text (a quoted root may contain spaces), and
     // check the message prints those commands with the rendered root.
     let root_arg = root.display().to_string();
+    // The message prints a Windows root with `/` separators; the run below
+    // passes the native spelling.
+    let printed_root = if cfg!(windows) {
+        root_arg.replace('\\', "/")
+    } else {
+        root_arg.clone()
+    };
     assert!(
-        refusal.contains(&format!("`ripr agent status --root {root_arg}"))
-            && refusal.contains(&format!("`ripr agent repair --root {root_arg}"))
+        refusal.contains(&format!("`ripr agent status --root {printed_root}"))
+            && refusal.contains(&format!("`ripr agent repair --root {printed_root}"))
             && refusal.contains(&format!("--seam-id {BOUNDARY_GAP_SEAM_ID} --phase before`")),
         "{refusal}"
     );

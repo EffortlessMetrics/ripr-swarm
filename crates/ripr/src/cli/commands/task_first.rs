@@ -901,7 +901,10 @@ mod tests {
     /// root prints only the Bash line.
     #[test]
     fn retry_template_translates_root_around_its_placeholder() {
-        let root = crate::agent::loop_commands::shell_arg("/home/o'neil/proj");
+        // The Bash single-quote form is the stimulus: the host form on Windows is a
+        // double-quoted root that PowerShell reads the same way, so it prints no
+        // second line.
+        let root = crate::agent::loop_commands::shell_arg_for("/home/o'neil/proj", false);
         assert_eq!(
             retry_lines(&format!("ripr continue --attempt <attempt-id> --root {root}")),
             vec![

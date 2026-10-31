@@ -2912,10 +2912,13 @@ pub(crate) mod tests {
     #[test]
     fn candidate_commands_carry_a_powershell_form_when_quoting_differs() {
         let root = "/home/o'neil/proj";
+        // The Bash single-quote form is the stimulus on every host: Windows
+        // prints a double-quoted root that PowerShell reads identically.
+        let bash_root = crate::agent::loop_commands::shell_arg_for(root, false);
         let mut first = note("src/lib.rs:2", "a >= b", "aaa");
-        first.command = format!("ripr repair aaa --root {}", shell_arg(root));
+        first.command = format!("ripr repair aaa --root {bash_root}");
         let mut second = note("src/lib.rs:10", "c >= d", "bbb");
-        second.command = format!("ripr repair bbb --root {}", shell_arg(root));
+        second.command = format!("ripr repair bbb --root {bash_root}");
         let text = render_repair_choice(&[first, second], 2, root);
         for seam in ["aaa", "bbb"] {
             assert!(

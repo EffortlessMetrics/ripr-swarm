@@ -2362,6 +2362,24 @@ fn repair_choice_commands_pair_powershell_form_for_apostrophe_root() -> Result<(
     );
     let stderr = stderr_text(&repair);
     let lines: Vec<&str> = stderr.lines().collect();
+    if cfg!(windows) {
+        // Windows prints the root double-quoted, which PowerShell reads the
+        // same way, so no second spelling exists to pair.
+        for seam in [FIXTURE_SEAM, SECOND_SEAM] {
+            assert!(
+                lines.iter().any(|line| line
+                    .trim_start()
+                    .starts_with(&format!("ripr repair {seam} --root \""))),
+                "candidate {seam} must print its double-quoted command:\n{stderr}"
+            );
+        }
+        assert!(
+            !stderr.contains("(PowerShell)"),
+            "a root both shells read alike prints no second form:\n{stderr}"
+        );
+        assert!(attempt_ids(root).is_empty(), "no attempt before selection");
+        return Ok(());
+    }
     for seam in [FIXTURE_SEAM, SECOND_SEAM] {
         assert!(
             lines.windows(2).any(|pair| {
@@ -2933,22 +2951,39 @@ fn continue_selection_retry_pairs_powershell_form_for_apostrophe_root() -> Resul
             "attempt {id} must be listed once as its own choice:\n{stderr}"
         );
     }
-    assert!(
-        lines.windows(2).any(|pair| {
-            pair[0].starts_with("retry: ripr continue --attempt <attempt-id> --root ")
-                && pair[0].contains("'\\''")
-                && pair[1].starts_with(
-                    "retry (PowerShell): ripr continue --attempt <attempt-id> --root '",
-                )
-                && pair[1].contains("''")
-                && !pair[1].contains("'\\''")
-        }),
-        "retry must pair its PowerShell form around the placeholder:\n{stderr}"
-    );
-    assert!(
-        !stderr.contains("PowerShell form unavailable"),
-        "the placeholder must not trigger the no-form disclosure:\n{stderr}"
-    );
+    if cfg!(windows) {
+        // Windows prints the root double-quoted, which PowerShell reads the
+        // same way, so the retry template carries no second spelling.
+        assert!(
+            lines
+                .iter()
+                .any(|line| line
+                    .starts_with("retry: ripr continue --attempt <attempt-id> --root \"")),
+            "retry must print its double-quoted command:\n{stderr}"
+        );
+        assert!(
+            !stderr.contains("retry (PowerShell)")
+                && !stderr.contains("PowerShell form unavailable"),
+            "a root both shells read alike prints no second form:\n{stderr}"
+        );
+    } else {
+        assert!(
+            lines.windows(2).any(|pair| {
+                pair[0].starts_with("retry: ripr continue --attempt <attempt-id> --root ")
+                    && pair[0].contains("'\\''")
+                    && pair[1].starts_with(
+                        "retry (PowerShell): ripr continue --attempt <attempt-id> --root '",
+                    )
+                    && pair[1].contains("''")
+                    && !pair[1].contains("'\\''")
+            }),
+            "retry must pair its PowerShell form around the placeholder:\n{stderr}"
+        );
+        assert!(
+            !stderr.contains("PowerShell form unavailable"),
+            "the placeholder must not trigger the no-form disclosure:\n{stderr}"
+        );
+    }
     for id in &ids {
         assert_eq!(
             read_manifest(root, id)?["state"],
