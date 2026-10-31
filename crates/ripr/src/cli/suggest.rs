@@ -37,9 +37,42 @@ pub(crate) struct UsageRefusal {
 /// Most recent usage records kept; older ones are dropped.
 const RECORDED_USAGE_LIMIT: usize = 16;
 
-static RECORDED_USAGE: std::sync::Mutex<Vec<UsageRefusal>> = std::sync::Mutex::new(Vec::new());
+/// A bounded, message-keyed list of usage records. The process-wide store is
+/// one instance; the bound is exercised on a local instance so no test can
+/// evict another test's record.
+#[derive(Default)]
+struct UsageRecords {
+    records: Vec<UsageRefusal>,
+}
 
-fn recorded_usage() -> std::sync::MutexGuard<'static, Vec<UsageRefusal>> {
+impl UsageRecords {
+    const fn new() -> Self {
+        Self {
+            records: Vec::new(),
+        }
+    }
+
+    fn record(&mut self, usage: UsageRefusal) {
+        self.records
+            .retain(|existing| existing.message != usage.message);
+        if self.records.len() >= RECORDED_USAGE_LIMIT {
+            self.records.remove(0);
+        }
+        self.records.push(usage);
+    }
+
+    fn take(&mut self, message: &str) -> Option<UsageRefusal> {
+        let index = self
+            .records
+            .iter()
+            .position(|existing| existing.message == message)?;
+        Some(self.records.remove(index))
+    }
+}
+
+static RECORDED_USAGE: std::sync::Mutex<UsageRecords> = std::sync::Mutex::new(UsageRecords::new());
+
+fn recorded_usage() -> std::sync::MutexGuard<'static, UsageRecords> {
     // A poisoned lock only means another thread panicked while holding it;
     // the list stays a valid list of independent records.
     RECORDED_USAGE
@@ -53,12 +86,7 @@ pub(crate) fn record_usage_refusal(
     next_command: Option<String>,
     message: String,
 ) -> String {
-    let mut recorded = recorded_usage();
-    recorded.retain(|existing| existing.message != message);
-    if recorded.len() >= RECORDED_USAGE_LIMIT {
-        recorded.remove(0);
-    }
-    recorded.push(UsageRefusal {
+    recorded_usage().record(UsageRefusal {
         code,
         next_command,
         message: message.clone(),
@@ -70,11 +98,7 @@ pub(crate) fn record_usage_refusal(
 /// message. Taking removes the record, so a later unrelated error never
 /// inherits a stale class.
 pub(crate) fn take_usage_refusal(message: &str) -> Option<UsageRefusal> {
-    let mut recorded = recorded_usage();
-    let index = recorded
-        .iter()
-        .position(|existing| existing.message == message)?;
-    Some(recorded.remove(index))
+    recorded_usage().take(message)
 }
 
 /// The help route an unknown-argument error points at. `check`'s default help
@@ -501,12 +525,36 @@ mod tests {
 
     #[test]
     fn the_record_list_is_bounded() {
-        let first = unknown_argument("check", "--bounded-first-11584");
+        // A local store: the bound must not be exercised on the process-wide
+        // list, where it would evict records parallel tests still need.
+        let usage = |index: usize| UsageRefusal {
+            code: "unknown_argument",
+            next_command: None,
+            message: format!("record {index}"),
+        };
+        let mut records = UsageRecords::new();
         for index in 0..(RECORDED_USAGE_LIMIT + 4) {
-            let _ = unknown_argument("check", &format!("--bounded-fill-{index}-11584"));
+            records.record(usage(index));
         }
-        // The oldest record was dropped, so it is prose-only, not retained forever.
-        assert_eq!(take_usage_refusal(&first), None);
+        assert_eq!(records.records.len(), RECORDED_USAGE_LIMIT);
+        // The oldest records were dropped; the newest are kept.
+        assert_eq!(records.take("record 0"), None);
+        assert!(
+            records
+                .take(&format!("record {}", RECORDED_USAGE_LIMIT + 3))
+                .is_some()
+        );
+        // Re-recording a message replaces it instead of growing the list.
+        records.record(usage(10));
+        records.record(usage(10));
+        assert_eq!(
+            records
+                .records
+                .iter()
+                .filter(|existing| existing.message == "record 10")
+                .count(),
+            1
+        );
     }
 
     #[test]
