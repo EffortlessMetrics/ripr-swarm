@@ -215,7 +215,26 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
             continue;
         }
         if byte == b'\'' {
-            index = skip_char_or_lifetime(text, index);
+            let end = skip_char_or_lifetime(text, index);
+            if end == index + 1
+                && bytes
+                    .get(end)
+                    .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b >= 0x80)
+            {
+                // A lifetime or label (`break 'a`, `&'a T`) is neither an
+                // operand nor a run breaker: skip its name here so it does not
+                // reset a prefix-keyword run (`break 'a break 'a ..`).
+                index = end;
+                while bytes
+                    .get(index)
+                    .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b >= 0x80)
+                {
+                    index += 1;
+                }
+                previous_word_was_else = false;
+                continue;
+            }
+            index = end;
             after_operand = true;
             unary_run = 0;
             previous_word_was_else = false;
@@ -272,9 +291,11 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
         previous_word_was_else = false;
         match byte {
             b'(' | b'[' | b'{' => {
-                if byte != b'{' && after_operand {
-                    // Postfix call or index: `f()()..` and `x[0][0]..` nest one
-                    // call or index expression per bracket pair (#11572).
+                if byte != b'{' && after_operand && follows_closer(bytes, index) {
+                    // Postfix call or index on a closed group: `f()()..` and
+                    // `x[0][0]..` nest one expression per bracket pair
+                    // (#11572). A group after an identifier (`foo() foo() ..`,
+                    // flat inside a macro token tree) nests one level at most.
                     count_operator(&mut operators, depth, &mut open_operators, &mut estimate);
                 }
                 depth = depth.saturating_add(1);
@@ -328,6 +349,15 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
         index += 1;
     }
     estimate
+}
+
+/// True when the previous non-whitespace byte before `index` closes a group.
+fn follows_closer(bytes: &[u8], index: usize) -> bool {
+    let mut at = index;
+    while at > 0 && bytes.get(at - 1).is_some_and(u8::is_ascii_whitespace) {
+        at -= 1;
+    }
+    at > 0 && matches!(bytes.get(at - 1), Some(b')' | b']'))
 }
 
 /// Record one more link in the left-nested chain the current token extends.
@@ -719,28 +749,55 @@ mod tests {
         }
     }
 
-    /// #11572: left-nested cast, call and index chains nest the tree once per
-    /// link and used to bypass the operator-run budget.
+    /// #11572: left-nested cast, call, index, binding and `box` chains nest the
+    /// tree once per link and used to bypass the budgets.
     #[test]
     fn cast_call_index_binding_and_box_chains_are_refused() {
-        let chains = [
-            ("as", " as u8".repeat(5_000)),
-            ("call", "()".repeat(5_000)),
-            ("index", "[0]".repeat(5_000)),
-            ("at", "y @ ".repeat(5_000)),
-            ("box", "box ".repeat(5_000)),
+        let sources = [
+            (
+                "as",
+                format!("fn f() {{ let _v = x{}; }}\n", " as u8".repeat(5_000)),
+            ),
+            (
+                "call",
+                format!("fn f() {{ let _v = x{}; }}\n", "()".repeat(5_000)),
+            ),
+            (
+                "index",
+                format!("fn f() {{ let _v = x{}; }}\n", "[0]".repeat(5_000)),
+            ),
+            (
+                "at",
+                format!("fn f() {{ let {}z = 1; }}\n", "y @ ".repeat(5_000)),
+            ),
+            (
+                "box",
+                format!("fn f() {{ let {}z = 1; }}\n", "box ".repeat(5_000)),
+            ),
+            (
+                "label",
+                format!("fn f() {{ let _v = {}x; }}\n", "break 'a ".repeat(5_000)),
+            ),
         ];
-        for (name, chain) in chains {
-            let source = format!("fn f() {{ let _v = x{chain}z; }}\n");
+        for (name, source) in sources {
             assert!(
                 rust_nesting_refusal(&source)
                     .is_some_and(|reason| reason.contains("rust_nesting_budget")),
                 "{name} chain must be refused"
             );
         }
+    }
+
+    #[test]
+    fn ordinary_and_flat_macro_groups_stay_within_budget() {
         let ordinary =
             "fn f(v: &[u8]) -> usize { make()(1)[0] as usize + v[1] as usize }\n".repeat(5_000);
         assert_eq!(rust_nesting_refusal(&ordinary), None);
+        // Flat adjacent groups inside a macro token tree nest one level each.
+        let flat = format!("m!({});\n", "foo() ".repeat(5_000));
+        assert_eq!(rust_nesting_refusal(&flat), None);
+        let flat_index = format!("m!({});\n", "a[0] ".repeat(5_000));
+        assert_eq!(rust_nesting_refusal(&flat_index), None);
     }
 
     #[test]
