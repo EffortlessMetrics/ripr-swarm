@@ -636,3 +636,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_test_placement_verify (29)
+
+Reason:
+RIPR-SPEC-0209: retain producer-qualified Python test identity for safe manual verification.
+
+Command:
+`cargo xtask goldens bless python_test_placement_verify --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

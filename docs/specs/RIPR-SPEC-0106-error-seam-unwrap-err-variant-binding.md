@@ -232,6 +232,16 @@ boundary only for an `ffi` identifier word (`std::ffi::CStr`, `ffi_call`),
 not for the letters `ffi` inside a word, which refused every witness for
 variants such as `PayError::Insufficient` (#6673).
 
+Repo-seam grading applies the same rule to a `return_value` seam whose changed
+expression is a plain `Err(Type::Variant)` construction (#11111): an exact
+error-variant pin naming that same variant (with the same string-payload guard)
+discriminates the return-value seam as it does the same-span error-variant seam,
+so `ripr repair` no longer reports "missing evidence" for a change `ripr check`
+reads as exposed. A sibling-variant pin, an `.ok_or(..)?` line and a success
+payload are not credited, and the shared `oracle_kind_matches_seam_kind` is
+unchanged. The effect can only move a seam toward gripped, which removes
+repair candidates and never adds one.
+
 ## Non-Goals
 
 - Does NOT recognize `expect_err` in a middle position (only at the end of the
