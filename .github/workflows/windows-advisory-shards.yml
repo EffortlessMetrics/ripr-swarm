@@ -8,6 +8,12 @@ name: Windows Advisory Shards
 # replace the required Linux gates and is not wired to pull_request events.
 on:
   workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: "Optional exact commit to test instead of the dispatched ref's head (40 hexadecimal characters; release candidate, #2769)"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -35,6 +41,7 @@ jobs:
       # on a shallow clone (#10344).
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          ref: ${{ inputs.candidate_sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -168,6 +175,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          ref: ${{ inputs.candidate_sha || github.sha }}
           persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.95

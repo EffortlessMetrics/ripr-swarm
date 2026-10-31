@@ -87,11 +87,11 @@ pub(in crate::analysis::language::python) fn resolve_repo_working_set_limit(
         }),
         Ok(raw) => {
             let parsed = raw.trim().parse::<usize>().map_err(|err| {
-                format!("{PYTHON_REPO_FILE_LIMIT_ENV} must be a positive integer: {err}")
+                format!("{PYTHON_REPO_FILE_LIMIT_ENV} must be a positive integer: {err}; set it to a whole number above zero, or unset it to use the default")
             })?;
             if parsed == 0 {
                 return Err(format!(
-                    "{PYTHON_REPO_FILE_LIMIT_ENV} must be a positive integer"
+                    "{PYTHON_REPO_FILE_LIMIT_ENV} must be a positive integer; set it to a whole number above zero, or unset it to use the default"
                 ));
             }
             Ok(RepoWorkingSetLimit {
@@ -99,9 +99,9 @@ pub(in crate::analysis::language::python) fn resolve_repo_working_set_limit(
                 source: RepoWorkingSetCapSource::EnvOverride,
             })
         }
-        Err(std::env::VarError::NotUnicode(_)) => {
-            Err(format!("{PYTHON_REPO_FILE_LIMIT_ENV} must be valid UTF-8"))
-        }
+        Err(std::env::VarError::NotUnicode(_)) => Err(format!(
+            "{PYTHON_REPO_FILE_LIMIT_ENV} must be valid UTF-8; set it to a whole number above zero, or unset it to use the default"
+        )),
     }
 }
 

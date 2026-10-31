@@ -721,7 +721,7 @@ fn build_index_with_adapters(
 /// never an error: the gate only ever under-credits.
 fn manifest_package_names(root: &Path) -> std::collections::BTreeSet<String> {
     let mut names = std::collections::BTreeSet::new();
-    let Ok(text) = std::fs::read_to_string(root.join("Cargo.toml")) else {
+    let Ok(text) = crate::bounded_input::read_metadata_toml(root.join("Cargo.toml")) else {
         return names;
     };
     // A manifest is a TOML document (a table), not a standalone value:
@@ -756,7 +756,7 @@ fn manifest_package_names(root: &Path) -> std::collections::BTreeSet<String> {
 /// package, or moves the library root (`[lib] path` other than `src/lib.rs`),
 /// so every consumer under-credits.
 fn manifest_library_name(root: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(root.join("Cargo.toml")).ok()?;
+    let text = crate::bounded_input::read_metadata_toml(root.join("Cargo.toml")).ok()?;
     let value = text.parse::<toml::Table>().ok()?;
     let package = value
         .get("package")
@@ -820,7 +820,7 @@ fn absolute_member_dirs(root: &Path) -> Vec<PathBuf> {
 /// The `[workspace] members` directories (literal paths and trailing `/*`
 /// globs, minus `exclude`) of the root manifest.
 fn workspace_member_directories(root: &Path) -> Vec<PathBuf> {
-    let Ok(text) = std::fs::read_to_string(root.join("Cargo.toml")) else {
+    let Ok(text) = crate::bounded_input::read_metadata_toml(root.join("Cargo.toml")) else {
         return Vec::new();
     };
     let Ok(value) = text.parse::<toml::Table>() else {

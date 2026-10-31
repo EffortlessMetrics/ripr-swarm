@@ -301,7 +301,7 @@ match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
     edit surface.
 4i. `must_not_have_contradictory_packet_messaging` cases (additive, projection
     honesty): assert packet-ready findings do not retain blocked preview evidence
-    strings such as `gap_state: advisory`,
+    strings such as `gap_state: unknown`,
     `actionability_category: incomplete_repair_packet`, `why_not_actionable:`,
     `repair_route:`, `missing_actionability_fields:`, or non-empty
     `evidence_needed_to_promote:` lines in the rendered JSON evidence. A

@@ -1,3 +1,4 @@
+mod absorbing_tail;
 mod activation;
 mod argument_fold;
 mod arm_selection;
@@ -50,6 +51,7 @@ mod transitive_reach;
 mod value_transfer;
 mod variant_field_pattern;
 
+pub(in crate::analysis) use absorbing_tail::absorbing_tail_sink;
 pub(in crate::analysis) use activation::{
     LocalBoundary, TestValueFacts, activation_and_boundary_input, call_parameter_names,
     chain_row_transfer_stop, comparison_operands, computed_input_parameters, literal_operand_value,
@@ -186,8 +188,10 @@ pub(in crate::analysis) use text::{
 // witnessing test (file:line) and the entry public-API symbol.
 pub(in crate::analysis) use transitive_reach::{
     InheritedGraphCounter, MAX_TRANSITIVE_DEPTH, MacroReachWitness, RUST_MACRO_REACH_MESSAGE,
-    RUST_TRANSITIVE_REACH_MESSAGE, TransitiveReachIndex, TransitiveWitness, calls_after_definition,
-    macro_reach_limit_kind, macro_reach_limitation_detail_lines, macro_reach_witness_pointer,
+    RUST_TRAIT_DISPATCH_AMBIGUITY_MESSAGE, RUST_TRANSITIVE_REACH_MESSAGE, TraitDispatchAmbiguity,
+    TransitiveReachIndex, TransitiveWitness, calls_after_definition, macro_reach_limit_kind,
+    macro_reach_limitation_detail_lines, macro_reach_witness_pointer,
+    trait_dispatch_ambiguity_detail_lines, trait_dispatch_ambiguity_pointer,
     transitive_reach_limit_kind, transitive_reach_limitation_detail_lines,
     transitive_reach_witness_pointer,
 };
