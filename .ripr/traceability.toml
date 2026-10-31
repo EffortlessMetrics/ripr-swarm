@@ -3520,6 +3520,14 @@ id = "RIPR-SPEC-0027"
 name = "TypeScript preview static facts"
 spec = "docs/specs/RIPR-SPEC-0027-typescript-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::single_const_in_callback_block_resolves",
+  "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::rebound_shadowed_or_computed_local_never_resolves",
+  "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::nested_only_or_unparsed_binding_is_refused_not_rescued_by_outer_scope",
+  "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::name_the_callback_only_reads_is_left_to_the_outer_scope",
+  "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::file_level_constant_resolves_only_when_single_and_immutable",
+  "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::non_file_level_scope_binding_blocks_the_module_constant",
+  "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::lowercase_local_constant_witnesses_the_boundary",
+  "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::local_constant_that_is_rebound_or_off_value_does_not_witness",
   "crates/ripr/src/analysis/language/typescript/typeof_kind_tests.rs::typeof_guard_names_the_kind_test_not_the_type_name_string",
   "crates/ripr/src/analysis/language/typescript/typeof_kind_tests.rs::typeof_guard_never_names_the_bare_operand_as_the_literal",
   "crates/ripr/src/analysis/language/typescript/typeof_kind_tests.rs::non_typeof_comparisons_keep_their_discriminator",
