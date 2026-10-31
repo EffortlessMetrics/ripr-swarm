@@ -133,6 +133,15 @@ const BINDINGS: &[Binding] = &[
         excluded: &[],
     },
     Binding {
+        schema_path: "schemas/ripr/cli-refusal.schema.json",
+        pointer: None,
+        corpus: Corpus::Exempt(
+            "narrower authority (#11584): schemas_accept_a_null_recovery_command_and_pair_status_with_error in crates/ripr/tests/cli_smoke/refusal_envelope.rs runs the real CLI and checks the emitted document's keys, reason code and null `next` against the published schema's declared properties, required list and code enum; no committed document is a producer byte stream (the refusal exists per failing invocation), and this validator cannot replace that structural check",
+        ),
+        edge_fixtures: &[],
+        excluded: &[],
+    },
+    Binding {
         schema_path: "schemas/ripr/gate-decision.schema.json",
         pointer: None,
         corpus: Corpus::FileName("gate-decision.json"),

@@ -69,6 +69,17 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
         )],
     ),
     (
+        // The standalone machine-readable refusal of argv usage errors,
+        // `context` selector misses and the `repair`/`continue` facade
+        // (#11584).
+        "cli-refusal",
+        &[producer(
+            "crates/ripr/src/output/cli_refusal.rs",
+            "pub(crate) const CLI_REFUSAL_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
         "doctor",
         &[producer(
             "crates/ripr/src/output/doctor.rs",
@@ -404,6 +415,17 @@ const CONTRACTS: &[VerificationContract] = &[
             "save_stdin_diff_to_named_file",
             "published_after_deadline",
         ],
+    },
+    // The standalone `cli_refusal` document (#11584). Its shape is pinned
+    // against the published schema here; the emitted bytes are checked by
+    // `refusal_envelope.rs::schemas_accept_a_null_recovery_command_and_pair_status_with_error`.
+    VerificationContract {
+        schema_path: "schemas/ripr/cli-refusal.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/cli-refusal.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["cli_refusal", "status", "error", "exit_code"],
     },
     // The `test_harnesses` projection is checked against a producer golden
     // rather than a hand-written copy, for the reason stated below about the

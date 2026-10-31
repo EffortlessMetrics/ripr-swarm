@@ -35,6 +35,7 @@ Machine-readable schemas live under `schemas/`:
 | [`schemas/ripr/gate-decision.schema.json`](../../schemas/ripr/gate-decision.schema.json) | `ripr gate evaluate` decision output and its structured repair route. |
 | [`schemas/ripr/check.schema.json`](../../schemas/ripr/check.schema.json) | `ripr check --json` primary findings and typed analysis-outcome output. |
 | [`schemas/ripr/check-timeout-refusal.schema.json`](../../schemas/ripr/check-timeout-refusal.schema.json) | `ripr check --json` `analysis_timeout` refusal with input context (refusal generation 0.3, RIPR-SPEC-0241 amendment #10796). |
+| [`schemas/ripr/cli-refusal.schema.json`](../../schemas/ripr/cli-refusal.schema.json) | Standalone `cli_refusal` document for argv usage errors, `context` selector misses and `repair`/`continue` refusals under a JSON request (#11584). |
 | [`schemas/ripr/doctor.schema.json`](../../schemas/ripr/doctor.schema.json) | `ripr doctor --json` environment report: detected languages, unanalyzed source, preview-language gaps, config defaults, cache, test surfaces, and the Perl preview. |
 | [`schemas/ripr/repair-assurance.schema.json`](../../schemas/ripr/repair-assurance.schema.json) | Design-only `RepairAssuranceV1` envelope and the producer-owned command-spec and execution-result shapes. |
 | [`schemas/ripr/rust-repair-trust-corpus.schema.json`](../../schemas/ripr/rust-repair-trust-corpus.schema.json) | Authorized Rust repair attempt corpus of record. |
