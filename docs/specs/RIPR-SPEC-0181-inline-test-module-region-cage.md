@@ -118,6 +118,12 @@ target only through this cage:
   Under `core.autocrlf=true` a staged or committed copy is the LF-normalized
   form of the CRLF worktree bytes and is refused as
   `index_copy_not_validated` (fail closed); the unstaged flow is unaffected.
+  The before-phase "target is at HEAD" check intentionally keeps Git's filters
+  so it agrees with `git status` under `core.autocrlf`, and it is never compared
+  with validated bytes. Accepted residual (#6310): a normalizing clean filter
+  can make a raw uncommitted worktree edit read as "at HEAD" there; this is
+  accepted because the edit then becomes part of the captured before text and
+  any later staged or committed copy is still compared raw.
   The observation is part of the
   bound delta, so the verdict kernel is compliant only with an admitted
   observation (a missing one fails closed as `outside_inline_test_region`),

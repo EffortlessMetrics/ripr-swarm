@@ -271,6 +271,75 @@ fn a_clean_filter_cannot_launder_a_staged_production_edit() -> Result<(), String
     Ok(())
 }
 
+/// #6310: a clean filter that rewrites the validated bytes into a different
+/// blob must not make the COMMITTED copy match either. The filtered commit
+/// moves HEAD, and the worktree holds exactly the validated bytes. Without
+/// `--no-filters` the filtered object id equals the committed blob and the
+/// edit is admitted.
+#[cfg(unix)]
+#[test]
+fn a_clean_filter_cannot_launder_a_committed_production_edit() -> Result<(), String> {
+    let fixture = fixture("filter-commit", LIB)?;
+    let baseline = capture_attempt_baseline(&fixture.root, &inline_policy()?)?;
+    write_lib(&fixture, &with_new_test(LIB))?;
+    git_ok(
+        &fixture.root,
+        &["config", "filter.launder.clean", "sed 's/- 10/- 9/'"],
+    )?;
+    fs::create_dir_all(fixture.root.join(".git/info")).map_err(|e| format!("info dir: {e}"))?;
+    fs::write(
+        fixture.root.join(".git/info/attributes"),
+        "src/lib.rs filter=launder\n",
+    )
+    .map_err(|e| format!("write attributes: {e}"))?;
+    git_ok(&fixture.root, &["add", "src/lib.rs"])?;
+    git_ok(&fixture.root, &["commit", "-qm", "filtered commit"])?;
+    // Precondition: the filter really rewrote the committed blob.
+    let committed = crate::git::run_git_output_with_deadline_and_limit(
+        &fixture.root,
+        &["show", "HEAD:src/lib.rs"],
+        std::time::Duration::from_secs(10),
+        1024 * 1024,
+    )?;
+    let committed = String::from_utf8_lossy(&committed.stdout).into_owned();
+    assert!(committed.contains("cents - 9"), "{committed}");
+    let (_, verdict) = evaluate_repository_edit_cage_with_head_movement(
+        &baseline,
+        HeadMovement::AdmitDescendantCommits,
+    )?;
+    let reason = inline_violation_reason(&verdict).ok_or("expected an inline-region violation")?;
+    assert!(reason.contains("copy_not_validated"), "{reason}");
+    Ok(())
+}
+
+/// #6310: under `core.autocrlf=true` a staged CRLF target is stored
+/// LF-normalized, so it no longer equals the validated CRLF worktree bytes
+/// and is refused (fail closed) rather than admitted.
+#[test]
+fn an_autocrlf_normalized_staged_target_is_refused() -> Result<(), String> {
+    let fixture = fixture("autocrlf", LIB)?;
+    let baseline = capture_attempt_baseline(&fixture.root, &inline_policy()?)?;
+    git_ok(&fixture.root, &["config", "core.autocrlf", "true"])?;
+    let crlf = with_new_test(LIB).replace('\n', "\r\n");
+    write_lib(&fixture, &crlf)?;
+    git_ok(&fixture.root, &["add", "src/lib.rs"])?;
+    // Precondition: git really normalized the staged blob to LF.
+    let staged = crate::git::run_git_output_with_deadline_and_limit(
+        &fixture.root,
+        &["show", ":src/lib.rs"],
+        std::time::Duration::from_secs(10),
+        1024 * 1024,
+    )?;
+    assert!(!staged.stdout.contains(&b'\r'), "staged blob kept CR");
+    let (_, verdict) = evaluate_repository_edit_cage_with_head_movement(
+        &baseline,
+        HeadMovement::RequireBaselineHead,
+    )?;
+    let reason = inline_violation_reason(&verdict).ok_or("expected an inline-region violation")?;
+    assert!(reason.contains("index_copy_not_validated"), "{reason}");
+    Ok(())
+}
+
 /// #6310: a failed `hash-object` is its own refusal, not a copy that merely
 /// differs, and it outranks the copy comparisons it could not make.
 #[test]

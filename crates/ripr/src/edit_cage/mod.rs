@@ -597,6 +597,16 @@ fn reevaluation_capture(baseline: &AttemptBaseline) -> Result<Rc<AttemptBaseline
 /// allowed surface, so an uncommitted production edit outside the module
 /// would otherwise become part of the "before" text and reach the receipt
 /// unseen (#6678 closed the same hole for test-surface targets).
+///
+/// The worktree hash here intentionally keeps Git's filters (no
+/// `--no-filters`): in the before phase it must agree with `git status` under
+/// `core.autocrlf` (a CRLF worktree file of an LF blob is clean), and it is
+/// never compared against validated bytes; any later staging is compared raw
+/// in [`observe_inline_target`]. Accepted residual (#6310): a normalizing
+/// clean filter can make a raw uncommitted worktree edit read as "at HEAD"
+/// here. That is accepted because the edit then lands in the captured before
+/// text, and the after-phase raw comparison still refuses any staged or
+/// committed copy that is not exactly the validated bytes.
 fn require_inline_target_at_head(baseline: &AttemptBaseline, path: &str) -> Result<(), String> {
     let root = &baseline.root;
     let committed = git_text(
@@ -636,6 +646,9 @@ fn inline_target_copies_at_head(
 /// because its worktree or index copy differs from HEAD. Uses the same
 /// predicate as the attempt's baseline capture ([`require_inline_target_at_head`])
 /// so `ripr check` can withhold a repair start the attempt would refuse.
+/// Like that predicate, the worktree hash intentionally keeps Git's filters so
+/// it agrees with `git status` under `core.autocrlf` (same accepted residual,
+/// #6310: a normalizing clean filter can hide a raw uncommitted edit here).
 /// Fails open (`false`, leaving the attempt's own refusal authoritative)
 /// whenever the answer is not positively established: `root` is not the exact
 /// Git top-level (the attempt refuses that root itself, and `<rev>:<path>`
