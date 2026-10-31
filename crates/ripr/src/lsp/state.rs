@@ -2168,7 +2168,7 @@ mod tests {
         ledger
             .documents
             .lock()
-            .map_err(|_| "documents lock poisoned".to_string())?
+            .map_err(|error| format!("documents lock poisoned: {error}"))?
             .documents
             .insert(uri.clone(), state);
         if ledger.document_quarantine(&uri).map(|(_, reason)| reason)
