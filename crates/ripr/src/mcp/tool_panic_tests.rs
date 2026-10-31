@@ -382,7 +382,7 @@ async fn real_session_contains_tools_list_and_resources_read_glue_panics() -> Re
             bytes
                 .split(|byte| *byte == b'\n')
                 .filter(|frame| !frame.is_empty())
-                .map(|frame| serde_json::from_slice::<serde_json::Value>(frame))
+                .map(serde_json::from_slice::<serde_json::Value>)
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|error| error.to_string())
         }
