@@ -1830,6 +1830,64 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn write_test_stub_leaves_outside_targets_untouched() {
+        use crate::analysis::test_stub::{RustTestStub, TestStubPlacement};
+        let base = std::env::temp_dir().join(format!("ripr-stub-e2e-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("root");
+        let victim = base.join("victim");
+        std::fs::create_dir_all(root.join("src")).expect("root");
+        std::fs::create_dir_all(&victim).expect("victim");
+        std::fs::write(victim.join("lib.rs"), "// outside\n").expect("outside file");
+        std::os::unix::fs::symlink(&victim, root.join("tests")).expect("dir link");
+        std::os::unix::fs::symlink(victim.join("lib.rs"), root.join("src/lib.rs"))
+            .expect("file link");
+
+        let stub = |placement| RustTestStub {
+            placement,
+            test_name: "t".to_string(),
+            text: "#[test]\nfn t() {}\n".to_string(),
+            already_present: false,
+            fill_ins: Vec::new(),
+            derived_inputs: Vec::new(),
+        };
+        let resolution = TestStubResolution {
+            seam_id: "s".to_string(),
+            owner: "o".to_string(),
+            source: "// outside\n".to_string(),
+            outcome: Err(crate::analysis::test_stub::TestStubRefusal::NotAGap),
+            grip_class: None,
+            at_note: None,
+            next_repair: None,
+            seam_line: 1,
+            weak_oracle_guidance: None,
+        };
+        let placements = [
+            TestStubPlacement::NewIntegrationFile {
+                file: "tests/new_test.rs".into(),
+            },
+            TestStubPlacement::NewInlineModule {
+                file: "src/lib.rs".into(),
+                offset: 0,
+            },
+            TestStubPlacement::ExistingIntegrationFile {
+                file: "src/lib.rs".into(),
+            },
+        ];
+        for placement in placements {
+            let result = super::write_test_stub(&root, &resolution, &stub(placement));
+            assert!(result.is_err_and(|e| e.contains("outside the workspace")));
+        }
+        assert_eq!(
+            std::fs::read_to_string(victim.join("lib.rs")).expect("read"),
+            "// outside\n"
+        );
+        assert!(!victim.join("new_test.rs").exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     use super::*;
 
     #[test]
