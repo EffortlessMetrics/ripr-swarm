@@ -1331,7 +1331,7 @@ fn package_contract_runs_in_parallel_but_remains_required_for_consumers() -> Tes
     )?;
     assert_eq!(
         shell.trim(),
-        "set -euo pipefail\ncargo xtask check-release-targets\ncargo test -p xtask --locked policy::distribution::tests -- --nocapture"
+        "set -euo pipefail\ncargo xtask check-release-targets\ncargo test -p xtask --locked policy::distribution:: -- --nocapture"
     );
     assert!(!build.contains("cargo xtask check-release-targets"));
     assert!(!build.contains("policy::distribution::tests"));
@@ -1388,7 +1388,7 @@ if test "$*" = 'xtask check-release-targets'; then exit 7; fi
     );
     assert_eq!(
         fs::read_to_string(&calls)?,
-        "xtask check-release-targets\ntest -p xtask --locked policy::distribution::tests -- --nocapture\n"
+        "xtask check-release-targets\ntest -p xtask --locked policy::distribution:: -- --nocapture\n"
     );
     Ok(())
 }

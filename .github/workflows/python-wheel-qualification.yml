@@ -190,7 +190,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo xtask check-release-targets
-          cargo test -p xtask --locked policy::distribution::tests -- --nocapture
+          cargo test -p xtask --locked policy::distribution:: -- --nocapture
 
   build-wheel:
     needs: applicability
@@ -260,13 +260,6 @@ jobs:
           "${venv}/bin/python" -m twine --version
           "${venv}/bin/python" -m uv --version
           "${venv}/bin/python" -c 'import packaging; print(f"packaging {packaging.__version__}")'
-
-      - name: Validate package source contract
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo xtask check-release-targets
-          cargo test -p xtask --locked policy::distribution:: -- --nocapture
 
       - name: Resolve and cross-check Python distribution version
         id: python_version

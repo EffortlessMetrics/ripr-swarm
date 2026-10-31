@@ -3,12 +3,16 @@ const WORKFLOW: &str = include_str!("../../../.github/workflows/printed-command-
 const ORIGINAL: &str =
     include_str!("../../../fixtures/convergence/printed-command-paste/original.yml");
 
-fn payload(source: &str) -> &str {
+fn payload(source: &str) -> String {
     // The retained predecessor names the tag; mainline pins the commit.
     source
         .split_once("      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95\n")
         .or_else(|| source.split_once("      - uses: dtolnay/rust-toolchain@1.95\n"))
         .map_or("", |(_, tail)| tail)
+        .replace(
+            "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2",
+            "Swatinem/rust-cache@v2",
+        )
 }
 
 fn input_bindings(source: &str) -> bool {
@@ -120,7 +124,8 @@ fn exact_checkout_and_full_platform_shell_payload_are_preserved() {
     }
     let checkout = WORKFLOW.find("actions/checkout@v6");
     let guard = WORKFLOW.find("Verify exact source before product execution");
-    let toolchain = WORKFLOW.find("dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591");
+    let toolchain =
+        WORKFLOW.find("dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591");
     assert!(checkout.is_some() && guard.is_some() && toolchain.is_some());
     assert!(checkout < guard && guard < toolchain);
 }
@@ -393,7 +398,8 @@ mod execution {
 
     #[test]
     fn actual_payload_native_failure_is_not_hidden() -> Result<(), String> {
-        let command = payload(WORKFLOW)
+        let source = payload(WORKFLOW);
+        let command = source
             .lines()
             .find_map(|line| line.strip_prefix("        run: cargo test"))
             .ok_or("missing test payload")?;

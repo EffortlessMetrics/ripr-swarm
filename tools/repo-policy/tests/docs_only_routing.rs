@@ -42,8 +42,15 @@ fn shell(name: &str) -> TestResult<String> {
     } else {
         job(name)?
     };
-    assert_eq!(source.matches("        run: |\n").count(), 1);
-    let (_, body) = source.split_once("        run: |\n").ok_or("shell block")?;
+    // The detector job verifies the admitted integration in an earlier step; the
+    // classifier under test is its last shell block.
+    // The result step's aggregate is its first shell block.
+    let (_, body) = if name == "result" {
+        source.split_once("        run: |\n")
+    } else {
+        source.rsplit_once("        run: |\n")
+    }
+    .ok_or("shell block")?;
     let script = body
         .lines()
         .take_while(|line| line.is_empty() || line.starts_with("          "))
@@ -514,8 +521,8 @@ fn event_commit_bindings_are_exact_and_history_is_available() -> TestResult {
         .ok_or("detector step env")?;
     for binding in [
         "          EVENT_NAME: ${{ github.event_name }}",
-        "          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}",
-        "          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}",
+        "          BASE_SHA: ${{ steps.admitted.outputs.base }}",
+        "          HEAD_SHA: ${{ steps.admitted.outputs.head }}",
     ] {
         assert_eq!(
             env.lines().filter(|line| *line == binding).count(),
@@ -831,6 +838,32 @@ fn routed_result_admitted(
         ("ADMISSION_RESULT", admission_result),
         ("ADMISSION_STATUS", admission_status),
     ]);
+    // A merge-ready pull_request earns every staged exact-subject obligation;
+    // legacy main/manual profiles must skip the PR-only qualification leaves.
+    let (staged, leaf) = if event == "pull_request" {
+        ("success", "success")
+    } else {
+        ("skipped", "skipped")
+    };
+    env.extend([
+        (
+            "REF",
+            if event == "pull_request" {
+                "refs/pull/10/merge"
+            } else {
+                "refs/heads/main"
+            },
+        ),
+        ("QUALIFICATION_RESULT", staged),
+        (
+            "QUALIFICATION_EXECUTE",
+            if event == "pull_request" { "true" } else { "" },
+        ),
+        ("WINDOWS_RESULT", leaf),
+        ("PASTE_RESULT", leaf),
+        ("CI_RESULT", leaf),
+        ("WHEEL_RESULT", leaf),
+    ]);
     let output = fixture.run(&shell("result")?, &env, None)?;
     let summary = fs::read_to_string(fixture.root.join(".git/actions-summary"))?;
     assert!(
@@ -854,14 +887,13 @@ fn actual_result_block_treats_other_labels_as_a_nonrequest_that_never_qualifies(
     let (_, run) = result_step()?
         .split_once("        run: |\n")
         .ok_or("result step")?;
-    let first_decision = run
-        .lines()
-        .find(|line| line.trim_start().starts_with("if ["))
-        .ok_or("first decision")?;
-    assert!(
-        first_decision.contains("\"${LABEL_NAME,,}\" != \"merge-ready\""),
-        "{first_decision}"
-    );
+    let gate = run
+        .find("[ \"$LABEL_NAME\" = merge-ready ] || exit 0")
+        .ok_or("nonrequest label gate")?;
+    let first_qualification = run
+        .find("QUALIFICATION_RESULT\" = success")
+        .ok_or("qualification decision")?;
+    assert!(gate < first_qualification, "label gate precedes decisions");
     assert!(source.contains("'Merge-ready Nonrequest'"));
     Ok(())
 }
