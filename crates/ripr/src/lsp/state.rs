@@ -10,6 +10,7 @@ use crate::config::LspDiagnosticProfile;
 use crate::domain::{Finding, LanguageId};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 use tower_lsp_server::ls_types::{
     Diagnostic, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
@@ -1267,6 +1268,93 @@ pub(super) struct DocumentQuarantine {
     pub(super) withdrawal_disclosed: bool,
 }
 
+/// Owner of the open-document store, per-document save digests and the last
+/// published diagnostics (#2941). Each field keeps its own lock exactly as the
+/// `Backend` held them, so lock ordering and behavior are unchanged; the
+/// digest and quarantine-marker transitions live here instead of in `Backend`.
+#[derive(Default)]
+pub(super) struct QuarantineLedger {
+    pub(super) documents: Mutex<DocumentStore>,
+    /// Per-document save digest plus the workspace revision that save
+    /// produced; the revision lets a failed refresh drop only the digests no
+    /// successful snapshot has covered yet.
+    saved_content_digests: Mutex<BTreeMap<Uri, (String, u64)>>,
+    pub(super) last_diagnostics: Mutex<BTreeMap<Uri, Vec<Diagnostic>>>,
+}
+
+impl QuarantineLedger {
+    pub(super) fn saved_content_digest_matches(&self, uri: &Uri, digest: &str) -> bool {
+        self.saved_content_digests
+            .lock()
+            .ok()
+            .and_then(|digests| digests.get(uri).map(|(recorded, _)| recorded.clone()))
+            .is_some_and(|recorded| recorded == digest)
+    }
+
+    pub(super) fn record_saved_content_digest(&self, uri: &Uri, digest: String, revision: u64) {
+        if let Ok(mut digests) = self.saved_content_digests.lock() {
+            digests.insert(uri.clone(), (digest, revision));
+        }
+    }
+
+    /// Drop digests stamped with a revision no published snapshot covered.
+    pub(super) fn retain_covered_digests(&self, covered_revision: u64) {
+        if let Ok(mut digests) = self.saved_content_digests.lock() {
+            digests.retain(|_, (_, revision)| *revision <= covered_revision);
+        }
+    }
+
+    pub(super) fn forget_saved_content_digest(&self, uri: &Uri) {
+        if let Ok(mut digests) = self.saved_content_digests.lock() {
+            digests.remove(uri);
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn saved_content_digest_uris(&self) -> Vec<Uri> {
+        self.saved_content_digests
+            .lock()
+            .map(|digests| digests.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// `(path, reason)` for a quarantined open document; `None` when the
+    /// document is unknown or clean.
+    pub(super) fn document_quarantine(
+        &self,
+        uri: &Uri,
+    ) -> Option<(PathBuf, DocumentStalenessReason)> {
+        let documents = self.documents.lock().ok()?;
+        let state = documents.state_for_uri(uri)?;
+        let quarantine = state.quarantine.as_ref()?;
+        Some((state.path.clone(), quarantine.reason))
+    }
+
+    pub(super) fn document_path_for_uri(&self, uri: &Uri) -> Option<PathBuf> {
+        self.documents
+            .lock()
+            .ok()?
+            .state_for_uri(uri)
+            .map(|state| state.path.clone())
+    }
+
+    /// Mark the withdrawal disclosed, returning `(path, reason)` only on the
+    /// first disclosure of the quarantine episode.
+    pub(super) fn mark_withdrawal_disclosed(
+        &self,
+        uri: &Uri,
+    ) -> Option<(PathBuf, DocumentStalenessReason)> {
+        let mut documents = self.documents.lock().ok()?;
+        let state = documents.state_for_uri_mut(uri)?;
+        let quarantine = state.quarantine.as_mut()?;
+        if quarantine.withdrawal_disclosed {
+            return None;
+        }
+        quarantine.withdrawal_disclosed = true;
+        Some((state.path.clone(), quarantine.reason))
+    }
+}
+
 /// Quarantine edges produced by applying a committed snapshot's analyzed
 /// identities (#1970): documents that entered quarantine, and documents
 /// that exited it with each exit carrying its disclosed marker.
@@ -2038,6 +2126,62 @@ mod tests {
         for (kind, expected) in cases {
             assert_eq!(kind.as_str(), expected);
         }
+    }
+
+    #[test]
+    fn quarantine_ledger_owns_digests_and_disclosure_once() -> Result<(), String> {
+        let uri = test_uri("file:///workspace/src/lib.rs")?;
+        let ledger = QuarantineLedger::default();
+        if ledger.saved_content_digest_matches(&uri, "a") {
+            return Err("unrecorded digest must not match".to_string());
+        }
+        ledger.record_saved_content_digest(&uri, "a".to_string(), 5);
+        if !ledger.saved_content_digest_matches(&uri, "a")
+            || ledger.saved_content_digest_matches(&uri, "b")
+        {
+            return Err("recorded digest must match only itself".to_string());
+        }
+        ledger.retain_covered_digests(4);
+        if ledger.saved_content_digest_matches(&uri, "a") {
+            return Err("digest above covered revision must be dropped".to_string());
+        }
+        ledger.record_saved_content_digest(&uri, "a".to_string(), 3);
+        ledger.retain_covered_digests(4);
+        if !ledger.saved_content_digest_matches(&uri, "a") {
+            return Err("covered digest must be retained".to_string());
+        }
+        ledger.forget_saved_content_digest(&uri);
+        if ledger.saved_content_digest_matches(&uri, "a") {
+            return Err("closed document digest must be forgotten".to_string());
+        }
+
+        let mut state = clean_document_state(&uri, "fn saved() {}");
+        if ledger.document_quarantine(&uri).is_some()
+            || ledger.mark_withdrawal_disclosed(&uri).is_some()
+        {
+            return Err("unknown document is neither quarantined nor disclosable".to_string());
+        }
+        state.quarantine = Some(DocumentQuarantine {
+            reason: DocumentStalenessReason::InvalidIncrementalChange,
+            withdrawal_disclosed: false,
+        });
+        ledger
+            .documents
+            .lock()
+            .map_err(|error| format!("documents lock poisoned: {error}"))?
+            .documents
+            .insert(uri.clone(), state);
+        if ledger.document_quarantine(&uri).map(|(_, reason)| reason)
+            != Some(DocumentStalenessReason::InvalidIncrementalChange)
+        {
+            return Err("quarantined document must report its reason".to_string());
+        }
+        if ledger.mark_withdrawal_disclosed(&uri).is_none()
+            || ledger.mark_withdrawal_disclosed(&uri).is_some()
+        {
+            return Err("withdrawal must disclose exactly once per episode".to_string());
+        }
+        Ok(())
     }
 
     #[test]
