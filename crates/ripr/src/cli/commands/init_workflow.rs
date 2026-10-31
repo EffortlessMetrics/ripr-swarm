@@ -51,14 +51,12 @@ defaults:
     shell: bash
 
 concurrency:
-  # Each label action gets its own group, so a label cannot cancel a push run or the other label event.
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.action || 'run' }}
   cancel-in-progress: true
 
 jobs:
   ripr:
     name: RIPR advisory reports
-    # Label events matter only to a gate that reads waiver labels; advisory runs skip them.
     if: ${{ (github.event.action != 'labeled' && github.event.action != 'unlabeled') || (vars.RIPR_GATE_MODE != '' && vars.RIPR_GATE_MODE != 'visible-only') }}
     runs-on: ubuntu-latest
     # Advisory unless RIPR_GATE_MODE names a blocking mode.
@@ -384,7 +382,7 @@ mod template_pin_tests {
     /// first line, and artifact paths, which the `generated_workflow_*` and
     /// `install_version_*` tests pin at the rendered level.
     const TEMPLATE_SHA256: &str =
-        "248b0d888519767082207b54ba9184ae0559b6e183bd8b2579c81dc4db0c4cef";
+        "102616375642b7b74bcb7b539efef6e2ceb05bf9b0bcce81ff06965b8aad3c15";
 
     #[test]
     fn template_matches_the_pinned_bytes() {
