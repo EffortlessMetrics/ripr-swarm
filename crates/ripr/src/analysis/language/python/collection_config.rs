@@ -613,6 +613,10 @@ impl IniRules {
                         Some(value) => self.ignore_glob.push(value),
                         None => self.unevaluated = true,
                     }
+                } else if inline.is_none() && VALUE_OPTIONS.contains(&name.as_str()) {
+                    // The next token is this option's value (a report or log
+                    // path), not a positional collection argument.
+                    index += usize::from(index < words.len());
                 } else if ["--ov", "--ro", "--confc", "--config"]
                     .iter()
                     .any(|prefix| name.starts_with(prefix))
@@ -734,6 +738,23 @@ enum IgnoreKind {
     Path,
     Glob,
 }
+
+/// Common options that take a space-separated value which may look like a
+/// path; the value is never a positional collection argument.
+const VALUE_OPTIONS: &[&str] = &[
+    "--junitxml",
+    "--junit-xml",
+    "--html",
+    "--log-file",
+    "--basetemp",
+    "--report-log",
+    "--resultlog",
+    "--cov-report",
+    "--cov-config",
+    "--alluredir",
+    "--cache-dir",
+    "--json-report-file",
+];
 
 /// `--ignore` and `--ignore-glob`, including argparse's unambiguous prefixes.
 fn ignore_kind(name: &str) -> Option<IgnoreKind> {

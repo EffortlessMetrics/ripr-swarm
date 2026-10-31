@@ -103,6 +103,14 @@ fn subclass_inherits_a_false_switch_unless_it_restores_true() {
 }
 
 #[test]
+fn intermediate_class_test_switch_true_keeps_credit() {
+    let source = "from calc import price\n\n\nclass Base:\n    __test__ = False\n\n\nclass TestMid(Base):\n    __test__ = True\n\n\nclass TestSub(TestMid):\n    def test_p(self):\n        assert price(3) == 6\n";
+    assert!(control_names("tests/test_calc.py", source).is_empty());
+    let disabled_mid = "from calc import price\n\n\nclass Base:\n    __test__ = True\n\n\nclass TestMid(Base):\n    __test__ = False\n\n\nclass TestSub(TestMid):\n    def test_p(self):\n        assert price(3) == 6\n";
+    assert_eq!(control_names("tests/test_calc.py", disabled_mid), [SWITCH]);
+}
+
+#[test]
 fn computed_or_branch_bound_test_switch_withholds_credit() {
     for binding in [
         "__test__ = bool(ENABLED)",
@@ -349,6 +357,20 @@ fn testpaths_and_ignore_options_withhold_credit() -> Result<(), String> {
         ],
         "pytest.collection(norecursedirs)",
     )?;
+    for (label, addopts) in [
+        ("junitxml", "--junitxml reports/junit.xml"),
+        ("html", "--html x.html"),
+        ("log-file", "--log-file logs/a.log"),
+        ("basetemp", "--basetemp .tmp/x"),
+    ] {
+        assert_credited(
+            label,
+            &[
+                ("pytest.ini", &format!("[pytest]\naddopts = {addopts}\n")),
+                ("tests/test_calc.py", TEST_BODY),
+            ],
+        )?;
+    }
     assert_credited(
         "benign-options",
         &[

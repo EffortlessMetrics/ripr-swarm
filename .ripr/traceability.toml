@@ -17822,6 +17822,7 @@ tests = [
   "crates/ripr/src/analysis/language/python/collection_config_tests.rs::class_test_switch_false_withholds_credit",
   "crates/ripr/src/analysis/language/python/collection_config_tests.rs::class_test_switch_true_and_unrelated_class_keep_credit",
   "crates/ripr/src/analysis/language/python/collection_config_tests.rs::subclass_inherits_a_false_switch_unless_it_restores_true",
+  "crates/ripr/src/analysis/language/python/collection_config_tests.rs::intermediate_class_test_switch_true_keeps_credit",
   "crates/ripr/src/analysis/language/python/collection_config_tests.rs::computed_or_branch_bound_test_switch_withholds_credit",
   "crates/ripr/src/analysis/language/python/collection_config_tests.rs::module_test_switch_false_withholds_credit",
   "crates/ripr/src/analysis/language/python/collection_config_tests.rs::conftest_collect_ignore_withholds_credit_for_ignored_files_only",

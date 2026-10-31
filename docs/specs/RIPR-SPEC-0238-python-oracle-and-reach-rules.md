@@ -1063,7 +1063,13 @@ mutant calibrates the rule; ripr reports only the static shape.
     class, an unparsable or unreadable file, `-o`, `-c` or `--rootdir` in
     `addopts`) withholds credit for its scope. Not modelled, so credit is
     unchanged: the default `norecursedirs`, `-k`, `-m` and `--deselect`,
-    `pytest_collection_modifyitems`, and command-line arguments.
+    `pytest_collection_modifyitems`, and command-line arguments. Known
+    limits: `testpaths` is assumed to govern collection (an invocation that
+    passes explicit paths bypasses it); a function-level `__test__` is not
+    read; and a base class imported from another module is not resolved, so
+    its `__test__` binding is unseen. A space-separated value of a known
+    value-taking option (`--junitxml`, `--html`, `--log-file`,
+    `--basetemp`, ...) is not treated as a positional path.
 25. **A property check pins no value.** A single `==` in an `assert`
     statement is a weak relational check, as a tautology is (rule 1), when
     one side is a call and the other side is either a call that appears in
