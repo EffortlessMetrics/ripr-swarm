@@ -640,11 +640,18 @@ fn quarantined_conflict_and_context_lines_do_not_consume_the_budget() -> Result<
 }
 
 #[test]
-fn deleted_file_removed_lines_count_and_keep_deletion_metadata() -> Result<(), String> {
+fn deleted_file_body_retains_no_payloads_so_it_never_consumes_the_budget() -> Result<(), String> {
     let input = "diff --git a/src/gone.rs b/src/gone.rs\ndeleted file mode 100644\n--- a/src/gone.rs\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-a\n-b\n";
-    let parsed = parse_with_line_limit(input.lines(), 2)?;
+    // The parser registers no file for a deleted path, so its body lines are
+    // never retained as `ChangedLine` payloads and never count (#2398).
+    let parsed = parse_with_line_limit(input.lines(), 1)?;
     assert_eq!(parsed.deleted_file_count, 1);
-    assert!(parse_with_line_limit(input.lines(), 1).is_err());
+    assert!(
+        parsed
+            .changed_files
+            .iter()
+            .all(|f| f.removed_lines.is_empty())
+    );
     Ok(())
 }
 
