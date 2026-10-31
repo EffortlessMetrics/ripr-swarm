@@ -70,6 +70,18 @@ registration; the repository has not yet retained cold-session proof that
 either client completes the flow (tracked in #3092), so treat them as
 configuration, not a support claim.
 
+Every `ripr_refresh` result carries a top-level `fresh_for_working_tree`
+(`true` for a saved-worktree snapshot or a committed one with no uncommitted
+edits outside the analysis; `false` after a failed attempt or with edits the
+analysis cannot see; `null` with no snapshot) and a `verify` block naming
+`ripr_refresh {"source": "worktree"}` as the re-check after editing tests. ripr
+runs no tests; run them yourself. A refresh whose attempt failed returns
+`isError: true`; the document keeps the typed `attempt.failure` and the
+`last_known_good` snapshot. `ripr_get_gap` bounds
+`discriminator_availability.observed_values` to 12 entries (those at or just
+after a related test's line first) and reports `observed_values_total` and
+`observed_values_omitted`.
+
 An agent edits the worktree, but by default `ripr_refresh` analyzes only the
 committed default-branch diff. To analyze saved staged and unstaged tracked
 edits without committing them, call `ripr_refresh` with `{"source":
@@ -456,10 +468,15 @@ edit-cage `must_not_change` statements, stop conditions, the before-evidence
 identity, an empty `command_routes` list with the typed limitation (concrete
 typed `CommandSpec` routes are published only by the durable CLI before
 phase), the shared non-claims, and the resource links. An ineligible item
-returns `repair_packet_ready: false` with the typed ineligibility reason and
-`attempt: null` — no attempt is created and no field is guessed. The reasons
+returns `isError: true` with `repair_packet_ready: false`, the typed
+ineligibility reason, `attempt: null` and a machine-readable `next` object
+(`kind` one of `nothing_to_do`, `write_test_by_hand`, `change_policy`,
+`commit_then_refresh`, `await_producer_fact`; the `reason`; an `mcp` route or
+`null`; and, only for `write_test_by_hand`, `after_editing_tests`) — no attempt
+is created and no field is guessed, and `next` adds no verdict the shared gate
+did not produce. `isError` is true exactly when no transaction exists. The reasons
 the shared seam-level repair gate behind `ripr repair` contributes are
-`seam_already_gripped` (the seam's existing tests already grip it),
+`seam_already_gripped` (the seam's existing tests already check it),
 `seam_gate_refused` (route not ready, cross-language limits, policy
 omission or an uncommitted inline test target), `seam_ambiguous` (several seams name the item), `seam_not_found`
 (no classified seam names it) and `seam_inventory_truncated` (the repo-wide
