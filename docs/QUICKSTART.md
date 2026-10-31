@@ -154,9 +154,12 @@ totals never become a percentage or ETA. Progress does not mean analysis is
 faster or that the command will succeed. `--quiet` suppresses the progress
 stream; it does not change findings or exit codes. `ripr explain` and
 `ripr context` print the same `ripr progress:` lines on stderr and accept
-`--quiet`, as does `ripr pilot`. The stderr progress lines are a deliberate
-contract: stdout is the output contract, so for machine capture (for example
-the JSON from `context`) use `--quiet` or `2>/dev/null`, never `2>&1`.
+`--quiet`, as does `ripr pilot`. With a machine format (`--json`, `--format
+json`, `sarif`, `badge-*`, `agent`) or `ripr context` and a stderr that is not a
+terminal, progress is off by default (set `RIPR_PROGRESS=1` to restore it);
+`RIPR_QUIET` and `--quiet` silence it everywhere, including `ripr repair` and
+`ripr continue`. Stdout is the output contract, so for machine capture (for
+example the JSON from `context`) keep stderr separate rather than `2>&1`.
 
 A short glossary for the terms below:
 
@@ -177,8 +180,9 @@ Human output uses plain words for the schema values: `appear noticed` is
 [Terminology](TERMINOLOGY.md) for the seam-level words and
 [RIPR-SPEC-0122](specs/RIPR-SPEC-0122-bounded-human-check-output.md) for the human output wording.
 
-Agents and scripts reading `ripr check --json` should pass `--quiet` so stderr
-stays free of `ripr progress:` lines. The JSON is the full versioned report and
+Agents and scripts reading `ripr check --json` get a stderr free of
+`ripr progress:` lines when stderr is a pipe or file; pass `--quiet` (or set
+`RIPR_QUIET=1`) to make that unconditional, including on a terminal. The JSON is the full versioned report and
 is large: read `summary` and `canonical_next_action` (when present) first, then fetch one
 finding's evidence with `ripr context --at <finding-id> --json --quiet`.
 

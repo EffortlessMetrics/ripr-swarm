@@ -5487,3 +5487,123 @@ fn member_context_selector_shadowed_by_a_root_package_file_is_refused() -> Resul
 
 #[path = "task_first_facade/brief_diff_status.rs"]
 mod brief_diff_status;
+
+/// #11598: `--quiet` (and `RIPR_QUIET`) on `repair` / `continue` drop the
+/// phase narration and `wrote <path>` lines but never the results (attempt
+/// id, next command) or refusal prose; `status` accepts the flag.
+#[test]
+fn quiet_drops_narration_and_keeps_results_and_refusals() -> Result<(), String> {
+    let loud = Fixture::boundary("facade-quiet-loud")?;
+    let quiet = Fixture::boundary("facade-quiet-quiet")?;
+    let loud_arg = loud.root.to_string_lossy().into_owned();
+    let quiet_arg = quiet.root.to_string_lossy().into_owned();
+
+    let loud_start = run_ripr_env(
+        &loud.root,
+        &["repair", FIXTURE_SEAM, "--root", &loud_arg],
+        &[("RIPR_QUIET", "0")],
+    )?;
+    assert_exit(&loud_start, 0, "loud repair start");
+    let loud_err = stderr_text(&loud_start);
+    assert!(
+        loud_err.contains("ripr: wrote ")
+            && loud_err.contains("ripr: agent repair --phase before for seam"),
+        "control: the loud start narrates and reports written files:\n{loud_err}"
+    );
+
+    let quiet_start = run_ripr_env(
+        &quiet.root,
+        &["repair", FIXTURE_SEAM, "--root", &quiet_arg, "--quiet"],
+        &[("RIPR_QUIET", "0")],
+    )?;
+    assert_exit(&quiet_start, 0, "quiet repair start");
+    let quiet_err = stderr_text(&quiet_start);
+    for dropped in ["ripr: wrote ", "agent repair --phase before for seam"] {
+        assert!(
+            !quiet_err.contains(dropped),
+            "--quiet must drop `{dropped}`:\n{quiet_err}"
+        );
+    }
+    for kept in [
+        "is waiting for your test",
+        "attempt next command: ripr continue",
+    ] {
+        assert!(
+            quiet_err.contains(kept),
+            "--quiet must keep the result line `{kept}`:\n{quiet_err}"
+        );
+    }
+    assert!(
+        !stdout_text(&quiet_start).is_empty(),
+        "--quiet leaves the stdout card in place"
+    );
+    assert_eq!(attempt_ids(&quiet.root).len(), 1, "one attempt started");
+
+    // A refused continue: refusal prose is identical in kind, only the
+    // phase narration is gone.
+    let loud_refusal = run_ripr_env(
+        &loud.root,
+        &["continue", "--root", &loud_arg],
+        &[("RIPR_QUIET", "0")],
+    )?;
+    assert_exit(&loud_refusal, 3, "loud continue before the edit");
+    assert!(
+        stderr_text(&loud_refusal).contains("consuming attempt manifest"),
+        "control: loud continue narrates:\n{}",
+        stderr_text(&loud_refusal)
+    );
+    for (label, output) in [
+        (
+            "--quiet",
+            run_ripr_env(
+                &quiet.root,
+                &["continue", "--root", &quiet_arg, "--quiet"],
+                &[("RIPR_QUIET", "0")],
+            )?,
+        ),
+        (
+            "RIPR_QUIET=1",
+            run_ripr_env(
+                &quiet.root,
+                &["continue", "--root", &quiet_arg],
+                &[("RIPR_QUIET", "1")],
+            )?,
+        ),
+    ] {
+        assert_exit(&output, 3, &format!("{label} continue before the edit"));
+        let stderr = stderr_text(&output);
+        for dropped in [
+            "consuming attempt manifest",
+            "agent repair --phase after for attempt",
+        ] {
+            assert!(
+                !stderr.contains(dropped),
+                "{label} must drop `{dropped}`:\n{stderr}"
+            );
+        }
+        for kept in ["still awaits the focused test edit", "to recover:"] {
+            assert!(
+                stderr.contains(kept),
+                "{label} must keep refusal prose `{kept}`:\n{stderr}"
+            );
+        }
+        assert_refusal_stderr_has_prefix(&stderr);
+    }
+
+    let status = run_ripr(&quiet.root, &["status", "--root", &quiet_arg, "--quiet"])?;
+    assert_exit(&status, 0, "status accepts --quiet");
+    let plain = run_ripr(&quiet.root, &["status", "--root", &quiet_arg])?;
+    assert_eq!(
+        stdout_text(&status),
+        stdout_text(&plain),
+        "status --quiet changes nothing"
+    );
+    Ok(())
+}
+
+fn assert_refusal_stderr_has_prefix(stderr: &str) {
+    assert!(
+        stderr.lines().any(|line| line.starts_with("ripr: ")),
+        "refusal prose keeps the `ripr:` prefix:\n{stderr}"
+    );
+}

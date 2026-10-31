@@ -202,7 +202,7 @@ findings. `unsupported_input` reports exit 2, as do usage errors. Do not build
 a CI gate on check's exit code; run `ripr gate evaluate` (exit 3 on `blocked`).
 Examples:
   ripr check
-  ripr check --base origin/main --json --quiet   (--json alone still prints progress)
+  ripr check --base origin/main --json --quiet   (--json on a pipe is already quiet; --quiet also silences a terminal)
 More:
   ripr check --help --all   Every option (--path/--exclude too), format, and env var.
 "#;
@@ -399,12 +399,15 @@ Progress:
   throttled `still active after <elapsed class>` heartbeats. Non-TTY
   / CI output is newline-delimited with no control sequences. A TTY
   may reuse one line and stays silent for sub-threshold flashes.
-  Machine formats (json, sarif, github) keep stdout byte-clean;
-  they do not disable stderr progress. Unknown totals never become a
+  Machine formats keep stdout byte-clean. When a machine format (json,
+  sarif, badge-*, agent) is selected and stderr is not a terminal, the
+  stream is off by default; `RIPR_PROGRESS=1` restores it. A terminal and
+  the human formats keep it. Unknown totals never become a
   percentage or ETA. Progress does not mean analysis is faster or
-  that the command will succeed. `--quiet` turns this stream off; agents
-  and scripts reading json should pass it. Setting `RIPR_QUIET` to anything
-  but empty, `0` or `false` does the same.
+  that the command will succeed. `--quiet` turns this stream off; so does
+  setting `RIPR_QUIET` to anything but empty, `0` or `false`. `repair` and
+  `continue` accept `--quiet` too and drop their progress narration and
+  `wrote <path>` lines; refusal prose is never suppressed.
 
 Environment variables:
   RIPR_MAX_DIFF_CHANGED_RUST_LINES        Maximum added plus removed Rust diff lines
@@ -464,9 +467,13 @@ Environment variables:
                                           Default: 1000000 (1 MB).
   RIPR_QUIET                              Silence the stderr `ripr progress:` stream
                                           like --quiet (check, explain, context,
-                                          pilot). Any value except empty, 0 or
-                                          false silences it; stdout, exit codes and
-                                          errors are unchanged.
+                                          pilot, repair, continue). Any value except
+                                          empty, 0 or false silences it; stdout, exit
+                                          codes and errors are unchanged.
+  RIPR_PROGRESS                           Keep the `ripr progress:` stream for a
+                                          machine format on a non-terminal stderr,
+                                          where it is off by default. Any value
+                                          except empty, 0 or false restores it.
   RIPR_GIT_TIMEOUT                        Cooperative deadline in seconds for each
                                           git invocation in the diff-load path. A
                                           git command that exceeds the deadline is

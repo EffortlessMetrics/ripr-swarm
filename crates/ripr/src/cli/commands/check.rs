@@ -1593,12 +1593,13 @@ fn check_inner(
     // diff-scoped path promises (`ripr progress: <stage> [<scope>]`,
     // throttled heartbeats included). Both the audit-path disclosure and the
     // stage lines are stderr-only and cannot change machine stdout.
-    let progress = (!crate::cli::progress::progress_silenced(quiet)).then(|| {
-        std::sync::Arc::new(crate::cli::progress::CliProgressSink::for_stderr(
-            std::io::stderr().is_terminal(),
-            crate::cli::progress::ProgressPolicy::STANDARD,
-        ))
-    });
+    let progress = (!crate::cli::progress::progress_silenced(quiet, format.is_machine_readable()))
+        .then(|| {
+            std::sync::Arc::new(crate::cli::progress::CliProgressSink::for_stderr(
+                std::io::stderr().is_terminal(),
+                crate::cli::progress::ProgressPolicy::STANDARD,
+            ))
+        });
     let progress_sink = progress
         .as_ref()
         .map(|sink| &**sink as &dyn crate::app::AnalysisProgressSink);

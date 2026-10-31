@@ -320,6 +320,7 @@ fn before_phase_refuses_dirty_production_premise_before_the_seam_inventory() -> 
             verify_rollback: false,
             store: None,
             json: false,
+            quiet: false,
         };
         let mut refusal = AfterPhaseRefusalContext::default();
         match run_agent_repair_phase(options, &mut refusal, Some(&identity)) {

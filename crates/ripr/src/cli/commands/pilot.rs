@@ -158,7 +158,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         .enabled()
         .contains(&crate::domain::LanguageId::Rust);
     let extension_ms = pilot_deadline_extension_ms(&options);
-    let progress = pilot_progress_sink(options.quiet);
+    let progress = pilot_progress_sink(options.quiet, options.format == PilotStdoutFormat::Json);
     let analysis_started = Instant::now();
     let mut timings = PilotTimings::start();
     let analysis_result = if rust_enabled {
@@ -735,8 +735,8 @@ fn elapsed_ms(started: Instant) -> u64 {
 /// one-shot timeout notice and command errors still reach stderr. The
 /// sink is terminal-once, so a timed-out attempt (or its #2424 retry)
 /// needs a fresh one from `pilot_progress_sink`.
-fn pilot_progress_sink(quiet: bool) -> Option<Arc<CliProgressSink>> {
-    if crate::cli::progress::progress_silenced(quiet) {
+fn pilot_progress_sink(quiet: bool, machine_format: bool) -> Option<Arc<CliProgressSink>> {
+    if crate::cli::progress::progress_silenced(quiet, machine_format) {
         return None;
     }
     Some(Arc::new(CliProgressSink::for_stderr(
@@ -1762,10 +1762,10 @@ mod tests {
         // every stage and heartbeat line while the timeout machinery still
         // behaves identically.
         assert!(
-            pilot_progress_sink(true).is_none(),
+            pilot_progress_sink(true, false).is_none(),
             "--quiet must suppress the pilot progress sink"
         );
-        assert!(pilot_progress_sink(false).is_some());
+        assert!(pilot_progress_sink(false, false).is_some());
 
         let result = run_pilot_analysis_with_timeout(
             50,
