@@ -1701,7 +1701,7 @@ mod tests {
     }
 
     #[test]
-    fn sarif_seam_identity_retains_its_location_bound_contract() -> Result<(), String> {
+    fn sarif_seam_identity_is_line_independent_but_file_and_rule_bound() -> Result<(), String> {
         use crate::analysis::seams::CrlfPairPositions;
         let source = "fn discount() {\n    if amount >= threshold { return 5; }\n}\n";
         let make = |source: &str, file: &str, class| -> Result<ClassifiedSeam, String> {
@@ -1737,23 +1737,28 @@ mod tests {
             ))
         };
         let base_entry = make(source, "src/pricing.rs", SeamGripClass::WeaklyGripped)?;
-        let expected = format!(
-            "ripr.seam.weakly_gripped|{}|src/pricing.rs|2",
-            base_entry.seam.id().as_str()
-        );
         let base = render(base_entry)?;
         let base = first_result(&base)?;
-        assert_eq!(base["partialFingerprints"]["riprFingerprintV1"], expected);
+        // #11219: the seam alert identity is `rule|file|identity_hash|ordinal`
+        // and reads neither the display line nor the byte offset.
+        let fingerprint = base["partialFingerprints"]["riprFingerprintV1"]
+            .as_str()
+            .ok_or("missing seam fingerprint")?;
+        assert!(
+            fingerprint.starts_with("ripr.seam.weakly_gripped|src/pricing.rs|")
+                && fingerprint.ends_with("|0"),
+            "unexpected seam fingerprint shape: {fingerprint}"
+        );
         assert_eq!(base["fingerprints"], base["partialFingerprints"]);
         let moved = render(make(
             &format!("\n{source}"),
             "src/pricing.rs",
             SeamGripClass::WeaklyGripped,
         )?)?;
-        assert_ne!(
+        assert_eq!(
             first_result(&moved)?["fingerprints"],
             base["fingerprints"],
-            "offset-based seams are explicitly not line-stable"
+            "a pure line move must keep the seam alert identity"
         );
         assert_eq!(
             first_result(&moved)?["locations"][0]["physicalLocation"]["region"]["startLine"],

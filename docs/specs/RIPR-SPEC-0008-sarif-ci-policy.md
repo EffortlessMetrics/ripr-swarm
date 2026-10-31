@@ -365,7 +365,7 @@ Implemented renderer tests:
 - `crates/ripr/src/output/sarif.rs::tests::sarif_renders_findings_with_stable_rule_ids`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_renders_seams_with_stable_rule_ids`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_finding_identity_moves_locations_but_retains_file_and_rule_boundaries`
-- `crates/ripr/src/output/sarif.rs::tests::sarif_seam_identity_retains_its_location_bound_contract`
+- `crates/ripr/src/output/sarif.rs::tests::sarif_seam_identity_is_line_independent_but_file_and_rule_bound`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_finding_identity_keeps_distinct_native_unix_filenames` (`#[cfg(unix)]`: `src/a.rs` is a nested path on Windows, so this control does not run there; Windows separator conversion is pinned by `sarif_uri_identity.rs::native_windows_separators_are_slashes`)
 - `crates/ripr/src/output/sarif.rs::tests::sarif_uses_configured_finding_severity`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_uses_configured_seam_severity`
