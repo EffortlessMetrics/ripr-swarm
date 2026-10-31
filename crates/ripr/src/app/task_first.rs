@@ -357,14 +357,27 @@ fn opaque_reach_guidance(entry: &crate::analysis::ClassifiedSeam) -> Option<Stri
         .filter(|rest| rest.starts_with('`') && rest.contains(", which may lead to `"));
     let candidate = if let Some(rest) = transitive {
         format!("ripr found {rest}")
-    } else {
-        let test = entry.evidence.related_tests.first()?;
+    } else if let Some(test) = entry.evidence.related_tests.first() {
         format!(
             "a related test is `{}` ({}:{}), but ripr cannot show that it runs this code",
             test.test_name,
             crate::analysis::stable_path_text(&test.file),
             test.line
         )
+    } else {
+        // No related test to name (#11466): trait-dispatch and macro summaries
+        // still say why the path is unresolved and which test mentions the
+        // type, so quote that detail, cut before ripr's own "no gap" tail.
+        let detail = summary
+            .strip_prefix("Reach unresolved (")
+            .and_then(|rest| rest.split_once("): "))
+            .map(|(_, rest)| rest)?;
+        let detail = ["; no gap", ". ripr does not", "; ripr does not"]
+            .iter()
+            .filter_map(|tail| detail.find(tail))
+            .min()
+            .map_or(detail, |end| &detail[..end]);
+        format!("ripr found that {detail}")
     };
     Some(format!(
         "ripr does not start an automatic repair here because it could not establish which test runs this code: {candidate}. Check by hand that a test runs the changed code and asserts on its result, and add a test only if none does"
@@ -3700,6 +3713,49 @@ pub(crate) mod tests {
         more.push("safe test target".to_string());
         let reason = route_not_ready_reason(&none, "repair route not ready", &more, root);
         assert!(!reason.contains("--kind predicate"), "{reason}");
+    }
+
+    /// #11466: an opaque seam with no related test still names why the path is
+    /// unresolved from the reach summary (trait dispatch, macro), without
+    /// leaking ripr's own "no gap is reported" tail.
+    #[test]
+    fn opaque_reach_without_related_tests_quotes_the_dispatch_detail() -> Result<(), String> {
+        use crate::analysis::seams::SeamGripClass;
+        use crate::domain::{Confidence, StageEvidence, StageState};
+        let config = crate::config::RiprConfig::default();
+        let policy = AgentBriefPolicy::from_config(&config);
+        let root = Path::new("/repo");
+        let mut entry = gate_entry(SeamGripClass::Opaque, Vec::new());
+        entry.evidence.reach = StageEvidence::new(
+            StageState::Opaque,
+            Confidence::Low,
+            "Reach unresolved (trait dispatch): `fmt` is a trait method of `Comparator`, which operators, formatting and generic calls run without naming it; test `test` (tests/test_autotrait.rs:6) uses `Comparator`. ripr does not trace trait dispatch, so no gap is reported",
+        );
+        let refusal = repair_start_refusal_for_entry(root, &entry, policy)
+            .ok_or("an opaque seam must be refused")?;
+        assert!(
+            refusal
+                .reason
+                .contains("`fmt` is a trait method of `Comparator`")
+                && refusal.reason.contains("tests/test_autotrait.rs:6")
+                && !refusal.reason.contains("no gap is reported")
+                && !refusal.reason.contains("does not trace trait dispatch"),
+            "{}",
+            refusal.reason
+        );
+
+        // Negative: a summary that is not an unresolved-reach sentence stays bare.
+        let mut bare = gate_entry(SeamGripClass::Opaque, Vec::new());
+        bare.evidence.reach =
+            StageEvidence::new(StageState::Opaque, Confidence::Low, "something else");
+        let refusal = repair_start_refusal_for_entry(root, &bare, policy)
+            .ok_or("an opaque seam must be refused")?;
+        assert!(
+            !refusal.reason.contains("ripr found that"),
+            "{}",
+            refusal.reason
+        );
+        Ok(())
     }
 
     /// #11466: a predicate seam whose only blocker is the missing test module

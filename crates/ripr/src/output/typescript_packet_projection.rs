@@ -275,11 +275,10 @@ impl TargetAssertionShape {
                 operand,
                 ..
             } => Some(format!(
-                "boundary operand `{operand}` in the missing discriminator \
-                 `{discriminator}` is not bound to a concrete value by the observed \
-                 call input `{observed_call}`, so that input is not shown to hit it; \
-                 derive an input where `{discriminator}` holds before the packet is \
-                 delegatable"
+                "derive an input where `{discriminator}` holds before this repair can \
+                 be handed to an agent: boundary operand `{operand}` is not bound to a concrete \
+                 value by the observed call input `{observed_call}`, so that input is \
+                 not shown to hit it"
             )),
         }
     }
@@ -3338,6 +3337,13 @@ pub(crate) mod tests {
                 "{label}: {shape:?}"
             );
             assert!(shape.shape().contains("/* boundary input for "), "{label}");
+            // #11592: the remedy leads so the digest line budget cuts the
+            // cause, never the remedy.
+            let reason = shape.packet_ineligibility_reason().unwrap_or_default();
+            assert!(
+                reason.starts_with("derive an input where `"),
+                "{label}: {reason}"
+            );
         }
         Ok(())
     }
