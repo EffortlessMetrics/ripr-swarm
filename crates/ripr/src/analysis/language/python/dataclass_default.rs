@@ -145,6 +145,7 @@ impl ClassModel {
             model: None,
             receiver: Some((method.receiver.as_str(), &fields)),
             floats: true,
+            callee: None,
         };
         evaluate(&method.reader.expression, &inner)
     }
@@ -310,6 +311,7 @@ fn credits<'a>(
                     model: Some(model),
                     receiver: None,
                     floats: true,
+                    callee: None,
                 };
                 if !preceding
                     .iter()
@@ -377,6 +379,7 @@ fn field_line(text: &str) -> Option<(String, Value)> {
         model: None,
         receiver: None,
         floats: true,
+        callee: None,
     };
     Some((name.id.to_string(), evaluate(value, &scope)?))
 }
@@ -552,6 +555,7 @@ fn field_value(value: &Expr) -> Option<Value> {
         model: None,
         receiver: None,
         floats: true,
+        callee: None,
     };
     evaluate(value, &scope)
 }

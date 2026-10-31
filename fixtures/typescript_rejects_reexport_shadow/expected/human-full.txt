@@ -45,6 +45,7 @@ Preview actionability
   raw evidence: src/load.ts:3 (typescript_preview_probe) source=probe:src_load.ts:typescript_preview:fd09bc48 owner=load
 Static exposure
   weakly_exposed (warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; related tests hold no exact-value oracle (weak or smoke assertion). Preview score, not on the same scale as Rust confidence.
 Evidence
   shared evidence: E1
   - infection unknown: TypeScript preview adapter does not yet model infection
@@ -108,6 +109,7 @@ Preview actionability
   raw evidence: src/load.ts:5 (typescript_preview_probe) source=probe:src_load.ts:typescript_preview:2209cfc8 owner=load
 Static exposure
   infection_unknown (warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether the changed value alters behavior is not established. Preview score, not on the same scale as Rust confidence.
 Evidence
   shared evidence: E1
   - infection unknown: TypeScript preview adapter does not model infection for this `literal_return` edit: the edit changes a literal return value, and the adapter does not model whether any test input reaches this return

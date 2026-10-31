@@ -236,7 +236,16 @@ fn eval_expression(text: &str, inputs: &ExactInputs, steps: &mut Vec<EvalStep>) 
 /// observed equality row (credit) but never name a missing input, so a
 /// consumer that would otherwise turn "no row lands on the boundary" into a
 /// repair signal treats a chain using one as unknown instead.
-pub(crate) const CREDIT_ONLY_OPERATIONS: [&str; 3] = ["arith", "split_whitespace", "count"];
+pub(crate) const CREDIT_ONLY_OPERATIONS: [&str; 8] = [
+    "arith",
+    "split_whitespace",
+    "count",
+    "trim",
+    "trim_start",
+    "trim_end",
+    "to_lowercase",
+    "to_uppercase",
+];
 
 /// Results above this bound fail closed: the unwritten integer type of a
 /// literal-only expression could change the answer beyond it.
@@ -415,7 +424,7 @@ fn apply_method(
     };
     // Reject an unknown family before evaluating its arguments so the
     // named edge is the unsupported method itself, not its argument.
-    const EVALUATED_METHODS: [&str; 16] = [
+    const EVALUATED_METHODS: [&str; 21] = [
         "rfind",
         "find",
         "len",
@@ -432,6 +441,11 @@ fn apply_method(
         "next_back",
         "split_whitespace",
         "count",
+        "trim",
+        "trim_start",
+        "trim_end",
+        "to_lowercase",
+        "to_uppercase",
     ];
     if !EVALUATED_METHODS.contains(&name) {
         return Err(unsupported(&format!(
@@ -468,6 +482,15 @@ fn apply_method(
         (TypedValue::Str(value), "split_whitespace", None) => {
             TypedValue::Words(value.split_whitespace().map(str::to_string).collect())
         }
+        // Normalizers (#10838): exact over a literal row, so a trimmed or
+        // case-folded local resolves to the value the equality compares.
+        (TypedValue::Str(value), "trim", None) => TypedValue::Str(value.trim().to_string()),
+        (TypedValue::Str(value), "trim_start", None) => {
+            TypedValue::Str(value.trim_start().to_string())
+        }
+        (TypedValue::Str(value), "trim_end", None) => TypedValue::Str(value.trim_end().to_string()),
+        (TypedValue::Str(value), "to_lowercase", None) => TypedValue::Str(value.to_lowercase()),
+        (TypedValue::Str(value), "to_uppercase", None) => TypedValue::Str(value.to_uppercase()),
         (TypedValue::Words(words), "count", None) => TypedValue::Index(words.len()),
         (TypedValue::CharSeq(chars), "count", None) => TypedValue::Index(chars.len()),
         (TypedValue::Str(value), "starts_with", Some(TypedValue::Str(prefix))) => {
@@ -1047,6 +1070,36 @@ mod tests {
             evaluate_initializer("input.chars().count().count()", &inputs(table)),
             EvalOutcome::Unsupported { .. }
         ));
+    }
+
+    #[test]
+    fn string_normalizers_resolve_over_an_exact_text_row() {
+        let table = &[("label", "\" Alpha \"")];
+        for (expression, expected) in [
+            ("label.trim()", "Alpha"),
+            ("label.trim_start()", "Alpha "),
+            ("label.trim_end()", " Alpha"),
+            ("label.to_lowercase()", " alpha "),
+            ("label.to_uppercase()", " ALPHA "),
+            ("label.trim().to_lowercase()", "alpha"),
+        ] {
+            assert_eq!(
+                exact(expression, table),
+                TypedValue::Str(expected.into()),
+                "{expression}"
+            );
+        }
+        // A normalizer over a non-text receiver or with an argument stays
+        // unread, and the ASCII-only folds stay outside the families.
+        for expression in ["n.trim()", "label.trim(1)", "label.to_ascii_uppercase()"] {
+            assert!(
+                matches!(
+                    evaluate_initializer(expression, &inputs(&[("label", "\"x\""), ("n", "5")])),
+                    EvalOutcome::Unsupported { .. }
+                ),
+                "{expression}"
+            );
+        }
     }
 
     #[test]

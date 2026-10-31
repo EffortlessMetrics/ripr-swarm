@@ -353,18 +353,67 @@ fn late_batch_parse_failure_returns_first_input_order_error_and_no_index() -> Te
 }
 
 #[test]
-fn cancellation_in_a_later_batch_returns_no_index_and_commits_no_part_of_it() -> TestResult<()> {
+fn cancellation_in_a_later_batch_returns_no_index_but_keeps_the_finished_parses() -> TestResult<()>
+{
+    // #11205: a pilot deadline lands mid-batch. No index is returned, but
+    // every file that finished parsing before the abort is stored, so the
+    // retry reuses them instead of starting cold. A one-thread pool runs the
+    // batch in input order, so exactly the files before the cancelling file
+    // finish: the cancelling file and everything after it must not be stored.
     let fixture = BatchFixture::new("late_cancel")?;
+    let cancelling = PARSE_BATCH_FILES + 10;
     let token = AnalysisCancellationToken::new();
     let mut adapter = ObservingAdapter::new(&fixture.cache);
-    adapter.cancel_at = Some((fixture.files[PARSE_BATCH_FILES + 10].clone(), token.clone()));
-    let (result, _, _) = with_token(&token, || {
-        fixture.build(&adapter, &LexicalRustSyntaxAdapter)
+    adapter.cancel_at = Some((fixture.files[cancelling].clone(), token.clone()));
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(1).build()?;
+    let result = pool.install(|| {
+        with_token(&token, || {
+            fixture
+                .build(&adapter, &LexicalRustSyntaxAdapter)
+                .map(|(result, _, _)| result)
+                .map_err(|error| error.to_string())
+        })
     })?;
     assert_eq!(
         result.err().as_deref(),
         Some("analysis cancelled: Cancelled")
     );
+    let expected = fixture.files[..cancelling]
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    assert_eq!(fixture.stored_paths(), expected);
+
+    // The retry converges: it hits everything the aborted run stored and
+    // parses only the rest, and the result equals an uncached build.
+    let retry_adapter = ObservingAdapter::new(&fixture.cache);
+    let (retry, _, _) = fixture.build(&retry_adapter, &LexicalRustSyntaxAdapter)?;
+    let retry = retry?;
+    assert_eq!(retry.file_fact_cache.hits, cancelling);
+    assert_eq!(retry.file_fact_cache.misses, FILE_COUNT - cancelling);
+    assert_eq!(retry.file_fact_cache.stores, FILE_COUNT - cancelling);
+    fixture.assert_matches_uncached(&retry)?;
+    Ok(())
+}
+
+#[test]
+fn an_ordinary_failure_does_not_flush_the_failing_batch() -> TestResult<()> {
+    // Control for #11205: the finished-parse flush is for aborts only. An
+    // ordinary source failure in the same one-thread input order stores no
+    // part of the failing batch, including the files before the failure.
+    let fixture = BatchFixture::new("failure_no_flush")?;
+    let failing = PARSE_BATCH_FILES + 10;
+    let fail = BTreeSet::from([fixture.files[failing].clone()]);
+    let mut adapter = ObservingAdapter::new(&fixture.cache);
+    adapter.fail = fail.clone();
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(1).build()?;
+    let result = pool.install(|| {
+        fixture
+            .build(&adapter, &RefusingFallback(&fail))
+            .map(|(result, _, _)| result)
+            .map_err(|error| error.to_string())
+    })?;
+    assert!(result.is_err());
     let expected = fixture.files[..PARSE_BATCH_FILES]
         .iter()
         .cloned()

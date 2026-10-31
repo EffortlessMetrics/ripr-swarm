@@ -27,7 +27,7 @@ Start here:
   Suggested test file: tests/test_stats.py
   Suggested test: test_writes
   Test node: tests/test_stats.py::test_writes
-  Verify command: python -m pytest tests/test_stats.py::test_writes (high)
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_assertion_helper_dynamic_code_replacement/input && python -m pytest tests/test_stats.py::test_writes) (high)
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

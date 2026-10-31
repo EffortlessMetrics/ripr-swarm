@@ -93,6 +93,15 @@ Retrying the same command after repairing the write fault must publish the
 complete file. Publication applies to each file independently; earlier files
 may already contain their complete replacement when a later write fails.
 
+For a check-output-derived ledger, producer root identity is same-root only
+when both roots resolve to the same physical directory. A distinct root is
+wrong-root; a missing, relative, or unresolvable producer root is unknown.
+Neither wrong-root nor unknown may offer regeneration that overwrites the
+supplied check output, including when the ledger projects zero records. A
+bounded, non-writing inspection may be offered when the selected head is live.
+Verified same-root zero-record projection retains its existing recovery route;
+this root check does not establish complete preview-corpus currentness.
+
 The packet must answer these reviewer questions in stable, user-facing terms:
 
 | Question | Required answer |
