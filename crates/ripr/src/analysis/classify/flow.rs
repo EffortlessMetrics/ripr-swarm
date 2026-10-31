@@ -341,7 +341,9 @@ fn statement_if_arms_repeat(owner_fn: Option<&FunctionSummary>, probe_line: usiz
         };
         cursor = masked.len() - after_else.len();
         let after_else = after_else.trim_start();
-        if !after_else.starts_with("if ") && !after_else.starts_with('{') {
+        // An `else if` makes a ladder (or an `if` with no final `else`), whose
+        // arms can differ for some inputs; only a bare `else {` closes a pair.
+        if !after_else.starts_with('{') {
             return false;
         }
     }
@@ -1812,6 +1814,26 @@ mod tests {
                 "{body}: {sinks:?}"
             );
         }
+    }
+
+    /// An `else if` with no final `else` is not a two-arm pair: when neither
+    /// condition holds the binding keeps its earlier value.
+    #[test]
+    fn statement_if_ladder_without_a_final_else_keeps_its_return_sink() {
+        let body = "pub fn f(x: i32, y: bool) -> i32 {\n    let mut r = 0;\n    if x >= 5 {\n        r = 1;\n    } else if y {\n        r = 1;\n    }\n    r + 0\n}";
+        let mut owner = function(body);
+        owner.returns = vec![ReturnFact {
+            line: body.lines().count() - 1,
+            text: "r + 0".to_string(),
+        }];
+        let probe = probe(ProbeFamily::Predicate, "x >= 5", 3);
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+        assert!(
+            sinks
+                .iter()
+                .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+            "{sinks:?}"
+        );
     }
 
     #[test]
