@@ -717,10 +717,21 @@ fn observe_inline_target(
                 Err("the file changed while the after phase observed it".to_string())
             }
         });
-    let worktree_object = if worktree.is_ok() {
-        git_text(root, &["hash-object", "--", &region.path]).ok()
+    // The staged and committed copies are compared with the exact validated
+    // bytes, so the object id is taken without clean filters or EOL
+    // conversion (#6310). A `filter.*.clean` driver in `.git/config` or
+    // `.git/info/attributes` could otherwise make a different blob hash equal
+    // to the worktree. Under `core.autocrlf=true` a staged or committed copy
+    // is the LF-normalized form of the CRLF worktree bytes, so it no longer
+    // equals them and is refused (`index_copy_not_validated`): fail closed.
+    // The unstaged, uncommitted flow is unaffected.
+    let (worktree_object, object_unreadable) = if worktree.is_ok() {
+        match git_text(root, &["hash-object", "--no-filters", "--", &region.path]) {
+            Ok(object) => (Some(object), None),
+            Err(error) => (None, Some(error)),
+        }
     } else {
-        None
+        (None, None)
     };
     let index_object = |state: &AttemptBaseline| {
         state
@@ -756,6 +767,7 @@ fn observe_inline_target(
             worktree,
             index_matches,
             head_matches,
+            object_unreadable,
             baseline: region,
         },
     ))
@@ -3312,6 +3324,7 @@ mod tests {
                     worktree: Ok(after.to_string()),
                     index_matches: true,
                     head_matches: true,
+                    object_unreadable: None,
                     baseline: &baseline,
                 },
             );

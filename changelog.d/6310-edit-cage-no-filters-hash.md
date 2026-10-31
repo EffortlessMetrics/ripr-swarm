@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- The inline test-module repair cage now compares a staged or committed copy of the target file with the exact validated bytes (`git hash-object --no-filters`), so a repository-local clean filter can no longer make a different blob match. A `hash-object` failure is refused as its own `git_object_unreadable` reason instead of a differing copy. Under `core.autocrlf=true`, a staged or committed CRLF target is refused (fail closed) because git normalizes it to LF (#6310).
