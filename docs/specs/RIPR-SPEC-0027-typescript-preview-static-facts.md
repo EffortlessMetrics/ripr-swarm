@@ -124,6 +124,17 @@ Test discovery:
   `node:test` `suite(...)`, as test and describe roots with the same active
   modifiers (`.only`, `.concurrent`, `.sequential`); `.skip`, `xit`, and
   `xcontext` register nothing (#4548)
+- a renamed registration alias the imports layer admits (`const { test: t } =
+  require('node:test')`, `import { test as t }`): the alias registers like
+  the direct spelling, bare or through an active modifier, with the same
+  runner-source, shadowing, skip/todo-options and inactive-modifier fences
+  (#10987). The namespace object's own name, a member read off it
+  (`runner.test(...)`), and an aliased `.each` factory register nothing
+  through this path
+- AVA's macro form, a named macro between the title and the callback
+  (`test(name, macro, async (t) => {})`, `test(name, ns.macro, fn)`): the
+  function third argument is the callback (#10964) for a root bound to AVA's `test`, and only an inline function; a macro without a
+  function third argument stays argument 1
 - an options object between the title and the callback
   (`it(name, { timeout }, fn)`, `describe(name, { concurrency }, fn)`); a
   trailing timeout (`test(name, fn, 5000)`) keeps argument 1 as the callback;
@@ -197,12 +208,22 @@ Test discovery:
   `./x.js` to `x.ts`. Anything the scan cannot follow keeps the disclosure: an
   unresolved relative import, a computed `import()` / `require()`,
   `import.meta.glob` / `require.context` / `createRequire`, a bare specifier a
-  tsconfig path, workspace package or the root package name could resolve, a
-  `~`, `#`, `$`, `/` or `@/` specifier, a `baseUrl`, `rootDirs`, an uninspected
-  `extends` (including an npm package base, after JSONC key decoding), a
-  project `references` entry, a package-level `paths`, any bundler, transpiler or test-runner config that
-  declares an alias or module directory, a Rust change related through the Bun
-  bridge, and a closure over 400 files. The conditional
+  tsconfig path, workspace package or the root package name could resolve
+  (a self-import follows the adapter's resolver, then `package.json` `exports`
+  targets that are indexed sources; an unscanned build output relates nothing,
+  and a missing entry, pattern or absent `exports` keeps the gap), a
+  `~`, `#`, `$`, `/` or `@/` specifier, a `baseUrl`, `rootDirs`, an `extends`
+  chain that is an npm package base, unreadable, or declares `paths`,
+  `baseUrl` or `rootDirs` (a workspace-relative chain without them does not
+  remap; JSONC keys are decoded), a project `references` entry the scan does
+  not visit, a `paths` in the root config that did not load, any bundler,
+  transpiler or test-runner config that declares an `alias` key (a
+  hyphenated lint-rule name such as `no-this-alias` does not) or module
+  directory, a Rust change related through the Bun
+  bridge, and a closure over 400 files. A nested package tsconfig that
+  declares `paths` or an unvisited `extends` remaps only files beneath its own
+  directory: a closure that reaches one keeps the gap, other gap files stay
+  scoped. The conditional
   assertion credit and owner-extraction disclosures keep their own scopes.
 - a symlink or junction the walk does not follow is counted for
   `typescript_workspace_links_skipped` / `typescript_repo_links_skipped`
@@ -481,6 +502,27 @@ boundary without changing the guards (#4104 E):
   initializers, repeated declarations, off-value constants, and constants
   imported from a module the adapter cannot resolve to the owner stay
   fail-closed.
+- **Test-side constants** (#10707, #10706): an owner-call argument that is
+  a bare identifier of any spelling (`edge`, `EDGE`) resolves to its integer
+  value only when the name provably has one binding, decided on the oxc
+  token stream. In the test callback: exactly one
+  `const NAME [: number] = <plain decimal integer>` declarator directly in
+  the callback block (never a nested block, loop header, or parameter list),
+  and every other occurrence in the callback a plain read after the
+  declaration. At the test file's module level: exactly one top-level such
+  `const`, every other occurrence in the file a plain read (the owner-module
+  constant rule), and no non-file-level enclosing scope binding the name.
+  The callback's own declaration decides first; a binding it refuses is
+  never rescued by an outer scope. Fail-closed: `let`/`var`, a reassigned or
+  updated name, a shadowing parameter, catch, function, inner declaration or
+  destructuring, an object key or shorthand spelling, a second declaration,
+  a computed, signed, non-decimal, fractional or non-safe-integer
+  initializer, an import that does not resolve to the owner, `eval`/`with`,
+  a read before the declaration, and member reads (`config.edge`, whose
+  property a test can rewrite). The credit only substitutes the value for
+  the name; the position, arity, off-value and expected-side rules are the
+  literal path's, unchanged. Fixtures: `ts_boundary_local_constant_credit`,
+  `ts_boundary_local_constant_refused`.
 - **Boundary input evidence**: for a changed predicate with a named missing
   discriminator `<param> == <operand>`, the adapter emits
   `typescript_boundary_input: parameter=<param>;index=<i>;operand=<operand>;value=<v>`
@@ -524,6 +566,28 @@ boundary without changing the guards (#4104 E):
   type); a computed or string-literal name, an optional method (`pick?(n)`), an
   object-type return and a method named like a control keyword are not, and keep
   their previous behavior (#10776).
+
+- **`typeof` kind tests** (#11196): an equality comparison of a `typeof`
+  expression with a quoted type-name word (`typeof input === "function"`,
+  also `!==`, `==`, `!=`, and the reversed spelling) names the missing
+  discriminator `typeof <operand> == "<kind>"`. It never reads as
+  `<operand> == "<kind>"`, which would name the type-name string as the input.
+  Two `typeof` sides, a relational operator, or a non-literal kind name no
+  discriminator. The comparison is witnessed only by an observed owner call
+  whose argument at the guarded parameter's position is written as a value of
+  exactly that kind (an inline function for `"function"`, a number literal for
+  `"number"`, and so on; a trailing type assertion such as `as any` is read
+  through). The kind's name as a string literal is a string, so
+  `resolveValue("function" as any)` does not witness a `"function"` test. The
+  guarded operand must be a plain owner parameter; a member read or a local
+  stays unwitnessed. The repair packet's assertion shape asks for a value of
+  the kind in place of the argument and never reuses the observed input, and
+  the "inputs on one side of the boundary" wording is not used for this shape.
+- **Open gap reason in the after phase** (#11196): when `agent verify` refuses
+  a gap that still reads open, the refusal appends the missing discriminator
+  the before and after check-findings artifacts already state (unchanged, or
+  changed from one to the other). With no discriminator in the after artifact
+  it appends nothing; the refusal reads as before and no reason is invented.
 
 When the adapter cannot classify, it emits one of the `static_limit_kind`
 values defined in RIPR-SPEC-0026:

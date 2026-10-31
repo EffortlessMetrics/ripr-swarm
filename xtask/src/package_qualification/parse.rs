@@ -48,8 +48,16 @@ fn validate_receipt(receipt: &PackageQualificationReceipt) -> Result<(), String>
     require_nonempty("tools.package_manager", &receipt.tools.package_manager)?;
     validate_subject_counts(&receipt.subjects)?;
     validate_required_rows(&receipt.required_rows)?;
+    let mut seen_rows = std::collections::BTreeSet::new();
     for (index, row) in receipt.rows.iter().enumerate() {
         validate_row(receipt, index, row)?;
+        if !seen_rows.insert((row.channel.as_str(), row.target.as_str())) {
+            return Err(format!(
+                "rows contains duplicate {}/{}",
+                row.channel.as_str(),
+                row.target
+            ));
+        }
     }
     if receipt.claim_boundary != CLAIM_BOUNDARY {
         return Err(

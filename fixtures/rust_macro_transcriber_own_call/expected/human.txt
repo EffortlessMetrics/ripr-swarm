@@ -17,13 +17,13 @@ Start here:
   Changed behavior: n >= 100
   Missing check (1 of 3): No detected boundary input for the changed predicate
   Related test: src/lib.rs:15 small_orders_are_not_bulk (no established call path to the changed code; linked by name only)
-  Next step: Open the related test and trace its input through the local or computed operand
-    (including default and empty cases) to see which side of the changed condition it exercises,
-    then name an input that would exercise the other side. ripr.toml does not support
-    fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap.
-    Compare the original and changed implementations with a focused run using the project's
-    configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain
-    unknown
+  Next step: Open the related test, check whether it reaches the changed code, and inspect other
+    existing tests. Trace their inputs through the local or computed operand (including default and
+    empty cases) to see which side of the changed condition they exercise, then name an input that
+    would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or
+    strengthen a test only if this inspection finds a gap. Compare the original and changed
+    implementations with a focused run using the project's configured test runner (`cargo test` for
+    ordinary Cargo tests). Static classification may remain unknown
   Evidence: reach weak · infection unknown · propagation yes · observation yes · discriminator unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -42,12 +42,12 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_macro_transcriber_own_call/input --diff <cwd>/fixtures/rust_macro_transcriber_own_call/diff.patch --mode fast probe:src_lib.rs:predicate:7ce86f3b
   ripr context --root <cwd>/fixtures/rust_macro_transcriber_own_call/input --diff <cwd>/fixtures/rust_macro_transcriber_own_call/diff.patch --mode fast --at probe:src_lib.rs:predicate:7ce86f3b
-  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test input that reaches the changed code; follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_macro_transcriber_own_call/input --at src/lib.rs:2 --kind predicate
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:2 (weak)
+    - ./src/lib.rs:2 (weak); kind: return_value; reason: No strong discriminator was detected
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

@@ -17,6 +17,7 @@ Start here:
   Language: typescript
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: return await Promise.reject(new Error("missing id"));
   Missing check (1 of 2): Only heuristic TypeScript test links were found for `loadProfile`; verify
@@ -48,7 +49,7 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).
-    - src/profile.ts:10 (weak)
+    - src/profile.ts:10 (weak); kind: error_path; reason: Only heuristic TypeScript test links were found for `publishProfile`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

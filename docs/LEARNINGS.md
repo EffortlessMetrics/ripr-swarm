@@ -346,6 +346,20 @@ bound, typed failure past that, and `ripr_list_gaps` byte-fills pages to
 `MAX_TOOL_DOCUMENT_BYTES` (half the response bound — worst-case JSON
 escaping doubles the text copy). When changing a wire shape, measure the
 final envelope, not the document.
+
+## 2026-10-30: Do not flip a wire default on an assumption about the host (#9360)
+
+The MCP tool result carries the document in `content[0].text` and in
+`structuredContent`, doubling the tokens an agent pays. Replacing the text with
+a digest looks free, but whether a host hands `structuredContent` or the text to
+its model is a host property the server cannot observe: a text-only host given a
+digest silently loses the result, while a structured host given the copy only
+pays tokens. Make the lossy side an explicit per-process opt-in
+(`RIPR_MCP_TEXT_CONTENT=summary`), keep the lossless copy the default, make an
+unrecognized value fall back to the lossless side, and measure refusal
+boundaries on the double-carry envelope in both modes so paging does not depend
+on the mode. Flip the default only after a host's behavior is observed.
+
 ## 2026-10-07: Windows spawn and path spellings that tests must not assume (#6855)
 
 Windows `CreateProcess` resolves the executable through the parent's PATH
@@ -3185,6 +3199,22 @@ Durable rules:
 - Prefer proving a negative twice on two independent paths - e.g. the safe
   wrapper listing and a compile attempt that uses it - before writing that a
   capability is unavailable.
+
+## 2026-10-25: Receiver and helper admission needs execution and declaration identity (#8004)
+
+An assertion operand parsed in a synthetic function must not borrow the outer
+receiver through an operand-local item: `struct value;` introduces a value
+constructor, and aliases, enums and modules can replace nominal type paths.
+Refuse operand items as a class and exempt the synthetic wrapper by syntax
+identity, never its name. This is a refusal boundary, not type resolution.
+
+Direct, helper and repository calls must share one admission boundary; audit
+every consumer when extending it. Descendant syntax is not execution: an
+uncalled nested fn, closure or async body can hold a perfect assertion without
+running the owner. A helper-name graph supplies candidates, not identities, so
+resolve each hop's free call in its own module/import scope and keep boundary
+tests on the candidate route, not a vacuous negative. Repeated parsing is
+performance work under #8005.
 
 ## 2026-10-16: Per-macro full-file `use` scans hang dogfood PR evidence
 

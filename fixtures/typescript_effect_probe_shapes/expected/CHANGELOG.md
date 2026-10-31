@@ -722,6 +722,17 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 
+## Pending — typescript_effect_probe_shapes (27)
+
+Reason:
+RIPR-SPEC-0118 / docs/OUTPUT_SCHEMA.md: #10192 displays hidden finding kind/reason, exact ambiguous seam choices, and evidence-specific unresolved-edge guidance; verdict, stage, identity and oracle fields stay unchanged (independently compared against actual JSON).
+
+Command:
+`cargo xtask goldens bless typescript_effect_probe_shapes --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
 ## Pending — typescript_effect_probe_shapes (31)
 
 Reason:
@@ -738,6 +749,18 @@ Updated:
 
 Reason:
 RIPR-SPEC-0088: TypeScript preview check JSON states top-level canonical_gap_id (#10709)
+
+Command:
+`cargo xtask goldens bless typescript_effect_probe_shapes --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_effect_probe_shapes (33)
+
+Reason:
+RIPR-SPEC-0026: additive confidence_basis and Why capped line for TypeScript/JavaScript preview findings (#10700)
 
 Command:
 `cargo xtask goldens bless typescript_effect_probe_shapes --reason "..."`

@@ -16,7 +16,6 @@
 //! RIPR-SPEC-0240 rule it only withholds, so the actionability flip stays
 //! fail-closed.
 
-use super::OwnerPinSyntax;
 use super::gap_admission::{is_ignored, withhold_gap};
 use super::related_tests::{
     inherent_owner_call_resolves_if_macros_trusted, requires_inherent_receiver_identity,
@@ -35,12 +34,7 @@ pub(in crate::analysis) const RECEIVER_UNVERIFIABLE_MACRO_PREFIX: &str = "receiv
 
 /// Tests whose owner call is blocked only by the unverifiable macro binding,
 /// formatted for the next step. Empty when the rule does not apply.
-fn blocked_tests(
-    finding: &Finding,
-    owner: &FunctionSummary,
-    index: &RustIndex,
-    pin_syntax: &OwnerPinSyntax,
-) -> Vec<String> {
+fn blocked_tests(finding: &Finding, owner: &FunctionSummary, index: &RustIndex) -> Vec<String> {
     if !matches!(
         finding.class,
         ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
@@ -61,7 +55,7 @@ fn blocked_tests(
                 .any(|row| is_test(&row.name, &row.file, row.line, test))
                 && !is_ignored(test)
                 && assertions_over_owner_are_strong(test, owner)
-                && inherent_owner_call_resolves_if_macros_trusted(test, owner, index, pin_syntax)
+                && inherent_owner_call_resolves_if_macros_trusted(test, owner, index)
         })
         .take(JUDGED_TEST_LIMIT)
         .map(|test| {
@@ -105,12 +99,11 @@ pub(in crate::analysis) fn mark_receiver_unestablished(
     finding: &mut Finding,
     owner: Option<&FunctionSummary>,
     index: &RustIndex,
-    pin_syntax: &OwnerPinSyntax,
 ) -> bool {
     let Some(owner) = owner else {
         return false;
     };
-    let judged = blocked_tests(finding, owner, index, pin_syntax);
+    let judged = blocked_tests(finding, owner, index);
     if judged.is_empty() {
         return false;
     }

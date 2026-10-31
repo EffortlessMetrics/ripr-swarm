@@ -404,6 +404,8 @@ jobs:
           # a hung producer wastes at most one hour — the scope guard
           # still caps memory).
           RIPR_PR_EVIDENCE_TIMEOUT_SECS: "3600"
+          # Align ripr check's own 600s budget (#5369) with the step ceiling.
+          RIPR_CHECK_TIMEOUT: "3600"
         run: |
           cargo xtask ripr-pr --base "$BASE_SHA" --head "$HEAD_SHA"
           cargo xtask ripr-pr --base "$BASE_SHA" --head "$HEAD_SHA" --check

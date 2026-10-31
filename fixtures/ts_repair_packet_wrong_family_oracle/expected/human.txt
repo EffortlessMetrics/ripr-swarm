@@ -17,6 +17,7 @@ Start here:
   Language: typescript
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: if (Number.isNaN(n)) {
   Missing check: Related tests reach `parseLimit` with a strong oracle, but the changed line has no
@@ -48,7 +49,7 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).
-    - src/limiter.ts:4 (weak)
+    - src/limiter.ts:4 (weak); kind: error_path; reason: Related test reaches `parseLimit` but the strongest extracted oracle is `unknown`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow`…
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

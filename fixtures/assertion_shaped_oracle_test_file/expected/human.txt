@@ -41,8 +41,9 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/assertion_shaped_oracle_test_file/input --diff <cwd>/fixtures/assertion_shaped_oracle_test_file/diff.patch --mode fast probe:src_fragment_checks.rs:predicate:41d9e03a
   ripr context --root <cwd>/fixtures/assertion_shaped_oracle_test_file/input --diff <cwd>/fixtures/assertion_shaped_oracle_test_file/diff.patch --mode fast --at probe:src_fragment_checks.rs:predicate:41d9e03a
-  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test assertion that pins the changed boundary value exactly; incomplete evidence stage: propagation; follow the Next step above, then rerun `ripr check`
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test assertion that pins the changed boundary value exactly; a test that follows the changed value through to something it can check; follow the Next step above, then rerun `ripr check`
 No test stub here: the owner returns no value to assert on
+Write this test by hand: call the function and assert what it changes (an argument it mutates, state it sets, or output it writes), or that it panics when the changed condition is hit, since it returns nothing to compare; then rerun `ripr check`.
 
 More:
   Full evidence: rerun with --format human-full

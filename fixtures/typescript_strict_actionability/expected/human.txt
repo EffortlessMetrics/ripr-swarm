@@ -17,6 +17,7 @@ Start here:
   Language: typescript
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: return count + 1;
   Missing check (1 of 2): Only heuristic TypeScript test links were found for `normalizeCount`;
@@ -48,8 +49,8 @@ Next: drill into the top finding:
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output (TypeScript preview: 2).
-    - src/context.ts:2 (no path)
-    - src/pricing.ts:2 (weak)
+    - src/context.ts:2 (no path); kind: predicate; reason: No statically linked test call to `thresholdLabel(` was established; inspect existing test calls and their import/export paths.
+    - src/pricing.ts:2 (weak); kind: predicate; reason: Only heuristic TypeScript test links were found for `discountedTotal`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

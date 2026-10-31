@@ -4609,6 +4609,7 @@ fn a_caplog_that_is_not_the_builtin_fixture_keeps_abstaining() -> Result<(), Str
                 body_text: "def caplog():\n    return Recorder()\n".to_string(),
                 imports: Vec::new(),
                 literal_construction: None,
+                inert_tool: None,
                 literal_params: None,
                 isolated: false,
                 scope_imports: Vec::new(),
@@ -5989,6 +5990,132 @@ fn classify_change_unresolved_pytest_fixture_fails_closed() -> Result<(), String
             .iter()
             .any(|entry| entry.contains("Static limit `unresolved_pytest_fixture`"))
     );
+    // The blocker is named so the reader knows which fixture to open (#10979).
+    assert!(
+        finding.evidence.iter().any(|entry| entry
+            == "unresolved_fixtures: discount_case (test_apply_discount_fixture_case)"),
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+/// Classify the changed predicate against a parametrized pytest test whose
+/// module text is `module_text` (#10979).
+fn classify_parametrized_module(module_text: &str) -> Result<Finding, String> {
+    let owners = extract_owners(
+        Path::new("src/pricing.py"),
+        "def apply_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
+    );
+    let tests = extract_tests(Path::new("tests/test_pricing.py"), module_text);
+    assert_eq!(
+        tests.len(),
+        1,
+        "fixture must parse exactly one test: {tests:?}"
+    );
+    assert_eq!(
+        tests[0].direct_parametrized,
+        vec!["amount".to_string(), "expected".to_string()],
+        "fixture must read both parametrize argnames"
+    );
+    classify_change(
+        Path::new("src/pricing.py"),
+        2,
+        "    if amount >= threshold:",
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "changed predicate inside owner should classify".to_string())
+}
+
+const PARAMETRIZED_TEST: &str = "@pytest.mark.parametrize((\"amount\", \"expected\"), [(5, 5), (50, 40)])\ndef test_apply_discount(amount, expected):\n    assert apply_discount(amount, 10) == expected\n";
+
+#[test]
+fn classify_change_parametrize_argnames_survive_prose_that_names_dynamic_writers()
+-> Result<(), String> {
+    // Words such as `vars` and `reload` in a docstring or a comment write
+    // nothing (#10979): the parametrize argnames are still values pytest
+    // passes to the test, not fixtures.
+    let module_text = format!(
+        "import pytest\nfrom src.pricing import apply_discount\n\n# Flask --reload/--no-reload and setattr are only prose here.\n{PARAMETRIZED_TEST}\ndef helper_other():\n    \"\"\"Env vars are plain strings; globals() and exec are not called.\"\"\"\n    assert apply_discount(5, 10) == 5\n"
+    );
+    let finding = classify_parametrized_module(&module_text)?;
+    assert_ne!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::UnresolvedPytestFixture),
+        "{:?}",
+        finding.evidence
+    );
+    assert_ne!(finding.class, ExposureClass::StaticUnknown);
+    Ok(())
+}
+
+#[test]
+fn classify_change_parametrize_argnames_stay_unsettled_when_code_writes_the_namespace()
+-> Result<(), String> {
+    // The discriminating negative: the same module with a real dynamic
+    // writer in code, an f-string expression, or `sys.modules` keeps the
+    // fail-closed fixture limit.
+    for writer in [
+        "vars()\n",
+        "globals()[\"pytest\"] = object()\n",
+        "label = f\"{globals()}\"\n",
+        "import sys\nsys . modules[\"pytest\"] = object()\n",
+        "setattr(object(), \"x\", 1)\n",
+        "eval(\"globals().update(x=1)\")\n",
+        "import pydoc\npydoc.locate(\"importlib.reload\")(object())\n",
+        "getattr(object(), \"__setattr__\")(\"x\", 1)\n",
+    ] {
+        let module_text = format!(
+            "import pytest\nfrom src.pricing import apply_discount\n\n{writer}\n{PARAMETRIZED_TEST}"
+        );
+        let finding = classify_parametrized_module(&module_text)?;
+        assert_eq!(
+            finding.static_limit_kind,
+            Some(StaticLimitKind::UnresolvedPytestFixture),
+            "writer {writer:?} must keep the limit: {:?}",
+            finding.evidence
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn classify_change_names_unsettled_indirect_values_apart_from_known_fixtures() -> Result<(), String>
+{
+    let owners = extract_owners(
+        Path::new("src/pricing.py"),
+        "def apply_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
+    );
+    // `indirect=` is a call ripr cannot read: `amount` is a parametrize value
+    // that may or may not pass through a fixture, while `rate` is a plain
+    // fixture the test takes (#10979).
+    let tests = extract_tests(
+        Path::new("tests/test_pricing.py"),
+        "import pytest\nfrom src.pricing import apply_discount\n\n@pytest.mark.parametrize(\"amount\", [5], indirect=flag())\ndef test_apply_discount(amount, rate):\n    assert apply_discount(amount, rate) == 5\n",
+    );
+    let finding = classify_change(
+        Path::new("src/pricing.py"),
+        2,
+        "    if amount >= threshold:",
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "changed predicate inside owner should classify".to_string())?;
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::UnresolvedPytestFixture)
+    );
+    for expected in [
+        "unresolved_fixtures: rate (test_apply_discount)",
+        "unsettled_indirect_params: amount (test_apply_discount)",
+    ] {
+        assert!(
+            finding.evidence.iter().any(|entry| entry == expected),
+            "{expected} missing from {:?}",
+            finding.evidence
+        );
+    }
     Ok(())
 }
 
@@ -8904,6 +9031,9 @@ fn builtin_protocol_entry_credits_the_dunder_owner() -> Result<(), String> {
 fn protocol_entry_receiver_read_in_bracketed_call_arguments_is_still_credited() -> Result<(), String>
 {
     for test_src in [
+        // A bracketed RHS or subscript target reads the bound receiver.
+        "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    other = (0, (r))\n    assert list(reversed(r)) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    values = {}\n    (x, values[(r)]) = 1, 0\n    assert list(reversed(r)) == []\n",
         "import unittest\nfrom src.nr import numeric_range\n\n\nclass T(unittest.TestCase):\n    def test_reads(self):\n        r = numeric_range(0)\n        self.assertEqual(len(r), 0)\n        self.assertEqual(list(reversed(r)), [])\n",
         "import unittest\nfrom src.nr import numeric_range\n\n\nclass T(unittest.TestCase):\n    def test_reads(self):\n        r = numeric_range(0)\n        self.assertEqual(len( r ), 0)\n        self.assertEqual(list(reversed(r)), [])\n",
         "import unittest\nfrom src.nr import numeric_range\n\n\nclass T(unittest.TestCase):\n    def test_reads(self):\n        r = numeric_range(0)\n        self.assertEqual(max((r), 0), 0)\n        self.assertEqual(list(reversed(r)), [])\n",
@@ -9042,6 +9172,20 @@ fn protocol_entry_unterminated_literals_do_not_invent_receiver_credit() -> Resul
 #[test]
 fn protocol_entry_stays_uncredited_without_a_bound_owner_receiver() -> Result<(), String> {
     for test_src in [
+        // Review controls: unbracketed/chained outer targets and inline suites.
+        "from src.nr import numeric_range\n\n\ndef test_unbracketed_outer():\n    r = numeric_range(0)\n    x, (y, (r)) = 1, (2, [1])\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_chained_outer():\n    r = numeric_range(0)\n    x = (y, (r)) = 2, [1]\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_inline_loop():\n    r = numeric_range(0)\n    for (x, (r)) in [(2, [1])]: pass\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_inline_with():\n    r = numeric_range(0)\n    with manager() as (x, (r)): pass\n    assert list(reversed(r)) == [1]\n",
+        // Non-adjacent bracket targets replace the constructed receiver (#9531).
+        "from src.nr import numeric_range\n\n\ndef test_nonadjacent_tuple():\n    r = numeric_range(0)\n    (x, (r)) = 2, [1]\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_nonadjacent_list():\n    r = numeric_range(0)\n    [a, [r]] = [2, [[1]]]\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_nonadjacent_loop():\n    r = numeric_range(0)\n    for (x, (r)) in [(2, [1])]:\n        pass\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_nonadjacent_with():\n    r = numeric_range(0)\n    with manager() as (x, (r)):\n        pass\n    assert list(reversed(r)) == [1]\n",
+        // Async headers reach the same fallback arms; a dropped arm or a parse
+        // failure leaves the receiver credited and fails this loop.
+        "from src.nr import numeric_range\n\n\ndef test_async_inline_loop():\n    r = numeric_range(0)\n    async for (x, (r)) in [(2, [1])]: pass\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_async_inline_with():\n    r = numeric_range(0)\n    async with manager() as (x, (r)): pass\n    assert list(reversed(r)) == [1]\n",
         // Another dunder's entry point does not reach `__reversed__`.
         "from src.nr import numeric_range\n\n\ndef test_len():\n    assert len(numeric_range(0)) == 0\n",
         // An unrelated receiver.
@@ -9458,6 +9602,168 @@ fn boundary_call_row_window_keeps_a_call_that_fits_whole() -> Result<(), String>
             .any(|fact| fact.text.contains(&call)),
         "the excerpt keeps the whole call"
     );
+    Ok(())
+}
+
+/// Classifies the `visible >= limit` -> `visible > limit` change (line 3 of
+/// `owner_source`) against a strong exact-value test whose body is
+/// `test_body`, with the owner source threaded in so the length-local
+/// derivation can read the owner body (#11103).
+fn classify_len_local_boundary(
+    owner_source: &str,
+    test_body: &str,
+) -> Result<crate::domain::Finding, String> {
+    let owners = extract_owners(Path::new("src/tw.py"), owner_source);
+    let tests = extract_tests(
+        Path::new("tests/test_tw.py"),
+        &format!("from src.tw import truncate\n\n\ndef test_truncate():\n{test_body}\n"),
+    );
+    assert_eq!(tests.len(), 1, "fixture must parse exactly one pytest test");
+    let changed = owner_source
+        .lines()
+        .position(|line| line.trim() == "if visible > limit:")
+        .ok_or_else(|| "fixture owner must carry the changed predicate".to_string())?;
+    classify_change_with_source(
+        Path::new("src/tw.py"),
+        changed + 1,
+        owner_source.lines().nth(changed).unwrap_or_default(),
+        Some("    if visible >= limit:"),
+        &owners,
+        &tests,
+        Some(owner_source),
+    )
+    .ok_or_else(|| "len-local boundary change should classify".to_string())
+}
+
+const LEN_LOCAL_OWNER: &str = "def truncate(s, limit):\n    visible = len(s)\n    if visible > limit:\n        return s[:limit]\n    return s\n";
+
+fn missing_boundary_discriminators(finding: &crate::domain::Finding) -> Vec<String> {
+    finding
+        .activation
+        .missing_discriminators
+        .iter()
+        .map(|missing| missing.value.clone())
+        .collect()
+}
+
+/// #11103: a once-bound `visible = len(s)` over a literal string argument is a
+/// derivable operand, so the boundary gate names the equality input shape.
+#[test]
+fn a_len_local_over_a_literal_argument_names_the_boundary_equality() -> Result<(), String> {
+    // Lengths 6 and 2 against limits 3 and 5: nothing sits on the boundary.
+    let finding = classify_len_local_boundary(
+        LEN_LOCAL_OWNER,
+        "    assert truncate(\"abcdef\", 3) == \"abc\"\n    assert truncate(\"ab\", 5) == \"ab\"",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(
+        missing_boundary_discriminators(&finding),
+        vec!["visible == limit".to_string()]
+    );
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|line| line.contains("observed visible values: 2, 6")),
+        "{:?}",
+        finding.missing
+    );
+    // The derived length is not a call argument and is never reported as one.
+    assert!(
+        finding
+            .activation
+            .observed_values
+            .iter()
+            .all(|fact| !fact.value.starts_with("visible")),
+        "{:?}",
+        finding.activation.observed_values
+    );
+    Ok(())
+}
+
+/// An annotated local and spacing before the call paren read like the plain
+/// form (#11103 review).
+#[test]
+fn an_annotated_len_local_names_the_boundary_equality() -> Result<(), String> {
+    let owner = "def truncate(s, limit):\n    visible: int = len (s)\n    if visible > limit:\n        return s[:limit]\n    return s\n";
+    let finding = classify_len_local_boundary(
+        owner,
+        "    assert truncate(\"abcdef\", 3) == \"abc\"\n    assert truncate(\"ab\", 5) == \"ab\"",
+    )?;
+    assert_eq!(
+        missing_boundary_discriminators(&finding),
+        vec!["visible == limit".to_string()]
+    );
+    Ok(())
+}
+
+/// Discriminating positive: a call whose string length equals the limit
+/// places the operands on the boundary, so nothing is missing.
+#[test]
+fn a_len_local_call_on_the_boundary_is_observed() -> Result<(), String> {
+    let finding = classify_len_local_boundary(
+        LEN_LOCAL_OWNER,
+        "    assert truncate(\"abc\", 3) == \"abc\"",
+    )?;
+    assert!(
+        missing_boundary_discriminators(&finding).is_empty(),
+        "{:?}",
+        finding.activation.missing_discriminators
+    );
+    Ok(())
+}
+
+/// Fail-closed negatives: any shape the derivation cannot prove stays
+/// unresolved, hands out no equality target, and never reads as observed.
+#[test]
+fn a_len_local_that_is_not_derivable_stays_unresolved() -> Result<(), String> {
+    let literal_calls =
+        "    assert truncate(\"abcdef\", 3) == \"abc\"\n    assert truncate(\"ab\", 5) == \"ab\"";
+    for (label, owner, test_body) in [
+        (
+            "bound twice",
+            "def truncate(s, limit):\n    visible = len(s)\n    visible = visible + 1\n    if visible > limit:\n        return s[:limit]\n    return s\n",
+            literal_calls,
+        ),
+        (
+            "loop-carried",
+            "def truncate(s, limit):\n    visible = len(s)\n    while True:\n        visible -= 1\n        if visible > limit:\n            return s[:limit]\n",
+            literal_calls,
+        ),
+        (
+            "parameter rebound",
+            "def truncate(s, limit):\n    s = s.strip()\n    visible = len(s)\n    if visible > limit:\n        return s[:limit]\n    return s\n",
+            literal_calls,
+        ),
+        (
+            "bound after the predicate",
+            "def truncate(s, limit):\n    if visible > limit:\n        return s[:limit]\n    visible = len(s)\n    return s\n",
+            literal_calls,
+        ),
+        (
+            "computed argument",
+            "def truncate(s, limit):\n    visible = len(s.strip())\n    if visible > limit:\n        return s[:limit]\n    return s\n",
+            literal_calls,
+        ),
+        (
+            "non-literal call argument",
+            LEN_LOCAL_OWNER,
+            "    text = make_text()\n    assert truncate(text, 3) == \"abc\"\n    assert truncate(\"ab\", 5) == \"ab\"",
+        ),
+        (
+            "escaped literal",
+            LEN_LOCAL_OWNER,
+            "    assert truncate(\"a\\n\", 2) == \"a\\n\"\n    assert truncate(\"abcdef\", 3) == \"abc\"",
+        ),
+    ] {
+        let finding = classify_len_local_boundary(owner, test_body)?;
+        assert!(
+            !missing_boundary_discriminators(&finding).contains(&"visible == limit".to_string()),
+            "{label}: {:?}",
+            finding.activation.missing_discriminators
+        );
+        assert_ne!(finding.class, ExposureClass::Exposed, "{label}");
+    }
     Ok(())
 }
 
@@ -10824,4 +11130,285 @@ fn match_case_capture_of_the_receiver_counts_as_a_binding_target() {
     ] {
         assert!(!binds_in_target_list(body, "r"), "{body:?}");
     }
+}
+
+const ORDER_SOURCE: &str = "def make_order(qty):\n    return {\"qty\": qty, \"total\": qty * 3}\n";
+
+#[test]
+fn name_prefilter_skips_a_test_that_never_spells_the_owner() {
+    // The name prefilter returns None without scanning a test that spells the
+    // owner nowhere; the debug cross-check runs the full scan to confirm it.
+    let owners = extract_owners(Path::new("src/orders.py"), ORDER_SOURCE);
+    let tests = extract_tests(
+        Path::new("tests/test_orders.py"),
+        "from src.orders import cancel_order\n\n\ndef test_cancel():\n    assert cancel_order(1) is None\n",
+    );
+    assert_eq!(owners[0].name, "make_order");
+    assert_eq!(tests.len(), 1);
+    assert_eq!(related_test_relation(&tests[0], &owners[0]), None);
+}
+
+#[test]
+fn name_prefilter_keeps_a_fixture_only_mention() {
+    // Only the conftest fixture the test requests spells `make_order`; the
+    // prefilter must read fixture bodies and imports and still relate it.
+    let owners = extract_owners(Path::new("src/orders.py"), ORDER_SOURCE);
+    let conftest_imports = extract_tests(
+        Path::new("tests/conftest.py"),
+        "from src.orders import make_order\n\n\ndef test_probe():\n    pass\n",
+    )
+    .first()
+    .map(|test| test.imports.clone())
+    .unwrap_or_default();
+    let mut tests = extract_tests(
+        Path::new("tests/test_orders.py"),
+        "def test_total(order):\n    assert order[\"total\"] == 3\n",
+    );
+    for test in &mut tests {
+        test.fixture_defs.push(PythonFixtureDef {
+            name: "order".to_string(),
+            binding: "order".to_string(),
+            file: PathBuf::from("tests/conftest.py"),
+            body_text: "def order():\n    return make_order(1)\n".to_string(),
+            imports: conftest_imports.clone(),
+            literal_construction: None,
+            inert_tool: None,
+            literal_params: None,
+            isolated: false,
+            scope_imports: Vec::new(),
+        });
+    }
+    assert_eq!(owners[0].name, "make_order");
+    assert!(!conftest_imports.is_empty());
+    assert_eq!(tests.len(), 1);
+    assert!(!tests[0].body_text.contains("make_order"));
+    assert!(tests[0].imports.is_empty());
+    assert_eq!(
+        related_test_relation(&tests[0], &owners[0]),
+        Some(PythonRelationKind::FixtureOwnerCall)
+    );
+}
+
+#[test]
+fn comprehension_boundary_values_retain_each_test_file() -> Result<(), String> {
+    let owner_file = Path::new("src/agg.py");
+    let owners = extract_owners(owner_file, FILTER_BOUNDARY_OWNER);
+    let source = "import asyncio\nfrom src.agg import fetch_total\n\ndef test_total():\n    assert asyncio.run(fetch_total([3, 1, 4])) == 7\n";
+    let classify = |paths: &[&str]| -> Result<Vec<(Option<std::path::PathBuf>, usize)>, String> {
+        let tests: Vec<_> = paths
+            .iter()
+            .flat_map(|file| extract_tests(Path::new(file), source))
+            .collect();
+        assert_eq!(tests.len(), 2);
+        let mut origins = crate::value_origins::ValueOrigins::default();
+        let finding = classify::classify_change_with_value_origins(
+            owner_file,
+            6,
+            "    return sum(p for p in prices if p > 1)",
+            None,
+            &owners,
+            &tests,
+            PythonNoBehaviorContext::default(),
+            Some(FILTER_BOUNDARY_OWNER),
+            &mut origins,
+            None,
+        )
+        .ok_or_else(|| "filter change should classify".to_string())?;
+        assert_eq!(finding.class, ExposureClass::Exposed);
+        let files = origins
+            .files(&finding)
+            .ok_or_else(|| "missing value origins".to_string())?;
+        let element_files: Vec<_> = finding
+            .activation
+            .observed_values
+            .iter()
+            .zip(files)
+            .filter(|(fact, _)| fact.value == "prices = [3, 1, 4]")
+            .map(|(fact, file)| (file.clone(), fact.line))
+            .collect();
+        Ok(element_files)
+    };
+    let expected = vec![
+        (Some("tests/a.py".into()), 5),
+        (Some("tests/b.py".into()), 5),
+    ];
+    assert_eq!(classify(&["tests/a.py", "tests/b.py"])?, expected);
+    assert_eq!(classify(&["tests/b.py", "tests/a.py"])?, expected);
+    Ok(())
+}
+
+#[test]
+fn caplog_snapshot_same_line_list_mutation_abstains() -> Result<(), String> {
+    let test = captured_records_test(
+        "msgs = caplog.messages\n    msgs[0] = \"low balance: 5\"; assert \"low balance: 5\" in msgs",
+    );
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            "log.warning(\"balance low: %s\", balance)",
+            &test
+        )?,
+        (
+            ExposureClass::StaticUnknown,
+            Some(StaticLimitKind::UnsupportedSyntax)
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn caplog_snapshot_same_line_text_rebinding_abstains() -> Result<(), String> {
+    let test = captured_records_test(
+        "msgs = caplog.text\n    msgs = \"low balance: 5\"; assert \"low balance: 5\" in msgs",
+    );
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            "log.warning(\"balance low: %s\", balance)",
+            &test
+        )?,
+        (
+            ExposureClass::StaticUnknown,
+            Some(StaticLimitKind::UnsupportedSyntax)
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn caplog_snapshot_binding_after_assertion_abstains() -> Result<(), String> {
+    for read in ["messages", "text"] {
+        let test = captured_records_test(&format!(
+            "assert \"low balance: 5\" in msgs\n    msgs = caplog.{read}",
+        ));
+        assert_eq!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                "log.warning(\"balance low: %s\", balance)",
+                &test
+            )?,
+            (
+                ExposureClass::StaticUnknown,
+                Some(StaticLimitKind::UnsupportedSyntax)
+            ),
+            "{read}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_snapshot_stores_in_assertions_abstain() -> Result<(), String> {
+    for tail in [
+        "assert (msgs := [\"low balance: 5\"]) and \"low balance: 5\" in msgs",
+        "assert f'{(msgs := [\"low balance: 5\"])}' != \"\" and \"low balance: 5\" in msgs",
+    ] {
+        let test = captured_records_test(&format!("msgs = caplog.messages\n    {tail}"));
+        assert_eq!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                "log.warning(\"balance low: %s\", balance)",
+                &test
+            )?,
+            (
+                ExposureClass::StaticUnknown,
+                Some(StaticLimitKind::UnsupportedSyntax)
+            ),
+            "{tail}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_snapshot_native_statement_bounds_reject_extra_uses() -> Result<(), String> {
+    for tail in [
+        "msgs[0] = \"low balance: 5\"; assert (\n        \"low balance: 5\" in msgs\n    )",
+        "tag = \"é\"; msgs[0] = \"low balance: 5\"; assert \"low balance: 5\" in msgs",
+        "assert \"low balance: 5\" in msgs; del msgs",
+        "assert \"low balance: 5\" in msgs; assert \"low balance: 5\" in msgs",
+        "match [\"low balance: 5\"]:\n        case msgs:\n            pass\n    assert \"low balance: 5\" in msgs",
+        "import logging as msgs\n    assert \"low balance: 5\" in msgs",
+        "try:\n        pass\n    except Exception as msgs:\n        pass\n    assert \"low balance: 5\" in msgs",
+        "assert [msgs := [\"low balance: 5\"] for _ in [0]] and \"low balance: 5\" in msgs",
+        "assert [True for msgs[0] in [\"low balance: 5\"]] and \"low balance: 5\" in msgs",
+    ] {
+        let test = captured_records_test(&format!("msgs = caplog.messages\n    {tail}"));
+        assert_eq!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                "log.warning(\"balance low: %s\", balance)",
+                &test
+            )?,
+            (
+                ExposureClass::StaticUnknown,
+                Some(StaticLimitKind::UnsupportedSyntax)
+            ),
+            "{tail}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_snapshot_valid_reads_keep_levels_absence_and_membership_semantics() -> Result<(), String>
+{
+    for read in ["messages", "text"] {
+        let test = captured_records_test(&format!(
+            "msgs = caplog.{read}\n    tag = \"é\"; assert (\n        \"low balance: 5\" in msgs\n    ), \"capture\""
+        ));
+        for body in [test.clone(), test.replace('\n', "\r\n"), test.replace(
+            "    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False",
+            "    caplog.set_level(logging.WARNING)\n    assert check_balance(5) is False",
+        )] {
+            for changed in [
+                "log.warning(\"balance low: %s\", balance)",
+                "log.info(\"low balance: %s\", balance)",
+            ] {
+                assert_eq!(classify_log_text_edit(AUDIT_OWNER, changed, &body)?, (ExposureClass::Exposed, None), "{read}: {body}");
+            }
+            let suffix = if read == "messages" { ExposureClass::Exposed } else { ExposureClass::WeaklyExposed };
+            assert_eq!(classify_log_text_edit(AUDIT_OWNER, "log.warning(\"low balance: %s (retry)\", balance)", &body)?, (suffix, None), "{read}: {body}");
+        }
+        let absence = captured_records_test(&format!(
+            "msgs = caplog.{read}\n    assert \"deprecated warning\" not in msgs"
+        ));
+        assert_eq!(
+            classify_log_text_edit(AUDIT_OWNER, "log.warning(\"deprecated warning\")", &absence)?,
+            (ExposureClass::Exposed, None),
+            "{read} absence"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_snapshot_record_aliases_keep_native_comprehension_reads() -> Result<(), String> {
+    for assertion in [
+        "assert any(\"low balance\" in r.message for r in msgs)",
+        "assert any(r.getMessage() == \"low balance: 5\" for r in msgs)",
+        "assert \"low balance: 5\" in [r.message for r in msgs]",
+    ] {
+        // Select the records assertion, rather than a competing return oracle.
+        let test = captured_records_test(&format!("msgs = caplog.records\n    {assertion}"))
+            .replace("assert check_balance(5) is False", "check_balance(5)");
+        assert_eq!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                "log.warning(\"balance low: %s\", balance)",
+                &test
+            )?,
+            (ExposureClass::Exposed, None),
+            "{assertion}"
+        );
+    }
+    let test = captured_records_test(
+        "msgs = caplog.records\n    assert not any(r.message == \"deprecated warning\" for r in msgs)",
+    )
+    .replace("assert check_balance(5) is False", "check_balance(5)");
+    assert_eq!(
+        classify_log_text_edit(AUDIT_OWNER, "log.warning(\"deprecated warning\")", &test)?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
 }

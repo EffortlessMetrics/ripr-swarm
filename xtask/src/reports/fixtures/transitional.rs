@@ -6,7 +6,6 @@
 //! entries it blesses; delete this file when it is empty.
 
 /// Fixed old openings (the variant discriminators the goldens pin).
-pub(super) const NO_GAP_ID: &str = "this finding has no gap ID";
 pub(super) const NO_SEAM: &str = "ripr found no seam in this finding's file to bind it to";
 pub(super) const SEAM_INVENTORY: &str = "the seam inventory behind `ripr repair`";
 pub(super) const STILL_MISSING: &str =
@@ -207,37 +206,6 @@ pub(super) const MIGRATIONS: &[Migration] = &[
             "python_unittest_list_equal/human.txt",
             "python_unreached_get_default_control/human.txt",
             "python_unreached_match_arm_control/human.txt",
-        ],
-    },
-    Migration {
-        old: NO_GAP_ID,
-        new: EXPOSED,
-        surfaces: &[
-            "currentness_matrix_typescript_deleted_statement/human.txt",
-            "javascript_awaited_registration/human.txt",
-            "ts_already_observed/human.txt",
-            "ts_bound_call_state_update/human.txt",
-            "ts_boundary_named_constant_test/human.txt",
-            "ts_discriminating_state_update/human.txt",
-            "ts_node_ordinary_test_control/human.txt",
-            "ts_pkg_discovery_monorepo/human.txt",
-            "ts_pkg_discovery_single_package/human.txt",
-            "ts_predicate_boundary_const_result_local/human.txt",
-            "ts_predicate_boundary_optional_chaining/human.txt",
-            "ts_runner_detect_ava_devdep/human.txt",
-            "ts_runner_detect_ava_script/human.txt",
-            "ts_runner_detect_no_runner/human.txt",
-            "ts_seeded_state_update/human.txt",
-            "ts_weak_call_state_update/human.txt",
-            "typescript_conditional_assertion_credit/human.txt",
-            "typescript_enum_canonical_alias/human.txt",
-            "typescript_reexport_directory_star_barrel/human.txt",
-            "typescript_reexport_single_hop/human.txt",
-            "typescript_reexport_two_hop_limit/human.txt",
-            "typescript_related_test_matching/human.txt",
-            "typescript_same_method_owner_identity_positive/human.txt",
-            "typescript_snapshot_single_call_control/human.txt",
-            "typescript_tape_equal_oracle/human.txt",
         ],
     },
     Migration {

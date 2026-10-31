@@ -6,7 +6,7 @@ ripr uses three ordinary command exit codes, plus standalone Unix check interrup
 |------|---------|
 | `0`  | The command completed. |
 | `2`  | The command could not complete: usage, parse, operational, or internal error. |
-| `3`  | The command ran successfully and reached a blocking decision or a typed refusal. |
+| `3`  | ripr declined: the command ran and reached a blocking result, or a request it will not run (the output says why). |
 | `130` | Supported standalone Unix `check` analysis was interrupted. |
 
 `ripr check` is advisory: it exits `0` whether or not it found gaps, including
@@ -35,10 +35,16 @@ verify-execute` declining a packet (the refusal JSON document is on stdout)
   (`agent_card_refusal` / `rust_test_stub` `state: refused`) on stdout only
   with `--json`, with the prose on stderr; without it stdout stays empty and
   stderr names the cause. An unknown `--seam-id` is one typed refusal with
-  one exit, `3`, on `agent start`, `agent card`, `agent stub` and `agent packet`
-  (`agent repair --phase before` still exits `2` for it): with `--json` the
-  document is on stdout and the prose on stderr, except `agent start`, whose
-  refusal is prose on stderr with empty stdout).
+  one exit, `3`, on `agent start`, `agent card`, `agent stub`,
+  `agent packet`, and `agent repair --phase before`. A known seam that
+  agent policy withholds (#10712) is the same typed refusal (exit `3`) on
+  `agent start`, `agent card`, `agent packet`, and
+  `agent repair --phase before`; `agent stub` still produces the stub
+  (exit `0`) with the omission disclosed in `warnings` and no repair
+  journey offered. With `--json` the
+  document is on stdout and the prose on stderr, except `agent start` and
+  `agent repair --phase before`, whose
+  refusals are prose on stderr with empty stdout).
 - `2`: the invocation or operation failed; retrying differently is
   appropriate.
 
@@ -94,7 +100,7 @@ reached the caller.
   JSON only), `agent brief --json`, and `agent packet --json` each write the
   shared refusal shape keyed with their own `schema_version` (rerun
   `ripr-targeted-rerun-v1`, context `1.1`, diff and agent brief `0.1`, agent
-  packet `0.5`; an unknown `agent packet --seam-id` is the one typed
+  packet `0.5`; an unknown or policy-withheld `agent packet --seam-id` is the one typed
   refusal among these and exits `3`, see above), and `mode` appears only on commands that accept `--mode`.
   A fresh `context` run preserves the check producer's typed failure and
   recovery route for both committed and working-tree analysis; an invalid
@@ -184,8 +190,9 @@ reached the caller.
   `cargo test` build may not enable, no return value, an out-of-line test module, or
   inline test modules that are all gated by more than `cfg(test)`), or the
   `--at` path names a language the Rust-only generator does not support
-  (`unsupported_language`: follow any check-provided test guidance, edit and
-  run the test by hand, then refresh the finding), or the selector names no
+  (`unsupported_language`, exit `3`; a `.py` or `.ts` path prints `stub
+  generation supports Rust files only`: follow any check-provided test
+  guidance, edit and run the test by hand, then refresh the finding), or the selector names no
   reported gap (`seam_not_found`), or the location selector
   matches several files or tied disjoint seams (`selector_ambiguous`: choose
   a specific path or one of the suggested seam IDs), or a single related

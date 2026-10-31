@@ -393,6 +393,17 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
+## Pending — error_path_diagnostic_escaped (28)
+
+Reason:
+RIPR-SPEC-0118 / docs/OUTPUT_SCHEMA.md: #10192 displays hidden finding kind/reason, exact ambiguous seam choices, and evidence-specific unresolved-edge guidance; verdict, stage, identity and oracle fields stay unchanged (independently compared against actual JSON).
+
+Command:
+`cargo xtask goldens bless error_path_diagnostic_escaped --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
 ## Pending — error_path_diagnostic_escaped (30)
 
 Reason:
@@ -405,3 +416,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_path_diagnostic_escaped (31)
+
+Reason:
+RIPR-SPEC-0108: restore JSON source-text backslashes the golden normalizer wrongly folded to '/' on non-Windows hosts (#11119)
+
+Command:
+`cargo xtask goldens bless error_path_diagnostic_escaped --reason "..."`
+
+Updated:
+- `expected/check.json`

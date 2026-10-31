@@ -48,7 +48,7 @@
 
 use super::super::rust_index::{FunctionSummary, RustIndex, TestSummary};
 use crate::analysis::extract::mask_comments_and_strings;
-use crate::analysis::facts::FunctionContainer;
+use crate::analysis::facts::{FunctionContainer, FunctionImplContext};
 use crate::analysis::syntax::{
     NameScope, NameScopes, RustModuleTreeEdge, UseBinding, rust_module_tree_scan,
 };
@@ -73,10 +73,10 @@ type TestKey = (PathBuf, usize, String);
 /// One identity per owner and purpose per run, built on first ask. Keyed by
 /// the identity purpose and owner's parser symbol id, which is unique per definition even when
 /// two same-named owners share one source line (inline sibling modules).
-type SoloIdentities = BTreeMap<String, Option<std::sync::Arc<OwnerCallIdentity>>>;
-type SharedIdentities = BTreeMap<(bool, String), Option<std::sync::Arc<OwnerCallIdentity>>>;
-
 type SharedOwnerScopes = BTreeMap<PathBuf, (Arc<str>, Option<Arc<super::owner_pin::FileScopes>>)>;
+
+type SharedIdentities = BTreeMap<(bool, String), Option<std::sync::Arc<OwnerCallIdentity>>>;
+type SoloIdentities = BTreeMap<String, Option<std::sync::Arc<OwnerCallIdentity>>>;
 
 /// Per-index memos for the call-identity family (#7716 residual).
 ///
@@ -99,6 +99,14 @@ pub(crate) struct CallIdentityMemos {
     identities: Mutex<SharedIdentities>,
     /// Lexical source facts shared by all short-lived owner-pin syntax contexts.
     pub(super) owner_file_scopes: Mutex<SharedOwnerScopes>,
+    /// One syntax owner for every inherent-receiver query of the run, so the
+    /// workspace trusted-macro scan behind assertion admission is paid once
+    /// per index rather than once per (seam, test) receiver check.
+    ///
+    /// Held directly, not behind a lock: its memos are already `SyncMemo`s, and
+    /// a guard held across a query would serialize every worker and could
+    /// re-enter on the rayon thread that steals a sibling seam mid-scan.
+    pub(super) receiver_pin_syntax: super::OwnerPinSyntax,
     /// #9218: the same per owner, built even when the owner has no
     /// same-named rival, for resolving a qualified call's spelled path.
     solo_identities: Mutex<SoloIdentities>,
@@ -113,15 +121,98 @@ pub(crate) struct CallIdentityMemos {
     /// workspace declares, read once per index so a receiver-type check is a
     /// lookup instead of a masked scan of every indexed file.
     type_name_counts: std::sync::OnceLock<BTreeMap<String, usize>>,
+    /// #10701: every indexed source with comments and strings masked, built
+    /// once per index for the repair-start Drop-type gate.
+    masked_sources: std::sync::OnceLock<Vec<String>>,
+    /// #10701: per type name, whether a `type` alias declares it and which
+    /// further type names its renames and definitions mention, so each name is
+    /// read from the corpus once per run instead of once per seam.
+    type_word_facts: Mutex<BTreeMap<String, (bool, Vec<String>)>>,
+    /// #10977: whole-index macro-rebound answers keyed by requested name
+    /// set, so the fixed-set production callers share one parser-backed
+    /// scan per set instead of rescanning the corpus per probe.
+    macro_rebound: crate::analysis::sync_memo::SyncMemo<BTreeMap<Vec<String>, bool>>,
+    /// #10977: how many unmemoized rebound scans ran on this index.
+    /// Test-only scaling probe: repeated probes must not rescan.
+    #[cfg(test)]
+    rebound_scans: std::sync::atomic::AtomicUsize,
 }
 
 impl CallIdentityMemos {
+    /// How many full-workspace macro scans the run-shared receiver syntax
+    /// owner has paid.
+    #[cfg(test)]
+    pub(in crate::analysis) fn receiver_scan_passes(&self) -> u32 {
+        self.receiver_pin_syntax.workspace_scan_passes()
+    }
+
+    /// The memoized masked sources, built by `build` on first use.
+    pub(in crate::analysis) fn masked_sources(
+        &self,
+        build: impl FnOnce() -> Vec<String>,
+    ) -> &[String] {
+        self.masked_sources.get_or_init(build)
+    }
+
+    /// The memoized facts for type name `word`, computed by `compute` on
+    /// first use (recomputed, not cached, if the lock is poisoned).
+    pub(in crate::analysis) fn type_word_facts(
+        &self,
+        word: &str,
+        compute: impl FnOnce() -> (bool, Vec<String>),
+    ) -> (bool, Vec<String>) {
+        if let Ok(cache) = self.type_word_facts.lock()
+            && let Some(found) = cache.get(word)
+        {
+            return found.clone();
+        }
+        let computed = compute();
+        if let Ok(mut cache) = self.type_word_facts.lock() {
+            cache.insert(word.to_string(), computed.clone());
+        }
+        computed
+    }
+
     /// The memoized type-name declaration counts, built by `build` on first use.
     pub(super) fn type_name_counts(
         &self,
         build: impl FnOnce() -> BTreeMap<String, usize>,
     ) -> &BTreeMap<String, usize> {
         self.type_name_counts.get_or_init(build)
+    }
+
+    /// The memoized rebound answer for requested macro set `key`
+    /// (sorted), computed by `compute` outside the lock on first use.
+    /// The scan is a pure function of the index sources, which never
+    /// change after the build except through producers that
+    /// [`clear`](Self::clear) these memos. Two workers that miss together
+    /// may each scan; the first insert wins and both get the same answer.
+    pub(in crate::analysis) fn macro_rebound(
+        &self,
+        key: Vec<String>,
+        compute: impl FnOnce() -> bool,
+    ) -> bool {
+        if let Some(found) = self.macro_rebound.borrow().get(&key) {
+            return *found;
+        }
+        let computed = compute();
+        #[cfg(test)]
+        self.rebound_scans
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        *self
+            .macro_rebound
+            .borrow_mut()
+            .entry(key)
+            .or_insert(computed)
+    }
+
+    /// How many unmemoized rebound scans ran on this index (#10977
+    /// scaling probe). Every repeated probe of one analysis must reuse
+    /// the first scan, so a repeated fixed-set query keeps this at one.
+    #[cfg(test)]
+    pub(in crate::analysis) fn rebound_scan_count(&self) -> usize {
+        self.rebound_scans
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -164,7 +255,10 @@ fn scan_call_identity_shapes(
     for (path, facts) in index.files().iter() {
         let package = package_key(path);
         let remapped = remaps.entry(package.clone()).or_insert(false);
-        if !*remapped && has_path_attribute(&facts.data().source) {
+        if !*remapped
+            && has_path_attribute(&facts.data().source)
+            && !path_attributes_only_select_cfg_alternatives(&facts.data().source)
+        {
             *remapped = true;
         }
         if under_tests_dir(path) {
@@ -1019,6 +1113,101 @@ fn join(left: &[String], right: &[String]) -> Vec<String> {
 /// comment only switches the rule off.
 fn package_remaps_module_paths(index: &RustIndex, package: Option<&str>) -> bool {
     call_identity_shape(index, package).remaps_module_paths
+}
+
+/// Whether every `#[path]` in `source` only selects between the two files of
+/// a complementary `cfg` pair: top-level out-of-line `#[cfg(P)]` /
+/// `#[cfg(not(P))]` declarations of one module name, each carrying exactly one
+/// `#[path = "..."]` and no other `cfg`, and `P` is not the `test` predicate
+/// (#8999). Such a pair is one module compiled from one of two files, so a
+/// file's own location still tells its same-named functions apart from the
+/// other alternative's; module paths derived from file names are never
+/// spelled by a call, so a spelled path cannot settle on the wrong file. Any
+/// other `#[path]`, a `cfg_attr`, an inline module, a nested declaration, a
+/// parse error, or a backslash anywhere in a gate fails closed (`false`).
+fn path_attributes_only_select_cfg_alternatives(source: &str) -> bool {
+    use ra_ap_syntax::{
+        AstNode,
+        ast::{self, HasAttrs, HasModuleItem, HasName},
+    };
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return false;
+    };
+    let file = parse.tree();
+    let mut gates: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut declared_path_attributes = 0usize;
+    for item in file.items() {
+        let ast::Item::Module(module) = item else {
+            continue;
+        };
+        let mut path_count = 0usize;
+        let mut gate: Option<String> = None;
+        for attr in module.attrs() {
+            let text = attr.syntax().text().to_string();
+            let compact: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
+            if attribute_sets_path(&text) {
+                // Only a bare `#[path = ".."]`; `cfg_attr(.., path = ..)` and
+                // any other carrier of `path =` fail closed.
+                if !compact.starts_with("#[path=") {
+                    return false;
+                }
+                path_count += 1;
+                continue;
+            }
+            let Some(predicate) = compact
+                .strip_prefix("#[cfg(")
+                .and_then(|rest| rest.strip_suffix(")]"))
+            else {
+                continue;
+            };
+            if gate.replace(predicate.to_string()).is_some() {
+                return false;
+            }
+        }
+        if path_count == 0 {
+            continue;
+        }
+        let Some(gate) = gate else { return false };
+        if path_count != 1
+            || module.item_list().is_some()
+            || gate.contains('\\')
+            || gate == "test"
+            || gate == "not(test)"
+        {
+            return false;
+        }
+        let Some(name) = module.name() else {
+            return false;
+        };
+        declared_path_attributes += 1;
+        gates.entry(name.text().to_string()).or_default().push(gate);
+    }
+    // A `#[path]` inside a macro invocation or `macro_rules!` body is raw
+    // tokens, not an `Attr` node, so the count below cannot see it.
+    if file
+        .syntax()
+        .descendants()
+        .filter_map(ast::TokenTree::cast)
+        .any(|tree| has_path_attribute(&tree.syntax().text().to_string()))
+    {
+        return false;
+    }
+    // Every `#[path]` of the file sits on one of those declarations.
+    let total_path_attributes = file
+        .syntax()
+        .descendants()
+        .filter_map(ast::Attr::cast)
+        .filter(|attr| attribute_sets_path(&attr.syntax().text().to_string()))
+        .count();
+    total_path_attributes == declared_path_attributes
+        && declared_path_attributes > 0
+        && gates.values().all(|pair| match pair.as_slice() {
+            [left, right] => {
+                right.strip_prefix("not(").and_then(|r| r.strip_suffix(')')) == Some(left)
+                    || left.strip_prefix("not(").and_then(|r| r.strip_suffix(')')) == Some(right)
+            }
+            _ => false,
+        })
 }
 
 pub(super) fn has_path_attribute(source: &str) -> bool {
@@ -2110,6 +2299,15 @@ fn file_module_segments(file: &Path) -> Option<Vec<String>> {
 /// qualifier this scan cannot read (`<T as Tr>::name`, a generic segment).
 /// Method calls (`x.name(..)`) and the `fn name` definition are skipped.
 fn call_qualifiers(body: &str, name: &str) -> Vec<Option<Vec<String>>> {
+    call_sites(body, name, false)
+        .into_iter()
+        .map(|(qualifier, _)| qualifier)
+        .collect()
+}
+
+/// [`call_qualifiers`] with each site's method-call flag, optionally counting
+/// method calls (`x.name(..)`, an empty qualifier) as sites.
+fn call_sites(body: &str, name: &str, with_methods: bool) -> Vec<(Option<Vec<String>>, bool)> {
     let masked = mask_comments_and_strings(body);
     let mut calls = Vec::new();
     for (start, _) in masked.match_indices(name) {
@@ -2125,12 +2323,118 @@ fn call_qualifiers(body: &str, name: &str) -> Vec<Option<Vec<String>>> {
             continue;
         }
         let head = masked[..start].trim_end();
-        if head.ends_with('.') || head_word(head) == "fn" {
+        if head.ends_with('.') {
+            if with_methods {
+                calls.push((Some(Vec::new()), true));
+            }
             continue;
         }
-        calls.push(qualifier_before(head));
+        if head_word(head) == "fn" {
+            continue;
+        }
+        calls.push((qualifier_before(head), false));
     }
     calls
+}
+
+/// `module` without its leading crate segment when that segment names the
+/// owner's crate from `test` (mirrors `qualified_call_names_owner`): `crate`
+/// only from a non-`tests`, same-package, same-crate-target file, else one of
+/// the owner crate's import names. `None` when it does not (fail closed).
+fn anchored_rest<'a>(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    module: &'a [String],
+) -> Option<&'a [String]> {
+    let owner_package = package_key(&owner.file);
+    let layout = CrateLayout::new(index, owner_package.as_deref());
+    let CrateClass::Crate(owner_crate) = layout.classify(&owner.file) else {
+        return None;
+    };
+    let (first, rest) = module.split_first()?;
+    let anchored = if first == "crate" {
+        package_key(&test.file) == owner_package
+            && !under_tests_dir(&test.file)
+            && !under_tests_dir(&owner.file)
+            && layout.class(&test.file).as_deref() == Some(owner_crate.as_str())
+    } else {
+        own_crate_names_of(
+            &owner.file,
+            owner_package.as_deref(),
+            Some(&owner_crate),
+            test,
+            index,
+        )
+        .contains(first)
+    };
+    anchored.then_some(rest)
+}
+
+/// Whether the test's file defines a rival `fn <owner name>` (any scope).
+fn test_file_defines_fn(index: &RustIndex, test: &TestSummary, owner: &FunctionSummary) -> bool {
+    index.files().get(&test.file).is_none_or(|facts| {
+        let (name, masked) = (&owner.name, mask_comments_and_strings(&facts.source));
+        let defs = masked
+            .match_indices(name.as_str())
+            .filter(|&(at, _)| {
+                !ident_char_before(&masked, at)
+                    && !ident_char_at(&masked, at + name.len())
+                    && head_word(masked[..at].trim_end()) == "fn"
+            })
+            .count();
+        // The owner's own definition is not a rival.
+        defs > usize::from(test.file == owner.file)
+    })
+}
+
+/// Whether `text` calls the owner: a bare call of a free function, a method
+/// call of a method, or a qualified call whose qualifier settles on the owner.
+/// Anything else, or an unreadable qualifier, does not count.
+pub(in crate::analysis) fn text_calls_owner(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    text: &str,
+) -> bool {
+    call_sites(text, &owner.name, true)
+        .into_iter()
+        .any(|(qualifier, is_method)| match qualifier {
+            None => false,
+            // A method call reaches only a method, a bare call a free function.
+            Some(segments) if segments.is_empty() => match owner.item.container {
+                FunctionContainer::Inherent { .. }
+                | FunctionContainer::TraitImpl { .. }
+                | FunctionContainer::Trait { .. } => is_method,
+                FunctionContainer::Free | FunctionContainer::Local => {
+                    !is_method && !test_file_defines_fn(index, test, owner)
+                }
+                FunctionContainer::Unknown => false,
+            },
+            // A method is reached as `Type::name(..)` only through its own
+            // self type; when another type of that name defines a method of
+            // that name, the module path must also resolve to the owner.
+            Some(segments) if owner.item.container != FunctionContainer::Free => {
+                match (&owner.impl_context, segments.last()) {
+                    (FunctionImplContext::Impl { self_type }, Some(last)) if self_type == last => {
+                        let rival = index.functions().iter().any(|other| {
+                            other.name == owner.name
+                                && other.id != owner.id
+                                && matches!(&other.impl_context,
+                                    FunctionImplContext::Impl { self_type: own } if own == self_type)
+                        });
+                        let module = &segments[..segments.len() - 1];
+                        !rival
+                            || (!module.is_empty()
+                                && module_path_of(owner, true).is_some_and(|path| {
+                                    anchored_rest(index, owner, test, module) == Some(&path[..])
+                                }))
+                    }
+                    _ => false,
+                }
+            }
+            Some(segments) => qualified_call_names_owner(index, owner, test, &segments),
+        })
 }
 
 /// [`OwnerCallIdentity::own_crate_names`] for an owner given by its file,
@@ -3353,6 +3657,100 @@ fn foreign_glob() {
         assert!(!has_path_attribute("#[doc = \"x\"]\n#[cfg(test)]\nmod z;"));
     }
 
+    const PAIR_ROOT: &str = "\
+#[cfg(feature = \"parking_lot\")]
+#[path = \"imp_pl.rs\"]
+mod imp;
+#[cfg(not(feature = \"parking_lot\"))]
+#[path = \"imp_std.rs\"]
+mod imp;
+";
+    const PAIR_STD: &str = "\
+pub(crate) fn wait(x: u32) -> u32 {
+    x + 1
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn std_wait() {
+        assert_eq!(super::wait(1), 2);
+    }
+}
+";
+    const PAIR_PL: &str = "\
+pub(crate) fn wait(x: u32) -> u32 {
+    x + 2
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn pl_wait() {
+        assert_eq!(super::wait(1), 3);
+    }
+}
+";
+
+    fn pair_index(root: &str) -> RustIndex {
+        index(&[
+            ("src/lib.rs", root),
+            ("src/imp_std.rs", PAIR_STD),
+            ("src/imp_pl.rs", PAIR_PL),
+        ])
+    }
+
+    /// #8999: a `#[path]` that only picks between `#[cfg(P)]` and
+    /// `#[cfg(not(P))]` files of one module keeps the identity on, so a test
+    /// of the other alternative's own `wait` does not settle on the owner,
+    /// and the owner's own test still does.
+    #[test]
+    fn a_cfg_exclusive_path_pair_tells_the_alternatives_apart() {
+        let index = pair_index(PAIR_ROOT);
+        assert_eq!(
+            settle(&index, "imp_std.rs::wait", "pl_wait"),
+            Some(CallTarget::Other)
+        );
+        assert_eq!(
+            settle(&index, "imp_std.rs::wait", "std_wait"),
+            Some(CallTarget::Owner)
+        );
+    }
+
+    /// Fail-closed controls: every deviation from a plain complementary pair
+    /// keeps the `#[path]` switch-off.
+    #[test]
+    fn other_path_shapes_keep_the_identity_off() {
+        let not_complementary =
+            PAIR_ROOT.replace("not(feature = \"parking_lot\")", "feature = \"std\"");
+        let test_pair = PAIR_ROOT.replace("feature = \"parking_lot\"", "test");
+        let cfg_attr = PAIR_ROOT.replace(
+            "#[path = \"imp_pl.rs\"]",
+            "#[cfg_attr(unix, path = \"imp_pl.rs\")]",
+        );
+        let third = format!("{PAIR_ROOT}#[path = \"elsewhere.rs\"]\nmod moved;\n");
+        let inline = format!("{PAIR_ROOT}mod nested {{\n    #[path = \"x.rs\"]\n    mod x;\n}}\n");
+        let ungated = PAIR_ROOT.replace("#[cfg(feature = \"parking_lot\")]\n", "");
+        let macro_remap =
+            format!("{PAIR_ROOT}cfg_if! {{ if #[cfg(unix)] {{ #[path = \"a.rs\"] mod sys; }} }}\n");
+        for (label, root) in [
+            ("not complementary", not_complementary),
+            ("cfg(test) pair", test_pair),
+            ("cfg_attr path", cfg_attr),
+            ("third remap", third),
+            ("nested path", inline),
+            ("ungated half", ungated),
+            ("macro token-tree path", macro_remap),
+        ] {
+            let index = pair_index(&root);
+            assert_eq!(
+                settle(&index, "imp_std.rs::wait", "pl_wait"),
+                None,
+                "{label}"
+            );
+        }
+    }
+
     const SPLIT_A: &str = "pub fn render(x: i32) -> i32 {\n    x + 1\n}\n";
 
     const SPLIT_B: &str = "\
@@ -3971,6 +4369,31 @@ mod tests {
     fn a_mixed_path_form_index_has_no_identity() {
         let index = index(&[("src/lib.rs", RENDER_LIB), ("/w/x/src/lib.rs", BIN_UTIL)]);
         assert_eq!(settle(&index, "src/lib.rs::a::render", "doubles_two"), None);
+    }
+
+    /// `crate::W::dbl` names the test's own crate: it observes a library
+    /// owner from a unit test of that crate, never from a `main.rs` test.
+    #[test]
+    fn crate_qualified_method_observes_the_owner_only_from_its_own_crate() {
+        let w = "pub struct W;\nimpl W {\n    pub fn dbl(x: i32) -> i32 { x }\n}\n";
+        let lib = format!("{w}#[cfg(test)]\nmod tests {{\n    #[test]\n    fn unit() {{}}\n}}\n");
+        let main = "struct W;\nimpl W {\n    fn dbl(x: i32) -> i32 { x }\n}\nfn main() {}\n#[test]\nfn bin() {}\n";
+        let index = index(&[("src/lib.rs", &lib), ("src/main.rs", main)]);
+        let owner = index
+            .functions()
+            .iter()
+            .find(|f| f.file.ends_with("lib.rs") && f.name == "dbl");
+        let unit = index.tests().iter().find(|t| t.name == "unit");
+        let bin = index.tests().iter().find(|t| t.name == "bin");
+        assert!(
+            owner.is_some() && unit.is_some() && bin.is_some(),
+            "fixture items must be indexed"
+        );
+        let (Some(owner), Some(unit), Some(bin)) = (owner, unit, bin) else {
+            return;
+        };
+        assert!(text_calls_owner(&index, owner, unit, "crate::W::dbl(2)"));
+        assert!(!text_calls_owner(&index, owner, bin, "crate::W::dbl(2)"));
     }
 
     /// #9218: a qualified call feeds the owner's inputs only when its

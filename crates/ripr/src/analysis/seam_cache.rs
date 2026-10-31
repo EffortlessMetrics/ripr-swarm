@@ -49,6 +49,10 @@
 //! v0.5 entry is impossible.
 
 use super::facts::FileFacts;
+#[cfg(feature = "lang-python")]
+use super::language::PythonFileFactStore;
+#[cfg(feature = "lang-typescript")]
+use super::language::TypeScriptFileFactStore;
 use super::seam_classification::ClassifiedSeam;
 #[cfg(test)]
 use super::seam_classification::SeamGripClassCounts;
@@ -71,7 +75,7 @@ use std::sync::{Arc, OnceLock};
 macro_rules! cache_layers {
     ($($variant:ident => $name:literal),+ $(,)?) => {
         #[derive(Clone, Copy)]
-        enum CacheLayer { $($variant),+ }
+        pub(crate) enum CacheLayer { $($variant),+ }
 
         impl CacheLayer {
             const fn name(self) -> &'static str {
@@ -91,6 +95,12 @@ cache_layers! {
     CompactClassifiedSeamsSharded => "repo-compact-classified-seams-sharded",
     CorpusFingerprint => "repo-corpus-fingerprint",
     FileFacts => "repo-file-facts",
+    // TypeScript preview per-file facts (#10725): content-keyed envelopes the
+    // diff-mode adapter reuses across runs, same conventions as FileFacts.
+    TypeScriptFileFacts => "typescript-file-facts",
+    // Python diff-mode per-file facts (#10914): the TypeScript store's
+    // conventions, one content-keyed envelope per workspace file.
+    PythonFileFacts => "python-file-facts",
     ModuleTreeScans => "repo-module-tree-scans",
     ScopedClassifiedSeams => "repo-scoped-classified-seams",
     // Test-only producer: `RepoSeamCountCache` is constructed only under
@@ -122,8 +132,14 @@ pub fn cache_layer_names() -> &'static [&'static str] {
     CACHE_LAYER_NAMES
 }
 
-fn cache_layer_dir(workspace_root: &Path, layer: CacheLayer) -> PathBuf {
+pub(crate) fn cache_layer_dir(workspace_root: &Path, layer: CacheLayer) -> PathBuf {
     cache_base_dir(workspace_root).join(layer.name())
+}
+
+/// A versioned entry directory under an already-resolved cache `base`,
+/// for producers that shard their entries by a schema-version component.
+pub(crate) fn cache_layer_versioned_dir(base: &Path, layer: CacheLayer, version: &str) -> PathBuf {
+    base.join(layer.name()).join(version)
 }
 
 /// The directories production caches write entries into, under an already
@@ -150,6 +166,10 @@ pub(crate) fn production_entry_dirs(base: &Path) -> Vec<(PathBuf, bool)> {
     );
     dirs.push(RepoCorpusFingerprintCache::at_base(base).entry_dir());
     dirs.push(RepoFileFactCache::at_base(base).entry_dir());
+    #[cfg(feature = "lang-typescript")]
+    dirs.push(TypeScriptFileFactStore::at_base(base).entry_dir());
+    #[cfg(feature = "lang-python")]
+    dirs.push(PythonFileFactStore::at_base(base).entry_dir());
     dirs.push(RepoModuleTreeScanCache::at_base(base).entry_dir());
     dirs.push(RepoScopedInventoryCache::at_base(base).entry_dir());
     dirs
@@ -561,7 +581,20 @@ pub(crate) struct CachedSeamLimitInfo {
 /// activation and boundary equality values (#10839); older entries missed them.
 /// `1.118`: a standard `Drop::drop` can be credited through a scope-end
 /// carrier (RIPR-SPEC-0240, #10814).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.118";
+/// `1.119`: a direct bare boolean assertion can grip its whole primitive
+/// integer boundary after owner admission, consistency and exact-call pairing
+/// (#8610). Old entries retain the missed weak repair result.
+/// `1.120`: a literal-only integer expression that folds exactly adds its value
+/// as an owner-scoped probe token, and the sole glob of the owner's declared
+/// dependency reaches a `T::name(..)` owner (RIPR-SPEC-0158, RIPR-SPEC-0172,
+/// #10479). Old entries keep the missed observation and the abstain.
+/// `1.121`: a Display `write!` tail whose format template changed beyond
+/// fixed text no longer borrows an exact output pin (#9836).
+/// `1.122`: a pushed element embedding a type from outside the scanned workspace
+/// no longer reads as comparing by its fields (#10684).
+/// `1.123`: return/error matches! assertions require shared test execution
+/// admission. Older entries may credit ignored or broad expected-panic tests.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.123";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -726,7 +759,11 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.118";
 /// `0.123`: same rebound-let rule as full `1.116` (#10819).
 /// `0.124`: same suffixed decimal argument values as full `1.117` (#10839).
 /// `0.125`: same scope-end carrier as full `1.118` (#10814).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.125";
+/// `0.126`: same boolean boundary grip as full `1.119` (#8610).
+/// `0.127`: same literal fold and sole-glob reach as full `1.120` (#10479).
+/// `0.128`: same Display placeholder-edit refusal as full `1.121` (#9836).
+/// `0.130`: same matches! execution admission as full `1.123`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.130";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -893,7 +930,11 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.125";
 /// `0.123`: same rebound-let rule as full `1.116` (#10819).
 /// `0.124`: same suffixed decimal argument values as full `1.117` (#10839).
 /// `0.125`: same scope-end carrier as full `1.118` (#10814).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.125";
+/// `0.126`: same boolean boundary grip as full `1.119` (#8610).
+/// `0.127`: same literal fold and sole-glob reach as full `1.120` (#10479).
+/// `0.128`: same Display placeholder-edit refusal as full `1.121` (#9836).
+/// `0.130`: same matches! execution admission as full `1.123`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.130";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -2740,7 +2781,7 @@ pub(crate) struct RepoFileFactCache {
 /// also stays `None`; the per-read corrupt path still reports the error
 /// kinds it can discriminate. Metadata follows symlinks so a base that
 /// resolves to a usable directory keeps its silent warm/cold behavior.
-fn cache_dir_not_a_directory_reason(base: &Path) -> Option<String> {
+pub(crate) fn cache_dir_not_a_directory_reason(base: &Path) -> Option<String> {
     match std::fs::metadata(base) {
         Ok(metadata) if !metadata.is_dir() => {
             Some(format!("cache dir is not a directory: {}", base.display()))
@@ -2759,7 +2800,7 @@ fn cache_dir_not_a_directory_reason(base: &Path) -> Option<String> {
 /// deadline) refuses rather than admits, and the build recomputes cold.
 /// Limits: an extracted archive carries no Git evidence, and this does not
 /// authenticate entries an untracked process wrote into the root.
-fn cache_base_untrusted_reason(base: &Path) -> Option<String> {
+pub(crate) fn cache_base_untrusted_reason(base: &Path) -> Option<String> {
     if !base.is_dir() {
         return None;
     }
@@ -3527,7 +3568,10 @@ fn encode_checksummed_pretty_to_writer<T: serde::Serialize, W: std::io::Write>(
 }
 
 /// Unkeyed checksum integrity does not authenticate a writer who can recompute the digest.
-fn semantic_body_digest<T: serde::Serialize>(domain: &str, body: &T) -> Result<String, String> {
+pub(crate) fn semantic_body_digest<T: serde::Serialize>(
+    domain: &str,
+    body: &T,
+) -> Result<String, String> {
     use sha2::{Digest, Sha256};
     // The serializer streams into SHA-256: warm admission never retains a second body.
     struct ChecksumWriter(Sha256);
@@ -3565,13 +3609,29 @@ fn semantic_body_digest<T: serde::Serialize>(domain: &str, body: &T) -> Result<S
     });
     Ok(format!("sha256:{:x}", writer.0.finalize()))
 }
-fn encode_integrity_body<T: serde::Serialize>(
+pub(crate) fn encode_integrity_body<T: serde::Serialize>(
     body: &T,
     payload_digest: String,
 ) -> Result<Vec<u8>, String> {
     note_integrity_envelope();
     let mut bytes = Vec::new();
     encode_checksummed_pretty_to_writer(body, payload_digest, &mut bytes)?;
+    record_integrity_vec_len(bytes.len());
+    Ok(bytes)
+}
+/// [`encode_integrity_body`] without pretty-printing, for envelopes large
+/// enough that indentation would dominate their size (the Python per-file
+/// fact store, #10914). Decoding and the digest are unchanged.
+pub(crate) fn encode_integrity_body_compact<T: serde::Serialize>(
+    body: &T,
+    payload_digest: String,
+) -> Result<Vec<u8>, String> {
+    note_integrity_envelope();
+    let bytes = serde_json::to_vec(&ChecksummedBody {
+        body,
+        payload_digest,
+    })
+    .map_err(|err| format!("encode checksummed cache body failed: {err}"))?;
     record_integrity_vec_len(bytes.len());
     Ok(bytes)
 }
@@ -3731,7 +3791,7 @@ mod codec {
     }
 }
 
-fn hash_str(s: &str) -> String {
+pub(crate) fn hash_str(s: &str) -> String {
     hash_bytes(s.as_bytes())
 }
 
@@ -4577,7 +4637,7 @@ fn canonical_toml_value(value: &toml::Value) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "<unserializable>".to_string())
 }
 
-fn hash_bytes(bytes: &[u8]) -> String {
+pub(crate) fn hash_bytes(bytes: &[u8]) -> String {
     format!("{:016x}", fnv1a_64(bytes))
 }
 
@@ -4875,7 +4935,7 @@ fn collect_manifest_dir_prefixes(root: &Path, directory: &Path, prefixes: &mut V
 
 /// FNV-1a 64-bit. Same algorithm `seams::compute_seam_id` uses; chosen
 /// for its dependency-free determinism across Rust releases.
-fn fnv1a_64(bytes: &[u8]) -> u64 {
+pub(crate) fn fnv1a_64(bytes: &[u8]) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
     const FNV_PRIME: u64 = 0x100000001b3;
     let mut hash: u64 = FNV_OFFSET;
@@ -4949,20 +5009,26 @@ mod tests {
         let compact = RepoSeamFactCache::at_compact_classified(root);
         let corpus = RepoCorpusFingerprintCache::at(root);
         let files = RepoFileFactCache::at(root);
+        #[cfg(feature = "lang-typescript")]
+        let ts_facts = TypeScriptFileFactStore::at(root);
+        #[cfg(feature = "lang-python")]
+        let py_facts = PythonFileFactStore::at(root);
         let scans = RepoModuleTreeScanCache::at(root);
         let counts = RepoSeamCountCache::at(root);
         let scoped = RepoScopedInventoryCache::at(root);
-        let produced = [
+        let mut produced: Vec<&std::path::Path> = vec![
             &full.dir,
             &full.sharded_dir,
             &compact.dir,
             &compact.sharded_dir,
             &corpus.dir,
             &files.dir,
-            &scans.dir,
-            &counts.dir,
-            &scoped.dir,
         ];
+        #[cfg(feature = "lang-typescript")]
+        produced.push(ts_facts.dir_path());
+        #[cfg(feature = "lang-python")]
+        produced.push(py_facts.dir_path());
+        produced.extend([&scans.dir, &counts.dir, &scoped.dir].map(PathBuf::as_path));
         let actual: BTreeSet<_> = produced
             .into_iter()
             .map(|path| {
@@ -4976,13 +5042,23 @@ mod tests {
                     .ok_or_else(|| "layer is not UTF-8".to_string())
             })
             .collect::<Result<_, _>>()?;
-        let expected: BTreeSet<_> = cache_layer_names().iter().copied().collect();
+        // The TypeScript and Python layers stay registered without their
+        // features (the `cache clear` leftover convention, same as
+        // `SeamCounts`), but no producer runs to produce them, so a build
+        // without the feature cannot claim they were produced.
+        let expected: BTreeSet<_> = cache_layer_names()
+            .iter()
+            .copied()
+            .filter(|name| cfg!(feature = "lang-typescript") || *name != "typescript-file-facts")
+            .filter(|name| cfg!(feature = "lang-python") || *name != "python-file-facts")
+            .collect();
         assert_eq!(
             actual, expected,
             "every produced layer must be maintainable"
         );
+        let registered: BTreeSet<_> = cache_layer_names().iter().copied().collect();
         assert_eq!(
-            expected.len(),
+            registered.len(),
             cache_layer_names().len(),
             "duplicate layer name"
         );
@@ -5270,7 +5346,12 @@ mod tests {
         // 1.115 -> 1.116: rebound let literal is not the argument (#10819).
         // 1.116 -> 1.117: whole suffixed decimal arguments feed repository activation (#10839).
         // 1.117 -> 1.118: scope-end carrier for a standard Drop (#10814).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.118");
+        // 1.118 -> 1.119: direct boolean boundary owner grip (RIPR-SPEC-0197, #8610).
+        // 1.119 -> 1.120: literal-only fold and sole-glob reach (#10479).
+        // 1.120 -> 1.121: Display placeholder-edit refusal (#9836).
+        // 1.121 -> 1.122: foreign embedded-type equality reading (#10684).
+        // 1.122 -> 1.123: return/error matches! execution admission.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.123");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5375,8 +5456,13 @@ mod tests {
         // 0.122 -> 0.123: same rebound-let rule as full 1.116.
         // 0.123 -> 0.124: same suffixed decimal argument values as full 1.117.
         // 0.124 -> 0.125: same scope-end carrier as full 1.118.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.125");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.125");
+        // 0.125 -> 0.126: same boolean boundary grip as full 1.119 (#8610).
+        // 0.126 -> 0.127: same literal fold and sole-glob reach as full 1.120.
+        // 0.127 -> 0.128: same Display placeholder-edit refusal as full 1.121.
+        // 0.128 -> 0.129: same foreign embedded-type reading as full 1.122.
+        // 0.129 -> 0.130: same matches! admission as full 1.123.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.130");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.130");
     }
 
     #[test]
@@ -10607,16 +10693,28 @@ mod generation_transition_tests {
         // each constructor's `entry_dirs`/`entry_dir` (#6707), so this
         // table must not: flipping a constructor flag changes the
         // production side only and fails this test.
-        let expected = vec![
+        let mut expected = vec![
             (full.dir.clone(), false),
             (full.sharded_dir.clone(), true),
             (compact.dir.clone(), false),
             (compact.sharded_dir.clone(), true),
             (RepoCorpusFingerprintCache::at(root).dir, false),
             (RepoFileFactCache::at(root).dir, false),
+        ];
+        #[cfg(feature = "lang-typescript")]
+        expected.push((
+            TypeScriptFileFactStore::at(root).dir_path().to_path_buf(),
+            false,
+        ));
+        #[cfg(feature = "lang-python")]
+        expected.push((
+            PythonFileFactStore::at(root).dir_path().to_path_buf(),
+            false,
+        ));
+        expected.extend([
             (RepoModuleTreeScanCache::at(root).dir, false),
             (RepoScopedInventoryCache::at(root).dir, false),
-        ];
+        ]);
         assert_eq!(production_entry_dirs(&cache_base_dir(root)), expected);
         // The constructors doctor's list is derived from must carry the
         // same flags, so a flag flipped in `entry_dirs`/`entry_dir`
@@ -10626,6 +10724,10 @@ mod generation_transition_tests {
         constructed.extend(compact.entry_dirs());
         constructed.push(RepoCorpusFingerprintCache::at(root).entry_dir());
         constructed.push(RepoFileFactCache::at(root).entry_dir());
+        #[cfg(feature = "lang-typescript")]
+        constructed.push(TypeScriptFileFactStore::at(root).entry_dir());
+        #[cfg(feature = "lang-python")]
+        constructed.push(PythonFileFactStore::at(root).entry_dir());
         constructed.push(RepoModuleTreeScanCache::at(root).entry_dir());
         constructed.push(RepoScopedInventoryCache::at(root).entry_dir());
         assert_eq!(constructed, expected);

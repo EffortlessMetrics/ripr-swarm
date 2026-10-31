@@ -12,7 +12,7 @@ Start here:
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:2
   Static exposure: weak (severity: warning, confidence 0.92)
-  Why weak: a related test reaches this change, but no test input tells the old and new behavior apart
+  Why weak: a related test reaches this change, but no assertion tells the old and new behavior apart
   Gap ID (for scripts): gap:rust:src/lib.rs:is_big:predicate_boundary:predicate:n==0xff
   Changed behavior: n > 0xFF
   Missing check: n == 0xFF
@@ -36,12 +36,12 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/radix_literal_boundary_off/input --diff <cwd>/fixtures/radix_literal_boundary_off/diff.patch --mode fast probe:src_lib.rs:predicate:7432bf5c
   ripr context --root <cwd>/fixtures/radix_literal_boundary_off/input --diff <cwd>/fixtures/radix_literal_boundary_off/diff.patch --mode fast --at probe:src_lib.rs:predicate:7432bf5c
-  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test input that reaches the changed code; follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/radix_literal_boundary_off/input --at src/lib.rs:2 --kind predicate
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:2 (weak)
+    - ./src/lib.rs:2 (weak); kind: return_value; reason: Missing discriminator value: n == 0xFF
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

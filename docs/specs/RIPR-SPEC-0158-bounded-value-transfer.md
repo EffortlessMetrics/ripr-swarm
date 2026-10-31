@@ -70,8 +70,10 @@ exercised boundary from a missing one.
   precedence and parentheses, failing closed on a leading sign,
   overflow, underflow, division by zero, or an operand or result at or
   above `i32::MAX`),
-  `split_whitespace().count()` and
-  `chars().count()` are credit-only families (#9637): a chain that
+  `split_whitespace().count()`, `chars().count()` and the text normalizers
+  `trim`/`trim_start`/`trim_end`/`to_lowercase`/`to_uppercase` (#10838, so a
+  trimmed local resolves to the value an equality compares) are credit-only
+  families (#9637): a chain that
   uses one may close a boundary through an observed equality row but
   never names a missing input, so no row on the boundary leaves the
   stage unknown. A comparison operand that is itself such a chain over
@@ -261,6 +263,21 @@ exercised boundary from a missing one.
   in the function. Any other shape keeps the boundary operand unresolved
   (`infection_unknown`).
 
+### Literal-only integer folding for observation (#10479)
+
+A changed `return_value` expression made only of plain decimal literals, `+ - * / %`
+and parentheses (`8 * 100`, `(2 + 2) * 200`) folds, through the same exact integer
+arithmetic, to its value. That value is one more owner-scoped digit token of the
+probe, so an exact-value assertion bound to the owner's result and carrying the
+folded literal confirms observation, as an unrewritten literal of three or more
+digits already does. A one- or two-digit value is no token in either spelling
+(`40 + 2` and `42` both stay unconfirmed), so a short folded value never matches
+an assertion that merely mentions its digits. A wrong expected value (`801`), a result at or above the arithmetic bound, an
+overflow, an underflow, a division by zero, and any name, suffix, sign,
+underscore, string or method call leave the expression unfolded and the
+assertion unconfirmed. The fold adds no reach and no new family: a test that
+only reaches the owner without a bound exact assertion stays below `exposed`.
+
 ## Required Evidence
 
 - The complete retained `authored-tokens` subject's six Rust sources,
@@ -433,7 +450,10 @@ exercised boundary from a missing one.
 `spec0158-modfold-helper-call`, `spec0158-modfold-helper-shadowed`,
 `spec0158-modfold-helper-computes`, `spec0158-modfold-const-shadowed` and
 `spec0158-modfold-helper-glob-import`;
-`analysis/classify/value_transfer.rs` `tests`;
+`analysis/classify/value_transfer.rs` `tests` (including
+`literal_only_integer_expressions_fold_to_their_value` and
+`literal_folding_refuses_everything_that_is_not_plain_integer_arithmetic`);
+`crates/ripr/tests/literal_arithmetic_observation.rs`;
 `analysis/classify/activation.rs`
 `activation_evidence_resolves_computed_local_boundary_operands`,
 `exact_values_compare_plain_decimals_by_digits_only` and

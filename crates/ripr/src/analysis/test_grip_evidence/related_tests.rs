@@ -314,12 +314,7 @@ pub(super) fn match_direct_owner_call(
             // Every inherent entry borrows the complete shared owner refusal,
             // independently of the legacy impl-name ambiguity shortcut.
             if !owner.inherent_owner.is_some_and(|function| {
-                inherent_owner_call_resolves(
-                    indexed.test,
-                    function,
-                    context.index,
-                    context.pin_syntax(),
-                )
+                inherent_owner_call_resolves(indexed.test, function, context.index)
             }) {
                 continue;
             }
@@ -378,7 +373,7 @@ pub(super) fn match_helper_owner_call(
     for test_index in indices {
         if owner.inherent_receiver
             && !owner.inherent_owner.is_some_and(|function| {
-                context.inherent_helper_reaches_owner(*test_index, &function.id.0)
+                context.inherent_helper_reaches_owner(*test_index, function)
             })
         {
             continue;
@@ -425,7 +420,7 @@ pub(super) fn match_target_affinity_owner_call(
         if !test_assertion_mentions_any_target_token(test, target_tokens)
             || (owner.inherent_receiver
                 && !owner.inherent_owner.is_some_and(|function| {
-                    context.inherent_helper_reaches_owner(*test_index, &function.id.0)
+                    context.inherent_helper_reaches_owner(*test_index, function)
                 }))
         {
             continue;
@@ -736,6 +731,7 @@ pub(super) fn sort_related_tests_for_seam<'a>(
     related: &mut [(&'a CompactTest<'a>, RelationReason)],
 ) -> Vec<BestOracle> {
     let owner = seam_owner_activation(seam, context);
+    let boolean_pin = BooleanBoundaryPin::establish(seam, owner_fn, context.index);
     let mut ranked: Vec<_> = related
         .iter()
         .map(|&entry| {
@@ -749,6 +745,7 @@ pub(super) fn sort_related_tests_for_seam<'a>(
                 // stage; a per-key fresh instance re-paid the whole-index
                 // lazily computed facts once per (seam, related test) rank.
                 context.pin_syntax(),
+                boolean_pin.as_ref(),
             );
             let key =
                 related_test_rank_key(seam, context, indexed, reason, owner.as_ref(), &oracle);

@@ -144,9 +144,9 @@ pub(crate) struct PythonJudgedPanelItem {
     pub(crate) id: String,
     pub(crate) repo: String,
     #[serde(default)]
-    base: Nullable<String>,
+    pub(crate) base: Nullable<String>,
     #[serde(default)]
-    head: Nullable<String>,
+    pub(crate) head: Nullable<String>,
     pub(crate) diff_path: String,
     pub(crate) shape: Vec<String>,
     pub(crate) expected_direction: String,

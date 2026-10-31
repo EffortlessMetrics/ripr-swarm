@@ -323,7 +323,7 @@ fn effect_order_helper_capture_does_not_gain_effect_channel_credit() -> Check {
         let assertion = test
             .assertions
             .iter()
-            .find(|assertion| assertion.helper_derived)
+            .find(|assertion| assertion.helper_origin.is_helper())
             .ok_or("expected resolved helper assertion")?;
         assert!(assertion.source_range.is_some());
         let effect = super::effect_alignment::ChangedEffect::SelfField {
@@ -336,7 +336,7 @@ fn effect_order_helper_capture_does_not_gain_effect_channel_credit() -> Check {
                 Some(assertion.line),
                 assertion.source_range,
                 &assertion.observed_operands,
-                assertion.helper_derived,
+                assertion.helper_origin.is_helper(),
             ),
             expected,
             "{control}"

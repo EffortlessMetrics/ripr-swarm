@@ -169,6 +169,23 @@ fn owner_from_function(
                 matches!(name.as_str(), "classmethod" | "staticmethod" | "property")
             })
     });
+    // A click command's decorators build a command that runs this body when
+    // invoked, so a helper it calls is reached through the command (#9226).
+    let click_command = !is_async
+        && decorator_names.len() == decorators.len()
+        && decorator_names
+            .iter()
+            .any(|decorator| matches!(decorator.as_str(), "click.command" | "click.group"))
+        && decorator_names.iter().all(|decorator| {
+            matches!(
+                decorator.as_str(),
+                "click.command" | "click.group" | "click.option" | "click.argument"
+            )
+        })
+        && context
+            .imports
+            .iter()
+            .any(super::cli_runner::is_plain_click_import);
     // A decorator whose name cannot be read still wraps the call.
     let binding_only = !is_async
         && decorator_names.len() == decorators.len()
@@ -224,7 +241,7 @@ fn owner_from_function(
         body,
         super::same_class_callees::method_receiver_name(&parameters, &decorators),
     );
-    let module_callees = if transparent_decorators {
+    let module_callees = if transparent_decorators || click_command {
         super::module_callees::bare_callees(&text_for_range(context.source, range), &parameters)
     } else {
         Vec::new()
@@ -271,6 +288,7 @@ fn owner_from_function(
         },
         foreign_writes: Default::default(),
         version_conditional: false,
+        cli_subcommand: None,
     }
 }
 
@@ -374,6 +392,7 @@ fn owner_from_class(
         class_facts: Default::default(),
         foreign_writes: Default::default(),
         version_conditional: false,
+        cli_subcommand: None,
     }
 }
 
@@ -412,6 +431,7 @@ pub(super) fn module_owner(
         class_facts: Default::default(),
         foreign_writes: Default::default(),
         version_conditional: false,
+        cli_subcommand: None,
     }
 }
 
@@ -619,6 +639,9 @@ pub(super) fn collect_tests_from_statements(
                     body_text,
                     imports,
                     decorators: decorator_names(&function.decorator_list),
+                    simple_literal_parametrize: simple_literal_parametrize(
+                        &function.decorator_list,
+                    ),
                     activation_controls: super::test_activation::activation_controls(
                         &function.decorator_list,
                         &definition_imports,
@@ -747,6 +770,9 @@ pub(super) fn collect_tests_from_statements(
                     body_text,
                     imports,
                     decorators: decorator_names(&function.decorator_list),
+                    simple_literal_parametrize: simple_literal_parametrize(
+                        &function.decorator_list,
+                    ),
                     activation_controls: super::test_activation::activation_controls(
                         &function.decorator_list,
                         &definition_imports,
@@ -935,6 +961,25 @@ pub(super) fn collect_tests_from_statements(
             _ => {}
         }
     }
+}
+
+/// The narrow literal shape required for positive whole-row observation.
+fn simple_literal_parametrize(decorators: &[Expr]) -> bool {
+    fn literal(expr: &Expr) -> bool {
+        match expr {
+            Expr::Constant(_) => true,
+            Expr::Tuple(value) => value.elts.iter().all(literal),
+            Expr::List(value) => value.elts.iter().all(literal),
+            Expr::UnaryOp(value) if matches!(value.op, ast::UnaryOp::UAdd | ast::UnaryOp::USub) => {
+                matches!(value.operand.as_ref(), Expr::Constant(constant) if matches!(constant.value, ast::Constant::Int(_) | ast::Constant::Float(_)))
+            }
+            _ => false,
+        }
+    }
+    let [Expr::Call(call)] = decorators else {
+        return false;
+    };
+    call.args.len() == 2 && call.keywords.is_empty() && call.args.iter().all(literal)
 }
 
 /// The test's cases without the argnames its body rebinds, read through a

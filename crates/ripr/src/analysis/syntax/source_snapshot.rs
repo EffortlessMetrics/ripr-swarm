@@ -90,21 +90,30 @@ impl std::fmt::Debug for SourceSyntaxMemos {
 
 impl SourceSyntaxMemos {
     pub(crate) fn parse_fragment(&self, text: &str) -> Option<Parse<SourceFile>> {
+        // Large texts are parsed transiently and the memo stops growing at its
+        // entry cap, so a repo-scale scan cannot accumulate every distinct body.
         if text.len() > FRAGMENT_MEMO_MAX_TEXT_BYTES {
             return parse_clean_source_file(text);
         }
+        // Parse outside the index-wide lock; the first stored entry wins so
+        // concurrent callers converge on one shared green tree.
+        if let Ok(fragments) = self.fragments.lock()
+            && let Some(parse) = fragments.get(text)
+        {
+            return parse.clone();
+        }
+        let parse = parse_clean_source_file(text);
         match self.fragments.lock() {
             Ok(mut fragments) => {
-                if let Some(parse) = fragments.get(text) {
-                    return parse.clone();
+                if let Some(existing) = fragments.get(text) {
+                    return existing.clone();
                 }
-                let parse = parse_clean_source_file(text);
                 if fragments.len() < FRAGMENT_MEMO_MAX_ENTRIES {
                     fragments.insert(text.to_string(), parse.clone());
                 }
                 parse
             }
-            Err(_) => parse_clean_source_file(text),
+            Err(_) => parse,
         }
     }
 
@@ -140,6 +149,7 @@ pub(crate) struct SourceSnapshot {
     shadows: Mutex<BTreeMap<ShadowKey, bool>>,
     root_shadows: Mutex<BTreeMap<(String, bool), RootShadow>>,
     masked: OnceLock<String>,
+    root_impl_lines: OnceLock<Vec<(usize, usize)>>,
     #[cfg(test)]
     shadow_computations: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
@@ -162,11 +172,35 @@ impl SourceSnapshot {
             shadows: Mutex::default(),
             root_shadows: Mutex::default(),
             masked: OnceLock::new(),
+            root_impl_lines: OnceLock::new(),
             #[cfg(test)]
             shadow_computations: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             root_shadow_computations: std::sync::atomic::AtomicUsize::new(0),
         }
+    }
+
+    /// Inclusive 1-based line ranges of the `impl` blocks that are direct items
+    /// of the file root, in source order, built once per snapshot. Lines count
+    /// the parsed tree's own text, so the answer is identical to counting
+    /// newlines before each range edge; a per-probe rebuild copied the whole
+    /// file text and rescanned it for every `impl`.
+    pub(crate) fn root_impl_lines(&self) -> &[(usize, usize)] {
+        self.root_impl_lines.get_or_init(|| {
+            let Some(tree) = self.tree() else {
+                return Vec::new();
+            };
+            let syntax = tree.syntax();
+            let lines = LineIndex::new(&syntax.text().to_string());
+            syntax
+                .children()
+                .filter_map(ast::Impl::cast)
+                .map(|item| {
+                    let range = item.syntax().text_range();
+                    (lines.line(range.start()), lines.line(range.end()))
+                })
+                .collect()
+        })
     }
 
     pub(crate) fn lexical_items(&self) -> Option<&SourceScopes> {
@@ -500,6 +534,43 @@ mod tests {
     use crate::analysis::rust_index::summarize_file;
 
     #[test]
+    fn root_impl_lines_cover_only_direct_root_impls() {
+        // Lines: 1 impl A, 2-4 mod m (with a nested impl B on 3), 5-7 impl C
+        // spanning three lines, 8 fn with a local impl D.
+        let source = "impl A { fn a() {} }\nmod m {\n    impl B { fn b() {} }\n}\nimpl C {\n    fn c() {}\n}\nfn f() { impl D {} }\n";
+        let snapshot = SourceSnapshot::new(source);
+        // The nested `impl B` (line 3) and the fn-local `impl D` (line 8) are
+        // not root items; a descendants-wide answer would include them.
+        assert_eq!(snapshot.root_impl_lines(), &[(1, 1), (5, 7)]);
+        assert!(
+            SourceSnapshot::new("fn broken( {")
+                .root_impl_lines()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn fragment_memo_is_bounded_by_entry_count_and_text_size() -> Result<(), String> {
+        let memos = SourceSyntaxMemos::default();
+        let len = |memos: &SourceSyntaxMemos| {
+            memos
+                .fragments
+                .lock()
+                .map(|m| m.len())
+                .map_err(|e| e.to_string())
+        };
+        let large = format!("fn big() {{ {} }}", "let a = 1; ".repeat(300));
+        assert!(large.len() > FRAGMENT_MEMO_MAX_TEXT_BYTES);
+        assert!(memos.parse_fragment(&large).is_some());
+        assert_eq!(len(&memos)?, 0);
+        for n in 0..FRAGMENT_MEMO_MAX_ENTRIES + 10 {
+            assert!(memos.parse_fragment(&format!("fn f{n}() {{}}")).is_some());
+        }
+        assert_eq!(len(&memos)?, FRAGMENT_MEMO_MAX_ENTRIES);
+        Ok(())
+    }
+
+    #[test]
     fn fragment_parses_share_only_exact_bytes_and_clones_start_empty() -> Result<(), String> {
         let memos = SourceSyntaxMemos::default();
         let text = "fn subject() { assert!(Widget.read()); }";
@@ -552,27 +623,6 @@ mod tests {
             Ok(())
         })?;
         assert_eq!(memos.fragments.lock().map_err(|e| e.to_string())?.len(), 3);
-        Ok(())
-    }
-
-    #[test]
-    fn fragment_memo_is_bounded_by_entry_count_and_text_size() -> Result<(), String> {
-        let memos = SourceSyntaxMemos::default();
-        let len = |memos: &SourceSyntaxMemos| {
-            memos
-                .fragments
-                .lock()
-                .map(|m| m.len())
-                .map_err(|e| e.to_string())
-        };
-        let large = format!("fn big() {{ {} }}", "let a = 1; ".repeat(300));
-        assert!(large.len() > FRAGMENT_MEMO_MAX_TEXT_BYTES);
-        assert!(memos.parse_fragment(&large).is_some());
-        assert_eq!(len(&memos)?, 0);
-        for n in 0..FRAGMENT_MEMO_MAX_ENTRIES + 10 {
-            assert!(memos.parse_fragment(&format!("fn f{n}() {{}}")).is_some());
-        }
-        assert_eq!(len(&memos)?, FRAGMENT_MEMO_MAX_ENTRIES);
         Ok(())
     }
 

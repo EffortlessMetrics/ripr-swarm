@@ -1,6 +1,7 @@
 use super::PythonFramework;
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::fixtures::literal_owner_instance_fixture;
+use super::sink_alignment::AlignmentPrep;
 use super::source_utils::normalized_path;
 use super::{
     PythonImport, PythonOwner, PythonTest, first_python_string_literal, line_prefix_before,
@@ -10,6 +11,7 @@ use crate::domain::{ExposureClass, OracleKind, OracleStrength, OwnerKind, Relate
 use rayon::prelude::*;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 #[cfg(test)]
 mod verify_command_tests;
@@ -45,6 +47,9 @@ pub(super) enum PythonRelationKind {
     /// The test names a pytest fixture whose body calls the owner (#4563).
     /// Reach evidence only; the fixture value is not an oracle.
     FixtureOwnerCall,
+    /// The test passes the owner, a click command, to `CliRunner.invoke`
+    /// (#9226). Reach evidence only; the command's output is not credited.
+    CliRunnerInvoke,
     ActivationLimited,
 }
 
@@ -66,6 +71,7 @@ impl PythonRelationKind {
             Self::FixtureName => 1,
             Self::FixtureOwnerCall => 2,
             Self::HelperOwnerCall => 2,
+            Self::CliRunnerInvoke => 2,
             Self::ActivationLimited => 0,
         }
     }
@@ -105,6 +111,7 @@ impl PythonRelationKind {
             Self::FixtureName => "fixture_name",
             Self::FixtureOwnerCall => "fixture_owner_call",
             Self::HelperOwnerCall => "helper_owner_call",
+            Self::CliRunnerInvoke => "cli_runner_invoke",
             Self::ActivationLimited => "test_activation_unestablished",
         }
     }
@@ -123,6 +130,7 @@ pub(super) struct PythonRepairPlacement {
     pub(super) suggested_test_name: String,
     pub(super) suggested_test_line: Option<usize>,
     pub(super) suggested_test_node_id: Option<String>,
+    pub(super) suggested_test_qualified_name: Option<String>,
     pub(super) verify_command: String,
     pub(super) verify_command_confidence: &'static str,
     pub(super) location_reason: &'static str,
@@ -136,6 +144,8 @@ pub(super) struct PythonRepairPlacement {
 pub(super) struct RelatedCandidateMemo<'a> {
     by_owner: HashMap<OwnerKey, Vec<PythonRelatedCandidate<'a>>>,
     helpers: HashMap<OwnerKey, Vec<HelperOwnerCallCandidate<'a>>>,
+    alignment_preps: HashMap<OwnerKey, AlignmentPrep<'a>>,
+    alignment_lookup: Option<Rc<TestLookup<'a>>>,
 }
 
 type OwnerKey = (PathBuf, usize, usize, String);
@@ -174,6 +184,25 @@ impl<'a> RelatedCandidateMemo<'a> {
             .entry(owner_key(owner))
             .or_insert_with(|| helper_owner_call_candidates(owner, owners, all_tests))
             .clone()
+    }
+
+    /// The owner's sink-alignment prep, once per owner (#10914): the owner's
+    /// import aliases across every test, which repeated per changed line was
+    /// most of a large workspace's per-line cost. The test index it reads
+    /// covers every test, so the run builds it once and every owner shares it.
+    pub(super) fn alignment_prep(
+        &mut self,
+        owner: &PythonOwner,
+        all_tests: &'a [PythonTest],
+    ) -> &AlignmentPrep<'a> {
+        self.alignment_preps
+            .entry(owner_key(owner))
+            .or_insert_with(|| {
+                let lookup = self
+                    .alignment_lookup
+                    .get_or_insert_with(|| AlignmentPrep::lookup(all_tests));
+                AlignmentPrep::with_lookup(owner, all_tests, Rc::clone(lookup))
+            })
     }
 }
 
@@ -326,7 +355,9 @@ pub(super) fn helper_owner_call_candidates<'a>(
         // its relation check.
         let related = |test: &'a PythonTest| {
             !seen.contains(&(test.file.as_path(), test.qualified_name.as_str()))
-                && related_test_relation(test, caller).is_some_and(PythonRelationKind::uses_oracle)
+                && related_test_relation(test, caller).is_some_and(|relation| {
+                    relation.uses_oracle() || relation == PythonRelationKind::CliRunnerInvoke
+                })
         };
         let reached: Vec<&'a PythonTest> = if all_tests.len() >= PARALLEL_RELATION_MIN_TESTS {
             #[cfg(test)]
@@ -451,77 +482,12 @@ pub(super) fn verify_command_for_test_on(test: &PythonTest, windows: bool) -> Op
             // ends with one, so `pytest "path"::test` would hand pytest the
             // quote bytes as part of the file name. A token with bytes cmd
             // or PowerShell expand inside double quotes gets no command.
-            let selector = if windows {
-                shell_quote_file_arg_for_host(&format!("{path}::{node}"), true)?
-            } else {
-                format!("{}::{node}", shell_quote_file_arg_for_host(&path, false)?)
-            };
-            Some(format!(
-                "{} {selector}",
-                crate::domain::PYTEST_VERIFY_PROGRAM
-            ))
+            crate::domain::python_pytest_verify_display(&path, &node, windows)
         }
         PythonFramework::Unittest => {
-            let module = unittest_module_for_path(&path)?;
-            let selector = if windows {
-                shell_quote_file_arg_for_host(&format!("{module}.{}", test.qualified_name), true)?
-            } else {
-                format!(
-                    "{}.{}",
-                    shell_quote_file_arg_for_host(&module, false)?,
-                    test.qualified_name
-                )
-            };
-            Some(format!("python -m unittest {selector}"))
+            crate::domain::python_unittest_verify_display(&path, &test.qualified_name, windows)
         }
     }
-}
-
-fn unittest_module_for_path(path: &str) -> Option<String> {
-    let module_path = path.strip_suffix(".py").unwrap_or(path);
-    // unittest splits every dot as a module separator. A literal path dot
-    // can therefore select a different file, even when shell quoting is
-    // correct. Keep that unresolved identity out of verification routes.
-    if module_path.contains('.') {
-        return None;
-    }
-    Some(module_path.replace(['/', '\\'], "."))
-}
-
-/// Quote one path or module token for the host's default shell grammar.
-///
-/// Suggested verify commands are text an agent may paste into a shell, so the
-/// quoting must match the host's grammar or the command fails for exactly the
-/// paths that need quoting (#8752). A relative path made of ASCII letters,
-/// digits, `.`, `_`, `/`, `-` stays readable (`:` too on Windows, where it is
-/// not a metachar and the pytest `::` separator must not force quotes); any
-/// other byte is quoted so spaces, unicode, and shell metacharacters reach
-/// the test runner intact. On POSIX hosts the quote is single-quote escaping
-/// (`'\''`), so `$()`, backticks, spaces, and quotes are not expanded. On
-/// Windows hosts the quote is double quotes — the common denominator of cmd
-/// and PowerShell for literal text — but both shells still expand some bytes
-/// inside double quotes (PowerShell: `$()`, `$var`, and backtick escapes;
-/// cmd: `%VAR%`). A token carrying any of those bytes gets no paste-ready
-/// command at all: the verify route stays silent rather than emitting a
-/// command whose paste executes the file name. An embedded `"` in a
-/// quotable token is doubled per the PowerShell grammar; cmd has no
-/// representation for an embedded quote, which stays a documented limit.
-/// Stored node ids and test-file paths stay the raw spelling; only the
-/// command text is quoted. This does not run the command.
-fn shell_quote_file_arg_for_host(file_str: &str, windows: bool) -> Option<String> {
-    let in_safe_class = |c: char| {
-        c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-') || (windows && c == ':')
-    };
-    if !file_str.is_empty() && file_str.chars().all(in_safe_class) {
-        return Some(file_str.to_string());
-    }
-    if windows {
-        if file_str.contains(['$', '`', '%']) {
-            return None;
-        }
-        return Some(format!("\"{}\"", file_str.replace('"', "\"\"")));
-    }
-    Some(format!("'{}'", file_str.replace('\'', "'\\''")))
 }
 
 pub(super) fn python_repair_placement(
@@ -568,6 +534,11 @@ pub(super) fn python_repair_placement_on(
                 suggested_test_name: candidate.test.name.clone(),
                 suggested_test_line,
                 suggested_test_node_id: Some(node_id),
+                suggested_test_qualified_name: candidate
+                    .test
+                    .qualified_name
+                    .contains('.')
+                    .then(|| candidate.test.qualified_name.clone()),
                 verify_command,
                 verify_command_confidence: "high",
                 location_reason: "strengthen existing weak pytest relation",
@@ -579,6 +550,7 @@ pub(super) fn python_repair_placement_on(
             suggested_test_name: candidate.test.name.clone(),
             suggested_test_line,
             suggested_test_node_id: None,
+            suggested_test_qualified_name: Some(candidate.test.qualified_name.clone()),
             verify_command,
             verify_command_confidence: "high",
             location_reason: "strengthen existing weak unittest relation",
@@ -587,6 +559,70 @@ pub(super) fn python_repair_placement_on(
 }
 
 pub(super) fn related_test_relation(
+    test: &PythonTest,
+    owner: &PythonOwner,
+) -> Option<PythonRelationKind> {
+    // Most of a large workspace's tests never spell the owner's name; for
+    // them the full scan below (route parsing, fixture views, import
+    // matching) is pure cost (#10914: pandas scans ~23k tests per changed
+    // owner).
+    // A click subcommand is reached through its group, so the test spells the
+    // group instead (`cli_subcommand.rs`).
+    if let Some(name) = name_anchor(owner)
+        && !test_text_mentions(test, name)
+        && !owner
+            .cli_subcommand
+            .as_ref()
+            .is_some_and(|subcommand| test_text_mentions(test, &subcommand.group))
+    {
+        debug_assert_eq!(
+            related_test_relation_scan(test, owner),
+            None,
+            "a test that never spells `{name}` related to it"
+        );
+        return None;
+    }
+    related_test_relation_scan(test, owner)
+}
+
+/// The name every relation of `owner` needs the test to spell, or `None` when
+/// a relation can hold without it: a module owner (reached through its module
+/// path), a dunder method (reached by operator, builtin or construction) and
+/// a routed handler (reached by URL).
+fn name_anchor(owner: &PythonOwner) -> Option<&str> {
+    (!owner.name.is_empty()
+        && !owner.is_module_owner()
+        && !is_dunder_name(&owner.name)
+        && dunder_method_class(owner).is_none()
+        && owner.route_paths.is_empty())
+    .then_some(owner.name.as_str())
+}
+
+/// Whether `name` occurs anywhere a relation reads source text: the body, the
+/// assertions, the imports, and the bodies and imports of resolved fixtures.
+fn test_text_mentions(test: &PythonTest, name: &str) -> bool {
+    let import_mentions = |import: &super::PythonImport| {
+        import.imported.contains(name)
+            || import.alias.contains(name)
+            || import.source_module.contains(name)
+    };
+    test.body_text.contains(name)
+        || test.assertions.iter().any(|assertion| {
+            assertion.text.contains(name)
+                || assertion.gate_text.contains(name)
+                || assertion
+                    .callable_call
+                    .as_deref()
+                    .is_some_and(|call| call.contains(name))
+        })
+        || test.imports.iter().any(import_mentions)
+        || test
+            .fixture_defs
+            .iter()
+            .any(|def| def.body_text.contains(name) || def.imports.iter().any(import_mentions))
+}
+
+fn related_test_relation_scan(
     test: &PythonTest,
     owner: &PythonOwner,
 ) -> Option<PythonRelationKind> {
@@ -632,6 +668,9 @@ pub(super) fn related_test_relation(
     }
     if fixture_owner_call(test, owner) {
         return Some(PythonRelationKind::FixtureOwnerCall);
+    }
+    if super::cli_runner::cli_runner_invokes_owner(test, owner) {
+        return Some(PythonRelationKind::CliRunnerInvoke);
     }
     if route.is_some() {
         return Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
@@ -873,6 +912,7 @@ fn is_case_capture(body: &str, idx: usize, after: &str) -> bool {
 /// `r: list = ...`). Any `var,` / `, var` / `var:` occurrence counts, which
 /// also demotes some reads (`f(r, 1)`); that only fails closed.
 pub(super) fn binds_in_target_list(body: &str, var: &str) -> bool {
+    let mut parsed_target_line = None;
     body.match_indices(var).any(|(idx, _)| {
         let end = idx + var.len();
         python_callee_start_has_boundary(body, idx)
@@ -892,7 +932,69 @@ pub(super) fn binds_in_target_list(body: &str, var: &str) -> bool {
                     || (continued && (plain_assign(after) || augmented_assign_op(after)))
                     || is_case_capture(body, idx, after)
                     || chained_or_bracketed_target(body, idx, before, after)
+                    || enclosing_bracketed_target_binds(body, idx, var, &mut parsed_target_line)
             }
+    })
+}
+
+/// A complete single-line target can enclose the name without every bracket
+/// touching it (`(x, (r)) = ...`, `[a, [r]] = ...`). Read the target tree rather
+/// than treating every surrounding bracket as a binding: `values[(r)]` still
+/// reads `r`, including when it occurs inside a tuple assignment target.
+fn enclosing_bracketed_target_binds(
+    body: &str,
+    idx: usize,
+    var: &str,
+    parsed_target_line: &mut Option<usize>,
+) -> bool {
+    use rustpython_parser::ast::{Expr, Mod, Stmt};
+
+    // Only a bracketed occurrence needs this fallback. In particular the
+    // original `r = Owner(...)` initializer must not count as a rebind.
+    if !body[..idx]
+        .trim_end_matches([' ', '\t'])
+        .ends_with(['(', '['])
+        || !body[idx + var.len()..]
+            .trim_start_matches([' ', '\t'])
+            .starts_with([')', ']'])
+    {
+        return false;
+    }
+    let line_start = body[..idx].rfind('\n').map_or(0, |at| at + 1);
+    // A failed lookup applies to every occurrence of this name on the line.
+    // Do not repeatedly parse wide tuple expressions containing many reads.
+    if *parsed_target_line == Some(line_start) {
+        return false;
+    }
+    *parsed_target_line = Some(line_start);
+    let line = body[line_start..].lines().next().unwrap_or_default().trim();
+    let path = Path::new("<protocol-entry-target>");
+    // Preserve inline suites by parsing the actual line first. Only an
+    // incomplete header needs a synthetic suite. Both attempts keep the
+    // common parser's nesting/tree budget and never execute user code.
+    let parsed = super::source_facts::parse_module_result(path, line).or_else(|_| {
+        super::source_facts::parse_module_result(path, &format!("{line}\n    pass\n"))
+    });
+    let Ok(Mod::Module(module)) = parsed else {
+        return false;
+    };
+    let binds = |target: &Expr| {
+        matches!(target, Expr::Tuple(_) | Expr::List(_) | Expr::Starred(_))
+            && super::sink_alignment::target_binds_name(target, var)
+    };
+    module.body.iter().any(|stmt| match stmt {
+        Stmt::Assign(assign) => assign.targets.iter().any(binds),
+        Stmt::For(loop_) => binds(&loop_.target),
+        Stmt::AsyncFor(loop_) => binds(&loop_.target),
+        Stmt::With(with) => with
+            .items
+            .iter()
+            .any(|item| item.optional_vars.as_deref().is_some_and(binds)),
+        Stmt::AsyncWith(with) => with
+            .items
+            .iter()
+            .any(|item| item.optional_vars.as_deref().is_some_and(binds)),
+        _ => false,
     })
 }
 
@@ -1716,6 +1818,19 @@ fn import_alias_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
 /// ([`submodule_receivers`]), or a re-exporting package alias. A local that
 /// shadows the import is not a spelling. Methods have none.
 pub(super) fn owner_module_callees(test: &PythonTest, owner: &PythonOwner) -> Vec<String> {
+    module_callees_named(test, owner, &owner.name, true)
+}
+
+/// The spellings a test uses for the top-level function `name` of the owner's
+/// module, through the same provenance checks as [`owner_module_callees`].
+/// `reexported` also accepts the owner's package re-exports, which only hold
+/// when `name` is the owner's own name.
+pub(super) fn module_callees_named(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    name: &str,
+    reexported: bool,
+) -> Vec<String> {
     if matches!(
         owner.owner_kind,
         Some(OwnerKind::Method | OwnerKind::ClassMethod)
@@ -1728,18 +1843,18 @@ pub(super) fn owner_module_callees(test: &PythonTest, owner: &PythonOwner) -> Ve
         if test_rebinds_import_alias(test, &import.alias) {
             continue;
         }
-        if import.imported == owner.name
-            && import_source_module_matches_owner(import, owner, &test.file)
+        if import.imported == name && import_source_module_matches_owner(import, owner, &test.file)
         {
             callees.push(import.alias.clone());
         }
-        let reexporting_package =
-            import.source_module.is_empty() && owner.reexport_modules.contains(&import.imported);
+        let reexporting_package = reexported
+            && import.source_module.is_empty()
+            && owner.reexport_modules.contains(&import.imported);
         let receivers = submodule_receivers(import, owner, &test.file)
             .into_iter()
             .chain(reexporting_package.then(|| import.alias.clone()));
         for receiver in receivers {
-            callees.push(format!("{receiver}.{}", owner.name));
+            callees.push(format!("{receiver}.{name}"));
         }
     }
     callees.sort();
@@ -1985,6 +2100,26 @@ pub(super) fn submodule_receivers(
     owner: &PythonOwner,
     test_file: &Path,
 ) -> Vec<String> {
+    // Every owner module path joins segments of the owner's file path, so a
+    // bound name whose last segment that path never spells reaches none of
+    // them; this skips the allocations below for most imports (#10914).
+    let last = import.imported.rsplit('.').next().unwrap_or_default();
+    if !last.is_empty() && owner.file.to_str().is_some_and(|file| !file.contains(last)) {
+        debug_assert!(
+            submodule_receivers_scan(import, owner, test_file).is_empty(),
+            "`{last}` is absent from {} yet reaches it",
+            owner.file.display()
+        );
+        return Vec::new();
+    }
+    submodule_receivers_scan(import, owner, test_file)
+}
+
+fn submodule_receivers_scan(
+    import: &PythonImport,
+    owner: &PythonOwner,
+    test_file: &Path,
+) -> Vec<String> {
     if !import_module_may_be_owners(import, owner, test_file) {
         return Vec::new();
     }
@@ -2036,6 +2171,11 @@ pub(super) fn import_module_may_be_owners(
     owner: &PythonOwner,
     test_file: &Path,
 ) -> bool {
+    // Without an ambiguous src-layout name every module identifies the owner;
+    // answer before formatting the dotted submodule name.
+    if owner.ambiguous_src_modules.is_empty() {
+        return true;
+    }
     if import.source_module.is_empty() {
         return module_name_identifies_owner_for(owner, &import.imported, test_file);
     }
@@ -2099,7 +2239,7 @@ pub(super) fn owner_module_paths(file: &Path) -> Vec<String> {
 /// A src-layout short module name of an owner file that another workspace
 /// source file also produces (#4566): `a/src/shared/calc.py` and
 /// `b/src/shared/calc.py` are both importable as `shared.calc`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct AmbiguousSrcModule {
     /// The shared dotted name.
     module: String,
@@ -2362,6 +2502,11 @@ enum ClientRoute {
 }
 
 fn api_client_route_calls_owner(test: &PythonTest, owner: &PythonOwner) -> Option<ClientRoute> {
+    // Only a routed owner has a route to match; skip parsing the body's
+    // client receivers for every other owner (#10914).
+    if owner.route_paths.is_empty() {
+        return None;
+    }
     let receivers = super::route_client::client_receivers(&test.body_text);
     let mut found = None;
     for (index, route) in owner.route_paths.iter().enumerate() {
@@ -3195,6 +3340,13 @@ pub(super) fn test_rebinds_import_alias(test: &PythonTest, alias: &str) -> bool 
     test.fixtures.iter().any(|fixture| fixture == alias)
         || assignment_count(&test.body_text, alias) > 0
         || keyword_or_operator_binds_text(&test.body_text, alias, false)
+}
+
+/// Whether `name` is bound by anything other than a plain `name = ...`
+/// assignment: a loop or `with` target, `def`, `class`, walrus, augmented
+/// assignment, import or `nonlocal`.
+pub(super) fn text_binds_beyond_assignment(text: &str, name: &str) -> bool {
+    keyword_or_operator_binds_text(text, name, true)
 }
 
 fn keyword_or_operator_binds_text(body: &str, name: &str, import_as_binds: bool) -> bool {

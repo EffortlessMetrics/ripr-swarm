@@ -120,6 +120,32 @@ can only hint that a caller "may lead here" without changing anything.
   still abstains, except an `unwrap_or_else` whose handler is a diverging
   workspace function (the diverging unwrap tail below); `mut self` (by value)
   is not admitted.
+- Free-call entry pin (#9638): a return-value owner reached through free
+  direct calls is pinned by an exact assertion on the entry, as a method hop
+  is, when every observed hop is a plain bare-name call the workspace
+  resolves to exactly one item: the callee is the one workspace function of
+  its name, declared in the caller's own file and enclosing block scopes; it
+  is not imported (a `use` of the name, a glob import or a
+  `macro_rules!` of it refuses), rebound by the caller through any pattern,
+  `let`, `const`, `static`, block-level `use` or nested `fn`, or a parameter
+  (plain or pattern) of the caller; and no hop is a method call, a macro
+  argument or a path-qualified call (`a::inner(x)`, `crate::inner(x)`). The
+  entry is called by the test as a bare name, with the same one-call,
+  whole-operand, exact-value assertion form the method pin requires. A hop
+  tail forwards the call unchanged, or shifts it by a decimal integer
+  literal (`inner(x) + 1`, `1 + inner(x)`, `inner(x) - 1`) when the owner and
+  every observed hop caller declare a builtin integer return type that no
+  workspace type or `use` item (an import or rename of the name, or a glob import other
+  than a `super::*` / `self::*` glob in a scope that does not enclose the
+  function, such as an inline `mod tests`) shadows: adding or subtracting a constant is injective on an
+  integer type, so the exact value at the entry moves with the owner's.
+  Multiplication, division, remainder, bit operations, negation, `1 - call`,
+  a second operand that is not a literal, `as` casts, literal suffixes,
+  method projections (`.min(..)`), a branch around the call, a swallowed
+  result and a float, string or custom type (`impl Add<i64>`) keep the
+  abstention (`propagation_unknown`). Cross-file and cross-crate owners,
+  re-exports, aliases and module-qualified calls are not admitted: the bare
+  name is only trusted where one scope declares it.
 - Diverging unwrap tail (#9638): a hop caller whose tail is exactly
   `<hop call>.unwrap_or_else(<handler>)` forwards the owner's result when
   `<handler>` is a path to a workspace function that only diverges, so the
@@ -254,6 +280,24 @@ can only hint that a caller "may lead here" without changing anything.
   take this only when every observed hop is a local-macro argument hop
   (RIPR-SPEC-0117 example 7), whose unexpanded body is not checked for
   data carrying; a plain fn hop above it keeps the target-passing rule.
+- Exact oracle behind a data-carrying hop (#11248): for a return-value
+  probe, an exact value at the entry pins the owner's value through
+  a hop when the owner and every observed hop caller declare a std string
+  or scalar return type that no workspace type or import shadows, and the
+  caller is one tail expression the weak-oracle rule above accepts as
+  carrying its callee as data. Only an injective carry counts: every
+  string literal in the caller uses plain `{}` placeholders, so a width,
+  precision, radix or `{:?}` spec (which can drop or re-render the value),
+  a positional or named argument, a bitwise `&` on the value
+  (`format!("{}", base() & 1)`), the callee nested in its own arguments, a
+  parameter that shares a method's name and a user `Display`/`From` impl keep
+  the abstention. The free-call chain identity rule and the owner-call entry
+  pin still apply, and an owner whose value is built by a macro
+  (`concat!("ri", "pr")`) is refused because its expansion is not seen.
+  Corpus: `spec0117-external-std-macro` and `format-forward-to-string-credits` credit;
+  `format-forward-precision-hides-value`,
+  `format-forward-bitand-hides-value` and
+  `old-title-through-format-macro` keep abstaining.
 - Effect propagation (#6780): a `side_effect` or `call_deletion` probe
   acts on state rather than on a returned value, so it is not judged by
   result forwarding. Under the same chain-only reach and the same
@@ -693,6 +737,15 @@ Reach on that rewritten finding is `unknown` and the stop reason is
     non-diverging, conditional, ambiguous, module-qualified, shadowed or
     external handler: none is credited
     (`helper_wrapper_reach`, `unwrap_tail_*`).
+14. Accept: an entry `plus_one(x)` returning `plus_one_inner(x) + 1`, with
+    an integer owner, called by an integration test that pins `plus_one(5)`
+    to `11` (`free-call-offset-plus`, `free-call-offset-minus`). The verdict
+    is `exposed`.
+15. Reject: an entry that clamps the owner's result (`.min(10)`), swallows it
+    (`let _ = inner(x); 10`) or takes the callee as a parameter
+    (`fn passed_in(x, shift: fn(i64) -> i64)`): none is credited
+    (`free-call-clamped-tail`, `free-call-swallowed-owner`,
+    `free-call-parameter-shadow`; `free_call_return_pin`).
 
 ## Test Mapping
 
@@ -717,6 +770,8 @@ unselected `match_arm` control);
 entry credit and its swallowed, transformed, shared-name, two-candidate,
 shadowed, path-call, unwrap-tail (including shadowed-name, other-module, other-file and custom-type controls), std-receiver, unestablished-receiver, same-named-type, root-package-member, external-trait-impl,
 `#[cfg(test)]`, no-self, macro-hop and other-package controls);
+`crates/ripr/tests/free_call_return_pin.rs` (the free-call entry pin and its
+offset, type, name-binding, scope, test-form and trait-entry controls);
 `crates/ripr/tests/crate_qualified_entry_reach.rs` (own-crate qualified
 entry call, `[lib] name` and hyphen spellings, and each refusal above).
 `crates/ripr/tests/helper_wrapper_reach.rs` (qualified effect refusal and lower

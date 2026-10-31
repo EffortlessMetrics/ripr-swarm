@@ -26,7 +26,7 @@ Start here:
   Suggested test file: tests/test_discount.py
   Suggested test: test_calculate_discount_smoke
   Test node: tests/test_discount.py::test_calculate_discount_smoke
-  Verify command: python -m pytest tests/test_discount.py::test_calculate_discount_smoke (high)
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_ranking_noise_control/input && python -m pytest tests/test_discount.py::test_calculate_discount_smoke) (high)
   Next step — Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `amount == threshold`
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
@@ -50,9 +50,9 @@ Next: drill into the top finding:
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output (Python preview: 3).
-    - src/b_observed.py:2 (exposed)
-    - src/d_isolated.py:2 (no path)
-    - src/a_dynamic.py:2 (unknown)
+    - src/b_observed.py:2 (exposed); kind: return_value; reason: Related Python test reaches `calculate_fee` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator.
+    - src/d_isolated.py:2 (no path); kind: return_value; reason: No Python test references `isolated_total(`; add a pytest or unittest test that calls the changed owner.
+    - src/a_dynamic.py:2 (unknown); kind: return_value; reason: Dynamic dispatch (trait objects or virtual calls) hides which implementation runs, so ripr cannot statically resolve whether a test reaches this change.
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

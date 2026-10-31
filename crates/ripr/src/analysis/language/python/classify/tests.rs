@@ -1276,6 +1276,83 @@ fn parametrize_cases_off_boundary_are_weakly_exposed() -> Result<(), String> {
     Ok(())
 }
 
+/// #10842: a rewrite that keeps the predicate on every integer
+/// (`amount >= 100` -> `amount > 99`) changes no behavior, so its truth is
+/// a wrong version of the new line. One row on the equality point catches
+/// the operator flip but not mutmut's `n + 1` shift of the bound
+/// (`amount > 100`), so `exposed` also needs the row where the shifted bound
+/// differs. A behavior change keeps the equality rule, and a shift that lands
+/// on the equality point (`amount < 100`) needs no further row.
+#[test]
+fn an_integer_equivalent_rewrite_needs_the_row_its_shifted_bound_moves_to() -> Result<(), String> {
+    let finding = |new: &str, old: &str, rows: &str| {
+        let source = format!("def fee(amount):\n    if {new}:\n        return 0\n    return 5\n");
+        let tests = format!(
+            "import pytest\nfrom src.subject import fee\n\n@pytest.mark.parametrize(\"amount, expected\", [{rows}])\ndef test_fee(amount, expected):\n    assert fee(amount) == expected\n"
+        );
+        classify_case(
+            &source,
+            &tests,
+            2,
+            &format!("    if {old}:"),
+            &format!("    if {new}:"),
+        )
+    };
+    for (new, old) in [
+        ("amount > 99", "amount >= 100"),
+        ("99 < amount", "amount >= 100"),
+        ("amount <= 99", "amount < 100"),
+        ("99 >= amount", "100 > amount"),
+    ] {
+        let one_row = finding(new, old, "(99, 5)")?;
+        assert_eq!(
+            one_row.class,
+            ExposureClass::WeaklyExposed,
+            "{new}: {one_row:?}"
+        );
+        assert!(
+            missing_boundary(&one_row, "amount == 100").is_some(),
+            "{new}: {one_row:?}"
+        );
+        let both = finding(new, old, "(99, 5), (100, 0)")?;
+        assert_eq!(both.class, ExposureClass::Exposed, "{new}: {both:?}");
+    }
+    // Controls: a behavior change, and a shift onto the equality point.
+    for (new, old, row) in [
+        ("amount > 99", "amount >= 99", "(99, 5)"),
+        (
+            "amount > 99 or amount == 7",
+            "amount >= 100 and amount == 7",
+            "(99, 5)",
+        ),
+        ("amount < 100", "amount <= 99", "(100, 5)"),
+        ("amount >= 100", "amount > 99", "(100, 0)"),
+    ] {
+        let control = finding(new, old, row)?;
+        assert_eq!(control.class, ExposureClass::Exposed, "{new}: {control:?}");
+    }
+    // A conditional return: the same rewrite needs the shifted row, but one
+    // that also changes a branch value is a behavior change.
+    let conditional = |old_else: &str| {
+        classify_case(
+            "def fee(amount):\n    return 0 if amount > 99 else 5\n",
+            "import pytest\nfrom src.subject import fee\n\n@pytest.mark.parametrize(\"amount, expected\", [(99, 5)])\ndef test_fee(amount, expected):\n    assert fee(amount) == expected\n",
+            2,
+            &format!("    return 0 if amount >= 100 else {old_else}"),
+            "    return 0 if amount > 99 else 5",
+        )
+    };
+    let rewrite = conditional("5")?;
+    assert_eq!(rewrite.class, ExposureClass::WeaklyExposed, "{rewrite:?}");
+    assert!(
+        missing_boundary(&rewrite, "amount == 100").is_some(),
+        "{rewrite:?}"
+    );
+    let changed = conditional("6")?;
+    assert_eq!(changed.class, ExposureClass::Exposed, "{changed:?}");
+    Ok(())
+}
+
 /// Positive control for #4559: one case on the boundary keeps `exposed`, also
 /// through a stacked decorator (the cases are the product).
 #[test]
@@ -3329,5 +3406,314 @@ fn string_opening_header_with_any_keyword_boundary_fails_open() -> Result<(), St
             "{source}: {finding:?}"
         );
     }
+    Ok(())
+}
+
+// #9186: an `is None` -> `not x` swap is weakly exposed only when every
+// strong call is readable and leaves the two tests unseparated; every other
+// shape keeps the existing verdict.
+fn classify_truthiness_swap(
+    source: &str,
+    changed_line: usize,
+    old_line: &str,
+    new_line: &str,
+    tests: &str,
+) -> Result<Finding, String> {
+    let file = Path::new("src/lib.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(Path::new("tests/test_lib.py"), tests);
+    classify_change_with_source(
+        file,
+        changed_line,
+        new_line,
+        Some(old_line),
+        &owners,
+        &tests,
+        Some(source),
+    )
+    .ok_or_else(|| "swap must produce a finding".to_string())
+}
+
+const SWAP_OLD: &str = "    if x is None:";
+const SWAP_NEW: &str = "    if not x:";
+const SWAP_SOURCE: &str = concat!(
+    "def pick(x, d):\n    if not x:",
+    "\n        return d\n    return x\n"
+);
+
+fn swap_class(tests: &str) -> Result<ExposureClass, String> {
+    Ok(classify_truthiness_swap(SWAP_SOURCE, 2, SWAP_OLD, SWAP_NEW, tests)?.class)
+}
+
+#[test]
+fn truthiness_swap_with_unseparated_literal_calls_is_weakly_exposed() -> Result<(), String> {
+    for tests in [
+        "from src.lib import pick\n\ndef test_pick():\n    assert pick(None, 3) == 3\n    assert pick(5, 3) == 5\n",
+        // Keyword arguments in any order bind the same values.
+        "from src.lib import pick\n\ndef test_pick():\n    assert pick(d=3, x=None) == 3\n    assert pick(x=5, d=3) == 5\n",
+    ] {
+        assert_eq!(swap_class(tests)?, ExposureClass::WeaklyExposed, "{tests}");
+    }
+    // A trailing comment on the changed line is not part of the condition.
+    let finding = classify_truthiness_swap(
+        SWAP_SOURCE,
+        2,
+        "    if x is None:  # none only",
+        "    if not x:  # falsy",
+        "from src.lib import pick\n\ndef test_pick():\n    assert pick(None, 3) == 3\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn truthiness_swap_stays_exposed_when_a_call_separates_the_tests() -> Result<(), String> {
+    for tests in [
+        "from src.lib import pick\n\ndef test_pick():\n    assert pick(None, 3) == 3\n    assert pick(0, 3) == 3\n",
+        "from src.lib import pick\n\ndef test_pick():\n    assert pick('', 3) == 3\n",
+        "from src.lib import pick\n\ndef test_pick():\n    assert pick(x=False, d=3) == 3\n",
+    ] {
+        assert_eq!(swap_class(tests)?, ExposureClass::Exposed, "{tests}");
+    }
+    Ok(())
+}
+
+#[test]
+fn truthiness_swap_fails_open_on_unread_or_non_literal_calls() -> Result<(), String> {
+    for tests in [
+        // A star-args call binds no row.
+        "from src.lib import pick\n\ndef test_pick():\n    args = (0, 3)\n    assert pick(None, 3) == 3\n    assert pick(*args) == 3\n",
+        // A local argument is not a literal.
+        "from src.lib import pick\n\ndef test_pick():\n    v = 0\n    assert pick(None, 3) == 3\n    assert pick(v, 3) == 3\n",
+        // A parametrized case with a separating value.
+        "import pytest\nfrom src.lib import pick\n\n@pytest.mark.parametrize(\"v\", [None, 0])\ndef test_pick(v):\n    assert pick(v, 3) == 3\n",
+    ] {
+        assert_eq!(swap_class(tests)?, ExposureClass::Exposed, "{tests}");
+    }
+    Ok(())
+}
+
+#[test]
+fn truthiness_swap_fails_open_when_the_owner_is_reached_indirectly() -> Result<(), String> {
+    for tests in [
+        "from src.lib import pick\n\ndef test_pick():\n    assert pick(None, 3) == 3\n    assert list(map(pick, [0], [3])) == [3]\n",
+        "from src.lib import pick\n\ndef w(v):\n    return pick(v, 3)\n\ndef test_pick():\n    assert pick(None, 3) == 3\n    assert w(0) == 3\n",
+        "from src.lib import pick\n\ndef test_pick():\n    alias = pick\n    assert pick(None, 3) == 3\n    assert alias(0, 3) == 3\n",
+    ] {
+        assert_eq!(swap_class(tests)?, ExposureClass::Exposed, "{tests}");
+    }
+    Ok(())
+}
+
+#[test]
+fn truthiness_swap_fails_open_when_the_owner_may_rebind_the_parameter() -> Result<(), String> {
+    for source in [
+        // An inline `if` body assigns the parameter before the swap.
+        concat!(
+            "def pick(x, d, flag):\n    if flag: x = 0\n    if not x:",
+            "\n        return d\n    return x\n"
+        ),
+        concat!(
+            "def pick(x, d, flag):\n    if flag:\n        x = 0\n    if not x:",
+            "\n        return d\n    return x\n"
+        ),
+        concat!(
+            "def pick(x, d, flag):\n    if flag: pass\n    else: x = 0\n    if not x:",
+            "\n        return d\n    return x\n"
+        ),
+        concat!(
+            "def pick(x, d, flag):\n    flag = 1; x = 0\n    if not x:",
+            "\n        return d\n    return x\n"
+        ),
+    ] {
+        let line = source
+            .lines()
+            .position(|line| line == SWAP_NEW)
+            .map(|index| index + 1)
+            .ok_or_else(|| format!("no swap line in {source}"))?;
+        let finding = classify_truthiness_swap(
+            source,
+            line,
+            SWAP_OLD,
+            SWAP_NEW,
+            "from src.lib import pick\n\ndef test_pick():\n    assert pick(None, 3, True) == 3\n",
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{source}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+const NL: &str = "\n";
+
+fn swap_with_prefix(prefix: &str) -> Result<ExposureClass, String> {
+    // `~` stands for a line break after a colon.
+    let prefix = prefix.replace('~', "\n");
+    let source =
+        format!("def pick(x, d, flag):\n{prefix}    if not x:{NL}        return d\n    return x\n");
+    let line = source
+        .lines()
+        .position(|line| line == SWAP_NEW)
+        .map(|index| index + 1)
+        .ok_or_else(|| format!("no swap line in {source}"))?;
+    Ok(classify_truthiness_swap(
+        &source,
+        line,
+        SWAP_OLD,
+        SWAP_NEW,
+        "from src.lib import pick\n\ndef test_pick():\n    assert pick(None, 3, True) == 3\n",
+    )?
+    .class)
+}
+
+// Closed allow-list: the parameter may appear in the owner body only on the
+// changed line or in a plain read statement; any other mention keeps exposed.
+#[test]
+fn truthiness_swap_refuses_every_parameter_binding_shape() -> Result<(), String> {
+    // The builder itself demotes when nothing mentions the parameter.
+    for prefix in ["", "    y = 1\n"] {
+        assert_eq!(
+            swap_with_prefix(prefix)?,
+            ExposureClass::WeaklyExposed,
+            "{prefix:?}"
+        );
+    }
+    for prefix in [
+        "    (a, x) = d\n",
+        "    [a, x] = d\n",
+        "    (x) = d\n",
+        "    a, x = d\n",
+        "    x \\\n        = d\n",
+        "    locals()['x'] = d\n",
+        "    match d:~        case x:~            pass\n",
+        "    async def g():~        async for x in d:~            pass\n",
+        "    def inner(x):\n        return x\n",
+        "    ys = [x for x in d]\n",
+        "    import x\n",
+        "    def x():\n        pass\n",
+        "    for x in d:~        pass\n",
+        "    with d as x:~        pass\n",
+        "    if (x := d):\n        pass\n",
+        // A fullwidth letter NFKC-normalizes to the parameter name.
+        "    \u{ff58} = d\n",
+        // An f-string defeats the naive comment and quote tracking.
+        "    s = f'{d}'\n",
+        "    print(rf\"{d!r}\")\n",
+    ] {
+        assert_eq!(
+            swap_with_prefix(prefix)?,
+            ExposureClass::Exposed,
+            "{prefix:?}"
+        );
+    }
+    Ok(())
+}
+
+// An attribute-call helper can forward a separating literal to the owner.
+#[test]
+fn truthiness_swap_fails_open_on_attribute_call_helpers() -> Result<(), String> {
+    for tests in [
+        "import helpers\nfrom src.lib import pick\n\ndef test_pick():\n    assert pick(None, 3) == 3\n    assert helpers.run(0) == 3\n",
+        "from src.lib import pick\n\nclass TestPick:\n    def helper(self, v):\n        return pick(v, 3)\n\n    def test_pick(self):\n        assert pick(None, 3) == 3\n        assert self.helper(0) == 3\n",
+        "from src.lib import pick\n\nclass TestPick:\n    def test_pick(self):\n        assert pick(None, 3) == 3\n        self.check(0)\n",
+    ] {
+        assert_eq!(swap_class(tests)?, ExposureClass::Exposed, "{tests}");
+    }
+    Ok(())
+}
+
+// The changed line is itself a plain read: an assignment holding the swapped
+// condition rebinds the parameter on the next loop iteration.
+#[test]
+fn truthiness_swap_refuses_a_changed_line_that_assigns_the_parameter() -> Result<(), String> {
+    let source = "def pick(x, items):\n    for _ in items:\n        x = items if not x else x\n    return x\n";
+    let finding = classify_truthiness_swap(
+        source,
+        3,
+        "        x = items if x is None else x",
+        "        x = items if not x else x",
+        "from src.lib import pick\n\ndef test_pick():\n    assert pick(None, [1]) == [1]\n",
+    )?;
+    assert_ne!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    Ok(())
+}
+
+// An owner call inside an f-string, through a receiver alias, or shown by an
+// owner docstring doctest is not read by the call rows: keep exposed.
+#[test]
+fn truthiness_swap_fails_open_on_fstring_alias_and_doctest_reach() -> Result<(), String> {
+    for tests in [
+        "from src.lib import pick\n\ndef test_pick():\n    assert pick(None, 3) == 3\n    assert f\"{pick(0, 3)}\" == '3'\n",
+        "import src.lib\n\ndef test_pick():\n    m = src.lib\n    assert src.lib.pick(None, 3) == 3\n    assert m.pick(0, 3) == 3\n",
+    ] {
+        assert_eq!(swap_class(tests)?, ExposureClass::Exposed, "{tests}");
+    }
+    // A nested owner call is an input the rows do not bind: pick(0, 7) is
+    // 0 before the swap and 7 after it.
+    assert_eq!(
+        swap_class(
+            "from src.lib import pick\n\ndef test_pick():\n    assert pick(None, pick(0, 7)) == 7\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    let source = concat!(
+        "def pick(x, d):\n    \"\"\">>> pick(0, 3)\n    3\n    \"\"\"\n    if not x:",
+        "\n        return d\n    return x\n"
+    );
+    let finding = classify_truthiness_swap(
+        source,
+        5,
+        SWAP_OLD,
+        SWAP_NEW,
+        "from src.lib import pick\n\ndef test_pick():\n    assert pick(None, 3) == 3\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+// Calls that hide a separating input: a helper named `assert_*`, a callee
+// that is a subscript or a call result, and non-ASCII identifier letters.
+#[test]
+fn truthiness_swap_fails_open_on_assert_named_helpers_and_result_callees() -> Result<(), String> {
+    for tests in [
+        "from src.lib import pick\nfrom helpers import assert_pick\n\ndef test_pick():\n    assert pick(None, 3) == 3\n    assert_pick(0, 3)\n",
+        "from src.lib import pick\n\nRUNNERS = [lambda v: pick(v, 3)]\n\ndef test_pick():\n    assert pick(None, 3) == 3\n    assert RUNNERS[0](0) == 3\n",
+        "from src.lib import pick\n\ndef make():\n    return pick\n\ndef test_pick():\n    assert pick(None, 3) == 3\n    assert make()(0, 3) == 3\n",
+        "from src.lib import pick\n\ndef test_pick():\n    assert pick(None, 3) == 3\n    \u{ff56} = 0\n    assert pick(\u{ff56}, 3) == 3\n",
+    ] {
+        assert_eq!(swap_class(tests)?, ExposureClass::Exposed, "{tests}");
+    }
+    Ok(())
+}
+
+#[test]
+fn truthiness_swap_fails_open_on_a_separating_default_or_a_branch_value_edit() -> Result<(), String>
+{
+    // The omitted argument takes the default `0`, a falsy non-None value.
+    let source = concat!(
+        "def pick(x=0, d=3):\n    if not x:",
+        "\n        return d\n    return x\n"
+    );
+    let finding = classify_truthiness_swap(
+        source,
+        2,
+        SWAP_OLD,
+        SWAP_NEW,
+        "from src.lib import pick\n\ndef test_pick():\n    assert pick() == 3\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    // The swap also moves a branch value on the same line.
+    let source = "def pick(x, d):\n    return d if not x else 1\n";
+    let finding = classify_truthiness_swap(
+        source,
+        2,
+        "    return d if x is None else x",
+        "    return d if not x else 1",
+        "from src.lib import pick\n\ndef test_pick():\n    assert pick(None, 3) == 3\n",
+    )?;
+    assert_ne!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
     Ok(())
 }

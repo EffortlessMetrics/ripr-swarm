@@ -25,3 +25,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_unsettled_indirect_parametrize (3)
+
+Reason:
+RIPR-SPEC-0238: name the blocking pytest fixture in Why unknown (#10979)
+
+Command:
+`cargo xtask goldens bless python_unsettled_indirect_parametrize --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

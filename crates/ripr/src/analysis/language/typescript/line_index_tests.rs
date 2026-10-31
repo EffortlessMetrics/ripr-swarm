@@ -90,45 +90,49 @@ fn generated_large_typescript_test_file(tests: usize) -> String {
 
 #[test]
 fn owner_and_test_extraction_stay_linear_on_a_large_module() {
-    let functions = 5_000;
-    let owner_source = generated_large_typescript_module(functions);
-    assert_eq!(owner_source.lines().count(), 20_000);
-    let test_source = generated_large_typescript_test_file(functions);
-    assert_eq!(test_source.lines().count(), 15_001);
+    // The per-lookup rescan this guards against took about 46s (owners) +
+    // 30s (tests) in a debug build at 5,000 functions, quadrupling with each
+    // doubling of the file; the indexed path takes about 0.2s + 0.2s. Compare
+    // 2,500 against 5,000 functions on the same runner instead of bounding
+    // seconds, so runner speed cancels out.
+    crate::testing::scale::assert_growth_within(
+        "owner and test extraction",
+        2_500,
+        5_000,
+        3,
+        |functions| {
+            let owner_source = generated_large_typescript_module(functions);
+            assert_eq!(owner_source.lines().count(), 4 * functions);
+            let test_source = generated_large_typescript_test_file(functions);
+            assert_eq!(test_source.lines().count(), 3 * functions + 1);
 
-    let started = std::time::Instant::now();
-    let owners = extract_owners(Path::new("src/large.ts"), &owner_source);
-    let tests = extract_tests(Path::new("tests/large.test.ts"), &test_source);
-    let elapsed = started.elapsed();
+            let owners = extract_owners(Path::new("src/large.ts"), &owner_source);
+            let tests = extract_tests(Path::new("tests/large.test.ts"), &test_source);
 
-    // The fixtures parsed into one owner per function and one test per
-    // registration, with late-file lines computed correctly.
-    assert_eq!(owners.len(), functions);
-    let last_owner = owners
-        .iter()
-        .find(|owner| owner.name == "f4999")
-        .map(|owner| (owner.start_line, owner.end_line));
-    assert_eq!(last_owner, Some((19_997, 20_000)));
-    assert_eq!(tests.len(), functions);
-    let last_test = tests
-        .iter()
-        .find(|test| test.name == "case 4999")
-        .map(|test| {
-            (
-                test.line,
-                test.assertions
-                    .iter()
-                    .map(|assertion| assertion.line)
-                    .collect::<Vec<_>>(),
-            )
-        });
-    assert_eq!(last_test, Some((14_999, vec![15_000])));
-
-    // Generous bound. In a debug build on these fixtures the per-lookup
-    // rescan took about 46s (owners) + 30s (tests), quadrupling with each
-    // doubling of the file, and the indexed path about 0.2s + 0.2s.
-    assert!(
-        elapsed < std::time::Duration::from_secs(20),
-        "extraction took {elapsed:?}"
+            // The fixtures parsed into one owner per function and one test per
+            // registration, with late-file lines computed correctly.
+            assert_eq!(owners.len(), functions);
+            let last_name = format!("f{}", functions - 1);
+            let last_owner = owners
+                .iter()
+                .find(|owner| owner.name == last_name)
+                .map(|owner| (owner.start_line, owner.end_line));
+            assert_eq!(last_owner, Some((4 * functions - 3, 4 * functions)));
+            assert_eq!(tests.len(), functions);
+            let last_case = format!("case {}", functions - 1);
+            let last_test = tests
+                .iter()
+                .find(|test| test.name == last_case)
+                .map(|test| {
+                    (
+                        test.line,
+                        test.assertions
+                            .iter()
+                            .map(|assertion| assertion.line)
+                            .collect::<Vec<_>>(),
+                    )
+                });
+            assert_eq!(last_test, Some((3 * functions - 1, vec![3 * functions])));
+        },
     );
 }

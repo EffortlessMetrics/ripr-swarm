@@ -736,6 +736,7 @@ fn malformed_catalog_cursors_preserve_protocol_validation_and_recover() -> Resul
     }
     Ok(())
 }
+
 /// Optional tool fields may be omitted, but their advertised string/integer
 /// types do not accept explicit null. Pin the schemas and dispatch separately
 /// against literal expectations, through the actual stdio process (#7314).
@@ -2594,6 +2595,9 @@ impl SequentialStdio {
     fn spawn_with_env(root: &Path, env: &[(&str, &str)]) -> Result<Self, String> {
         let mut command = worktree_ripr();
         command.args(["mcp", "--stdio", "--root"]).arg(root);
+        // An ambient text-content mode must not leak into a session that
+        // does not ask for one (#9360).
+        command.env_remove("RIPR_MCP_TEXT_CONTENT");
         for (key, value) in env {
             command.env(key, value);
         }
@@ -3114,8 +3118,14 @@ fn refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation() -> Re
             || item["repair_ineligibility"]
                 != if ready {
                     Value::Null
+                } else if id == PYTHON {
+                    // #10718: the seam inventory covers Rust files only, so
+                    // `ripr repair` resolves the Python item to no seam.
+                    json!("seam_not_found")
                 } else {
-                    json!("fix_site_not_established")
+                    // #10718: the shared repair gate's cause (route not
+                    // ready), not the producer-side fix-site gate.
+                    json!("seam_gate_refused")
                 }
             || item["class"] != if ready { "exposed" } else { "no_static_path" }
         {
@@ -4813,7 +4823,7 @@ fn install_exposed_match_arm_fixture() -> Result<PathBuf, String> {
     .map_err(|error| error.to_string())?;
     std::fs::write(
         root.join("tests/t.rs"),
-        "use parity_fixture::*;\n#[test] fn a() { assert_eq!(price(Kind::A), 1); }\n#[test] fn t() { assert!(total(&[1, 2]) > 0); }\n",
+        "use parity_fixture::*;\n#[test] fn a() { assert_eq!(price(Kind::A), 1); }\n#[test] fn t() { assert!(total(&[1, 2]) >= 3 && total(&[1, 2]) <= 3); }\n",
     )
     .map_err(|error| error.to_string())?;
     std::fs::write(root.join(".gitignore"), "/target\n").map_err(|error| error.to_string())?;
@@ -4830,7 +4840,7 @@ fn install_exposed_match_arm_fixture() -> Result<PathBuf, String> {
     .map_err(|error| error.to_string())?;
     std::fs::write(
         root.join("tests/t.rs"),
-        "use parity_fixture::*;\n#[test] fn a() { assert_eq!(price(Kind::A), 1); }\n#[test] fn t() { assert!(total(&[1, 2]) > 0); }\n#[test] fn b() { assert_eq!(price(Kind::B), 5); assert_eq!(price(Kind::A), 1); }\n",
+        "use parity_fixture::*;\n#[test] fn a() { assert_eq!(price(Kind::A), 1); }\n#[test] fn t() { assert!(total(&[1, 2]) >= 3 && total(&[1, 2]) <= 3); }\n#[test] fn b() { assert_eq!(price(Kind::B), 5); assert_eq!(price(Kind::A), 1); }\n",
     )
     .map_err(|error| error.to_string())?;
     commit_fixture(&root, "change arms")?;
@@ -4933,7 +4943,9 @@ fn mcp_readiness_never_exceeds_the_cli_repair_gate() -> Result<(), String> {
         }
         if id == ARM {
             let refusal = refusal.ok_or("`ripr repair` must refuse the gripped arm")?;
-            if !refusal.contains("not repair-eligible") || !refusal.contains("already grip") {
+            if !refusal.contains("not ready for an automatic repair")
+                || !refusal.contains("already grip")
+            {
                 return Err(format!("CLI refusal changed shape: {refusal}"));
             }
             if item["repair_ineligibility"] != "seam_already_gripped"
@@ -5552,7 +5564,7 @@ fn install_weak_boundary_fixture() -> Result<PathBuf, String> {
     .map_err(|error| error.to_string())?;
     std::fs::write(
         root.join("tests/adult.rs"),
-        "use weak_boundary_fixture::is_adult;\n\n#[test]\nfn adult_is_recognized() {\n    assert!(is_adult(30));\n}\n",
+        "use weak_boundary_fixture::is_adult;\n\n#[test]\nfn adult_is_recognized() {\n    assert!(is_adult(30));\n    assert!(is_adult(40) == true);\n}\n",
     )
     .map_err(|error| error.to_string())?;
     std::fs::write(root.join(".gitignore"), "/target\n").map_err(|error| error.to_string())?;
@@ -6129,5 +6141,126 @@ fn refresh_source_worktree_withholds_repair_card_and_readiness_for_a_ready_item(
         TIMEOUT,
     )?;
     structured_tool_success(&card, "committed card after worktree")?;
+    Ok(())
+}
+
+/// #9360: the text companion of a successful tool result is selectable per
+/// server process. The default stays the lossless JSON copy (a host that
+/// reads only text content loses nothing); `RIPR_MCP_TEXT_CONTENT=summary`
+/// opts into a digest that says it is not a copy, while `structuredContent`
+/// stays the one complete result and is identical in both modes. An
+/// unrecognized spelling keeps the lossless default.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn summary_text_mode_is_opt_in_and_keeps_structured_content_whole_over_stdio() -> Result<(), String>
+{
+    let timeout = Duration::from_mins(1);
+    let root = install_gap_filter_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut observed: Vec<(Value, String, usize)> = Vec::new();
+    let mut get_gap_wire: Vec<usize> = Vec::new();
+    for env in [
+        &[][..],
+        &[("RIPR_MCP_TEXT_CONTENT", "summary")][..],
+        &[("RIPR_MCP_TEXT_CONTENT", "summry")][..],
+    ] {
+        let mut session = SequentialStdio::spawn_with_env(&root, env)?;
+        session.call("discover", "server/discover", json!({}), timeout)?;
+        let refresh =
+            session.call_tool("refresh", "ripr_refresh", json!({}), Duration::from_mins(3))?;
+        structured_tool_success(&refresh, "refresh")?;
+        let list = session.call_tool("list", "ripr_list_gaps", json!({}), timeout)?;
+        let result = list
+            .get("result")
+            .ok_or_else(|| format!("list lost its result: {list}"))?;
+        let structured = structured_tool_success(&list, "list")?;
+        let text = result
+            .pointer("/content/0/text")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("list lost its text content: {result}"))?
+            .to_string();
+        let wire = serde_json::to_string(&list)
+            .map_err(|error| error.to_string())?
+            .len();
+        let first = structured["items"][0]["canonical_id"]
+            .as_str()
+            .ok_or("list omitted its first canonical_id")?
+            .to_string();
+        let gap = session.call_tool(
+            "get",
+            "ripr_get_gap",
+            json!({ "canonical_id": first }),
+            timeout,
+        )?;
+        structured_tool_success(&gap, "get gap")?;
+        get_gap_wire.push(
+            serde_json::to_string(&gap)
+                .map_err(|error| error.to_string())?
+                .len(),
+        );
+        observed.push((structured, text, wire));
+    }
+    let [
+        (default_doc, default_text, default_wire),
+        (summary_doc, summary_text, summary_wire),
+        (typo_doc, typo_text, _),
+    ] = observed.as_slice()
+    else {
+        return Err("expected three sessions".to_string());
+    };
+    // The default text is the compact JSON copy of the one document.
+    let reparsed: Value = serde_json::from_str(default_text)
+        .map_err(|error| format!("default text must stay the JSON copy: {error}"))?;
+    if &reparsed != default_doc {
+        return Err("default text drifted from structuredContent".to_string());
+    }
+    // A typo keeps the lossless default.
+    if typo_text != default_text || typo_doc != default_doc {
+        return Err("an unrecognized mode spelling must keep the default".to_string());
+    }
+    // Summary: same complete structured result, digest text.
+    if summary_doc != default_doc {
+        return Err("structuredContent must be identical in both modes".to_string());
+    }
+    if serde_json::from_str::<Value>(summary_text).is_ok() {
+        return Err("summary text must not masquerade as the JSON document".to_string());
+    }
+    let schema = default_doc["schema_version"]
+        .as_str()
+        .ok_or("list omitted schema_version")?;
+    let first_id = default_doc["items"][0]["canonical_id"]
+        .as_str()
+        .ok_or("list omitted its first canonical_id")?;
+    for needle in [
+        schema,
+        "not a copy",
+        "structuredContent",
+        "RIPR_MCP_TEXT_CONTENT=full",
+        first_id,
+    ] {
+        if !summary_text.contains(needle) {
+            return Err(format!("summary text lost {needle:?}: {summary_text}"));
+        }
+    }
+    if summary_wire >= default_wire {
+        return Err(format!(
+            "summary mode must shrink the wire response: {summary_wire} vs {default_wire}"
+        ));
+    }
+    // The single-item evidence document is where the duplicate is large:
+    // the digest must cut the whole response by at least a third.
+    let [default_get, summary_get, typo_get] = get_gap_wire.as_slice() else {
+        return Err("expected three get_gap measurements".to_string());
+    };
+    if summary_get * 3 > default_get * 2 || typo_get != default_get {
+        return Err(format!(
+            "ripr_get_gap summary must be at most two thirds of default: default={default_get} summary={summary_get} typo={typo_get}"
+        ));
+    }
+    eprintln!(
+        "ripr_list_gaps wire bytes: default={default_wire} summary={summary_wire} (text {} -> {})",
+        default_text.len(),
+        summary_text.len()
+    );
     Ok(())
 }

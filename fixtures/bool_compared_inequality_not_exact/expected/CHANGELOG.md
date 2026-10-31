@@ -195,3 +195,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — bool_compared_inequality_not_exact (16)
+
+Reason:
+RIPR-SPEC-0122: #10701 a weak assertion on a changed return value or error with a direct caller test now reaches a repair start
+
+Command:
+`cargo xtask goldens bless bool_compared_inequality_not_exact --reason "..."`
+
+Updated:
+- `expected/human.txt`

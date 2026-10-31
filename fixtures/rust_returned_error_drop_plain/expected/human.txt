@@ -38,10 +38,11 @@ Next: drill into the top finding:
   ripr context --root <cwd>/fixtures/rust_returned_error_drop_plain/input --diff <cwd>/fixtures/rust_returned_error_drop_plain/diff.patch --mode fast --at probe:src_lib.rs:field_construction:9382a2f4
   no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test assertion that checks the changed field value; follow the Next step above, then rerun `ripr check`
 No test stub here: the changed field is set on a struct literal the owner does not return directly (as its tail or `return` value), so the stub cannot tell which value to assert on
+Write this test by hand: call the function and assert on what it returns: match the wrapper that carries the changed field (for example the `Err` variant) and check the field inside it, or compare the whole returned value; then rerun `ripr check`.
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:13 (exposed)
-    - ./src/lib.rs:13 (exposed)
+    - ./src/lib.rs:13 (exposed); kind: error_path; reason: Strong oracle found: exact error variant assertion
+    - ./src/lib.rs:13 (exposed); kind: return_value; reason: Strong oracle found: exact error variant assertion
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

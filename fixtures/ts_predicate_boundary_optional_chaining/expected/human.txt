@@ -17,6 +17,7 @@ Start here:
   Language: typescript
   Language status: preview
   Static exposure: exposed (severity: info, confidence 0.60)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.
   Changed behavior: if (order?.role === "admin") {
   Discriminator (observed, advisory): Related test reaches `userIsAdmin` with an `exact_value`
     oracle. Static evidence suggests the changed behavior is observed under an exact-value or
@@ -41,12 +42,12 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/ts_predicate_boundary_optional_chaining/input --diff <cwd>/fixtures/ts_predicate_boundary_optional_chaining/diff.patch --mode fast probe:src_guards.ts:typescript_preview:7098c2ff
   ripr context --root <cwd>/fixtures/ts_predicate_boundary_optional_chaining/input --diff <cwd>/fixtures/ts_predicate_boundary_optional_chaining/diff.patch --mode fast --at probe:src_guards.ts:typescript_preview:7098c2ff
-  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: nothing to repair here; the related tests already notice this change (exposed)
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output (TypeScript preview: 2).
-    - src/guards.ts:9 (exposed)
-    - src/guards.ts:15 (exposed)
+    - src/guards.ts:9 (exposed); kind: predicate; reason: Related test reaches `pickLabel` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.
+    - src/guards.ts:15 (exposed); kind: predicate; reason: Related test reaches `thresholdsAbove` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant…
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

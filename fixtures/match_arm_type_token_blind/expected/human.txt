@@ -17,7 +17,7 @@ Start here:
   Changed behavior: Mode::Frozen => -1,
   Missing check (1 of 2): Mode::Frozen
   Related test: tests/classify_tests.rs:4 warm_arm_returns_one (no test input selects arm `Mode::Frozen =>`)
-  Next step: Strengthen the related assertion so it discriminates the changed behavior
+  Next step: Add a test that calls the changed code with an input that selects the arm `Mode::Frozen =>` and asserts its result
   Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

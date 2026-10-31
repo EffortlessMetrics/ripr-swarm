@@ -40,11 +40,12 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_qualified_helper_effect_reach/input --diff <cwd>/fixtures/rust_qualified_helper_effect_reach/diff.patch --mode fast probe:src_lib.rs:call_deletion:05331642
   ripr context --root <cwd>/fixtures/rust_qualified_helper_effect_reach/input --diff <cwd>/fixtures/rust_qualified_helper_effect_reach/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:05331642
-  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned test symbol; direct owner relationship; a way to follow the changed value to something a test can check; incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned test symbol; direct owner relationship; a way to follow the changed value to something a test can check; a test input that reaches the changed code; follow the Next step above, then rerun `ripr check`
 No test stub here: the change shows up as a side effect or call, which needs an observer or mock ripr cannot write
+Write this test by hand: call the function, then assert the visible change the changed call makes (a changed value, state, or output); then rerun `ripr check`.
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:2 (unknown)
+    - ./src/lib.rs:2 (unknown); kind: side_effect; reason: No clear propagation path from changed behavior to an observable sink
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

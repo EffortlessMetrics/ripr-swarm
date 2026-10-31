@@ -1,0 +1,22 @@
+[[extend]]
+id = "RIPR-SPEC-0311"
+tests = [
+  "crates/ripr/src/app/repair_attempt/mod.rs::recorded_workflow_path_tests::producer_root_spellings_and_escape_decoys_are_distinct",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::gap_cleanup_does_not_hide_unrelated_bound_neighbor",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::gap_retention_accepts_default_and_relative_root_spellings",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::gap_projection_custody_uses_the_explicit_attempt_store",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::repeated_gap_attempt_is_current_and_keeps_test_byte_binding",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::python_repeated_gap_attempt_remains_current_and_detects_drift",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::concurrent_after_processes_in_distinct_stores_preserve_live_backups",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::crashed_after_leaves_unknown_backup_for_inspection",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::after_preserves_original_when_backup_creation_is_denied",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::pending_terminal_recovery_requires_published_receipt",
+  "crates/ripr/src/agent/artifact_issued_history_tests.rs::issued_history_accepts_recorded_producer_without_live_git",
+  "crates/ripr/src/agent/artifact_issued_history_tests.rs::issued_history_and_live_findings_refuse_pre_run_owned_v4_identity",
+  "crates/ripr/src/agent/artifact_issued_history_tests.rs::issued_history_preserves_structure_completeness_root_and_commitment_refusals",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::gap_currentness_survives_only_proven_workflow_projection_cleanup",
+]
+code = [
+  "crates/ripr/src/agent/artifact.rs",
+  "crates/ripr/src/app/repair_attempt/mod.rs",
+]

@@ -70,10 +70,15 @@ pub(crate) fn owners_from_program(
             owner.module_entries = owner_entries.clone();
         }
     }
-    assign_class_entries(
+    let instance_fields = class_instance_field_names(program);
+    let repeated_names = repeated_class_names(program);
+    assign_class_entries(&mut owners, &instance_fields, &repeated_names);
+    assign_instance_factories(
+        program,
+        source,
         &mut owners,
-        &class_instance_field_names(program),
-        &repeated_class_names(program),
+        &instance_fields,
+        &repeated_names,
     );
     assign_decorated_entries(program, source, &mut owners);
     owners
@@ -1859,7 +1864,7 @@ pub(crate) fn ambient_declaration_lines(
 /// per save). Every fact is a pure function of the source bytes; the
 /// per-diff `changed_lines` filtering happens at call time, so one cached
 /// extraction serves every diff of the same content.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct PhaseTwoFacts {
     /// Every unsupported owner shape span in source order. Filtering to the
     /// first entry whose line range intersects a changed line reproduces the
@@ -1877,13 +1882,67 @@ pub(crate) struct PhaseTwoFacts {
 /// snippet), and precomputed 1-based line range (for the changed-line gate).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GapShape {
+    /// The disclosure label. The serialized spelling is on-disk cache
+    /// identity (#10725): deserialization accepts only the closed label
+    /// table and fails closed on anything else.
     pub(crate) shape: &'static str,
     pub(crate) span: (usize, usize),
     pub(crate) lines: (usize, usize),
 }
 
+/// Closed label table mirrored from the extractor sites in this file.
+/// Unknown labels are a cache-integrity failure, not a new shape:
+/// deserializing them must error so the entry is discarded.
+const GAP_SHAPE_LABELS: [&str; 8] = [
+    "enum declaration",
+    "module/namespace declaration",
+    "member-assigned function",
+    "function inside a top-level call",
+    "arrow-function class field",
+    "class static block",
+    "accessor auto-accessor",
+    "class method with unsupported key",
+];
+
+impl serde::Serialize for GapShape {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("GapShape", 3)?;
+        state.serialize_field("shape", self.shape)?;
+        state.serialize_field("span", &self.span)?;
+        state.serialize_field("lines", &self.lines)?;
+        state.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for GapShape {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // Hand-written (not derived): the serde derive adds an implicit
+        // `'de: 'static` bound for a borrowed `&'static str` field, which no
+        // deserializer can satisfy. Deserializing through an owned body and
+        // resolving against the static table keeps the closed-label contract.
+        #[derive(serde::Deserialize)]
+        struct GapShapeBody {
+            shape: String,
+            span: (usize, usize),
+            lines: (usize, usize),
+        }
+        let body = <GapShapeBody as serde::Deserialize>::deserialize(deserializer)?;
+        let shape = GAP_SHAPE_LABELS
+            .iter()
+            .find(|label| **label == body.shape)
+            .copied()
+            .ok_or_else(|| serde::de::Error::custom("unknown gap shape label"))?;
+        Ok(GapShape {
+            shape,
+            span: body.span,
+            lines: body.lines,
+        })
+    }
+}
+
 /// One runtime enum member: its 1-based line range and stable identity.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct EnumMember {
     pub(crate) lines: (usize, usize),
     pub(crate) identity: String,

@@ -7,7 +7,7 @@
 //!
 //! Unlike the xtask, this command does NOT shell out to `cargo run -p ripr --
 //! check ...`. It calls [`crate::check_workspace`] directly and renders the
-//! resulting [`crate::CheckOutput`] as JSON via [`crate::app::render_check_json_unbounded`].
+//! resulting [`crate::CheckOutput`] as JSON via `crate::app::render_check_json_unbounded`.
 //! This avoids recompilation and keeps the analysis in-process.
 
 use crate::app::{CheckInput, Mode, OutputFormat, check_workspace};

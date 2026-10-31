@@ -1,5 +1,48 @@
 mod json_construction;
+mod module_local_glob;
 mod retention_parity;
+#[test]
+fn module_shadow_exempts_only_the_owners_nearest_module() -> Result<(), String> {
+    // The owner's nearest enclosing module is the production declaration's
+    // scope and never a shadow; every other module still counts.
+    for (source, expected) in [
+        // Owner and the same-name type share `a`: exempt.
+        (
+            "mod a { struct Widget; fn read() {} #[test] fn subject() {} }",
+            false,
+        ),
+        // The owner sits in `b`; the type declared in the test's own `a` shadows.
+        (
+            "mod a { struct Widget; #[test] fn subject() {} } mod b { fn read() {} }",
+            true,
+        ),
+        // Nested: the owner's nearest module is `inner`, so `outer`'s type counts.
+        (
+            "mod outer { struct Widget; mod inner { fn read() {} #[test] fn subject() {} } }",
+            true,
+        ),
+        // Same-name owner `fn` in two modules on the owner's line: ambiguous, no exemption.
+        (
+            "mod a { struct Widget; fn read() {} #[test] fn subject() {} } mod b { fn read() {} }",
+            true,
+        ),
+    ] {
+        let index = index(&[(LIB, source)]);
+        let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
+        let owner = OwnerScope::new("read", 1, Path::new(LIB));
+        assert!(!index.tests().is_empty());
+        for test in index.tests().iter() {
+            assert_eq!(
+                test_module_shadows_type(test, source, "Widget", Some(owner), &index),
+                expected,
+                "{source}"
+            );
+        }
+    }
+    Ok(())
+}
+
+mod shared_target_context;
 #[test]
 fn module_shadow_snapshot_shares_facts_and_complete_answers() -> Result<(), String> {
     let source = "mod production {\nstruct Widget;\nimpl Widget { fn read() {} }\n#[test] fn subject() {}\nmod nested { struct Widget; trait Render {}\n#[test] fn subject() {}\n}\n}\nmod peer { struct Widget;\n#[test] fn subject() {}\n}\n";
@@ -204,48 +247,6 @@ fn module_shadow_snapshot_keeps_raw_alias_same_line_and_owner_ambiguity() -> Res
     }
     Ok(())
 }
-#[test]
-fn module_shadow_exempts_only_the_owners_nearest_module() -> Result<(), String> {
-    // The owner's nearest enclosing module is the production declaration's
-    // scope and never a shadow; every other module still counts.
-    for (source, expected) in [
-        // Owner and the same-name type share `a`: exempt.
-        (
-            "mod a { struct Widget; fn read() {} #[test] fn subject() {} }",
-            false,
-        ),
-        // The owner sits in `b`; the type declared in the test's own `a` shadows.
-        (
-            "mod a { struct Widget; #[test] fn subject() {} } mod b { fn read() {} }",
-            true,
-        ),
-        // Nested: the owner's nearest module is `inner`, so `outer`'s type counts.
-        (
-            "mod outer { struct Widget; mod inner { fn read() {} #[test] fn subject() {} } }",
-            true,
-        ),
-        // Same-name owner `fn` in two modules on the owner's line: ambiguous, no exemption.
-        (
-            "mod a { struct Widget; fn read() {} #[test] fn subject() {} } mod b { fn read() {} }",
-            true,
-        ),
-    ] {
-        let index = index(&[(LIB, source)]);
-        let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
-        let owner = OwnerScope::new("read", 1, Path::new(LIB));
-        assert!(!index.tests().is_empty());
-        for test in index.tests().iter() {
-            assert_eq!(
-                test_module_shadows_type(test, source, "Widget", Some(owner), &index),
-                expected,
-                "{source}"
-            );
-        }
-    }
-    Ok(())
-}
-
-mod shared_target_context;
 
 use super::*;
 use crate::analysis::facts::{FunctionItemFact, SourceRoleProvenance, SourceRoleProvenanceEdge};
@@ -8012,6 +8013,7 @@ fn binding_refusal(kind: Option<MacroBindingKind>) -> AssertionRefusal {
                     kind,
                     scope: None,
                     crate_local: false,
+                    module_local: false,
                 },
             )
         }),
@@ -13034,32 +13036,6 @@ fn comparison_macro_imports_must_name_the_macro_as_a_direct_item_of_its_crate() 
     assert!(!imported("use float_cmp::{inner::{x, approx_eq, y}};\n"));
 }
 
-/// A `use` is in scope for a test only when its module, file or block also
-/// contains the test: a sibling module's glob supplies and shadows nothing.
-#[test]
-fn imports_visible_at_a_line_exclude_sibling_modules_and_other_blocks() -> Result<(), String> {
-    let source = "use a::Root;\nmod unrelated {\n    use crate::E::*;\n}\nmod tests {\n    use b::Own;\n    #[test] fn checks() {\n        use c::Inner;\n    }\n    fn other() {\n        use d::Elsewhere;\n    }\n}\n";
-    let visible = imports_visible_at_line(source, 7).ok_or("parse")?;
-    assert!(
-        visible.contains("a::Root") && visible.contains("b::Own"),
-        "{visible}"
-    );
-    assert!(visible.contains("c::Inner"), "{visible}");
-    assert!(!visible.contains("crate::E"), "{visible}");
-    assert!(!visible.contains("d::Elsewhere"), "{visible}");
-    // Scope comes from the test's own node, not the line's end, which can lie
-    // inside a sibling module opened later on the same line.
-    let same_line = "use a::Root;\n#[test] fn checks() { use c::Inner; } mod unrelated {\n    use crate::E::*;\n}\n";
-    let visible = imports_visible_at_line(same_line, 2).ok_or("parse")?;
-    assert!(
-        visible.contains("c::Inner") && !visible.contains("crate::E"),
-        "{visible}"
-    );
-    // Two functions on one line leave the scope unestablished.
-    assert!(imports_visible_at_line("fn a() {} fn b() {}\n", 1).is_none());
-    Ok(())
-}
-
 /// The crate roots a file imports are read through any whitespace or comment
 /// between the keyword and the path, so a spelling cannot hide a glob import.
 #[test]
@@ -13075,5 +13051,87 @@ fn imported_crate_roots_read_through_whitespace_and_comments() {
         let mut roots = BTreeSet::new();
         imported_crate_roots(source, &mut roots);
         assert!(roots.contains("mac"), "{source:?}: {roots:?}");
+    }
+}
+
+#[test]
+fn matches_admission_preserves_source_assertion_cardinality() {
+    for attributes in [
+        "",
+        "#[ignore]",
+        "#[ignore = \"slow\"]",
+        "#[should_panic]",
+        "#[should_panic(expected = \"oracle mismatch\")]",
+    ] {
+        let source = format!(
+            "enum Fault {{ Bad, Other }}\nfn parse(_: &str) -> Result<(), Fault> {{ Err(Fault::Bad) }}\n#[test]\n{attributes}\nfn parse_checks_bad() {{ assert!(matches!(parse(\"bad\"), Err(Fault::Other)), \"oracle mismatch\"); }}\n"
+        );
+        let index = index(&[(LIB, &source)]);
+        assert_eq!(index.tests().len(), 1, "{attributes}");
+        let test = index.tests().at(0);
+        assert_eq!(test.assertions.len(), 1, "{attributes}");
+        assert!(test.assertions[0].text.starts_with("assert!(matches!"));
+        let qualified = source.replace("assert!(matches!", "std::assert!(std::matches!");
+        let qualified_index = index_for_assertion_cardinality(&qualified);
+        assert_eq!(qualified_index, 1, "{attributes}");
+        let fallback = source.replace("; }", "; panic!(\"fallback\"); }");
+        assert_eq!(
+            index_for_assertion_cardinality(&fallback),
+            1,
+            "{attributes}"
+        );
+        let duplicate = source.replace(
+            "; }",
+            "; assert!(matches!(parse(\"bad\"), Err(Fault::Other))); }",
+        );
+        assert_eq!(
+            index_for_assertion_cardinality(&duplicate),
+            2,
+            "{attributes}"
+        );
+    }
+}
+
+fn index_for_assertion_cardinality(source: &str) -> usize {
+    let indexed = index(&[(LIB, source)]);
+    assert_eq!(indexed.tests().len(), 1);
+    indexed.tests().at(0).assertions.len()
+}
+
+/// The memoized rename answer must equal the direct scan for every spelling,
+/// including raw identifiers, casts, qualified paths and macro arguments.
+#[test]
+fn memoized_file_renames_to_matches_the_direct_scan() {
+    let sources = [
+        "use foreign::Other as Widget;",
+        "use a::b as r#Widget; fn f() {}",
+        "extern crate foo as bar;",
+        "fn f(x: u8) -> u32 { x as u32 }",
+        "fn f() { <T as Clone>::clone(&t); }",
+        "import!(other::Fake as u32);",
+        "#[cfg(x)] use a::B as C;",
+        "use a::{B as C, D as r#E};",
+        "// use a::B as Widget;\nfn f() {}",
+        "const S: &str = \"use a::B as Widget;\";",
+        "use a::B as\n    Widget;",
+        "use a::B as Widget2;",
+        "use a::B as Fooé;",
+        "use a::B as ;",
+        "use a::B as r#",
+    ];
+    let names = [
+        "Widget", "r#Widget", "r", "u32", "Clone", "Fake", "bar", "C", "E", "r#E", "Widget2",
+        "Wid", "Missing", "", "Foo", "r#r",
+    ];
+    for source in sources {
+        for name in names {
+            // Twice: the second call answers from the memo.
+            let _ = file_renames_to(source, name);
+            assert_eq!(
+                file_renames_to(source, name),
+                source.contains(name) && file_renames_to_uncached(source, name),
+                "{source:?} / {name:?}"
+            );
+        }
     }
 }

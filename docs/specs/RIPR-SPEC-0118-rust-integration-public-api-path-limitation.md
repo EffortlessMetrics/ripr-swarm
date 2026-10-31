@@ -278,6 +278,46 @@ origin witnesses.
 - `cargo xtask check-traceability`
 - `cargo fmt --check`
 
+## Limited-finding journey (#10192)
+
+The next step for a transitive/public-API path limitation with retained edge
+evidence must explain that tests cannot close the static-analysis limitation,
+name that edge, and retain its analyzer route. Tests through the public entry
+may already observe the change; do not prescribe a direct private-helper call
+or promise that repeating the public assertion resolves the path. Exact indexed
+function identity and declaration visibility may name the private-helper/public
+entry boundary without promoting the candidate path to confirmed reach.
+The annotation requires exactly one indexed owner identity and one indexed
+entry with that name. Two public entries with the same name in distinct indexed
+files withhold it, even when one calls the exact private owner. This guard does
+not establish completeness for siblings outside the index. The parser-backed
+`limited_journey_private_helper_detail_refuses_same_name_indexed_entries` test
+pairs the unique-entry annotation with that duplicate-entry refusal.
+This is additive `limitation_helper_boundary` evidence; all existing canonical
+edge, route, and non-claim values remain unchanged.
+`explain` presents investigation guidance instead of a recipe claimed to change
+the verdict; check withholds its test-writing route for this limitation. Neither
+changes classification, stage evidence, or repair admission.
+MCP gap evidence uses the same named-edge guidance while preserving an absent
+next step as `null`. Missing edge evidence and unrelated limitation kinds keep
+their original advice. This projection does not change repair readiness.
+
+Ambiguous stub locations retain the syntax resolver's seam identities, with
+explicit disclosure that these selectors are unvalidated and their commands
+may refuse already-gripped or unsupported seams. They establish neither stub
+readiness nor repair admission. The mixed-grip CLI control independently
+establishes a strongly gripped seam and a weakly gripped seam at the same
+location, then requires the former's `not_a_gap` refusal and the latter's
+unwritten stub without filtering either syntax identity from the choices.
+
+The bounded hidden-row projection resolves syntax ambiguity only, after the
+existing eligibility and source-currentness guards. A canonical in-root file
+and supported seam family are required; no classified suffix fallback or
+constant-consumer investigation is performed for hidden rows. A unique hidden
+resolution adds no classified inventory lookup. The direct producer control
+counts those lookups against the same selected finding's full route; selected
+route classification and weak-oracle refusal retain their existing authority.
+
 ## Metrics
 
 - Corpus invariant: integration-origin transitive witnesses emit

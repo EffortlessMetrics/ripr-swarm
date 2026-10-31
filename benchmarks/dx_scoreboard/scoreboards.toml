@@ -189,6 +189,27 @@ sha = "680d19f7d1e042e55934209caeb79bc843b94f44"
 language = "typescript"
 note = "schema-validation library tested with Vitest; the commit edits packages/zod/src/v4/core/schemas.ts and its union test, and the repository tracks a tooling directory alias that a link-aware walk must not report as skipped"
 
+[[corpus]]
+id = "valibot-typescript"
+url = "https://github.com/open-circle/valibot"
+sha = "e6b538386cfa4ccf8be6122f7f457ea7d4020325"
+language = "typescript"
+note = "schema library whose sources live in library/ rather than the root; the commit edits six object-schema sources and no test, so the row measures a TypeScript workspace with a large package table (#10943) and nested detection (#10941)"
+
+[[corpus]]
+id = "remeda-typescript"
+url = "https://github.com/remeda/remeda"
+sha = "d02c3bdb5e18cfa53e76f33f4ae525adce515379"
+language = "typescript"
+note = "pnpm monorepo whose package is packages/remeda; the commit edits packages/remeda/src/funnel.ts and its test, and only nested detection (#10941) selects the TypeScript adapter without a ripr.toml"
+
+[[corpus]]
+id = "hono-typescript"
+url = "https://github.com/honojs/hono"
+sha = "d54720da80134a180f5fe2dd98a7676cfc8f08b4"
+language = "typescript"
+note = "web framework with Vitest suites; the commit edits src/middleware/serve-static/index.ts and its test, and the repository declares tsconfig references and extends in nested packages, a vite config naming a lint rule with `alias`, and a self-import of its own package name, which each used to switch off reach scoping of the test-extraction disclosure (#10954)"
+
 # ---------------------------------------------------------------- speed ----
 
 [[metric]]
