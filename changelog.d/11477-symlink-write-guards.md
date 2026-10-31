@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `[perl].cache_dir`, `ripr agent stub --write`, and `ripr feedback record`/`export` no longer follow a committed directory link out of the workspace: the Perl facts cache and the stub's new `tests/` file are refused when their existing path resolves outside the analyzed root before anything is created, and `feedback` keeps the `target/ripr/*` link check even when `RIPR_CACHE_DIR` redirects only the cache (#11477 items 2, 3 feedback half, 4).

@@ -33736,3 +33736,31 @@ fn declined_rust_file_is_a_limitation_in_check_and_pilot_json() -> Result<(), St
     ignore_remove_dir_all(&root);
     Ok(())
 }
+
+/// #11477 item 3: `RIPR_CACHE_DIR` redirects only the cache, so `feedback`
+/// must still refuse a committed `target` link that escapes the workspace.
+#[cfg(unix)]
+#[test]
+fn feedback_export_refuses_target_link_even_with_cache_dir_override() -> Result<(), String> {
+    let base = unique_temp_workspace("feedback-link-cache-env");
+    let ws = base.join("ws");
+    let outside = base.join("outside");
+    std::fs::create_dir_all(&ws).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&outside).map_err(|e| e.to_string())?;
+    std::os::unix::fs::symlink(&outside, ws.join("target")).map_err(|e| e.to_string())?;
+    let cache = base.join("cache");
+    let output = run_ripr_with_env(
+        &["feedback", "export", "--root", &ws.to_string_lossy()],
+        &[("RIPR_CACHE_DIR", &cache.to_string_lossy())],
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let leaked = std::fs::read_dir(&outside)
+        .map_err(|e| e.to_string())?
+        .next()
+        .is_some();
+    let _ = std::fs::remove_dir_all(&base);
+    assert!(!output.status.success(), "link must be refused: {stderr}");
+    assert!(stderr.contains("resolves outside the workspace"), "{stderr}");
+    assert!(!leaked, "nothing may be written through the link");
+    Ok(())
+}

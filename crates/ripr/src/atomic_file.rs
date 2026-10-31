@@ -108,6 +108,43 @@ fn ensure_default_output_contained_with(
     Ok(())
 }
 
+/// Refuse a write target whose existing ancestry resolves outside `root`
+/// (#11477). Lexical containment (no `..`, not absolute) does not stop a
+/// committed directory link from redirecting `create_dir_all` and the write
+/// that follows. This resolves the deepest existing component of `target`
+/// (a dangling or looping link counts as unresolvable) and requires it to stay
+/// under the canonical workspace root, before anything is created.
+pub(crate) fn ensure_path_within_root(
+    root: &Path,
+    target: &Path,
+    what: &str,
+) -> Result<(), String> {
+    let canonical_root = root.canonicalize().map_err(|error| {
+        format!(
+            "refusing to write {what}: cannot resolve workspace root {}: {error}",
+            root.display()
+        )
+    })?;
+    for ancestor in target.ancestors() {
+        match std::fs::symlink_metadata(ancestor) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            _ => {}
+        }
+        let problem = match ancestor.canonicalize() {
+            Ok(canonical) if canonical.starts_with(&canonical_root) => return Ok(()),
+            Ok(_) => "resolves outside the workspace",
+            Err(_) => "cannot be resolved (dangling or looping link)",
+        };
+        return Err(format!(
+            "refusing to write {what}: {} {problem} (workspace {}). \
+             A repository can check in a link to redirect where ripr writes; replace it with a real directory.",
+            ancestor.display(),
+            root.display()
+        ));
+    }
+    Ok(())
+}
+
 /// Grace before treating a cache staging file as abandoned. A stalled writer
 /// older than this may lose staging and fail its best-effort publication.
 const STALE_TEMP_GRACE: std::time::Duration = std::time::Duration::from_mins(10);
@@ -1001,6 +1038,34 @@ mod tests {
             })
         );
         assert!(escaped_ripr.is_err());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn path_within_root_refuses_linked_ancestor_and_passes_real_ones() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!("ripr-within-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let ws = base.join("ws");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(ws.join("real")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&outside).map_err(|e| e.to_string())?;
+        // Positive controls: a real directory, a not-yet-created child, and an
+        // in-workspace alias all pass.
+        super::ensure_path_within_root(&ws, &ws.join("real/new/leaf"), "x")?;
+        std::os::unix::fs::symlink(ws.join("real"), ws.join("alias")).map_err(|e| e.to_string())?;
+        super::ensure_path_within_root(&ws, &ws.join("alias/new"), "x")?;
+        // Escaping link, a child below it, and a dangling link all refuse.
+        std::os::unix::fs::symlink(&outside, ws.join("out")).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(base.join("missing"), ws.join("dangling"))
+            .map_err(|e| e.to_string())?;
+        let direct = super::ensure_path_within_root(&ws, &ws.join("out"), "x");
+        let below = super::ensure_path_within_root(&ws, &ws.join("out/not/yet"), "x");
+        let dangling = super::ensure_path_within_root(&ws, &ws.join("dangling/leaf"), "x");
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(direct.is_err_and(|e| e.contains("resolves outside")));
+        assert!(below.is_err());
+        assert!(dangling.is_err_and(|e| e.contains("cannot be resolved")));
         Ok(())
     }
 
