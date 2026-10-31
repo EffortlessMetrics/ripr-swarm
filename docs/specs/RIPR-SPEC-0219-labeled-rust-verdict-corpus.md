@@ -427,6 +427,17 @@ listed row that is no longer false, so a bless cannot absorb a new false
 verdict and a fixed row cannot return unnoticed. A `--case` subset is never
 gated on it.
 
+A diff cannot list its own regression (#10986). When the merge base is
+readable (`RIPR_VERDICT_CORPUS_BASE`, else the merge base with `origin/main` or
+`main`), a whole-corpus `check` also fails on a `known-false/<case>.toml` that
+the diff adds for a row that was not a false verdict at the base. The entry
+passes only with `accepted_growth = <issue>`, an accepted-cost issue that names
+the case, and the case id in its `reason`. That keeps the acceptance a visible
+line in the reviewed diff; the check cannot read the issue, so it makes growth
+explicit and does not approve it. An entry already listed at the base, or for a
+row already false there, is not growth. In a hosted run (`GITHUB_ACTIONS=true`)
+an unreadable base fails; elsewhere it is reported as not established.
+
 Missed credit, an `abstained` row whose truth is `discriminated` (tests that
 catch the change while ripr says unknown), is accepted one row per block:
 `missed-credit.toml` in the corpus directory holds `[[entry]]` blocks (`case`

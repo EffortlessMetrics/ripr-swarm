@@ -727,7 +727,22 @@ developer knows (for example `assert_eq!(total(/* boundary input where a >= b
 `assertion shape: ...`, followed by a note to replace each `/* ... */` comment
 with a real value from the developer's test before using it. Any other
 assertion text keeps its `assertion:` label and gets no note. The structured
-pilot packets keep their existing fields and values unchanged (#9244).
+pilot packets keep their existing fields; the only value that changes is the
+boundary placeholder text below (#9244, #11023).
+
+The boundary placeholder describes the equality value the missing discriminator
+asks for (#11023): when the changed predicate is a simple strict comparison
+(`x > 5`, `count < limit`), the placeholder reads `boundary input where x == 5`,
+because an input where `x > 5` holds excludes the boundary beside it. A
+non-strict or compound predicate (`>=`, `<=`, `==`, `!=`, `a > b && c`) is
+spelled as written. The placeholder is one string carried wherever the
+suggested assertion is shown, so for strict-comparison seams the same text
+changes in the machine JSON string values that carry it (`assertion_shape`,
+`assertion`, `suggested_assertion`, `suggested_test`, `example`,
+`recommended_repair`, `target_test_shape`, `brief` and `focused_proof_intent` in
+agent packets, PR guidance comments, gate decisions, evidence records and the
+LSP code-action and hover assertions) and in the human and Markdown surfaces
+that print it. Keys, structure and every other value are unchanged.
 
 ### Outcome is public CLI
 

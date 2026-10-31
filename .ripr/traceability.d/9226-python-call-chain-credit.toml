@@ -1,0 +1,14 @@
+# Registers the evaluated one-return call-chain credit (#9226) under RIPR-SPEC-0028.
+[[extend]]
+id = "RIPR-SPEC-0028"
+tests = [
+  "crates/ripr/src/analysis/language/python/call_chain_tests.rs::a_self_call_chain_pinned_through_a_local_instance_is_credited",
+  "crates/ripr/src/analysis/language/python/call_chain_tests.rs::a_module_function_that_builds_the_class_is_credited",
+  "crates/ripr/src/analysis/language/python/call_chain_tests.rs::a_six_hop_chain_is_credited_and_a_recursive_one_decides_nothing",
+  "crates/ripr/src/analysis/language/python/call_chain_tests.rs::chains_the_model_cannot_show_observe_the_edit_are_not_credited",
+  "crates/ripr/src/analysis/language/python/call_chain_tests.rs::guards_around_the_evaluator_refuse_unproven_chains",
+  "crates/ripr/src/analysis/language/python/call_chain_tests.rs::owner_module_hooks_and_class_body_code_are_not_credited",
+]
+code = [
+  "crates/ripr/src/analysis/language/python/call_chain.rs",
+]

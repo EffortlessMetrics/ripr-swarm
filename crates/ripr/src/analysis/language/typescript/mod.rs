@@ -96,12 +96,19 @@ mod helper_inline_tests;
 mod hook_owner_guard;
 #[cfg(test)]
 mod identifier_write_scale_tests;
+mod infection_shape;
+#[cfg(test)]
+mod infection_shape_tests;
 mod instance_class_guard;
+mod instance_factories;
 #[cfg(test)]
 mod line_index_tests;
 mod literal_eval;
 mod literal_mask;
 mod literal_matcher_guard;
+mod local_constant;
+#[cfg(test)]
+mod local_constant_tests;
 mod lookup_table_guard;
 mod loop_bound_guard;
 mod match_object_guard;
@@ -148,6 +155,7 @@ mod row_miss;
 mod row_miss_tests;
 #[cfg(test)]
 mod self_comparing_assertion_tests;
+mod shadow_index;
 mod spread_override_guard;
 mod static_limit;
 mod table_loop_rows;
@@ -155,6 +163,9 @@ mod table_rows;
 mod ternary_arm_guard;
 #[cfg(test)]
 mod tests;
+mod typeof_kind;
+#[cfg(test)]
+mod typeof_kind_tests;
 // Declared here, not in `tests.rs`, so #7813/#7815 do not collide with #8476.
 mod assertion_helper;
 mod boolean_pin_guard;
@@ -202,6 +213,7 @@ pub(crate) use dropped_term_guard::*;
 pub(crate) use error_payload_guard::*;
 pub(crate) use field_update_guard::*;
 pub(crate) use instance_class_guard::*;
+pub(crate) use instance_factories::*;
 pub(crate) use literal_matcher_guard::*;
 pub(crate) use lookup_table_guard::*;
 pub(crate) use loop_bound_guard::*;
@@ -762,7 +774,21 @@ impl TypeScriptAdapter {
                 // is served from the content-keyed cache; the clone below is
                 // what snapshot promotion mutates, so promotion still reads
                 // the filesystem on every run.
-                let extraction = extraction_cache::test_extraction_cached(relative, source);
+                let (extraction, extraction_failure) =
+                    extraction_cache::test_extraction_cached_disclosing(relative, source);
+                // #11132: a parse-worker failure during test extraction
+                // serves an empty extraction. That must not read as "this
+                // file registers no tests" (a false `no_static_path`), so it
+                // is disclosed through the same typed partial-extraction
+                // limitation as an unindexed registration shape.
+                if let Some(reason) = extraction_failure {
+                    extraction_gaps.push(TypeScriptTestExtractionGap {
+                        file: relative.clone(),
+                        sample_line: 1,
+                        shape: "test extraction unavailable (parse worker failed)",
+                        snippet: reason,
+                    });
+                }
                 // A worker failure serves an empty extraction it never caches;
                 // only a cached extraction is a function of the bytes.
                 if recomputed_facts
@@ -827,6 +853,7 @@ impl TypeScriptAdapter {
                         file: relative.to_path_buf(),
                         sample_line: test.line,
                         condition: test.conditional_registration.clone().unwrap_or_default(),
+                        sites: Vec::new(),
                     });
                 }
                 all_tests.extend(tests);
@@ -1405,11 +1432,17 @@ impl TypeScriptAdapter {
             .flat_map(|finding| finding.related_tests.iter())
             .map(|related| (normalized_path(&related.file), related.line))
             .collect();
-        let consulted_credit_gaps: Vec<&TypeScriptConditionalCreditGap> = if test_index_consumed {
-            consulted_credit_gaps(&conditional_credit_gaps, &consulted_test_files)
+        let consulted_credit_gaps: Vec<TypeScriptConditionalCreditGap> = if test_index_consumed {
+            credit_gaps_in_consulted_tests(
+                &consulted_credit_gaps(&conditional_credit_gaps, &consulted_test_files),
+                &all_tests,
+                &consulted_test_lines,
+            )
         } else {
             Vec::new()
         };
+        let consulted_credit_gaps: Vec<&TypeScriptConditionalCreditGap> =
+            consulted_credit_gaps.iter().collect();
         if let Some(limitation) = conditional_assertion_credit_summary(&consulted_credit_gaps)? {
             limitations.push(limitation);
         }
@@ -1811,6 +1844,62 @@ fn conditional_gap_summary(
 /// touch; a gap in a test file no finding relates to must not mark this
 /// analysis partial. Normalization matches the related-test path
 /// convention so separator spelling cannot split a match.
+/// Narrow file-scoped credit gaps to the tests the findings consulted
+/// (RIPR-SPEC-0243 rule 11). A conditional assertion sits inside one test's
+/// registration call; it cannot hide the oracle of a different test that
+/// the findings consulted in the same file, so a site enclosed only by
+/// other registered tests is dropped. Fail-closed: a site no registered
+/// test encloses (a hook, a helper, a describe-level branch), a gap without
+/// recorded sites, and any file whose tests come from an expanded suite
+/// factory (reported lines are not the walked source's) keep the whole
+/// file's disclosure.
+fn credit_gaps_in_consulted_tests(
+    gaps: &[&TypeScriptConditionalCreditGap],
+    all_tests: &[TypeScriptTest],
+    consulted_test_lines: &std::collections::BTreeSet<(String, usize)>,
+) -> Vec<TypeScriptConditionalCreditGap> {
+    gaps.iter()
+        .filter_map(|gap| {
+            let file = normalized_path(&gap.file);
+            let file_tests: Vec<&TypeScriptTest> = all_tests
+                .iter()
+                .filter(|test| normalized_path(&test.file) == file)
+                .collect();
+            if gap.sites.is_empty()
+                || file_tests
+                    .iter()
+                    .any(|test| test.factory_call_line.is_some())
+            {
+                return Some((*gap).clone());
+            }
+            let test_lines: std::collections::BTreeSet<usize> =
+                file_tests.iter().map(|test| test.line).collect();
+            let relevant: Vec<TypeScriptCreditSite> = gap
+                .sites
+                .iter()
+                .filter(|site| {
+                    let mut enclosing = site
+                        .enclosing_call_lines
+                        .iter()
+                        .filter(|line| test_lines.contains(line))
+                        .peekable();
+                    enclosing.peek().is_none()
+                        || enclosing
+                            .any(|line| consulted_test_lines.contains(&(file.clone(), *line)))
+                })
+                .cloned()
+                .collect();
+            let first = relevant.first()?;
+            Some(TypeScriptConditionalCreditGap {
+                file: gap.file.clone(),
+                sample_line: first.line,
+                condition: first.condition.clone(),
+                sites: relevant,
+            })
+        })
+        .collect()
+}
+
 fn consulted_credit_gaps<'a>(
     gaps: &'a [TypeScriptConditionalCreditGap],
     consulted_test_files: &std::collections::BTreeSet<String>,

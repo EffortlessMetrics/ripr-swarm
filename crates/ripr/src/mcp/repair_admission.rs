@@ -173,6 +173,7 @@ impl SeamAdmission {
                         // emitted next command here.
                         resolve_repair_subject_in(candidate_seams, policy, &finding.id, None),
                         candidate_seams,
+                        &finding.id,
                     ),
                 };
                 (finding.id.clone(), verdict)
@@ -224,7 +225,11 @@ fn inline_verdict(seam_id: &str, candidate_seams: &[ClassifiedSeam]) -> SeamVerd
     }
 }
 
-fn verdict_for(outcome: RepairSubjectOutcome, candidate_seams: &[ClassifiedSeam]) -> SeamVerdict {
+fn verdict_for(
+    outcome: RepairSubjectOutcome,
+    candidate_seams: &[ClassifiedSeam],
+    item: &str,
+) -> SeamVerdict {
     match outcome {
         RepairSubjectOutcome::Seam(seam_id) => inline_verdict(&seam_id, candidate_seams),
         RepairSubjectOutcome::Ineligible {
@@ -247,9 +252,16 @@ fn verdict_for(outcome: RepairSubjectOutcome, candidate_seams: &[ClassifiedSeam]
                 seam_ids.len()
             ),
         },
+        // #10718: the CLI's own words for an item that names no seam, so a
+        // listed item that the inventory cannot resolve (a Python finding:
+        // the seam inventory covers Rust files only) is refused with the same
+        // cause on both surfaces instead of a bare "no classified seam".
         RepairSubjectOutcome::Unknown => SeamVerdict::Refused {
             code: SEAM_NOT_FOUND,
-            detail: "the shared repair gate (`ripr repair`) resolves this item to no classified seam in the snapshot's seam inventory".to_string(),
+            detail: format!(
+                "the shared repair gate (`ripr repair`) refuses this item: {}",
+                crate::app::task_first::unknown_repair_item_reason(None, item)
+            ),
         },
     }
 }

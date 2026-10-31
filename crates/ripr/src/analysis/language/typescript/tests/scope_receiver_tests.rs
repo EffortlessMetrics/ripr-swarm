@@ -534,3 +534,582 @@ fn return_inside_a_nested_closure_keeps_the_hook_write() -> Result<(), String> {
         ),
     )
 }
+
+/// An inert reassignment of the ambient hook cannot construct the receiver
+/// whose method the test calls. Keep the active hook and lexical-shadow controls.
+#[test]
+fn reassigned_setup_hook_does_not_establish_a_method_receiver() -> Result<(), String> {
+    for extension in ["ts", "js"] {
+        for (label, setup, expected) in [
+            (
+                "active",
+                "beforeEach(() => { cart = new Cart(); });",
+                ExposureClass::Exposed,
+            ),
+            (
+                "declared",
+                "const beforeEach = () => {}; beforeEach(() => { cart = new Cart(); });",
+                ExposureClass::NoStaticPath,
+            ),
+            (
+                "reassigned",
+                "beforeEach = () => {}; beforeEach(() => { cart = new Cart(); });",
+                ExposureClass::NoStaticPath,
+            ),
+        ] {
+            let root = ts_unique_tempdir(&format!("hook-receiver-{extension}-{label}"))?;
+            let owner_path = format!("src/cart.{extension}");
+            let test_path = format!("tests/cart.test.{extension}");
+            let annotation = if extension == "ts" { ": number" } else { "" };
+            let owner = format!(
+                "export class Cart {{\n  total(){annotation} {{\n    return 1;\n  }}\n}}\n"
+            );
+            let import_suffix = if extension == "js" { ".js" } else { "" };
+            let source = format!(
+                "import {{ expect }} from 'chai';\nimport {{ Cart }} from '../src/cart{import_suffix}';\ndescribe('cart', () => {{\n  let cart = {{ total: () => 1 }};\n  {setup}\n  it('observes cart total', () => {{ expect(cart.total()).to.equal(1); }});\n}});\n"
+            );
+            ts_write_file(&root.join(&owner_path), &owner)?;
+            ts_write_file(&root.join(&test_path), &source)?;
+            let changed = ChangedFile {
+                path: PathBuf::from(&owner_path),
+                added_lines: vec![crate::analysis::diff::ChangedLine {
+                    line: 3,
+                    text: "    return 1;".to_string(),
+                    new_side_line: 3,
+                }],
+                removed_lines: vec![crate::analysis::diff::ChangedLine {
+                    line: 3,
+                    text: "    return 0;".to_string(),
+                    new_side_line: 3,
+                }],
+            };
+            let result = TypeScriptAdapter.analyze_diff(
+                &ts_analysis_options(root.clone()),
+                &OraclePolicy::default(),
+                &[changed],
+            );
+            let _ = std::fs::remove_dir_all(&root);
+            let finding = result?
+                .findings
+                .into_iter()
+                .find(|finding| finding.probe.location.line == 3)
+                .ok_or_else(|| format!("{extension}/{label}: missing owner probe"))?;
+            assert_eq!(finding.class, expected, "{extension}/{label}");
+        }
+    }
+    Ok(())
+}
+
+/// Registration captures the callable before later writes; separate lexical
+/// bindings do not replace it. Keep the pre-existing duplicate-hook ambiguity.
+#[test]
+fn hook_registration_identity_preserves_order_and_lexical_scope() -> Result<(), String> {
+    for (label, source, expected) in [
+        (
+            "valid_outer",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe("outer", () => {
+let cart;
+beforeEach(() => { cart = new Cart(); });
+it('reads amount', () => { expect(cart.total()).to.equal(1); });
+});
+"#,
+            ExposureClass::Exposed,
+        ),
+        (
+            "late_global_reassignment_before_test",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe("outer", () => {
+let cart;
+beforeEach(() => { cart = new Cart(); });
+beforeEach = () => {};
+it('reads amount', () => { expect(cart.total()).to.equal(1); });
+});
+"#,
+            ExposureClass::Exposed,
+        ),
+        (
+            "later_sibling_global_reassignment",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe("outer", () => {
+let cart;
+beforeEach(() => { cart = new Cart(); });
+it('reads amount', () => { expect(cart.total()).to.equal(1); });
+});
+describe("noise", () => { beforeEach = () => {}; });
+"#,
+            ExposureClass::Exposed,
+        ),
+        (
+            "sibling_local_reassignment",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe("outer", () => {
+let cart;
+beforeEach(() => { cart = new Cart(); });
+describe("noise", () => { let beforeEach = () => {}; beforeEach = () => {}; });
+describe("target", () => {
+it('reads amount', () => { expect(cart.total()).to.equal(1); });
+});
+});
+"#,
+            ExposureClass::Exposed,
+        ),
+        (
+            "registered_then_inert_same_scope",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe("outer", () => {
+let cart;
+beforeEach(() => { cart = new Cart(); });
+beforeEach = () => {};
+beforeEach(() => { cart = new Decoy(); });
+it('reads amount', () => { expect(cart.total()).to.equal(1); });
+});
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "preceding_sibling_global",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+describe('noise', () => { beforeEach = () => {}; });
+describe('target', () => { let cart; beforeEach(() => { cart = new Cart(); }); it('reads', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "preceding_sibling_local",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+describe('noise', () => { let beforeEach = () => {}; beforeEach = () => {}; });
+describe('target', () => { let cart; beforeEach(() => { cart = new Cart(); }); it('reads', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::Exposed,
+        ),
+        (
+            "preceding_helper_declared_later",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+disable(); describe('target', () => { let cart; beforeEach(() => { cart = new Cart(); }); it('reads', () => { expect(cart.total()).to.equal(1); }); }); function disable() { beforeEach = () => {}; }
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "repeated_hook_then_write",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+describe('target', () => { let cart; for (const step of [1, 2]) { beforeEach(() => { cart = new Cart(); }); beforeEach = () => {}; } it('reads', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "later_global_member",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+describe('target', () => { let cart; beforeEach(() => { cart = new Cart(); }); globalThis.beforeEach = () => {}; it('reads', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::Exposed,
+        ),
+        (
+            "imported_hook_ignores_ambient_write",
+            r#"import { describe, it, beforeEach, expect } from 'vitest';
+import { Cart } from '../src/cart';
+describe('target', () => { let cart; globalThis.beforeEach = () => {}; beforeEach(() => { cart = new Cart(); }); it('reads', () => { expect(cart.total()).toBe(1); }); });"#,
+            ExposureClass::Exposed,
+        ),
+        (
+            "parameter_local_write",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+function noise(beforeEach) { beforeEach = () => {}; } noise(() => {});
+describe('target', () => { let cart; beforeEach(() => { cart = new Cart(); }); it('reads', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::Exposed,
+        ),
+        (
+            "block_local_write",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+{ let beforeEach = () => {}; beforeEach = () => {}; }
+describe('target', () => { let cart; beforeEach(() => { cart = new Cart(); }); it('reads', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::Exposed,
+        ),
+        (
+            "catch_local_write",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+try { throw 1; } catch (beforeEach) { beforeEach = () => {}; }
+describe('target', () => { let cart; beforeEach(() => { cart = new Cart(); }); it('reads', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::Exposed,
+        ),
+        (
+            "loop_local_write",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+for (let beforeEach of [1]) { beforeEach = () => {}; }
+describe('target', () => { let cart; beforeEach(() => { cart = new Cart(); }); it('reads', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::Exposed,
+        ),
+        (
+            "shadowed_global_root",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+describe('noise', () => { const globalThis = {}; globalThis.beforeEach = () => {}; });
+describe('target', () => { let cart; beforeEach(() => { cart = new Cart(); }); it('reads', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::Exposed,
+        ),
+        (
+            "preceding_dynamic_global",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+globalThis[key] = () => {};
+describe('target', () => { let cart; beforeEach(() => { cart = new Cart(); }); it('reads', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "default_parameter_body_shadow",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe('target', (ignored = (globalThis.beforeEach = () => {})) => {
+ const globalThis = {};
+ let cart = new Decoy();
+ beforeEach(() => { cart = new Cart(); });
+ it('reads amount', () => { expect(cart.total()).to.equal(1); });
+});
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "default_parameter_unshadowed",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe('target', (ignored = (globalThis.beforeEach = () => {})) => {
+ let cart = new Decoy();
+ beforeEach(() => { cart = new Cart(); });
+ it('reads amount', () => { expect(cart.total()).to.equal(1); });
+});
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "body_shadow_positive",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe('target', () => {
+ const globalThis = {};
+ let cart = new Decoy();
+ beforeEach(() => { cart = new Cart(); });
+ it('reads amount', () => { expect(cart.total()).to.equal(1); });
+});
+"#,
+            ExposureClass::Exposed,
+        ),
+        (
+            "default_function_body_shadow",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe('target', function (ignored = (globalThis.beforeEach = () => {})) {
+ const globalThis = {};
+ let cart = new Decoy();
+ beforeEach(() => { cart = new Cart(); });
+ it('reads amount', () => { expect(cart.total()).to.equal(1); });
+});
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "default_bare_hook_body_shadow",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe('noise', (ignored = (beforeEach = () => {})) => { const beforeEach = () => {}; });
+describe('target', () => { let cart = new Decoy(); beforeEach(() => { cart = new Cart(); }); it('reads amount', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "default_outer_literal_body_alias",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+const globalThis = {};
+describe('target', (ignored = (globalThis.beforeEach = () => {})) => { const globalThis = global; let cart = new Decoy(); beforeEach(() => { cart = new Cart(); }); it('reads amount', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::Exposed,
+        ),
+        (
+            "default_parameter_value_remains_unknown",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe('target', (globalThis = {}) => { globalThis.beforeEach = () => {}; let cart = new Decoy(); beforeEach(() => { cart = new Cart(); }); it('reads amount', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "local_globalthis_alias",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+const globalThis = global; globalThis.beforeEach = () => {};
+describe('target', () => { let cart = new Decoy(); beforeEach(() => { cart = new Cart(); }); it('reads amount', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "local_global_alias",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+const global = globalThis; global.beforeEach = () => {};
+describe('target', () => { let cart = new Decoy(); beforeEach(() => { cart = new Cart(); }); it('reads amount', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "local_self_alias",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+const self = globalThis; self.beforeEach = () => {};
+describe('target', () => { let cart = new Decoy(); beforeEach(() => { cart = new Cart(); }); it('reads amount', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "local_window_alias",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+const window = globalThis; window.beforeEach = () => {};
+describe('target', () => { let cart = new Decoy(); beforeEach(() => { cart = new Cart(); }); it('reads amount', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "immutable_empty_literal_global_root",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+const globalThis = {}; globalThis.beforeEach = () => {};
+describe('target', () => { let cart = new Decoy(); beforeEach(() => { cart = new Cart(); }); it('reads amount', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::Exposed,
+        ),
+        (
+            "mutable_literal_global_root_can_alias",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+let globalThis = {}; globalThis = global; globalThis.beforeEach = () => {};
+describe('target', () => { let cart = new Decoy(); beforeEach(() => { cart = new Cart(); }); it('reads amount', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "literal_global_root_forwarding_setter",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+const globalThis = { set beforeEach(value) { global.beforeEach = value; } }; globalThis.beforeEach = () => {};
+describe('target', () => { let cart = new Decoy(); beforeEach(() => { cart = new Cart(); }); it('reads amount', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "nearest_alias_shadows_empty_literal",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+const globalThis = {};
+describe('noise', () => { const globalThis = global; globalThis.beforeEach = () => {}; });
+describe('target', () => { let cart = new Decoy(); beforeEach(() => { cart = new Cart(); }); it('reads amount', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "imported_hook_ignores_unresolved_root_alias",
+            r#"import { describe, it, beforeEach, expect } from 'vitest';
+import { Cart } from '../src/cart';
+const globalThis = global; globalThis.beforeEach = () => {};
+describe('target', () => { let cart; beforeEach(() => { cart = new Cart(); }); it('reads', () => { expect(cart.total()).toBe(1); }); });
+"#,
+            ExposureClass::Exposed,
+        ),
+        (
+            "disabled_suite_keeps_old_unknown",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+describe.skip('noise', () => { beforeEach = () => {}; });
+describe('target', () => { let cart; beforeEach(() => { cart = new Cart(); }); it('reads', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "reentrant_named_suite_keeps_unknown",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+let remaining = 2;
+describe('target', function again() {
+  let cart = new Decoy();
+  beforeEach(() => { cart = new Cart(); });
+  beforeEach = () => {};
+  if (--remaining) { again(); return; }
+  it('reads amount', () => { expect(cart.total()).to.equal(1); });
+});
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "trailing_suite_hook_write",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe('target', () => {
+  let cart = new Decoy();
+  beforeEach(() => { cart = new Cart(); });
+  it('reads amount', () => { expect(cart.total()).to.equal(1); });
+}, (beforeEach = () => {}));
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "trailing_suite_global_write",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe('target', function () {
+  let cart = new Decoy();
+  beforeEach(() => { cart = new Cart(); });
+  it('reads amount', () => { expect(cart.total()).to.equal(1); });
+}, (globalThis.beforeEach = () => {}));
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "harmless_trailing_suite_argument",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe('target', () => {
+  let cart = new Decoy();
+  beforeEach(() => { cart = new Cart(); });
+  it('reads amount', () => { expect(cart.total()).to.equal(1); });
+}, 1000);
+"#,
+            ExposureClass::Exposed,
+        ),
+        (
+            "mocha_import_observes_trailing_ambient_write",
+            r#"import { beforeEach } from 'mocha';
+import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe('target', () => {
+  let cart = new Decoy();
+  beforeEach(() => { cart = new Cart(); });
+  it('reads amount', () => { expect(cart.total()).to.equal(1); });
+}, (globalThis.beforeEach = () => {}));
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "vitest_import_ignores_trailing_ambient_write",
+            r#"import { describe, it, beforeEach, expect } from 'vitest';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe('target', () => { let cart = new Decoy(); beforeEach(() => { cart = new Cart(); }); it('reads', () => { expect(cart.total()).toBe(1); }); }, (globalThis.beforeEach = () => {}, 1000));
+"#,
+            ExposureClass::Exposed,
+        ),
+        (
+            "mocha_import_receiver_keeps_existing_limit",
+            r#"import { beforeEach } from 'mocha';
+import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe('target', () => { let cart = new Decoy(); beforeEach(() => { cart = new Cart(); }); globalThis.beforeEach = () => {}; it('reads', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "mocha_import_observes_preceding_ambient_write",
+            r#"import { beforeEach } from 'mocha';
+import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+globalThis.beforeEach = () => {};
+describe('target', () => { let cart = new Decoy(); beforeEach(() => { cart = new Cart(); }); it('reads', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "argument_hook_write_keeps_unknown",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+describe('target', () => {
+  let cart = new Decoy();
+  beforeEach(beforeEach = () => {}, () => { cart = new Cart(); });
+  it('reads amount', () => { expect(cart.total()).to.equal(1); });
+});
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+    ] {
+        let root = ts_unique_tempdir(label)?;
+        ts_write_file(
+            &root.join("src/cart.js"),
+            "export class Cart {\n  total() {\n    return 2;\n  }\n}\n",
+        )?;
+        ts_write_file(&root.join("tests/hook.test.js"), source)?;
+        let result = TypeScriptAdapter.analyze_diff(
+            &ts_analysis_options(root.clone()),
+            &OraclePolicy::default(),
+            &[ChangedFile {
+                path: PathBuf::from("src/cart.js"),
+                added_lines: vec![crate::analysis::diff::ChangedLine {
+                    line: 3,
+                    text: "    return 2;".into(),
+                    new_side_line: 3,
+                }],
+                removed_lines: vec![crate::analysis::diff::ChangedLine {
+                    line: 3,
+                    text: "    return 1;".into(),
+                    new_side_line: 3,
+                }],
+            }],
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        let result = result?;
+        assert_eq!(result.findings.len(), 1, "{label}: nonempty exact subject");
+        let finding = &result.findings[0];
+        assert_eq!(finding.probe.location.line, 3, "{label}");
+        assert_eq!(
+            finding.probe.owner.as_ref().map(|owner| owner.0.as_str()),
+            Some("javascript:src/cart.js::total"),
+            "{label}"
+        );
+        assert_eq!(finding.class, expected, "{label}");
+    }
+    Ok(())
+}

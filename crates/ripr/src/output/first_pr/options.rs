@@ -195,7 +195,8 @@ Exit status:
   2  usage error, unresolvable input, or --check found a missing, stale or malformed packet,
      or a current packet that records a blocked state (wrong root, missing or malformed artifacts)
   Write mode exits 0 after composing a packet, including a recovery packet; read its
-  Output state, or run --check, to gate on the packet state.
+  State line (or the JSON `selected.output_state`), or run --check, to gate on
+  the packet state.
 
 Start-here language:
   - start here: open target/ripr/reports/start-here.md first when it exists

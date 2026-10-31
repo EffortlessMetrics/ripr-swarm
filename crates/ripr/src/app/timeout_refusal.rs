@@ -565,6 +565,16 @@ mod tests {
         }
     }
 
+    /// A projection with no explicit format, output directory or facts.
+    fn bare(
+        input: &CheckInput,
+        requested: RequestedSourceContext,
+        budget: Duration,
+        json_output: bool,
+    ) -> TimeoutRefusalProjection {
+        build(input, requested, budget, json_output, None, None, None)
+    }
+
     fn published_full() -> PublishedInputFacts {
         PublishedInputFacts {
             source: Some(InputSource::Committed),
@@ -655,14 +665,11 @@ mod tests {
 
     #[test]
     fn early_timeout_marks_every_fact_unpublished() {
-        let projection = build(
+        let projection = bare(
             &input("repo", Some("origin/main"), None),
             requested(InputSource::Committed),
             Duration::from_mins(1),
             true,
-            None,
-            None,
-            None,
         );
         let value = projection.input_context_value();
         for pointer in [
@@ -689,14 +696,11 @@ mod tests {
 
     #[test]
     fn requested_echo_distinguishes_source_from_analysis_mode() {
-        let projection = build(
+        let projection = bare(
             &input("repo", Some("origin/main"), None),
             requested(InputSource::WorkingTree),
             Duration::from_secs(30),
             false,
-            None,
-            None,
-            None,
         );
         let value = projection.input_context_value();
         assert_eq!(value["requested"]["source"], json!("working-tree"));
@@ -706,14 +710,11 @@ mod tests {
 
     #[test]
     fn quoted_roots_and_refs_stay_shell_safe() {
-        let projection = build(
+        let projection = bare(
             &input("my repo", Some("feature/it''s"), None),
             requested(InputSource::Committed),
             Duration::from_mins(1),
             true,
-            None,
-            None,
-            None,
         );
         let command = projection.recovery_command();
         // The host's quoting form is owned and pinned by
@@ -780,14 +781,11 @@ mod tests {
         .map_err(|err| format!("scope patterns are valid: {err}"))?;
         let mut requested_context = requested(InputSource::Committed);
         requested_context.committed_explicit = true;
-        let projection = build(
+        let projection = bare(
             &check_input,
             requested_context,
             Duration::from_secs(10),
             false,
-            None,
-            None,
-            None,
         );
         let command = projection.recovery_command();
         assert!(
@@ -809,14 +807,11 @@ mod tests {
     fn auto_selected_worktree_states_rereads_instead_of_fake_flags() {
         // A working-tree source selected by default (no --worktree flag) keeps
         // no fabricated flag and names the live-byte re-read.
-        let projection = build(
+        let projection = bare(
             &input("repo", None, None),
             requested(InputSource::WorkingTree),
             Duration::from_mins(1),
             false,
-            None,
-            None,
-            None,
         );
         let command = projection.recovery_command();
         assert!(
@@ -855,14 +850,11 @@ mod tests {
         assert!(text.contains("bounded retry: ripr check"), "{text}");
         assert!(text.contains("not pinned"), "{text}");
 
-        let early = build(
+        let early = bare(
             &input("repo", Some("origin/main"), None),
             requested(InputSource::Committed),
             Duration::from_mins(1),
             false,
-            None,
-            None,
-            None,
         );
         let text = early.human_recovery_text();
         assert!(
@@ -875,14 +867,11 @@ mod tests {
     fn stash_take_and_clear_are_scoped_to_one_projection() {
         clear_stashed();
         assert!(take_stashed().is_none());
-        stash(build(
+        stash(bare(
             &input("repo", None, None),
             requested(InputSource::Committed),
             Duration::from_mins(1),
             false,
-            None,
-            None,
-            None,
         ));
         assert!(take_stashed().is_some(), "first take consumes the stash");
         assert!(
@@ -975,14 +964,11 @@ mod tests {
         // waits for new stdin or analyzes different bytes. The consumed
         // bytes cannot be replayed, so the recovery names the honest
         // continuation instead of a bounded literal retry.
-        let projection = build(
+        let projection = bare(
             &input("repo", None, Some("-")),
             requested(InputSource::SuppliedDiff),
             Duration::from_secs(45),
             false,
-            None,
-            None,
-            None,
         );
         let value = projection.input_context_value();
         assert_eq!(
@@ -1004,14 +990,11 @@ mod tests {
         );
         assert!(text.contains("save the diff to a named file"), "{text}");
         // A named diff file keeps the executable retry.
-        let named = build(
+        let named = bare(
             &input("repo", None, Some("change.diff")),
             requested(InputSource::SuppliedDiff),
             Duration::from_secs(45),
             false,
-            None,
-            None,
-            None,
         );
         let value = named.input_context_value();
         assert_eq!(value["recovery"]["kind"], json!("retry_with_larger_budget"));
@@ -1034,14 +1017,11 @@ mod tests {
         deep.include_unchanged_tests = false;
         deep.perl_facts_path = Some(PathBuf::from("facts packet"));
         deep.suppression_policy = Some(PathBuf::from("policy file"));
-        let projection = build(
+        let projection = bare(
             &deep,
             requested(InputSource::SuppliedDiff),
             Duration::from_secs(45),
             false,
-            None,
-            None,
-            None,
         );
         let command = projection.recovery_command();
         let windows = cfg!(windows);
@@ -1068,14 +1048,11 @@ mod tests {
             "the suppression policy must ride the retry: {command}"
         );
         // Default-profile controls: no fabricated flags on a plain run.
-        let draft = build(
+        let draft = bare(
             &input("repo", None, None),
             requested(InputSource::Committed),
             Duration::from_secs(45),
             false,
-            None,
-            None,
-            None,
         );
         let command = draft.recovery_command();
         assert!(
@@ -1098,14 +1075,11 @@ mod tests {
         // escapes `%` (`repo%41` renders `repo%2541`); a retry command built
         // from it would name a different directory. The command uses the raw
         // path; the JSON echo keeps the display spelling.
-        let projection = build(
+        let projection = bare(
             &input("repo%41", Some("origin/main"), None),
             requested(InputSource::Committed),
             Duration::from_mins(1),
             true,
-            None,
-            None,
-            None,
         );
         let command = projection.recovery_command();
         let raw = crate::agent::loop_commands::shell_arg("repo%41");
@@ -1161,27 +1135,21 @@ mod tests {
         // No explicit --format/--output-dir: the retry keeps the --json
         // spelling (or the default human renderer) and adds no output dir —
         // nothing the user did not ask for.
-        let json_run = build(
+        let json_run = bare(
             &input("repo", None, None),
             requested(InputSource::Committed),
             Duration::from_mins(1),
             true,
-            None,
-            None,
-            None,
         );
         let command = json_run.recovery_command();
         assert!(command.contains("--json"), "{command}");
         assert!(!command.contains("--format"), "{command}");
         assert!(!command.contains("--output-dir"), "{command}");
-        let human_run = build(
+        let human_run = bare(
             &input("repo", None, None),
             requested(InputSource::Committed),
             Duration::from_mins(1),
             false,
-            None,
-            None,
-            None,
         );
         let command = human_run.recovery_command();
         assert!(!command.contains("--json"), "{command}");
@@ -1193,40 +1161,31 @@ mod tests {
         // #10796 review (NIT 3): a committed diff is the <base>...HEAD range,
         // so both endpoint refs are live; a working-tree retry re-resolves
         // the merge base, which reads the base ref and HEAD as well.
-        let committed = build(
+        let committed = bare(
             &input("repo", Some("origin/main"), None),
             requested(InputSource::Committed),
             Duration::from_mins(1),
             false,
-            None,
-            None,
-            None,
         );
         assert_eq!(
             committed.input_context_value()["recovery"]["rereads"],
             json!(["base-ref", "head-ref"])
         );
-        let committed_default = build(
+        let committed_default = bare(
             &input("repo", None, None),
             requested(InputSource::Committed),
             Duration::from_mins(1),
             false,
-            None,
-            None,
-            None,
         );
         assert_eq!(
             committed_default.input_context_value()["recovery"]["rereads"],
             json!(["base-ref", "head-ref", "default-base-resolution"])
         );
-        let worktree = build(
+        let worktree = bare(
             &input("repo", Some("origin/main"), None),
             requested(InputSource::WorkingTree),
             Duration::from_mins(1),
             false,
-            None,
-            None,
-            None,
         );
         assert_eq!(
             worktree.input_context_value()["recovery"]["rereads"],

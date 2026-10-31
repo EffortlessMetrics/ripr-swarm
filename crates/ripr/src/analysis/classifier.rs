@@ -11,12 +11,13 @@ use self::owner::resolve_owner_function;
 use super::classify::{
     DependencyEdgeContext, HelperChain, NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY,
     NO_REACHABLE_TEST_OBSERVE_SUMMARY, ProbeContext, RelatedTestCandidateIndex,
-    TransitiveReachIndex, ambiguous_helper_entry_called_by_tests, confidence_score,
-    find_related_tests_with_candidate_index, is_assertion_shaped_owner, relation_establishes_reach,
-    same_file_const_readers,
+    TransitiveReachIndex, ambiguous_helper_entry_called_by_tests, associated_const_binding,
+    confidence_score, evaluate_const_flow, find_related_tests_with_candidate_index,
+    is_assertion_shaped_owner, relation_establishes_reach, same_file_const_readers,
+    shares_module_scope,
 };
 use super::probes::parser_expression_for_probe;
-use super::rust_index::{RustIndex, TestSummary};
+use super::rust_index::{RustIndex, TestSummary, find_file_facts};
 use crate::domain::*;
 
 #[cfg(test)]
@@ -62,6 +63,28 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
     )
 }
 
+/// An inherent-method owner reached through an `async fn` hop is not executed
+/// by a test that only calls that hop: the call constructs a future and
+/// nothing here establishes polling (#7415, the same refusal
+/// `inherent_helper_path_reaches_owner` applies to the compact path). Hops
+/// run owner-upward, so the chain keeps the synchronous hops below the first
+/// `async` caller and a test that calls one of those still relates.
+/// Unknown or ambiguous declarations fail closed like an `async` one.
+fn without_async_hops_for_inherent_owner(
+    owner: Option<&crate::analysis::facts::FunctionSummary>,
+    mut chain: super::classify::HelperChain,
+    index: &RustIndex,
+) -> super::classify::HelperChain {
+    if owner.is_some_and(super::classify::requires_inherent_receiver_identity)
+        && let Some(first_async) = chain.hops.iter().position(|hop| {
+            super::classify::function_declaration_is_async(&hop.caller, index) != Some(false)
+        })
+    {
+        chain.hops.truncate(first_async);
+    }
+    chain
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "classification inputs plus explicit run-local origin context"
@@ -86,6 +109,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
         .map(|owner| super::classify::resolve_chain(&owner.name, index, workspace_complete, &[]));
     let helper_chain = resolved_chain
         .clone()
+        .map(|chain| without_async_hops_for_inherent_owner(owner_fn, chain, index))
         .filter(|chain| !chain.hops.is_empty());
     let mut related_tests = find_related_tests_with_candidate_index(
         probe,
@@ -102,13 +126,42 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
     // same-file reader. The probe family is unchanged (`static_unknown`), so
     // this only corrects the reach evidence; it cannot promote a verdict.
     let mut const_readers = Vec::new();
+    let mut const_flow = None;
     if owner_fn.is_none() {
         let mut through_readers: Vec<_> = Vec::new();
         let probe_file = candidate_index.probe_index_file(probe, index);
-        let readers = probe_file
+        let mut readers = probe_file
             .as_deref()
             .map(|file| same_file_const_readers(probe, file, index))
             .unwrap_or_default();
+        // RIPR-SPEC-0048 associated-constant extension: a constant declared
+        // inside `impl Trait for Type` is read by the trait's default
+        // methods, not by a same-file reader of a unique name.
+        let mut assoc_type: Option<String> = None;
+        if readers.is_empty()
+            && let (Some(file), Some(name)) = (probe_file.as_deref(), probe.changed_const_name())
+            && let Some(facts) = find_file_facts(index, file)
+            && let Some(binding) = associated_const_binding(
+                &facts.source,
+                probe.location.line,
+                name,
+                facts.functions.iter(),
+            )
+            // `Type::name(` resolves to an inherent method of that name before
+            // a trait default one, wherever it is defined: a reader name any
+            // other workspace function shares is not bound.
+            && binding.readers.iter().all(|reader| {
+                index
+                    .functions()
+                    .iter()
+                    .filter(|function| function.name == reader.name)
+                    .count()
+                    == 1
+            })
+        {
+            assoc_type = Some(binding.self_type);
+            readers = binding.readers;
+        }
         for reader in readers {
             let mut reached = false;
             for (test, reason) in find_related_tests_with_candidate_index(
@@ -134,6 +187,44 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
             if reached {
                 const_readers.push(reader);
             }
+        }
+        // RIPR-SPEC-0048: evaluate the constant through those readers and
+        // the tests that reach them. Unreadable in any part: no flow.
+        if !through_readers.is_empty()
+            && let Some(change) = probe_file.as_deref().and_then(|file| {
+                candidate_index
+                    .changed_consts()
+                    .lookup(file, probe.location.line)
+            })
+        {
+            let reader_tests: Vec<&TestSummary> =
+                through_readers.iter().map(|(test, _)| *test).collect();
+            const_flow = probe_file
+                .as_deref()
+                .and_then(|file| find_file_facts(index, file))
+                .and_then(|facts| {
+                    // Spelling cannot tell an imported or sibling-module
+                    // constant from the edited one: the declaration and every
+                    // reader must share one module scope.
+                    let lines: Vec<usize> = const_readers
+                        .iter()
+                        .map(|reader| reader.start_line)
+                        .collect();
+                    // The associated-constant binding checked its own module
+                    // chain; a free constant checks it here.
+                    if assoc_type.is_none()
+                        && !shares_module_scope(&facts.source, probe.location.line, &lines)
+                    {
+                        return None;
+                    }
+                    evaluate_const_flow(
+                        change,
+                        &const_readers,
+                        &reader_tests,
+                        &|name| facts.functions.iter().filter(|f| f.name == name).count(),
+                        assoc_type.as_deref(),
+                    )
+                });
         }
         if !through_readers.is_empty() {
             related_tests.retain(|(existing, _)| {
@@ -168,6 +259,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
     .with_diff_touched(candidate_index.diff_touched());
     context.propagation_origin = propagation_origin;
     context.const_readers = const_readers;
+    context.const_flow = const_flow;
     context.unmounted_build_script =
         candidate_index.probe_in_unmounted_build_script(probe, owner_fn, index);
     let reveal_expression = parser_expression_for_probe(
@@ -178,8 +270,14 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
         &probe.expression,
     )
     .unwrap_or(&probe.expression);
-    let evidence = ClassifiedProbeEvidence::gather(&context, reveal_expression, transitive_reach);
-    let class = evidence.classify(context.probe);
+    let mut evidence =
+        ClassifiedProbeEvidence::gather(&context, reveal_expression, transitive_reach);
+    // RIPR-SPEC-0048: a changed constant decided by evaluation takes its class
+    // from the evaluation; every other probe is classified as before.
+    let class = match context.const_flow.as_ref() {
+        Some(flow) => evidence.apply_const_flow(flow),
+        None => evidence.classify(context.probe),
+    };
     // #7532: `build_finding` rewrites a `no_static_path` finding's misses;
     // keep reveal's so a withheld finding can report them again.
     let reveal_misses: Vec<Option<RelatedTestMiss>> = evidence
@@ -194,6 +292,72 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
     }
     read_trace.finish();
     finding
+}
+
+/// Evidence line that marks a finding whose classification stopped on an
+/// internal error (#11116). Present only on [`classification_incomplete_finding`].
+pub(in crate::analysis) const CLASSIFICATION_INCOMPLETE_EVIDENCE: &str = "classification_incomplete: classification of this probe stopped on an internal error; no exposure claim is made";
+
+/// The fail-closed stand-in for a probe whose classification panicked
+/// (#11116). One probe's internal failure must not abort the run or read as a
+/// result: the probe keeps its identity and location but is `static_unknown`
+/// with every stage unknown, no related tests, no discriminator and no
+/// canonical gap, so it can never be `exposed` or an actionable repair signal.
+/// The panic payload is not echoed: it can quote repository text and the
+/// installed panic hook has already reported it.
+pub(in crate::analysis) fn classification_incomplete_finding(probe: &Probe) -> Finding {
+    let stage = StageEvidence::new(
+        StageState::Unknown,
+        Confidence::Low,
+        "Not established: classification of this probe stopped on an internal error",
+    );
+    Finding {
+        analysis_scope: AnalysisScope::Diff,
+        confidence_basis: Vec::new(),
+        id: probe.id.0.clone(),
+        canonical_gap: None,
+        probe: probe.clone(),
+        class: ExposureClass::StaticUnknown,
+        ripr: RiprEvidence {
+            reach: stage.clone(),
+            infect: stage.clone(),
+            propagate: stage.clone(),
+            reveal: RevealEvidence {
+                observe: stage.clone(),
+                discriminate: stage,
+            },
+        },
+        confidence: 0.0,
+        evidence: vec![
+            CLASSIFICATION_INCOMPLETE_EVIDENCE.to_string(),
+            format!("{LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX}the changed probe"),
+            format!("{LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX}classification of this probe"),
+            format!("{LIMITATION_ANALYZER_ROUTE_PREFIX}analysis/classifier"),
+            format!(
+                "{LIMITATION_NON_CLAIM_PREFIX}no test gap and no exposure are established for this probe"
+            ),
+        ],
+        missing: vec![
+            "classification abstains: ripr stopped on an internal error while classifying this probe".to_string(),
+        ],
+        flow_sinks: Vec::new(),
+        activation: ActivationEvidence::default(),
+        stop_reasons: vec![StopReason::StaticProbeUnknown],
+        related_tests_matched_total: None,
+        related_tests: Vec::new(),
+        recommended_next_step: Some(
+            "ripr could not classify this change because of an internal error, so it makes no claim about whether a test would notice it. Inspect the related tests by hand and report the failure at https://github.com/EffortlessMetrics/ripr-swarm/issues.".to_string(),
+        ),
+        language: None,
+        language_status: None,
+        owner_kind: None,
+        static_limit_kind: None,
+        changed_sink: None,
+        observed_sink: None,
+        oracle_alignment: None,
+        alignment_reason: None,
+        source_currentness: SourceCurrentness::UnresolvedSubject,
+    }
 }
 
 /// Proc-macro code is exercised through `#[derive]`/attribute expansion in
@@ -3065,7 +3229,7 @@ fn far_above_threshold_discounts() {
             )
             .as_deref(),
             Some(
-                "Open the related test and trace its input through the local or computed operand (including default and empty cases) to see which side of the changed condition it exercises, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
+                "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
             )
         );
         assert_eq!(

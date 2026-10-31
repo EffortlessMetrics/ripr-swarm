@@ -320,11 +320,8 @@ mod tests {
 
     #[test]
     fn interrupted_intake_keeps_its_deadline_reason_distinct() -> Result<(), String> {
-        // #10796 review: the loader completing must not speak for the intake.
-        // With only the load stage published, an absent count is a producer
-        // that had not completed when the budget fired — never
-        // `not_computed_for_source`, which would falsely claim the intake
-        // never computes counts for this source.
+        // The loader completing must not speak for the intake: an absent
+        // count is an unfinished producer, never `not_computed_for_source`.
         let slot: InputFactsSlot = Arc::new(Mutex::new(None));
         with_input_facts_capture(slot.clone(), None, || {
             publish_loaded_diff(
@@ -358,10 +355,9 @@ mod tests {
 
     #[test]
     fn facts_published_at_or_after_the_deadline_stamp_are_masked() -> Result<(), String> {
-        // #10796 review (MINOR 1): a producer finishing inside the cancel
-        // grace publishes after the budget fired. The publish time is the
-        // only completion evidence the slot has, so the projection must read
-        // such facts as `published_after_deadline`, never `available: true`.
+        // A producer finishing inside the cancel grace publishes after the
+        // budget fired: those facts read `published_after_deadline`, never
+        // `available: true`.
         let grace_slot: InputFactsSlot = Arc::new(Mutex::new(None));
         with_input_facts_capture(
             grace_slot.clone(),
@@ -412,8 +408,7 @@ mod tests {
 
     #[test]
     fn early_deadline_leaves_the_slot_empty() {
-        // A producer that never completes publishes nothing: the early
-        // timeout case must read as "no input facts", not as zero facts.
+        // A producer that never completes publishes nothing, not zero facts.
         let slot: InputFactsSlot = Arc::new(Mutex::new(None));
         let seen = with_input_facts_capture(slot.clone(), None, || published(&slot));
         assert_eq!(seen, None);

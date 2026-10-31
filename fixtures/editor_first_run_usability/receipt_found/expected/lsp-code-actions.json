@@ -3,7 +3,7 @@
   "fixture": "editor_first_run_usability/receipt_found",
   "actions": [
     {
-      "title": "Copy first repair packet",
+      "title": "Copy repair instructions for an AI agent",
       "command": "ripr.copyContext",
       "arguments": [
         {

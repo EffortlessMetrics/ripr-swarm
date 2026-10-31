@@ -1,0 +1,9 @@
+# Registers the committed-history `untracked:` header line (#11159) under RIPR-SPEC-0116.
+[[extend]]
+id = "RIPR-SPEC-0116"
+tests = [
+  "crates/ripr/src/output/human.rs::tests::header_names_untracked_files_left_out_of_a_committed_history_run",
+]
+code = [
+  "crates/ripr/src/output/human.rs",
+]

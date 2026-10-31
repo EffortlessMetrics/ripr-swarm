@@ -1,0 +1,10 @@
+[package]
+name = "declared_target_glob"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
+
+[[bin]]
+name = "xtask"
+path = "xtask/main.rs"

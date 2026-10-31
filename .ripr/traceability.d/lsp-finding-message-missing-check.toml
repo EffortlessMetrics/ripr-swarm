@@ -1,0 +1,4 @@
+[[extend]]
+id = "RIPR-SPEC-0076"
+tests = ["crates/ripr/src/lsp/diagnostics.rs::diagnostic_policy_tests::generic_next_step_names_the_missing_check_when_the_witness_has_one"]
+code = ["crates/ripr/src/lsp/diagnostics.rs"]

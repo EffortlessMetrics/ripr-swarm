@@ -930,55 +930,6 @@ mod tests {
     }
 
     #[test]
-    fn early_timeout_marks_every_resolved_fact_unavailable() -> Result<(), String> {
-        use crate::app::timeout_refusal;
-        use crate::core_error::CoreError;
-        timeout_refusal::clear_stashed();
-        // Early timeout: nothing published before the deadline.
-        timeout_refusal::stash(timeout_refusal::build(
-            &input(),
-            timeout_refusal::RequestedSourceContext {
-                source: crate::analysis::InputSource::WorkingTree,
-                worktree_explicit: true,
-                committed_explicit: false,
-                candidate_tree: None,
-                candidate_base: None,
-            },
-            std::time::Duration::from_mins(1),
-            false,
-            None,
-            None,
-            None,
-        ));
-        let rendered = render_check_failure_json(
-            &input(),
-            &CoreError::analysis_timeout(
-                "analysis_timeout: ripr check exceeded its 60s wall-clock budget",
-            ),
-        )?;
-        let value: Value =
-            serde_json::from_str(&rendered).map_err(|err| format!("parse refusal JSON: {err}"))?;
-        for pointer in [
-            "/input_context/resolved/effective_base",
-            "/input_context/resolved/base_commit",
-            "/input_context/resolved/merge_base",
-            "/input_context/resolved/scoped_changed_files",
-            "/input_context/resolved/out_of_scope_files",
-        ] {
-            let fact = value
-                .pointer(pointer)
-                .ok_or_else(|| format!("{pointer} must exist: {value}"))?;
-            if fact.get("available") != Some(&Value::Bool(false)) {
-                return Err(format!("{pointer} must be unavailable: {value}"));
-            }
-            if fact.get("reason") != Some(&Value::String("not_published_before_deadline".into())) {
-                return Err(format!("{pointer} must name the deadline reason: {value}"));
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
     fn non_timeout_refusals_ignore_a_stale_stash() -> Result<(), String> {
         use crate::app::timeout_refusal;
         use crate::core_error::CoreError;

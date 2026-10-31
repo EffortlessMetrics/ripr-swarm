@@ -1,0 +1,44 @@
+{
+  "case_id": "eq-divert-early-return-new-constant",
+  "subject_id": "authored-eq-divert",
+  "diff": "cases/eq-divert-early-return-new-constant.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 22
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "equality_row_diverted_before_the_changed_line",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if n == 6 { 1 } else { 0 }",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the edit changes which input takes the branch, but no executed assertion observes it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Row 6 equals the new constant but returns 9 from the `n > 3` early return before the equality, so the swap changes nothing the test sees. A row on the new constant that an earlier return handles must not credit it either.",
+  "labeling_observation": {
+    "ripr_commit": "fd684cecd",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

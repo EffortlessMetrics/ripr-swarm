@@ -5,8 +5,9 @@
 //! result only for the values where `n === 1` and `n <= 1` disagree (`0` and
 //! below). A pair of exact assertions on `plural(1)` and `plural(3)` passes on
 //! both versions, however exact the matcher is. So an `exposed` ladder result
-//! whose change only swaps the operator or literal of one `param <op> number ?`
-//! condition keeps its credit unless some observed owner call passes a value
+//! whose change only swaps the operator or literal of one ternary comparison
+//! condition (the `param OP number ?` shape) keeps its credit unless some
+//! observed owner call passes a value
 //! where the two comparisons differ, or some call cannot be read.
 
 use super::*;
