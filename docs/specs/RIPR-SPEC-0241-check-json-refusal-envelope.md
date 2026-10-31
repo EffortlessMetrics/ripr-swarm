@@ -193,10 +193,11 @@ machine-readable `check` formats carry their own refusal documents:
   agent brief and agent packet; agent brief echoes the caller-supplied
   `--base` when its working set selected one. Exit stays `2`, prose stays on
   stderr, and argv usage errors stay prose-only with empty stdout.
-- The closed identity vocabulary includes seven members. All but
-  `analysis_timeout` make no claim that analysis ran; `analysis_timeout`
-  (#5369) means the wall-clock budget expired before the budgeted check
-  analysis returned:
+- The closed identity vocabulary includes eight members. All but
+  `analysis_timeout` and `analysis_worker_stopped` make no claim that analysis
+  ran; `analysis_timeout` (#5369) means the wall-clock budget expired before
+  the budgeted check analysis returned, and `analysis_worker_stopped` (#11116)
+  means the analysis worker died before returning:
 
 | Identity | Repair route | Meaning |
 |---|---|---|
@@ -207,6 +208,7 @@ machine-readable `check` formats carry their own refusal documents:
 | `seam_policy_omitted` | `analysis/seam-policy` | A named `ripr agent packet`, `ripr agent start`, or `ripr agent repair --phase before` `--seam-id` matches a seam that agent policy withholds (configured off, already gripped, or not agent-visible) (#10712). |
 | `diff_input_unsupported` | `analysis/diff-input` | An `agent brief --diff` or `--base` working set carries a shared-parser limitation, admission refusal, or truncated textual section; brief selection did not run. Empty valid patches retain their successful brief behavior. |
 | `analysis_timeout` | `analysis/timeout` | The `ripr check` wall-clock budget (`--timeout SECS`, `RIPR_CHECK_TIMEOUT`) ran out before analysis finished (#5369). No findings are produced and the result is never a clean pass. |
+| `analysis_worker_stopped` | `analysis/worker-stopped` | The `ripr check` analysis worker stopped without producing a result, almost always a panic (#11116). No findings are produced and the result is never a clean pass. |
 
 - For `ripr check`, the machine-readable formats `sarif`, `github`,
   `badge-json`, `repo-exposure-json`, and `agent-seam-packets-json` render a
@@ -255,7 +257,7 @@ all renderers.
 
 ## Implementation Mapping (Amendment #7331, #7332)
 
-- `crates/ripr/src/core_error.rs::CheckFailureKind::{CheckArtifactUnusable, GapLedgerUnusable, SeamIdUnknown, SeamPolicyOmitted, SeamNotActionable, DiffInputUnsupported, AnalysisTimeout}`
+- `crates/ripr/src/core_error.rs::CheckFailureKind::{CheckArtifactUnusable, GapLedgerUnusable, SeamIdUnknown, SeamPolicyOmitted, SeamNotActionable, DiffInputUnsupported, AnalysisTimeout, AnalysisWorkerStopped}`
 - `crates/ripr/src/cli/commands/check_budget.rs::run_with_budget`
 - `crates/ripr/src/cli/commands_agent_support.rs::agent_brief_checked_lines_from_diff`
 - `crates/ripr/src/core_error.rs::RefusalNotice`
