@@ -934,8 +934,9 @@ read back existing work before requesting again. There is no exactly-once claim.
 
 Existing Rust/docs producers and the extracted Windows subset feed the aggregate.
 The subset preserves advisory verdicts and mandatory status/log/nonempty execution,
-source/receipt/cleanup evidence. Its standalone wrapper runs the subset only for
-schedule/manual diagnostics. The full Windows suite and other feature/wheel/
+source/receipt/cleanup evidence. The unchanged `windows-advisory-subset` job in
+`windows-advisory.yml` still runs on schedule, manual dispatch and an explicit
+`merge-ready` labeled request, separately from the admitted aggregate child. The full Windows suite and other feature/wheel/
 security/editor lanes remain separately owned; this bounded patch does not claim
 that every legacy automatic launch has migrated.
 

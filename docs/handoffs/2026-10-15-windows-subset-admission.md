@@ -10,8 +10,10 @@ candidate is separate. #8002 and other owner branches are untouched.
 The `.github/workflows` files on this **candidate branch** are executable workflow
 wiring, not examples: `routed-rust.yml` has explicit labeled admission, the existing
 Rust/docs producers and final aggregate; `windows-subset-qualification.yml` is
-the extracted callable Windows producer; `windows-advisory.yml` calls that same
-producer only on schedule/manual diagnosis. Its full twice-run job is unchanged.
+the extracted callable Windows producer; `windows-advisory.yml` is unchanged: its
+inline `windows-advisory-subset` job still runs on schedule, manual dispatch and an
+explicit `merge-ready` labeled request, separate from the admitted routed-rust
+child. Its full twice-run job is also unchanged.
 `pr-staleness-watchdog.yml` remains API-only and observes requested rather than
 merely Ready heads, excluding unrelated metadata runs from in-flight qualification.
 

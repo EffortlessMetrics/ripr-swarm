@@ -107,10 +107,34 @@ fn execute_review_stream(
         .env("GITHUB_OUTPUT", temp.join("out"))
         .env("GITHUB_STEP_SUMMARY", temp.join("summary"));
     native_subject::configure(&mut command, WORKFLOW)?;
+    // The vectors name the preflight result `ADMISSION_RESULT`/`EXECUTE`; the
+    // workflow's `qualification` job owns them now, and the separate trusted
+    // candidate `admission` job and live eligibility step default to success.
+    let text = |key: &str| environment.get(key).and_then(Value::as_str).unwrap_or("");
+    let pull_request = text("EVENT_NAME") == "pull_request";
+    command
+        .env("QUALIFICATION_RESULT", text("ADMISSION_RESULT"))
+        .env("QUALIFICATION_EXECUTE", text("EXECUTE"))
+        .env("ADMISSION_RESULT", "success")
+        .env(
+            "ADMISSION_STATUS",
+            if pull_request {
+                "admitted"
+            } else {
+                "not_applicable"
+            },
+        )
+        .env("GITHUB_TESTS_RESULT", text("GITHUB_RESULT"))
+        .env("WORKFLOW_REF", text("REF"))
+        .env("ELIGIBILITY_RESULT", "success")
+        .env(
+            "LABEL_NAME",
+            environment
+                .get("LABEL")
+                .and_then(Value::as_str)
+                .unwrap_or(if pull_request { "merge-ready" } else { "" }),
+        );
     for key in [
-        "ADMISSION_RESULT",
-        "EXECUTE",
-        "PRIOR_RESULT",
         "WINDOWS_RESULT",
         "PASTE_RESULT",
         "CI_RESULT",
@@ -198,7 +222,7 @@ fn current_attestation_rejects_narrative_readiness_without_changing_native_revie
     let pr = &vectors["live_drift_cases"][0]["live_pull_request"];
     let comment = |body: &str, state: &str, head: char, second: u8| {
         json!({"id":second,"user":{"login":"author"},"state":state,
-            "commit_id":head.to_string().repeat(40),
+            "author_association":"MEMBER", "commit_id":head.to_string().repeat(40),
             "submitted_at":format!("2026-10-15T01:00:0{second}Z"),"body":body})
     };
     for script in review_boundary_bodies()? {
@@ -314,7 +338,7 @@ fn observed_producer_review_bodies_reach_both_actual_consumers() -> Result<(), S
     assert_eq!(reviews.len(), 5, "nonempty retained producer sample");
     for observed in reviews {
         let review = json!({"id":observed["id"],"user":{"login":"author"},
-            "state":"COMMENTED","commit_id":"a".repeat(40),
+            "state":"COMMENTED","author_association":"MEMBER", "commit_id":"a".repeat(40),
             "submitted_at":"2026-10-15T01:00:00Z","body":observed["body"]});
         // Real, unchanged published body; synthetic API subject isolates format
         // compatibility. Historical bodies are not fresh clearance for this PR.
@@ -425,7 +449,7 @@ fn completed_qualification_retains_its_subject_when_live_main_moves() -> Result<
     frame["data"]["repository"]["pullRequest"]["potentialMergeCommit"]["oid"] =
         json!("9".repeat(40));
     let reviews = json!([{"id":1,"user":{"login":"reviewer"},"state":"APPROVED",
-        "commit_id":"a".repeat(40),"submitted_at":"2026-10-17T00:00:00Z","body":""}]);
+        "author_association":"MEMBER", "commit_id":"a".repeat(40),"submitted_at":"2026-10-17T00:00:00Z","body":""}]);
     let script = body("Recheck current head and base before result publication")?;
     assert!(
         execute(&script, &pr, &reviews, &json!({"MOCK_FRAME":frame}))?,
@@ -453,9 +477,9 @@ fn immutable_qualification_step_uses_admission_outputs_and_cannot_be_optional() 
             && step.starts_with("        if: github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready'\n")
             && !step.contains("continue-on-error")
             && [
-                "EXPECTED_SUBJECT: ${{ needs.admission.outputs.subject }}",
-                "EXPECTED_IDENTITY: ${{ needs.admission.outputs.identity }}",
-                "EXPECTED_REQUEST_ID: ${{ needs.admission.outputs.request_id }}",
+                "EXPECTED_SUBJECT: ${{ needs.qualification.outputs.subject }}",
+                "EXPECTED_IDENTITY: ${{ needs.qualification.outputs.identity }}",
+                "EXPECTED_REQUEST_ID: ${{ needs.qualification.outputs.request_id }}",
                 "SUBJECT_SHA: ${{ github.sha }}",
                 "GENERATION: ${{ github.workflow_sha }}",
             ].iter().all(|binding| step.contains(binding))
@@ -463,15 +487,15 @@ fn immutable_qualification_step_uses_admission_outputs_and_cannot_be_optional() 
     assert!(bound(WORKFLOW));
     for (good, bad) in [
         (
-            "EXPECTED_REQUEST_ID: ${{ needs.admission.outputs.request_id }}",
+            "EXPECTED_REQUEST_ID: ${{ needs.qualification.outputs.request_id }}",
             "EXPECTED_REQUEST_ID: stale-request",
         ),
         (
-            "EXPECTED_IDENTITY: ${{ needs.admission.outputs.identity }}",
+            "EXPECTED_IDENTITY: ${{ needs.qualification.outputs.identity }}",
             "EXPECTED_IDENTITY: guessed-digest",
         ),
         (
-            "EXPECTED_SUBJECT: ${{ needs.admission.outputs.subject }}",
+            "EXPECTED_SUBJECT: ${{ needs.qualification.outputs.subject }}",
             "EXPECTED_SUBJECT: unverified-subject",
         ),
         (
@@ -493,7 +517,7 @@ fn qualification_completion_refuses_subject_and_attempt_substitution() -> Result
     let literal = native_subject::fixture()?;
     let pr = &literal["PR"];
     let reviews = json!([{"id":1,"user":{"login":"reviewer"},"state":"APPROVED",
-        "commit_id":"a".repeat(40),"submitted_at":"2026-10-17T00:00:00Z","body":""}]);
+        "author_association":"MEMBER", "commit_id":"a".repeat(40),"submitted_at":"2026-10-17T00:00:00Z","body":""}]);
     let script = body("Recheck current head and base before result publication")?;
     assert!(execute(&script, pr, &reviews, &json!({}))?);
     for key in [
@@ -643,7 +667,7 @@ fn currentness_refusal_names_the_failed_predicate_without_dumping_the_frame() ->
         "set +e\ndiagnostic=$( ( {actual}\n) 2>&1)\nstatus=$?\n[ \"$status\" != 0 ] || exit 1\n[[ \"$diagnostic\" == *'\"head_identity\":false'* ]] || exit 1\n[[ ${{#diagnostic}} -lt 2048 ]] || exit 1\n[[ \"$diagnostic\" != *must-not-appear-in-diagnostic* ]]"
     );
     let reviews = json!([{"id":1,"user":{"login":"reviewer"},"state":"APPROVED",
-        "commit_id":"a".repeat(40),"submitted_at":"2026-10-17T00:00:00Z","body":""}]);
+        "author_association":"MEMBER", "commit_id":"a".repeat(40),"submitted_at":"2026-10-17T00:00:00Z","body":""}]);
     assert!(execute(
         &script,
         &literal["PR"],
@@ -710,7 +734,7 @@ fn ordinary_comments_cannot_erase_native_review_dispositions() -> Result<(), Str
     let reviewer = |state: &str, time: &str, user: &str, text: &str| {
         json!({
             "user": {"login": user}, "state": state, "submitted_at": time,
-            "commit_id": "a".repeat(40), "body": text
+            "author_association":"MEMBER", "commit_id": "a".repeat(40), "body": text
         })
     };
     let requested = reviewer(
@@ -770,13 +794,63 @@ fn ordinary_comments_cannot_erase_native_review_dispositions() -> Result<(), Str
 }
 
 #[test]
+fn untrusted_reviewers_cannot_supply_positive_attestation_but_can_still_block() -> Result<(), String>
+{
+    let vectors: Value = serde_json::from_str(VECTORS).map_err(|e| e.to_string())?;
+    let pr = &vectors["live_drift_cases"][0]["live_pull_request"];
+    let admission = body("Reconcile native request and current readiness")?;
+    let final_boundary = body("Recheck current head and base before result publication")?;
+    let review = |association: &str, state: &str, text: &str| {
+        json!({
+            "user": {"login": "outsider"}, "state": state, "submitted_at": "2026-10-15T01:00:00Z",
+            "author_association": association, "commit_id": "a".repeat(40), "body": text
+        })
+    };
+    for script in [&admission, &final_boundary] {
+        for association in ["MEMBER", "OWNER", "COLLABORATOR"] {
+            for (state, text) in [("APPROVED", ""), ("COMMENTED", "SOURCE_REVIEW_READY")] {
+                assert!(
+                    execute(
+                        script,
+                        pr,
+                        &json!([review(association, state, text)]),
+                        &json!({})
+                    )?,
+                    "{association} {state} must attest"
+                );
+            }
+        }
+        for association in ["CONTRIBUTOR", "NONE", "FIRST_TIME_CONTRIBUTOR", "MANNEQUIN"] {
+            for (state, text) in [("APPROVED", ""), ("COMMENTED", "SOURCE_REVIEW_READY")] {
+                assert!(
+                    !execute(
+                        script,
+                        pr,
+                        &json!([review(association, state, text)]),
+                        &json!({})
+                    )?,
+                    "{association} {state} must not attest"
+                );
+            }
+        }
+        let mut missing = review("MEMBER", "APPROVED", "");
+        missing
+            .as_object_mut()
+            .ok_or("review object")?
+            .remove("author_association");
+        assert!(!execute(script, pr, &json!([missing]), &json!({}))?);
+    }
+    Ok(())
+}
+
+#[test]
 fn outstanding_old_head_changes_requests_block_both_readiness_boundaries() -> Result<(), String> {
     let vectors: Value = serde_json::from_str(VECTORS).map_err(|e| e.to_string())?;
     let pr = &vectors["live_drift_cases"][0]["live_pull_request"];
     let review = |user: &str, state: &str, head: char, time: u8, text: &str| {
         json!({
             "user": {"login": user}, "state": state,
-            "commit_id": head.to_string().repeat(40), "submitted_at": format!("2026-10-15T0{time}:00:00Z"), "body": text
+            "author_association":"MEMBER", "commit_id": head.to_string().repeat(40), "submitted_at": format!("2026-10-15T0{time}:00:00Z"), "body": text
         })
     };
     let requested = review("alice", "CHANGES_REQUESTED", 'e', 1, "unresolved");
@@ -845,7 +919,7 @@ fn terminal_cancellation_check_rejects_green_dependencies_and_prior_success() ->
     let aggregate = body("Summarize routed result")?;
     let guard = body("Reject workflow cancellation before final result")?;
     // Separate steps: exit 0 in the reuse branch must not bypass the terminal guard.
-    let mut env = json!({"ADMISSION_RESULT":"success", "EXECUTE":"true", "PRIOR_RESULT":"none", "WINDOWS_RESULT":"success", "PASTE_RESULT":"success", "CI_RESULT":"success", "WHEEL_RESULT":"success",
+    let mut env = json!({"ADMISSION_RESULT":"success", "EXECUTE":"true", "WINDOWS_RESULT":"success", "PASTE_RESULT":"success", "CI_RESULT":"success", "WHEEL_RESULT":"success",
         "DOCS_DETECT_RESULT":"success", "DOCS_ONLY":"false", "DOCS_GATE_RESULT":"skipped", "ROUTE_RESULT":"success", "TARGET":"github", "GITHUB_RESULT":"success", "EVENT_NAME":"pull_request"});
     let terminal = WORKFLOW
         .split_once("      - name: Reject workflow cancellation before final result\n")
@@ -859,10 +933,9 @@ fn terminal_cancellation_check_rejects_green_dependencies_and_prior_success() ->
     );
     // Pin the actual native step condition above. These literal condition cases
     // model its documented boolean semantics, not GitHub runner event delivery.
-    for reuse in [false, true] {
-        env["EXECUTE"] = json!(if reuse { "false" } else { "true" });
-        env["PRIOR_RESULT"] = json!(if reuse { "success" } else { "none" });
-        env["WINDOWS_RESULT"] = json!(if reuse { "skipped" } else { "success" });
+    for reuse in [false] {
+        env["EXECUTE"] = json!("true");
+        env["WINDOWS_RESULT"] = json!("success");
         for cancelled in [false, true] {
             let sequence = steps(&[
                 aggregate.clone(),
@@ -905,7 +978,7 @@ fn terminal_cancellation_check_rejects_green_dependencies_and_prior_success() ->
 
 fn paged_review(user: &str, state: &str, head: char, second: u8, id: u64, text: &str) -> Value {
     json!({"id": id, "user": {"login": user}, "state": state,
-        "commit_id": head.to_string().repeat(40),
+        "author_association":"MEMBER", "commit_id": head.to_string().repeat(40),
         "submitted_at": format!("2026-10-15T01:00:{second:02}Z"), "body": text})
 }
 fn review_pages(first: Value, tail: Vec<Value>) -> Vec<Value> {
@@ -1102,7 +1175,7 @@ fn printed_child_is_mandatory_and_native_failures_reach_the_aggregate() -> Resul
     let vectors: Value = serde_json::from_str(VECTORS).map_err(|e| e.to_string())?;
     let live = &vectors["live_drift_cases"][0];
     let script = body("Summarize routed result")?;
-    let mut env = json!({"ADMISSION_RESULT":"success", "EXECUTE":"true", "PRIOR_RESULT":"none",
+    let mut env = json!({"ADMISSION_RESULT":"success", "EXECUTE":"true",
         "WINDOWS_RESULT":"success", "PASTE_RESULT":"success", "CI_RESULT":"success", "WHEEL_RESULT":"success", "DOCS_DETECT_RESULT":"success",
         "DOCS_ONLY":"false", "ROUTE_RESULT":"success", "TARGET":"github", "GITHUB_RESULT":"success",
         "EVENT_NAME":"pull_request", "DOCS_GATE_RESULT":"success"});
@@ -1125,17 +1198,9 @@ fn printed_child_is_mandatory_and_native_failures_reach_the_aggregate() -> Resul
             );
         }
     }
-    // Native prior-result reuse skips children only after admission/final refresh.
+    // A merge-ready request never reuses a prior result: execute=false is refused.
     env["EXECUTE"] = json!("false");
-    env["PRIOR_RESULT"] = json!("success");
     env["PASTE_RESULT"] = json!("skipped");
-    assert!(execute(
-        &script,
-        &live["live_pull_request"],
-        &live["reviews"],
-        &env
-    )?);
-    env["PRIOR_RESULT"] = json!("failure");
     assert!(!execute(
         &script,
         &live["live_pull_request"],
@@ -1151,16 +1216,16 @@ fn printed_call_binds_every_admitted_input_and_required_dependency() -> Result<(
         .split_once("  printed-command:\n")
         .ok_or("printed call missing")?;
     let (call, _) = call.split_once("  result:\n").ok_or("result missing")?;
-    assert!(call.contains("needs: [admission]"));
-    assert!(call.contains("if: needs.admission.outputs.execute == 'true'"));
+    assert!(call.contains("needs: [qualification]"));
+    assert!(call.contains("if: needs.qualification.outputs.execute == 'true'"));
     assert!(call.contains("uses: ./.github/workflows/printed-command-paste.yml"));
     for binding in [
         "proof_profile: qualification",
         "request_id: ${{ format('{0}-{1}', github.run_id, github.run_attempt) }}",
-        "head_sha: ${{ needs.admission.outputs.head }}",
-        "base_sha: ${{ needs.admission.outputs.base }}",
-        "subject_sha: ${{ needs.admission.outputs.merge }}",
-        "subject_tree: ${{ needs.admission.outputs.tree }}",
+        "head_sha: ${{ needs.qualification.outputs.head }}",
+        "base_sha: ${{ needs.qualification.outputs.base }}",
+        "subject_sha: ${{ needs.qualification.outputs.merge }}",
+        "subject_tree: ${{ needs.qualification.outputs.tree }}",
         "workflow_generation: ${{ github.workflow_sha }}",
     ] {
         assert!(call.contains(binding), "missing {binding}");
@@ -1182,7 +1247,7 @@ fn ci_native_result_is_mandatory_for_product_and_docs_subjects() -> Result<(), S
     let vectors: Value = serde_json::from_str(VECTORS).map_err(|e| e.to_string())?;
     let live = &vectors["live_drift_cases"][0];
     let script = body("Summarize routed result")?;
-    let mut env = json!({"ADMISSION_RESULT":"success", "EXECUTE":"true", "PRIOR_RESULT":"none",
+    let mut env = json!({"ADMISSION_RESULT":"success", "EXECUTE":"true",
         "WINDOWS_RESULT":"success", "PASTE_RESULT":"success", "CI_RESULT":"success", "WHEEL_RESULT":"success",
         "DOCS_DETECT_RESULT":"success", "DOCS_ONLY":"false", "DOCS_GATE_RESULT":"success",
         "ROUTE_RESULT":"success", "TARGET":"github", "GITHUB_RESULT":"success", "EVENT_NAME":"pull_request"});
@@ -1205,16 +1270,9 @@ fn ci_native_result_is_mandatory_for_product_and_docs_subjects() -> Result<(), S
             );
         }
     }
+    // A merge-ready request never reuses a prior result: execute=false is refused.
     env["EXECUTE"] = json!("false");
-    env["PRIOR_RESULT"] = json!("success");
     env["CI_RESULT"] = json!("skipped");
-    assert!(execute(
-        &script,
-        &live["live_pull_request"],
-        &live["reviews"],
-        &env
-    )?);
-    env["PRIOR_RESULT"] = json!("failure");
     assert!(!execute(
         &script,
         &live["live_pull_request"],
@@ -1232,16 +1290,16 @@ fn ci_call_binds_identities_and_conservatively_freezes_all_rows() -> Result<(), 
     let (call, _) = call
         .split_once("  printed-command:\n")
         .ok_or("printed child missing")?;
-    assert!(call.contains("needs: [admission]"));
-    assert!(call.contains("if: needs.admission.outputs.execute == 'true'"));
+    assert!(call.contains("needs: [qualification]"));
+    assert!(call.contains("if: needs.qualification.outputs.execute == 'true'"));
     assert!(call.contains("uses: ./.github/workflows/ci.yml"));
     for binding in [
         "proof_profile: qualification",
         "request_id: ${{ format('{0}-{1}', github.run_id, github.run_attempt) }}",
-        "head_sha: ${{ needs.admission.outputs.head }}",
-        "base_sha: ${{ needs.admission.outputs.base }}",
-        "subject_sha: ${{ needs.admission.outputs.merge }}",
-        "subject_tree: ${{ needs.admission.outputs.tree }}",
+        "head_sha: ${{ needs.qualification.outputs.head }}",
+        "base_sha: ${{ needs.qualification.outputs.base }}",
+        "subject_sha: ${{ needs.qualification.outputs.merge }}",
+        "subject_tree: ${{ needs.qualification.outputs.tree }}",
         "workflow_generation: ${{ github.workflow_sha }}",
         "run_rust_only: true",
         "run_release_proof: true",
@@ -1265,7 +1323,7 @@ fn wheel_native_result_is_mandatory_for_product_and_docs_subjects() -> Result<()
     let vectors: Value = serde_json::from_str(VECTORS).map_err(|e| e.to_string())?;
     let live = &vectors["live_drift_cases"][0];
     let script = body("Summarize routed result")?;
-    let mut env = json!({"ADMISSION_RESULT":"success", "EXECUTE":"true", "PRIOR_RESULT":"none",
+    let mut env = json!({"ADMISSION_RESULT":"success", "EXECUTE":"true",
         "WINDOWS_RESULT":"success", "PASTE_RESULT":"success", "WHEEL_RESULT":"success", "CI_RESULT":"success",
         "DOCS_DETECT_RESULT":"success", "DOCS_ONLY":"false", "DOCS_GATE_RESULT":"success",
         "ROUTE_RESULT":"success", "TARGET":"github", "GITHUB_RESULT":"success", "EVENT_NAME":"pull_request"});
@@ -1288,16 +1346,9 @@ fn wheel_native_result_is_mandatory_for_product_and_docs_subjects() -> Result<()
             );
         }
     }
+    // A merge-ready request never reuses a prior result: execute=false is refused.
     env["EXECUTE"] = json!("false");
-    env["PRIOR_RESULT"] = json!("success");
     env["WHEEL_RESULT"] = json!("skipped");
-    assert!(execute(
-        &script,
-        &live["live_pull_request"],
-        &live["reviews"],
-        &env
-    )?);
-    env["PRIOR_RESULT"] = json!("failure");
     assert!(!execute(
         &script,
         &live["live_pull_request"],
@@ -1315,16 +1366,16 @@ fn wheel_call_binds_every_identity_and_native_result() -> Result<(), String> {
     let (call, _) = call
         .split_once("  ci-feature:\n")
         .ok_or("CI child missing")?;
-    assert!(call.contains("needs: [admission]"));
-    assert!(call.contains("if: needs.admission.outputs.execute == 'true'"));
+    assert!(call.contains("needs: [qualification]"));
+    assert!(call.contains("if: needs.qualification.outputs.execute == 'true'"));
     assert!(call.contains("uses: ./.github/workflows/python-wheel-qualification.yml"));
     for binding in [
         "proof_profile: qualification",
         "request_id: ${{ format('{0}-{1}', github.run_id, github.run_attempt) }}",
-        "head_sha: ${{ needs.admission.outputs.head }}",
-        "base_sha: ${{ needs.admission.outputs.base }}",
-        "subject_sha: ${{ needs.admission.outputs.merge }}",
-        "subject_tree: ${{ needs.admission.outputs.tree }}",
+        "head_sha: ${{ needs.qualification.outputs.head }}",
+        "base_sha: ${{ needs.qualification.outputs.base }}",
+        "subject_sha: ${{ needs.qualification.outputs.merge }}",
+        "subject_tree: ${{ needs.qualification.outputs.tree }}",
         "workflow_generation: ${{ github.workflow_sha }}",
     ] {
         assert!(call.contains(binding), "missing {binding}");
@@ -1351,12 +1402,15 @@ fn legacy_profiles_require_actual_product_results_and_no_pr_admission() -> Resul
         ("workflow_dispatch", "refs/heads/rehearsal"),
     ] {
         let mut env = json!({"EVENT_NAME":event,"REF":reference,"LABEL":"",
-            "ADMISSION_RESULT":"skipped","EXECUTE":"","PRIOR_RESULT":"",
+            "ADMISSION_RESULT":"skipped","EXECUTE":"",
             "WINDOWS_RESULT":"skipped","PASTE_RESULT":"skipped","CI_RESULT":"skipped","WHEEL_RESULT":"skipped",
             "DOCS_DETECT_RESULT":"success","DOCS_ONLY":"false","DOCS_GATE_RESULT":"skipped",
             "ROUTE_RESULT":"success","TARGET":"github","GITHUB_RESULT":"success"});
-        assert!(
+        // Branch/tag dispatch is diagnostic-only and can never pass the required result (#5394).
+        let diagnostic_only = event == "workflow_dispatch" && reference == "refs/heads/rehearsal";
+        assert_eq!(
             execute(&script, &json!({}), &json!([]), &env)?,
+            !diagnostic_only,
             "{event}/{reference}"
         );
         for key in ["DOCS_DETECT_RESULT", "ROUTE_RESULT", "GITHUB_RESULT"] {
@@ -1499,47 +1553,45 @@ fn watchdog_pending_runs_use_actual_producer_title_and_head() -> Result<(), Stri
     let producer = WORKFLOW
         .lines()
         .find(|line| line.starts_with("run-name:"))
-        .and_then(|line| line.split_once("format('"))
-        .and_then(|(_, line)| line.split_once("{0}"))
-        .map(|(prefix, _)| prefix)
+        .and_then(|line| line.split_once("format('Merge-ready request "))
+        .map(|_| "Merge-ready request ")
         .ok_or("qualification producer title missing")?;
-    let query = WATCHDOG
+    let consumer = WATCHDOG
         .lines()
         .find(|line| line.contains("in_flight=\"$(gh api"))
-        .and_then(|line| line.split_once(" --jq \""))
-        .and_then(|(_, line)| line.split_once("\" | awk"))
-        .map(|(program, _)| program.replace("\\\"", "\""))
+        .ok_or("watchdog in-flight consumer missing")?;
+    // The head is bound by the API query; the jq program binds status and title.
+    assert!(
+        consumer.contains("head_sha=$head_sha") && consumer.contains("event=pull_request"),
+        "watchdog must query the exact head's pull_request runs"
+    );
+    let query = consumer
+        .split_once(" --jq '")
+        .and_then(|(_, line)| line.split_once("' | awk"))
+        .map(|(program, _)| program.to_owned())
         .ok_or("watchdog jq program missing")?;
     let head = "a".repeat(40);
-    let title = format!("{producer}{head}/{}/{}", "b".repeat(40), "c".repeat(40));
-    let vectors: Value = serde_json::from_str(VECTORS).map_err(|e| e.to_string())?;
-    let pr = &vectors["live_drift_cases"][0]["live_pull_request"];
+    let title = format!("{producer}{head}");
     let replay = |program: &str, run: &Value, expected: usize| -> Result<bool, String> {
-        let program = program.replace("$head_sha", &head);
         let input = json!({"workflow_runs": [run]}).to_string();
         let script = format!(
             "actual=$(jq '{program}' <<'RUNS'\n{input}\nRUNS\n)\n[ \"$actual\" = {expected} ]"
         );
-        execute(&script, pr, &json!([]), &json!({}))
+        execute(&script, &json!({}), &json!([]), &json!({}))
     };
-    let run = |status: &str, run_head: &str, display: &str| json!({"status":status,"head_sha":run_head,"display_title":display,"event":"pull_request"});
+    let run = |status: &str, display: &str| json!({"status":status,"head_sha":"a".repeat(40),"display_title":display,"event":"pull_request"});
     for status in ["queued", "in_progress"] {
         assert!(
-            replay(&query, &run(status, &head, &title), 1)?,
+            replay(&query, &run(status, &title), 1)?,
             "actual {status} qualification was called dark"
         );
     }
     for (label, value) in [
-        ("completed", run("completed", &head, &title)),
-        ("wrong head", run("queued", &"e".repeat(40), &title)),
-        (
-            "wrong title head",
-            run("queued", &head, &title.replace(&head, &"e".repeat(40))),
-        ),
-        ("metadata", run("queued", &head, "Label metadata 123")),
+        ("completed", run("completed", &title)),
+        ("metadata", run("queued", "Label metadata 123")),
         (
             "obsolete title",
-            run("queued", &head, &format!("Merge-ready {head}/b/c")),
+            run("queued", &format!("Merge-ready {head}/b/c")),
         ),
     ] {
         assert!(
@@ -1547,28 +1599,16 @@ fn watchdog_pending_runs_use_actual_producer_title_and_head() -> Result<(), Stri
             "{label} substituted for a pending qualification"
         );
     }
-    // This is the exact old consumer's behavior on the current producer title.
-    let old = format!(
-        "[.workflow_runs[] | select(.status != \"completed\" and (.display_title | startswith(\"Merge-ready {head}/\")))] | length"
-    );
-    assert!(
-        !replay(&old, &run("queued", &head, &title), 1)?,
-        "old predicate must fail the positive qualification vector"
-    );
-    for (old, changed) in [
-        (".status != \"completed\"", "true"),
-        (".head_sha == \"$head_sha\"", "true"),
-        ("Merge-ready event provenance $head_sha/", ""),
+    for (old, changed, value) in [
+        (".status != \"completed\"", "true", run("completed", &title)),
+        (
+            "startswith(\"Merge-ready request \")",
+            "startswith(\"\")",
+            run("queued", "Label metadata 123"),
+        ),
     ] {
         let mutant = query.replace(old, changed);
         assert_ne!(mutant, query, "mutation must engage: {old}");
-        let value = if old.starts_with(".status") {
-            run("completed", &head, &title)
-        } else if old.starts_with(".head_sha") {
-            run("queued", &"e".repeat(40), &title)
-        } else {
-            run("queued", &head, "Label metadata 123")
-        };
         assert!(
             !replay(&mutant, &value, 0)?,
             "missing {old} guard must reject its negative vector"

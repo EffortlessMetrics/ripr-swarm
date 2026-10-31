@@ -87,7 +87,7 @@ fn positive() -> Case {
     Case {
         pr: pr.to_string(),
         reviews: json!([{"id":1, "user":{"login":"reviewer"}, "state":"COMMENTED",
-            "commit_id":"a".repeat(40), "submitted_at":"2026-10-15T11:51:29Z",
+            "author_association":"MEMBER", "commit_id":"a".repeat(40), "submitted_at":"2026-10-15T11:51:29Z",
             "body":format!("SOURCE_REVIEW_READY {REVIEW_SECRET}")}])
         .to_string(),
         threads: vec![
@@ -412,7 +412,7 @@ fn review_order_body_changes_and_paginated_streams_remain_authoritative() -> Res
     blocking.reviews += &format!(
         "\n{}",
         json!([{"id":3,"user":{"login":"blocker"},
-        "state":"CHANGES_REQUESTED", "commit_id":"f".repeat(40),
+        "state":"CHANGES_REQUESTED", "author_association":"MEMBER", "commit_id":"f".repeat(40),
         "submitted_at":"2026-10-15T12:00:00Z","body":REVIEW_SECRET}])
     );
     let detail = paired(&blocking, 1, Some("reviews-check"))?;
@@ -446,9 +446,9 @@ fn review_missing_null_invalid_and_body_types_preserve_parser_outcomes() -> Resu
         "\n{}",
         json!([
         {"id":2,"user":{"login":"other"},"state":"CHANGES_REQUESTED",
-            "commit_id":"f".repeat(40),"submitted_at":"2026-10-15T12:00:00Z","body":REVIEW_SECRET},
+            "author_association":"MEMBER", "commit_id":"f".repeat(40),"submitted_at":"2026-10-15T12:00:00Z","body":REVIEW_SECRET},
         {"id":3,"user":{"login":"other"},"state":"DISMISSED",
-            "commit_id":"f".repeat(40),"submitted_at":"2026-10-15T12:01:00Z","body":REVIEW_SECRET}])
+            "author_association":"MEMBER", "commit_id":"f".repeat(40),"submitted_at":"2026-10-15T12:01:00Z","body":REVIEW_SECRET}])
     );
     paired(&dismissed, 0, None)?;
     Ok(())
@@ -469,7 +469,7 @@ fn reported_identities_and_review_metadata_are_bounded_and_non_secret() -> Resul
         .map(|id| {
             json!({
         "id":id,"user":{"login":format!("reviewer-{id}")},"state":"COMMENTED",
-        "commit_id":"a".repeat(40),"submitted_at":"2026-10-15T12:00:00Z",
+        "author_association":"MEMBER", "commit_id":"a".repeat(40),"submitted_at":"2026-10-15T12:00:00Z",
         "body":REVIEW_SECRET})
         })
         .collect();

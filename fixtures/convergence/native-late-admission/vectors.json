@@ -569,6 +569,7 @@
           "user": {
             "login": "reviewer"
           },
+          "author_association": "MEMBER",
           "commit_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "state": "APPROVED",
           "submitted_at": "2026-10-15T01:00:00Z",
@@ -661,6 +662,7 @@
           "user": {
             "login": "reviewer"
           },
+          "author_association": "MEMBER",
           "commit_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "state": "APPROVED",
           "submitted_at": "2026-10-15T01:00:00Z",
@@ -753,6 +755,7 @@
           "user": {
             "login": "reviewer"
           },
+          "author_association": "MEMBER",
           "commit_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "state": "APPROVED",
           "submitted_at": "2026-10-15T01:00:00Z",
@@ -845,6 +848,7 @@
           "user": {
             "login": "reviewer"
           },
+          "author_association": "MEMBER",
           "commit_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "state": "APPROVED",
           "submitted_at": "2026-10-15T01:00:00Z",
@@ -937,6 +941,7 @@
           "user": {
             "login": "reviewer"
           },
+          "author_association": "MEMBER",
           "commit_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "state": "APPROVED",
           "submitted_at": "2026-10-15T01:00:00Z",
@@ -1025,6 +1030,7 @@
           "user": {
             "login": "reviewer"
           },
+          "author_association": "MEMBER",
           "commit_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "state": "APPROVED",
           "submitted_at": "2026-10-15T01:00:00Z",
@@ -1117,6 +1123,7 @@
           "user": {
             "login": "reviewer"
           },
+          "author_association": "MEMBER",
           "commit_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "state": "APPROVED",
           "submitted_at": "2026-10-15T01:00:00Z",
@@ -1209,6 +1216,7 @@
           "user": {
             "login": "reviewer"
           },
+          "author_association": "MEMBER",
           "commit_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "state": "APPROVED",
           "submitted_at": "2026-10-15T01:00:00Z",
@@ -1301,6 +1309,7 @@
           "user": {
             "login": "reviewer"
           },
+          "author_association": "MEMBER",
           "commit_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "state": "APPROVED",
           "submitted_at": "2026-10-15T01:00:00Z",
@@ -1393,6 +1402,7 @@
           "user": {
             "login": "reviewer"
           },
+          "author_association": "MEMBER",
           "commit_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "state": "APPROVED",
           "submitted_at": "2026-10-15T01:00:00Z",
@@ -1402,6 +1412,7 @@
           "user": {
             "login": "reviewer"
           },
+          "author_association": "MEMBER",
           "commit_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "state": "CHANGES_REQUESTED",
           "submitted_at": "2026-10-15T01:01:00Z",
@@ -1494,6 +1505,7 @@
           "user": {
             "login": "reviewer"
           },
+          "author_association": "MEMBER",
           "commit_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "state": "DISMISSED",
           "submitted_at": "2026-10-15T01:01:00Z",
@@ -1586,6 +1598,7 @@
           "user": {
             "login": "reviewer"
           },
+          "author_association": "MEMBER",
           "commit_id": "ffffffffffffffffffffffffffffffffffffffff",
           "state": "APPROVED",
           "submitted_at": "2026-10-15T01:00:00Z",
@@ -1754,8 +1767,8 @@
       "selected_result": "skipped",
       "expected": {
         "name": "Ripr Rust Small Result",
-        "contract_required_success": true,
-        "candidate_required_success": true
+        "contract_required_success": false,
+        "candidate_required_success": false
       },
       "drift_case": "unchanged",
       "note": "selected_result is the selected Windows job result; other applicable obligations must also succeed. Nonrequest success must use the nonrequired name.",

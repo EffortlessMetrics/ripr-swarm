@@ -1577,8 +1577,10 @@ pub fn routed_rust_workflow_contract_violations_with_reusable(
     ] {
         let legacy = format!("needs.route.outputs.router_target == '{target}'");
         let legacy_docs = format!("{legacy} && needs.detect-docs-only.outputs.docs_only != 'true'");
+        // The trusted-candidate admission job is an explicit success dependency;
+        // the implicit success() of a skipped ancestor withholds the work.
         let staged = format!(
-            "!cancelled() && needs.route.result == 'success' && needs.detect-docs-only.result == 'success' && {legacy_docs}"
+            "{legacy} && needs.admission.result == 'success' && needs.detect-docs-only.outputs.docs_only != 'true'"
         );
         let condition = routed_rust_job_condition(workflow, job);
         let reviewed = match condition.as_deref() {

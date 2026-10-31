@@ -20,10 +20,15 @@ fn normalized_job(source: &str) -> Result<String, String> {
         .ok_or_else(|| "missing Windows subset job".to_owned())?;
     let mut job = job.to_owned();
     if let Some((before, tail)) = job.split_once(PRECHECK) {
-        let (_, after) = tail
-            .split_once("      - uses: dtolnay/rust-toolchain@1.95\n")
-            .ok_or_else(|| "precheck displaced the native toolchain".to_owned())?;
-        job = format!("{before}      - uses: dtolnay/rust-toolchain@1.95\n{after}");
+        // Frozen predecessors name the tag; mainline pins the commit.
+        let (toolchain, after) = [
+            "      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95\n",
+            "      - uses: dtolnay/rust-toolchain@1.95\n",
+        ]
+        .iter()
+        .find_map(|toolchain| tail.split_once(toolchain).map(|(_, after)| (*toolchain, after)))
+        .ok_or_else(|| "precheck displaced the native toolchain".to_owned())?;
+        job = format!("{before}{toolchain}{after}");
     }
     let trust = "github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository";
     job = job.replace(&format!("${{{{ {trust} }}}}"), "\"true\"")
@@ -126,10 +131,17 @@ fn production_producer_preserves_all_native_commands_oracles_and_cleanup() -> Re
             "WORKFLOW = Path.cwd() / '.github/workflows/windows-subset-qualification.yml'"
         )
     );
-    assert_eq!(
-        normalized_job(STAGED)?,
-        expected_job_with_recovery_quote_repair()?
-    );
+    // The retained predecessor names action tags; mainline pins their commits.
+    let unpinned = normalized_job(STAGED)?
+        .replace(
+            "dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95",
+            "dtolnay/rust-toolchain@1.95",
+        )
+        .replace(
+            "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2",
+            "Swatinem/rust-cache@v2",
+        );
+    assert_eq!(unpinned, expected_job_with_recovery_quote_repair()?);
     Ok(())
 }
 
@@ -209,7 +221,7 @@ fn source_precheck_precedes_candidate_execution_and_keeps_source_receipt() -> Re
         .find(PRECHECK)
         .ok_or_else(|| "missing source precheck".to_owned())?;
     let toolchain = STAGED
-        .find("      - uses: dtolnay/rust-toolchain@1.95\n")
+        .find("      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95\n")
         .ok_or_else(|| "missing toolchain".to_owned())?;
     assert!(check < toolchain);
     for clause in [
@@ -321,7 +333,7 @@ fn requested_result_evaluates_admission_and_selected_obligations() -> Result<(),
     for fragment in [
         "[ \"$QUALIFICATION_RESULT\" = success ]",
         "[ \"$WINDOWS_RESULT\" = success ]",
-        "[ \"$QUALIFICATION_PRIOR_RESULT\" = success ]",
+        "[ \"$QUALIFICATION_EXECUTE\" = true ]",
         "[ \"$PASTE_RESULT\" = success ]",
         "[ \"$CI_RESULT\" = success ]",
         "[ \"$WHEEL_RESULT\" = success ]",
@@ -331,6 +343,10 @@ fn requested_result_evaluates_admission_and_selected_obligations() -> Result<(),
             "missing required-result boundary {fragment}"
         );
     }
+    // The preflight exits for every non-merge-ready label and either refuses or
+    // emits execute=true otherwise, so a merge-ready result never sees false.
+    assert!(!NATIVE.contains("QUALIFICATION_PRIOR_RESULT"));
+    assert!(NATIVE.contains("local attempt frame base tree candidate=''"));
     Ok(())
 }
 

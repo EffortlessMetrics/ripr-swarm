@@ -85,7 +85,7 @@ jobs:
              workflow_ref = $env:GITHUB_WORKFLOW_REF; workflow_sha = $env:GITHUB_WORKFLOW_SHA } |
              ConvertTo-Json | Set-Content -LiteralPath target/windows-subset-source.json
 
-      - uses: dtolnay/rust-toolchain@1.95
+      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95
 
       - name: Check selector storage boundaries without a product build
         shell: pwsh
@@ -544,7 +544,7 @@ jobs:
       # different target subsets, and GitHub cache keys are immutable, so one
       # shared key would let whichever job saves first on `main` starve the
       # other of its artifacts.
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           # v2 joins target to workspace root; cross-drive absolute targets cannot
           # be mapped directly. Prune through the junction, archive the real path

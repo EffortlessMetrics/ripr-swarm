@@ -85,6 +85,9 @@ env:
            end) |
         .fence == null and (.dispositions | length > 0 and all(. == "positive"))
       end;
+    # Only a repository OWNER/MEMBER/COLLABORATOR can supply a positive
+    # attestation; any reviewer can still block with CHANGES_REQUESTED.
+    def trusted: (.author_association // "") as $a | ["OWNER","MEMBER","COLLABORATOR"] | index($a) != null;
 
   NATIVE_REQUEST_JQ: |
     .node_id == $pr_id and .number == $number and .state == "open" and .draft == false and
@@ -121,8 +124,8 @@ env:
     ($reviews | map(select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")) |
     group_by(.user.login) | map(max_by(.submitted_at))) as $dispositions |
     all($dispositions[]; .state != "CHANGES_REQUESTED") and
-    (any($dispositions[]; .commit_id == $head and .state == "APPROVED") or
-    any($reviews | group_by(.user.login) | map(max_by(.submitted_at))[];
+    (any($dispositions[]; .commit_id == $head and .state == "APPROVED" and trusted) or
+    any($reviews | map(select(trusted)) | group_by(.user.login) | map(max_by(.submitted_at))[];
     .commit_id == $head and .state == "COMMENTED" and
     (.body | current_comment_ready)))
   NATIVE_PRIOR_REQUESTS_JQ: |
@@ -158,11 +161,11 @@ env:
     [ .[][] ] as $reviews |
     ($reviews | map(select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")) |
     group_by(.user.login) | map(max_by(.submitted_at))) as $dispositions |
-    ($reviews | group_by(.user.login) | map(max_by(.submitted_at))) as $latest |
+    ($reviews | map(select(trusted)) | group_by(.user.login) | map(max_by(.submitted_at))) as $latest |
     {payload:"review-pages", pages:length, latest_count:($latest | length),
     latest_ids:($latest | map(.id | if type == "number" then . else null end) | .[:20]),
     checks:{no_changes_requested:all($dispositions[]; .state != "CHANGES_REQUESTED"),
-    current_head_approved:any($dispositions[]; .commit_id == $head and .state == "APPROVED"),
+    current_head_approved:any($dispositions[]; .commit_id == $head and .state == "APPROVED" and trusted),
     current_head_marker:any($latest[];
     .commit_id == $head and .state == "COMMENTED" and
     (.body | current_comment_ready))}}
@@ -240,7 +243,7 @@ jobs:
             # The REST merge ref and the GraphQL live view rebuild at different
             # times after a main push; a bounded refresh reads the pair the way
             # settle_request reads mergeability, without widening admission.
-            local attempt frame candidate base tree
+            local attempt frame base tree candidate=''
             for attempt in 1 2 3; do
               frame=$(gh api graphql -f query="$NATIVE_SUBJECT_QUERY" -F number="$PR_NUMBER") || { [ "$attempt" = 3 ] || sleep 2; continue; }
               candidate=$(jq -ceS --arg repo "$REPOSITORY" --arg repo_id "$REPOSITORY_ID" --arg pr_id "$PR_ID" --argjson number "$PR_NUMBER" --arg head "$HEAD_SHA" --arg merge "$SUBJECT_SHA" --arg generation "$GENERATION" "$NATIVE_SUBJECT_JQ" <<< "$frame") && break
@@ -374,7 +377,8 @@ jobs:
     needs: [qualification]
     if: >-
       !cancelled() &&
-      ((github.event_name == 'push' &&
+      (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready')
+      && ((github.event_name == 'push' &&
         (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) ||
        github.event_name == 'workflow_dispatch' ||
        github.event_name == 'merge_group' ||
@@ -1174,7 +1178,6 @@ jobs:
           REF: ${{ github.ref }}
           QUALIFICATION_RESULT: ${{ needs.qualification.result }}
           QUALIFICATION_EXECUTE: ${{ needs.qualification.outputs.execute }}
-          QUALIFICATION_PRIOR_RESULT: ${{ needs.qualification.outputs.prior_result }}
           WINDOWS_RESULT: ${{ needs.windows-subset.result }}
           PASTE_RESULT: ${{ needs.printed-command.result }}
           CI_RESULT: ${{ needs.ci-feature.result }}
@@ -1220,10 +1223,6 @@ jobs:
             pull_request:*)
               [ "$LABEL_NAME" = merge-ready ] || exit 0
               [ "$QUALIFICATION_RESULT" = success ] || { echo 'Qualification admission missing/failed' >&2; exit 1; }
-              if [ "$QUALIFICATION_EXECUTE" = false ]; then
-                [ "$QUALIFICATION_PRIOR_RESULT" = success ] || { echo 'Prior required result failed; no implicit retry' >&2; exit 1; }
-                exit 0
-              fi
               [ "$QUALIFICATION_EXECUTE" = true ] || { echo 'Incomplete native request' >&2; exit 1; }
               [ "$WINDOWS_RESULT" = success ] || { echo 'Selected Windows evidence missing/failed' >&2; exit 1; }
               [ "$PASTE_RESULT" = success ] || { echo 'Selected printed-command evidence missing/failed' >&2; exit 1; }

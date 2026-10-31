@@ -4,8 +4,10 @@ const ORIGINAL: &str =
     include_str!("../../../fixtures/convergence/printed-command-paste/original.yml");
 
 fn payload(source: &str) -> &str {
+    // The retained predecessor names the tag; mainline pins the commit.
     source
-        .split_once("      - uses: dtolnay/rust-toolchain@1.95\n")
+        .split_once("      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95\n")
+        .or_else(|| source.split_once("      - uses: dtolnay/rust-toolchain@1.95\n"))
         .map_or("", |(_, tail)| tail)
 }
 
@@ -118,7 +120,7 @@ fn exact_checkout_and_full_platform_shell_payload_are_preserved() {
     }
     let checkout = WORKFLOW.find("actions/checkout@v6");
     let guard = WORKFLOW.find("Verify exact source before product execution");
-    let toolchain = WORKFLOW.find("dtolnay/rust-toolchain@1.95");
+    let toolchain = WORKFLOW.find("dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591");
     assert!(checkout.is_some() && guard.is_some() && toolchain.is_some());
     assert!(checkout < guard && guard < toolchain);
 }

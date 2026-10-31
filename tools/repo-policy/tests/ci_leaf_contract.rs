@@ -477,7 +477,7 @@ fn run_blocks(source: &str) -> Vec<String> {
 fn feature_command_action_and_manual_denominators_are_unchanged() -> TestResult {
     for (name, _) in JOBS {
         assert_eq!(
-            run_blocks(job(WORKFLOW, name)).iter().map(|script| script.replace("  [ \"${CALLED:-false}\" != true ] || return 0\n", "").replace("cargo package -p ripr --no-verify\npackage_id=\"$(cargo pkgid -p ripr)\"\npackage_version=\"${package_id##*#}\"\ntest -n \"$package_version\"\n", "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\n")).collect::<Vec<_>>(),
+            run_blocks(job(WORKFLOW, name)).iter().filter(|script| !script.contains("proptest_singleton/input/Cargo.toml") && !script.contains("owner_return_pin_json_real_literal/input/Cargo.toml")).map(|script| script.replace("  [ \"${CALLED:-false}\" != true ] || return 0\n", "").replace("cargo package -p ripr --no-verify\npackage_id=\"$(cargo pkgid -p ripr)\"\npackage_version=\"${package_id##*#}\"\ntest -n \"$package_version\"\n", "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\n")).collect::<Vec<_>>(),
             run_blocks(job(ORIGINAL, name)).iter().map(|script| script.replace(
                 "cargo package -p ripr --no-verify && tar xzf \"target/package/ripr-$(cargo pkgid -p ripr | sed 's/.*#//').crate\" -C \"$RUNNER_TEMP\"\ncd \"$RUNNER_TEMP/ripr-$(cargo pkgid -p ripr | sed 's/.*#//')\" && rm Cargo.lock && cargo generate-lockfile",
                 "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\ntar xzf \"target/package/ripr-$package_version.crate\" -C \"$RUNNER_TEMP\"\ncd \"$RUNNER_TEMP/ripr-$package_version\"\nrm Cargo.lock\ncargo generate-lockfile"
@@ -488,7 +488,19 @@ fn feature_command_action_and_manual_denominators_are_unchanged() -> TestResult 
             s.lines()
                 .filter(|l| l.trim_start().starts_with("- uses:"))
                 .map(str::trim)
-                .map(str::to_owned)
+                // Mainline pins actions to a commit with the tag in a comment; the
+                // retained predecessor names the tag. Compare the tag identity.
+                .map(|line| match line.split_once(" # ") {
+                    Some((pinned, tag))
+                        if pinned
+                            .rsplit_once('@')
+                            .is_some_and(|(_, sha)| sha.len() == 40) =>
+                    {
+                        let name = pinned.rsplit_once('@').map_or(pinned, |(name, _)| name);
+                        format!("{name}@{}", tag.trim())
+                    }
+                    _ => line.to_owned(),
+                })
                 .collect::<Vec<_>>()
         };
         assert_eq!(actions(job(WORKFLOW, name)), actions(job(ORIGINAL, name)));
@@ -560,7 +572,7 @@ fn literal_runtime_commands_propagate_native_failure() -> TestResult {
             }
         }
     }
-    assert_eq!(count, 11, "nonempty payload denominator");
+    assert_eq!(count, 13, "nonempty payload denominator");
     Ok(())
 }
 

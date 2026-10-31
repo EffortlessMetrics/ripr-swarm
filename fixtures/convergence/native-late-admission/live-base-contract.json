@@ -127,6 +127,7 @@
         "login": "reviewer"
       },
       "state": "APPROVED",
+      "author_association": "MEMBER",
       "commit_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "submitted_at": "2026-10-15T11:51:29Z",
       "body": ""
