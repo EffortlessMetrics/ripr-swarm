@@ -695,8 +695,10 @@ fn no_eligible_seam_message(
             "no seams visible under {root}; `ripr repair` selects repository seams and does not reuse the diff or base from an earlier `ripr check`. If that check printed a gap-bound repair start, use the start printed by that check; rerun the same check, including its original --base if supplied, if needed. To explore repository seams, run `ripr pilot --root {root}`"
         );
     }
-    let noun = if total_seams == 1 { "seam" } else { "seams" };
-    let mut message = format!("{total_seams} visible {noun} under {root}, none repair-eligible");
+    let noun = if total_seams == 1 { "spot" } else { "spots" };
+    let mut message = format!(
+        "ripr looked at {total_seams} {noun} in the code under {root}; none is ready for an automatic repair"
+    );
     if !reasons.is_empty() {
         message.push_str(&format!(" ({})", reasons.join("; ")));
         // The list is bounded (#8728): when the total count exceeds what
@@ -1183,17 +1185,18 @@ mod tests {
         let root = Path::new("/ripr-task-first-root");
         let setup = no_eligible_seam_message(root, 0, &["ignored reason".to_string()], 1);
         if !setup.starts_with("no seams visible under ")
-            || setup.contains("none repair-eligible")
+            || setup.contains("automatic repair")
             || setup.contains("ignored reason")
             || !setup.contains("`ripr pilot --root ")
         {
             return Err(format!("zero seams must be the setup outcome:\n{setup}"));
         }
         let one = no_eligible_seam_message(root, 1, &[], 0);
-        if !one.starts_with("1 visible seam under ") || one.contains("seams under") {
+        if !one.starts_with("ripr looked at 1 spot in the code under ") || one.contains("spots in")
+        {
             return Err(format!("one seam must be singular:\n{one}"));
         }
-        if one.contains("none repair-eligible (") {
+        if one.contains("automatic repair (") {
             return Err(format!("no reasons must print no reason list:\n{one}"));
         }
         let several = no_eligible_seam_message(
@@ -1206,8 +1209,8 @@ mod tests {
             2,
         );
         for expected in [
-            "3 visible seams under ",
-            "none repair-eligible (repair route not ready; configured off). Next:",
+            "ripr looked at 3 spots in the code under ",
+            "none is ready for an automatic repair (repair route not ready; configured off). Next:",
             "`ripr check --root ",
         ] {
             if !several.contains(expected) {

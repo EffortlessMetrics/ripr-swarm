@@ -1,5 +1,6 @@
 //! Change classifier for the TypeScript preview adapter.
 
+use super::local_constant::{BodyConstant, test_body_integer_constant, test_file_integer_constant};
 use super::*;
 
 // ── Observation guard (RIPR-SPEC-0098) ───────────────────────────────────────
@@ -1941,9 +1942,10 @@ pub(crate) fn ts_predicate_boundary_row_activation(
 
 /// A zero or empty expected value is treated as matching a field's initial
 /// state, so pinning it cannot show an update ran: a scalar
-/// zero/empty/false/null/undefined, or an array holding only such values
-/// (`[]`, `[0, 0]`, `[[], '']`). Conservative by design: an array of zero-like
-/// values may under-credit a real pin, never over-credit one.
+/// zero/empty/false/null/undefined, or an array or object holding only such
+/// values at every depth (`[]`, `[0, 0]`, `[[], '']`, `{}`, `{ _: [], n: 0 }`).
+/// Conservative by design: a container of zero-like values may under-credit a
+/// real pin, never over-credit one.
 pub(crate) fn ts_expected_is_zero_like(expected: &str) -> bool {
     let compact: String = expected.split_whitespace().collect();
     if matches!(
@@ -1952,14 +1954,116 @@ pub(crate) fn ts_expected_is_zero_like(expected: &str) -> bool {
     ) {
         return true;
     }
-    if !(compact.starts_with('[') && compact.ends_with(']')) {
-        return false;
+    (compact.starts_with('{') || compact.starts_with('[')) && zero_like_container(expected)
+}
+
+/// Whether every leaf of an all-literal array or object text is zero-like.
+/// Reads the literal grammar (`[..]`, `{ key: value }`, quoted strings, bare
+/// scalars) with a tiny scanner; anything it cannot read is not zero-like.
+fn zero_like_container(text: &str) -> bool {
+    let chars: Vec<char> = text.chars().collect();
+    let mut at = 0;
+    let ok = zero_like_value(&chars, &mut at);
+    skip_ws(&chars, &mut at);
+    ok && at == chars.len()
+}
+
+fn skip_ws(chars: &[char], at: &mut usize) {
+    while chars.get(*at).is_some_and(|ch| ch.is_whitespace()) {
+        *at += 1;
     }
-    let mut rest = compact;
-    for token in ["\"\"", "''", "``", "false", "null", "undefined", "0"] {
-        rest = rest.replace(token, "");
+}
+
+fn zero_like_value(chars: &[char], at: &mut usize) -> bool {
+    skip_ws(chars, at);
+    match chars.get(*at) {
+        Some('[') => {
+            *at += 1;
+            loop {
+                skip_ws(chars, at);
+                match chars.get(*at) {
+                    Some(']') => {
+                        *at += 1;
+                        return true;
+                    }
+                    Some(',') => *at += 1,
+                    Some(_) => {
+                        if !zero_like_value(chars, at) {
+                            return false;
+                        }
+                    }
+                    None => return false,
+                }
+            }
+        }
+        Some('{') => {
+            *at += 1;
+            loop {
+                skip_ws(chars, at);
+                match chars.get(*at) {
+                    Some('}') => {
+                        *at += 1;
+                        return true;
+                    }
+                    Some(',') => *at += 1,
+                    Some(_) => {
+                        // The key carries no value; skip it up to its colon.
+                        if matches!(chars.get(*at), Some('"' | '\'')) {
+                            if scan_quoted(chars, at).is_none() {
+                                return false;
+                            }
+                        } else {
+                            while chars.get(*at).is_some_and(|ch| *ch != ':') {
+                                *at += 1;
+                            }
+                        }
+                        skip_ws(chars, at);
+                        if chars.get(*at) != Some(&':') {
+                            return false;
+                        }
+                        *at += 1;
+                        if !zero_like_value(chars, at) {
+                            return false;
+                        }
+                    }
+                    None => return false,
+                }
+            }
+        }
+        Some('"' | '\'' | '`') => scan_quoted(chars, at).is_some_and(|inner| inner.is_empty()),
+        Some(_) => {
+            let start = *at;
+            while chars
+                .get(*at)
+                .is_some_and(|ch| !matches!(ch, ',' | ']' | '}') && !ch.is_whitespace())
+            {
+                *at += 1;
+            }
+            let token: String = chars[start..*at].iter().collect();
+            matches!(token.as_str(), "0" | "false" | "null" | "undefined")
+        }
+        None => false,
     }
-    rest.chars().all(|ch| matches!(ch, '[' | ']' | ','))
+}
+
+/// Consume a quoted string at `at` and return its inner text.
+fn scan_quoted(chars: &[char], at: &mut usize) -> Option<String> {
+    let quote = *chars.get(*at)?;
+    *at += 1;
+    let mut inner = String::new();
+    while let Some(&ch) = chars.get(*at) {
+        *at += 1;
+        if ch == '\\' {
+            inner.push(ch);
+            inner.push(*chars.get(*at)?);
+            *at += 1;
+        } else if ch == quote {
+            return Some(inner);
+        } else {
+            inner.push(ch);
+        }
+    }
+    None
 }
 
 /// RIPR-SPEC-0243 decision 18: whether some strong, pinned, exact-value assertion
@@ -2764,7 +2868,7 @@ fn top_level_statements(block: &str) -> Option<Vec<String>> {
 }
 
 /// True when `text` is one identifier (`[A-Za-z_$][A-Za-z0-9_$]*`).
-fn is_bare_identifier(text: &str) -> bool {
+pub(super) fn is_bare_identifier(text: &str) -> bool {
     let mut chars = text.chars();
     chars
         .next()
@@ -3053,7 +3157,7 @@ pub(crate) fn substitute_constant_arguments(
         .into_iter()
         .map(|argument| {
             let trimmed = argument.trim();
-            if is_constant_shaped_operand(trimmed)
+            if is_bare_identifier(trimmed)
                 && let Some(value) =
                     ts_test_scope_constant_value(trimmed, test, owner, alias_map, workspace_root)
             {
@@ -3303,12 +3407,22 @@ fn ts_test_scope_constant_value(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> Option<String> {
-    if !is_constant_shaped_operand(name) {
+    if !is_bare_identifier(name) {
         return None;
     }
-    let (const_value, shadowed) = scan_test_body_constant_declarations(&test.body_text, name);
-    if const_value.is_some() || shadowed {
-        return const_value;
+    if is_constant_shaped_operand(name) {
+        let (const_value, shadowed) = scan_test_body_constant_declarations(&test.body_text, name);
+        if const_value.is_some() || shadowed {
+            return const_value;
+        }
+    }
+    // #10707, #10706: the callback's own single immutable local (any
+    // spelling), decided on the token stream. A declaration or binding it
+    // refuses is never rescued by an outer scope.
+    match test_body_integer_constant(&test.file, &test.body_text, name) {
+        BodyConstant::Resolved(value) => return Some(value),
+        BodyConstant::Refused => return None,
+        BodyConstant::Undeclared => {}
     }
     // No test-body declaration: resolve through the import record to the
     // owner's own module. Ambiguous or unrelated imports fail closed.
@@ -3317,7 +3431,11 @@ fn ts_test_scope_constant_value(
         .iter()
         .filter(|import| !import.namespace && import.local == name)
         .collect();
-    if imports.len() != 1 {
+    if imports.is_empty() {
+        // #10707, #10706: a module-level constant of the test file itself.
+        return test_file_integer_constant(test, name, workspace_root);
+    }
+    if imports.len() != 1 || !is_constant_shaped_operand(name) {
         return None;
     }
     let import = imports[0];
@@ -5037,7 +5155,8 @@ pub(crate) fn expected_side_is_live(
     // once the branches are known to be scalar-foldable.
     let expected_is_array = {
         let trimmed = expected.trim();
-        trimmed.starts_with('[') && trimmed.ends_with(']')
+        (trimmed.starts_with('[') && trimmed.ends_with(']'))
+            || (trimmed.starts_with('{') && trimmed.ends_with('}'))
     };
     let expected_value = if expected_is_array {
         None

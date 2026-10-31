@@ -1,0 +1,45 @@
+{
+  "case_id": "eq-swap-normalized-local",
+  "subject_id": "authored-eq-swap",
+  "diff": "cases/eq-swap-normalized-local.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 54
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "one_sided_equality_constant_swap",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if label == \"beta\" {",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests::a_padded_alpha_row_is_word",
+        "equivalence_review": "the edit itself: moving the compared constant changes which input takes the branch"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The compared value is a trimmed local (`let label = label.trim();`). The test pins `trimmed_class(\" alpha \")` to word; trimmed, that row is `alpha`, so moving the compared constant to beta sends it to blank and the test fails (#10838). The padded argument never equals the old constant until the normalizer is evaluated over the exact row.",
+  "labeling_observation": {
+    "ripr_commit": "586a0d8a",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
