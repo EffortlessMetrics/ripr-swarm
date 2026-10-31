@@ -72,7 +72,22 @@ pub(in crate::analysis) fn build_finding_with_origins(
         stop_reasons.retain(|reason| reason.as_str() != StopReason::NoChangedRustLine.as_str());
     }
     ensure_unknown_stop_reason(&class, &mut stop_reasons);
+    // RIPR-SPEC-0263: no related test call enters the guard around the
+    // changed line, so the repair is an input, not a stronger assertion.
+    let unentered_guard = (class == ExposureClass::WeaklyExposed)
+        .then(|| {
+            input_boundary_fact(
+                &evidence.activation.missing_discriminators,
+                &context.probe.family,
+            )
+        })
+        .flatten()
+        .filter(|fact| fact.reason.starts_with(GUARD_UNENTERED_REASON_PREFIX))
+        .map(|fact| fact.value.clone());
+    // An exact oracle on another branch does not cover a sink no test enters
+    // (#11147), so the rows still get their `missing_input` miss.
     let exact_oracle_covers_direct_sink = evidence.discriminate.state == StageState::Yes
+        && unentered_guard.is_none()
         && matches!(
             context.probe.family,
             ProbeFamily::ReturnValue | ProbeFamily::ErrorPath | ProbeFamily::FieldConstruction
@@ -116,18 +131,6 @@ pub(in crate::analysis) fn build_finding_with_origins(
             &evidence.implicit_dispatch_tests,
         );
     }
-    // RIPR-SPEC-0263: no related test call enters the guard around the
-    // changed line, so the repair is an input, not a stronger assertion.
-    let unentered_guard = (class == ExposureClass::WeaklyExposed)
-        .then(|| {
-            input_boundary_fact(
-                &evidence.activation.missing_discriminators,
-                &context.probe.family,
-            )
-        })
-        .flatten()
-        .filter(|fact| fact.reason.starts_with(GUARD_UNENTERED_REASON_PREFIX))
-        .map(|fact| fact.value.clone());
     // RIPR-SPEC-0229 / #11024: no related test input selects the changed
     // match arm, so the repair is an input that selects it, not a stronger
     // assertion. The arm pattern is the backticked span of the fact reason.
