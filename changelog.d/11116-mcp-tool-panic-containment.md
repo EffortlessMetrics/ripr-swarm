@@ -1,2 +1,2 @@
 <!-- section: Fixed -->
-- A panic inside any MCP tool handler other than `ripr_refresh` is now contained: the call answers a typed `analysis_failed` tool failure naming the tool and a next step, and the `ripr mcp` stdio session keeps serving instead of ending (#11116).
+- A panic inside any MCP tool handler other than `ripr_refresh` is now contained: the call answers a typed `analysis_failed` tool failure naming the tool and a next step, and the `ripr mcp` stdio session keeps serving instead of ending. `ripr_refresh` is excluded because worker and adapter panics are already contained at the analysis boundary; glue panics in `ripr_refresh` itself, `resources/read`, `tools/list` and `initialize` are not covered (#11116).

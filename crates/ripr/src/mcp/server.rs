@@ -513,8 +513,10 @@ impl McpServer {
     /// Runs one tool call with panic containment (#11116). A panic in a
     /// non-refresh handler becomes a typed `analysis_failed` tool failure that
     /// names the tool and the next step; the session keeps serving.
-    /// `ripr_refresh` contains adapter panics at the analysis boundary
-    /// (#11132) and an unknown tool never reaches a handler.
+    /// `ripr_refresh` is excluded because worker and adapter panics are
+    /// already contained at the analysis boundary (#11132); glue panics in
+    /// `ripr_refresh` itself, `read_resource`, `list_tools` and `initialize`
+    /// are not covered. An unknown tool never reaches a handler.
     async fn call_tool_contained(
         &self,
         request: CallToolRequestParams,

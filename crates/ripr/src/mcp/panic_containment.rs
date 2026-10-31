@@ -10,8 +10,10 @@
 //! tool failure that names the tool and the next step, and the session keeps
 //! serving.
 //!
-//! `ripr_refresh` is not wrapped: a panic in a language adapter is already a
-//! typed `analysis_failed` failure at the analysis boundary (#11132).
+//! `ripr_refresh` is not wrapped: worker and language-adapter panics are
+//! already typed `analysis_failed` failures at the analysis boundary (#11132).
+//! Glue panics in `ripr_refresh` itself, `read_resource`, `list_tools` and
+//! `initialize` are not covered (remaining on #11116).
 //!
 //! Scope: unwinding panics only. A stack overflow or `abort` ends the process
 //! and cannot be caught here. The panic payload is not echoed to the client:
@@ -35,6 +37,12 @@ impl<F: Future> ContainPanic<F> {
     }
 }
 
+/// `AssertUnwindSafe` invariant: after a panic this adapter resolves to
+/// `Err(Panicked)` and the handler future is never polled again; the caller's
+/// `.await` consumes the adapter and answers the typed failure. Tokio mutexes
+/// do not poison and release their guard on unwind, so the shared session
+/// stays usable; state the handler wrote before the panic persists, and a
+/// later call proceeds on it.
 impl<F: Future> Future for ContainPanic<F> {
     type Output = Result<F::Output, Panicked>;
 

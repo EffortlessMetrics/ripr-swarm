@@ -5,6 +5,15 @@ use super::*;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+/// Removes the fixture root on every exit path, including early `Err` returns.
+struct Cleanup(std::path::PathBuf);
+
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 #[tokio::test]
 async fn panicking_tool_handler_keeps_the_stdio_session_serving() -> Result<(), String> {
     let root = std::env::temp_dir().join(format!(
@@ -15,6 +24,7 @@ async fn panicking_tool_handler_keeps_the_stdio_session_serving() -> Result<(), 
             .map_err(|error| error.to_string())?
             .as_nanos()
     ));
+    let _cleanup = Cleanup(root.clone());
     std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
     std::fs::write(
         root.join("Cargo.toml"),
@@ -79,7 +89,6 @@ async fn panicking_tool_handler_keeps_the_stdio_session_serving() -> Result<(), 
     drop(input);
     let _ = tokio::time::timeout(std::time::Duration::from_secs(5), session).await;
     drop(armed);
-    let _ = std::fs::remove_dir_all(&root);
     let [failed, served] = replies.as_slice() else {
         return Err("expected exactly two replies".to_string());
     };

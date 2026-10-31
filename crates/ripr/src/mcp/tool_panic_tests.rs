@@ -7,7 +7,16 @@
 use super::super::panic_containment::injected_tool_panic;
 use super::*;
 
-fn fixture_root(label: &str) -> Result<std::path::PathBuf, String> {
+/// Temp root removed on every exit path, including early `Err` returns.
+struct TempRoot(std::path::PathBuf);
+
+impl Drop for TempRoot {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn fixture_root(label: &str) -> Result<TempRoot, String> {
     let root = std::env::temp_dir().join(format!(
         "ripr-mcp-tool-panic-{label}-{}-{}",
         std::process::id(),
@@ -17,7 +26,7 @@ fn fixture_root(label: &str) -> Result<std::path::PathBuf, String> {
             .as_nanos()
     ));
     std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
-    Ok(root)
+    Ok(TempRoot(root))
 }
 
 fn server_at(root: &std::path::Path) -> Result<McpServer, String> {
@@ -31,7 +40,8 @@ fn server_at(root: &std::path::Path) -> Result<McpServer, String> {
 #[tokio::test(flavor = "current_thread")]
 async fn panicking_tool_handler_becomes_a_typed_failure_and_the_server_keeps_serving()
 -> Result<(), String> {
-    let root = fixture_root("contained")?;
+    let guard = fixture_root("contained")?;
+    let root = guard.0.clone();
     let server = server_at(&root)?;
     let armed = injected_tool_panic::arm(&root, protocol::LIST_GAPS_TOOL_NAME);
     let contained = server
@@ -70,8 +80,15 @@ async fn panicking_tool_handler_becomes_a_typed_failure_and_the_server_keeps_ser
         )
         .await
         .map_err(|error| format!("list_gaps after contained panic: {error:?}"))?;
-    let after = format!("{after:?}");
-    if !after.contains(workspace::CODE_NO_SNAPSHOT) {
+    let rmcp::model::CallToolResponse::Complete(after) = after else {
+        return Err("disarmed list_gaps did not complete".to_string());
+    };
+    let after = serde_json::to_value(&after).map_err(|error| error.to_string())?;
+    if after
+        .pointer("/structuredContent/failure/code")
+        .and_then(serde_json::Value::as_str)
+        != Some(workspace::CODE_NO_SNAPSHOT)
+    {
         return Err(format!("disarmed handler must answer normally: {after}"));
     }
     server
@@ -81,13 +98,13 @@ async fn panicking_tool_handler_becomes_a_typed_failure_and_the_server_keeps_ser
         )
         .await
         .map_err(|error| format!("status after contained panic: {error:?}"))?;
-    let _ = std::fs::remove_dir_all(&root);
     Ok(())
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn panicking_tool_handler_without_containment_unwinds() -> Result<(), String> {
-    let root = fixture_root("control")?;
+    let guard = fixture_root("control")?;
+    let root = guard.0.clone();
     let server = std::sync::Arc::new(server_at(&root)?);
     let _armed = injected_tool_panic::arm(&root, protocol::LIST_GAPS_TOOL_NAME);
     let uncontained = tokio::spawn(async move {
@@ -100,7 +117,7 @@ async fn panicking_tool_handler_without_containment_unwinds() -> Result<(), Stri
             .is_ok()
     })
     .await;
-    let _ = std::fs::remove_dir_all(&root);
+    drop(guard);
     match uncontained {
         Err(error) if error.is_panic() => Ok(()),
         other => Err(format!(
