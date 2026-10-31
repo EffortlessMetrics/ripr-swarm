@@ -593,7 +593,7 @@ pub(crate) fn render_human_triage(
                 finding.probe.location.line,
                 finding.class.plain_label_with_stage(),
                 currentness,
-                finding.probe.family.as_str(),
+                super::evidence_lines::plain_probe_family(&finding.probe.family),
                 hidden_finding_reason(finding)
             ));
             if offers_test_stub(finding)
@@ -807,7 +807,7 @@ fn hidden_finding_reason(finding: &Finding) -> String {
             }
             ExposureClass::StaticUnknown => &finding.ripr.infect.summary,
         });
-    one_line(reason)
+    one_line(&super::evidence_lines::plain_default_missing(reason))
 }
 
 /// The currentness mix of the omitted set. `unresolved_subject` is the

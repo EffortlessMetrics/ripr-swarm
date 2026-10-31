@@ -4770,7 +4770,7 @@ mod tests {
             &crate::config::RiprConfig::default(),
             Path::new("."),
         );
-        if !digest.contains("  Missing check (1 of 2): No strong discriminator was detected") {
+        if !digest.contains("  Missing check (1 of 2): No strong assertion was detected") {
             return Err(format!(
                 "a finding with a real missing discriminator keeps its label:
 {digest}"
@@ -4897,9 +4897,36 @@ mod tests {
         );
 
         assert!(
-            digest.contains("  Missing check (1 of 2): No strong discriminator was detected\n"),
+            digest.contains("  Missing check (1 of 2): No strong assertion was detected\n"),
             "prose entries must render unchanged; got:\n{digest}"
         );
+    }
+
+    /// #10691: the default text names the classifier's "nothing strong notices
+    /// this" entry and the catch-all change type in plain words, while the
+    /// producer's wording stays in `missing` (JSON, `human-full`) and every
+    /// other change type keeps its stable token.
+    #[test]
+    fn default_text_plain_words_cover_only_the_two_fixed_forms() {
+        use crate::domain::ProbeFamily;
+        assert_eq!(
+            super::evidence_lines::plain_default_missing("No strong discriminator was detected"),
+            "No strong assertion was detected"
+        );
+        assert_eq!(
+            super::evidence_lines::plain_default_missing("Missing discriminator value: 100"),
+            "Missing discriminator value: 100",
+            "other entries are not this fixed form"
+        );
+        assert_eq!(
+            super::evidence_lines::plain_probe_family(&ProbeFamily::StaticUnknown),
+            "unclear"
+        );
+        assert_eq!(
+            super::evidence_lines::plain_probe_family(&ProbeFamily::ReturnValue),
+            "return_value"
+        );
+        assert_eq!(ProbeFamily::StaticUnknown.as_str(), "static_unknown");
     }
 
     /// A prose entry past the line budget used to hard-cut at 180 characters
