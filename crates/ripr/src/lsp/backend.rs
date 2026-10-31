@@ -414,13 +414,15 @@ impl Backend {
         }
     }
 
-    /// Overrides the server→client request liveness bound (#5278). The
-    /// in-process composition tests shorten it so the uniform mid-session
-    /// exit contract stays fast.
+    /// Stops analysis from outside the backend when the session ends without
+    /// `shutdown` (#11439).
     pub(super) fn scheduler_stop_handle(&self) -> SchedulerStopHandle {
         self.refresh_scheduler.stop_handle()
     }
 
+    /// Overrides the server→client request liveness bound (#5278). The
+    /// in-process composition tests shorten it so the uniform mid-session
+    /// exit contract stays fast.
     pub(super) fn with_client_request_timeout(mut self, timeout: Duration) -> Self {
         self.client_request_timeout = timeout;
         self
