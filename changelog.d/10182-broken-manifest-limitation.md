@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A broken or missing `Cargo.toml` no longer reads as a complete analysis. When the path-dependency graph is `limited` or `unavailable`, `ripr check` now adds a typed limitation to `analysis_outcome.limitations`, so the JSON and human reports say why dependents may have been missed and what to do next instead of warning on stderr only (#10182). Other consumers that read the shared outcome see the same entry. A complete path-dependency graph adds no limitation.

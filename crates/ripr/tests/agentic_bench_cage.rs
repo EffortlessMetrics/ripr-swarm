@@ -691,11 +691,11 @@ fn b6_dirty_production_premise_refuses_the_before_phase_and_a_dirty_test_still_r
     assert_exit_code(&before, 2, "dirty-premise before-phase")?;
     let text = combined_output(&before);
     for fragment in [
-        "repair attempt cannot start",
+        "ripr repair needs your source changes committed first",
         "src/lib.rs",
-        "to recover:",
+        "Commit them",
         "git commit -- src/lib.rs",
-        "No workflow was prepared and no repair attempt was started.",
+        "Nothing was started.",
     ] {
         if !text.contains(fragment) {
             return Err(format!(
@@ -1044,6 +1044,290 @@ fn b6_superseding_finish_keeps_first_attempt_byte_identical() -> Result<(), Stri
         return Err(format!(
             "the first attempt's retained receipt must keep binding its own attempt:\n{retained_a}"
         ));
+    }
+    Ok(())
+}
+
+/// #9823: `agent status` re-reads one worktree per finished current attempt.
+/// With two finished attempts under one policy the persist-latency trace must
+/// show a single `reevaluate_*` capture, not one per attempt, and the shared
+/// capture must not hide an edit: a later status call still sees the drift and
+/// withdraws "current" for every attempt that edit invalidated.
+#[test]
+fn status_shares_one_worktree_capture_across_finished_attempts() -> Result<(), String> {
+    // `RIPR_STATUS_CAPTURE_FILLER_FILES=3000` repeats the measurement the
+    // inner-loop target is stated against (#9823): the same two finished
+    // attempts over a larger tracked tree, with each status call timed.
+    let filler_files = std::env::var("RIPR_STATUS_CAPTURE_FILLER_FILES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(0);
+    let (journey, _owned) = start_before_after("agentic-9823-shared-capture", |root| {
+        if filler_files == 0 {
+            return Ok(());
+        }
+        let line = "filler line for tracked-tree size\n".repeat(50);
+        fs::create_dir_all(root.join("filler")).map_err(|error| format!("filler dir: {error}"))?;
+        for index in 0..filler_files {
+            fs::write(root.join(format!("filler/f{index}.txt")), &line)
+                .map_err(|error| format!("write filler {index}: {error}"))?;
+        }
+        fixture_git_ok(root, &["add", "filler"]).map_err(|error| format!("add filler: {error}"))?;
+        fixture_git_ok(
+            root,
+            &[
+                "-c",
+                "user.name=RIPR test",
+                "-c",
+                "user.email=ripr@example.invalid",
+                "commit",
+                "-m",
+                "filler",
+            ],
+        )
+        .map_err(|error| format!("commit filler: {error}"))
+    })?;
+    let attempt_b = run_before_phase(&journey.root, &journey.root_arg, &journey.seam_id)?;
+    append_test_fn(
+        &journey.root,
+        "equality_boundary_discounts",
+        "assert_eq!(discounted_total(100, 100), 90);",
+    )?;
+    for attempt in [journey.attempt_id.as_str(), attempt_b.as_str()] {
+        let after = run_after_attempt(&journey.root, &journey.root_arg, attempt)?;
+        if !after.status.success() {
+            return Err(format!(
+                "after phase for {attempt} failed:\n{}",
+                combined_output(&after)
+            ));
+        }
+        let manifest = attempt_manifest(&journey.root, attempt)?;
+        if json_str(&manifest, "/state", "finished attempt manifest")? != "ready_to_finish" {
+            return Err(format!(
+                "{attempt} must finish ready_to_finish:\n{manifest}"
+            ));
+        }
+    }
+    let status_args = [
+        "agent",
+        "status",
+        "--json",
+        "--root",
+        journey.root_arg.as_str(),
+    ];
+    let traced = |label: &str| -> Result<(Value, usize), String> {
+        let started = std::time::Instant::now();
+        let output = run_ripr_with_env(
+            &journey.root,
+            &status_args,
+            "RIPR_PERSIST_LATENCY_TRACE",
+            "1",
+        )?;
+        if filler_files > 0 {
+            eprintln!(
+                "status_capture_measurement filler_files={filler_files} call={label} wall_ms={}",
+                started.elapsed().as_millis()
+            );
+        }
+        if !output.status.success() {
+            return Err(format!(
+                "{label}: agent status failed:\n{}",
+                combined_output(&output)
+            ));
+        }
+        let captures = String::from_utf8_lossy(&output.stderr)
+            .matches("phase=reevaluate_git_inventory ")
+            .count();
+        Ok((parse_stdout_json(&output)?, captures))
+    };
+    let currentness = |status: &Value| -> Vec<(String, String)> {
+        status
+            .pointer("/repair_attempts")
+            .and_then(Value::as_array)
+            .map(|attempts| {
+                attempts
+                    .iter()
+                    .map(|attempt| {
+                        (
+                            attempt
+                                .pointer("/attempt_id")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_string(),
+                            attempt
+                                .pointer("/head_current")
+                                .map_or_else(String::new, ToString::to_string),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let (first, first_captures) = traced("first status")?;
+    let finished_current = currentness(&first);
+    if finished_current.len() < 2 {
+        return Err(format!(
+            "status must list both finished attempts, saw {finished_current:?}:\n{first}"
+        ));
+    }
+    if first_captures != 1 {
+        return Err(format!(
+            "two finished attempts under one policy must share one worktree capture, saw {first_captures}"
+        ));
+    }
+    // Each finished attempt binds the identities of paths in its delta, not
+    // just HEAD. Finishing B changes B's manifest already bound by A, so A
+    // need not remain current. B must be current after its own producer-owned
+    // workflow backups are cleaned up; those temporary files are not edits.
+    if !finished_current.contains(&(attempt_b.clone(), "true".to_string())) {
+        return Err(format!(
+            "latest finished attempt {attempt_b} must remain current after producer cleanup:\n{first}"
+        ));
+    }
+    if !finished_current.contains(&(journey.attempt_id.clone(), "false".to_string())) {
+        return Err(
+            "finishing B must not revive A's changed sibling-manifest evidence".to_string(),
+        );
+    }
+    // The exact issued replacement is recognized, not arbitrary bytes at a
+    // canonical output path. Both retained pairs are custody requirements.
+    let global = compatibility_receipt_path(&journey.root);
+    let original = fs::read(&global).map_err(|error| error.to_string())?;
+    fs::write(&global, b"user-authored replacement").map_err(|error| error.to_string())?;
+    let (tampered, _) = traced("tampered receipt")?;
+    if !currentness(&tampered).contains(&(attempt_b.clone(), "false".to_string())) {
+        return Err("unowned receipt bytes were treated as an issued replacement".to_string());
+    }
+    fs::write(&global, &original).map_err(|error| error.to_string())?;
+    let (restored, _) = traced("restored receipt")?;
+    if !currentness(&restored).contains(&(attempt_b.clone(), "true".to_string())) {
+        return Err("restoring the exact issued receipt did not recover currentness".to_string());
+    }
+    let prior_manifest = attempt_manifest(&journey.root, &journey.attempt_id)?;
+    let prior_verify = prior_manifest["terminal_artifacts"]
+        .as_array()
+        .ok_or("prior terminal artifacts missing")?
+        .iter()
+        .find(|artifact| artifact["role"] == "agent_verify")
+        .and_then(|artifact| artifact["path"].as_str())
+        .ok_or("prior verify missing")?;
+    let prior_verify = journey.root.join(prior_verify);
+    let original_verify = fs::read(&prior_verify).map_err(|error| error.to_string())?;
+    fs::write(&prior_verify, b"unowned verify").map_err(|error| error.to_string())?;
+    let (uncustodied, _) = traced("uncustodied predecessor")?;
+    if !currentness(&uncustodied).contains(&(attempt_b.clone(), "false".to_string())) {
+        return Err("invalid predecessor evidence supplied replacement custody".to_string());
+    }
+    fs::write(&prior_verify, original_verify).map_err(|error| error.to_string())?;
+    // B's own retained verify appeared only after its bind, so ordinary
+    // bound-neighbor drift cannot explain this custody negative.
+    let own_manifest = attempt_manifest(&journey.root, &attempt_b)?;
+    let own_verify = own_manifest["terminal_artifacts"]
+        .as_array()
+        .ok_or("own terminal artifacts missing")?
+        .iter()
+        .find(|artifact| artifact["role"] == "agent_verify")
+        .and_then(|artifact| artifact["path"].as_str())
+        .ok_or("own verify missing")?;
+    let own_verify = journey.root.join(own_verify);
+    let own_original = fs::read(&own_verify).map_err(|error| error.to_string())?;
+    fs::write(&own_verify, b"invalid current producer verify")
+        .map_err(|error| error.to_string())?;
+    let (own_uncustodied, _) = traced("uncustodied current producer")?;
+    if !currentness(&own_uncustodied).contains(&(attempt_b.clone(), "false".to_string())) {
+        return Err("invalid current producer evidence supplied replacement custody".to_string());
+    }
+    fs::write(&own_verify, own_original).map_err(|error| error.to_string())?;
+    let (own_restored, _) = traced("restored current producer")?;
+    if !currentness(&own_restored).contains(&(attempt_b.clone(), "true".to_string())) {
+        return Err("restoring both retained pairs did not recover currentness".to_string());
+    }
+    // An edit after the first call is not hidden by it: the next call
+    // recaptures and the drift changes what status reports.
+    edit_out_of_surface(&journey.root)?;
+    let (second, second_captures) = traced("second status")?;
+    if second_captures != 1 {
+        return Err(format!(
+            "each status call captures once, saw {second_captures} on the second"
+        ));
+    }
+    if !currentness(&second).contains(&(attempt_b.clone(), "false".to_string())) {
+        return Err(format!(
+            "an authored edit must make latest finished attempt {attempt_b} stale:\n{second}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn receipt_projection_replacement_requires_an_exact_issued_predecessor() -> Result<(), String> {
+    for guard in ["unowned", "modified_issued", "missing_verify"] {
+        let (journey, _owned) = start_before(&format!("receipt-predecessor-{guard}"))?;
+        let attempt_b = run_before_phase(&journey.root, &journey.root_arg, &journey.seam_id)?;
+        add_in_surface_test(&journey.root)?;
+        let first = run_after(&journey)?;
+        if !first.status.success() {
+            return Err(format!("first finish failed: {}", combined_output(&first)));
+        }
+        let global = compatibility_receipt_path(&journey.root);
+        match guard {
+            "unowned" => {
+                fs::write(&global, b"user-authored receipt").map_err(|error| error.to_string())?
+            }
+            "modified_issued" => {
+                // Same parseable receipt and attempt id, different exact bytes.
+                let mut bytes = fs::read(&global).map_err(|error| error.to_string())?;
+                bytes.push(b' ');
+                fs::write(&global, bytes).map_err(|error| error.to_string())?;
+            }
+            "missing_verify" => {
+                let manifest = attempt_manifest(&journey.root, &journey.attempt_id)?;
+                let relative = manifest["terminal_artifacts"]
+                    .as_array()
+                    .ok_or("terminal artifacts missing")?
+                    .iter()
+                    .find(|artifact| artifact["role"] == "agent_verify")
+                    .and_then(|artifact| artifact["path"].as_str())
+                    .ok_or("verify path missing")?;
+                fs::remove_file(journey.root.join(relative)).map_err(|error| error.to_string())?;
+            }
+            _ => return Err("unknown custody guard".to_string()),
+        }
+        let second = run_after_attempt(&journey.root, &journey.root_arg, &attempt_b)?;
+        if !second.status.success() {
+            return Err(format!(
+                "second finish failed: {}",
+                combined_output(&second)
+            ));
+        }
+        let manifest = attempt_manifest(&journey.root, &attempt_b)?;
+        if manifest
+            .pointer("/after/receipt_projection_predecessor")
+            .is_some()
+        {
+            return Err(format!(
+                "{guard}: unowned predecessor received a custody witness"
+            ));
+        }
+        let output = run_ripr(
+            &journey.root,
+            &["agent", "status", "--json", "--root", &journey.root_arg],
+        )?;
+        if !output.status.success() {
+            return Err(combined_output(&output));
+        }
+        let status = parse_stdout_json(&output)?;
+        let row = status["repair_attempts"]
+            .as_array()
+            .ok_or("attempt rows missing")?
+            .iter()
+            .find(|attempt| attempt["attempt_id"] == attempt_b)
+            .ok_or("second attempt missing")?;
+        if row["head_current"] != false {
+            return Err(format!(
+                "{guard}: replacing unowned bound bytes must remain stale: {row}"
+            ));
+        }
     }
     Ok(())
 }

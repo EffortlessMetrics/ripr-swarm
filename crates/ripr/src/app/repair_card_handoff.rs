@@ -848,6 +848,25 @@ pub(crate) fn finding_for_seam<'a>(
     Some(hit)
 }
 
+/// Whether `finding` names `entry` by its producer gap's file, owner, probe
+/// family and line, with no canonical gap id involved (#10702). A strongly
+/// gripped seam carries no canonical gap id (only headline-eligible classes
+/// do), so [`finding_for_seam`] can never bind a finding to it; this is the
+/// same producer-structured join and most-specific-claimant rule, asked
+/// without the content-hash ticket. It binds nothing for repair: the caller
+/// uses it only to name why a gap or limit finding sits on an already gripped
+/// seam.
+pub(crate) fn finding_names_seam_by_location(
+    finding: &crate::domain::Finding,
+    entry: &ClassifiedSeam,
+    candidate_seams: &[ClassifiedSeam],
+) -> bool {
+    finding
+        .canonical_gap
+        .as_ref()
+        .is_some_and(|gap| producer_candidate_qualifies(entry, finding, gap, candidate_seams))
+}
+
 /// The canonical gap id of the finding the shared [`finding_for_seam`] join
 /// binds to this seam, as `ripr check` / `ripr_list_gaps` print it. Binding is
 /// not projection: this is present for a bound finding that projects no
@@ -1197,6 +1216,55 @@ mod tests {
         }
     }
 
+    /// #10702: the location-only join names a strongly gripped seam only when
+    /// it is the unique most-specific claimant; twins and unrelated seams do
+    /// not bind, so the caller keeps `NoBindingSeam`.
+    #[test]
+    fn location_join_names_only_a_unique_gripped_claimant() {
+        let gripped = |offset: usize, line: usize| {
+            let mut entry = spanned_twin_boundary_entry(
+                offset,
+                line,
+                crate::analysis::seams::SeamSpan {
+                    start_line: line,
+                    end_line: line,
+                    start_column: 1,
+                    end_column: 10,
+                },
+            );
+            entry.class = SeamGripClass::StronglyGripped;
+            entry
+        };
+        let mut finding = producer_gap_finding(
+            "finding:loc",
+            "gap:rust:src/pricing.rs:pricing::discounted_total:predicate_boundary:predicate",
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            "predicate",
+        );
+        finding.probe.location.line = 88;
+
+        let sole = gripped(10, 88);
+        assert!(finding_names_seam_by_location(
+            &finding,
+            &sole,
+            std::slice::from_ref(&sole)
+        ));
+        // An unrelated gripped seam elsewhere in the owner does not claim it.
+        let other = gripped(20, 120);
+        assert!(!finding_names_seam_by_location(
+            &finding,
+            &other,
+            &[sole.clone(), other.clone()]
+        ));
+        // Two gripped seams with the identical span are an ambiguous collision:
+        // neither is named.
+        let twin = gripped(30, 88);
+        let pair = [sole.clone(), twin.clone()];
+        assert!(!finding_names_seam_by_location(&finding, &sole, &pair));
+        assert!(!finding_names_seam_by_location(&finding, &twin, &pair));
+    }
+
     /// The rendered packet envelope for this seam: `packets` names the seam,
     /// so the canonical packet family projects as current.
     fn packet_for(entry: &ClassifiedSeam) -> String {
@@ -1234,13 +1302,15 @@ mod tests {
         };
         let mut entry = weakly_gripped_entry();
         entry.evidence.discriminate = stage(StageState::Weak);
-        entry.evidence.observed_values = vec![ValueFact {
-            file: None,
-            line: 120,
-            text: "discounted_total(50, 100)".to_string(),
-            value: "50".to_string(),
-            context: ValueContext::FunctionArgument,
-        }];
+        entry.evidence.observed_values = vec![
+            ValueFact {
+                line: 120,
+                text: "discounted_total(50, 100)".to_string(),
+                value: "50".to_string(),
+                context: ValueContext::FunctionArgument,
+            }
+            .into(),
+        ];
         entry.evidence.missing_discriminators = vec![MissingDiscriminatorFact {
             value: "discount_threshold (equality boundary)".to_string(),
             reason: "observed values do not include the equality-boundary case".to_string(),
@@ -1649,6 +1719,7 @@ mod tests {
         // actually produce a witness and fail this control.
         let finding = crate::domain::Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_lib.rs:predicate:4036edfa".to_string(),
             canonical_gap: Some(FindingCanonicalGap {
                 id: "gap:rust:src/lib.rs:pricing::discounted_total:predicate_boundary:predicate:amount==discount_threshold"
@@ -1745,6 +1816,7 @@ mod tests {
         };
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: id.to_string(),
             canonical_gap: Some(FindingCanonicalGap {
                 id: gap_id.to_string(),

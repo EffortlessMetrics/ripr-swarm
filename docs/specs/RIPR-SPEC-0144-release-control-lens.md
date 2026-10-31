@@ -154,6 +154,26 @@ active and contains update and deletion protection. The authorized operator
 must retain fresh native remote/ref/protection observations before and after
 execution. Local custody checks do not manufacture remote authenticity.
 
+### Typed proposal production
+
+`cargo xtask release-manifest-proposal --controller-root <path> --version <version>
+--input <relative-json> --out <new-relative-directory>` parses the full schema-1.1
+DTO, shares the admission owner's field and retained packet/pin checks, then
+serializes `manifest.json` and embeds those exact bytes in `manifest.md`. Unknown,
+missing, stale, template, changed-packet and invalid-pin inputs refuse before
+output creation. Existing destinations are never overwritten; a write failure
+retains an explicitly incomplete directory. Reads keep the existing byte/count
+limits, and emitted JSON must fit the same 16 MiB input cap.
+
+This is proposal generation, not admission: no producer-computed digest creates
+an accepted snapshot. The Markdown labels independent #1609 acceptance as not
+established. Schema-1.1 serialization does not prove the broader full hard-cut
+predicates, native owner judgments, actual final-main identity, live pin/protection,
+or candidate qualification. The operator still verifies these before accepting
+the raw output digest. Evidence paths remain relative to the original controller
+root; an output subdirectory is not a standalone packet. No ref or remote state
+is mutated by this command.
+
 ### Independent acceptance and explicit admission modes
 
 #1609 accepts the complete manifest and its prerequisite packet identities

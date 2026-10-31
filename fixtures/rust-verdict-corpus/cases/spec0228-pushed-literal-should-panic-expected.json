@@ -1,0 +1,55 @@
+{
+  "case_id": "spec0228-pushed-literal-should-panic-expected",
+  "subject_id": "authored-spec0228-pushed-expected",
+  "diff": "cases/spec0228-pushed-literal-should-panic-expected.diff",
+  "anchor": {
+    "file": "src/p_panic.rs",
+    "line": 14
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction",
+  "test_shape": "owner_call_then_assert_eq_whole_collection_in_should_panic_test",
+  "hard_case": "the test expects a panic, so it passes exactly when the collections differ and cannot notice a changed sku",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "self.lines.push(Line { sku: sku.to_lowercase(), qty });",
+        "mutated_line": "self.lines.push(Line { sku: sku.to_lowercase(), qty });",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the recorded sku changes, but the test is #[should_panic] over a deliberately wrong expectation and still panics"
+      },
+      {
+        "replacement": "self.lines.push(Line { sku: String::new(), qty });",
+        "mutated_line": "self.lines.push(Line { sku: String::new(), qty });",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the recorded sku is empty, which still differs from the expected NUT line, so the test still panics"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "a_wrong_expectation_panics_p_panic expects the NUT line while the owner records BOLT, so it passes only because the collections differ; any other recorded sku also panics, so no mutant can fail it.",
+  "labeling_observation": {
+    "ripr_commit": "74c75ee253",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0228#23"
+  ]
+}

@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0000000..0000000 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -13,6 +13,6 @@
+ }
+ 
+ pub fn process(store: &mut Store, amount: i64) -> i64 {
+-    let _ = store.put(amount * 9);
++    let _ = store.put(amount * 8);
+     amount
+ }

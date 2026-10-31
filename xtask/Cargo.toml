@@ -7,6 +7,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+bigdecimal = "0.4"
 home = "=0.5.12"
 num-bigint = "0.4"
 repo-policy = { path = "../tools/repo-policy" }
@@ -20,6 +21,7 @@ toml = "1"
 flate2 = "1"
 tar = "0.4"
 zip = { version = "9", default-features = false, features = ["deflate"] }
+roxmltree = "0.21"
 
 [lints]
 workspace = true

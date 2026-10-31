@@ -1,0 +1,60 @@
+{
+  "case_id": "spec0158-modfold-helper-call",
+  "subject_id": "authored-spec0158-modfold-expected",
+  "diff": "cases/spec0158-modfold-helper-call.diff",
+  "anchor": {
+    "file": "src/m_helper.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "owner_called_with_nullary_literal_helpers",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if 10 < qty {",
+        "mutated_line": "if 10 < qty {",
+        "outcome": "tests_failed",
+        "failing_test": "m_helper::tests::the_tenth_unit_earns_the_tier_m_helper",
+        "equivalence_review": "not equivalent: m_helper::tests::the_tenth_unit_earns_the_tier_m_helper fails on it"
+      },
+      {
+        "replacement": "if 11 <= qty {",
+        "mutated_line": "if 11 <= qty {",
+        "outcome": "tests_failed",
+        "failing_test": "m_helper::tests::the_tenth_unit_earns_the_tier_m_helper",
+        "equivalence_review": "not equivalent: m_helper::tests::the_tenth_unit_earns_the_tier_m_helper fails on it"
+      },
+      {
+        "replacement": "if 9 <= qty {",
+        "mutated_line": "if 9 <= qty {",
+        "outcome": "tests_failed",
+        "failing_test": "m_helper::tests::the_tenth_unit_earns_the_tier_m_helper",
+        "equivalence_review": "not equivalent: m_helper::tests::the_tenth_unit_earns_the_tier_m_helper fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "big() returns 10 and small() returns 9, the rows on both sides of the boundary, so each boundary mutant fails the test; each helper is declared once and its body is one literal.",
+  "labeling_observation": {
+    "ripr_commit": "UNSET",
+    "full_checkout_verdict": "silent",
+    "full_checkout_classifications": [],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0158#24"
+  ]
+}

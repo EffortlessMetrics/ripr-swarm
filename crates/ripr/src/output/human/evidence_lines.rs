@@ -58,6 +58,46 @@ pub(super) struct EvidenceEntry {
     pub key: Option<Vec<u8>>,
 }
 
+/// The producer's fixed class-limitation sentence for `propagation_unknown`
+/// (`analysis/classify/decision.rs`), which names an "observable sink". The
+/// JSON `missing` list keeps that sentence byte-for-byte; the human surfaces
+/// say the same thing without the internal noun (#10691).
+pub(crate) const PROPAGATION_UNKNOWN_PRODUCER_SENTENCE: &str =
+    "No clear propagation path from changed behavior to an observable sink";
+
+/// Fixed producer phrases that name internal nouns (probe, observable sink).
+/// The producers keep them byte-for-byte for JSON and receipts; the human
+/// surfaces substitute plain words (#10691). A display mapping only: it
+/// decides nothing, and text containing none of these phrases is unchanged.
+const PLAIN_PHRASES: &[(&str, &str)] = &[
+    (
+        PROPAGATION_UNKNOWN_PRODUCER_SENTENCE,
+        "ripr could not follow the changed value to something a test can check (a return value or side effect)",
+    ),
+    (
+        "no assertion text references this probe's changed expression",
+        "no assertion text references the changed expression",
+    ),
+    (
+        "not mapped to a high-confidence probe family",
+        "not mapped to a high-confidence change type",
+    ),
+    (
+        "owner, related-test, oracle, and probe evidence",
+        "owner, related-test, oracle, and changed-behavior evidence",
+    ),
+];
+
+pub(crate) fn plain_internal_wording(text: &str) -> String {
+    let mut plain = text.to_string();
+    for (internal, replacement) in PLAIN_PHRASES {
+        if plain.contains(internal) {
+            plain = plain.replace(internal, replacement);
+        }
+    }
+    plain
+}
+
 /// #9244: the producer's reveal-stage summaries carry the machine marker
 /// `observation_unverified`, which consumers of the stage summary in JSON key
 /// on. The human window already says the same thing in words ("Discriminator
@@ -103,28 +143,45 @@ pub(crate) fn plain_observation_wording(text: &str) -> String {
 }
 
 pub(super) fn evidence_path_lines(finding: &Finding, wording: JsonPointerWording) -> Vec<String> {
-    evidence_path(finding, wording, |text, _| text)
+    evidence_path_lines_with_files(finding, wording, None)
 }
 
-pub(super) fn evidence_path_entries(finding: &Finding, with_keys: bool) -> Vec<EvidenceEntry> {
-    evidence_path(finding, JsonPointerWording::CheckFlag, |text, source| {
-        // Multi-line literals retain their existing rendering locally and cannot
-        // forge a catalogue definition or generated reference.
-        let key = if !with_keys
-            || matches!(source, EvidenceSource::Window)
-            || text.contains(['\n', '\r'])
-        {
-            None
-        } else {
-            serde_json::to_vec(&(source, &text)).ok()
-        };
-        EvidenceEntry { text, key }
-    })
+pub(super) fn evidence_path_lines_with_files(
+    finding: &Finding,
+    wording: JsonPointerWording,
+    files: Option<&[Option<std::path::PathBuf>]>,
+) -> Vec<String> {
+    evidence_path(finding, wording, files, |text, _| text)
+}
+pub(super) fn evidence_path_entries(
+    finding: &Finding,
+    with_keys: bool,
+    files: Option<&[Option<std::path::PathBuf>]>,
+) -> Vec<EvidenceEntry> {
+    evidence_path(
+        finding,
+        JsonPointerWording::CheckFlag,
+        files,
+        |text, source| {
+            // Multi-line literals retain their existing rendering locally and cannot
+            // forge a catalogue definition or generated reference.
+            let key = if !with_keys
+                || matches!(source, EvidenceSource::Window)
+                || text.contains(['\n', '\r'])
+            {
+                None
+            } else {
+                serde_json::to_vec(&(source, &text)).ok()
+            };
+            EvidenceEntry { text, key }
+        },
+    )
 }
 
 fn evidence_path<T>(
     finding: &Finding,
     wording: JsonPointerWording,
+    files: Option<&[Option<std::path::PathBuf>]>,
     mut project: impl FnMut(String, EvidenceSource<'_>) -> T,
 ) -> Vec<T> {
     let mut lines = vec![
@@ -289,16 +346,23 @@ fn evidence_path<T>(
         .collect::<Vec<_>>();
     // #8389: a bare `at line N` is only ambiguous when the shown window mixes
     // facts from more than one test file; then each line names its file.
-    let name_files = shown_values
-        .iter()
-        .filter_map(|value| value.file.as_deref())
-        .collect::<std::collections::BTreeSet<_>>()
-        .len()
-        > 1;
-    for value in shown_values {
+    let files = files.filter(|files| files.len() == observed_values_total);
+    let name_files = files
+        .map(|files| {
+            files
+                .iter()
+                .take(MAX_OBSERVED_VALUES_SHOWN)
+                .filter_map(|file| file.as_deref())
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                > 1
+        })
+        .unwrap_or(false);
+    for (index, value) in shown_values.into_iter().enumerate() {
+        let file = files.and_then(|files| files[index].as_deref());
         lines.push(project(
             if name_files {
-                crate::output::observed_values::source_value_evidence_line_with_file(value)
+                crate::output::observed_values::source_value_evidence_line_with_file(value, file)
             } else {
                 crate::output::observed_values::human_source_value_evidence_line(value)
             },
@@ -363,7 +427,7 @@ pub(super) fn weakness_lines(finding: &Finding) -> Vec<String> {
         // #9929: the Python adapter's reason text carries the producer marker
         // `(observation_unverified)`; the human list drops it, JSON `missing`
         // keeps it.
-        .map(|missing| plain_observation_wording(missing))
+        .map(|missing| plain_internal_wording(&plain_observation_wording(missing)))
         .collect::<Vec<_>>();
     for discriminator in &finding.activation.missing_discriminators {
         lines.push(format!(

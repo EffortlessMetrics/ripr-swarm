@@ -342,7 +342,11 @@ fn normalized_release_features(
     Ok(actual)
 }
 
-fn validate_version_line(actual: &str, version: &str, commit: &str) -> Result<(), String> {
+pub(super) fn validate_version_line(
+    actual: &str,
+    version: &str,
+    commit: &str,
+) -> Result<(), String> {
     let expected = format!("ripr {version} ({commit})");
     if actual == expected {
         Ok(())
@@ -353,7 +357,7 @@ fn validate_version_line(actual: &str, version: &str, commit: &str) -> Result<()
     }
 }
 
-fn validate_receipt_shape(receipt: &ProducerBuildReceipt) -> Result<(), String> {
+pub(super) fn validate_receipt_shape(receipt: &ProducerBuildReceipt) -> Result<(), String> {
     let mut violations = Vec::new();
     if receipt.schema_version != PRODUCER_SCHEMA_VERSION {
         violations.push(format!(

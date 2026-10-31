@@ -39,24 +39,27 @@ use super::related_tests::{PythonRelatedCandidate, python_text_hides_code};
 use super::source_utils::{SourceText, line_for_range_end, line_for_range_start, text_for_range};
 use super::static_limits::has_identifier_boundary;
 use super::{PythonAssertion, PythonOwner, PythonParameter, PythonTest, expr_full_name};
-use crate::domain::{OracleStrength, OwnerKind, ValueContext, ValueFact};
+use crate::{
+    domain::{OracleStrength, OwnerKind, ValueContext},
+    value_origins::LocatedValueFact as ValueFact,
+};
 use rustpython_parser::ast::{self, Expr, Mod, Ranged, Stmt};
 use rustpython_parser::text_size::TextSize;
 use rustpython_parser::{Mode, parse};
 
 /// A function body that is one guarded return of literals:
 /// `if <parameter> <op> <operand>: return <then>` then `return <else>`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub(super) struct PythonGuardedReturn {
-    parameter: String,
-    operator: &'static str,
-    operand: String,
-    then_value: String,
-    else_value: String,
+    pub(super) parameter: String,
+    pub(super) operator: &'static str,
+    pub(super) operand: String,
+    pub(super) then_value: String,
+    pub(super) else_value: String,
 }
 
 /// Body facts used by bounded term activation and helper alignment.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct PythonTermFacts {
     /// Conservative raw yield presence, including unresolved string/nested
     /// text. Only helper-derived credit reads this refusal fact.
@@ -475,15 +478,14 @@ pub(super) fn python_inactive_term_evidence(
             return None;
         }
         observed_values.push(ValueFact {
-            file: None,
+            file: Some(row.file.clone()),
             line: row.line,
             text: row.text.clone(),
             value: format!("{argument} = {value}"),
             context: ValueContext::FunctionArgument,
         });
     }
-    observed_values.sort_by(|a, b| a.line.cmp(&b.line).then(a.value.cmp(&b.value)));
-    observed_values.dedup();
+    crate::analysis::classify::sort_value_facts(&mut observed_values);
     let values: Vec<&str> = observed_values
         .iter()
         .map(|fact| fact.value.as_str())

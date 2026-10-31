@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0172"
+scope = "out"
+reason = "Rust/Cargo analyzer behavior; a TypeScript case cannot label it"

@@ -1,0 +1,25 @@
+{
+  "subject_id": "authored-spec0048-const-flow",
+  "origin": "authored",
+  "version_label": "authored 2026-10-27 for RIPR-SPEC-000048 same-file direct-reader must-not-claim shapes (#9871)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "76268dbebc563c2f6b2897afb8034a73c76333f79dedb6d6a5a63a13adfbe9e7"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "0f0c3ab8b894acd9cb31e7e846f4015f0d1fc4f6db04b1cfd0aaca7ea26454e5"
+    },
+    {
+      "path": "src/reader.rs",
+      "sha256": "b74c7bf8faafdb3714183d211566e0d50281c222f5974aee12b8d1573111bae1"
+    },
+    {
+      "path": "tests/it.rs",
+      "sha256": "3ff16982780205e584a1e13e56ba6931eb4403ff16c5fb2a36fd4142508e5799"
+    }
+  ]
+}

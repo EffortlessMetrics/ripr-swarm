@@ -102,7 +102,11 @@ runner's entry for it can be named and is committed:
   `package.json` names `projects`, `workspace` or `root` as a key (plain,
   quoted, computed `["projects"]:`, JS shorthand, or a member assignment
   `config.projects = ...`), since those keys delegate to config files this
-  walk does not read, no `package.json` passes a config, project list or root
+  walk does not read (a Jest `projects: [...]` whose elements are all inline
+  object literals with no `rootDir`, `roots`, `root`, `workspace` or
+  `projects` key and no `preset` other than a `ts-jest` preset delegates to
+  nothing and is read, whether the key is bare or quoted and wherever a
+  comment mentions the word, and a regex literal such as `globals: { tag: /a(b)/ }` is a value, not a call, #10139), and a quoted property value (`displayName: "projects"`) is a value, not a key, while a string passed to a call or bound by `=` (`Object.defineProperty(c, 'root', ..)`) keeps the refusal, while a config holding a template literal, a `/` (regex or division) or an unterminated string keeps the refusal (#10295), no `package.json` passes a config, project list or root
   by path (a script flag `--config`, `--config=`, `-c`, `-cx`, `--projects`,
   `--rootDir`, `--root`, `-r`, `--dir` or `--workspace`, or a `"projects"` or
   `"rootDir"` key), and each such file reads; a `<stem>.config.<ext>` whose
@@ -203,6 +207,23 @@ RIPR-SPEC-0243 ladder, including the observation guard.
    title, which credits an assertion a hook's or another call's entry
    satisfies.
 
+### JSON command escapes
+
+Before checking package-script command flags, decode JSON escapes once.
+`\uXXXX` accepts either case of hexadecimal digit, including a UTF-16
+surrogate pair. Encoded whitespace, dash, flag letters and shell quotes have
+exactly their decoded command-text meaning: `jest\u000A-u`,
+`jest \u002d\u0075`, `jest\u0022-u\u0022` and
+`jest\u000D--config cfg/jest.js` refuse snapshot credit. The same decoding
+applies to long update flags and config-path flag separators.
+
+An escaped literal backslash stays literal: JSON script text
+`jest\\u000A-u`, `jest\\n-u` and `jest\u005cu000A-u` do not manufacture
+whitespace or an update flag by decoding again. Flag-free commands and
+`--ci` retain their earlier reading. This is lexical command normalization;
+config inheritance, project delegation and shell evaluation retain their
+existing rules and limits.
+
 ### Known limits
 
 - The snapshot file and configs are read from the working tree. A
@@ -219,7 +240,8 @@ RIPR-SPEC-0243 ladder, including the observation guard.
   with one row and a literal title runs once and can read strong.
 - A runner config passed by path is not read; a `package.json` script that
   passes one refuses instead. A config that names `projects`, `workspace` or
-  `root` is not followed into the files it names; it refuses instead. A
+  `root` is not followed into the files it names; it refuses instead, except
+  a plain inline `projects` array (#10139). A
   computed key built at run time (`["pro" + "jects"]`) is not read and a
   delegating config written that way keeps the credit. A config above the
   repository boundary is not read.
@@ -329,7 +351,12 @@ RIPR-SPEC-0243 ladder, including the observation guard.
    `__snapshots__` directory: medium.
 8. A `jest.config.js` with `projects: [...]` or `["projects"]: [...]`, a
    `vitest.config.ts` with `workspace`, `root` or `config.test.root = ...`:
-   medium. A `const root = process.cwd()` declaration, a Jest `roots` or
+   medium. A `jest.config.js` whose `projects` holds only inline objects
+   (`projects: [{ displayName: "unit", preset: "ts-jest" }]`): strong; the
+   same array with a path, glob, identifier or spread element, a project
+   setting `rootDir` or `roots`, or a package preset
+   (`preset: "review-snapshot-preset"`, which Jest merges from a file this
+   walk never reads): medium. A `const root = process.cwd()` declaration, a Jest `roots` or
    `rootDir` option: strong. A package whose `.git` file is a submodule
    pointer (`gitdir: ../../.git/modules/app`) under a superproject whose
    `jest.config.js` sets a `snapshotResolver`: medium; the same package with a
@@ -365,6 +392,8 @@ RIPR-SPEC-0243 ladder, including the observation guard.
   `symlinked_test_directory_stays_medium` pin example 7;
   `computed_and_member_spellings_of_delegating_keys_stay_medium`,
   `json_escaped_whitespace_before_the_update_flag_stays_medium`,
+  `plain_inline_projects_keep_the_credit_and_every_other_spelling_refuses`,
+  `vitest_string_values_are_not_keys_but_real_keys_still_refuse`,
   `submodule_git_file_does_not_end_the_walk` and
   `only_a_submodule_pointer_is_not_a_boundary` pin example 8 and the
   #8768 spellings;
@@ -385,6 +414,12 @@ RIPR-SPEC-0243 ladder, including the observation guard.
   `credited`; and
   `jest-spec0258-ex06-spaced-call` (example 6's spaced call) reads
   `credited`.
+
+- `unicode_json_update_flags_stay_medium`,
+  `unicode_json_config_flag_separators_stay_medium` and
+  `unicode_json_literal_escapes_keep_snapshot_credit` in
+  `crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs`
+  pin the #9951 command-decoding rule and escaped-literal controls.
 
 ## Implementation Mapping
 

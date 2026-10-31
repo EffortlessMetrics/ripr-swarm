@@ -38,6 +38,7 @@ fn examined_only(name: &str) -> RelatedTest {
 fn finding(related: Vec<RelatedTest>) -> Finding {
     Finding {
         analysis_scope: crate::domain::AnalysisScope::Diff,
+        confidence_basis: Vec::new(),
         id: "probe:src_lib_rs:1:predicate".to_string(),
         canonical_gap: None,
         probe: Probe {

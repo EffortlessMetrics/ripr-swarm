@@ -1,3 +1,4 @@
+use super::pilot_timings::PilotTimings;
 use crate::analysis;
 use crate::app::{self, CheckInput, Mode, OutputFormat};
 use crate::cli::commands_numeric::{parse_positive_u64, parse_positive_usize};
@@ -113,7 +114,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     let config = load_for_root(&options.root)?;
     // Refuse an invalid RIPR_PILOT_SEAM_BUDGET (#4529) before the analysis
     // it would bound, not after it.
-    analysis::pilot_seam_budget()?;
+    // The same guard bounds the built-in inventory cap by that budget (#10726).
+    let _pilot_inventory_default = analysis::PilotInventoryDefault::enter()?;
     // RIPR_GIT_TIMEOUT bounds pilot's current-change git calls as it bounds
     // check's (#2613): seconds, `0` disables the deadline, and an invalid
     // value fails closed here rather than running with the default.
@@ -158,6 +160,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     let extension_ms = pilot_deadline_extension_ms(&options);
     let progress = pilot_progress_sink(options.quiet);
     let analysis_started = Instant::now();
+    let mut timings = PilotTimings::start();
     let analysis_result = if rust_enabled {
         run_pilot_analysis_with_timeout(
             options.timeout_ms,
@@ -175,29 +178,60 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                 move || {
                     // The loaded change selects both the generated-source view
                     // and later change-first ranking, inside the same deadline.
+                    let load_started = Instant::now();
                     let change = load_pilot_current_change(&input, git_timeout);
-                    let report = run_pilot_inventory(
-                        &input.root,
-                        &cfg,
-                        &change.changed_files(),
-                        sink.as_ref(),
-                    )?;
-                    Ok((report, change))
+                    let load_ms = elapsed_ms(load_started);
+                    let inventory_started = Instant::now();
+                    // #10727: the inventory already reports its phases through
+                    // the latency-phase owner; `-v` reads them instead of
+                    // adding a second timer beside each one.
+                    let run = || {
+                        run_pilot_inventory(
+                            &input.root,
+                            &cfg,
+                            &change.changed_files(),
+                            sink.as_ref(),
+                        )
+                    };
+                    let (report, phases) = if crate::is_verbose() {
+                        analysis::resource_cost::record_latency_phases(run)
+                    } else {
+                        (run(), Vec::new())
+                    };
+                    let report = report?;
+                    let inventory_ms = elapsed_ms(inventory_started);
+                    Ok((
+                        report,
+                        change,
+                        PilotStageTimes {
+                            load_ms,
+                            inventory_ms,
+                            inventory_phases: phases,
+                        },
+                    ))
                 }
             },
         )?
     } else {
+        let load_started = Instant::now();
+        let change = load_pilot_current_change(&input, git_timeout);
         PilotAnalysisResult::Complete((
             analysis::ClassifiedSeamsReport {
                 classified: Vec::new(),
                 corpus_key: None,
+                analyzed_production_files: Vec::new(),
                 diff_bound_corpus: false,
                 limit_info: None,
                 skipped_generated: Vec::new(),
                 naming_only_skips: Vec::new(),
                 declined_rust_files: Vec::new(),
             },
-            load_pilot_current_change(&input, git_timeout),
+            change,
+            PilotStageTimes {
+                load_ms: elapsed_ms(load_started),
+                inventory_ms: 0,
+                inventory_phases: Vec::new(),
+            },
         ))
     };
     // The timeout hint floors at the budget actually spent, so an
@@ -205,7 +239,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // (#5443). The printed retry also stays inside an interactive cap
     // instead of multiplying the spent budget by four (#7427).
     let spent_timeout_ms = options.timeout_ms.saturating_add(extension_ms.unwrap_or(0));
-    let PilotAnalysisResult::Complete((report, current_change)) = analysis_result else {
+    let PilotAnalysisResult::Complete((report, current_change, stage_times)) = analysis_result
+    else {
         // #7425: a timeout overwrites only the two summaries. Remove leftover
         // repo-exposure and seam-packet files from an earlier complete run so
         // the packet directory does not present them as this run's outputs.
@@ -235,6 +270,21 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // disabled run always arrives here with an empty report. Disclose only
     // when the exclusion changed the result meaning: Rust files exist but
     // were not analyzed.
+    let PilotStageTimes {
+        load_ms,
+        inventory_ms,
+        inventory_phases,
+    } = stage_times;
+    timings.record_ms(
+        "load_change",
+        load_ms,
+        Some(current_change.changed_files().len()),
+    );
+    // Rust disabled bypasses the inventory, so there is no stage to report.
+    if rust_enabled {
+        timings.record_ms("inventory", inventory_ms, Some(report.classified.len()));
+        timings.record_inventory_phases(&inventory_phases);
+    }
     let rust_files = analysis::workspace_rust_files(&input.root);
     let rust_excluded = (!rust_enabled && !rust_files.is_empty()).then_some(rust_files.len());
 
@@ -245,6 +295,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // budget wins when both fire; inventory limit is the outer bound).
     let mut classified = report.classified;
     let corpus_key = report.corpus_key;
+    let analyzed_production_files = report.analyzed_production_files;
     let diff_bound_corpus = report.diff_bound_corpus;
     let mut inventory_limit_info = report.limit_info;
     let declined_rust_files = report.declined_rust_files.clone();
@@ -262,6 +313,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // the change's own files in what is left of pilot's deadline and add its
     // cut seams; they count as analyzed. A failed or late classification
     // never fails pilot: the seam-limit caveat on the change stays.
+    let change_started = Instant::now();
     let change_classification = classify_change_past_seam_limit(
         &input.root,
         &config,
@@ -270,12 +322,14 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         spent_timeout_ms.saturating_sub(elapsed_ms(analysis_started)),
         !options.quiet,
     );
+    let classify_ms = elapsed_ms(change_started);
     // #6944: name the changed files `ripr check` analyzes but the repo
     // inventory leaves out (build scripts, `xtask/`, roots outside `src`),
     // so a change there is not read as a change with no seams. It runs after
     // the change's own classification, so this explanation never spends the
     // deadline that ranks changed seams. Without Rust enabled neither
     // command analyzes these files, so there is nothing to name.
+    let diff_only_started = Instant::now();
     let current_change = if rust_enabled {
         let diff_only = name_diff_only_files(
             &input.root,
@@ -287,6 +341,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     } else {
         current_change
     };
+    let diff_only_ms = elapsed_ms(diff_only_started);
     let folded = current_change.fold_classified_change(
         &mut classified,
         &mut inventory_limit_info,
@@ -299,6 +354,10 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                 "ripr pilot: could not classify the current change past the seam limit ({error})"
             ))
         );
+    }
+    timings.record_ms("change_classification", classify_ms, Some(folded.added));
+    if rust_enabled {
+        timings.record_ms("diff_only_files", diff_only_ms, None);
     }
     // A snapshot holding seams `ripr check` never classifies is not the same
     // population as its after snapshot, so it is written without identity.
@@ -325,9 +384,31 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     let current_change = current_change
         .with_absent_file_limitations(absent_file_limitations)
         .with_seams_counted(&classified, folded.caveat_limit);
-    let pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
+    let budget_started = Instant::now();
+    let mut pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
         current_change.keeps_past_budget(entry)
     })?;
+    // The pilot-scoped default inventory cap (#10726) is the pilot budget cut
+    // earlier. Disclose it as the budget, naming `RIPR_PILOT_SEAM_BUDGET`, and
+    // not as an inventory cut whose repair route would not lift the budget.
+    // The total is the real inventory even when current-change seams folded in
+    // past the cap made the budget fire too (its own total then counts the
+    // capped inventory plus the folded seams). The population is also not what
+    // `ripr check` analyzes, so the snapshot carries no comparable identity,
+    // exactly as for a budget cut.
+    if let Some(default_cut) =
+        analysis::PilotInventoryDefault::as_budget_cut(inventory_limit_info.as_ref())
+    {
+        pilot_budget_info = Some(match pilot_budget_info {
+            Some(budget) => analysis::SeamLimitInfo {
+                total: default_cut.total,
+                ..budget
+            },
+            None => default_cut,
+        });
+        inventory_limit_info = None;
+    }
+    timings.record("seam_budget", budget_started, Some(classified.len()));
     let pilot_budget_truncated = pilot_budget_info.is_some();
     // The summary's disclosure counts from the outermost population: when
     // both caps fired, the pilot budget's total is the already-capped
@@ -354,7 +435,9 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         eprintln!("{}", terminal_safe(format!("ripr pilot: {warning}")));
     }
 
-    let python_first_use = collect_pilot_python_first_use(&input, &config);
+    let scan_started = Instant::now();
+    let python_first_use =
+        collect_pilot_python_first_use(&input, &config, current_change.is_working_tree());
     // #3906 / #7665: pilot ranks Rust seams only. Name the languages it did
     // not rank so an empty ranking is never read as a clean result for them;
     // when an enabled supported language is present, the headline names its
@@ -371,6 +454,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     )
     .with_rust_exclusion(rust_excluded)
     .with_declined_rust_files(declined_rust_files.clone());
+    timings.record("language_scan", scan_started, None);
     let context = output::pilot::PilotSummaryContext {
         root: &input.root,
         mode: &input.mode,
@@ -400,9 +484,10 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                 None,
                 &config,
             )?
-            .with_rust_corpus_key(corpus_key.as_ref()),
+            .with_rust_inventory(corpus_key.as_ref(), &analyzed_production_files),
         )
     };
+    let write_started = Instant::now();
     write_pilot_repo_exposure_json(
         &artifacts.repo_exposure_json,
         &input,
@@ -433,20 +518,35 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     )?;
 
     let summary_json = output::pilot::render_pilot_summary_json(&classified, context);
+    let (summary_md, terminal) = output::pilot::render_pilot_human_summaries(&classified, context);
     write_pilot_file(&artifacts.pilot_summary_json, &summary_json)?;
-    write_pilot_file(
-        &artifacts.pilot_summary_md,
-        output::pilot::render_pilot_summary_md(&classified, context),
-    )?;
+    write_pilot_file(&artifacts.pilot_summary_md, summary_md)?;
+    timings.record("write_artifacts", write_started, Some(classified.len()));
+    // #10727: the sidecar is written last, so it cannot change any other
+    // artifact. A run without `-v` drops a prior run's sidecar rather than
+    // leave it standing as this run's timings.
+    timings.finish();
+    let timings_path = pilot_timings_path(&artifacts);
+    if crate::is_verbose() {
+        if let Err(error) = write_pilot_file(&timings_path, timings.render_json()) {
+            // The atomic writer keeps the old file when a replace fails, so
+            // drop it: a prior run's timings must not read as this run's.
+            remove_timeout_packet_sibling(&timings_path)?;
+            eprintln!("ripr pilot: timings sidecar not written: {error}");
+        }
+    } else {
+        remove_timeout_packet_sibling(&timings_path)?;
+    }
 
-    print!(
-        "{}",
-        pilot_stdout(
-            options.format,
-            &summary_json,
-            &output::pilot::render_pilot_terminal(&classified, context),
-        )
-    );
+    print!("{}", pilot_stdout(options.format, &summary_json, &terminal));
+    // #10727: stderr only, so stdout and the artifacts stay byte-identical.
+    // Through the shadowed `eprintln!`, so a held-open TTY progress row is
+    // finished before the table starts instead of being glued onto.
+    if crate::is_verbose() {
+        for line in timings.render().lines() {
+            eprintln!("{line}");
+        }
+    }
     // #5019: producer `completed` was held until every artifact write and
     // the terminal render succeeded; commit it now. An earlier failure
     // already dropped the sink, which projected `failed` instead.
@@ -652,6 +752,14 @@ fn pilot_progress_sink(quiet: bool) -> Option<Arc<CliProgressSink>> {
 /// run shows bounded stage lines and throttled heartbeats instead of
 /// minutes of silence. Stage identity stays producer-owned; pilot adds
 /// no stage vocabulary of its own.
+/// What the analysis worker measured for the `-v` stage table (#10727).
+struct PilotStageTimes {
+    load_ms: u64,
+    inventory_ms: u64,
+    /// The inventory's own phases; empty unless `-v` asked for them.
+    inventory_phases: Vec<analysis::resource_cost::RecordedLatencyPhase>,
+}
+
 fn run_pilot_inventory(
     root: &Path,
     config: &RiprConfig,
@@ -735,9 +843,14 @@ fn current_change_unavailable_reason(error: &CoreError, fallback: &'static str) 
     }
 }
 
+/// Pilot's Python preview reads the same diff pilot's current change and the
+/// printed `ripr check` command select. `from_working_tree` (uncommitted
+/// tracked changes) must use the worktree entry; the committed-history entry
+/// would see an empty diff and report zero findings (#10681).
 fn collect_pilot_python_first_use(
     input: &CheckInput,
     config: &RiprConfig,
+    from_working_tree: bool,
 ) -> Option<output::pilot::PilotPythonFirstUse> {
     if !config
         .languages()
@@ -749,12 +862,15 @@ fn collect_pilot_python_first_use(
 
     let mut check_input = input.clone();
     check_input.format = OutputFormat::Json;
-    Some(
-        match app::check_workspace_with_config(check_input, config) {
-            Ok(output) => output::pilot::PilotPythonFirstUse::from_check_output(&output),
-            Err(error) => output::pilot::PilotPythonFirstUse::analysis_unavailable(error),
-        },
-    )
+    let result = if from_working_tree {
+        app::check_workspace_worktree_with_config(check_input, config)
+    } else {
+        app::check_workspace_with_config(check_input, config)
+    };
+    Some(match result {
+        Ok(output) => output::pilot::PilotPythonFirstUse::from_check_output(&output),
+        Err(error) => output::pilot::PilotPythonFirstUse::analysis_unavailable(error),
+    })
 }
 
 fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
@@ -982,6 +1098,14 @@ fn remove_timeout_packet_sibling(path: &Path) -> Result<(), String> {
     }
 }
 
+/// `pilot-timings.json` beside the summary: the machine-readable twin of the
+/// `-v` stage table (#10727).
+fn pilot_timings_path(artifacts: &output::pilot::PilotArtifacts) -> PathBuf {
+    artifacts
+        .pilot_summary_json
+        .with_file_name("pilot-timings.json")
+}
+
 /// Publish the timeout packet: remove the prior-run siblings this run will
 /// not rewrite (#7425), then overwrite the two summaries with the partial
 /// timeout result. Extracted verbatim from `pilot`'s timeout branch so the
@@ -993,6 +1117,7 @@ fn publish_timeout_packet(
     context: output::pilot::PilotSummaryContext<'_>,
 ) -> Result<(), String> {
     remove_unwritten_timeout_packet_siblings(artifacts)?;
+    remove_timeout_packet_sibling(&pilot_timings_path(artifacts))?;
     let summary_json = output::pilot::render_pilot_timeout_summary_json(context);
     write_pilot_file(&artifacts.pilot_summary_json, &summary_json)?;
     write_pilot_file(
@@ -1028,6 +1153,123 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[cfg(feature = "lang-python")]
+    const PRICING_GE: &str =
+        "def discount(qty, price):\n    if qty >= 10:\n        return price * 0.1\n    return 0\n";
+    #[cfg(feature = "lang-python")]
+    const PRICING_GT: &str =
+        "def discount(qty, price):\n    if qty > 10:\n        return price * 0.1\n    return 0\n";
+
+    #[cfg(feature = "lang-python")]
+    fn commit_all(root: &std::path::Path, message: &str) -> Result<(), String> {
+        let git = |args: &[&str]| {
+            crate::git::run_git(root, args).map_err(|err| format!("git {args:?} failed: {err}"))
+        };
+        git(&["add", "-A"])?;
+        git(&[
+            "-c",
+            "user.email=a@b.c",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "-m",
+            message,
+        ])?;
+        Ok(())
+    }
+
+    #[cfg(feature = "lang-python")]
+    /// A Python repo whose `pricing.py` is committed as `>=` with a boundary
+    /// test that does not observe the exact boundary.
+    fn python_pilot_fixture(name: &str) -> Result<std::path::PathBuf, String> {
+        let root = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+        let io = |error: std::io::Error| error.to_string();
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("tests")).map_err(io)?;
+        crate::git::run_git(&root, &["init", "-q"]).map_err(|err| format!("git init: {err}"))?;
+        std::fs::write(root.join("pricing.py"), PRICING_GE).map_err(io)?;
+        std::fs::write(
+            root.join("tests/test_pricing.py"),
+            "from pricing import discount\n\ndef test_discount():\n    assert discount(10, 10) > 0\n",
+        )
+        .map_err(io)?;
+        commit_all(&root, "init")?;
+        Ok(root)
+    }
+
+    /// #10681: an uncommitted Python edit must reach pilot's Python preview
+    /// through the production path (`load_pilot_current_change` selects the
+    /// diff source, `collect_pilot_python_first_use` analyzes it), matching
+    /// what `ripr check` reports instead of `findings: 0`.
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn pilot_python_preview_counts_uncommitted_python_change() -> Result<(), String> {
+        let root = python_pilot_fixture("ripr-pilot-py")?;
+        std::fs::write(root.join("pricing.py"), PRICING_GT).map_err(|e| e.to_string())?;
+
+        let input = CheckInput {
+            root: root.clone(),
+            ..CheckInput::default()
+        };
+        let config = load_for_root(&root)?;
+        let change = load_pilot_current_change(&input, Some(std::time::Duration::from_secs(30)));
+        assert!(
+            change.is_working_tree(),
+            "fixture must be read as a working-tree change: {change:?}"
+        );
+        let first_use = collect_pilot_python_first_use(&input, &config, change.is_working_tree())
+            .ok_or_else(|| "python is enabled by default".to_string())?;
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(first_use.analysis_error, None);
+        assert_eq!(
+            first_use.findings_total, 1,
+            "pilot must count the same Python finding `ripr check` reports"
+        );
+        Ok(())
+    }
+
+    /// #10681: committed `>=`->`>` then an unstaged edit restoring `>=`
+    /// leaves the working-tree diff against the base empty (`NoChange`), but
+    /// `ripr check` still reads the working tree because tracked files are
+    /// dirty. The preview must follow that source and find nothing, not
+    /// recommend a repair for code absent from the working tree.
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn pilot_python_preview_follows_working_tree_when_edit_restores_base() -> Result<(), String> {
+        let root = python_pilot_fixture("ripr-pilot-py-revert")?;
+        let io = |error: std::io::Error| error.to_string();
+        std::fs::write(root.join("pricing.py"), PRICING_GT).map_err(io)?;
+        commit_all(&root, "tighten boundary")?;
+        std::fs::write(root.join("pricing.py"), PRICING_GE).map_err(io)?;
+
+        let input = CheckInput {
+            root: root.clone(),
+            base: Some("HEAD~1".to_string()),
+            ..CheckInput::default()
+        };
+        let config = load_for_root(&root)?;
+        let change = load_pilot_current_change(&input, Some(std::time::Duration::from_secs(30)));
+        assert!(
+            matches!(change, output::pilot::PilotCurrentChange::NoChange { .. }),
+            "restoring the base must leave an empty working-tree diff: {change:?}"
+        );
+        assert!(
+            change.is_working_tree(),
+            "an empty diff must keep the working-tree source: {change:?}"
+        );
+        let first_use = collect_pilot_python_first_use(&input, &config, change.is_working_tree())
+            .ok_or_else(|| "python is enabled by default".to_string())?;
+        // Contrast: the committed-history source would report the stale edit.
+        let committed = collect_pilot_python_first_use(&input, &config, false)
+            .ok_or_else(|| "python is enabled by default".to_string())?;
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(first_use.analysis_error, None);
+        assert_eq!(first_use.findings_total, 0, "{first_use:?}");
+        assert_eq!(committed.findings_total, 1, "{committed:?}");
+        Ok(())
     }
 
     #[test]
@@ -1354,6 +1596,7 @@ mod tests {
                 Ok(analysis::ClassifiedSeamsReport {
                     classified: Vec::new(),
                     corpus_key: None,
+                    analyzed_production_files: Vec::new(),
                     diff_bound_corpus: false,
                     limit_info: None,
                     skipped_generated: Vec::new(),
@@ -1694,6 +1937,8 @@ mod tests {
             std::fs::write(path, stale)
                 .map_err(|err| format!("write stale {}: {err}", path.display()))?;
         }
+        std::fs::write(pilot_timings_path(&artifacts), stale)
+            .map_err(|err| format!("write stale timings sidecar: {err}"))?;
         std::fs::write(dir.join("unrelated.txt"), "keep-me")
             .map_err(|err| format!("write unrelated: {err}"))?;
         let root = dir.join("repo");
@@ -1717,6 +1962,10 @@ mod tests {
             },
         )?;
 
+        assert!(
+            !pilot_timings_path(&artifacts).exists(),
+            "a timeout run must not leave the previous run's timings sidecar"
+        );
         let summary = std::fs::read_to_string(&artifacts.pilot_summary_json)
             .map_err(|err| format!("read timeout summary: {err}"))?;
         assert!(

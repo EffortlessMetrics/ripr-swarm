@@ -120,7 +120,7 @@ pub(super) fn classify_sink_alignment(
     related: &[RelatedTest],
     all_tests: &[PythonTest],
 ) -> SinkAlignment {
-    classify_sink_alignment_with_old(owner, line_text, None, related, all_tests, false)
+    classify_sink_alignment_with_old(owner, line_text, None, related, all_tests, false, None)
 }
 
 /// Whether a strong related-test oracle actually observes the changed behavior's
@@ -239,20 +239,14 @@ pub(super) fn oracle_observes_changed_dict_element(
     changed_values: &[String],
 ) -> bool {
     // A whole-collection comparison (`== {...}` / `== [...]`) observes every element.
-    if oracle.contains("=={")
-        || oracle.contains("== {")
-        || oracle.contains("==[")
-        || oracle.contains("== [")
-    {
+    if oracle_compares_whole_collection(oracle) {
         return true;
     }
     // Observes a changed value literal (e.g. the new `9090` / `"failure"`), but
     // not when that literal only appears beside a sibling-key subscript
     // (`assert build()['timeout'] == 80` after `'port'` changed to `80`).
     for value in changed_values {
-        let literal = value.trim().trim_matches('"').trim_matches('\'');
-        if literal.len() >= 2
-            && oracle.contains(literal)
+        if oracle_contains_value_literal(oracle, value)
             && !oracle_solely_subscripts_unchanged_dict_key(oracle, changed_keys)
         {
             return true;
@@ -283,6 +277,191 @@ fn oracle_solely_subscripts_unchanged_dict_key(oracle: &str, changed_keys: &[Str
         && !changed_keys
             .iter()
             .any(|key| oracle_subscripts_dict_key(oracle, key))
+}
+
+/// `text` with the contents of its quoted strings blanked out; keeps byte offsets so the
+/// caller can still index the original. Escapes inside strings are honoured.
+fn blank_quoted_strings(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for ch in text.chars() {
+        match quote {
+            Some(active) => {
+                let closes = !escaped && ch == active;
+                escaped = !escaped && ch == '\\';
+                if closes {
+                    quote = None;
+                    out.push(ch);
+                } else {
+                    out.extend(std::iter::repeat_n('_', ch.len_utf8()));
+                }
+            }
+            None => {
+                if ch == '"' || ch == '\'' {
+                    quote = Some(ch);
+                }
+                out.push(ch);
+            }
+        }
+    }
+    out
+}
+
+/// A whole-collection comparison (RIPR-SPEC-0238 rule 10): `<owner result> == {…}`
+/// or `== […]` where the display holds only literals (a display that subscripts,
+/// calls or `.get`s other data supplies no whole-output evidence) and the other
+/// operand is not itself a literal wrapper such as `list((10,))`.
+pub(super) fn oracle_compares_whole_collection(oracle: &str) -> bool {
+    let blanked = blank_quoted_strings(oracle);
+    blanked.match_indices("==").any(|(at, _)| {
+        let before = blanked[..at].chars().next_back();
+        if before.is_some_and(|c| matches!(c, '=' | '!' | '<' | '>')) {
+            return false;
+        }
+        let right = blanked[at + 2..].trim_start();
+        let Some(open) = right.chars().next().filter(|c| matches!(c, '{' | '[')) else {
+            return false;
+        };
+        let close = if open == '{' { '}' } else { ']' };
+        let mut depth = 0usize;
+        let Some(end) = right.char_indices().find_map(|(i, c)| {
+            if c == open || c == '{' || c == '[' {
+                depth += 1;
+            } else if c == close || c == '}' || c == ']' {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            None
+        }) else {
+            return false;
+        };
+        let display = &right[..=end];
+        // A `(` is a call only after a name, `)` or `]`; a tuple display opens one
+        // after `:`, `,` or another bracket.
+        let calls = display.char_indices().any(|(i, c)| {
+            c == '('
+                && display[..i]
+                    .trim_end()
+                    .chars()
+                    .next_back()
+                    .is_some_and(|p| p.is_alphanumeric() || matches!(p, '_' | ')' | ']'))
+        });
+        let reads_other_data = calls
+            || display.contains(".get")
+            || display.char_indices().any(|(i, c)| {
+                c == '['
+                    && display[..i].chars().next_back().is_some_and(|p| {
+                        p.is_alphanumeric() || matches!(p, '_' | ']' | ')' | '"' | '\'')
+                    })
+            });
+        let left = blanked[..at].trim_start();
+        let left = left.strip_prefix("assert").unwrap_or(left);
+        let mut residue = left.to_string();
+        for wrapper in ["frozenset", "sorted", "tuple", "list", "dict", "set"] {
+            residue = residue.replace(wrapper, "");
+        }
+        !reads_other_data && residue.chars().any(char::is_alphabetic)
+    })
+}
+
+/// Whether byte offset `start` of `text` lies inside a quoted string literal.
+fn inside_quoted_string(text: &str, start: usize) -> bool {
+    blank_quoted_strings(text)
+        .get(start..start + 1)
+        .is_some_and(|c| c == "_")
+}
+
+/// Whether the oracle contains the changed element's value as a WHOLE literal
+/// token (RIPR-SPEC-0238 rule 10): a number not adjacent to a digit, letter, `_`
+/// or `.` (so `80` is not found inside `8080`), a string as a complete quoted
+/// literal (so `y` is not found inside `"yes"`). Any other value expression keeps
+/// the substring match.
+pub(super) fn oracle_contains_value_literal(oracle: &str, value: &str) -> bool {
+    let value = value.trim();
+    let literal = value.trim_matches('"').trim_matches('\'');
+    if literal.is_empty() || (literal.len() < 2 && literal.len() == value.len()) {
+        return false;
+    }
+    let quoted = value.len() >= 2
+        && literal.len() + 2 == value.len()
+        && (value.starts_with('"') && value.ends_with('"')
+            || value.starts_with('\'') && value.ends_with('\''));
+    if quoted {
+        return !literal.contains(['"', '\''])
+            && (oracle.contains(&format!("\"{literal}\""))
+                || oracle.contains(&format!("'{literal}'")));
+    }
+    let digits = literal.strip_prefix('-').unwrap_or(literal);
+    let numeric = digits.starts_with(|c: char| c.is_ascii_digit())
+        && digits
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == '.' || c == '_');
+    if !numeric {
+        return oracle.contains(literal);
+    }
+    let adjacent = |c: char| c.is_alphanumeric() || c == '_' || c == '.';
+    oracle.match_indices(literal).any(|(start, found)| {
+        let before = oracle[..start].chars().next_back();
+        let after = oracle[start + found.len()..].chars().next();
+        !before.is_some_and(adjacent)
+            && !after.is_some_and(adjacent)
+            && !inside_quoted_string(oracle, start)
+    })
+}
+
+/// A multi-line dict or list literal element (`"retries": 3,` between `return {`
+/// and `}`) cannot be localized from its own line. Join the enclosing literal on
+/// the new side and, with the paired old line substituted, on the old side, so the
+/// dict-element and list-element gates judge the same changed element they judge
+/// for a one-line literal. `None` when the line is not one element line of a
+/// bracketed literal bound by `return` or an assignment.
+pub(super) fn enclosing_literal_pair(
+    source: &str,
+    line: usize,
+    line_text: &str,
+    old_line_text: Option<&str>,
+) -> Option<(String, String)> {
+    let old_line_text = old_line_text?;
+    let lines: Vec<&str> = source.lines().collect();
+    let index = line.checked_sub(1)?;
+    let changed = *lines.get(index)?;
+    if changed.trim() != line_text.trim() || old_line_text.contains('#') {
+        return None;
+    }
+    let indent = |text: &str| text.len() - text.trim_start().len();
+    let element_indent = indent(changed);
+    let shallower = |i: &usize| !lines[*i].trim().is_empty() && indent(lines[*i]) < element_indent;
+    let opener_index = (0..index).rev().find(shallower)?;
+    let closer_index = (index + 1..lines.len()).find(shallower)?;
+    let opener = lines[opener_index].trim();
+    let closer = lines[closer_index].trim();
+    let (open, close) = match opener.chars().last()? {
+        '{' => ('{', '}'),
+        '[' => ('[', ']'),
+        _ => return None,
+    };
+    let prefix = opener[..opener.len() - 1].trim();
+    if !closer.starts_with(close)
+        || !(prefix == "return" || (prefix.ends_with('=') && !prefix.contains('(')))
+    {
+        return None;
+    }
+    let (first, last) = (opener_index + 1, closer_index);
+    // A comment would swallow the rest of the joined line and its commas would
+    // read as element separators, so any comment inside the literal declines.
+    if lines[first..last].iter().any(|text| text.contains('#')) {
+        return None;
+    }
+    let join = |replace: &str| {
+        let body: Vec<&str> = (first..last)
+            .map(|i| if i == index { replace } else { lines[i] }.trim())
+            .collect();
+        format!("{open}{}{close}", body.join(" "))
+    };
+    Some((join(line_text.trim()), join(old_line_text.trim())))
 }
 
 /// Parse a list-literal line (a `return [...]`) into its top-level element source
@@ -344,22 +523,16 @@ fn list_changed_indices_and_values(
 /// comparison. Conservative, mirroring [`oracle_observes_changed_dict_element`]: it
 /// returns `false` only for an oracle that observes purely a sibling index or an
 /// aggregate (`len(...)`).
-fn oracle_observes_changed_list_element(
+pub(super) fn oracle_observes_changed_list_element(
     oracle: &str,
     changed_indices: &[usize],
     changed_values: &[String],
 ) -> bool {
-    if oracle.contains("=={")
-        || oracle.contains("== {")
-        || oracle.contains("==[")
-        || oracle.contains("== [")
-    {
+    if oracle_compares_whole_collection(oracle) {
         return true;
     }
     for value in changed_values {
-        let literal = value.trim().trim_matches('"').trim_matches('\'');
-        if literal.len() >= 2
-            && oracle.contains(literal)
+        if oracle_contains_value_literal(oracle, value)
             && !oracle_solely_subscripts_unchanged_list_index(oracle, changed_indices)
         {
             return true;
@@ -515,21 +688,50 @@ pub(super) fn oracle_is_pure_len_aggregate(oracle: &str, changed_literals: &str)
 
 /// Per-finding state that does not depend on the related rows: the test index
 /// and the owner's import-alias locals across every test. Built once so a
-/// caller that aligns many rows separately does not rebuild it per row.
+/// caller that aligns many rows separately does not rebuild it per row. The
+/// index covers every test, not one owner, so a run shares one across all of
+/// its owners and only the alias tokens are per owner.
 pub(super) struct AlignmentPrep<'a> {
-    lookup: TestLookup<'a>,
+    lookup: Rc<TestLookup<'a>>,
     alias_tokens: Vec<String>,
+}
+
+// Alignment preps and test indexes built on this thread, so a test can pin one
+// prep per owner and one index per run rather than one per changed line (#10914).
+#[cfg(test)]
+thread_local! {
+    pub(super) static ALIGNMENT_PREPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static ALIGNMENT_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 impl<'a> AlignmentPrep<'a> {
     pub(super) fn new(owner: &PythonOwner, all_tests: &'a [PythonTest]) -> Self {
+        Self::with_lookup(owner, all_tests, Self::lookup(all_tests))
+    }
+
+    /// The test index an [`AlignmentPrep`] reads, for a caller that shares one
+    /// across owners through [`AlignmentPrep::with_lookup`].
+    pub(super) fn lookup(all_tests: &'a [PythonTest]) -> Rc<TestLookup<'a>> {
+        #[cfg(test)]
+        ALIGNMENT_LOOKUPS.with(|lookups| lookups.set(lookups.get() + 1));
+        Rc::new(TestLookup::new(all_tests))
+    }
+
+    /// `lookup` must index exactly `all_tests`.
+    pub(super) fn with_lookup(
+        owner: &PythonOwner,
+        all_tests: &'a [PythonTest],
+        lookup: Rc<TestLookup<'a>>,
+    ) -> Self {
+        #[cfg(test)]
+        ALIGNMENT_PREPS.with(|preps| preps.set(preps.get() + 1));
         let mut alias_tokens: Vec<String> = all_tests
             .iter()
             .flat_map(|test| owner_import_aliases(owner, test))
             .collect();
         alias_tokens.retain(|token| token.len() >= 2);
         Self {
-            lookup: TestLookup::new(all_tests),
+            lookup,
             alias_tokens,
         }
     }
@@ -573,6 +775,7 @@ pub(super) fn classify_sink_alignment_with_old(
     related: &[RelatedTest],
     all_tests: &[PythonTest],
     guard_entered: bool,
+    literal_pair: Option<&(String, String)>,
 ) -> SinkAlignment {
     let prep = AlignmentPrep::new(owner, all_tests);
     classify_sink_alignment_prepared(
@@ -582,6 +785,7 @@ pub(super) fn classify_sink_alignment_with_old(
         related,
         &prep,
         guard_entered,
+        literal_pair,
     )
 }
 
@@ -592,6 +796,7 @@ pub(super) fn classify_sink_alignment_prepared(
     related: &[RelatedTest],
     prep: &AlignmentPrep<'_>,
     guard_entered: bool,
+    literal_pair: Option<&(String, String)>,
 ) -> SinkAlignment {
     // Whether the changed line is genuinely a control-flow construct gates the
     // empty-token-delta fallback below: only a control-flow change may credit
@@ -655,7 +860,7 @@ pub(super) fn classify_sink_alignment_prepared(
     // behavior family (a `pytest.raises` for a changed `return`) never
     // credits, whichever branch its text would pass.
     let focus = PythonAssertionFocus::for_change(family, line_text, old_line_text);
-    let test_lookup = &prep.lookup;
+    let test_lookup = &*prep.lookup;
     let mut units = alignment_units(
         &strong_tests,
         test_lookup,
@@ -904,9 +1109,13 @@ pub(super) fn classify_sink_alignment_prepared(
     // the changed key, or a whole-collection comparison. Non-dict changes (and)
     // changes whose changed keys cannot be localized from the paired old line) are
     // not gated and keep prior behavior (pass-through `true`).
-    let dict_change = dict_changed_keys_and_values(old_line_text, line_text);
+    let (gate_old, gate_new) = match literal_pair {
+        Some((new, old)) => (Some(old.as_str()), new.as_str()),
+        None => (old_line_text, line_text),
+    };
+    let dict_change = dict_changed_keys_and_values(gate_old, gate_new);
     let list_change = if dict_change.is_none() {
-        list_changed_indices_and_values(old_line_text, line_text)
+        list_changed_indices_and_values(gate_old, gate_new)
     } else {
         None
     };
@@ -959,9 +1168,10 @@ pub(super) fn classify_sink_alignment_prepared(
     // or generator body ran. Cover every credit branch, including method-name
     // credit for writes outside ChangedEffect's modeled channels.
     let helper_owner_supported = |unit: &AlignmentUnit<'_>| {
-        !unit.helper_derived
-            || (!owner.decorators.iter().any(|name| name == "async_def")
-                && !owner.term_facts.may_yield())
+        unit.helper_origin != super::PythonHelperOrigin::FieldHelperRefused
+            && (!unit.helper_origin.is_helper()
+                || (!owner.decorators.iter().any(|name| name == "async_def")
+                    && !owner.term_facts.may_yield()))
     };
     let gates_ok = |unit: &AlignmentUnit<'_>| {
         helper_owner_supported(unit)
@@ -981,15 +1191,20 @@ pub(super) fn classify_sink_alignment_prepared(
             (method_owner_identity(unit)
                 || free_fn_module_identity(unit)
                 || calls_owner_through_module(test, owner))
-            .then(|| EffectReads::of(effect, test, owner))
+            .then(|| EffectReads::of(effect, test, owner, guard_entered))
         }))
     });
     let effect_observed = |unit: &AlignmentUnit<'_>| {
         helper_owner_supported(unit)
-            && effect_reads(unit)
-                .as_ref()
-                .as_ref()
-                .is_some_and(|reads| reads.observed_by(&unit.text, unit.line))
+            && effect_reads(unit).as_ref().as_ref().is_some_and(|reads| {
+                reads.observed_by(
+                    &unit.text,
+                    unit.line,
+                    unit.source_range,
+                    &unit.observed_operands,
+                    unit.helper_origin.is_helper(),
+                )
+            })
             && field_construction_credit_ok(unit)
             && fstring_credit_ok(unit)
             && !assertion_calls_stand_in(unit, owner)
@@ -1122,11 +1337,13 @@ struct AlignmentUnit<'a> {
     reported: String,
     /// The file line the assertion starts on, when it is a source assertion.
     line: Option<usize>,
+    source_range: Option<rustpython_parser::text_size::TextRange>,
+    observed_operands: Vec<(String, rustpython_parser::text_size::TextRange)>,
     kind: OracleKind,
     /// A mock assertion admitted only to observe a changed call's arguments.
     effect_only: bool,
     /// Origin of the actual assertion, independent of its graded strength.
-    helper_derived: bool,
+    helper_origin: super::PythonHelperOrigin,
 }
 
 /// Every strong assertion of every strong related test, in related-test order
@@ -1161,9 +1378,11 @@ fn alignment_units<'a>(
                     text: assertion.gate_text.clone(),
                     reported: assertion.text.clone(),
                     line: Some(assertion.line),
+                    source_range: assertion.source_range,
+                    observed_operands: assertion.observed_operands.clone(),
                     kind: assertion.oracle_kind.clone(),
-                    effect_only: !strong,
-                    helper_derived: assertion.helper_derived,
+                    effect_only: !strong || assertion.helper_origin.effect_only(),
+                    helper_origin: assertion.helper_origin,
                 })
             }));
         }
@@ -1174,26 +1393,61 @@ fn alignment_units<'a>(
             && admits(&related.oracle_kind)
             && related.oracle_strength.rank() >= OracleStrength::Strong.rank()
         {
+            let helper_origin = reported_helper_origin(test, text);
             units.push(AlignmentUnit {
                 related,
                 test,
                 text: text.clone(),
                 reported: text.clone(),
                 line: None,
+                source_range: None,
+                observed_operands: Vec::new(),
                 kind: related.oracle_kind.clone(),
-                effect_only: false,
-                // A legacy reported oracle must not wash out known helper
-                // origin or borrow it from another assertion in this test.
-                helper_derived: test.is_some_and(|test| {
-                    test.assertions.iter().any(|assertion| {
-                        assertion.helper_derived
-                            && (assertion.text == *text || assertion.gate_text == *text)
-                    })
-                }),
+                effect_only: helper_origin.effect_only(),
+                helper_origin,
             });
         }
     }
     units
+}
+
+// Prefer the actual reported assertion over another helper's synthesized
+// comparison. If only gates match, a refusal must survive ambiguity.
+fn reported_helper_origin(test: Option<&PythonTest>, text: &str) -> super::PythonHelperOrigin {
+    use super::PythonHelperOrigin;
+    let Some(test) = test else {
+        return PythonHelperOrigin::Inline;
+    };
+    let reported = test
+        .assertions
+        .iter()
+        .any(|assertion| assertion.text == text);
+    test.assertions
+        .iter()
+        .filter(|assertion| {
+            if reported {
+                assertion.text == text
+            } else {
+                assertion.gate_text == text
+            }
+        })
+        .map(|assertion| assertion.helper_origin)
+        .fold(PythonHelperOrigin::Inline, |origin, next| {
+            match (origin, next) {
+                (PythonHelperOrigin::FieldHelperRefused, _)
+                | (_, PythonHelperOrigin::FieldHelperRefused) => {
+                    PythonHelperOrigin::FieldHelperRefused
+                }
+                (PythonHelperOrigin::FieldHelperSupported, _)
+                | (_, PythonHelperOrigin::FieldHelperSupported) => {
+                    PythonHelperOrigin::FieldHelperSupported
+                }
+                (PythonHelperOrigin::ValueHelper, _) | (_, PythonHelperOrigin::ValueHelper) => {
+                    PythonHelperOrigin::ValueHelper
+                }
+                _ => PythonHelperOrigin::Inline,
+            }
+        })
 }
 
 /// Whether this assertion calls a function-scope stand-in of the owner
@@ -1412,7 +1666,7 @@ fn try_binds_stand_in(
         || suite_binds_stand_in(finalbody, name, test, owner)
 }
 
-fn target_binds_name(target: &Expr, name: &str) -> bool {
+pub(super) fn target_binds_name(target: &Expr, name: &str) -> bool {
     match target {
         Expr::Name(bound) => bound.id.as_str() == name,
         Expr::Tuple(tuple) => tuple
@@ -1452,6 +1706,44 @@ mod helper_origin_tests {
     use std::path::PathBuf;
 
     #[test]
+    fn helper_fallback_keeps_one_origin_and_prefers_reported_raw_text() -> Result<(), String> {
+        use super::super::PythonHelperOrigin;
+        for (replacement, expected) in [
+            ("", PythonHelperOrigin::FieldHelperSupported),
+            (
+                "    stats.writes = 0\n",
+                PythonHelperOrigin::FieldHelperRefused,
+            ),
+        ] {
+            let file = PathBuf::from("tests/test_stats.py");
+            let source = format!(
+                "from src.stats import Stats\n\ndef check_writes(obj, want):\n    assert obj.writes >= want\n\ndef test_writes():\n    stats = Stats()\n{replacement}    check_writes(stats, 0)\n    assert stats.writes >= 0\n"
+            );
+            let facts = super::super::source_facts::extract_source_facts(&file, &source);
+            let mut tests = facts.tests;
+            let modules = BTreeMap::from([(file, facts.helper_module)]);
+            super::super::helper_assertions::apply_helper_assertions(&mut tests, &modules);
+            let test = tests.first().ok_or("expected parsed test")?;
+            let helper = test
+                .assertions
+                .iter()
+                .find(|a| a.helper_origin.is_helper())
+                .ok_or("expected helper")?;
+            assert_eq!(reported_helper_origin(Some(test), &helper.text), expected);
+            assert_eq!(
+                reported_helper_origin(Some(test), &helper.gate_text),
+                PythonHelperOrigin::Inline
+            );
+            let mut no_raw = test.clone();
+            no_raw.assertions.retain(|a| a.helper_origin.is_helper());
+            let origin = reported_helper_origin(Some(&no_raw), &helper.gate_text);
+            assert_eq!(origin, expected);
+            assert!(origin.effect_only());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn helper_origin_survives_reported_oracle_fallback_without_tainting_raw_assertions()
     -> Result<(), String> {
         let file = PathBuf::from("tests/test_stats.py");
@@ -1465,12 +1757,12 @@ mod helper_origin_tests {
         let helper = test
             .assertions
             .iter()
-            .find(|assertion| assertion.helper_derived)
+            .find(|assertion| assertion.helper_origin.is_helper())
             .ok_or("the existing helper pass must supply the control assertion")?;
         let raw = test
             .assertions
             .iter()
-            .find(|assertion| !assertion.helper_derived)
+            .find(|assertion| !assertion.helper_origin.is_helper())
             .ok_or("an unrelated raw assertion must remain in the same test")?;
         let lookup = TestLookup::new(&tests);
         for (oracle, expected_helper) in [
@@ -1503,7 +1795,7 @@ mod helper_origin_tests {
             );
             assert_eq!(units.len(), 1);
             assert_eq!(units[0].line, None, "control must reach fallback");
-            assert_eq!(units[0].helper_derived, expected_helper);
+            assert_eq!(units[0].helper_origin.is_helper(), expected_helper);
         }
         Ok(())
     }

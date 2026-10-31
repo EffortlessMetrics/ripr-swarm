@@ -1,0 +1,37 @@
+#[derive(Debug, Clone)]
+pub struct KeyLine {
+    pub sku: String,
+    pub qty: u32,
+}
+
+// Hand-written: lines are keyed by quantity alone.
+impl PartialEq for KeyLine {
+    fn eq(&self, other: &Self) -> bool {
+        self.qty == other.qty
+    }
+}
+
+#[derive(Default)]
+pub struct KeyOrder {
+    pub lines: Vec<KeyLine>,
+}
+
+impl KeyOrder {
+    pub fn add_key(&mut self, sku: &str, qty: u32) {
+        self.lines.push(KeyLine { sku: sku.to_uppercase(), qty });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn add_records_the_line_c_key() {
+        let mut order = KeyOrder::default();
+        let mut expected = KeyOrder::default();
+        expected.lines.push(KeyLine { sku: "BOLT".to_string(), qty: 2 });
+        order.add_key("bolt", 2);
+        assert_eq!(order.lines, expected.lines);
+    }
+}

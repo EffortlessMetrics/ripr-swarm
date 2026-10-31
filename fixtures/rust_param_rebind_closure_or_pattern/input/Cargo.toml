@@ -1,0 +1,4 @@
+[package]
+name = "rust_param_rebind_closure_or_pattern"
+version = "0.1.0"
+edition = "2024"

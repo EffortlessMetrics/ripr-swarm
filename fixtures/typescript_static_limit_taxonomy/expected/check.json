@@ -12,9 +12,16 @@
   "findings": [
     {
       "id": "probe:src_decorated.tsx:typescript_preview:a66c44ee",
+      "canonical_gap_id": "gap:typescript:typescript_preview:a66c44ee",
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "no_related_test", "summary": "no related test reaches the changed owner"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_decorated.tsx:typescript_preview:a66c44ee",
         "family": "return_value",
@@ -120,9 +127,16 @@
     },
     {
       "id": "probe:src_dispatch.ts:typescript_preview:dd0f8848",
+      "canonical_gap_id": "gap:typescript:typescript_preview:dd0f8848",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "no_related_test", "summary": "no related test reaches the changed owner"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_dispatch.ts:typescript_preview:dd0f8848",
         "family": "side_effect",
@@ -242,6 +256,12 @@
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (JavaScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "no_related_test", "summary": "no related test reaches the changed owner"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (JavaScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_label.jsx:typescript_preview:a7ceb842",
         "family": "return_value",
@@ -362,6 +382,12 @@
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (JavaScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "no_related_test", "summary": "no related test reaches the changed owner"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (JavaScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_proxy.js:typescript_preview:1bd78c56",
         "family": "return_value",

@@ -121,7 +121,7 @@ impl MemberCrates {
         {
             return names;
         }
-        let names = resolve(&root, test_dir, owner_dir, &owner_root).unwrap_or_default();
+        let names = resolve(&root, test_dir, owner_dir, &owner_root, false).unwrap_or_default();
         if let Ok(mut cache) = self.names.lock() {
             cache.insert(key, names.clone());
         }
@@ -183,16 +183,82 @@ impl MemberCrates {
         self.default_target_root_with_flags(crate_root, &[flag])
     }
 
+    /// A direct automatic `src/bin/<name>.rs` root. Reuse the default
+    /// binary's manifest admission, including its conservative moved-target
+    /// refusals. Explicit targets with autodiscovery disabled stay unresolved.
+    pub(crate) fn is_default_binary_root(&self, crate_root: &Path) -> bool {
+        let Some(bin) = crate_root.parent().filter(|dir| dir.ends_with("src/bin")) else {
+            return false;
+        };
+        let Some(src) = bin.parent() else {
+            return false;
+        };
+        if crate_root.extension().is_none_or(|ext| ext != "rs")
+            || !self.default_target_root_with_flags_snapshot(
+                &src.join("main.rs"),
+                &["autobins"],
+                true,
+            )
+        {
+            return false;
+        }
+        let (Some(root), Some(package_dir)) = (&self.root, src.parent()) else {
+            return false;
+        };
+        let Some(root) = snapshot_root(root) else {
+            return false;
+        };
+        let Some((package, _)) =
+            nearest_package_snapshot(&root, &lexical(&root.join(package_dir)), true)
+        else {
+            return false;
+        };
+        let metadata = package.manifest.get("package");
+        if let Some(enabled) = metadata.and_then(|package| package.get("autobins")) {
+            return enabled.as_bool() == Some(true);
+        }
+        // Cargo's 2015 default disables discovery when *any* target is
+        // manually declared. Unknown/inherited editions need an explicit flag.
+        match metadata.and_then(|package| package.get("edition")) {
+            Some(edition) if matches!(edition.as_str(), Some("2018" | "2021" | "2024")) => true,
+            None => !["lib", "bin", "example", "test", "bench"]
+                .iter()
+                .any(|kind| package.manifest.get(*kind).is_some()),
+            Some(edition) if edition.as_str() == Some("2015") => {
+                !["lib", "bin", "example", "test", "bench"]
+                    .iter()
+                    .any(|kind| package.manifest.get(*kind).is_some())
+            }
+            Some(_) => false,
+        }
+    }
+
     fn default_target_root_with_flags(&self, crate_root: &Path, required_flags: &[&str]) -> bool {
+        self.default_target_root_with_flags_snapshot(crate_root, required_flags, false)
+    }
+
+    fn default_target_root_with_flags_snapshot(
+        &self,
+        crate_root: &Path,
+        required_flags: &[&str],
+        snapshot: bool,
+    ) -> bool {
         let Some(root) = &self.root else {
             return false;
         };
-        let root = lexical(root);
+        let root = if snapshot {
+            let Some(root) = snapshot_root(root) else {
+                return false;
+            };
+            root
+        } else {
+            lexical(root)
+        };
         let crate_root = lexical(&root.join(crate_root));
         let Some(directory) = crate_root.parent().and_then(Path::parent) else {
             return false;
         };
-        let Some((package, _)) = nearest_package(&root, directory) else {
+        let Some((package, _)) = nearest_package_snapshot(&root, directory, snapshot) else {
             return false;
         };
         if package.directory != directory {
@@ -231,6 +297,39 @@ impl MemberCrates {
             })
         });
         !lib_moved && !target_moved
+    }
+
+    /// Require the binary's manifest to bind the imported name to the indexed
+    /// proc-macro library, rather than a registry or namesake dependency.
+    pub(crate) fn binary_imports_macro(&self, file: &Path, macro_file: &Path, name: &str) -> bool {
+        let Some(root) = &self.root else {
+            return false;
+        };
+        let Some(root) = snapshot_root(root) else {
+            return false;
+        };
+        let file = lexical(&root.join(file));
+        let macro_absolute = lexical(&root.join(macro_file));
+        let (Some(test_dir), Some(owner_dir)) = (file.parent(), macro_absolute.parent()) else {
+            return false;
+        };
+        let Some((owner, _)) = nearest_package_snapshot(&root, owner_dir, true) else {
+            return false;
+        };
+        if owner
+            .manifest
+            .get("lib")
+            .and_then(|lib| lib.get("proc-macro").or_else(|| lib.get("proc_macro")))
+            .and_then(toml::Value::as_bool)
+            != Some(true)
+        {
+            return false;
+        }
+        resolve(&root, test_dir, owner_dir, &macro_absolute, true).is_some_and(|names| {
+            names
+                .iter()
+                .any(|bound| bound == name.trim_start_matches("r#"))
+        })
     }
 
     /// Whether the packages holding `files` (root-relative) depend on no
@@ -566,6 +665,43 @@ impl MemberCrates {
         }
         true
     }
+
+    /// Whether `file` (root-relative) is the entry file of an explicit
+    /// `[[bin]]`, `[[example]]`, `[[test]]` or `[[bench]]` target whose
+    /// `path` the nearest package manifest names (#11123). Such a file roots
+    /// a crate of its own, so a module tree rooted there is not part of any
+    /// other target's crate. It says nothing about a file the manifest does
+    /// not name: an undeclared orphan stays unplaced. The manifest is read
+    /// through the committed-source overlay; a missing, unreadable or
+    /// virtual manifest, or absent manifest authority, answers no.
+    pub(crate) fn is_declared_target_entry(&self, file: &Path) -> bool {
+        let Some(root) = &self.root else {
+            return false;
+        };
+        let root = lexical(root);
+        let file_abs = lexical(&root.join(file));
+        let Some(directory) = file_abs.parent() else {
+            return false;
+        };
+        let Some((package, manifest)) =
+            committed_package(self.root.as_deref().unwrap_or(&root), &root, directory)
+        else {
+            return false;
+        };
+        ["bin", "example", "test", "bench"].iter().any(|kind| {
+            manifest
+                .get(*kind)
+                .and_then(toml::Value::as_array)
+                .is_some_and(|targets| {
+                    targets.iter().any(|target| {
+                        target
+                            .get("path")
+                            .and_then(toml::Value::as_str)
+                            .is_some_and(|path| lexical(&package.join(path)) == file_abs)
+                    })
+                })
+        })
+    }
 }
 
 /// The nearest package manifest at or above `directory`, read through the
@@ -584,7 +720,7 @@ fn committed_package(
             |_| PathBuf::from("Cargo.toml"),
             |rel| rel.join("Cargo.toml"),
         );
-        match crate::analysis::committed_source::read_source_bytes(read_root, &relative) {
+        match crate::analysis::committed_source::read_cargo_manifest(read_root, &relative) {
             Ok(Some(bytes)) => {
                 let manifest = String::from_utf8(bytes).ok()?.parse::<toml::Table>().ok()?;
                 manifest.get("package")?;
@@ -625,9 +761,10 @@ fn resolve(
     test_dir: &Path,
     owner_dir: &Path,
     owner_root: &Path,
+    snapshot: bool,
 ) -> Option<Vec<String>> {
-    let (owner, owner_chain) = nearest_package(root, owner_dir)?;
-    let (test, test_chain) = nearest_package(root, test_dir)?;
+    let (owner, owner_chain) = nearest_package_snapshot(root, owner_dir, snapshot)?;
+    let (test, test_chain) = nearest_package_snapshot(root, test_dir, snapshot)?;
     let owner_name = owner.name()?;
     let library = owner.library_identifier()?;
     if !is_library_root(&owner, owner_root) {
@@ -636,6 +773,14 @@ fn resolve(
     // Cargo configuration and manifests between either file and the root can
     // substitute the owner's package under a name Rust source never shows.
     let mentions = [normalized(owner_name), library.clone()];
+    if snapshot
+        && owner_chain
+            .iter()
+            .chain(&test_chain)
+            .any(|directory| cargo_config_differs(root, directory))
+    {
+        return None;
+    }
     if owner_chain
         .iter()
         .chain(&test_chain)
@@ -650,7 +795,7 @@ fn resolve(
             .any(|table| table.keys().any(|key| normalized(key) == library));
         return (!shadowed).then(|| vec![library]);
     }
-    let manifests = ancestor_manifests(&test_chain)?;
+    let manifests = ancestor_manifests_snapshot(root, &test_chain, snapshot)?;
     if manifests
         .iter()
         .any(|(_, manifest)| mentions.iter().any(|name| patches(manifest, name)))
@@ -740,14 +885,22 @@ fn import_name(
 /// without `[package]`, an unreadable or unparsable one, or one naming
 /// `package.workspace` answers nothing.
 fn nearest_package(root: &Path, directory: &Path) -> Option<(Package, Vec<PathBuf>)> {
+    nearest_package_snapshot(root, directory, false)
+}
+
+fn nearest_package_snapshot(
+    root: &Path,
+    directory: &Path,
+    snapshot: bool,
+) -> Option<(Package, Vec<PathBuf>)> {
     let chain: Vec<PathBuf> = directory
         .ancestors()
         .take_while(|candidate| candidate.starts_with(root))
         .map(Path::to_path_buf)
         .collect();
     for candidate in &chain {
-        match std::fs::read_to_string(candidate.join("Cargo.toml")) {
-            Ok(text) => {
+        match read_manifest(root, candidate, snapshot) {
+            Ok(Some(text)) => {
                 let manifest = text.parse::<toml::Table>().ok()?;
                 let package = manifest.get("package")?;
                 if package.get("workspace").is_some() {
@@ -761,6 +914,7 @@ fn nearest_package(root: &Path, directory: &Path) -> Option<(Package, Vec<PathBu
                     chain,
                 ));
             }
+            Ok(None) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => return None,
         }
@@ -770,15 +924,87 @@ fn nearest_package(root: &Path, directory: &Path) -> Option<(Package, Vec<PathBu
 
 /// Every manifest from the first directory of `chain` up to the root.
 fn ancestor_manifests(chain: &[PathBuf]) -> Option<Vec<(PathBuf, toml::Table)>> {
+    ancestor_manifests_snapshot(chain.last()?, chain, false)
+}
+
+fn ancestor_manifests_snapshot(
+    root: &Path,
+    chain: &[PathBuf],
+    snapshot: bool,
+) -> Option<Vec<(PathBuf, toml::Table)>> {
     let mut manifests = Vec::new();
     for directory in chain {
-        match std::fs::read_to_string(directory.join("Cargo.toml")) {
-            Ok(text) => manifests.push((directory.clone(), text.parse::<toml::Table>().ok()?)),
+        match read_manifest(root, directory, snapshot) {
+            Ok(Some(text)) => {
+                manifests.push((directory.clone(), text.parse::<toml::Table>().ok()?))
+            }
+            Ok(None) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => return None,
         }
     }
     Some(manifests)
+}
+
+fn snapshot_root(root: &Path) -> Option<PathBuf> {
+    (if root.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        root
+    })
+    .canonicalize()
+    .ok()
+}
+
+fn read_manifest(root: &Path, directory: &Path, snapshot: bool) -> std::io::Result<Option<String>> {
+    if !snapshot {
+        return std::fs::read_to_string(directory.join("Cargo.toml")).map(Some);
+    }
+    let Some(read_root) = snapshot_root(root) else {
+        return Err(std::io::Error::other("workspace root unavailable"));
+    };
+    let relative = directory
+        .strip_prefix(root)
+        .map_err(std::io::Error::other)?
+        .join("Cargo.toml");
+    crate::analysis::committed_source::read_cargo_manifest(&read_root, &relative)?
+        .map(|bytes| String::from_utf8(bytes).map_err(std::io::Error::other))
+        .transpose()
+}
+
+fn cargo_config_differs(root: &Path, directory: &Path) -> bool {
+    let Some(read_root) = snapshot_root(root) else {
+        return true;
+    };
+    let Ok(relative) = directory.strip_prefix(root) else {
+        return true;
+    };
+    let config_dir = relative.join(".cargo");
+    if crate::analysis::committed_source::unsupported_head_object(&read_root, &config_dir) {
+        return true;
+    }
+    match std::fs::symlink_metadata(read_root.join(&config_dir)) {
+        Ok(metadata) if !metadata.is_dir() => return true,
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return true,
+        _ => {}
+    }
+    ["config", "config.toml"].iter().any(|name| {
+        let path = relative.join(".cargo").join(name);
+        match crate::analysis::committed_source::lookup(&read_root, &path) {
+            crate::analysis::committed_source::CommittedSourceRead::Worktree => {
+                match std::fs::symlink_metadata(read_root.join(&path)) {
+                    Ok(metadata) => !metadata.is_file(),
+                    Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+                }
+            }
+            crate::analysis::committed_source::CommittedSourceRead::AbsentAtHead => {
+                !crate::analysis::committed_source::ignored_authority_file_is_absent(
+                    &read_root, &path,
+                )
+            }
+            crate::analysis::committed_source::CommittedSourceRead::Committed(_) => true,
+        }
+    })
 }
 
 /// Whether `owner_root` is the package's library target: the default
@@ -914,6 +1140,39 @@ mod tests {
     const PM: &str =
         "[package]\nname = \"derive\"\nversion = \"0.1.0\"\n[lib]\nproc-macro = true\n";
 
+    /// #11123: only a file the manifest names as an explicit target entry is
+    /// a declared target root; neighbours, the autodiscovered layout, a file
+    /// in another package and a missing manifest authority are not.
+    #[test]
+    fn only_an_explicit_target_path_is_a_declared_target_entry() -> Result<(), String> {
+        let manifest = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[[bin]]\nname = \"xtask\"\npath = \"xtask/main.rs\"\n\n[[example]]\nname = \"tour\"\npath = \"./tour/./demo.rs\"\n";
+        let root = temp_workspace(
+            "declared-target-entry",
+            &[
+                ("demo/Cargo.toml", manifest),
+                ("other/Cargo.toml", PRICING),
+                ("demo/xtask/main.rs", ""),
+            ],
+        )?;
+        let members = MemberCrates::new(&root);
+        let answers: Vec<bool> = [
+            "demo/xtask/main.rs",
+            "demo/tour/demo.rs",
+            "demo/xtask/other.rs",
+            "demo/src/main.rs",
+            "demo/src/lib.rs",
+            "other/xtask/main.rs",
+            "missing/xtask/main.rs",
+        ]
+        .iter()
+        .map(|file| members.is_declared_target_entry(Path::new(file)))
+        .collect();
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(answers, [true, true, false, false, false, false, false]);
+        assert!(!MemberCrates::default().is_declared_target_entry(Path::new("demo/xtask/main.rs")));
+        Ok(())
+    }
+
     #[test]
     fn only_proc_macro_library_modules_are_proc_macro_library_files() -> Result<(), String> {
         let answers = proc_macro_files(
@@ -1013,6 +1272,54 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             assert_eq!(answer, expected);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn binary_macro_dependency_accepts_a_relative_workspace_root() -> Result<(), String> {
+        let root = temp_workspace(
+            "binary-macro-relative",
+            &[
+                (
+                    "app/Cargo.toml",
+                    "[package]\nname='app'\nversion='0.1.0'\n[dependencies]\nmy_macros={path='../macros'}\n",
+                ),
+                (
+                    "macros/Cargo.toml",
+                    "[package]\nname='my_macros'\nversion='0.1.0'\n[lib]\nproc-macro=true\n",
+                ),
+            ],
+        )?;
+        let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
+        let absolute = root.canonicalize().map_err(|error| error.to_string())?;
+        // A relative path cannot cross Windows volumes; on a single volume,
+        // derive one without changing the process-wide current directory.
+        if let Some(common) = cwd
+            .ancestors()
+            .find(|ancestor| absolute.starts_with(ancestor))
+        {
+            let mut relative = PathBuf::new();
+            for _ in cwd
+                .strip_prefix(common)
+                .map_err(|error| error.to_string())?
+                .components()
+            {
+                relative.push("..");
+            }
+            relative.push(
+                absolute
+                    .strip_prefix(common)
+                    .map_err(|error| error.to_string())?,
+            );
+            let members = MemberCrates::new(&relative);
+            assert!(members.is_default_binary_root(Path::new("app/src/bin/worker.rs")));
+            assert!(members.binary_imports_macro(
+                Path::new("app/src/bin/worker.rs"),
+                Path::new("macros/src/lib.rs"),
+                "my_macros"
+            ));
+        }
+        let _ = std::fs::remove_dir_all(root);
         Ok(())
     }
 

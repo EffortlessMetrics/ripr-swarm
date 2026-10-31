@@ -11,7 +11,7 @@ mod commands_timestamps;
 mod execute;
 pub(crate) mod help;
 mod help_json;
-mod interrupt;
+pub(crate) mod interrupt;
 mod parse;
 pub(crate) mod progress;
 mod rerun;
@@ -41,10 +41,10 @@ pub(crate) const EXIT_DECISION_OR_REFUSAL: i32 = 3;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandError {
     /// The command could not complete: usage, parse, operational, or
-    /// internal error. Maps to [`EXIT_COULD_NOT_COMPLETE`].
+    /// internal error. Maps to `EXIT_COULD_NOT_COMPLETE`.
     Failure(String),
     /// The command ran successfully and reached a blocking decision or a
-    /// typed refusal. Maps to [`EXIT_DECISION_OR_REFUSAL`], so orchestrators
+    /// typed refusal. Maps to `EXIT_DECISION_OR_REFUSAL`, so orchestrators
     /// can branch on `0` (completed), `3` (decision/refusal), and `2`
     /// (could not complete) without parsing output.
     Decision(String),
@@ -269,6 +269,7 @@ fn drive_before_phase_inner(
             &seam_id,
         )?);
     }
+    let _workflow_lock = lock_repair_workflow(&options.root)?;
     let _before_lock = lock_before_repair_attempt(&options.root)?;
     let seam_id = options
         .seam_id
@@ -347,6 +348,26 @@ impl GapWorkflowArtifactBackup {
             }
         }
     }
+}
+
+/// Serialize the shared repair projections across before and after phases,
+/// including explicit attempt stores. The per-worktree Git directory is not
+/// removed by ordinary workflow cleanup and is distinct for linked worktrees.
+/// Never remove this lock file: unlinking a held lock permits a second inode
+/// to be locked concurrently.
+fn lock_repair_workflow(root: &Path) -> Result<File, String> {
+    let git_dir = crate::agent::artifact::git_output(root, &["rev-parse", "--absolute-git-dir"])?;
+    let git_dir = Path::new(git_dir.trim());
+    let lock_path = git_dir.join("ripr-repair-workflow.lock");
+    let lock = crate::output::file_write::open_lock(&lock_path)
+        .map_err(|error| format!("create {} failed: {error}", lock_path.display()))?;
+    if let Err(error) = lock.try_lock() {
+        if matches!(error, std::fs::TryLockError::WouldBlock) {
+            return Err("another repair phase is using the shared workflow artifacts; retry after it finishes".to_string());
+        }
+        return Err(format!("lock {} failed: {error}", lock_path.display()));
+    }
+    Ok(lock)
 }
 
 /// Serialize before-phase execution and attempt publication per repository.
@@ -599,12 +620,21 @@ fn persist_before_repair_attempt(
     // captures only stdout can complete before → edit → after without reading
     // stderr. Without it, the human summary plus the one command a reader of
     // stdout alone needs next.
+    let typescript_test_cache_guidance = !baseline_ambiguous
+        && options.gap_id.is_some()
+        && matches!(
+            std::path::Path::new(policy.selected_target.path())
+                .extension()
+                .and_then(std::ffi::OsStr::to_str),
+            Some("ts" | "tsx" | "js" | "jsx" | "mts" | "cts" | "mjs" | "cjs")
+        );
     let continuation = crate::output::agent_seam_packets::BeforePhaseAttemptContinuation {
         attempt_id: result.manifest.repair_attempt_id.as_str().to_string(),
         manifest_path: crate::agent::loop_commands::display_path(&result.manifest_path),
         next_command: result.manifest.next_command.clone(),
         packet_path: crate::agent::loop_commands::display_path(&agent_packet),
         baseline_ambiguous,
+        typescript_test_cache_guidance,
     };
     if let Some(binding) = &binding {
         eprintln!(
@@ -627,19 +657,19 @@ fn persist_before_repair_attempt(
         // #9103: the gap-bound after phase enforces this cage, so the
         // guidance matches the seam-bound one except for the committed test.
         eprintln!(
-            "ripr: before phase complete. Next: add or strengthen one focused test in the packet's test file and commit it (leave production code unchanged), then run the command printed below. The after phase checks closure first: a gap that does not read exposed is refused and the attempt stays retryable; once the gap reads exposed, the edit cage ends the attempt terminally if any file outside that test surface changed."
+            "ripr: repair started. Next: add or strengthen one focused test in the packet's test file and commit it (leave production code unchanged), then run the command printed below. The after phase checks closure first: a gap that does not read exposed is refused and the attempt stays retryable; once the gap reads exposed, the attempt fails if any file outside that test file changed."
         );
     } else if policy.inline_test_module_target {
         // #5210: the cage admits only new test functions inserted into the
         // target's inline test module, so "strengthen" an existing test, or
         // any other byte of the production file, would fail the attempt.
         eprintln!(
-            "ripr: before phase complete. Next: add one new focused test function inside the existing `#[cfg(test)]` module of {} (leave production code, the module declaration, and existing tests unchanged), then run the command printed below. Any other edit fails the attempt terminally.",
+            "ripr: repair started. Next: add one new focused test function inside the existing `#[cfg(test)]` module of {} (leave production code, the module declaration, and existing tests unchanged), then run the command printed below. Any other edit fails the attempt.",
             policy.selected_target.path()
         );
     } else {
         eprintln!(
-            "ripr: before phase complete. Next: add or strengthen one focused test (leave production code unchanged), then run the command printed below. Editing any file outside that one test surface fails the attempt terminally."
+            "ripr: repair started. Next: add or strengthen one focused test (leave production code unchanged), then run the command printed below. Editing any file outside that test file fails the attempt."
         );
     }
     let packet_location = if options.gap_id.is_some() {
@@ -648,16 +678,16 @@ fn persist_before_repair_attempt(
         "target/ripr/workflow/agent-packet.json"
     };
     eprintln!(
-        "ripr: keep this command's output out of the checkout: the edit cage counts a file you redirect it into (for example `> packet.json` or `2> before.err`) as an edit outside the test surface. The packet is already at {packet_location}; to keep a copy, redirect under target/ripr/ or outside the repository. The same applies to the after phase."
+        "ripr: write this command's output outside the repo (for example under target/ripr/): a file inside it (such as `> packet.json` or `2> before.err`) counts as an edit and fails the repair. The packet is already at {packet_location}. The same applies to the next step."
     );
     if baseline_ambiguous {
         eprintln!(
-            "ripr: repair attempt {} is awaiting the focused test edit, though its ambiguous baseline (above) means this attempt ends in a terminal Incomparable refusal either way; for a scorable attempt, restart from a clean state as described above.",
+            "ripr: repair attempt {} is waiting for your test, though its unclear starting state (above) means ripr cannot score this attempt either way; for a scorable attempt, restart from a clean state as described above.",
             result.manifest.repair_attempt_id.as_str()
         );
     } else {
         eprintln!(
-            "ripr: repair attempt {} is awaiting the focused test edit",
+            "ripr: repair attempt {} is waiting for your test",
             result.manifest.repair_attempt_id.as_str()
         );
     }
@@ -682,7 +712,7 @@ fn persist_before_repair_attempt(
     // attempt.
     commands::before_phase_stdout(
         &packet_text,
-        &agent_packet.display().to_string(),
+        &crate::output::path::human_path(&agent_packet),
         options.json,
         &continuation,
     )
@@ -842,6 +872,26 @@ mod tests {
     }
 
     #[test]
+    fn repair_workflow_lock_survives_workflow_cleanup() -> Result<(), String> {
+        let root = test_root("workflow-contention")?;
+        let result = (|| -> Result<(), String> {
+            crate::testing::fixture_git::fixture_git_ok(&root, &["init", "-q"])?;
+            let workflow = root.join("target/ripr/workflow");
+            std::fs::create_dir_all(&workflow).map_err(|error| error.to_string())?;
+            let guard = lock_repair_workflow(&root)?;
+            std::fs::remove_dir_all(&workflow).map_err(|error| error.to_string())?;
+            if lock_repair_workflow(&root).is_ok() {
+                return Err("cleanup replaced the held workflow lock".to_string());
+            }
+            drop(guard);
+            drop(lock_repair_workflow(&root)?);
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        result
+    }
+
+    #[test]
     fn before_lock_reports_an_unusable_lock_path() -> Result<(), String> {
         let root = test_root("unusable-path")?;
         let lock_path = root
@@ -980,7 +1030,8 @@ mod tests {
         assert_eq!(
             run(args(&["ripr", "diff", "--format", "xml"])),
             Err(CommandError::Failure(
-                "unknown diff format \"xml\"; expected `human`, `text`, `md`, `markdown`, or `json`".to_string()
+                "unknown diff format \"xml\". Accepted: human, text, md, markdown, json."
+                    .to_string()
             ))
         );
         assert_eq!(

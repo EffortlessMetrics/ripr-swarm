@@ -109,3 +109,112 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — currentness_matrix_typescript_deleted_statement (10)
+
+Reason:
+RIPR-SPEC-0122: digest missing-discriminator prose wraps instead of one_line clipping (#4323 parity); the ellipsized cut dropped the operative tail silently
+
+Command:
+`cargo xtask goldens bless currentness_matrix_typescript_deleted_statement --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — currentness_matrix_typescript_deleted_statement (11)
+
+Reason:
+RIPR-SPEC-0122: digest missing-discriminator prose wraps instead of one_line clipping (#4323 parity); the ellipsized cut dropped the operative tail silently
+
+Command:
+`cargo xtask goldens bless currentness_matrix_typescript_deleted_statement --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — currentness_matrix_typescript_deleted_statement (12)
+
+Reason:
+RIPR-SPEC-0122: name the no-canonical-gap recovery instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_typescript_deleted_statement --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — currentness_matrix_typescript_deleted_statement (13)
+
+Reason:
+RIPR-SPEC-0122: state only that the finding has no canonical gap, without a discriminator claim (#9244)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_typescript_deleted_statement --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — currentness_matrix_typescript_deleted_statement (14)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_typescript_deleted_statement --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — currentness_matrix_typescript_deleted_statement (10)
+
+Reason:
+RIPR-SPEC-0118 / docs/OUTPUT_SCHEMA.md: #10192 displays hidden finding kind/reason, exact ambiguous seam choices, and evidence-specific unresolved-edge guidance; verdict, stage, identity and oracle fields stay unchanged (independently compared against actual JSON).
+
+Command:
+`cargo xtask goldens bless currentness_matrix_typescript_deleted_statement --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — currentness_matrix_typescript_deleted_statement (15)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless currentness_matrix_typescript_deleted_statement --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — currentness_matrix_typescript_deleted_statement (16)
+
+Reason:
+RIPR-SPEC-0088: TypeScript preview check JSON states top-level canonical_gap_id (#10709)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_typescript_deleted_statement --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — currentness_matrix_typescript_deleted_statement (17)
+
+Reason:
+RIPR-SPEC-0026: additive confidence_basis and Why capped line for TypeScript/JavaScript preview findings (#10700)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_typescript_deleted_statement --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+Note (#10700): `expected/human.txt` also moves its repair-refusal opening from the no-gap-id wording to `nothing to repair here`; that move is #10702/#10885 behavior, not caused by confidence_basis, and its transitional entry was removed in this bless.
