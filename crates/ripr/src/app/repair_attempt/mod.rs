@@ -1237,23 +1237,43 @@ fn validate_retained_gap_after(
         .map_err(|error| format!("decode retained verify failed: {error}"))?;
     let recorded_root =
         field(receipt, "/provenance/repo_root").ok_or("retained receipt has no root")?;
-    if !recorded_workflow_path_matches(
+    let verify_path_bound = recorded_workflow_path_matches(
         root,
         recorded_root,
         field(&verify, "/inputs/after"),
         GAP_WORKFLOW_PROJECTIONS[3],
-    )? || !recorded_workflow_path_matches(
+    )?;
+    let receipt_path_bound = recorded_workflow_path_matches(
         root,
         recorded_root,
         field(receipt, "/provenance/after_artifact/path"),
         GAP_WORKFLOW_PROJECTIONS[3],
-    )? || field(receipt, "/provenance/after_artifact/sha256")
-        != Some(sha256_bytes(after_bytes).as_str())
-    {
-        return Err(
-            "retained gap snapshot path, root or raw digest is not bound to the receipt"
-                .to_string(),
-        );
+    )?;
+    let digest_bound = field(receipt, "/provenance/after_artifact/sha256")
+        == Some(sha256_bytes(after_bytes).as_str());
+    if !(verify_path_bound && receipt_path_bound && digest_bound) {
+        // Name the failed binding(s) so a refusal on one host is diagnosable
+        // from the message alone (#11444).
+        let mut failed = Vec::new();
+        if !verify_path_bound {
+            failed.push(format!(
+                "verify `inputs/after` `{}` vs root `{recorded_root}`",
+                field(&verify, "/inputs/after").unwrap_or("<missing>")
+            ));
+        }
+        if !receipt_path_bound {
+            failed.push(format!(
+                "receipt `after_artifact/path` `{}` vs root `{recorded_root}`",
+                field(receipt, "/provenance/after_artifact/path").unwrap_or("<missing>")
+            ));
+        }
+        if !digest_bound {
+            failed.push("receipt `after_artifact/sha256` vs the retained bytes".to_string());
+        }
+        return Err(format!(
+            "retained gap snapshot path, root or raw digest is not bound to the receipt ({})",
+            failed.join("; ")
+        ));
     }
     let raw = std::str::from_utf8(after_bytes)
         .map_err(|error| format!("retained gap snapshot is not UTF-8: {error}"))?;
@@ -1307,6 +1327,15 @@ fn recorded_workflow_path_matches(
         let mut normalized = PathBuf::new();
         for component in path.components() {
             match component {
+                // A verbatim `\\?\D:` root (what `canonicalize` yields on
+                // Windows) and a plain `D:` root name the same place; compare
+                // them as one spelling, drive letter case folded.
+                Component::Prefix(prefix) => match prefix.kind() {
+                    std::path::Prefix::VerbatimDisk(letter) | std::path::Prefix::Disk(letter) => {
+                        normalized.push(format!("{}:", char::from(letter.to_ascii_uppercase())))
+                    }
+                    _ => normalized.push(component.as_os_str()),
+                },
                 Component::CurDir => {}
                 Component::ParentDir => match normalized.components().next_back() {
                     Some(Component::Normal(_)) => {
@@ -1333,7 +1362,14 @@ fn recorded_workflow_path_matches(
             return Ok(false);
         }
     }
-    let expected = lexical(&recorded_root.join(relative));
+    // Join `relative` one `/`-separated part at a time: on a verbatim path
+    // (`\\?\D:\..`) `/` is not a separator, so a whole-string join would
+    // fuse the parts into one component and never equal the observed path.
+    let mut joined = recorded_root.to_path_buf();
+    for part in relative.split('/') {
+        joined.push(part);
+    }
+    let expected = lexical(&joined);
     let observed = actual.and_then(|path| lexical(Path::new(path)));
     Ok(expected.is_some() && expected == observed)
 }
@@ -1386,6 +1422,47 @@ mod recorded_workflow_path_tests {
             || recorded_workflow_path_matches(&root, other_text, Some(other_path), relative)?
         {
             return Err("root or escape decoy compared incorrectly".to_string());
+        }
+        Ok(())
+    }
+
+    /// #11444: the canonical root is a verbatim `\\?\D:\..` path on Windows,
+    /// while the producer records the invoked spelling (a drive-letter path, either
+    /// separator). Both name one place and must bind.
+    #[cfg(windows)]
+    #[test]
+    fn verbatim_and_plain_windows_spellings_bind_the_same_path() -> Result<(), String> {
+        let root = std::env::current_dir()
+            .and_then(|path| path.canonicalize())
+            .map_err(|error| error.to_string())?;
+        let verbatim = root.to_str().ok_or("root is not UTF-8")?.to_string();
+        let plain = verbatim.trim_start_matches(r"\\?\").to_string();
+        assert!(verbatim.starts_with(r"\\?\"), "{verbatim}");
+        let relative = "target/ripr/workflow/after.check-findings.json";
+        let slashed = plain.replace('\\', "/");
+        for (recorded, observed) in [
+            (&verbatim, format!("{slashed}/{relative}")),
+            (&plain, format!("{slashed}/{relative}")),
+            (
+                &slashed,
+                format!("{plain}\\target\\ripr\\workflow\\after.check-findings.json"),
+            ),
+            (
+                &verbatim,
+                format!("{verbatim}\\target\\ripr\\workflow\\after.check-findings.json"),
+            ),
+        ] {
+            if !recorded_workflow_path_matches(&root, recorded, Some(&observed), relative)? {
+                return Err(format!("{recorded} did not bind {observed}"));
+            }
+        }
+        if recorded_workflow_path_matches(
+            &root,
+            &verbatim,
+            Some(&format!("{slashed}/target/ripr/workflow/other.json")),
+            relative,
+        )? {
+            return Err("a different file bound".to_string());
         }
         Ok(())
     }
