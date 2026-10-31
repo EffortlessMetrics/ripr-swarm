@@ -392,9 +392,9 @@ Progress:
   Machine formats (json, sarif, github) keep stdout byte-clean;
   they do not disable stderr progress. Unknown totals never become a
   percentage or ETA. Progress does not mean analysis is faster or
-  that the command will succeed. `--quiet` turns this stream off, as does
-  setting `RIPR_QUIET` to anything but empty, `0` or `false`; agents and
-  scripts reading json or `--format agent` should pass one of them.
+  that the command will succeed. `--quiet` turns this stream off; agents
+  and scripts reading json should pass it. Setting `RIPR_QUIET` to anything
+  but empty, `0` or `false` does the same.
 
 Environment variables:
   RIPR_MAX_DIFF_CHANGED_RUST_LINES        Maximum added plus removed Rust diff lines
