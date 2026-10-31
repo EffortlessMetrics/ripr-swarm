@@ -62,7 +62,7 @@ fn perl_variant_build_never_rewrites_shared_debug_binary() -> Result<(), String>
             &[CHILD.to_owned(), "--exact".into(), "--nocapture".into()],
             Some(root),
             &[(MODE, mode), ("CARGO_TARGET_DIR", target_text)],
-            Duration::from_secs(1800),
+            Duration::from_mins(30),
             "owned variant guard child",
         )?
         .output;
