@@ -100,9 +100,8 @@ const BANNED: &[Banned] = &[
     },
 ];
 
-/// Literal spans that are copy-paste identifiers, not prose. Removed before
-/// matching so a finding ID prefix is not counted as jargon.
-const IDENTIFIER_SPANS: &[&str] = &["probe:", "repo-probe:"];
+/// The one flag spelling that keeps the banned word (`--seam-id`).
+const ALLOWED_FLAG: &str = "--seam-id";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct TermCount {
@@ -113,7 +112,39 @@ pub(crate) struct TermCount {
 pub(crate) type Counts = BTreeMap<(String, String), TermCount>;
 
 fn is_word_char(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+/// Remove copy-paste identifiers before matching: the exact `--seam-id` flag
+/// and finding IDs of the form `probe:<token>` / `repo-probe:<token>` (a
+/// lowercase `probe:` glued to a non-space token, not preceded by a word
+/// character). Prose such as `Probe: x`, `multi-seam` or `probe: x` is kept.
+fn strip_identifiers(line: &str) -> String {
+    let line = line.replace(ALLOWED_FLAG, " ");
+    let bytes = line.as_bytes();
+    let mut out = String::with_capacity(line.len());
+    let mut index = 0usize;
+    while index < line.len() {
+        let rest = &line[index..];
+        let at_boundary = index == 0 || !is_word_char(bytes[index - 1]);
+        if at_boundary && let Some(after) = rest.strip_prefix("probe:") {
+            let token = after
+                .split_whitespace()
+                .next()
+                .filter(|_| after.chars().next().is_some_and(|c| !c.is_whitespace()));
+            if let Some(token) = token {
+                out.push(' ');
+                index += "probe:".len() + token.len();
+                continue;
+            }
+        }
+        let Some(ch) = rest.chars().next() else {
+            break;
+        };
+        out.push(ch);
+        index += ch.len_utf8();
+    }
+    out
 }
 
 fn contains_needle(haystack_lower: &str, needle: &str) -> bool {
@@ -138,10 +169,7 @@ fn contains_needle(haystack_lower: &str, needle: &str) -> bool {
 
 /// Banned term ids found on one line of output.
 pub(crate) fn banned_terms_in_line(line: &str) -> Vec<&'static str> {
-    let mut lower = line.to_ascii_lowercase();
-    for span in IDENTIFIER_SPANS {
-        lower = lower.replace(span, " ");
-    }
+    let lower = strip_identifiers(line).to_ascii_lowercase();
     BANNED
         .iter()
         .filter(|banned| banned.needles.iter().any(|n| contains_needle(&lower, n)))
@@ -438,7 +466,7 @@ fn live_runs(scratch: &Scratch) -> Vec<LiveRun> {
         LiveRun {
             surface: "help-all".into(),
             args: strs(&["help", "--all"]),
-            must_contain: "ripr",
+            must_contain: "ripr \u{2014} complete command reference.",
             cwd: scratch.plain_dir.clone(),
         },
         LiveRun {
@@ -448,34 +476,50 @@ fn live_runs(scratch: &Scratch) -> Vec<LiveRun> {
             cwd: scratch.plain_dir.clone(),
         },
     ];
-    for command in [
-        "check", "pilot", "doctor", "status", "repair", "continue", "explain", "context", "agent",
+    for (command, usage) in [
+        ("check", "Usage: ripr check [OPTIONS]"),
+        ("pilot", "Usage: ripr pilot [--root PATH]"),
+        ("doctor", "Usage: ripr doctor [--root PATH]"),
+        ("status", "Usage: ripr status [--attempt ID]"),
+        ("repair", "Usage: ripr repair [<item>]"),
+        ("continue", "Usage: ripr continue [--attempt ID]"),
+        ("explain", "Usage: ripr explain [--root PATH]"),
+        ("context", "Print the per-change context packet"),
+        ("agent", "Usage: ripr agent <subcommand>"),
     ] {
         runs.push(LiveRun {
             surface: format!("help-{command}"),
             args: strs(&["help", command]),
-            must_contain: "ripr",
+            must_contain: usage,
             cwd: scratch.plain_dir.clone(),
         });
     }
     let repo_runs: [(&str, &[&str], &'static str); 9] = [
         ("check", &["check"], "Summary:"),
         ("pilot", &["pilot"], "RIPR pilot complete"),
-        ("doctor", &["doctor"], "ripr doctor"),
-        ("status", &["status"], "Status:"),
+        ("doctor", &["doctor"], "ripr doctor (analysis)"),
+        ("status", &["status"], "# RIPR Agent Status"),
         ("repair-refusal", &["repair"], "Nothing was started"),
         (
             "agent-card-unknown-id",
             &["agent", "card", "--seam-id", "nope"],
-            "nope",
+            "agent card seam_id nope was not found.",
         ),
-        ("agent-packet-refusal", &["agent", "packet"], "agent packet"),
+        (
+            "agent-packet-refusal",
+            &["agent", "packet"],
+            "ripr: agent packet requires --seam-id or --gap-ledger with --gap-id",
+        ),
         (
             "agent-repair-refusal",
             &["agent", "repair", "--phase", "before"],
-            "agent repair",
+            "ripr: agent repair --phase before requires --seam-id <id>;",
         ),
-        ("continue-refusal", &["continue"], "no current attempt"),
+        (
+            "continue-refusal",
+            &["continue"],
+            "ripr: no current attempt to continue",
+        ),
     ];
     for (surface, args, must_contain) in repo_runs {
         runs.push(LiveRun {
@@ -625,6 +669,16 @@ fn render_report(
     evaluation: &Evaluation,
 ) -> String {
     let mut out = format!("# check-user-text report\n\nStatus: {status}\n\n");
+    if !evaluation.lowerable.is_empty() {
+        out.push_str(&format!(
+            "NOTE: {} ceiling(s) are higher than the current count and can be lowered. Run `cargo xtask check-user-text --ratchet` and commit the result (advisory; this does not fail the check):\n",
+            evaluation.lowerable.len()
+        ));
+        for item in &evaluation.lowerable {
+            out.push_str(&format!("- {item}\n"));
+        }
+        out.push('\n');
+    }
     out.push_str(&format!(
         "Glossary and banned-term list: `{GLOSSARY}`. Ceilings: `{BASELINE_PATH}`.\n\n"
     ));
@@ -657,12 +711,6 @@ fn render_report(
             "\nRepair: replace the term with the plain wording in `{GLOSSARY}`, then re-bless affected goldens (see the glossary's bless path).\n"
         ));
     }
-    if !evaluation.lowerable.is_empty() {
-        out.push_str("\nCeiling can be lowered (run `cargo xtask check-user-text --ratchet`):\n");
-        for item in &evaluation.lowerable {
-            out.push_str(&format!("- {item}\n"));
-        }
-    }
     out
 }
 
@@ -684,6 +732,32 @@ fn repo_root() -> Result<PathBuf, String> {
     })
 }
 
+/// Whether the diff can change what the built binary prints: `ripr` source or
+/// manifests, this check, or its baseline. An unreadable diff forces the run.
+fn live_output_may_have_changed() -> bool {
+    let (Ok(mut changed), Ok(dirty)) = (
+        crate::changed_files_vs_base(Path::new(".")),
+        crate::git_changed_files(Path::new("."), "HEAD"),
+    ) else {
+        return true;
+    };
+    changed.extend(dirty);
+    changed.iter().any(|path| live_trigger_path(path))
+}
+
+pub(crate) fn live_trigger_path(path: &str) -> bool {
+    path.starts_with("crates/ripr/src/")
+        || path == "crates/ripr/Cargo.toml"
+        || path == "Cargo.lock"
+        || path == "xtask/src/policy/user_text.rs"
+        || path == BASELINE_PATH
+}
+
+/// Always scans the live output too (check-pr and CI).
+pub(crate) fn check_user_text_full() -> Result<(), String> {
+    check_user_text_with_args(&["--full".to_string()])
+}
+
 pub(crate) fn check_user_text() -> Result<(), String> {
     check_user_text_with_args(&[])
 }
@@ -691,6 +765,7 @@ pub(crate) fn check_user_text() -> Result<(), String> {
 pub(crate) fn check_user_text_with_args(args: &[String]) -> Result<(), String> {
     let mut ripr: Option<String> = None;
     let mut ratchet = false;
+    let mut full = false;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -702,9 +777,10 @@ pub(crate) fn check_user_text_with_args(args: &[String]) -> Result<(), String> {
                 );
             }
             "--ratchet" => ratchet = true,
+            "--full" => full = true,
             other => {
                 return Err(format!(
-                    "unknown argument `{other}`; usage: cargo xtask check-user-text [--ripr <path>] [--ratchet]"
+                    "unknown argument `{other}`; usage: cargo xtask check-user-text [--ripr <path>] [--ratchet] [--full]"
                 ));
             }
         }
@@ -722,8 +798,23 @@ pub(crate) fn check_user_text_with_args(args: &[String]) -> Result<(), String> {
                 .into(),
         );
     }
-    let bin = resolve_ripr_binary(ripr.as_deref())?;
-    let live = scan_live(&bin, &root, &mut counts)?;
+    // The live half builds `ripr` and runs ~25 commands. Run it when forced
+    // (`--full`, `--ripr`, `--ratchet`, check-pr/CI) or when the change can
+    // alter live output; a docs-only change scans the goldens only.
+    let run_live = full || ratchet || ripr.is_some() || live_output_may_have_changed();
+    let (live, baseline) = if run_live {
+        let bin = resolve_ripr_binary(ripr.as_deref())?;
+        (scan_live(&bin, &root, &mut counts)?, baseline)
+    } else {
+        println!(
+            "check-user-text: live output half skipped, no ripr source or baseline change vs origin/main (golden half only; use --full to force)"
+        );
+        let golden_only = baseline
+            .into_iter()
+            .filter(|((surface, _), _)| surface == GOLDEN_SURFACE)
+            .collect();
+        (Vec::new(), golden_only)
+    };
 
     let evaluation = evaluate(&counts, &baseline);
     let status = if evaluation.violations.is_empty() {
@@ -739,6 +830,12 @@ pub(crate) fn check_user_text_with_args(args: &[String]) -> Result<(), String> {
         fs::write(root.join(BASELINE_PATH), render_baseline(&lowered))
             .map_err(|err| format!("write {BASELINE_PATH}: {err}"))?;
         println!("\nceilings lowered where counts dropped; none raised.");
+    }
+    if !evaluation.lowerable.is_empty() {
+        eprintln!(
+            "check-user-text: NOTE {} ceiling(s) can be lowered; run `cargo xtask check-user-text --ratchet`",
+            evaluation.lowerable.len()
+        );
     }
     if evaluation.violations.is_empty() {
         Ok(())
@@ -803,6 +900,39 @@ mod tests {
 
         let clean = scan(GOLDEN_SURFACE, "Summary: 1 changed behavior checked\n");
         assert_eq!(evaluate(&clean, &baseline), Evaluation::default());
+    }
+
+    #[test]
+    fn identifier_exemptions_are_narrow() {
+        for flagged in [
+            "a multi-seam finding",
+            "Probe: src/lib.rs",
+            "probe: not an id",
+            "use --seam-id now with a seam",
+        ] {
+            assert!(
+                !banned_terms_in_line(flagged).is_empty(),
+                "should be flagged: {flagged}"
+            );
+        }
+        for exempt in [
+            "ripr agent repair --seam-id 2377 --phase before",
+            "(`probe:src_lib.rs:predicate:9aa6` or `repo-probe:src_lib.rs:x:1`)",
+            "ripr explain probe:src_lib.rs:predicate:9aa6fca0",
+        ] {
+            assert!(
+                banned_terms_in_line(exempt).is_empty(),
+                "should be exempt: {exempt}"
+            );
+        }
+    }
+
+    #[test]
+    fn live_half_runs_only_for_output_affecting_paths() {
+        assert!(live_trigger_path("crates/ripr/src/cli/help.rs"));
+        assert!(live_trigger_path(BASELINE_PATH));
+        assert!(!live_trigger_path("docs/USER_TEXT_GLOSSARY.md"));
+        assert!(!live_trigger_path("fixtures/x/expected/human.txt"));
     }
 
     #[test]

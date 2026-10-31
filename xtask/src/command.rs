@@ -735,7 +735,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "check-ci-lane-whitelist",
         "check-proof-packs",
         "check-product-copy",
-        "check-user-text [--ripr <path>] [--ratchet]",
+        "check-user-text [--ripr <path>] [--ratchet] [--full]",
         "check-packaged-readme",
         "check-positioning-language",
         "check-doc-roles",
@@ -2429,7 +2429,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Checks public product-copy policy.",
         ),
         command_entry(
-            "check-user-text [--ripr <path>] [--ratchet]",
+            "check-user-text [--ripr <path>] [--ratchet] [--full]",
             "argument_dependent",
             "target/ripr/reports/user-text.md; --ratchet rewrites policy/user-text-baseline.toml downward only",
             false,

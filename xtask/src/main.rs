@@ -1755,7 +1755,7 @@ fn run_policy_checks() -> Result<(), String> {
     check_process_policy()?;
     check_network_policy()?;
     check_lint_policy()?;
-    check_user_text()
+    policy::check_user_text_full()
 }
 
 fn ci_full() -> Result<(), String> {

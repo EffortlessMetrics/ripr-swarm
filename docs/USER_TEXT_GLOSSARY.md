@@ -1,10 +1,12 @@
 # User text glossary
 
-Default `ripr` output is plain language. Internal terms stay available where
-they carry meaning for integrators: `--verbose`, `--format human-full`, JSON,
-SARIF, schemas and specs. This page is the single list of terms the default
-human output must not use, the wording to use instead, and where the internal
-term may still appear. `cargo xtask check-user-text` enforces it.
+Default `ripr` output is being moved to plain language, surface by surface.
+Internal terms stay available where they carry meaning for integrators:
+`--verbose`, `--format human-full`, JSON, SARIF, schemas and specs. This page is
+the single list of terms the default human output should not use, the wording
+to use instead, and where the internal term may still appear. `cargo xtask
+check-user-text` does not make the output jargon-free today; it stops the
+banned-term counts from growing while the surface issues remove them.
 
 Rule: refusals and user-facing messages use plain wording unless a term is
 already very clear to a first-time user. Wording stays within the conservative
@@ -52,8 +54,17 @@ Explicitly not scanned (the allowlist printed in every report):
 - JSON, SARIF and other machine formats;
 - `docs/specs/**` and other internal reference documents.
 
-Each scanned surface also asserts a marker line it must contain, so a wrong
-binary or a failed scratch setup is an instrument failure, never a pass.
+Each live surface asserts a distinctive line it must contain (a help screen's
+usage header, a refusal's opening sentence), so a wrong binary or a failed
+scratch setup is an instrument failure, never a pass. The goldens carry no such
+marker; they are only required to exist (zero goldens fails the check).
+
+The live half uses the default-feature `ripr` binary (`cargo build -p ripr`);
+text that only appears under non-default features is not scanned. It builds the
+binary and runs about 25 commands, so a change that touches no `ripr` source,
+no manifest, and not this check or its baseline scans the goldens only
+(`precommit`). `check-pr`/CI, `--full`, `--ripr` and `--ratchet` always run
+both halves.
 
 ## Baseline ceilings
 
@@ -65,7 +76,10 @@ of output lines containing the term today.
 - A term with no row has a ceiling of 0.
 - Ceilings only go down. After fixing wording, run
   `cargo xtask check-user-text --ratchet` to lower them; it never raises or
-  adds a row. Raising a ceiling needs a stated reason in the PR and is a
+  adds a row. A ceiling that is higher than the current count does not fail
+  (so concurrent PRs do not conflict); the report prints these rows at the top
+  as a NOTE and the command prints a reminder to run `--ratchet`. After a
+  rebase, rerun `--ratchet` instead of hand-resolving baseline numbers. Raising a ceiling needs a stated reason in the PR and is a
   review blocker by default.
 - Surface issues remove their terms: #10691 (check), #10692 (repair and agent
   refusals), #10693 (agent card), #10694 (pilot), #10695 (editor).
