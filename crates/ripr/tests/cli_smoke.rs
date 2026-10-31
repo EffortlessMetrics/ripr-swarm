@@ -9534,20 +9534,17 @@ fn after_phase_redirect_scenario(
     // Run the printed commands: the status command is bound to this root, and
     // the restart refuses while the repair edit is present but works once the
     // test restores the pre-edit test content (as the message tells the user).
-    let printed = |name: &str| -> Result<Vec<String>, Box<dyn std::error::Error>> {
-        let start = refusal
-            .find(&format!("`ripr agent {name} --root "))
-            .ok_or("printed command missing")?
-            + 1;
-        let end = start + refusal[start..].find('`').ok_or("unterminated command")?;
-        Ok(refusal[start..end]
-            .split_whitespace()
-            .skip(1)
-            .map(str::to_string)
-            .collect())
-    };
-    let status_args = printed("status")?;
-    let status_refs = status_args.iter().map(String::as_str).collect::<Vec<_>>();
+    // Build the argument vectors from the known root and seam instead of
+    // splitting the printed text (a quoted root may contain spaces), and
+    // check the message prints those commands with the rendered root.
+    let root_arg = root.display().to_string();
+    assert!(
+        refusal.contains(&format!("`ripr agent status --root {root_arg}"))
+            && refusal.contains(&format!("`ripr agent repair --root {root_arg}"))
+            && refusal.contains(&format!("--seam-id {BOUNDARY_GAP_SEAM_ID} --phase before`")),
+        "{refusal}"
+    );
+    let status_refs = ["agent", "status", "--root", root_arg.as_str()];
     let status = run_command(env!("CARGO_BIN_EXE_ripr"), Some(outside), &status_refs)?;
     assert_success(&status);
     let status_text = format!(
@@ -9559,8 +9556,16 @@ fn after_phase_redirect_scenario(
         status_text.contains(&attempt_id) && status_text.contains("ready_to_finish"),
         "status must report this attempt's state: {status_text}"
     );
-    let restart_args = printed("repair")?;
-    let restart_refs = restart_args.iter().map(String::as_str).collect::<Vec<_>>();
+    let restart_refs = [
+        "agent",
+        "repair",
+        "--root",
+        root_arg.as_str(),
+        "--seam-id",
+        BOUNDARY_GAP_SEAM_ID,
+        "--phase",
+        "before",
+    ];
     let blocked = run_command(env!("CARGO_BIN_EXE_ripr"), Some(outside), &restart_refs)?;
     assert_failure(&blocked);
     let blocked_err = String::from_utf8_lossy(&blocked.stderr);
