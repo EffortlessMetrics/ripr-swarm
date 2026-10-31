@@ -1,0 +1,47 @@
+{
+  "case_id": "py-guard-atoms-is-none-untaken",
+  "subject_id": "authored-py-pytest-guard-arms",
+  "diff": "cases/py-guard-atoms-is-none-untaken.diff",
+  "anchor": {
+    "file": "guards/label_nil.py",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "pytest_literal_call_fails_is_none_guard",
+  "hard_case": "the only strong test calls the owner with 3, which fails the guarding `x is None`, so the edited arm never runs",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.18, pytest 9.2.0, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return 'nil'",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the edited line returns a different value whenever it runs; no test reaches it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "`'none'` becomes `'nil'` on the line inside `if x is None`. The test calls `label_nil(3)`, which takes the fall-through, so the exact-value assertion passes either way. The `is None` guard is one of the closed allow-list of non-comparison forms the guarded-arm gate reads, so this reads `weakly_exposed`.",
+  "labeling_observation": {
+    "ripr_commit": "pending",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0260#6"
+  ]
+}
