@@ -68,6 +68,10 @@ Role is derived from authoritative context in priority order:
    (`<dir>/<name>.rs`, `<dir>/<name>/main.rs`) — nested src layouts like
    `examples/sample/src/lib.rs` are NOT discoverable targets and stay
    production subjects;
+   a cargo-fuzz harness (`fuzz/fuzz_targets/**`, consecutive `fuzz` then
+   `fuzz_targets` components) is `test_evidence` even when its package
+   declares it as a `[[bin]]` root, so it seeds no production findings
+   (#11293);
 4. everything else is a production subject. A filename convention alone
    (`*_test.rs`, `test_*.rs`) never classifies.
 
@@ -432,7 +436,8 @@ is not a measured throughput, peak-RSS, constant-memory, or reduced-coverage cla
 
 `analysis/workspace/source_role.rs` unit tests pin the layout rules,
 Cargo-autodiscovery shapes, override priority, windows normalization,
-and the seeding/evidence partition. `analysis/workspace/cargo_targets.rs`
+the seeding/evidence partition, and the cargo-fuzz harness test-evidence
+rule (`cargo_fuzz_harness_is_test_evidence_even_when_declared_as_a_bin`). `analysis/workspace/cargo_targets.rs`
 pins manifest extraction and the #3608 harness-target Cargo verdict
 (declared, harness-enabled, undeclared, manifest-unavailable) against
 real `cargo metadata` workspaces (#3634): metadata-sourced membership
