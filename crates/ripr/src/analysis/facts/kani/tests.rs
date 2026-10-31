@@ -271,12 +271,12 @@ fn source_provider_and_opaque_context_counterexamples_withhold_admission() -> Re
             "opaque_attribute_context",
         ),
         (
-            "#[cfg_attr(kani, allow(dead_code))]\n",
+            "#[cfg_attr(kani, warn(dead_code))]\n",
             "",
             "conditional_attribute_context_unsupported",
         ),
         (
-            "#![cfg_attr(kani, allow(dead_code))]\n",
+            "#![cfg_attr(kani, warn(dead_code))]\n",
             "",
             "conditional_attribute_context_unsupported",
         ),
