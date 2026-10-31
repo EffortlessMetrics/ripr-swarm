@@ -152,15 +152,31 @@ pub(crate) fn detect_typescript_project(root: &Path) -> bool {
 /// non-marker (#10941), as does JavaScript with no manifest.
 #[cfg(any(feature = "lang-typescript", test))]
 pub(crate) fn detect_javascript_led_root(root: &Path) -> bool {
-    root.join("package.json").is_file()
+    JAVASCRIPT_LED_MANIFESTS
+        .iter()
+        .any(|manifest| root.join(manifest).is_file())
         && (dir_has_package_source_file(root)
-            || ["src", "test", "tests"]
+            || JAVASCRIPT_LED_SOURCE_DIRS
                 .iter()
                 .any(|dir| dir_contains_package_source(&root.join(dir))))
 }
 
+/// Root manifest and source directories that `detect_javascript_led_root`
+/// reads, shared with the LSP watcher classification and the seam-cache
+/// identity so they cannot drift from the detector.
 #[cfg(any(feature = "lang-typescript", test))]
-fn is_detectable_package_source_name(name: &str) -> bool {
+pub(crate) const JAVASCRIPT_LED_MANIFESTS: &[&str] = &["package.json"];
+#[cfg(any(feature = "lang-typescript", test))]
+pub(crate) const JAVASCRIPT_LED_SOURCE_DIRS: &[&str] = &["src", "test", "tests"];
+
+/// Canonical root manifest name for a candidate name (host path rule).
+#[cfg(any(feature = "lang-typescript", test))]
+pub(crate) fn javascript_led_manifest_name(name: &str) -> Option<&'static str> {
+    canonical_marker_name(JAVASCRIPT_LED_MANIFESTS, name)
+}
+
+#[cfg(any(feature = "lang-typescript", test))]
+pub(crate) fn is_detectable_package_source_name(name: &str) -> bool {
     let is_javascript = Path::new(name)
         .extension()
         .and_then(|extension| extension.to_str())
