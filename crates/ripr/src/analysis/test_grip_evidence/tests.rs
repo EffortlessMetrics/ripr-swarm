@@ -21074,3 +21074,21 @@ fn given_integration_test_when_local_module_alias_reaches_rival_then_owner_gets_
     }
     Ok(())
 }
+
+#[test]
+fn given_integration_test_when_rival_is_absent_then_nested_and_aliased_calls_keep_related_test()
+-> Result<(), String> {
+    // Positive controls for the emptiness assertions above: the same shapes
+    // without the local rival are extracted and related.
+    let nested = "mod inner {\n    #[test]\n    fn equality_boundary_discounts() {\n        assert_eq!(lib_proptest::discounted_total(100, 100), 90);\n    }\n}\n";
+    let aliased = "mod local {\n    pub fn other() -> i32 { 1 }\n}\nuse local as alias;\n\n#[test]\nfn equality_boundary_discounts() {\n    assert_eq!(alias::discounted_total(100, 100), 90);\n}\n";
+    for source in [nested, aliased] {
+        let related = related_test_names_for_boundary_seam(source)?;
+        assert_eq!(
+            related,
+            vec!["equality_boundary_discounts".to_string()],
+            "{source}"
+        );
+    }
+    Ok(())
+}

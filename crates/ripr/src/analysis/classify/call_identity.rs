@@ -2760,6 +2760,14 @@ fn qualified_call_names_owner(
 /// owner in another file, even when the module is spelled like the owner's
 /// library crate. Used when no [`OwnerCallIdentity`] exists to settle the call
 /// (the rival sits in another crate class, so the identity rule is off).
+///
+/// `true` withholds the owner; `false` keeps the production relation. The
+/// reading is lexical and keeps the production relation whenever it is
+/// unsure. Documented cases that therefore still keep it although Rust would
+/// resolve to the local rival: a bare `use local::f; f()`, `use local::*`, a
+/// rival module nested inside another module, a `mod tests` calling a
+/// top-level rival without `super::`, a wrapper module that delegates to the
+/// library, and a fn-body `use` shadowing a file-level alias.
 pub(in crate::analysis) fn test_calls_only_through_local_rival_module(
     index: &RustIndex,
     owner: &FunctionSummary,
@@ -3119,6 +3127,31 @@ mod tests {
             call_qualifiers("fn t() { assert_eq!(crate::r#b::render(2), 4); }", "render"),
             vec![None]
         );
+    }
+
+    #[test]
+    fn crate_path_names_the_local_module_only_in_an_integration_test_file() {
+        let prod =
+            "pub fn discounted_total(a: i32, t: i32) -> i32 { if a >= t { a - 10 } else { a } }\n";
+        let test_src = "mod lib_proptest {\n    pub fn discounted_total(_a: i32, _t: i32) -> i32 { 90 }\n}\n\n#[test]\nfn equality_boundary_discounts() {\n    assert_eq!(crate::lib_proptest::discounted_total(100, 100), 90);\n}\n";
+        let withheld = |test_path: &str| {
+            let index = index(&[("src/lib.rs", prod), (test_path, test_src)]);
+            let owner = index
+                .functions()
+                .iter()
+                .find(|function| function.file == Path::new("src/lib.rs"));
+            let test = index
+                .tests()
+                .iter()
+                .find(|test| test.name == "equality_boundary_discounts");
+            owner.zip(test).map(|(owner, test)| {
+                test_calls_only_through_local_rival_module(&index, owner, test)
+            })
+        };
+        // Positive control: the integration crate root is the test file.
+        assert_eq!(withheld("tests/boundary.rs"), Some(true));
+        // `crate::` is the library root elsewhere: the production relation stays.
+        assert_eq!(withheld("src/boundary.rs"), Some(false));
     }
 
     fn strings(segments: &[&str]) -> Vec<String> {
