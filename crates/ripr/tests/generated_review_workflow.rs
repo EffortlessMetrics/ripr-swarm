@@ -4420,6 +4420,55 @@ fn generated_install_windows_zip_route_replays_securely() -> Result<(), Box<dyn 
             "{label}: escaped the archive root"
         );
     }
+    // A very large flat listing whose first-sorted entry is a traversal name
+    // must still be refused before extraction: a `printf | grep -q` pipeline
+    // under `pipefail` could lose that match to SIGPIPE and read "clean".
+    let names: Vec<String> = (0..60_000)
+        .map(|n| format!("filler-entry-{n:06}.txt"))
+        .collect();
+    let mut entries: Vec<Entry<'_>> =
+        vec![file("../x", b"x"), file("ripr.exe", good_exe.as_bytes())];
+    entries.extend(names.iter().map(|name| file(name, b"")));
+    let large = Case::new("zip-large-listing", &version)?;
+    large.serve_verified(&asset, &zip_bytes(&entries)?)?;
+    let run = large.run(&install, "Windows", "X64")?;
+    let out = String::from_utf8_lossy(&run.stdout);
+    assert_eq!(run.status.code(), Some(1), "{out}");
+    assert!(out.contains("outside a flat archive root"), "{out}");
+    assert!(large.extracted().is_empty() && large.cargo_calls().is_empty());
+    // ... and a large clean listing still finds ripr.exe and installs.
+    let clean = Case::new("zip-large-clean", &version)?;
+    let mut entries: Vec<Entry<'_>> = vec![file("ripr.exe", good_exe.as_bytes())];
+    entries.extend(names.iter().map(|name| file(name, b"")));
+    clean.serve_verified(&asset, &zip_bytes(&entries)?)?;
+    let run = clean.run(&install, "Windows", "X64")?;
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&run.stdout)
+    );
+
+    // The reported version must equal the pin, not merely start with it.
+    for reported in [
+        format!("{version}0"),
+        format!("{version}-rc.1"),
+        format!("{version}.9"),
+    ] {
+        let case = Case::new("zip-version-prefix", &version)?;
+        case.serve_verified(
+            &asset,
+            &payload(format!("#!/bin/sh\necho 'ripr {reported} (abc)'").as_bytes())?,
+        )?;
+        let run = case.run(&install, "Windows", "X64")?;
+        let out = String::from_utf8_lossy(&run.stdout);
+        assert_eq!(run.status.code(), Some(1), "{reported}: {out}");
+        assert!(
+            out.contains(&format!("not ripr {version}")),
+            "{reported}: {out}"
+        );
+    }
+
     // A symlink entry named ripr.exe passes the listing but is not a regular
     // file once extracted.
     let link = Case::new("zip-symlink", &version)?;

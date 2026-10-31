@@ -110,11 +110,11 @@ jobs:
               ziptool="${SYSTEMROOT:-${SystemRoot:-}}/System32/tar.exe"
               [ -x "$ziptool" ] || { echo "::error::Cannot extract $asset: Windows tar not found at $ziptool"; exit 1; }
               entries="$("$ziptool" -tf "$asset" | tr -d '\r' | sed 's#^\./##' | LC_ALL=C sort)" || { echo "::error::$asset is not a readable zip archive"; exit 1; }
-              if [ -z "$entries" ] || printf '%s\n' "$entries" | grep -Eq '[/\\:]|^\.\.?$|^$'; then
+              if [ -z "$entries" ] || grep -Eq '[/\\:]|^\.\.?$|^$' <<< "$entries"; then
                 echo "::error::$asset lists an entry outside a flat archive root (nested, absolute, traversal or empty name)"; exit 1
               fi
               [ -z "$(printf '%s\n' "$entries" | uniq -d)" ] || { echo "::error::$asset lists a duplicate entry"; exit 1; }
-              printf '%s\n' "$entries" | grep -qx "$exe" || { echo "::error::$asset does not contain $exe at its root"; exit 1; }
+              grep -qx "$exe" <<< "$entries" || { echo "::error::$asset does not contain $exe at its root"; exit 1; }
               "$ziptool" -xf "$asset" -C ripr-bin || { echo "::error::$asset could not be extracted"; exit 1; }
             else
               tar -xzf "$asset" -C ripr-bin || { echo "::error::$asset could not be extracted"; exit 1; }
@@ -134,7 +134,7 @@ jobs:
             cargo install ripr --version @RIPR_VERSION@ --locked
           fi
           reported="$("$ripr" --version)"; echo "$reported"
-          case "$reported" in "ripr $version"*) ;; *) echo "::error::the installed ripr reports \"$reported\", not ripr $version"; exit 1 ;; esac
+          case "$reported" in "ripr $version" | "ripr $version "*) ;; *) echo "::error::the installed ripr reports \"$reported\", not ripr $version"; exit 1 ;; esac
           echo "RIPR_CACHE_DIR=$RUNNER_TEMP/ripr-cache" >> "$GITHUB_ENV"
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0; reuses unchanged files' analysis
@@ -416,7 +416,7 @@ mod template_pin_tests {
     /// first line, and artifact paths, which the `generated_workflow_*` and
     /// `install_version_*` tests pin at the rendered level.
     const TEMPLATE_SHA256: &str =
-        "1eb9f2d7a6a01423e73191c129ff4dbc78bf14e96ecb73d8657a9aa0e05f051b";
+        "36a4b2cda24cc88274808d9e3ee39d2802e5e89c65044087ef7458e16acc95b4";
 
     #[test]
     fn template_matches_the_pinned_bytes() {
