@@ -115,8 +115,9 @@ route, the delivery owner completes this order before spending the
    `REVIEW_INCOMPLETE` may retain that evidence gap and merge-ready-requested proof;
    unavailable proof is not a pass. It cannot excuse an executable but unrun
    applicable local check, unfinished review or repair, a known-red test, or
-   missing claim-essential native proof. After Ready, the `merge-ready` label (applied last, or removed and re-added for a new head) requests
-   qualification for the exact head; Ready alone requests nothing;
+   missing claim-essential native proof. After Ready, inspect the existing label, request and runs for the exact head
+   and subject before acting. The `merge-ready` label requests qualification;
+   Ready alone requests nothing;
    `REVIEW_READY` and required proof still govern merge under `finish-pr`.
 
 After Ready, inspect the actual job checkout commit, parents and tree against
@@ -127,9 +128,22 @@ or subject is verified; do not relabel that run as proof for the local tree or
 re-apply `merge-ready` merely to refresh it.
 
 A new head or material finding returns the candidate to Draft for one joined
-repair/proof/review wave before the next `merge-ready` request (remove and re-add the label on the exact new
-head). Preserve unaffected evidence. Do not re-apply the label on an unchanged
-head with a queued or running required run: it cancels it. Retain its run link and yield the remote wait.
+repair/proof/review wave. Preserve unaffected evidence. Before any label request,
+read the current head, label and admitted run state, including the run subject:
+
+- Preserve a queued or running current-subject run and its link; reapplying the
+  label cancels it. Yield the remote wait.
+- A retained label and conflict notice with no admitted run is not qualification.
+  Once the conflict and prerequisites are resolved, remove and re-add the label
+  to request the current subject. Confirm admission.
+- A terminal infrastructure failure requires diagnosis and the supported retry
+  route; do not relabel it as a pass or blindly reapply the label.
+- A success on a stale head or different subject does not qualify the current
+  subject. After affected proof and review, request the current subject only when
+  no current-subject run is already admitted.
+- Unknown required-check membership remains unknown; a visible green run alone
+  does not establish complete required checks. If request or run state cannot be
+  read, record the limit and do not guess or duplicate a request.
 
 ### PR-native continuation record
 

@@ -189,3 +189,50 @@ fn routed_guidance_rejects_routine_settings_reads() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn request_guidance_preserves_inflight_runs_and_denied_source_boundaries() -> Result<(), String> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("missing repository root")?;
+    for path in [
+        ".agents/skills/finish-pr/SKILL.md",
+        ".claude/skills/finish-pr/SKILL.md",
+    ] {
+        let guidance = fs::read_to_string(root.join(path)).map_err(|e| e.to_string())?;
+        assert!(
+            guidance.contains("inspect the existing request and run state"),
+            "{path}"
+        );
+        assert!(
+            guidance
+                .contains("never reapply the label over a queued or running current-subject run"),
+            "{path}"
+        );
+        assert!(
+            !guidance.contains("remove and re-add it for a new head"),
+            "{path}"
+        );
+    }
+    let handoff =
+        fs::read_to_string(root.join("docs/PR_AUTOMATION.md")).map_err(|e| e.to_string())?;
+    for phrase in [
+        "conflict notice with no admitted run",
+        "terminal infrastructure failure",
+        "success on a stale head",
+        "Unknown required-check membership remains unknown",
+    ] {
+        assert!(handoff.contains(phrase), "missing {phrase}");
+    }
+    let scenarios =
+        fs::read_to_string(root.join("docs/agent-context/delivery-continuation-scenarios.md"))
+            .map_err(|e| e.to_string())?;
+    for phrase in [
+        "independently authorized exact-object source fetch",
+        "Stop a separately denied source fetch without rerouting",
+        "frozen-source proof cannot establish live PR readiness",
+    ] {
+        assert!(scenarios.contains(phrase), "missing {phrase}");
+    }
+    Ok(())
+}
