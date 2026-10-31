@@ -1235,7 +1235,7 @@ impl TypeScriptAdapter {
                     // inference returns `None`. `typescript_test_runner_unresolved`
                     // names a missing runner, so emit it only when neither a
                     // framework nor a package-manager runner resolved. An empty
-                    // `related_tests` list also yields `None` (`max_by_key`
+                    // `related_tests` list also yields `None` (`min_by_key`
                     // over an empty iterator); that is a missing test target,
                     // not an unknown runner. When the runner is already known
                     // (`typescript_test_runner: vitest`, mocha detected, npm

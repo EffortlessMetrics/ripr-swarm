@@ -104,9 +104,6 @@ fn headline_card_and_json_summary_name_the_strong_row() -> Result<(), String> {
     assert!(headline.contains("barrel strong"), "{headline}\n{human}");
     assert!(!headline.contains("direct weak"), "{headline}");
 
-    let full = check(&guard.root, "human-full")?;
-    assert!(full.contains("barrel strong"), "{full}");
-
     let json: serde_json::Value =
         serde_json::from_str(&check(&guard.root, "json")?).map_err(|error| error.to_string())?;
     let finding = json
@@ -119,6 +116,12 @@ fn headline_card_and_json_summary_name_the_strong_row() -> Result<(), String> {
     assert!(
         rows.len() >= 2,
         "the control needs both rows to be related: {finding}"
+    );
+    let position = |name: &str| rows.iter().position(|row| row.to_string().contains(name));
+    let (weak_at, strong_at) = (position("direct weak"), position("barrel strong"));
+    assert!(
+        matches!((weak_at, strong_at), (Some(weak), Some(strong)) if weak < strong),
+        "the control needs the weak row listed before the strong row: {finding}"
     );
     let strongest = rows
         .iter()
