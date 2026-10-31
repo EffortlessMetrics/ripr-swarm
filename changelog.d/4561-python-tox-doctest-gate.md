@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Python doctest examples are now read as tests of their owner when the only signal is a `tox.ini` `[testenv]` `commands` line that runs a bare `pytest --doctest-modules` (the boltons shape). The read stays closed when any pytest configuration exists, when a `pyproject.toml` pytest table is present, or when the command names a target, ignores a path or chains another command (#4561).
