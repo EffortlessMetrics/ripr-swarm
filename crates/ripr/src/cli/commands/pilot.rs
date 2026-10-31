@@ -391,13 +391,21 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // The pilot-scoped default inventory cap (#10726) is the pilot budget cut
     // earlier. Disclose it as the budget, naming `RIPR_PILOT_SEAM_BUDGET`, and
     // not as an inventory cut whose repair route would not lift the budget.
-    // It is also not the population `ripr check` analyzes, so the snapshot
-    // carries no comparable identity, exactly as for a budget cut.
-    if pilot_budget_info.is_none()
-        && let Some(info) =
-            analysis::PilotInventoryDefault::as_budget_cut(inventory_limit_info.as_ref())
+    // The total is the real inventory even when current-change seams folded in
+    // past the cap made the budget fire too (its own total then counts the
+    // capped inventory plus the folded seams). The population is also not what
+    // `ripr check` analyzes, so the snapshot carries no comparable identity,
+    // exactly as for a budget cut.
+    if let Some(default_cut) =
+        analysis::PilotInventoryDefault::as_budget_cut(inventory_limit_info.as_ref())
     {
-        pilot_budget_info = Some(info);
+        pilot_budget_info = Some(match pilot_budget_info {
+            Some(budget) => analysis::SeamLimitInfo {
+                total: default_cut.total,
+                ..budget
+            },
+            None => default_cut,
+        });
         inventory_limit_info = None;
     }
     timings.record("seam_budget", budget_started, Some(classified.len()));

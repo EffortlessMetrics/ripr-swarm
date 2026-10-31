@@ -17876,6 +17876,15 @@ fn pilot_default_inventory_cap_follows_the_budget_without_moving_the_ranking()
         default.0
     );
     assert_same_result("changed seam past the cap", &default, &full);
+    // An explicit nonzero inventory limit still applies as set (cap 2 here,
+    // not the pilot-scoped default of 1), so the run still discloses the
+    // whole inventory as its total.
+    let explicit = run(Some("2"))?;
+    assert_eq!(
+        explicit.1["seam_limit"]["total"], default.1["seam_limit"]["total"],
+        "{}",
+        explicit.1
+    );
     std::fs::remove_dir_all(root)?;
     Ok(())
 }

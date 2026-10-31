@@ -81,11 +81,15 @@ static PILOT_INVENTORY_DEFAULT: AtomicUsize = AtomicUsize::new(0);
 /// `RIPR_REPO_EXPOSURE_SEAM_LIMIT` (including `0`) still wins: only the
 /// built-in default moves, and it keeps reporting `source: default`.
 /// Dropping the guard restores the product default.
-#[must_use = "the pilot inventory default lasts only while the guard is held"]
 ///
 /// The cap is process-wide (a static, not thread-local, because inventory work
 /// runs on worker threads): one pilot run at a time per process. The guard
-/// restores the value it replaced, so nested guards unwind in order.
+/// restores the value it replaced, so nested guards unwind in order. The only
+/// holder is `ripr pilot`, whose entry point is private to the CLI adapter module and is
+/// reached from the CLI dispatch alone: the LSP and MCP adapters never call it
+/// and xtask runs the pilot binary as a subprocess, so no other in-process
+/// analysis shares the lowered default.
+#[must_use = "the pilot inventory default lasts only while the guard is held"]
 pub(crate) struct PilotInventoryDefault {
     previous: usize,
 }
@@ -10369,6 +10373,25 @@ pub fn check_b(x: i32) -> bool { x < 0 }
     }
 
     // -- Pilot seam budget tests ---------------------------------------------
+
+    #[test]
+    fn built_in_inventory_default_is_the_product_cap_without_a_pilot_guard() {
+        // No lib test holds `PilotInventoryDefault`, so non-pilot callers keep
+        // the product default; an explicit value still wins and is configured.
+        if std::env::var_os(REPO_EXPOSURE_SEAM_LIMIT_ENV).is_none() {
+            assert_eq!(
+                repo_exposure_seam_limit(),
+                Ok(Some((
+                    DEFAULT_REPO_EXPOSURE_SEAM_LIMIT,
+                    SeamLimitSource::Default
+                )))
+            );
+        }
+        assert_eq!(
+            seam_limit_from_env(REPO_EXPOSURE_SEAM_LIMIT_ENV, 2_000, Ok("7".to_string())),
+            Ok(Some((7, SeamLimitSource::Configured)))
+        );
+    }
 
     #[test]
     fn pilot_seam_budget_default_constant_is_smaller_than_repo_exposure_cap() {
