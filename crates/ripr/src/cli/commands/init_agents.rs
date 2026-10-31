@@ -114,25 +114,36 @@ fn marked_section() -> String {
 /// Byte range of an existing marked section, `None` when there is none.
 /// A begin marker without a later end marker fails closed: replacing from an
 /// unterminated marker could delete the user's content.
+///
+/// Markers count only as whole lines (the begin line starts with the prefix, the
+/// end line is exactly the end marker), so prose that merely mentions a marker
+/// is user text. Exactly one begin line followed by exactly one end line is a
+/// managed section; zero of both is none; every other layout (repeated, nested,
+/// reversed, orphan end) fails closed, because replacing across it could delete
+/// the user's content between or after the markers.
 fn find_section(text: &str, shown: &str) -> Result<Option<(usize, usize)>, String> {
-    let Some(start) = text.find(BEGIN_PREFIX) else {
-        return Ok(None);
-    };
-    let end = text[start..]
-        .find(END_LINE)
-        .map(|offset| start + offset + END_LINE.len())
-        .ok_or_else(|| {
-            format!(
-                "existing {shown} has a ripr section start marker without its end marker; fix or remove the marker, nothing was written"
-            )
-        })?;
-    // Take the trailing newline with the section so a replace stays line-exact.
-    let end = if text[end..].starts_with('\n') {
-        end + 1
-    } else {
-        end
-    };
-    Ok(Some((start, end)))
+    let mut begins = Vec::new();
+    let mut ends = Vec::new();
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        let bare = line.trim_end_matches(['\n', '\r']);
+        if bare.starts_with(BEGIN_PREFIX) {
+            begins.push(offset);
+        } else if bare == END_LINE {
+            ends.push(offset + line.len());
+        }
+        offset += line.len();
+    }
+    match (begins.as_slice(), ends.as_slice()) {
+        ([], []) => Ok(None),
+        ([start], [end]) if start < end => Ok(Some((*start, *end))),
+        ([_], []) => Err(format!(
+            "existing {shown} has a ripr section start marker without its end marker; fix or remove the marker, nothing was written"
+        )),
+        _ => Err(format!(
+            "existing {shown} has repeated, nested, reversed or unpaired ripr section markers; leave exactly one begin and one end marker line, or remove them, nothing was written"
+        )),
+    }
 }
 
 /// Plan one agent instruction file: create it, append the marked section to
@@ -335,10 +346,48 @@ mod tests {
         );
         let forced = plan(InitAgent::Claude, &path, true)?;
         assert_eq!(forced.action, InitAction::Update);
-        assert!(forced.body.starts_with("before\n"));
-        assert!(forced.body.ends_with("after\n"));
-        assert!(forced.body.contains("STOP and report"));
-        assert!(!forced.body.contains("stale edited text"));
+        assert_eq!(
+            forced.body,
+            format!("before\n{}after\n", marked_section()),
+            "force must replace exactly the marked section and nothing else"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn marker_text_in_prose_is_not_a_section() -> Result<(), String> {
+        let root = temp_root("prose")?;
+        let path = root.join("CLAUDE.md");
+        let text = format!("Docs: write `{BEGIN_PREFIX}` to start a section.\nmore\n");
+        std::fs::write(&path, &text).map_err(|err| err.to_string())?;
+        let planned = plan(InitAgent::Claude, &path, true)?;
+        assert_eq!(planned.action, InitAction::Update);
+        assert!(planned.body.starts_with(&text), "user prose must be kept");
+        assert!(planned.body.ends_with(&marked_section()));
+        Ok(())
+    }
+
+    #[test]
+    fn repeated_nested_reversed_and_orphan_markers_fail_closed() -> Result<(), String> {
+        let root = temp_root("layouts")?;
+        let path = root.join("CLAUDE.md");
+        let layouts = [
+            format!("{BEGIN_LINE}\na\n{END_LINE}\nmine\n{BEGIN_LINE}\nb\n{END_LINE}\n"),
+            format!("{BEGIN_LINE}\na\n{BEGIN_LINE}\nb\n{END_LINE}\nmine\n"),
+            format!("{BEGIN_LINE}\na\n{END_LINE}\nmine\n{END_LINE}\n"),
+            format!("mine\n{END_LINE}\n{BEGIN_LINE}\na\n"),
+            format!("mine\n{END_LINE}\nmore\n"),
+        ];
+        for text in &layouts {
+            std::fs::write(&path, text).map_err(|err| err.to_string())?;
+            for force in [false, true] {
+                let err = plan(InitAgent::Claude, &path, force)
+                    .err()
+                    .ok_or("an ambiguous marker layout must be refused")?;
+                assert!(err.contains("nothing was written"), "{err}");
+            }
+            assert_eq!(read(&path)?, *text, "the file must be untouched");
+        }
         Ok(())
     }
 
