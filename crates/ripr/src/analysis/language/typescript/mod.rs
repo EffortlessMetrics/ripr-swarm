@@ -141,6 +141,8 @@ mod ambient_declaration_tests;
 #[cfg(test)]
 mod assertion_form_tests;
 #[cfg(test)]
+mod asymmetric_matcher_tests;
+#[cfg(test)]
 mod conditional_assertion_tests;
 mod loop_count_guard;
 mod loop_rows;
@@ -163,8 +165,6 @@ mod row_miss;
 mod row_miss_tests;
 #[cfg(test)]
 mod self_comparing_assertion_tests;
-#[cfg(test)]
-mod asymmetric_matcher_tests;
 mod shadow_index;
 mod spread_override_guard;
 mod static_limit;

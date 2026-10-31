@@ -2854,11 +2854,6 @@ fn bigint_zero_is_falsy(literal: &str) -> bool {
     u128::from_str_radix(digits, radix) != Ok(0)
 }
 
-/// RIPR-SPEC-0243 rule 9 (#8713): true when the matcher's single argument is
-/// the same token sequence as the `expect(...)` argument. Whitespace outside
-/// string literals is not part of the sequence (`expect(a).toBe( a )` is still
-/// self-comparing); whitespace inside a string literal is significant, so
-/// `expect("ab").toBe("a b")` is not self-comparing.
 /// True when the argument is a call rooted at the runner's `expect` namespace
 /// (`expect.any(..)`, `expect.not.stringContaining(..)`, ...): a Jest/Vitest
 /// asymmetric matcher. Parentheses and TS wrappers do not hide it.
@@ -2910,6 +2905,11 @@ pub(crate) fn is_derived_property_observation(arg: &Argument<'_>) -> bool {
     }
 }
 
+/// RIPR-SPEC-0243 rule 9 (#8713): true when the matcher's single argument is
+/// the same token sequence as the `expect(...)` argument. Whitespace outside
+/// string literals is not part of the sequence (`expect(a).toBe( a )` is still
+/// self-comparing); whitespace inside a string literal is significant, so
+/// `expect("ab").toBe("a b")` is not self-comparing.
 fn self_comparing_matcher_argument(
     matcher_call: &oxc_ast::ast::CallExpression<'_>,
     source: &str,
