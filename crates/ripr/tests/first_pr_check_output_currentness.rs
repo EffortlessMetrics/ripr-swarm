@@ -903,7 +903,11 @@ fn no_action_does_not_promote_unbound_or_stale_preview_check() -> Result<(), Str
         printed(&a)?,
         "producer root must survive derivation: {ledger}"
     );
-    assert_eq!(ledger["root"], printed(&b)?);
+    // The ledger records its own root as given (native separators).
+    assert_eq!(
+        ledger["root"].as_str().map(|root| root.replace('\\', "/")),
+        Some(printed(&b)?)
+    );
     #[cfg(unix)]
     {
         // Execute the literal wrong-root inspection; it must use B's weak
