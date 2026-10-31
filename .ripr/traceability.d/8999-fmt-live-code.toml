@@ -1,0 +1,10 @@
+[[extend]]
+id = "RIPR-SPEC-0297"
+tests = [
+  "crates/ripr/src/analysis/classify/related_tests/fmt_live.rs::tests::a_literal_false_block_is_dead_but_its_else_is_live",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_live.rs::tests::conditional_and_loop_bodies_with_unknown_conditions_stay_live",
+  "crates/ripr/tests/fmt_dispatch_live_reach.rs",
+]
+code = [
+  "crates/ripr/src/analysis/classify/related_tests/fmt_live.rs",
+]

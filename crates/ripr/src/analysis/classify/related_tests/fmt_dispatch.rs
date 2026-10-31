@@ -280,11 +280,15 @@ pub(super) fn test_dispatches_to_fmt(
     if same_fmt_impls != 1 {
         return false;
     }
-    let masked = mask_comments_and_strings(&test.body);
+    // Only code the test can run formats anything: a `to_string()` in a
+    // literal `if false` block, a never-called closure or nested fn, or after
+    // a `return` reaches nothing.
+    let live = super::fmt_live::live_body(&test.body);
+    let masked = mask_comments_and_strings(&live);
     (fmt_trait == FmtTrait::Display
         && !context.competing_to_string
         && to_string_dispatch(&masked, &self_type, &context.constructors))
-        || macro_dispatch(&test.body, &masked, fmt_trait, &self_type, context)
+        || macro_dispatch(&live, &masked, fmt_trait, &self_type, context)
 }
 
 /// `value.to_string()` where `value` is typed as `self_type` by the strict
