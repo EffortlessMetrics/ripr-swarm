@@ -1,0 +1,2 @@
+crates/ripr/tests/verification_erased_edits.rs|Command::new|1|cli-tests|#10749: runs the built ripr binary (`check`) against an isolated temporary Cargo workspace with fixed in-memory sources. No shell, network, or user-repository mutation.
+crates/ripr/tests/verification_erased_edits.rs|use std::process::Command|1|cli-tests|#10749: import for the one built-binary `check` run against an isolated temporary Cargo workspace; see the Command::new entry.

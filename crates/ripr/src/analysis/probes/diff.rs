@@ -95,6 +95,21 @@ pub(crate) fn probes_for_file_with_relations(
         .map(|facts| prose_lines(&facts.source))
         .unwrap_or_default();
     let removed_prose = old_source.map(prose_lines).unwrap_or_default();
+    // RIPR-SPEC-0368: contract attributes and ghost/logic items are read by a
+    // verifier, never by a test; the run discloses them as a typed limitation
+    // instead of probing them.
+    let added_verification = find_file_facts(index, &changed.path)
+        .map(|facts| super::verification_erased::verification_only_lines(&facts.source))
+        .unwrap_or_default();
+    let removed_verification = old_source
+        .map(super::verification_erased::verification_only_lines)
+        .unwrap_or_default();
+    for (flag, line) in skip_added.iter_mut().zip(&changed.added_lines) {
+        *flag |= added_verification.contains(&line.new_side_line);
+    }
+    for (flag, line) in skip_removed.iter_mut().zip(&changed.removed_lines) {
+        *flag |= removed_verification.contains(&line.line);
+    }
     let added_at = changed
         .added_lines
         .iter()
@@ -1338,23 +1353,34 @@ fn position_macro_lines(source: &str) -> std::collections::BTreeSet<usize> {
 /// probes.
 fn macro_invocation_lines(source: &str, names: &[&str]) -> std::collections::BTreeSet<usize> {
     let masked = mask_comments_and_strings(source);
-    let bytes = masked.as_bytes();
-    let newlines = bytes
-        .iter()
+    let newlines = masked
+        .bytes()
         .enumerate()
-        .filter(|(_, byte)| **byte == b'\n')
+        .filter(|(_, byte)| *byte == b'\n')
         .map(|(at, _)| at)
         .collect::<Vec<_>>();
     let line_of = |at: usize| newlines.partition_point(|&newline| newline < at) + 1;
-    let mut lines = std::collections::BTreeSet::new();
-    let mut bangs = macro_bangs(&masked, names);
+    macro_invocation_extents(&masked, names)
+        .into_iter()
+        .flat_map(|(at, end)| line_of(at)..=line_of(end))
+        .collect()
+}
+
+/// Byte extents `(name offset, closing delimiter offset)` of each invocation
+/// of a macro named in `names` in `masked` text, outermost first. An
+/// invocation that never closes ends at `masked.len()` and is the last entry,
+/// since it already covers every later invocation.
+pub(super) fn macro_invocation_extents(masked: &str, names: &[&str]) -> Vec<(usize, usize)> {
+    let bytes = masked.as_bytes();
+    let mut extents = Vec::new();
+    let mut bangs = macro_bangs(masked, names);
     bangs.sort_unstable();
     let mut covered_to = 0usize;
     for (at, after_bang) in bangs {
         if at < covered_to {
             continue;
         }
-        let cursor = skip_rust_whitespace(&masked, after_bang);
+        let cursor = skip_rust_whitespace(masked, after_bang);
         if !matches!(bytes.get(cursor), Some(b'(' | b'[' | b'{')) {
             continue;
         }
@@ -1373,15 +1399,13 @@ fn macro_invocation_lines(source: &str, names: &[&str]) -> std::collections::BTr
                 _ => {}
             }
         }
-        lines.extend(line_of(at)..=line_of(end));
+        extents.push((at, end));
         if end == bytes.len() {
-            // Unclosed: it already runs to the end of the file, so every later
-            // invocation is covered and rescanning would be quadratic.
             break;
         }
         covered_to = end;
     }
-    lines
+    extents
 }
 
 fn neutral_spelling(line: &str) -> String {
