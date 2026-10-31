@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-idiom-wantarray-smoke.json",
-    "sha256": "ad6414bc01e4846d78a55909fa67d7bcbc9c4cb6f54012e1270299b88ac9e51e",
+    "sha256": "549fd6568dc40ae5a938bbcbabf19896de51d645479f97ad69bd98c9e69d3a8b",
     "provenance": "producer"
   }
 }
