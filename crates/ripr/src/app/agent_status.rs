@@ -6455,7 +6455,7 @@ mod tests {
             .find(|warning| warning.kind == "pilot_withheld_static_limitations_no_repair_target")
             .ok_or_else(|| format!("expected a withheld warning: {:?}", report.warnings))?;
         for expected in [
-            "is missing or unreadable, so status cannot tell whether a gap limit cut the run",
+            "is missing or unreadable, so status cannot tell whether an analysis limit cut the run",
             "raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT",
         ] {
             assert!(warning.message.contains(expected), "{}", warning.message);
