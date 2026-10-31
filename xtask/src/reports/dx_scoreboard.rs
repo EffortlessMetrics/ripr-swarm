@@ -130,6 +130,13 @@ pub(crate) struct CorpusEntry {
     /// languages are read as separate populations.
     #[serde(default)]
     pub(crate) language: Option<String>,
+    /// Hard ceilings on this repository's own samples, by metric id: a
+    /// measured value above one, or a sample that did not produce a value,
+    /// fails `--gate` whatever the baseline holds. A relative regression
+    /// margin lets a row creep back over a bar it was cut under; a ceiling
+    /// does not, and it does not depend on a same-runner baseline existing.
+    #[serde(default)]
+    pub(crate) ceilings: BTreeMap<String, f64>,
 }
 
 /// Languages a corpus entry may declare.
@@ -417,6 +424,9 @@ pub(crate) fn corpus_from_manifest(value: &Value) -> Result<(String, Vec<CorpusE
             base_sha: repo["base_sha"].as_str().map(str::to_string),
             note: repo["why"].as_str().unwrap_or_default().to_string(),
             heavy: repo["tier"].as_str() != Some("fast"),
+            // The shared manifest carries no ceilings; they are set per
+            // entry in the inline list only.
+            ceilings: BTreeMap::new(),
             // A present non-string value is an error, not an absent field:
             // reading it as absent would file the entry under `rust`.
             language: match &repo["language"] {
@@ -531,7 +541,112 @@ pub(crate) fn parse_config(text: &str) -> Result<Config, String> {
             ));
         }
     }
+    validate_ceilings(&config)?;
     Ok(config)
+}
+
+/// Each corpus ceiling must name a measured per-repository metric where
+/// lower is better, with a positive bound, so a typo cannot leave a row
+/// silently unguarded.
+fn validate_ceilings(config: &Config) -> Result<(), String> {
+    for entry in &config.corpus {
+        for (metric_id, ceiling) in &entry.ceilings {
+            let Some(metric) = config.metric.iter().find(|metric| &metric.id == metric_id) else {
+                return Err(format!(
+                    "corpus `{}` sets a ceiling on unknown metric `{metric_id}`",
+                    entry.id
+                ));
+            };
+            if !metric.per_repo
+                || metric.direction != "lower_is_better"
+                || metric.source != "measured"
+            {
+                return Err(format!(
+                    "corpus `{}` ceiling on `{metric_id}` needs a measured per-repo lower_is_better metric",
+                    entry.id
+                ));
+            }
+            if !ceiling.is_finite() || *ceiling <= 0.0 {
+                return Err(format!(
+                    "corpus `{}` ceiling on `{metric_id}` must be a positive number",
+                    entry.id
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The ceilinged samples this run breached: a value above its row's
+/// ceiling, a sample of a ceilinged row that produced no value, or a row this
+/// run selected that has no sample of its ceilinged metric at all. A row is
+/// selected when the run recorded it in its corpus or holds any sample of
+/// it. Rows this run did not select (a heavy row without `--include-heavy`)
+/// are not breaches; their absence is visible in the per-repo view.
+fn ceiling_breaches(
+    config: &Config,
+    boards: &[String],
+    samples: &[Sample],
+    context: &RunContext,
+) -> Vec<Value> {
+    let mut breaches = Vec::new();
+    for entry in &config.corpus {
+        let of_row = |sample: &&Sample| sample.repo.as_deref() == Some(entry.id.as_str());
+        let selected = context
+            .corpus
+            .iter()
+            .any(|row| row["id"].as_str() == Some(entry.id.as_str()))
+            || samples.iter().any(|sample| of_row(&sample));
+        for (metric_id, ceiling) in &entry.ceilings {
+            let in_run = config
+                .metric
+                .iter()
+                .any(|metric| &metric.id == metric_id && boards.contains(&metric.board));
+            if !in_run {
+                continue;
+            }
+            let mut sampled = false;
+            for sample in samples
+                .iter()
+                .filter(|sample| &sample.metric == metric_id)
+                .filter(of_row)
+            {
+                sampled = true;
+                let reason = match &sample.outcome {
+                    SampleOutcome::Value(value) if value <= ceiling => continue,
+                    SampleOutcome::Value(value) => format!("{value} exceeds ceiling {ceiling}"),
+                    SampleOutcome::Incomplete(_) => {
+                        format!("did not complete, so ceiling {ceiling} is not established")
+                    }
+                    _ => format!("produced no value, so ceiling {ceiling} is not established"),
+                };
+                breaches.push(json!({
+                    "metric": metric_id,
+                    "repo": entry.id,
+                    "ceiling": ceiling,
+                    "value": match sample.outcome {
+                        SampleOutcome::Value(value) => json!(value),
+                        _ => Value::Null,
+                    },
+                    "reason": reason,
+                }));
+            }
+            // A selected row whose ceilinged metric has no sample is a
+            // missing measurement, not a pass.
+            if selected && !sampled {
+                breaches.push(json!({
+                    "metric": metric_id,
+                    "repo": entry.id,
+                    "ceiling": ceiling,
+                    "value": Value::Null,
+                    "reason": format!(
+                        "was selected but produced no sample, so ceiling {ceiling} is not established"
+                    ),
+                }));
+            }
+        }
+    }
+    breaches
 }
 
 /// Read a `ripr-dx-scoreboard-input-v1` file produced by another harness.
@@ -2022,8 +2137,11 @@ pub(crate) fn build_report(
         .filter(|row| row["baseline"]["comparison_failed"] == true)
         .map(|row| json!({"metric": row["id"], "reason": row["baseline"]["reason"]}))
         .collect();
+    let ceiling_breaches = ceiling_breaches(config, boards, samples, context);
     let gate_status = if !gate {
         "not_run"
+    } else if !ceiling_breaches.is_empty() {
+        "fail"
     } else if baseline.is_none() {
         if failed.is_empty() {
             "no_baseline"
@@ -2058,6 +2176,7 @@ pub(crate) fn build_report(
             "regressions": regressions,
             "failed_instruments": failed,
             "failed_comparisons": comparison_failures,
+            "ceiling_breaches": ceiling_breaches,
             "review": review,
             "uncompared": uncompared,
         },
@@ -2774,6 +2893,18 @@ fn gate_failure_message(report: &Value) -> String {
             item["reason"].as_str().unwrap_or("missing evidence")
         ));
     }
+    for breach in report["gate"]["ceiling_breaches"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        lines.push(format!(
+            "  ceiling breached {} on {}: {}",
+            breach["metric"].as_str().unwrap_or("?"),
+            breach["repo"].as_str().unwrap_or("?"),
+            breach["reason"].as_str().unwrap_or("?")
+        ));
+    }
     lines.push("see target/ripr/reports/dx-scoreboard.md".to_string());
     lines.join("\n")
 }
@@ -2801,6 +2932,18 @@ pub(crate) fn render_markdown(report: &Value) -> String {
         .as_array()
         .map(Vec::as_slice)
         .unwrap_or(&[]);
+    for breach in report["gate"]["ceiling_breaches"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        out.push_str(&format!(
+            "\n**Ceiling breached** `{}` on `{}`: {}\n",
+            breach["metric"].as_str().unwrap_or("?"),
+            breach["repo"].as_str().unwrap_or("?"),
+            breach["reason"].as_str().unwrap_or("?")
+        ));
+    }
     for item in report["gate"]["failed_comparisons"]
         .as_array()
         .into_iter()

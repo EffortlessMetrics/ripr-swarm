@@ -27,6 +27,7 @@ Updated:
 ## Pending — ts_boundary_local_constant_refused (3)
 
 Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
 RIPR-SPEC-0122: script unconfirmed-observation wording names the changed behavior, not a branch
 
 Command:

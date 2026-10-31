@@ -978,6 +978,20 @@ impl AnalysisSnapshot {
                 )
             })
             .count();
+        // Preview-withheld markers (#11296) are governed, code-marked
+        // disclosures for a file whose preview findings the actionable
+        // profile withheld; they are not findings, seams, or gap records.
+        let preview_withheld_disclosures = self
+            .diagnostics_by_uri
+            .values()
+            .flatten()
+            .filter(|diagnostic| {
+                diagnostic_has_code(
+                    diagnostic,
+                    super::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE,
+                )
+            })
+            .count();
         let published_finding_count = super::diagnostics::canonical_finding_groups(&self.findings)
             .into_iter()
             .filter(|(primary, _)| {
@@ -995,6 +1009,7 @@ impl AnalysisSnapshot {
                 + gap_diagnostics
                 + scope_guard_disclosures
                 + language_not_analyzed_disclosures
+                + preview_withheld_disclosures
                 == diagnostic_count
             && self
                 .gap_artifacts
@@ -3131,6 +3146,62 @@ mod tests {
         };
 
         if lookalike_snapshot.is_consistent() {
+            return Err("a lookalike code must stay unaccounted".to_string());
+        }
+        Ok(())
+    }
+
+    fn preview_withheld_snapshot(code: &str) -> Result<AnalysisSnapshot, String> {
+        let uri = test_uri("file:///workspace/src/pricing.py")?;
+        let mut marker = plain_diagnostic();
+        marker.code = Some(tower_lsp_server::ls_types::NumberOrString::String(
+            code.to_string(),
+        ));
+        let mut diagnostics_by_uri = BTreeMap::new();
+        diagnostics_by_uri.insert(uri, vec![marker]);
+        Ok(AnalysisSnapshot {
+            root: PathBuf::from("/workspace"),
+            rust_consumed_sources: Default::default(),
+            input_identity: None,
+            base: None,
+            mode: Mode::Draft,
+            refresh: RefreshMetadata::default(),
+            findings: Vec::new(),
+            analysis_outcome: None,
+            diagnostic_profile: LspDiagnosticProfile::Actionable,
+            classified_seams: Vec::new(),
+            repair_card_candidate_seams: None,
+            gap_artifacts: Vec::new(),
+            gap_artifact_rejections: Vec::new(),
+            harness_facts: HarnessFactsOnSnapshot::NotRegistered,
+            diagnostics_by_uri,
+            diagnostic_uri_index: None,
+            delivery_selection: None,
+            seams_deferred: false,
+            partial_scope: None,
+            component_outcomes: Vec::new(),
+            out_of_scope_test_file_findings: 0,
+            unavailable_adapter: UnavailableAdapterCoverage::default(),
+            language_view: None,
+        })
+    }
+
+    #[test]
+    fn snapshot_consistency_counts_preview_withheld_marker() -> Result<(), String> {
+        // #11296: the governed marker is accounted without a finding.
+        let snapshot = preview_withheld_snapshot(
+            crate::lsp::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE,
+        )?;
+        if !snapshot.is_consistent() {
+            return Err("the preview-withheld marker should be accounted".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn snapshot_consistency_rejects_preview_withheld_lookalike() -> Result<(), String> {
+        let lookalike = preview_withheld_snapshot("ripr-diagnostic-preview-withheld-x")?;
+        if lookalike.is_consistent() {
             return Err("a lookalike code must stay unaccounted".to_string());
         }
         Ok(())
