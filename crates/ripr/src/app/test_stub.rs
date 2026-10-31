@@ -1826,8 +1826,8 @@ mod tests {
 
         let refused = super::ensure_stub_path_contained(&root, &root.join("tests/new_test.rs"));
         assert!(refused.is_err_and(|e| e.contains("outside the workspace")));
-        assert!(super::ensure_stub_path_contained(&root, &root.join("okdir/new_test.rs")).is_ok());
-        assert!(super::ensure_stub_path_contained(&root, &root.join("src/lib.rs")).is_ok());
+        super::ensure_stub_path_contained(&root, &root.join("okdir/new_test.rs"))?;
+        super::ensure_stub_path_contained(&root, &root.join("src/lib.rs"))?;
         let _ = std::fs::remove_dir_all(&base);
         Ok(())
     }
