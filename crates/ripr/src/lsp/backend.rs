@@ -3774,7 +3774,10 @@ impl Backend {
         if std::fs::metadata(&path).map(|meta| meta.len()).ok() != u64::try_from(text.len()).ok() {
             return false;
         }
-        std::fs::read(&path).is_ok_and(|disk| disk == text.as_bytes())
+        // The path is client-named, so it may be a device or FIFO
+        // (`/dev/zero` reports length 0): read only through the bounded
+        // regular-file reader, never an unbounded `fs::read`.
+        super::state::read_saved_bytes(&path).is_some_and(|disk| disk == text.as_bytes())
     }
 
     /// The quarantine state of an open document, as `(path, reason)`.
