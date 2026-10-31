@@ -21,9 +21,12 @@
 
 use crate::analysis::ClassifiedSeam;
 use crate::app::agent_brief::AgentBriefPolicy;
-use crate::app::task_first::{RefusalKind, RepairSubjectOutcome, resolve_repair_subject_in};
+use crate::app::task_first::{
+    RefusalKind, RefusalRoot, RepairSubjectOutcome, resolve_repair_subject_in,
+};
 use crate::domain::Finding;
 use std::collections::HashMap;
+use std::path::Path;
 
 /// Typed reason: the shared gate names the seam and its existing tests
 /// already grip it (`exposed`), so no static gap remains to repair.
@@ -155,6 +158,7 @@ impl SeamAdmission {
         candidate_seams: &[ClassifiedSeam],
         policy: AgentBriefPolicy<'_>,
         completeness: &InventoryCompleteness,
+        root: Option<&Path>,
     ) -> Self {
         // The CLI checks inventory truncation before it resolves any item, so
         // a truncated or unverifiable inventory refuses every finding first.
@@ -170,8 +174,15 @@ impl SeamAdmission {
                     None => verdict_for(
                         // The server's verdicts are consumed relative to its
                         // own workspace root, so no `--root` is worded into an
-                        // emitted next command here.
-                        resolve_repair_subject_in(candidate_seams, policy, &finding.id, None),
+                        // emitted next command here; the sources are still
+                        // read under it, so a refusal never offers a stub
+                        // command that would itself refuse.
+                        resolve_repair_subject_in(
+                            candidate_seams,
+                            policy,
+                            &finding.id,
+                            RefusalRoot::implicit(root),
+                        ),
                         candidate_seams,
                         &finding.id,
                     ),

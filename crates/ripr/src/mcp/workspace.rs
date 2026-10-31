@@ -1824,6 +1824,7 @@ pub(crate) fn run_check(
             &inventory.candidate_seams,
             crate::app::agent_brief::AgentBriefPolicy::from_config(&config),
             &inventory.completeness,
+            Some(root),
         );
         let mut snapshot = Snapshot::from_output_admitted(
             &output,

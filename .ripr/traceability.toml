@@ -16125,6 +16125,8 @@ tests = [
   "crates/ripr/tests/check_repair_agree.rs::exposed_change_refusal_says_nothing_to_do",
   "crates/ripr/tests/check_repair_agree.rs::change_with_no_repairable_code_says_so_first",
   "crates/ripr/tests/check_repair_agree.rs::async_route_refusal_does_not_offer_a_stub_that_refuses",
+  "crates/ripr/tests/mcp_cli_repair_parity.rs::async_owner_refusal_names_the_stub_refusal_on_both_surfaces",
+  "crates/ripr/src/app/task_first.rs::tests::opaque_refusal_names_what_could_not_be_established",
   "crates/ripr/src/app/agent_status.rs::tests::agent_attempt_status_types_a_missing_attempt_instead_of_erroring",
   "crates/ripr/src/app/agent_status.rs::tests::agent_attempt_status_uses_only_the_selected_store",
   "crates/ripr/src/app/agent_status.rs::tests::agent_attempt_status_never_claims_resumable_past_a_moved_head",

@@ -4944,7 +4944,7 @@ fn mcp_readiness_never_exceeds_the_cli_repair_gate() -> Result<(), String> {
         if id == ARM {
             let refusal = refusal.ok_or("`ripr repair` must refuse the gripped arm")?;
             if !refusal.contains("not ready for an automatic repair")
-                || !refusal.contains("already grip")
+                || !refusal.contains("already check it")
             {
                 return Err(format!("CLI refusal changed shape: {refusal}"));
             }
@@ -4958,7 +4958,7 @@ fn mcp_readiness_never_exceeds_the_cli_repair_gate() -> Result<(), String> {
                 ));
             }
             let reason = gap["item"]["readiness"]["reason"].as_str().unwrap_or("");
-            if !reason.contains("already grip") {
+            if !reason.contains("already check it") {
                 return Err(format!(
                     "get_gap readiness must carry the shared validator's reason: {reason}"
                 ));

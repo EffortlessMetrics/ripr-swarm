@@ -226,6 +226,37 @@ pub(crate) enum RefusalKind {
     Unverified,
 }
 
+/// The workspace a refusal is worded for: where its sources live and whether
+/// an emitted next command names it with `--root`.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct RefusalRoot<'a> {
+    source: Option<&'a Path>,
+    name_in_commands: bool,
+}
+
+impl<'a> RefusalRoot<'a> {
+    /// The CLI: read sources under `root` and name it in next commands.
+    pub(crate) fn named(root: &'a Path) -> Self {
+        Self {
+            source: Some(root),
+            name_in_commands: true,
+        }
+    }
+
+    /// The MCP server: read sources under `root`, but next commands already
+    /// run relative to it, so no `--root` is worded into them.
+    pub(crate) fn implicit(root: Option<&'a Path>) -> Self {
+        Self {
+            source: root,
+            name_in_commands: false,
+        }
+    }
+
+    fn command_root(self) -> Option<&'a Path> {
+        self.source.filter(|_| self.name_in_commands)
+    }
+}
+
 /// The one repair-admission gate, shared by the auto selector and the
 /// explicit-subject resolver: a seam may start only when the producer-owned
 /// packet flip is eligible and the brief policy does not omit its class.
@@ -235,7 +266,7 @@ pub(crate) enum RefusalKind {
 fn repair_refusal(
     entry: &crate::analysis::ClassifiedSeam,
     policy: AgentBriefPolicy<'_>,
-    root: Option<&Path>,
+    root: RefusalRoot<'_>,
 ) -> Option<(RefusalKind, String)> {
     let eligibility = repair_packet_eligibility(entry);
     if !eligibility.eligible() {
@@ -273,16 +304,12 @@ fn repair_refusal(
                 );
                 (RefusalKind::RouteNotReady, label)
             } else if reason == RepairPacketIneligibility::ClassNotHeadlineEligible
-                && let Some(lacks) = unknown_class_lacks(entry.class)
+                && entry.class == crate::analysis::seams::SeamGripClass::Opaque
             {
-                // Name what ripr could not establish, as `ripr check` does for
-                // the same finding, instead of "this kind of finding".
-                (
-                    RefusalKind::Other,
-                    format!(
-                        "ripr does not start an automatic repair here because it could not establish {lacks}, so it cannot say what a test should check; write the test by hand"
-                    ),
-                )
+                // An opaque seam: name what ripr could not establish instead
+                // of "this kind of finding". The `*_unknown` classes are
+                // headline classes, so they never reach this branch.
+                (RefusalKind::Other, OPAQUE_SPOT_REASON.to_string())
             } else {
                 (RefusalKind::Other, label.to_string())
             }
@@ -293,23 +320,9 @@ fn repair_refusal(
         .map(|reason| (RefusalKind::Other, reason))
 }
 
-/// What an unknown-stage class could not establish, in plain words, or `None`
-/// for a class whose refusal is not an unknown stage.
-fn unknown_class_lacks(class: crate::analysis::seams::SeamGripClass) -> Option<&'static str> {
-    use crate::analysis::seams::SeamGripClass;
-    match class {
-        SeamGripClass::ActivationUnknown => Some("that a test input reaches the changed code"),
-        SeamGripClass::PropagationUnknown => {
-            Some("that the changed value flows to something a test can check")
-        }
-        SeamGripClass::ObservationUnknown => Some("that a test observes the changed behavior"),
-        SeamGripClass::DiscriminationUnknown => {
-            Some("whether a test assertion would fail if the changed behavior were wrong")
-        }
-        SeamGripClass::Opaque => Some("how any test reaches or observes this code"),
-        _ => None,
-    }
-}
+/// The refusal for an opaque seam: ripr could not see how any test reaches
+/// or observes the changed code, so it cannot say what a test should check.
+const OPAQUE_SPOT_REASON: &str = "ripr does not start an automatic repair here because it could not establish how any test reaches or observes this code, so it cannot say what a test should check; write the test by hand";
 
 /// The route-not-ready refusal wording: the plain-language missing evidence
 /// plus any concrete manual route (predicate or return-value stub).
@@ -317,7 +330,7 @@ fn route_not_ready_reason(
     entry: &crate::analysis::ClassifiedSeam,
     label: &str,
     missing_evidence: &[String],
-    root: Option<&Path>,
+    root: RefusalRoot<'_>,
 ) -> String {
     let missing = missing_evidence
         .iter()
@@ -352,7 +365,7 @@ fn route_not_ready_reason(
         }
         let file = crate::analysis::stable_path_text(entry.seam.file());
         let at = shell_arg(&format!("{file}:{}", entry.seam.display_line()));
-        let root_flag = root.map_or_else(String::new, |root| {
+        let root_flag = root.command_root().map_or_else(String::new, |root| {
             format!(
                 " --root {}",
                 shell_arg(&bound_root(&root.to_string_lossy()))
@@ -375,8 +388,8 @@ fn route_not_ready_reason(
         )
     {
         // The stub command refuses some owners (async, generic, ...): name
-        // that refusal, as `ripr check` does, instead of offering a command
-        // that would refuse (#11111 burn-down).
+        // the stub's own refusal reason instead of offering a command that
+        // would refuse (#11111 burn-down).
         if let Some(why) = stub_refusal_reason(entry, root) {
             label.push_str(&format!(
                 ": write the test by hand; ripr cannot write a fill-in skeleton here because {why}"
@@ -385,7 +398,7 @@ fn route_not_ready_reason(
         }
         let file = crate::analysis::stable_path_text(entry.seam.file());
         let at = shell_arg(&format!("{file}:{}", entry.seam.display_line()));
-        let root_flag = root.map_or_else(String::new, |root| {
+        let root_flag = root.command_root().map_or_else(String::new, |root| {
             format!(
                 " --root {}",
                 shell_arg(&bound_root(&root.to_string_lossy()))
@@ -403,9 +416,9 @@ fn route_not_ready_reason(
 /// (the existing route text then stands).
 fn stub_refusal_reason(
     entry: &crate::analysis::ClassifiedSeam,
-    root: Option<&Path>,
+    root: RefusalRoot<'_>,
 ) -> Option<&'static str> {
-    let root = root?;
+    let root = root.source?;
     let source = std::fs::read_to_string(root.join(entry.seam.file())).ok()?;
     crate::analysis::test_stub::rust_test_stub_for_classified_seam(root, entry, &source)
         .err()
@@ -545,7 +558,7 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
     // both read these results.
     let refusals: Vec<_> = classified
         .iter()
-        .map(|entry| (entry, repair_refusal(entry, policy, Some(root))))
+        .map(|entry| (entry, repair_refusal(entry, policy, RefusalRoot::named(root))))
         .collect();
     let gripped_siblings: Vec<&crate::analysis::ClassifiedSeam> = refusals
         .iter()
@@ -1171,7 +1184,7 @@ pub(crate) fn resolve_repair_subject_outcome(
         &classified,
         AgentBriefPolicy::from_config(&config),
         item,
-        Some(root),
+        RefusalRoot::named(root),
     ))
 }
 
@@ -1179,15 +1192,16 @@ pub(crate) fn resolve_repair_subject_outcome(
 /// one explicit repair item against an already-classified seam inventory and
 /// apply the shared repair-admission gate to the one seam it names. The MCP
 /// refresh runs this over its own diff-scoped inventory so a session item's
-/// repair readiness is this exact decision, not a parallel one. `root` lets
-/// the shared refusal word an emitted next command (`ripr agent stub --root`)
-/// for the workspace the inventory came from; the MCP server passes `None`
-/// because its verdicts are already relative to the server's workspace root.
+/// repair readiness is this exact decision, not a parallel one. `root` names
+/// where the sources live (read to tell whether `ripr agent stub` would
+/// refuse the seam) and whether an emitted next command carries `--root`;
+/// the MCP server passes [`RefusalRoot::implicit`] because its verdicts are
+/// already relative to the server's workspace root.
 pub(crate) fn resolve_repair_subject_in(
     classified: &[crate::analysis::ClassifiedSeam],
     policy: AgentBriefPolicy<'_>,
     item: &str,
-    root: Option<&Path>,
+    root: RefusalRoot<'_>,
 ) -> RepairSubjectOutcome {
     let outcome_for = |entry: &crate::analysis::ClassifiedSeam| {
         let seam_id = entry.seam.id().as_str().to_string();
@@ -1477,7 +1491,7 @@ pub(crate) fn repair_start_refusal_for_entry(
     entry: &crate::analysis::ClassifiedSeam,
     policy: AgentBriefPolicy<'_>,
 ) -> Option<RepairStartRefusal> {
-    let (kind, reason) = repair_refusal(entry, policy, Some(root))
+    let (kind, reason) = repair_refusal(entry, policy, RefusalRoot::named(root))
         .or_else(|| {
             (!crate::output::agent_seam_packets::recommended_test_is_repair_edit_target(entry))
                 .then(|| {
@@ -1938,7 +1952,7 @@ pub(crate) fn check_repair_route(
     if bound.next().is_some() {
         return CheckRepairRoute::Refused(RepairRouteRefusal::SeveralBindingSeams);
     }
-    if let Some((kind, reason)) = repair_refusal(entry, policy, Some(root)) {
+    if let Some((kind, reason)) = repair_refusal(entry, policy, RefusalRoot::named(root)) {
         // A bound seam carries a canonical gap id, which a strongly gripped
         // seam never does, so `AlreadyGripped` cannot reach here: that case is
         // named by the location fallback above (#10702).
@@ -2911,6 +2925,49 @@ pub(crate) mod tests {
             other_note.contains("not a headline repair target") && !other_note.contains("by hand"),
             "{other_note}"
         );
+        Ok(())
+    }
+
+    /// #11111 burn-down: an opaque seam names what ripr could not establish;
+    /// a class with its own policy reason keeps the generic label. The
+    /// `*_unknown` classes are headline classes and never take this branch.
+    #[test]
+    fn opaque_refusal_names_what_could_not_be_established() -> Result<(), String> {
+        use crate::analysis::seams::SeamGripClass;
+        let config = crate::config::RiprConfig::default();
+        let policy = AgentBriefPolicy::from_config(&config);
+        let root = Path::new("/repo");
+        let opaque = repair_start_refusal_for_entry(
+            root,
+            &gate_entry(SeamGripClass::Opaque, Vec::new()),
+            policy,
+        )
+        .ok_or("an opaque seam must be refused")?;
+        if opaque.reason != OPAQUE_SPOT_REASON || opaque.kind != RefusalKind::Other {
+            return Err(format!("opaque refusal changed: {}", opaque.reason));
+        }
+        let intentional = repair_start_refusal_for_entry(
+            root,
+            &gate_entry(SeamGripClass::Intentional, Vec::new()),
+            policy,
+        )
+        .ok_or("an intentional seam must be refused")?;
+        if intentional.reason.contains("could not establish") {
+            return Err(format!(
+                "only an opaque seam names what could not be established: {}",
+                intentional.reason
+            ));
+        }
+        for class in [
+            SeamGripClass::ActivationUnknown,
+            SeamGripClass::PropagationUnknown,
+            SeamGripClass::ObservationUnknown,
+            SeamGripClass::DiscriminationUnknown,
+        ] {
+            if !class.is_headline_eligible() {
+                return Err(format!("{class:?} must stay a headline class"));
+            }
+        }
         Ok(())
     }
 

@@ -155,8 +155,12 @@ receipt strength, and currentness as separate facts:
   that, even with no repairable spot elsewhere, and closes with a
   hand-written test; otherwise it keeps the repository route. A
   route-not-ready reason names a `ripr agent stub` command only when the stub
-  would write one, and otherwise names the stub's own refusal. A seam whose
-  class is an unknown stage names what ripr could not establish.
+  would write one, and otherwise names the stub's own refusal; the MCP
+  server reads the same sources and carries the same refusal, without
+  `--root`. An opaque seam
+  names what ripr could not establish; intentional and suppressed seams keep
+  the general label (the `*_unknown` classes are headline classes and reach
+  the route gate instead).
 
 - A restart or fresh-start route is named only when the shared repair
   eligibility gate admits the seam (#8766): `repair_refusal` (the gate
