@@ -16,6 +16,20 @@ FILES = ("action.yml", "candidate_admission.py", "release_cut_admission.py")
 PIN = "${{ steps.trusted.outputs.sha }}"
 
 
+def bash():
+    """The bash the workflow steps run under. On Windows a bare `bash` resolves to
+    the WSL launcher in System32 (no distributions installed on the runner), so
+    prefer Git for Windows' bash and ignore PATH, which a case may poison."""
+    if os.name != "nt":
+        return "bash"
+    for variable in ("ProgramFiles", "ProgramFiles(x86)"):
+        prefix = os.environ.get(variable)
+        for relative in ("Git/bin/bash.exe", "Git/usr/bin/bash.exe"):
+            if prefix and (Path(prefix) / relative).is_file():
+                return str(Path(prefix) / relative)
+    raise RuntimeError("Git for Windows bash.exe not found under ProgramFiles")
+
+
 def shell(source):
     return "\n".join(line[8:] if line.startswith("        ") else line
                      for line in source.split("      run: |\n", 1)[1].splitlines())
@@ -104,7 +118,7 @@ class Bundle(unittest.TestCase):
             workflow = (ROOT / ".github/workflows/routed-rust.yml").read_text(encoding="utf-8")
             verify = step(workflow, "Verify trusted admission bundle")
             if verify:
-                result = run("bash", "-euo", "pipefail", "-c", shell(verify), cwd=workspace)
+                result = run(bash(), "-euo", "pipefail", "-c", shell(verify), cwd=workspace)
                 if result.returncode:
                     self.assertFalse(marker.exists())
                     return result.returncode, result.stdout + result.stderr, False
@@ -130,7 +144,7 @@ class Bundle(unittest.TestCase):
             (tmp / "gh").chmod(0o755)
             (tmp / "gh.cmd").write_text(f'@"{sys.executable}" "%~dp0gh" %*\r\n', encoding="utf-8")
             env["PATH"] = str(tmp) + os.pathsep + env["PATH"]
-            result = run("bash", "-euo", "pipefail", "-c", shell((action / "action.yml").read_text(encoding="utf-8")), cwd=workspace)
+            result = run(bash(), "-euo", "pipefail", "-c", shell((action / "action.yml").read_text(encoding="utf-8")), cwd=workspace)
             outputs = (tmp / "outputs").read_text(encoding="utf-8") if (tmp / "outputs").exists() else ""
             return result.returncode, outputs + result.stdout + result.stderr, marker.exists()
 
@@ -189,7 +203,7 @@ class Bundle(unittest.TestCase):
             for collision in (False, True):
                 if collision:
                     (workspace / ".admission-trusted").mkdir()
-                result = subprocess.run(["bash", "-euo", "pipefail", "-c", shell(check)], cwd=workspace,
+                result = subprocess.run([bash(), "-euo", "pipefail", "-c", shell(check)], cwd=workspace,
                                         env=dict(os.environ, GITHUB_WORKSPACE=str(workspace),
                                                  GITHUB_OUTPUT=str(workspace / "outputs"), EVENT_NAME="pull_request",
                                                  PR_BASE_SHA="b"*40, GROUP_BASE_SHA="c"*40, EVENT_SHA="a"*40), capture_output=True)
@@ -211,7 +225,7 @@ class Bundle(unittest.TestCase):
                         if missing:
                             env[field] = ""
                         output.write_text("", encoding="utf-8")
-                        result = subprocess.run(["bash", "-euo", "pipefail", "-c", shell(check)],
+                        result = subprocess.run([bash(), "-euo", "pipefail", "-c", shell(check)],
                                                 env=env, capture_output=True)
                         self.assertEqual(result.returncode, int(missing), result)
                         self.assertEqual(output.read_text(encoding="utf-8"), "" if missing else "sha="+expected*40+"\n")
