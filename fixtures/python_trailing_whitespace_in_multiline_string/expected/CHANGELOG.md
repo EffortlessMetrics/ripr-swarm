@@ -11,3 +11,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_trailing_whitespace_in_multiline_string (2)
+
+Reason:
+RIPR-SPEC-0028: refresh the verify-command rendering that landed on main alongside #10706
+
+Command:
+`cargo xtask goldens bless python_trailing_whitespace_in_multiline_string --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
