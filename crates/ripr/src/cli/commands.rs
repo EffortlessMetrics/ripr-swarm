@@ -8274,6 +8274,9 @@ language = "rust"
         assert!(workflow.contains("RIPR_UPLOAD_SARIF"));
         assert!(workflow.contains("RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }}"));
         assert!(workflow.contains("RIPR_GATE_BASELINE: ${{ vars.RIPR_GATE_BASELINE || '' }}"));
+        assert!(
+            workflow.contains("RIPR_PILOT_TIMEOUT_MS: ${{ vars.RIPR_PILOT_TIMEOUT_MS || '' }}")
+        );
         assert!(workflow.contains("RIPR_COMMENT_MODE: ${{ vars.RIPR_COMMENT_MODE || 'off' }}"));
         assert!(workflow.contains("pull-requests: write"));
         assert!(workflow.contains("run: ripr reports ci-packet --root ."));
