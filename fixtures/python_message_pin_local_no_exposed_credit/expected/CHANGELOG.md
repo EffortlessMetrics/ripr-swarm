@@ -11,3 +11,16 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_message_pin_local_no_exposed_credit (2)
+
+Reason:
+RIPR-SPEC-0238: add human-full golden required by the honesty corpus expected_class assertion (#9185)
+
+Command:
+`cargo xtask goldens bless python_message_pin_local_no_exposed_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
