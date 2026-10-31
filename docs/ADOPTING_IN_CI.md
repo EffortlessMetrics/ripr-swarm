@@ -43,7 +43,7 @@ RIPR_GATE_MODE=visible-only
 
 `visible-only` runs the gate and writes
 `target/ripr/reports/gate-decision.json` and `gate-decision.md` without
-blocking the job. Review them; do not baseline output nobody has read. A
+blocking the job. Review them; do not baseline output that has not been reviewed. A
 repository variable is not carried by a pull request, so push or re-run a pull
 request after setting it.
 
@@ -62,13 +62,13 @@ then checkpoint its reviewed gate decision:
 ```bash
 ripr baseline create \
   --from target/ripr/reports/gate-decision.json \
-  --out target/ripr/reports/gate-baseline.candidate.json
+  --out .ripr/gate-baseline.json
 ```
 
 `--from` is the downloaded `gate-decision.json`; the path above is where the
 workflow writes it. The command refuses to overwrite an existing output unless
-`--force` is passed. Review the candidate, copy it to `.ripr/gate-baseline.json`
-and commit it in its own PR, still in `visible-only`. The baseline is scoped to
+`--force` is passed. Review `.ripr/gate-baseline.json` before committing it in
+its own PR, still in `visible-only`. The baseline is scoped to
 the pull request the decision came from. Full steps and review checklist:
 [baseline ledger workflow](BASELINE_LEDGER_WORKFLOW.md).
 
@@ -90,7 +90,7 @@ acknowledge it visibly as the baseline ledger workflow describes.
 `baseline-check` with no baseline, or an invalid one, is a `config_error` and
 the gate exits 2 (could not complete). It never acts as an empty baseline. The
 message names the way out: use `visible-only` to start without blocking, then
-run `ripr baseline create --from target/ripr/reports/gate-decision.json`,
+run `ripr baseline create --from target/ripr/reports/gate-decision.json --out .ripr/gate-baseline.json`,
 commit the result and pass it with `--baseline` (`RIPR_GATE_BASELINE`). A
 `blocked` decision, by contrast, exits 3.
 
