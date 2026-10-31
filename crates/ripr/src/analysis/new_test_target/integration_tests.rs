@@ -826,3 +826,66 @@ fn library_crate_name_for_root_file_resolves_name_root_and_target_shape() -> Res
     }
     Ok(())
 }
+
+#[test]
+fn sibling_cfg_test_file_is_an_admitted_repair_target() -> Result<(), String> {
+    let root = claim_root("sibling-cfg-test")?;
+    write_file(
+        &root.0,
+        "Cargo.toml",
+        "[package]\nname = \"sibling-test\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )?;
+    write_file(
+        &root.0,
+        "src/lib.rs",
+        &format!("{}\n#[cfg(test)] mod tests;\n", public_library_source()),
+    )?;
+    write_file(
+        &root.0,
+        "src/tests.rs",
+        "use super::*;\n#[test] fn reaches() { assert!(discounted_total(11, 10) > 0); }\n",
+    )?;
+    let classified = inventory_classified_seams_at(&root.0)?;
+    let entry = boundary_entry(&classified)?;
+    let selected = crate::output::agent_seam_packets::recommended_test_for(entry);
+    assert_eq!(
+        selected.file,
+        "src/tests.rs",
+        "entry: {entry:?}; readiness: {:?}",
+        repair_packet_eligibility(entry).readiness
+    );
+    assert!(crate::output::agent_seam_packets::recommended_test_is_repair_edit_target(entry));
+    Ok(())
+}
+
+#[test]
+fn production_tests_directory_is_not_a_whole_file_repair_target() -> Result<(), String> {
+    let root = claim_root("production-tests-dir")?;
+    write_file(
+        &root.0,
+        "Cargo.toml",
+        "[package]\nname = \"production-tests-dir\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )?;
+    write_file(
+        &root.0,
+        "src/lib.rs",
+        &format!("{}\nmod tests;\n", public_library_source()),
+    )?;
+    write_file(&root.0, "src/tests/mod.rs", "mod production;\n")?;
+    write_file(
+        &root.0,
+        "src/tests/production.rs",
+        "use crate::*;\npub fn production_value() -> i32 { 42 }\n#[test] fn reaches() { assert!(discounted_total(11, 10) > 0); }\n",
+    )?;
+    let classified = inventory_classified_seams_at(&root.0)?;
+    let entry = boundary_entry(&classified)?;
+    let selected = crate::output::agent_seam_packets::recommended_test_for(entry);
+    assert_eq!(
+        selected.file,
+        "src/tests/production.rs",
+        "entry: {entry:?}; readiness: {:?}",
+        repair_packet_eligibility(entry).readiness
+    );
+    assert!(!crate::output::agent_seam_packets::recommended_test_is_repair_edit_target(entry));
+    Ok(())
+}
