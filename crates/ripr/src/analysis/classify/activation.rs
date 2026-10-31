@@ -3139,14 +3139,44 @@ fn unresolved_call_identity(
     index: &crate::analysis::rust_index::RustIndex,
 ) -> Option<String> {
     let refused = |target: &FunctionSummary| {
-        related_tests.iter().any(|test| {
-            test.body_calls().any(|call| {
-                call.name == target.name
-                    && !super::call_identity::qualified_owner_calls_resolve(
-                        index, target, test, &call.text, call.line,
-                    )
-            })
-        })
+        let rival = super::call_identity::shared_owner_call_identity(index, target).is_some();
+        let mut resolving = false;
+        let mut declined = false;
+        let mut foreign = false;
+        for test in related_tests {
+            let test_foreign =
+                super::call_identity::name_bound_outside_owner_crate(index, target, test);
+            for call in test.body_calls() {
+                if call.name != target.name {
+                    continue;
+                }
+                if super::call_identity::qualified_owner_calls_resolve(
+                    index, target, test, &call.text, call.line,
+                ) {
+                    resolving = true;
+                    continue;
+                }
+                // A call shadowed inside a shadowing closure whose declared
+                // arity differs from the owner's provably cannot be the
+                // owner, so it never withholds the inference from the
+                // resolved rows: a shadowed call in one closure does not veto
+                // the outer real calls. Every other decline still withholds
+                // beside resolving rows, and rivals, settled-away or
+                // foreign-bound declines withhold even alone: with no trusted
+                // row anywhere, absence of a row cannot establish a missing
+                // boundary discriminator (#10046).
+                if super::call_identity::closure_shadowed_bare_call(
+                    index, target, test, &call.text, call.line,
+                ) {
+                    continue;
+                }
+                declined = true;
+                if test_foreign {
+                    foreign = true;
+                }
+            }
+        }
+        declined && (resolving || rival || foreign)
     };
     (refused(owner)
         || helper_chain
