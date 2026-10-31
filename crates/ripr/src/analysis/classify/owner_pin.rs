@@ -1029,25 +1029,18 @@ impl OwnerPinSyntax {
                         .is_none()
             }
             // Field construction: only a real shadow (a definition or import
-            // of the assertion name) or an opaque in-scope expansion that
-            // mentions it refuses credit. A site that only may rebind it
-            // (`#[macro_use] extern crate`, a glob import) does not, matching
-            // the operand-whitespace contracts on main; the return family
-            // keeps refusing on those sites.
+            // of the assertion name) or an opaque in-scope expansion that mentions
+            // it refuses credit. A `#[macro_use] extern crate` or a foreign glob
+            // alone remains admitted for the operand-whitespace field contracts;
+            // the return family keeps refusing on these ambiguous sites.
             Some(AssertionRefusal::Syntax(AssertionContextRefusal::MacroBinding(name))) => {
                 family == ProbeFamily::FieldConstruction
                     && self
                         .macro_binding_site(test, assertion.line, &name, index)
-                        .is_some_and(|(_, site)| {
-                            !rebinds(&site)
-                                && !matches!(
-                                    site.kind,
-                                    MacroBindingKind::MacroArgument(_)
-                                        | MacroBindingKind::MacroBody(_)
-                                        | MacroBindingKind::BodyBindsAny { .. }
-                                        | MacroBindingKind::ArgumentAttribute { .. }
-                                )
-                        })
+                        .is_some()
+                    && self
+                        .field_blocking_macro_site(test, assertion.line, &name, index)
+                        .is_none()
             }
             Some(_) => false,
         }
@@ -1084,7 +1077,12 @@ impl OwnerPinSyntax {
         ));
         Some(match refusal {
             AssertionRefusal::Syntax(AssertionContextRefusal::MacroBinding(name)) => {
-                let site = self.macro_binding_site(test, assertion.line, &name, index);
+                let site = if probe.family == ProbeFamily::FieldConstruction {
+                    self.field_blocking_macro_site(test, assertion.line, &name, index)
+                        .or_else(|| self.macro_binding_site(test, assertion.line, &name, index))
+                } else {
+                    self.macro_binding_site(test, assertion.line, &name, index)
+                };
                 AssertionRefusal::MacroBinding { name, site }
             }
             refusal => refusal,
@@ -1140,6 +1138,56 @@ impl OwnerPinSyntax {
         } else {
             workspace.or(local)
         }
+    }
+
+    // Unlike disclosure's single selected site, admission must consider every
+    // relevant blocking kind. Withheld scans retain only one site and can stop
+    // early, so any reaching withheld ambiguity cannot establish absence.
+    fn field_blocking_macro_site(
+        &self,
+        test: &TestSummary,
+        assertion_line: usize,
+        name: &str,
+        index: &RustIndex,
+    ) -> Option<(PathBuf, MacroBindingSite)> {
+        let roots = self.target_roots(index).roots(&test.file, index);
+        let resolved_modules = self.resolved_module_declarations(index);
+        let resolved = |path: &Path, line: usize, declaration: &str| {
+            resolved_modules.contains(&(path.to_path_buf(), line, declaration.to_string()))
+        };
+        self.workspace_macro_site_in_mode(name, roots.as_ref(), Some(&test.file), index, true)
+            .or_else(|| self.withheld.sites.get(name).cloned())
+            .or_else(|| {
+                self.withheld
+                    .root_sites
+                    .iter()
+                    .find_map(|((site_name, root), site)| {
+                        (site_name == name && roots.as_ref().is_none_or(|r| r.contains(root)))
+                            .then(|| site.clone())
+                    })
+            })
+            .or_else(|| {
+                let facts = index.files().get(&test.file)?;
+                self.test_file_macro_sites
+                    .borrow_mut()
+                    .entry((name.to_string(), test.file.clone()))
+                    .or_insert_with(|| {
+                        macro_binding_sites(
+                            name,
+                            &test.file,
+                            &facts.source,
+                            facts.macro_candidates.as_deref(),
+                            index,
+                            self.target_roots(index),
+                            &resolved,
+                        )
+                    })
+                    .iter()
+                    .find(|(_, site)| {
+                        site_covers_assertion(site, test, assertion_line) && field_site_blocks(site)
+                    })
+                    .map(|(_, site)| (test.file.clone(), site.clone()))
+            })
     }
 
     fn execution_context(
@@ -1418,6 +1466,17 @@ impl OwnerPinSyntax {
         test_file: Option<&Path>,
         index: &RustIndex,
     ) -> Option<(PathBuf, MacroBindingSite)> {
+        self.workspace_macro_site_in_mode(name, test_roots, test_file, index, false)
+    }
+
+    fn workspace_macro_site_in_mode(
+        &self,
+        name: &str,
+        test_roots: Option<&BTreeSet<PathBuf>>,
+        test_file: Option<&Path>,
+        index: &RustIndex,
+        field_only: bool,
+    ) -> Option<(PathBuf, MacroBindingSite)> {
         if !assertion_context_macros().contains(&name) {
             return None;
         }
@@ -1430,14 +1489,17 @@ impl OwnerPinSyntax {
         let retained = scan.as_ref()?;
         let mut rebinding: Option<&OrderedMacroSite> = None;
         let mut may_rebind: Option<&OrderedMacroSite> = None;
+        let mut field_blocking: Option<&OrderedMacroSite> = None;
         if let Some(rank) = retained.global.get(name) {
             merge_macro_site_rank(&mut rebinding, &mut may_rebind, rank);
+            keep_earliest_site(&mut field_blocking, rank.field_blocking.as_ref());
         }
         for (root, names) in &retained.by_root {
             if test_roots.is_none_or(|roots| roots.contains(root))
                 && let Some(rank) = names.get(name)
             {
                 merge_macro_site_rank(&mut rebinding, &mut may_rebind, rank);
+                keep_earliest_site(&mut field_blocking, rank.field_blocking.as_ref());
             }
         }
         for (file, binding) in &retained.by_module {
@@ -1445,11 +1507,15 @@ impl OwnerPinSyntax {
                 && let Some(rank) = binding.sites.get(name)
             {
                 merge_macro_site_rank(&mut rebinding, &mut may_rebind, rank);
+                keep_earliest_site(&mut field_blocking, rank.field_blocking.as_ref());
             }
         }
-        rebinding
-            .or(may_rebind)
-            .map(|site| (site.path.clone(), site.site.clone()))
+        let selected = if field_only {
+            field_blocking
+        } else {
+            rebinding.or(may_rebind)
+        };
+        selected.map(|site| (site.path.clone(), site.site.clone()))
     }
 
     /// #8255: finish the retained-site scan the ambiguity pass skipped. It
@@ -2234,6 +2300,7 @@ fn module_ancestry(
 struct MacroSiteRank {
     rebinding: Option<OrderedMacroSite>,
     may_rebind: Option<OrderedMacroSite>,
+    field_blocking: Option<OrderedMacroSite>,
 }
 
 /// Producer position, rather than line number, preserves same-line order
@@ -2252,6 +2319,18 @@ impl OrderedMacroSite {
 }
 impl MacroSiteRank {
     fn absorb(&mut self, path: &Path, position: usize, site: &MacroBindingSite) {
+        if field_site_blocks(site)
+            && self
+                .field_blocking
+                .as_ref()
+                .is_none_or(|kept| (path, position) < (kept.path.as_path(), kept.position))
+        {
+            self.field_blocking = Some(OrderedMacroSite {
+                path: path.to_path_buf(),
+                position,
+                site: site.clone(),
+            });
+        }
         let slot = if rebinds(site) {
             &mut self.rebinding
         } else {
@@ -2934,6 +3013,17 @@ fn workspace_macro_binding_site_for(
         }
     }
     first
+}
+
+fn field_site_blocks(site: &MacroBindingSite) -> bool {
+    rebinds(site)
+        || matches!(
+            site.kind,
+            MacroBindingKind::MacroArgument(_)
+                | MacroBindingKind::MacroBody(_)
+                | MacroBindingKind::BodyBindsAny { .. }
+                | MacroBindingKind::ArgumentAttribute { .. }
+        )
 }
 
 /// A definition or `use` of the name: a real rebinding, not one that only
