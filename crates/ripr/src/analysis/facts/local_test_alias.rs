@@ -232,7 +232,7 @@ fn direct_wrapper_defines(source: &str, name: &str) -> bool {
         }
         if function
             .visibility()
-            .is_none_or(|visibility| visibility.syntax().text().to_string() != "pub")
+            .is_none_or(|visibility| visibility.syntax().text() != "pub")
         {
             return false;
         }
@@ -254,46 +254,6 @@ fn direct_wrapper_defines(source: &str, name: &str) -> bool {
         matches += 1;
     }
     matches == 1
-}
-
-#[cfg(test)]
-mod dependency_tests {
-    use super::direct_wrapper_defines;
-
-    #[test]
-    fn direct_wrapper_rejects_ambiguous_or_disabled_definitions() {
-        let valid = "#[proc_macro_attribute] pub fn wrapped_test(a: TokenStream, b: TokenStream) -> TokenStream { stringify!(#[test]); b }";
-        assert!(direct_wrapper_defines(valid, "wrapped_test"));
-        assert!(!direct_wrapper_defines(valid, "other"));
-        assert!(!direct_wrapper_defines(
-            &format!("{valid}\n{valid}"),
-            "wrapped_test"
-        ));
-        assert!(!direct_wrapper_defines(
-            &format!("#[cfg(any())] {valid}"),
-            "wrapped_test"
-        ));
-        assert!(!direct_wrapper_defines(
-            &format!("{valid}\nother!();"),
-            "wrapped_test"
-        ));
-        assert!(!direct_wrapper_defines(
-            &format!("{valid}\nuse other::wrapped_test;"),
-            "wrapped_test"
-        ));
-        assert!(!direct_wrapper_defines(
-            &format!("{valid}\nuse other::*;"),
-            "wrapped_test"
-        ));
-        assert!(!direct_wrapper_defines(
-            &valid.replace("pub fn", "fn"),
-            "wrapped_test"
-        ));
-        assert!(!direct_wrapper_defines(
-            &valid.replace("pub fn", "pub(crate) fn"),
-            "wrapped_test"
-        ));
-    }
 }
 
 fn compact(text: &str) -> String {
@@ -553,4 +513,44 @@ fn binary_alias_root_is_unambiguous(
             let scan = rust_module_tree_scan(&facts.source);
             scan.complete && scan.edges.is_empty()
         })
+}
+
+#[cfg(test)]
+mod dependency_tests {
+    use super::direct_wrapper_defines;
+
+    #[test]
+    fn direct_wrapper_rejects_ambiguous_or_disabled_definitions() {
+        let valid = "#[proc_macro_attribute] pub fn wrapped_test(a: TokenStream, b: TokenStream) -> TokenStream { stringify!(#[test]); b }";
+        assert!(direct_wrapper_defines(valid, "wrapped_test"));
+        assert!(!direct_wrapper_defines(valid, "other"));
+        assert!(!direct_wrapper_defines(
+            &format!("{valid}\n{valid}"),
+            "wrapped_test"
+        ));
+        assert!(!direct_wrapper_defines(
+            &format!("#[cfg(any())] {valid}"),
+            "wrapped_test"
+        ));
+        assert!(!direct_wrapper_defines(
+            &format!("{valid}\nother!();"),
+            "wrapped_test"
+        ));
+        assert!(!direct_wrapper_defines(
+            &format!("{valid}\nuse other::wrapped_test;"),
+            "wrapped_test"
+        ));
+        assert!(!direct_wrapper_defines(
+            &format!("{valid}\nuse other::*;"),
+            "wrapped_test"
+        ));
+        assert!(!direct_wrapper_defines(
+            &valid.replace("pub fn", "fn"),
+            "wrapped_test"
+        ));
+        assert!(!direct_wrapper_defines(
+            &valid.replace("pub fn", "pub(crate) fn"),
+            "wrapped_test"
+        ));
+    }
 }
