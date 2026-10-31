@@ -1,0 +1,22 @@
+{
+  "case_id": "spec-b-0169-unreadable-cfg-attr-helper",
+  "subject_id": "authored-spec-b-configured",
+  "origin": "authored",
+  "anchor": "src/unicode_child.rs:2",
+  "behavior_family": "return_value",
+  "test_shape": "0169_unreadable_cfg_attr_helper",
+  "hard_case": true,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

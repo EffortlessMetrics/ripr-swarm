@@ -2,21 +2,5 @@ id = "RIPR-SPEC-0153"
 scope = "in"
 
 [[waived]]
-example = 1
-reason = "a bench edit is never run by cargo test, so its truth is not_discriminated, and the spec's required outcome (zero production findings) is silence, which the truth table scores as a false verdict for an undetected edit; the source_role unit tests pin the evidence role"
-
-[[waived]]
-example = 3
-reason = "every required outcome is that nothing is seeded, which is silence on an edit no test can distinguish; a case cannot label silence as correct, and the source_role and cargo_targets unit tests pin the exclusions"
-
-[[waived]]
-example = 6
-reason = "production_like_targets is ripr.toml configuration, and a corpus case is a Rust diff plus runtime mutant truth with no configuration channel; the source_role override tests pin it"
-
-[[waived]]
-example = 7
-reason = "custom_harness registration is ripr.toml configuration, and a corpus case has no configuration channel; the cargo_targets tests pin the declared, undeclared and harness-enabled verdicts against real cargo metadata"
-
-[[waived]]
 example = 8
-reason = "the required outcome is that a criterion_main! call produces no obligation, which is silence on a bench edit no test runs; a case cannot label silence as correct for a not_discriminated truth"
+reason = "the example asserts that the criterion_main! runner invocation is harness plumbing, not a production obligation. Verdict rows label changed behavior using named runtime-test outcomes; mutating the runner registration does not label that no-obligation classification. Executable bench-helper edits are measured separately. diff_analysis_treats_cargo_benches_as_evidence_not_production directly pins the macro/probe boundary"
