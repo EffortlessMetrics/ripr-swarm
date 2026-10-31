@@ -3676,6 +3676,11 @@ fn generated_install_failure_explanation_is_consistent_on_every_host() -> Result
         .ok_or("no cargo guard before the error line")?
         .1;
     assert!(!guard.contains("cargo install"), "{install}");
+    // The guard is the negation: the error path runs only when cargo is absent.
+    assert!(
+        before_error.contains("if ! command -v cargo >/dev/null 2>&1; then"),
+        "{install}"
+    );
     let notice_template = between(&install, "echo \"::notice::", "\"")
         .ok_or("no cargo-fallback notice in install step")?;
     assert_eq!(
@@ -3711,6 +3716,24 @@ fn generated_install_failure_explanation_is_consistent_on_every_host() -> Result
     );
     assert!(
         summary_step.contains("RIPR_INSTALL_OUTCOME: ${{ steps.install.outcome }}"),
+        "{summary_step}"
+    );
+    // The explanation runs only when the install did not succeed, fails the
+    // step, and does so before the normal summary command.
+    let guard_at = summary_step
+        .find("if [ \"${RIPR_INSTALL_OUTCOME:-}\" != success ]; then")
+        .ok_or("no install-outcome guard in the summary step")?;
+    let printf_at = summary_step
+        .find("printf '## RIPR advisory summary")
+        .ok_or("no summary printf")?;
+    let exit_at = summary_step
+        .find("see that step's log.\"; exit 1")
+        .ok_or("summary error line does not exit 1")?;
+    let ci_summary_at = summary_step
+        .find("ripr reports ci-summary")
+        .ok_or("no ci-summary command")?;
+    assert!(
+        guard_at < printf_at && printf_at < exit_at && exit_at < ci_summary_at,
         "{summary_step}"
     );
     Ok(())
