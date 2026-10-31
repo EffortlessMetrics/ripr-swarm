@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- LSP diagnostic `data.confidence` (and the witness confidence value) is rounded to the two-decimal contract precision that `ripr check` prints, so the same finding reads `0.4` in the editor instead of `0.4000000059604645`. Only the LSP diagnostic payload changes; the rounding helper is shared by its two producers and other serializers (such as the context packet) are untouched (#10717).
