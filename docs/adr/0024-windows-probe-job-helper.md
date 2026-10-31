@@ -2,7 +2,7 @@
 
 - Status: Proposed (safe design: no `unsafe` and no exception to `unsafe_code = "forbid"` is requested)
 - Date: 2026-10-25
-- Related: #9631, #9526, #5891, #9625, #9654, #3803
+- Related: #9631, #9526, #5891, #9625, #9654, #3803, #9564
 
 ## Context
 
@@ -55,6 +55,18 @@ needs no `unsafe` and no exception.
    `unsafe` lives inside the reviewed dependency, as it does for `winsafe` and
    for `process_owner`, so the helper keeps `unsafe_code = "forbid"` and
    inherits the workspace lints unchanged.
+6. **Same helper, but kill-on-close from `win32job` instead of the `tokio`
+   `JobObject`.** `win32job` 2.0.3 is already a dependency (#9564) and
+   `process_owner.rs` already uses it (`ExtendedLimitInfo`,
+   `Job::create_with_limit_info`) to put the owner process in a kill-on-close
+   Job, with its `unsafe` inside the crate. The helper could put itself in such
+   a Job and run the probe with the plain std `process-wrap` Job, which would
+   not need the `tokio1` feature or the `tokio` `process` feature. Open: it
+   gives one Job for the helper rather than the probe's own Job, so whether
+   descendant cleanup and the typed exit and start-failure markers still meet
+   the Job-contract tests is unshown. It is the first thing to try in the
+   helper slice, ahead of the `tokio` route in the Decision, because it adds no
+   dependency feature.
 
 ## Decision
 
@@ -78,7 +90,9 @@ Proposed, not accepted. Adopt option 5, narrowly.
   `tokio` `process` feature to the helper's dependency set. If that, or the
   flag's effect, cannot be shown under the Job-contract tests, the design
   returns to the architect: the fallback is option 3 with its `unsafe`
-  exception, not a silent loss of kill-on-close.
+  exception, not a silent loss of kill-on-close. Alternative 6 (`win32job`,
+  no new feature) is tried first; the `tokio` route is the next step if it
+  cannot satisfy the Job-contract tests, and option 3 remains the last.
 - Shipped only in the win32 VSIX. The PowerShell wrapper remains as the
   fallback when the helper is missing or fails to start, so a packaging mistake
   degrades to today's behavior rather than to no probe.
