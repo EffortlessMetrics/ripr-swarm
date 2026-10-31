@@ -472,6 +472,7 @@ Updated:
 ## Pending — ts_repair_packet_wrong_family_oracle (39)
 
 Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
 RIPR-SPEC-0122: #11229 script-file ObservationUnconfirmed wording names the preview adapter (wording only; verdict and credit unchanged)
 
 Command:

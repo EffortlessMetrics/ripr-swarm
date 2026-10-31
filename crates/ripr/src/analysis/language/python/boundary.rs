@@ -198,7 +198,7 @@ pub(super) fn python_boundary_evidence(
         .map(|(left, right)| format!("{left} == {right}"));
 
     let constants = unrebound_constants(owner, related_candidates);
-    let (mut rows, call_gaps) =
+    let (mut rows, gaps) =
         strong_owner_call_rows_with_gaps(owner, &constants, related_candidates, focus);
     // A once-bound `local = len(param)` takes the length of the literal string
     // each call passes, so the comparison against it is readable (#11103).
@@ -244,7 +244,7 @@ pub(super) fn python_boundary_evidence(
             left,
             right,
         )?;
-        (!call_gaps
+        (!gaps
             && !rows.is_empty()
             && rows.iter().all(|row| {
                 resolve_operand(left, row, &constants)
@@ -382,7 +382,7 @@ pub(super) fn python_boundary_evidence(
         Some(filter) if filter.local == operand => !row.elements.contains_key(filter.iterable),
         _ => resolve_operand(operand, row, &constants).is_none(),
     };
-    let unplaced_call = call_gaps
+    let unplaced_call = gaps
         || rows.iter().any(|row| {
             unresolved(&left, row)
                 || unresolved(&right, row)
@@ -414,7 +414,7 @@ pub(super) fn python_boundary_evidence(
                         .any(|parameter| parameter.name == filter.iterable)
             })
     };
-    let unplaced_call_input = call_gaps
+    let unplaced_call_input = gaps
         || rows.iter().any(|row| {
             let mut operands: Vec<&str> = vec![&left, &right];
             if let Some((old_left, old_right)) = &old_equality_operands {
@@ -501,7 +501,7 @@ pub(super) fn python_boundary_evidence(
             })
         });
     if let Some(step) = step {
-        if call_gaps || rows.iter().any(|row| unresolved(&step.variable, row)) {
+        if gaps || rows.iter().any(|row| unresolved(&step.variable, row)) {
             crate::analysis::classify::sort_value_facts(&mut observed_values);
             return Some(PythonBoundaryEvidence {
                 activation: BoundaryActivation::Missing,
@@ -1591,6 +1591,9 @@ pub(super) struct CallRow {
     pub(super) elements: BTreeMap<String, Vec<String>>,
 }
 
+/// Owner calls from related tests whose strongest assertion is strong: the
+/// same tests that could credit `exposed`. Each analyzable call binds owner
+/// parameters to literal arguments (or literal defaults when omitted).
 /// The strong owner-call rows, and whether some strong related test has an
 /// owner call that binds no row (a `*args` unpack, a comment inside the
 /// argument list) or no owner call this reader recognizes at all. A rule

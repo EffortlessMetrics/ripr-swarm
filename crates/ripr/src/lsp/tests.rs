@@ -3733,6 +3733,43 @@ fn refresh_completion_log_message_counts_profile_withheld_unknown_findings() -> 
     Ok(())
 }
 
+/// #11296: the completion log names the preview-language findings the
+/// actionable profile withheld, so `findings=1, diagnostics=0` is explained.
+#[test]
+fn refresh_completion_log_message_counts_profile_withheld_preview_findings() -> Result<(), String> {
+    let mut preview = sample_finding();
+    preview.language = Some(crate::domain::LanguageId::Python);
+    preview.language_status = Some(crate::domain::LanguageStatus::Preview);
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let mut snapshot = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        uri,
+        Vec::new(),
+        vec![preview.clone()],
+    );
+    snapshot.refresh.record_duration(Duration::from_millis(5));
+
+    snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Actionable;
+    let message =
+        refresh_completed_log_message(&RefreshLogSummary::from_snapshot(9, &snapshot), 0, 0);
+    assert!(message.contains("withheld_preview=1"), "{message}");
+
+    snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Full;
+    let message =
+        refresh_completed_log_message(&RefreshLogSummary::from_snapshot(9, &snapshot), 0, 0);
+    assert!(message.contains("withheld_preview=0"), "{message}");
+
+    // Negative control: a non-preview hidden gap is not a preview withholding.
+    let mut rust = sample_finding();
+    rust.language_status = None;
+    snapshot.findings = vec![rust];
+    snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Actionable;
+    let message =
+        refresh_completed_log_message(&RefreshLogSummary::from_snapshot(9, &snapshot), 0, 0);
+    assert!(message.contains("withheld_preview=0"), "{message}");
+    Ok(())
+}
+
 #[test]
 fn refresh_completion_log_message_counts_preview_findings_and_limits() -> Result<(), String> {
     let mut finding = sample_finding();
@@ -16216,6 +16253,102 @@ fn canonical_finding_groups_collapse_same_gap_and_preserve_raw_signals() -> Resu
     Ok(())
 }
 
+/// Two gap-less probes of different families on one expression (#11453).
+fn overlapping_family_pair() -> (Finding, Finding) {
+    let first = sample_finding();
+    let mut second = first.clone();
+    second.id = "probe:pricing:88:return_value".to_string();
+    second.probe.id = ProbeId(second.id.clone());
+    second.probe.family = ProbeFamily::ReturnValue;
+    second.probe.delta = DeltaKind::Value;
+    second.probe.expected_sinks = vec!["return value".to_string()];
+    second.probe.required_oracles = vec!["exact return".to_string()];
+    (first, second)
+}
+
+fn overlap_diagnostics(findings: &[Finding]) -> Result<Vec<Diagnostic>, String> {
+    let config = LspAnalysisConfig::default();
+    let grouped = finding_diagnostics_by_uri(
+        Path::new("/workspace"),
+        findings,
+        config.repo_config().severity(),
+        true,
+        None,
+    )?;
+    Ok(grouped.into_values().flatten().collect())
+}
+
+#[test]
+fn gapless_family_overlap_publishes_one_diagnostic_with_every_probe_listed() -> Result<(), String> {
+    let (first, second) = overlapping_family_pair();
+    // Fixture construction: distinct ids/families, same site, no canonical gap.
+    assert_ne!(first.id, second.id);
+    assert_ne!(first.probe.family, second.probe.family);
+    assert_eq!(first.probe.location, second.probe.location);
+    assert_eq!(first.probe.expression, second.probe.expression);
+    assert!(first.canonical_gap.is_none() && second.canonical_gap.is_none());
+
+    // Input order must not change which finding is primary.
+    for findings in [
+        vec![first.clone(), second.clone()],
+        vec![second.clone(), first.clone()],
+    ] {
+        let diagnostics = overlap_diagnostics(&findings)?;
+        assert_eq!(diagnostics.len(), 1, "overlapping probes must collapse");
+        let data = diagnostics[0].data.as_ref().ok_or("missing data")?;
+        assert_eq!(data["finding_id"], serde_json::json!(first.id));
+        assert_eq!(data["group_reason"], "same_site_and_repair_signal");
+        assert_eq!(data["raw_signal_count"], 2);
+        let raw_ids = data["raw_findings"]
+            .as_array()
+            .ok_or("missing raw_findings")?
+            .iter()
+            .map(|raw| raw["finding_id"].as_str().unwrap_or(""))
+            .collect::<Vec<_>>();
+        assert_eq!(raw_ids, vec![first.id.as_str(), second.id.as_str()]);
+    }
+    Ok(())
+}
+
+#[test]
+fn gapless_overlap_keeps_findings_apart_when_any_repair_signal_differs() -> Result<(), String> {
+    let (first, second) = overlapping_family_pair();
+    let mut variants = Vec::new();
+    let mut other_class = second.clone();
+    other_class.class = ExposureClass::StaticUnknown;
+    variants.push(other_class);
+    let mut other_step = second.clone();
+    other_step.recommended_next_step = Some("assert the exact boundary".to_string());
+    variants.push(other_step);
+    let mut other_evidence = second.clone();
+    other_evidence
+        .evidence
+        .push("extra static fact".to_string());
+    variants.push(other_evidence);
+    let mut other_line = second.clone();
+    other_line.probe.location.line = 89;
+    variants.push(other_line);
+    let mut other_column = second.clone();
+    other_column.probe.location.column = 5;
+    variants.push(other_column);
+    let mut other_expression = second.clone();
+    other_expression.probe.expression = "amount > threshold".to_string();
+    variants.push(other_expression);
+    let mut other_owner = second.clone();
+    other_owner.probe.owner = Some(crate::domain::SymbolId("src/pricing.rs::other".to_string()));
+    variants.push(other_owner);
+    let mut gapped = second.clone();
+    gapped.canonical_gap = Some(sample_canonical_gap());
+    variants.push(gapped);
+
+    for variant in variants {
+        assert_ne!(variant, second, "fixture must actually differ");
+        let diagnostics = overlap_diagnostics(&[first.clone(), variant])?;
+        assert_eq!(diagnostics.len(), 2, "a distinct finding must stay visible");
+    }
+    Ok(())
+}
+
 #[test]
 fn canonical_group_mixed_classes_are_detected_without_promotion() {
     let mut first = sample_finding();
@@ -22805,6 +22938,72 @@ fn open_document_entry<'a>(
                 .find(|entry| entry.get("uri").and_then(serde_json::Value::as_str) == Some(uri))
         })
         .ok_or_else(|| format!("missing open_documents entry for {uri}: {status}"))
+}
+
+/// #11296: the passive preview-withheld marker is served on a clean
+/// document next to the real diagnostics, and a dirty (quarantined) buffer
+/// withdraws it with the rest, leaving only the quarantine marker.
+#[tokio::test]
+async fn preview_withheld_marker_respects_document_quarantine() -> Result<(), String> {
+    let fixture = quarantine_fixture("preview-withheld-quarantine")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
+        .await;
+    let mut workspace = quarantine_workspace_diagnostics(&fixture, QUARANTINE_TEXT_A);
+    let marker = super::diagnostics::withheld_preview_diagnostic(
+        Range::default(),
+        Some("python"),
+        1,
+        "set diagnosticProfile: full or run `ripr check`",
+        "src/a.rs",
+    );
+    workspace
+        .snapshot
+        .diagnostics_by_uri
+        .entry(fixture.uri_a.clone())
+        .or_default()
+        .push(marker.clone());
+    workspace.batches[0].diagnostics.push(marker.clone());
+    backend
+        .refresh_plan(workspace)
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+
+    let has_marker = |report: &serde_json::Value| {
+        report
+            .get("items")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|items| {
+                items.iter().any(|item| {
+                    item.get("code").and_then(serde_json::Value::as_str)
+                        == Some("ripr-diagnostic-preview-withheld")
+                })
+            })
+    };
+    let served = pull_document_json(backend, &fixture.uri_a, None).await?;
+    if !has_marker(&served) {
+        return Err(format!("a clean document must serve the marker: {served}"));
+    }
+    if report_kind_and_items(&served).1 < 2 {
+        return Err(format!("the real diagnostic must be served too: {served}"));
+    }
+
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.uri_a,
+            2,
+            QUARANTINE_TEXT_A_DIRTY,
+        ))
+        .await;
+    let withdrawn = pull_document_json(backend, &fixture.uri_a, None).await?;
+    if !report_is_quarantine_withdrawal(&withdrawn) || has_marker(&withdrawn) {
+        return Err(format!(
+            "a quarantined document must withdraw the marker too: {withdrawn}"
+        ));
+    }
+    Ok(())
 }
 
 #[tokio::test]
@@ -30315,4 +30514,133 @@ fn show_related_test_refusal_maps_to_invalid_params_over_the_wire() -> Result<()
         }
         Ok(())
     })
+}
+
+/// A committed Python repo with a weak test and one working-tree edit to a
+/// call-argument change (a preview finding without a fix route), analyzed with the Python preview adapter enabled.
+#[cfg(feature = "lang-python")]
+fn python_preview_edit_fixture(name: &str) -> Result<TempLspRoot, String> {
+    let root = unique_lsp_test_root(name)?;
+    std::fs::create_dir_all(root.path().join("src"))
+        .map_err(|err| format!("create src failed: {err}"))?;
+    std::fs::create_dir_all(root.path().join("tests"))
+        .map_err(|err| format!("create tests failed: {err}"))?;
+    std::fs::write(
+        root.path().join("src/pricing.py"),
+        "def log_value(x):\n    print(x)\n    return x\n",
+    )
+    .map_err(|err| format!("write pricing.py failed: {err}"))?;
+    std::fs::write(
+        root.path().join("tests/test_pricing.py"),
+        "from src.pricing import log_value\n\n\ndef test_log_value_runs():\n    assert log_value(1) is not None\n",
+    )
+    .map_err(|err| format!("write test_pricing.py failed: {err}"))?;
+    run_lsp_scope_git(root.path(), &["init", "-q"])?;
+    run_lsp_scope_git(root.path(), &["add", "-A"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &[
+            "-c",
+            "user.email=ripr-test@example.com",
+            "-c",
+            "user.name=ripr-test",
+            "-c",
+            "commit.gpgSign=false",
+            "commit",
+            "-qm",
+            "baseline",
+        ],
+    )?;
+    std::fs::write(
+        root.path().join("src/pricing.py"),
+        "def log_value(x):\n    print(x, x)\n    return x\n",
+    )
+    .map_err(|err| format!("edit pricing.py failed: {err}"))?;
+    Ok(root)
+}
+
+/// #11296 through the real workspace entry point: a Python preview edit is
+/// withheld by the actionable profile and disclosed by one passive marker
+/// that the snapshot's consistency check accounts for; the full profile
+/// publishes the real Information finding and no marker; and once the edit
+/// is reverted the finding and the marker are gone together.
+#[test]
+#[cfg(feature = "lang-python")]
+fn python_preview_edit_discloses_withheld_marker_only_under_actionable_profile()
+-> Result<(), String> {
+    use crate::lsp::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE;
+    let root = python_preview_edit_fixture("preview-withheld-entry")?;
+    let analyze = |profile| {
+        let config = LspAnalysisConfig {
+            base_ref: Some("HEAD".to_string()),
+            mode: Mode::Instant,
+            diagnostic_profile: profile,
+            repo_config: crate::config::tests_only_parse(
+                "[languages]\nenabled = [\"rust\", \"python\"]\n",
+            )?,
+            ..LspAnalysisConfig::default()
+        };
+        workspace_diagnostics_with_config(root.path(), &config, true)
+    };
+    let is_marker = |diagnostic: &Diagnostic| {
+        diagnostic.code
+            == Some(NumberOrString::String(
+                DIAGNOSTIC_PREVIEW_WITHHELD_CODE.to_string(),
+            ))
+    };
+
+    let actionable = analyze(crate::config::LspDiagnosticProfile::Actionable)?;
+    if actionable.snapshot.findings.is_empty() {
+        return Err("fixture must produce a Python preview finding".to_string());
+    }
+    let diagnostics = actionable
+        .batches
+        .iter()
+        .flat_map(|batch| batch.diagnostics.iter())
+        .collect::<Vec<_>>();
+    let [marker] = diagnostics.as_slice() else {
+        return Err(format!(
+            "actionable: exactly one marker expected: {diagnostics:?}"
+        ));
+    };
+    if !is_marker(marker) || marker.severity != Some(DiagnosticSeverity::HINT) {
+        return Err(format!(
+            "actionable: the lone diagnostic must be the Hint marker: {marker:?}"
+        ));
+    }
+    if !actionable.snapshot.is_consistent() {
+        return Err("actionable: snapshot with the marker must be consistent".to_string());
+    }
+
+    let full = analyze(crate::config::LspDiagnosticProfile::Full)?;
+    let full_diagnostics = full
+        .batches
+        .iter()
+        .flat_map(|batch| batch.diagnostics.iter())
+        .collect::<Vec<_>>();
+    if full_diagnostics.is_empty()
+        || full_diagnostics.iter().copied().any(is_marker)
+        || !full_diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.severity == Some(DiagnosticSeverity::INFORMATION))
+    {
+        return Err(format!(
+            "full: Information finding and no marker expected: {full_diagnostics:?}"
+        ));
+    }
+    if !full.snapshot.is_consistent() {
+        return Err("full: snapshot must be consistent".to_string());
+    }
+
+    run_lsp_scope_git(root.path(), &["checkout", "--", "src/pricing.py"])?;
+    let reverted = analyze(crate::config::LspDiagnosticProfile::Actionable)?;
+    if reverted
+        .batches
+        .iter()
+        .flat_map(|batch| batch.diagnostics.iter())
+        .any(is_marker)
+    {
+        return Err("reverted edit: the marker must disappear with its finding".to_string());
+    }
+    Ok(())
 }

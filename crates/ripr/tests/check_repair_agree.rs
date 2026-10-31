@@ -702,7 +702,9 @@ fn unreached_workspace_change_is_not_called_gripped_by_repair() -> Result<(), St
     let unscoped = refused_repair(&committed)?;
     assert_plain(&unscoped);
     assert!(
-        unscoped.contains("ripr does not start an automatic repair for this kind of finding"),
+        unscoped.contains(
+            "ripr cannot trace which test runs this code, so it starts no automatic repair"
+        ),
         "the class refusal must be plain:\n{unscoped}"
     );
 
