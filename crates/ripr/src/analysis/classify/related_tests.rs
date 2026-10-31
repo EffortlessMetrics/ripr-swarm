@@ -6125,7 +6125,10 @@ fn owner_call_relation_reason(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "each argument is one independent input of the receiver-identity gate"
+)]
 fn owner_call_relation_reason_gated(
     test: &TestSummary,
     owner_fn: Option<&FunctionSummary>,
