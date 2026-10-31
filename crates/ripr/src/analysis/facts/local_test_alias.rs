@@ -27,7 +27,7 @@
 //!   and `super` stay local), so a foreign crate's namesake macro is never
 //!   mistaken for a workspace one;
 //! - the aliased name resolves to exactly one `#[proc_macro_attribute]` fn
-//!   in the analyzed index; and
+//!   in the index or in a separately admitted direct dependency; and
 //! - source of that macro's package names a known test attribute
 //!   (`tokio::test`, `async_std::test` or `#[test]`) in code tokens, not in
 //!   comments or string literals.
@@ -210,6 +210,15 @@ fn direct_wrapper_defines(source: &str, name: &str) -> bool {
     if !scan.complete || !scan.edges.is_empty() {
         return false;
     }
+    let scope = name_scope_for_file(&parse.tree());
+    if !scope.globs.is_empty()
+        || scope
+            .imports
+            .iter()
+            .any(|import| import.bound.trim_start_matches("r#") == name.trim_start_matches("r#"))
+    {
+        return false;
+    }
     let mut matches = 0;
     for item in parse.tree().items() {
         if matches!(item, ast::Item::MacroCall(_)) {
@@ -266,6 +275,14 @@ mod dependency_tests {
         ));
         assert!(!direct_wrapper_defines(
             &format!("{valid}\nother!();"),
+            "wrapped_test"
+        ));
+        assert!(!direct_wrapper_defines(
+            &format!("{valid}\nuse other::wrapped_test;"),
+            "wrapped_test"
+        ));
+        assert!(!direct_wrapper_defines(
+            &format!("{valid}\nuse other::*;"),
             "wrapped_test"
         ));
         assert!(!direct_wrapper_defines(

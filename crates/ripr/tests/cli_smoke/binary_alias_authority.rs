@@ -5,10 +5,8 @@ fn draft_finds_test_wrapped_by_unchanged_dependency() -> Result<(), Box<dyn std:
     let root = std::env::temp_dir().join(format!("ripr-dependency-alias-{}", std::process::id()));
     std::fs::create_dir_all(root.join("app/src"))?;
     std::fs::create_dir_all(root.join("macros/src"))?;
-    std::fs::write(
-        root.join("Cargo.toml"),
-        "[workspace]\nmembers=['app','macros']\nresolver='2'\n",
-    )?;
+    let workspace = "[workspace]\nmembers=['app','macros']\nresolver='2'\n";
+    std::fs::write(root.join("Cargo.toml"), workspace)?;
     let app = "[package]\nname='app'\nversion='0.1.0'\nedition='2021'\n[dependencies]\nmacros={path='../macros'}\n";
     std::fs::write(root.join("app/Cargo.toml"), app)?;
     let macros_manifest =
@@ -63,11 +61,26 @@ fn draft_finds_test_wrapped_by_unchanged_dependency() -> Result<(), Box<dyn std:
     assert!(worktree("draft", &[])?); // warm file-fact cache
     assert!(worktree("fast", &[])?);
     assert!(!worktree("draft", &[("RIPR_MAX_DIFF_INDEX_FILES", "2")])?);
+    std::fs::create_dir_all(root.join("other/src"))?;
+    std::fs::write(
+        root.join("other/Cargo.toml"),
+        "[package]\nname='other'\nversion='0.1.0'\n[lib]\nproc-macro=true\n",
+    )?;
+    std::fs::write(
+        root.join("other/src/lib.rs"),
+        "#[proc_macro_attribute] pub fn wrapped_test(_: TokenStream, item: TokenStream) -> TokenStream { stringify!(#[test]); item }\n",
+    )?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers=['app','macros','other']\nresolver='2'\n",
+    )?;
     std::fs::write(
         root.join("app/Cargo.toml"),
         app.replace("../macros", "../other"),
     )?;
     assert!(!worktree("draft", &[])?);
+    std::fs::write(root.join("Cargo.toml"), workspace)?;
+    std::fs::remove_dir_all(root.join("other"))?;
     std::fs::write(
         root.join("app/Cargo.toml"),
         format!("{app}\n[lib]\ntest=false\n"),
