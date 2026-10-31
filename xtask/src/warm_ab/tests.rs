@@ -215,9 +215,12 @@ mod stub {
 
     #[test]
     fn a_candidate_report_missing_findings_is_rejected() {
-        match packet_for("cand-missing", HEALTHY, MISSING) {
-            Ok(packet) => panic!("missing candidate findings accepted: {}", packet.detail),
-            Err(error) => assert!(error.contains("findings"), "{error}"),
-        }
+        let error = packet_for("cand-missing", HEALTHY, MISSING)
+            .err()
+            .unwrap_or_default();
+        assert!(
+            error.contains("findings"),
+            "missing candidate findings must be rejected naming findings: {error:?}"
+        );
     }
 }
