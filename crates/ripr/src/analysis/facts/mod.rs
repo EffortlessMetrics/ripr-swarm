@@ -40,6 +40,7 @@ mod harness_registry;
 mod includes;
 mod index;
 mod local_test_alias;
+pub(crate) use local_test_alias::dependency_candidates as test_alias_dependency_candidates;
 mod macro_generated_tests;
 pub(crate) mod macro_visibility;
 
@@ -345,16 +346,39 @@ fn build_cached_index_with_test_harnesses(
 /// Every post-parse phase, shared by the loaded and streaming builders so
 /// the two can never drift (#4996).
 fn post_process_cached_index(
+    cached: build::CachedRustIndex,
+    root: &Path,
+    registrations: &[TestHarnessRegistration],
+) -> Result<build::CachedRustIndex, String> {
+    post_process_cached_index_with_dependencies(cached, root, registrations, &Default::default())
+}
+
+pub(crate) fn build_analysis_index_with_alias_dependencies(
+    root: &Path,
+    files: &[(PathBuf, Vec<u8>)],
+    registrations: &[TestHarnessRegistration],
+    dependency_sources: &std::collections::BTreeMap<PathBuf, String>,
+) -> Result<build::CachedRustIndex, String> {
+    let cached =
+        build::build_index_from_loaded_files_with_cache(root, files, MissAttribution::Skipped)?;
+    post_process_cached_index_with_dependencies(cached, root, registrations, dependency_sources)
+}
+
+fn post_process_cached_index_with_dependencies(
     mut cached: build::CachedRustIndex,
     root: &Path,
     registrations: &[TestHarnessRegistration],
+    dependency_sources: &std::collections::BTreeMap<PathBuf, String>,
 ) -> Result<build::CachedRustIndex, String> {
     index_phase("index_parameterized_tests", || {
         parameterized_tests::promote_explicit_test_case_functions(&mut cached.index);
         cached.index.refresh_memberships()
     })?;
     index_phase("index_test_styles", || {
-        test_styles::normalize_index_test_styles(&mut cached.index)?;
+        test_styles::normalize_index_test_styles_with_dependencies(
+            &mut cached.index,
+            dependency_sources,
+        )?;
         cached.index.refresh_memberships()
     })?;
     // #5334: same-file macro_rules! test generators, expanded in one

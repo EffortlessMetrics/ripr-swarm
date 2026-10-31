@@ -57,6 +57,60 @@ pub(crate) struct MemberCrates {
 }
 
 impl MemberCrates {
+    /// Resolve the narrow, unrenamed direct workspace proc-macro dependency
+    /// used by an ordinary library root. Unsupported Cargo shapes decline.
+    pub(crate) fn direct_library_macro_root(&self, file: &Path, name: &str) -> Option<PathBuf> {
+        let root = snapshot_root(self.root.as_ref()?)?;
+        let file = lexical(&root.join(file));
+        let (package, chain) = nearest_package_snapshot(&root, file.parent()?, true)?;
+        if file != package.directory.join("src/lib.rs") || !is_library_root(&package, &file) {
+            return None;
+        }
+        if package.manifest.get("lib").is_some_and(|lib| {
+            lib.get("path").is_some()
+                || lib.get("test").and_then(toml::Value::as_bool) == Some(false)
+        }) {
+            return None;
+        }
+        let manifests = ancestor_manifests_snapshot(&root, &chain, true)?;
+        let (workspace_dir, workspace) = manifests.iter().find_map(|(dir, manifest)| {
+            manifest
+                .get("workspace")?
+                .as_table()
+                .map(|table| (dir, table))
+        })?;
+        let spec = package
+            .manifest
+            .get("dependencies")?
+            .get(name)?
+            .as_table()?;
+        if spec.contains_key("package")
+            || spec.contains_key("git")
+            || spec.contains_key("registry")
+            || spec.get("optional").and_then(toml::Value::as_bool) == Some(true)
+        {
+            return None;
+        }
+        let dep = lexical(&package.directory.join(spec.get("path")?.as_str()?));
+        let relative = dep.strip_prefix(workspace_dir).ok()?;
+        let relative = relative.to_str()?.replace('\\', "/");
+        // Literal membership only: globs and exclusions need fuller Cargo
+        // authority than this narrow admission can establish.
+        if workspace.contains_key("exclude")
+            || !workspace
+                .get("members")?
+                .as_array()?
+                .iter()
+                .any(|item| item.as_str() == Some(relative.as_str()))
+        {
+            return None;
+        }
+        let macro_file = dep.join("src/lib.rs");
+        let relative_file = macro_file.strip_prefix(&root).ok()?.to_path_buf();
+        let consumer = file.strip_prefix(&root).ok()?;
+        self.binary_imports_macro(consumer, &relative_file, name)
+            .then_some(relative_file)
+    }
     pub(crate) fn new(root: &Path) -> Self {
         Self {
             root: Some(root.to_path_buf()),

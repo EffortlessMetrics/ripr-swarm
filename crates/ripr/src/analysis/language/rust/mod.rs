@@ -2346,24 +2346,66 @@ impl RustAdapter {
             &options.test_harnesses,
             loaded_files,
         );
+        // Alias providers are evidence for test-role normalization only;
+        // never insert their functions into the general index. Charge each
+        // additional source against the same hard file budget.
+        let mut alias_dependencies = std::collections::BTreeMap::new();
+        let candidates = if matches!(options.mode, AnalysisMode::Draft | AnalysisMode::Fast) {
+            crate::analysis::facts::test_alias_dependency_candidates(&options.root, &loaded_files)
+        } else {
+            BTreeSet::new()
+        };
+        let selected: BTreeSet<_> = loaded_files.iter().map(|(path, _)| path.clone()).collect();
+        let extra: Vec<_> = candidates
+            .into_iter()
+            .filter(|path| {
+                !selected.contains(path) && analyzable_rust_files.iter().any(|file| file == path)
+            })
+            .collect();
+        if index_files.len().saturating_add(extra.len()) <= scope_limit {
+            for path in extra {
+                cancellation::checkpoint()?;
+                let bytes =
+                    crate::analysis::committed_source::read_source_bytes(&options.root, &path)
+                        .map_err(|err| {
+                            format!(
+                                "failed to read {}: {err}",
+                                options.root.join(&path).display()
+                            )
+                        })?;
+                rust_consumed_sources.record(&path, bytes.as_deref());
+                if let Some(source) = bytes.and_then(|bytes| String::from_utf8(bytes).ok()) {
+                    alias_dependencies.insert(path, source);
+                }
+            }
+        }
         // #8547: when the dependent-scope admission probe already built
         // the changed packages' index, reuse it as the main index: only
         // the admitted extras (and any file whose bytes moved since the
         // probe read them) are parsed, through the same fact cache, and
         // post-processing re-runs once over the merged index. Without an
         // admission probe the main build is the only build, as before.
-        let cached = match admission_core {
-            Some(core) => rust_index::reuse_cached_index_with_loaded_files(
-                core,
+        let cached = if !alias_dependencies.is_empty() {
+            crate::analysis::facts::build_analysis_index_with_alias_dependencies(
                 &options.root,
                 &loaded_files,
                 &options.test_harnesses,
-            )?,
-            None => rust_index::build_analysis_index_from_loaded_files(
-                &options.root,
-                &loaded_files,
-                &options.test_harnesses,
-            )?,
+                &alias_dependencies,
+            )?
+        } else {
+            match admission_core {
+                Some(core) => rust_index::reuse_cached_index_with_loaded_files(
+                    core,
+                    &options.root,
+                    &loaded_files,
+                    &options.test_harnesses,
+                )?,
+                None => rust_index::build_analysis_index_from_loaded_files(
+                    &options.root,
+                    &loaded_files,
+                    &options.test_harnesses,
+                )?,
+            }
         };
         #[cfg(test)]
         {

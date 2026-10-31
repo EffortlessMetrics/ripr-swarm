@@ -40,9 +40,9 @@
 //! macro's package, not traced through its expansion. Anything unresolved
 //! (an external crate, a non-test-gated or repeated import, a macro that
 //! never names a test attribute) credits nothing. Arbitrary `#[x::test]`
-//! paths are untouched. Draft and Fast scans index the changed package and
-//! its dependents, so a wrapper macro in an unchanged dependency is not
-//! seen there and nothing is credited (#10141).
+//! paths are untouched. Draft and Fast can additionally receive a bounded
+//! manifest-resolved dependency source solely for the ordinary library-root
+//! alias; that source does not enter the general index (#10141).
 
 use super::index::{FactArena, IndexedFileFacts};
 use super::member_crates::MemberCrates;
@@ -51,7 +51,7 @@ use crate::analysis::syntax::{
     name_scope_for_file, parse_clean_source_file, rust_module_tree_scan,
 };
 use ra_ap_syntax::AstNode;
-use ra_ap_syntax::ast::{self, HasAttrs, HasModuleItem, HasName};
+use ra_ap_syntax::ast::{self, HasAttrs, HasModuleItem, HasName, HasVisibility};
 use ra_ap_syntax::{NodeOrToken, SyntaxKind};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -90,6 +90,7 @@ impl LocalTestAliases {
         function_facts: &FactArena<FunctionFact>,
         workspace_crates: &BTreeSet<String>,
         member_crates: &MemberCrates,
+        dependency_sources: &BTreeMap<PathBuf, String>,
     ) -> Self {
         let mut aliased = BTreeSet::new();
         let mut binary_bound = BTreeSet::new();
@@ -100,10 +101,20 @@ impl LocalTestAliases {
             };
             let legacy_name = target.names_workspace_crate(workspace_crates);
             let binary = src_dir(path).is_some_and(|src| path.starts_with(src.join("bin")));
+            let name = &target.name;
+            if target.binary_direct
+                && !binary
+                && root_import_is_unambiguous(&facts.source, &target)
+                && let Some(macro_file) =
+                    member_crates.direct_library_macro_root(path, &target.first)
+                && let Some(source) = dependency_sources.get(&macro_file)
+                && direct_wrapper_defines(source, name)
+            {
+                aliased.insert(path.clone());
+            }
             if !legacy_name && !binary {
                 continue;
             }
-            let name = &target.name;
             let macros = proc_macros.get_or_insert_with(|| proc_macro_files(files, function_facts));
             let Some([macro_file]) = macros.get(name).map(Vec::as_slice) else {
                 continue;
@@ -149,6 +160,122 @@ impl LocalTestAliases {
                     .all(|root| self.aliased.contains(root) || self.binary_bound.contains(root)),
             self_path: self.aliased.contains(file),
         }
+    }
+}
+
+/// Candidate paths are resolved from the importer's manifest before any
+/// additional source is read. Callers must charge them to their index budget.
+pub(crate) fn dependency_candidates(
+    root: &Path,
+    files: &[(PathBuf, Vec<u8>)],
+) -> BTreeSet<PathBuf> {
+    let members = MemberCrates::new(root);
+    files
+        .iter()
+        .filter_map(|(path, bytes)| {
+            let source = std::str::from_utf8(bytes).ok()?;
+            let target = test_alias_target(source)?;
+            (target.binary_direct && root_import_is_unambiguous(source, &target))
+                .then(|| members.direct_library_macro_root(path, &target.first))
+                .flatten()
+        })
+        .collect()
+}
+
+fn root_import_is_unambiguous(source: &str, target: &AliasTarget) -> bool {
+    let Some(parse) = parse_clean_source_file(source) else {
+        return false;
+    };
+    let scope = name_scope_for_file(&parse.tree());
+    if parse
+        .tree()
+        .items()
+        .any(|item| matches!(item, ast::Item::MacroCall(_)))
+    {
+        return false;
+    }
+    let shadows =
+        |name: &str| name.trim_start_matches("r#") == target.first.trim_start_matches("r#");
+    !scope.child_modules.iter().any(|name| shadows(name))
+        && !scope.defines.iter().any(|name| shadows(name))
+        && !scope.imports.iter().any(|import| shadows(&import.bound))
+        && scope.globs.is_empty()
+}
+
+fn direct_wrapper_defines(source: &str, name: &str) -> bool {
+    let Some(parse) = parse_clean_source_file(source) else {
+        return false;
+    };
+    let scan = rust_module_tree_scan(source);
+    if !scan.complete || !scan.edges.is_empty() {
+        return false;
+    }
+    let mut matches = 0;
+    for item in parse.tree().items() {
+        if matches!(item, ast::Item::MacroCall(_)) {
+            return false;
+        }
+        let ast::Item::Fn(function) = item else {
+            continue;
+        };
+        if function.name().is_none_or(|found| found.text() != name) {
+            continue;
+        }
+        if function
+            .visibility()
+            .is_none_or(|visibility| visibility.syntax().text().to_string() != "pub")
+        {
+            return false;
+        }
+        let attrs: Vec<_> = function
+            .attrs()
+            .map(|a| compact(&a.syntax().text().to_string()))
+            .collect();
+        if attrs != ["#[proc_macro_attribute]"] {
+            return false;
+        }
+        let text = function.syntax().text().to_string();
+        let tokens = code_tokens(&text);
+        if !TEST_ATTRIBUTE_NEEDLES
+            .iter()
+            .any(|needle| tokens.contains(needle))
+        {
+            return false;
+        }
+        matches += 1;
+    }
+    matches == 1
+}
+
+#[cfg(test)]
+mod dependency_tests {
+    use super::direct_wrapper_defines;
+
+    #[test]
+    fn direct_wrapper_rejects_ambiguous_or_disabled_definitions() {
+        let valid = "#[proc_macro_attribute] pub fn wrapped_test(a: TokenStream, b: TokenStream) -> TokenStream { stringify!(#[test]); b }";
+        assert!(direct_wrapper_defines(valid, "wrapped_test"));
+        assert!(!direct_wrapper_defines(valid, "other"));
+        assert!(!direct_wrapper_defines(
+            &format!("{valid}\n{valid}"),
+            "wrapped_test"
+        ));
+        assert!(!direct_wrapper_defines(
+            &format!("#[cfg(any())] {valid}"),
+            "wrapped_test"
+        ));
+        assert!(!direct_wrapper_defines(
+            &format!("{valid}\nother!();"),
+            "wrapped_test"
+        ));
+        assert!(!direct_wrapper_defines(
+            &valid.replace("pub fn", "fn"),
+            "wrapped_test"
+        ));
+        assert!(!direct_wrapper_defines(
+            &valid.replace("pub fn", "pub(crate) fn"),
+            "wrapped_test"
+        ));
     }
 }
 

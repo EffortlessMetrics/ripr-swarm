@@ -1,4 +1,4 @@
-use super::{ignore_remove_dir_all, run_git, run_ripr};
+use super::{ignore_remove_dir_all, run_git, run_ripr, run_ripr_with_env};
 
 #[test]
 fn draft_finds_test_wrapped_by_unchanged_dependency() -> Result<(), Box<dyn std::error::Error>> {
@@ -9,22 +9,17 @@ fn draft_finds_test_wrapped_by_unchanged_dependency() -> Result<(), Box<dyn std:
         root.join("Cargo.toml"),
         "[workspace]\nmembers=['app','macros']\nresolver='2'\n",
     )?;
-    std::fs::write(
-        root.join("app/Cargo.toml"),
-        "[package]\nname='app'\nversion='0.1.0'\nedition='2021'\n[dependencies]\nmacros={path='../macros'}\n",
-    )?;
-    std::fs::write(
-        root.join("macros/Cargo.toml"),
-        "[package]\nname='macros'\nversion='0.1.0'\nedition='2021'\n[lib]\nproc-macro=true\n",
-    )?;
+    let app = "[package]\nname='app'\nversion='0.1.0'\nedition='2021'\n[dependencies]\nmacros={path='../macros'}\n";
+    std::fs::write(root.join("app/Cargo.toml"), app)?;
+    let macros_manifest =
+        "[package]\nname='macros'\nversion='0.1.0'\nedition='2021'\n[lib]\nproc-macro=true\n";
+    std::fs::write(root.join("macros/Cargo.toml"), macros_manifest)?;
     std::fs::write(
         root.join("macros/src/lib.rs"),
         "extern crate proc_macro;\nuse proc_macro::TokenStream;\n#[proc_macro_attribute]\npub fn wrapped_test(_: TokenStream, item: TokenStream) -> TokenStream { let mut result: TokenStream = stringify!(#[test]).parse().unwrap(); result.extend(item); result }\n",
     )?;
-    std::fs::write(
-        root.join("app/src/lib.rs"),
-        "use macros::wrapped_test as test;\npub mod handler;\n",
-    )?;
+    let lib = "use macros::wrapped_test as test;\npub mod handler;\n";
+    std::fs::write(root.join("app/src/lib.rs"), lib)?;
     let handler =
         "pub fn value() -> u32 { 1 }\n#[crate::test]\nfn aliased() { assert_eq!(value(), 2); }\n";
     std::fs::write(root.join("app/src/handler.rs"), handler)?;
@@ -37,33 +32,67 @@ fn draft_finds_test_wrapped_by_unchanged_dependency() -> Result<(), Box<dyn std:
         root.join("app/src/handler.rs"),
         handler.replace("u32 { 1 }", "u32 { 2 }"),
     )?;
-    let output = run_ripr(&[
-        "check",
-        "--root",
-        &root.to_string_lossy(),
-        "--base",
-        "HEAD",
-        "--worktree",
-        "--mode",
-        "draft",
-        "--format",
-        "json",
-    ]);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let value: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-    let findings = value["findings"].as_array().ok_or("findings")?;
-    assert_eq!(findings.len(), 1);
-    let tests = findings[0]["related_tests"]
-        .as_array()
-        .ok_or("related tests")?;
-    assert!(
-        tests.iter().any(|test| test["name"] == "aliased"),
-        "{tests:?}"
-    );
+    let root_arg = root.to_string_lossy().into_owned();
+    let check = |mode: &str,
+                 base: &str,
+                 snapshot: &str,
+                 env: &[(&str, &str)]|
+     -> Result<bool, Box<dyn std::error::Error>> {
+        let output = run_ripr_with_env(
+            &[
+                "check", "--root", &root_arg, "--base", base, snapshot, "--mode", mode, "--format",
+                "json",
+            ],
+            env,
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        let findings = value["findings"].as_array().ok_or("findings")?;
+        assert_eq!(findings.len(), 1);
+        let tests = findings[0]["related_tests"]
+            .as_array()
+            .ok_or("related tests")?;
+        Ok(tests.iter().any(|test| test["name"] == "aliased"))
+    };
+    let worktree = |mode, env: &[(&str, &str)]| check(mode, "HEAD", "--worktree", env);
+    assert!(worktree("draft", &[])?);
+    assert!(worktree("draft", &[])?); // warm file-fact cache
+    assert!(worktree("fast", &[])?);
+    assert!(!worktree("draft", &[("RIPR_MAX_DIFF_INDEX_FILES", "2")])?);
+    std::fs::write(
+        root.join("app/Cargo.toml"),
+        app.replace("../macros", "../other"),
+    )?;
+    assert!(!worktree("draft", &[])?);
+    std::fs::write(
+        root.join("app/Cargo.toml"),
+        format!("{app}\n[lib]\ntest=false\n"),
+    )?;
+    assert!(!worktree("draft", &[])?);
+    std::fs::write(root.join("app/Cargo.toml"), app)?;
+    std::fs::write(
+        root.join("app/src/lib.rs"),
+        lib.replace("wrapped_test", "other_test"),
+    )?;
+    assert!(!worktree("draft", &[])?);
+    std::fs::write(
+        root.join("app/src/lib.rs"),
+        format!("{lib}\nmod macros {{}}\n"),
+    )?;
+    assert!(!worktree("draft", &[])?);
+    std::fs::write(root.join("app/src/lib.rs"), lib)?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-q", "-m", "change"])?;
+    std::fs::write(
+        root.join("macros/Cargo.toml"),
+        macros_manifest.replace("name='macros'", "name='other'"),
+    )?;
+    assert!(check("draft", "HEAD~1", "--committed", &[])?);
+    assert!(!check("draft", "HEAD~1", "--worktree", &[])?);
     ignore_remove_dir_all(&root);
     Ok(())
 }

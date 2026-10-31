@@ -168,8 +168,18 @@ globs, and packages with indexed module/include edges or an incomplete
 module scan. Nested binary helpers and explicit targets with automatic
 discovery disabled remain unresolved. Library and sibling-binary aliases
 cannot supply the binary's binding. Existing unique proc-macro and cfg
-checks still apply; this does not trace a macro expansion or resolve an
-unchanged dependency outside the index.
+checks still apply; this does not trace a macro expansion.
+
+In Draft/Fast diff analysis, an ordinary enabled library root can also use a
+direct, unrenamed proc-macro dependency listed as a literal workspace member
+when that dependency is outside the index. The dependency's default library
+source is read under the selected snapshot and charged to the existing index
+file budget. Its facts are used only to establish this alias, not added to the
+general function or test index. Missing or ambiguous manifest authority,
+disabled library tests, shadowed imports, globs, opaque item macros, gated or
+duplicate definitions, unsupported membership forms, and budget refusal do
+not establish the alias. The wrapper must directly name a recognized test
+attribute in code; this remains a bounded source heuristic, not expansion proof.
 
 For a binary-root alias, manifest dependency authority must bind the imported
 crate name to the indexed proc-macro library; a registry, wrong-path, missing,

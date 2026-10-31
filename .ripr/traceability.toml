@@ -11965,6 +11965,7 @@ tests = [
   "crates/ripr/src/analysis/committed_source/tests.rs::cargo_config_symlink_target_cannot_change_snapshot_binding",
   "crates/ripr/src/analysis/committed_source/tests.rs::cargo_config_directory_symlink_remains_unresolved",
   "crates/ripr/tests/cli_smoke/binary_alias_authority.rs::binary_alias_manifest_authority_follows_the_selected_snapshot",
+  "crates/ripr/tests/cli_smoke/binary_alias_authority.rs::draft_finds_test_wrapped_by_unchanged_dependency",
   "crates/ripr/src/analysis/syntax/ra.rs::tests::ra_adapter_marks_direct_cfg_helpers_without_registering_tests",
   "crates/ripr/src/analysis/facts/test_styles/tests.rs::direct_cfg_helpers_have_evidence_role_on_parser_and_lexical_paths",
   "crates/ripr/src/analysis/source_role_corpus.rs::direct_cfg_helpers_keep_one_executable_test_and_production_controls",
