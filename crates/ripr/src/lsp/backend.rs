@@ -1107,16 +1107,17 @@ impl Backend {
         RefreshAttemptOutcome::Published
     }
 
+    fn invalidate_rust_index_keys(&self) {
+        if let Ok(mut documents) = self.quarantine.documents.lock() {
+            documents.invalidate_rust_index_keys();
+        }
+    }
+
     fn open_rust_index_paths_for_root(&self, root: &Path) -> std::collections::BTreeSet<PathBuf> {
-        let Ok(documents) = self.quarantine.documents.lock() else {
+        let Ok(mut documents) = self.quarantine.documents.lock() else {
             return Default::default();
         };
-        documents
-            .documents
-            .keys()
-            .filter_map(|uri| super::uri::file_uri_relative_to_root(root, uri))
-            .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
-            .collect()
+        documents.open_rust_index_paths(root)
     }
 
     pub(super) async fn report_refresh_failure_after(
@@ -6322,6 +6323,7 @@ impl LanguageServer for Backend {
             self.verbose_params_bytes(&params),
         )
         .await;
+        self.invalidate_rust_index_keys();
         let changes = self.watched_file_change_kinds(&params.changes);
         if changes.config_changed {
             self.reload_repository_config().await;
@@ -6714,6 +6716,7 @@ impl LanguageServer for Backend {
             self.verbose_params_bytes(&params),
         )
         .await;
+        self.invalidate_rust_index_keys();
         // Deduplicate by saved-content input identity (#1908): a save whose
         // bytes did not change since the last recorded save cannot change
         // analysis input, so it neither advances the workspace revision nor

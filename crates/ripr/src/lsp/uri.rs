@@ -317,6 +317,40 @@ pub(super) fn file_uri_relative_to_root(root: &Path, uri: &Uri) -> Option<PathBu
     path_relative_to_root(root, &path_from_file_uri(uri)?)
 }
 
+/// Whether a document can be dropped from the open-`.rs` index without
+/// resolving it against the filesystem. True only when the lexical key is
+/// certain to be the key [`file_uri_relative_to_root`] would return and that
+/// key does not end in `.rs`: no `..` segment anywhere (so the physical key is
+/// never preferred) and the normalized path sits lexically below the
+/// normalized root. In that case the full resolution returns either `None`
+/// (physical containment fails) or the lexical key, and both are excluded from
+/// the index. Every other shape (aliased roots, parent segments, unadmitted
+/// URIs) falls through to the full fail-closed resolution.
+pub(super) fn file_uri_is_lexically_non_rust(root: &Path, uri: &Uri) -> bool {
+    let Some(path) = path_from_file_uri(uri) else {
+        return false;
+    };
+    let candidate = if path.is_absolute() {
+        path
+    } else {
+        root.join(path)
+    };
+    if root
+        .components()
+        .chain(candidate.components())
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return false;
+    }
+    relative_path_below(&normalize_path(root), &normalize_path(&candidate)).is_some_and(
+        |relative| {
+            relative
+                .extension()
+                .is_none_or(|extension| extension != "rs")
+        },
+    )
+}
+
 pub(super) fn file_uris_match(left: &Uri, right: &Uri) -> bool {
     file_uris_match_on(
         left,

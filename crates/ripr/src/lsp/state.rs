@@ -2,14 +2,16 @@ use super::capabilities::WorkspaceRootResolution;
 use super::component_outcome::ComponentOutcome;
 use super::gap_artifacts::{GapArtifactRejection, ValidatedGapArtifact};
 use super::input_identity::LspAnalysisInputIdentity;
-use super::uri::{file_uri_relative_to_root, file_uris_match, path_from_file_uri};
+use super::uri::{
+    file_uri_is_lexically_non_rust, file_uri_relative_to_root, file_uris_match, path_from_file_uri,
+};
 use crate::analysis::language_outcome::{LanguageCompletenessView, LanguageDisclosure};
 use crate::analysis::{ClassifiedSeam, PreviewLanguageAdvisory};
 use crate::analysis_outcome::AnalysisOutcome;
 use crate::app::Mode;
 use crate::config::LspDiagnosticProfile;
 use crate::domain::{Finding, LanguageId};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1904,6 +1906,13 @@ fn invalidate_incremental_document_state(state: &mut DocumentState) -> Quarantin
 #[derive(Default)]
 pub(super) struct DocumentStore {
     pub(super) documents: BTreeMap<Uri, DocumentState>,
+    /// Workspace-relative keys already resolved for open `.rs` candidates,
+    /// keyed by URI with the root they were resolved against (#11763). Each
+    /// resolution canonicalizes the root and the candidate, so recomputing
+    /// every document on every refresh made N `didOpen`s cost O(N^2)
+    /// filesystem calls. An entry is dropped on reopen, close, save and
+    /// watched-file changes, and ignored when the root differs.
+    rust_index_keys: BTreeMap<Uri, (PathBuf, Option<PathBuf>)>,
 }
 
 impl DocumentStore {
@@ -1915,8 +1924,44 @@ impl DocumentStore {
             params.text_document.text,
         );
         let transition = state.refresh_quarantine();
+        self.rust_index_keys.remove(&uri);
         self.documents.insert(uri, state);
         transition
+    }
+
+    /// Workspace-relative paths of the open `.rs` documents under `root`.
+    /// Equivalent to resolving every document with `file_uri_relative_to_root`
+    /// and keeping `.rs` keys, without repeating the filesystem resolution for
+    /// documents whose key is already known or lexically cannot be `.rs`.
+    pub(super) fn open_rust_index_paths(&mut self, root: &Path) -> BTreeSet<PathBuf> {
+        let Self {
+            documents,
+            rust_index_keys,
+        } = self;
+        documents
+            .keys()
+            .filter_map(|uri| {
+                if let Some((cached_root, key)) = rust_index_keys.get(uri)
+                    && cached_root == root
+                {
+                    return key.clone();
+                }
+                if file_uri_is_lexically_non_rust(root, uri) {
+                    return None;
+                }
+                let key = file_uri_relative_to_root(root, uri);
+                rust_index_keys.insert(uri.clone(), (root.to_path_buf(), key.clone()));
+                key
+            })
+            .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+            .collect()
+    }
+
+    /// Forget resolved index keys so the next refresh re-resolves them against
+    /// the current filesystem (a save or watched-file change can retarget a
+    /// symlink).
+    pub(super) fn invalidate_rust_index_keys(&mut self) {
+        self.rust_index_keys.clear();
     }
 
     /// Whether the just-opened buffer already matches the persisted saved
@@ -2172,6 +2217,7 @@ impl DocumentStore {
     }
 
     pub(super) fn close(&mut self, params: DidCloseTextDocumentParams) {
+        self.rust_index_keys.remove(&params.text_document.uri);
         self.documents.remove(&params.text_document.uri);
     }
 

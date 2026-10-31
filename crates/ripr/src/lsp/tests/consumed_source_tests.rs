@@ -1052,3 +1052,111 @@ fn snapshot_alias_index_refuses_changed_roots_and_same_count_keys() -> Result<()
     }
     Ok(())
 }
+
+#[cfg(unix)]
+fn reference_open_rust_index_paths(
+    root: &Path,
+    store: &DocumentStore,
+) -> std::collections::BTreeSet<PathBuf> {
+    store
+        .documents
+        .keys()
+        .filter_map(|uri| crate::lsp::uri::file_uri_relative_to_root(root, uri))
+        .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+        .collect()
+}
+
+#[cfg(unix)]
+fn open_for_index_test(store: &mut DocumentStore, path: &Path) -> Result<(), String> {
+    store.open(DidOpenTextDocumentParams {
+        text_document: TextDocumentItem::new(
+            file_uri_for_path(path)?,
+            "rust".to_string(),
+            1,
+            SOURCE_A.to_string(),
+        ),
+    });
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn open_rust_index_paths_match_reference_and_bound_canonicalization() -> Result<(), String> {
+    let fixture = consumed_source_alias_fixture("open-rust-index")?;
+    let outside = fixture.temp.path().join("outside.rs");
+    fs::write(&outside, SOURCE_A).map_err(|error| format!("write outside: {error}"))?;
+    let src = fixture.root.join("src");
+    fs::write(src.join("notes.txt"), "x").map_err(|error| format!("write txt: {error}"))?;
+    std::os::unix::fs::symlink(src.join("lib.rs"), src.join("link_to_rs.txt"))
+        .map_err(|error| format!("link txt: {error}"))?;
+    std::os::unix::fs::symlink(src.join("notes.txt"), src.join("link_to_txt.rs"))
+        .map_err(|error| format!("link rs: {error}"))?;
+    let edge_paths = vec![
+        fixture.file.clone(),
+        src.join("notes.txt"),
+        src.join("link_to_rs.txt"),
+        src.join("link_to_txt.rs"),
+        src.join("missing.rs"),
+        src.join("Makefile"),
+        outside,
+        fixture.alias.join("src/lib.rs"),
+        fixture.alias.join("src/other.rs"),
+        fixture.alias.join("src/notes.txt"),
+    ];
+    let mut store = DocumentStore::default();
+    for path in &edge_paths {
+        open_for_index_test(&mut store, path)?;
+    }
+    for root in [&fixture.root, &fixture.alias] {
+        let expected = reference_open_rust_index_paths(root, &store);
+        if expected.is_empty() {
+            return Err("fixture must produce indexed keys".into());
+        }
+        store.invalidate_rust_index_keys();
+        let actual = store.open_rust_index_paths(root);
+        if actual != expected {
+            return Err(format!("index drifted: {actual:?} != {expected:?}"));
+        }
+        // A cached second pass must agree too.
+        if store.open_rust_index_paths(root) != expected {
+            return Err("cached index drifted".into());
+        }
+    }
+    // Non-.rs files under the root never touch the filesystem; .rs files
+    // resolve once and then come from the cache.
+    let mut bulk = DocumentStore::default();
+    for index in 0..200 {
+        open_for_index_test(&mut bulk, &src.join(format!("doc_{index}.txt")))?;
+    }
+    let before = crate::lsp::uri::canonical_projection_count_for_test();
+    if !bulk.open_rust_index_paths(&fixture.root).is_empty() {
+        return Err("non-rust documents must not be indexed".into());
+    }
+    let non_rust = crate::lsp::uri::canonical_projection_count_for_test() - before;
+    if non_rust != 0 {
+        return Err(format!("non-.rs documents canonicalized {non_rust} times"));
+    }
+    for index in 0..200 {
+        open_for_index_test(&mut bulk, &src.join(format!("doc_{index}.rs")))?;
+    }
+    let before = crate::lsp::uri::canonical_projection_count_for_test();
+    let first = bulk.open_rust_index_paths(&fixture.root);
+    let first_cost = crate::lsp::uri::canonical_projection_count_for_test() - before;
+    if first.len() != 200 || first_cost != 400 {
+        return Err(format!(
+            "first pass: {} keys, {first_cost} projections",
+            first.len()
+        ));
+    }
+    let before = crate::lsp::uri::canonical_projection_count_for_test();
+    for _ in 0..5 {
+        if bulk.open_rust_index_paths(&fixture.root) != first {
+            return Err("repeat refresh changed the index".into());
+        }
+    }
+    let repeat = crate::lsp::uri::canonical_projection_count_for_test() - before;
+    if repeat != 0 {
+        return Err(format!("repeat refreshes canonicalized {repeat} times"));
+    }
+    Ok(())
+}
