@@ -98,13 +98,18 @@ pub(crate) fn render_review_comments_json_with_scope(
         || changed_test_paths.is_empty(),
         |changes| changes.files.is_empty() && !changes.unresolved,
     );
-    let actionable = selection
+    let mut actionable = selection
         .top_seams
         .iter()
         .filter(|selected| {
             selected.why_now.reason != AgentBriefWhyNowReason::RepoActionableFallback
         })
         .collect::<Vec<_>>();
+    // The inline and summary slots are few. A gap with a named missing check
+    // takes them before a card that can only say RIPR has nothing to suggest;
+    // the brief's own order (file path as the last tiebreak) must not decide
+    // which of the two the author sees. Stable, so each group keeps its rank.
+    actionable.sort_by_key(|selected| !card_is_actionable(selected.seam));
     let suppressed_repo_fallback = !selection.top_seams.is_empty() && actionable.is_empty();
     let mut warnings = if suppressed_repo_fallback {
         selection
@@ -878,6 +883,23 @@ fn repair_prompt(route: &GapRepairRoute, verify_command: &str) -> String {
     )
 }
 
+/// The card's `gap_state`, decided once: the review card projects it and the
+/// slot ordering reads it, so the two cannot disagree.
+fn card_gap_state(
+    entry: &ClassifiedSeam,
+    missing: &[crate::output::agent_seam_packets_legacy::MissingRecord],
+) -> &'static str {
+    if cross_language_test_target_unresolved(entry) {
+        return "static_limitation";
+    }
+    gap_state_for(entry, &actionability_for(entry, missing))
+}
+
+/// Whether the card for `entry` offers a test to add.
+fn card_is_actionable(entry: &ClassifiedSeam) -> bool {
+    card_gap_state(entry, &missing_records_for(entry)) == "actionable"
+}
+
 fn review_recommendation_json(
     root: &Path,
     base: &str,
@@ -909,12 +931,7 @@ fn review_recommendation_json(
         .map(agent_seam_packets::navigation_only_external_target_json);
 
     // Derive gap_state for every card using the canonical decision from evidence_record.
-    let actionability = actionability_for(entry, &missing);
-    let gap_state = if target_unresolved {
-        "static_limitation"
-    } else {
-        gap_state_for(entry, &actionability)
-    };
+    let gap_state = card_gap_state(entry, &missing);
 
     // receipt_command: only for actionable cards; reuses canonical_receipt_command_for.
     let receipt_command = canonical_receipt_command_for(entry, gap_state, &root_display);
@@ -930,6 +947,14 @@ fn review_recommendation_json(
     } else {
         None
     };
+    // Only a limitation that is a plain statement about the change reaches
+    // the sentence an author reads. The others name producer vocabulary
+    // ("producer-owned missing discriminator fact") that stays in
+    // `why_not_actionable` for tools.
+    let readable_limitation_detail: Option<String> = static_limitations
+        .first()
+        .filter(|limitation| limitation.category == NO_TEST_REACHES_OWNER_CATEGORY)
+        .map(|limitation| limitation.reason.clone());
     let non_claims = if gap_state == "static_limitation" {
         let lang_status = entry
             .evidence
@@ -1058,7 +1083,12 @@ fn review_recommendation_json(
             "expression": seam.expression(),
         },
         "source_location": source_location_json(&seam_file, Some(seam_line)),
-        "reason": reason_for(selected, gap_state, missing_value.as_deref()),
+        "reason": reason_for(
+            selected,
+            gap_state,
+            missing_value.as_deref(),
+            readable_limitation_detail.as_deref(),
+        ),
         "missing_discriminator": missing_value,
         "suggested_test": suggested_test,
         "llm_guidance": llm_guidance,
@@ -1217,10 +1247,34 @@ fn unresolved_source_location_json() -> Value {
 
 /// Scope disclosure for a gate decision built from a gap ledger (issue #9301
 /// F2): the same shape review-comments emits for a ledger artifact.
+///
+/// With a verified producer `coverage` (a complete whole-Rust-workspace
+/// repo-exposure run whose record set is intact, #9599) the scope is
+/// `rust_workspace_complete`; otherwise the record-derived
+/// `gap_ledger_artifact` scope, which baseline resolution never trusts.
 pub(crate) fn gap_ledger_analysis_scope_json(
     records: &[crate::output::gap_decision_ledger::GapRecord],
+    coverage: Option<&Value>,
+    refusal: &[String],
 ) -> Value {
-    analysis_scope_json(&ReviewCommentsAnalysisScope::gap_ledger_artifact(records))
+    if let Some(coverage) = coverage {
+        return json!({
+            "scope": "rust_workspace_complete",
+            "run_status": "complete",
+            "basis": "repo_exposure_complete_run",
+            "corpus": coverage.get("corpus").cloned().unwrap_or(Value::Null),
+            "records_total": records.len(),
+            "records_digest": coverage.get("records_digest").cloned().unwrap_or(Value::Null),
+            "downstream_consumable": true,
+        });
+    }
+    let mut scope = analysis_scope_json(&ReviewCommentsAnalysisScope::gap_ledger_artifact(records));
+    // Why a disclosed workspace coverage was refused (additive, inert to
+    // consumers): the input classes that differ from the ledger's disclosure.
+    if !refusal.is_empty() {
+        scope["coverage_refused"] = json!(refusal);
+    }
+    scope
 }
 
 fn analysis_scope_json(scope: &ReviewCommentsAnalysisScope) -> Value {
@@ -1316,13 +1370,29 @@ fn reason_for(
     selected: &AgentBriefSelectedSeam<'_>,
     gap_state: &str,
     missing: Option<&str>,
+    why_not_actionable: Option<&str>,
 ) -> String {
     // Optional discriminator values do not grant repair authority. Project
-    // the same canonical decision that owns the card's typed guidance.
+    // the same canonical decision that owns the card's typed guidance. This
+    // sentence reaches a pull request author as an annotation, so it says
+    // what RIPR can do (nothing to add) and why, not which internal state
+    // the card is in.
     if gap_state != "actionable" {
-        return format!(
-            "Static evidence state is {gap_state}; no repair test is offered by this card. Inspect the producer-owned evidence and policy state."
-        );
+        return match (
+            why_not_actionable
+                .map(|why| why.trim().trim_end_matches('.'))
+                .filter(|why| !why.is_empty()),
+            gap_state,
+        ) {
+            (Some(why), _) => format!("RIPR has no test to suggest here: {why}."),
+            (None, "static_limitation") => {
+                "RIPR has no test to suggest here: it could not follow this change through to a test assertion."
+                    .to_string()
+            }
+            (None, state) => {
+                format!("RIPR has no test to suggest here (static evidence state: {state}).")
+            }
+        };
     }
     if let Some(missing) = missing {
         return format!(
@@ -1606,6 +1676,25 @@ fn push_analysis_scope_summary(lines: &mut Vec<String>, value: Option<&Value>) {
                 .to_string(),
         );
     }
+    if let Some(declined) = scope
+        .get("parser_declined_files")
+        .and_then(Value::as_array)
+        .filter(|files| !files.is_empty())
+    {
+        let listed = declined
+            .iter()
+            .filter_map(Value::as_str)
+            .map(code_span)
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!(
+            "- limitation: `parser_declined_files`; no seams were extracted from: {listed}, so a baselined gap in them is not evaluated, not resolved"
+        ));
+        lines.push(
+            "- repair: split the file below the Rust parse budget, fix the parse error or save it as UTF-8, then re-run"
+                .to_string(),
+        );
+    }
     if let (Some(limitation), Some(route)) = (
         scope.get("limitation").and_then(Value::as_str),
         scope.get("repair_route").and_then(Value::as_str),
@@ -1741,6 +1830,47 @@ mod tests {
             !rendered.contains("dropped file(s): src/@octocat/"),
             "raw path must not appear outside a code span:\n{rendered}"
         );
+    }
+
+    /// #9734: parser-declined files are listed as a limitation (markup kept
+    /// inert) and the line is absent when none were declined, so existing
+    /// fixtures stay byte-stable.
+    #[test]
+    fn parser_declined_files_markdown_names_the_limitation_and_stays_inert() {
+        let scope = json!({
+            "scope": "diff_scoped_changed_files",
+            "run_status": "limited_diff_scope",
+            "production_files_considered": 1,
+            "classified_seams_considered": 0,
+            "parser_declined_files": ["src/@octocat/`deep`.rs", "src/b.rs"]
+        });
+        let mut lines = Vec::new();
+        push_analysis_scope_summary(&mut lines, Some(&scope));
+        let rendered = lines.join("\n");
+        assert!(
+            rendered.contains(&format!(
+                "- limitation: `parser_declined_files`; no seams were extracted from: {}, {}, so a baselined gap in them is not evaluated, not resolved",
+                code_span("src/@octocat/`deep`.rs"),
+                code_span("src/b.rs")
+            )),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("- repair: split the file below the Rust parse budget"),
+            "{rendered}"
+        );
+
+        let mut none = Vec::new();
+        for empty in [json!([]), json!(null)] {
+            let mut scope = scope.clone();
+            scope["parser_declined_files"] = empty;
+            none.clear();
+            push_analysis_scope_summary(&mut none, Some(&scope));
+            assert!(
+                !none.join("\n").contains("parser_declined_files"),
+                "{none:?}"
+            );
+        }
     }
 
     use crate::analysis::ClassifiedSeam;
@@ -1998,13 +2128,17 @@ mod tests {
     /// A new public owner that no existing test reaches, as in a PR that adds
     /// a `pub fn` that no test calls, next to a crate integration test file.
     fn unreached_new_owner_classified() -> ClassifiedSeam {
-        let mut entry = classified_in_owner(29, "src/lib.rs::loyalty_price");
+        unreached_new_owner_classified_at(29)
+    }
+
+    fn unreached_new_owner_classified_at(line: usize) -> ClassifiedSeam {
+        let mut entry = classified_in_owner(line, "src/lib.rs::loyalty_price");
         let seam = RepoSeam::new(
             "src/lib.rs",
             "src/lib.rs::loyalty_price",
             SeamKind::PredicateBoundary,
-            290,
-            29,
+            line * 10,
+            line,
             "member_years >= 5",
             RequiredDiscriminator::BoundaryValue {
                 description: "5".to_string(),
@@ -2773,6 +2907,77 @@ mod tests {
     }
 
     #[test]
+    fn a_gap_with_a_named_check_takes_the_inline_slot_before_a_limitation() -> Result<(), String> {
+        // Four cards, one slot per card up to the inline cap of three. The
+        // three limitations come first in the brief's order; the one gap that
+        // names a missing check comes last and must not be the one demoted.
+        let mut seams = vec![
+            unreached_new_owner_classified_at(11),
+            unreached_new_owner_classified_at(12),
+            unreached_new_owner_classified_at(13),
+        ];
+        seams.push(classified(40));
+        let changed_lines = [11, 12, 13, 40]
+            .iter()
+            .map(|line| {
+                AgentBriefLine::new(
+                    if *line == 40 {
+                        "src/pricing.rs"
+                    } else {
+                        "src/lib.rs"
+                    },
+                    *line,
+                )
+            })
+            .collect::<Vec<_>>();
+        let working_set = AgentBriefResolvedWorkingSet::base("main", changed_lines);
+
+        let value = render_value(&working_set, &seams)?;
+        assert_eq!(value["summary"]["comments"], 3);
+        assert_eq!(value["comments"][0]["gap_state"], "actionable");
+        assert_eq!(
+            value["comments"][0]["missing_discriminator"],
+            "amount == discount_threshold"
+        );
+        // The limitations keep their brief order behind it, and the one that
+        // no longer fits is the limitation, not the gap.
+        assert_eq!(value["comments"][1]["gap_state"], "static_limitation");
+        assert_eq!(value["comments"][1]["seam"]["line"], 11);
+        assert_eq!(value["comments"][2]["seam"]["line"], 12);
+        assert_eq!(value["summary_only"][0]["gap_state"], "static_limitation");
+        assert_eq!(value["summary_only"][0]["seam"]["line"], 13);
+        assert_eq!(
+            value["summary_only"][0]["summary_reason"],
+            SUMMARY_REASON_INLINE_CAP_REACHED
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_limitation_card_says_plainly_that_it_has_no_test_to_suggest() -> Result<(), String> {
+        let seams = [unreached_new_owner_classified()];
+        let working_set =
+            AgentBriefResolvedWorkingSet::base("main", vec![AgentBriefLine::new("src/lib.rs", 29)]);
+        let value = render_value(&working_set, &seams)?;
+        let reason = value["comments"][0]["reason"]
+            .as_str()
+            .ok_or("missing reason")?;
+        assert!(
+            reason.starts_with("RIPR has no test to suggest here: no existing test reaches"),
+            "{reason}"
+        );
+        // Internal vocabulary stays out of the sentence a PR author reads.
+        for internal in [
+            "producer-owned",
+            "policy state",
+            "no repair test is offered",
+        ] {
+            assert!(!reason.contains(internal), "{reason}");
+        }
+        Ok(())
+    }
+
+    #[test]
     fn review_comments_falls_back_to_summary_only_without_safe_line() -> Result<(), String> {
         let seams = [classified(88)];
         let working_set = AgentBriefResolvedWorkingSet::files(vec![PathBuf::from("src/other.rs")]);
@@ -3213,8 +3418,9 @@ mod tests {
             .get("reason")
             .and_then(Value::as_str)
             .ok_or_else(|| "static-limitation card must carry a reason".to_string())?;
-        if !reason.contains("Static evidence state is static_limitation")
+        if !reason.starts_with("RIPR has no test to suggest here")
             || reason.contains("a focused test can strengthen")
+            || reason.contains("producer-owned")
         {
             return Err(format!(
                 "static-limitation reason contradicts canonical state: {reason}"
@@ -3253,10 +3459,13 @@ mod tests {
             "unknown",
         ] {
             for missing in [None, Some("amount == discount_threshold")] {
-                let reason = reason_for(entry, state, missing);
-                let expected = format!(
-                    "Static evidence state is {state}; no repair test is offered by this card. Inspect the producer-owned evidence and policy state."
-                );
+                let reason = reason_for(entry, state, missing, None);
+                let expected = if state == "static_limitation" {
+                    "RIPR has no test to suggest here: it could not follow this change through to a test assertion."
+                        .to_string()
+                } else {
+                    format!("RIPR has no test to suggest here (static evidence state: {state}).")
+                };
                 if reason != expected {
                     return Err(format!(
                         "non-actionable state {state} changed: expected {expected}, got {reason}"
@@ -3264,7 +3473,12 @@ mod tests {
                 }
             }
         }
-        let missing = reason_for(entry, "actionable", Some("amount == discount_threshold"));
+        let missing = reason_for(
+            entry,
+            "actionable",
+            Some("amount == discount_threshold"),
+            None,
+        );
         if missing
             != "Static evidence names missing discriminator `amount == discount_threshold` for this seam."
         {
@@ -3272,7 +3486,7 @@ mod tests {
                 "actionable discriminator reason changed: {missing}"
             ));
         }
-        let fallback = reason_for(entry, "actionable", None);
+        let fallback = reason_for(entry, "actionable", None, None);
         let expected_fallback = format!(
             "Static evidence class is {}; a focused test can strengthen the named seam.",
             entry.seam.class.as_str()

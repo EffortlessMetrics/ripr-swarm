@@ -70,10 +70,15 @@ pub(crate) fn owners_from_program(
             owner.module_entries = owner_entries.clone();
         }
     }
-    assign_class_entries(
+    let instance_fields = class_instance_field_names(program);
+    let repeated_names = repeated_class_names(program);
+    assign_class_entries(&mut owners, &instance_fields, &repeated_names);
+    assign_instance_factories(
+        program,
+        source,
         &mut owners,
-        &class_instance_field_names(program),
-        &repeated_class_names(program),
+        &instance_fields,
+        &repeated_names,
     );
     assign_decorated_entries(program, source, &mut owners);
     owners

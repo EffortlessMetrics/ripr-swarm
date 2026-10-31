@@ -17,6 +17,7 @@ Start here:
   Language: typescript
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: if (Number.isNaN(n)) {
   Missing check: Related tests reach `parseLimit` with a strong oracle, but the changed line has no

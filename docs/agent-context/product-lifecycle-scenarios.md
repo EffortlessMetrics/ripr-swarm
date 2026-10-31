@@ -43,8 +43,11 @@ test result is recorded, and the applicable verification command is available.
 
 ### Pair C: qualification versus final judgment
 
-These two inputs explicitly assume an activated no-queue late-request adapter;
-they do not claim that RIPR's current production adapter is activated.
+These two inputs explicitly assume the installed legacy label route (explicit
+late qualification request followed by final judgment and protected squash);
+they do not claim that native merge-queue qualification is activated. After
+verified queue activation, the same judgment boundary applies through the
+native-queue procedure in [merge flow](../MERGE_FLOW.md).
 
 **C1.** An explicit request has completed all applicable qualification. A newly
 arrived substantive review identifies a product-contract contradiction, with
@@ -95,7 +98,7 @@ These are examiner expectations, not measured results.
 | B1 | Inspect actual discrimination and the opaque path; record a precise limitation or analyzer defect if supported | Do not weaken/couple a useful test solely to make RIPR green; no universal correctness claim from one control |
 | B2 | Execute the applicable native verification and retain its outcome | Static movement is not test execution or mutation confirmation |
 | C1 | Withhold merge; investigate the new finding and refresh affected judgment/proof | Green qualification remains factual but is not final approval; no auto-merge |
-| C2 | Recheck expected head and current requirements, then use the authorized normal protected squash path | No native merge queue or routine second qualification merely to click merge; verify actual landing and remaining parent acceptance |
+| C2 | Recheck expected head and current requirements, then use the authorized normal protected squash path on the installed legacy route | No routine second qualification merely to click merge; use the native-queue procedure only after verified activation; verify actual landing and remaining parent acceptance |
 | D1 | Stop artifact admission and reconcile/requalify the changed bytes | Checkout proof and a receipt for another digest cannot qualify this upload |
 | D2 | Limit delivery to the authorized channel and perform its independent public verification through the existing owner | No all-channel completion from a stale comment; back-sync/release closeout remain governed separately |
 | E1 | Run a bounded M2 observation where supported; retain M1's failure and untested dimensions | A guidance edit or structural check is not improved harness behavior |

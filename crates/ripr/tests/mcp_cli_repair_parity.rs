@@ -367,7 +367,7 @@ fn route_not_ready_seam_is_seam_gate_refused_not_a_producer_gate() -> Result<(),
         let seen = observe(&fixture)?;
         assert!(
             seen.repair_text
-                .contains("not repair-eligible: repair route not ready"),
+                .contains("not ready for an automatic repair: repair route not ready"),
             "{name}: precondition, the CLI gate says the route is not ready:\n{}",
             seen.repair_text
         );

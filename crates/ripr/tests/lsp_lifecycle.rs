@@ -1479,7 +1479,7 @@ fn shutdown_and_eof_during_request_load_exits_zero() -> Result<(), String> {
 
 /// Server-executed compatibility command ids in the exact order
 /// `lsp/capabilities.rs` advertises them via `executeCommandProvider`.
-const EXPECTED_SERVER_EXECUTED_COMMANDS: [&str; 7] = [
+const EXPECTED_SERVER_EXECUTED_COMMANDS: [&str; 8] = [
     "ripr.refresh",
     "ripr.collectContext",
     "ripr.collectEvidenceContext",
@@ -1487,6 +1487,7 @@ const EXPECTED_SERVER_EXECUTED_COMMANDS: [&str; 7] = [
     "ripr.collectRepairPacket",
     "ripr.collectTopLimitation",
     "ripr.collectReceiptStatus",
+    "ripr.showRelatedTest",
 ];
 
 /// Receipt destination relative to the workspace root. `target/` is

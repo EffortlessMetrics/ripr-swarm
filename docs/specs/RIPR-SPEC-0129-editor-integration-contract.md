@@ -216,6 +216,18 @@ This presentation must preserve the snapshot's diagnostics and result IDs.
   commands. The `quickfix.ripr.*` / `source.ripr.refresh` kind strings
   still appear as kind metadata for every client; they carry no negotiation
   requirement.
+- A standard LSP client that advertises `window.showDocument` but not the
+  `ripr.openRelatedTest` client command receives the same "open best related
+  test" action backed by the server-executed `ripr.showRelatedTest` command
+  (#11281). The server validates the request and sends `window/showDocument`
+  (file URI, target line selection, `takeFocus`). It fails closed: without
+  the `showDocument` capability no navigation action of either kind is
+  offered and a manually sent command is refused; a client that advertises
+  `ripr.openRelatedTest` keeps its client command with no duplicate; and a
+  stale snapshot input identity, missing snapshot, target outside the
+  workspace root, missing file or non-1-based line is refused with
+  `InvalidParams`. Navigation only: never a source edit and never test
+  execution.
 - A client that forwards a command the server does not execute — an unknown
   command ID, or a client-registered command such as `ripr.copyContext` —
   receives a stable `InvalidParams` rejection naming the command

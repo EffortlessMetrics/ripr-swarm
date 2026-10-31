@@ -257,6 +257,7 @@ pub(super) fn status_tool_result(
     max_message_bytes: usize,
     max_response_bytes: usize,
     max_envelope_bytes: usize,
+    text_mode: TextContentMode,
 ) -> Result<Value, String> {
     let document = status_document(
         status,
@@ -265,7 +266,7 @@ pub(super) fn status_tool_result(
         max_message_bytes,
         max_response_bytes,
     );
-    let mut envelope = tool_result(document, max_envelope_bytes)?;
+    let mut envelope = tool_result_with(document, max_envelope_bytes, text_mode)?;
     if let Some(recovery) = unavailable_recovery(status)
         && let Some(content) = envelope.get_mut("content").and_then(Value::as_array_mut)
     {
@@ -293,10 +294,63 @@ pub(super) fn status_tool_result(
 /// pre-shrink their pages against the same budget
 /// ([`structured_envelope_overflows`]); single-item producers refuse
 /// through their document guard and this envelope guard.
+#[cfg(test)]
 pub(super) fn tool_result(document: Value, max_envelope_bytes: usize) -> Result<Value, String> {
+    tool_result_with(document, max_envelope_bytes, TextContentMode::Full)
+}
+
+/// Environment variable that selects [`TextContentMode`] for one server
+/// process (set it in the MCP host's server `env`).
+pub(super) const TEXT_CONTENT_ENV: &str = "RIPR_MCP_TEXT_CONTENT";
+
+/// What `content[0].text` carries on a successful tool result. The complete
+/// document is always in `structuredContent`; this only selects the text
+/// companion the MCP specification asks for on behalf of hosts that do not
+/// read structured results (#9360).
+///
+/// `Full` (the default) is the compact JSON serialization of the document, so
+/// a host that reads only text content loses nothing. `Summary` is an opt-in
+/// token saver for hosts known to read `structuredContent`: a short digest
+/// that states plainly it is not a copy and how to get the full text. The
+/// default is not flipped because a host that feeds only text content to its
+/// model would silently lose the result, which is a worse failure than the
+/// duplicated tokens.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum TextContentMode {
+    #[default]
+    Full,
+    Summary,
+}
+
+impl TextContentMode {
+    /// `summary` (ASCII case-insensitive, surrounding whitespace ignored)
+    /// selects [`TextContentMode::Summary`]. Every other value, including a
+    /// typo, keeps the lossless default: an unrecognized spelling must never
+    /// shrink what a text-only host receives.
+    pub(super) fn from_env_value(value: Option<&str>) -> Self {
+        match value.map(str::trim) {
+            Some(value) if value.eq_ignore_ascii_case("summary") => Self::Summary,
+            _ => Self::Full,
+        }
+    }
+
+    pub(super) fn from_env() -> Self {
+        Self::from_env_value(std::env::var(TEXT_CONTENT_ENV).ok().as_deref())
+    }
+}
+
+/// [`tool_result`] with an explicit text companion. The size guard always
+/// measures the complete double-carry envelope, so a document is admitted or
+/// refused identically in both modes (paging and `result_too_large` do not
+/// depend on the mode); `Summary` only replaces `content[0].text` afterward.
+pub(super) fn tool_result_with(
+    document: Value,
+    max_envelope_bytes: usize,
+    mode: TextContentMode,
+) -> Result<Value, String> {
     let text = serde_json::to_string(&document)
         .map_err(|error| format!("render tool document: {error}"))?;
-    let structured = json!({
+    let mut structured = json!({
         "content": [{ "type": "text", "text": text }],
         "structuredContent": document,
         "isError": false,
@@ -308,7 +362,112 @@ pub(super) fn tool_result(document: Value, max_envelope_bytes: usize) -> Result<
             super::MAX_RESPONSE_BYTES
         ));
     }
+    if mode == TextContentMode::Summary {
+        let summary = structured
+            .get("structuredContent")
+            .map(summary_text)
+            .ok_or_else(|| "tool envelope lost structuredContent".to_string())?;
+        if let Some(slot) = structured.pointer_mut("/content/0/text") {
+            *slot = Value::String(summary);
+        }
+    }
     Ok(structured)
+}
+
+const SUMMARY_STRING_CHARS: usize = 200;
+const SUMMARY_LISTED_IDS: usize = 5;
+const SUMMARY_LISTED_FIELDS: usize = 12;
+
+/// The opt-in text digest of a document: a header that says this is not the
+/// full result, then one line per top-level field — scalars verbatim (long
+/// strings truncated with a marker), arrays as counts (plus the first few
+/// `canonical_id`s so a text-only agent can still call `ripr_get_gap`), and
+/// objects as their field names. No fact is invented or reworded; every line
+/// is a projection of the structured document.
+fn summary_text(document: &Value) -> String {
+    let mut lines = Vec::new();
+    let schema = document
+        .get("schema_version")
+        .and_then(Value::as_str)
+        .map_or_else(|| "unknown schema".to_string(), escape_summary);
+    lines.push(format!(
+        "ripr summary ({schema}). This text is a digest, not a copy: the complete result is `structuredContent`. A host that reads only text content should start the server with {TEXT_CONTENT_ENV}=full to receive the full JSON here."
+    ));
+    let Some(object) = document.as_object() else {
+        return lines.join("\n");
+    };
+    for (raw_key, value) in object {
+        if raw_key == "schema_version" {
+            continue;
+        }
+        let key = escape_summary(raw_key);
+        lines.push(match value {
+            Value::Null => format!("{key}: null"),
+            Value::Bool(flag) => format!("{key}: {flag}"),
+            Value::Number(number) => format!("{key}: {number}"),
+            Value::String(text) => format!("{key}: {}", clip_summary_string(text)),
+            Value::Array(entries) => {
+                let ids: Vec<String> = entries
+                    .iter()
+                    .filter_map(|entry| entry.get("canonical_id").and_then(Value::as_str))
+                    .take(SUMMARY_LISTED_IDS)
+                    .map(escape_summary)
+                    .collect();
+                if ids.is_empty() {
+                    format!("{key}: {} entries", entries.len())
+                } else {
+                    format!(
+                        "{key}: {} entries; first canonical_id values: {}",
+                        entries.len(),
+                        ids.join(", ")
+                    )
+                }
+            }
+            Value::Object(fields) => {
+                let names: Vec<String> = fields
+                    .keys()
+                    .map(|name| escape_summary(name))
+                    .take(SUMMARY_LISTED_FIELDS)
+                    .collect();
+                let more = fields.len().saturating_sub(names.len());
+                if more == 0 {
+                    format!("{key}: object with fields {}", names.join(", "))
+                } else {
+                    format!(
+                        "{key}: object with fields {} and {more} more",
+                        names.join(", ")
+                    )
+                }
+            }
+        });
+    }
+    lines.join("\n")
+}
+
+/// Control characters (newlines above all) are escaped so a document string
+/// can never start a new digest line and forge a `key: value` entry.
+fn escape_summary(text: &str) -> String {
+    text.chars()
+        .flat_map(|character| {
+            let escaped: Vec<char> = if character.is_control() {
+                character.escape_default().collect()
+            } else {
+                vec![character]
+            };
+            escaped
+        })
+        .collect()
+}
+
+fn clip_summary_string(text: &str) -> String {
+    if text.chars().count() <= SUMMARY_STRING_CHARS {
+        return escape_summary(text);
+    }
+    let clipped: String = text.chars().take(SUMMARY_STRING_CHARS).collect();
+    format!(
+        "{}... (truncated; full text in structuredContent)",
+        escape_summary(&clipped)
+    )
 }
 
 fn envelope_bytes(envelope: &Value) -> Result<usize, String> {
@@ -682,6 +841,8 @@ fn repair_card_output_schema() -> Value {
                     "requested_snapshot_id": { "type": ["string", "null"] },
                     "item": { "type": "object" },
                     "card": { "type": "object" },
+                    "finding_guidance": { "type": "object" },
+                    "mcp_detail_routes": { "type": "array", "items": { "type": "object" } },
                     "currentness": { "type": "object" },
                     "claim_boundary": { "type": "string" },
                     "limitations": {
@@ -1133,6 +1294,16 @@ fn refresh_output_schema() -> Value {
                     },
                     "scope": scope_disclosure_schema(),
                     "requested_base": { "type": "string" },
+                    "empty_scope_hint": {
+                        "type": "object",
+                        "properties": {
+                            "why": { "type": "string" },
+                            "pass_base": { "type": "string" },
+                            "pass_source": { "type": "string" }
+                        },
+                        "required": ["why", "pass_base", "pass_source"],
+                        "additionalProperties": false
+                    },
                     "requested_source": { "type": "string", "enum": ["committed", "worktree"] },
                     "captured_source": { "type": ["string", "null"], "enum": ["committed", "worktree", null] },
                     "snapshot": { "type": ["object", "null"] },
@@ -1349,6 +1520,7 @@ fn repair_packet_output_schema() -> Value {
                     "requested_snapshot_id": { "type": ["string", "null"] },
                     "repair_packet_ready": { "type": "boolean" },
                     "ineligibility": { "type": "object" },
+                    "finding_guidance": { "type": "object" },
                     "recovery": { "type": "string" },
                     "item": { "type": "object" },
                     "attempt": { "type": ["object", "null"] },
@@ -1658,6 +1830,234 @@ mod tests {
             return Err(format!(
                 "the compact-text refusal must name the budget and the bound: {detail}"
             ));
+        }
+        Ok(())
+    }
+
+    /// #9360: the text companion is selectable, `structuredContent` is the
+    /// single full result in both modes, and the guard is mode-independent.
+    #[test]
+    fn summary_text_mode_keeps_structured_content_whole_and_shrinks_only_the_text()
+    -> Result<(), String> {
+        let rows = |count: usize| {
+            json!({
+                "schema_version": "ripr-mcp-gap-list-v4",
+                "claim_boundary": "Static exposure evidence only.",
+                "selected": count,
+                "overflowed": false,
+                "requested_snapshot_id": Value::Null,
+                "filters": { "class": "weakly_exposed", "language": "rust" },
+                "items": (0..count)
+                    .map(|index| {
+                        json!({
+                            "canonical_id": format!("gap:rust:src/m{index}.rs:owner:predicate_boundary:p{index}"),
+                            "note": "n".repeat(300),
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+            })
+        };
+        let budget = super::super::MAX_RESPONSE_BYTES;
+        let full = tool_result_with(rows(40), budget, TextContentMode::Full)?;
+        let summary = tool_result_with(rows(40), budget, TextContentMode::Summary)?;
+        if full != tool_result(rows(40), budget)? {
+            return Err("tool_result must stay the lossless Full mode".to_string());
+        }
+        if full["structuredContent"] != summary["structuredContent"]
+            || summary["structuredContent"] != rows(40)
+        {
+            return Err("structuredContent must be the one full document in both modes".into());
+        }
+        if full["isError"] != summary["isError"] || summary["isError"] != json!(false) {
+            return Err("summary mode must not change isError".into());
+        }
+        let full_text = full
+            .pointer("/content/0/text")
+            .and_then(Value::as_str)
+            .ok_or("full text missing")?;
+        if serde_json::from_str::<Value>(full_text).ok() != Some(rows(40)) {
+            return Err("Full text must remain the JSON copy of the document".into());
+        }
+        let text = summary
+            .pointer("/content/0/text")
+            .and_then(Value::as_str)
+            .ok_or("summary text missing")?;
+        if summary["content"].as_array().map(Vec::len) != Some(1) {
+            return Err("summary mode keeps exactly one text content item".into());
+        }
+        if serde_json::from_str::<Value>(text).is_ok() {
+            return Err("summary text must not masquerade as the JSON document".into());
+        }
+        // The text-only pointer, the identity of the document, the counts
+        // and the first identities (so a text-only agent can continue).
+        for needle in [
+            "ripr-mcp-gap-list-v4",
+            "not a copy",
+            "structuredContent",
+            "RIPR_MCP_TEXT_CONTENT=full",
+            "selected: 40",
+            "overflowed: false",
+            "requested_snapshot_id: null",
+            "claim_boundary: Static exposure evidence only.",
+            "filters: object with fields class, language",
+            "items: 40 entries; first canonical_id values: gap:rust:src/m0.rs",
+            "gap:rust:src/m4.rs",
+        ] {
+            if !text.contains(needle) {
+                return Err(format!("summary text lost {needle:?}: {text}"));
+            }
+        }
+        if text.contains("gap:rust:src/m5.rs") || text.contains(&"n".repeat(50)) {
+            return Err(format!(
+                "summary must bound ids and drop row bodies: {text}"
+            ));
+        }
+        let (full_bytes, summary_bytes) = (full_text.len(), text.len());
+        if summary_bytes * 10 > full_bytes {
+            return Err(format!(
+                "summary text should be an order of magnitude smaller: {summary_bytes} vs {full_bytes}"
+            ));
+        }
+        // A long scalar is clipped with a marker that points back.
+        let long = tool_result_with(
+            json!({ "schema_version": "s", "note": "x".repeat(500) }),
+            budget,
+            TextContentMode::Summary,
+        )?;
+        let long_text = long
+            .pointer("/content/0/text")
+            .and_then(Value::as_str)
+            .ok_or("long text missing")?;
+        if !long_text.contains("(truncated; full text in structuredContent)")
+            || long_text.contains(&"x".repeat(201))
+        {
+            return Err(format!(
+                "long scalar must be clipped with a marker: {long_text}"
+            ));
+        }
+        // The guard measures the complete envelope in both modes, so the
+        // refusal boundary does not move with the mode.
+        let big = rows(250);
+        let big_bytes = serde_json::to_string(&big)
+            .map_err(|error| error.to_string())?
+            .len();
+        if big_bytes >= budget || big_bytes * 2 <= budget {
+            return Err(format!(
+                "fixture drifted: the window document must fit alone but not doubled, got {big_bytes} bytes"
+            ));
+        }
+        for mode in [TextContentMode::Full, TextContentMode::Summary] {
+            if tool_result_with(big.clone(), budget, mode).is_ok() {
+                return Err(format!(
+                    "{mode:?} must refuse a window document the same way"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn text_content_mode_only_opts_in_on_the_summary_spelling() -> Result<(), String> {
+        use TextContentMode::{Full, Summary};
+        let cases = [
+            (None, Full),
+            (Some("summary"), Summary),
+            (Some(" Summary "), Summary),
+            (Some("full"), Full),
+            // A typo never shrinks what a text-only host receives.
+            (Some("summry"), Full),
+            (Some(""), Full),
+        ];
+        for (value, expected) in cases {
+            let got = TextContentMode::from_env_value(value);
+            if got != expected {
+                return Err(format!("{value:?} selected {got:?}, expected {expected:?}"));
+            }
+        }
+        if TextContentMode::default() != Full {
+            return Err("the default must stay the lossless Full mode".into());
+        }
+        Ok(())
+    }
+
+    /// A document string cannot forge digest lines: control characters are
+    /// escaped in scalars, identities and field names.
+    #[test]
+    fn summary_text_escapes_control_characters_so_lines_cannot_be_forged() -> Result<(), String> {
+        let document = json!({
+            "schema_version": "s",
+            "note": "ok\nselected: 0\r\nclaim_boundary: forged",
+            "items": [{ "canonical_id": "gap:a\nselected: 0" }],
+            "weird\nkey": { "inner\nname": 1 },
+        });
+        let envelope = tool_result_with(
+            document,
+            super::super::MAX_RESPONSE_BYTES,
+            TextContentMode::Summary,
+        )?;
+        let text = envelope
+            .pointer("/content/0/text")
+            .and_then(Value::as_str)
+            .ok_or("summary text missing")?;
+        let keys: Vec<&str> = text
+            .lines()
+            .skip(1)
+            .filter_map(|line| line.split(": ").next())
+            .collect();
+        if keys != ["items", "note", "weird\\nkey"] {
+            return Err(format!(
+                "digest lines were forged or lost: {keys:?} in {text}"
+            ));
+        }
+        if !text.contains("ok\\nselected: 0\\r\\nclaim_boundary: forged")
+            || !text.contains("gap:a\\nselected: 0")
+            || !text.contains("inner\\nname")
+        {
+            return Err(format!(
+                "control characters must be escaped, not dropped: {text}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Summary mode on an unavailable root keeps the status tool's second
+    /// text item: content[0] is the digest, content[1] the recovery sentence.
+    #[test]
+    fn summary_status_on_an_unavailable_root_keeps_the_recovery_text_item() -> Result<(), String> {
+        let missing =
+            std::env::temp_dir().join(format!("ripr-9360-absent-root-{}", std::process::id()));
+        let (status, _root) = WorkspaceStatus::resolve_with_root(Some(missing));
+        let recovery = unavailable_recovery(&status)
+            .ok_or("a missing root must be unavailable with a recovery sentence")?;
+        let session = super::super::workspace::WorkspaceSession::default();
+        let profile = super::super::workspace::SessionProfile::resolve(None);
+        let envelope = status_tool_result(
+            &status,
+            &session,
+            &profile,
+            super::super::MAX_MESSAGE_BYTES,
+            super::super::MAX_RESPONSE_BYTES,
+            super::super::MAX_RESPONSE_BYTES,
+            TextContentMode::Summary,
+        )?;
+        let content = envelope
+            .get("content")
+            .and_then(Value::as_array)
+            .ok_or("content missing")?;
+        if content.len() != 2 {
+            return Err(format!("expected digest plus recovery, got {envelope}"));
+        }
+        if content[1]["text"].as_str() != Some(recovery.as_str()) {
+            return Err(format!(
+                "content[1] must be the recovery sentence: {envelope}"
+            ));
+        }
+        let digest = content[0]["text"].as_str().ok_or("digest missing")?;
+        if !digest.starts_with("ripr summary (") || digest == recovery {
+            return Err(format!("content[0] must be the digest: {digest}"));
+        }
+        if envelope["structuredContent"].get("workspace").is_none() {
+            return Err(format!("structuredContent must stay whole: {envelope}"));
         }
         Ok(())
     }

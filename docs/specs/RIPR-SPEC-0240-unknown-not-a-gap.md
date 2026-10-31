@@ -857,7 +857,10 @@ without naming it at the invocation site; unrelated sibling modules do not. A di
 grouped `super::Money::{self}` spelling. A grouped `other::Money::{self}`
 binds the foreign `Money` and refuses the lift. Other same-name imports,
 foreign globs, cross-file calls, unparsed or ambiguous scopes are withheld
-when their identity cannot be established. A local alias to the owner still
+when their identity cannot be established. Inside the owner's own module a `struct`, `enum` or `union` of the type name is the
+definition and is admitted only when the impl header spells its self type as a
+bare name; with a qualified header (`impl Add for other::Money`) a same-module
+`type Money = ..` or other rebinding refuses the lift. A local alias to the owner still
 fails closed at the relation stage. The test must also reach this impl directly
 to be judged this way. The related rows are capped for display; a finding whose
 rows were cut stays withheld, because a naming test may be among the cut rows

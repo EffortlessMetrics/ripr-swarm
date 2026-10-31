@@ -12,11 +12,12 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: preview-language evidence is advisory; no repair packet is emitted because of the named static limitation: typescript_dynamic_assertion_unresolved — the matcher `.toBe(...)` receives a non-literal dynamic argument; the adapter cannot statically resolve the expected value and cannot confirm the discriminator pins the changed behavior; `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
+  Safe next action: ripr cannot tell whether the test at `tests/clamp.test.ts:8` covers this change: its `.toBe(...)` compares against a variable or computed value, not a literal; replace that expected value with a literal, or check by hand that the test covers this change, then rerun `ripr check`. No repair is started for this finding: `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it
   File: src/clamp.ts:2
   Language: typescript
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: if (value < min) {
   Missing check (1 of 2): Related tests reach `clamp` with a strong oracle, but no strong assertion
@@ -44,7 +45,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_dynamic_assertion_unresolved/input --diff <cwd>/fixtures/typescript_dynamic_assertion_unresolved/diff.patch --mode fast probe:src_clamp.ts:typescript_preview:bd179af5
   ripr context --root <cwd>/fixtures/typescript_dynamic_assertion_unresolved/input --diff <cwd>/fixtures/typescript_dynamic_assertion_unresolved/diff.patch --mode fast --at probe:src_clamp.ts:typescript_preview:bd179af5
-  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: ripr has no complete repair packet for this TypeScript finding (ripr cannot tell whether the test at `tests/clamp.test.ts:8` covers this change: its `.toBe(...)` compares against a variable or computed value, not a literal); add or strengthen the test by hand as the Next step above says, then rerun `ripr check`
 
 More:
   Full evidence: rerun with --format human-full
