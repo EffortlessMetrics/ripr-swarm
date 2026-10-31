@@ -2087,6 +2087,19 @@ pub(super) fn literal_value(text: &str) -> Option<String> {
 /// Returns `None` when static evidence cannot read the comparison (mixed
 /// unreadable kinds, escapes, prefixes) rather than a definite inequality.
 pub(super) fn literals_equal(left: &str, right: &str) -> Option<bool> {
+    // `None` equals only `None`: against any readable number, bool or plain
+    // string it is a definite inequality, not an unreadable mixed pair.
+    if left != right && (left == "None" || right == "None") {
+        let other = if left == "None" { right } else { left };
+        if bool_as_decimal(other).is_some()
+            || canonical_decimal(other).is_some()
+            || (other.starts_with(['\'', '"'])
+                && !other.contains('\\')
+                && python_string_literal_value(other).is_some())
+        {
+            return Some(false);
+        }
+    }
     match (bool_as_decimal(left), bool_as_decimal(right)) {
         (Some(left), Some(right)) => return Some(left == right),
         (Some(bool_value), None) => {
