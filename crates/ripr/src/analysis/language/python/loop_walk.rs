@@ -123,7 +123,7 @@ pub(super) fn sequence_oracle_observes_row(
             && test.file == row.file
             && test.assertions.iter().any(|assertion| {
                 assertion.line == row.line
-                    && !assertion.helper_derived
+                    && !assertion.helper_origin.is_helper()
                     && assertion.oracle_strength.rank()
                         >= crate::domain::OracleStrength::Strong.rank()
             })
