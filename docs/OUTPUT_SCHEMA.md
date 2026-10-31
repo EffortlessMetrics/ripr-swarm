@@ -3626,6 +3626,7 @@ Every result carries:
 - a primary physical location when file and line are known;
 - `partialFingerprints.riprFingerprintV1`;
 - `properties.kind` (`finding` or `seam`);
+- finding `properties.confidence`, rounded to the contract's two decimals through `domain::contract_confidence` (the same value `check` JSON prints; the `f32` is never widened to `f64`, #10717);
 - stable IDs (`finding_id`, `probe_id`, or `seam_id`) when available;
 - class metadata (`classification`, `probe_family`, `grip_class`, or
   `seam_kind`) when available.
