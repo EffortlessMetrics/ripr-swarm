@@ -183,7 +183,7 @@ fn repair_after_no_movement_lines_advise_retry_until_the_budget_is_spent() -> Re
         &[
             "to recover: make the focused test edit in `src/lib.rs`",
             "leave production code unchanged",
-            "rerun this after-phase command",
+            "run the after phase again",
         ],
     )?;
     require_contains(&first[2], &["ripr agent status", "--attempt"])?;
