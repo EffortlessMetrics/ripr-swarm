@@ -9587,19 +9587,21 @@ fn word_after_as(rest: &str) -> &str {
 /// changed file can never read a stale answer; bounded so a long-lived
 /// process cannot grow without limit. `None` if the lock is poisoned.
 fn renamed_names_memoized(source: &str) -> Option<Arc<BTreeSet<String>>> {
-    use std::hash::{Hash, Hasher};
     // The full text is kept beside its answer and compared on a hit, so a
-    // hash collision can only miss, never hand one file another's renames
-    // (which would drop a refusal).
+    // key collision can only miss, never hand one file another's renames
+    // (which would drop a refusal). The key is the length plus a bounded
+    // byte sample: a pilot asks per (seam, test, type) triple, and hashing the
+    // whole file each time (SipHash over every byte) was a third of ripgrep's
+    // evidence stage. Files that share a key sit side by side in one bucket.
     type Entry = (Arc<str>, Arc<BTreeSet<String>>);
-    static MEMO: std::sync::Mutex<BTreeMap<u64, Entry>> = std::sync::Mutex::new(BTreeMap::new());
+    static MEMO: std::sync::Mutex<BTreeMap<u64, Vec<Entry>>> =
+        std::sync::Mutex::new(BTreeMap::new());
     const MAX_ENTRIES: usize = 2048;
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    source.hash(&mut hasher);
-    let key = hasher.finish();
+    let key = source_sample_key(source);
     if let Ok(memo) = MEMO.lock()
-        && let Some((text, found)) = memo.get(&key)
-        && &**text == source
+        && let Some((_, found)) = memo
+            .get(&key)
+            .and_then(|bucket| bucket.iter().find(|(text, _)| &**text == source))
     {
         return Some(Arc::clone(found));
     }
@@ -9619,11 +9621,30 @@ fn renamed_names_memoized(source: &str) -> Option<Arc<BTreeSet<String>>> {
         .collect();
     let renamed = Arc::new(renamed);
     let mut memo = MEMO.lock().ok()?;
-    if memo.len() >= MAX_ENTRIES {
+    if memo.values().map(Vec::len).sum::<usize>() >= MAX_ENTRIES {
         memo.clear();
     }
-    memo.insert(key, (Arc::from(source), Arc::clone(&renamed)));
+    let bucket = memo.entry(key).or_default();
+    if !bucket.iter().any(|(text, _)| &**text == source) {
+        bucket.push((Arc::from(source), Arc::clone(&renamed)));
+    }
     Some(renamed)
+}
+
+/// A cheap memo key for `source`: its length and a byte sample spread evenly
+/// across it (the whole file when it is under 2048 bytes, otherwise up to
+/// about 2047 bytes at a stride of `len / 1024`). Equal texts always share a key; unequal texts may, which
+/// callers resolve by comparing the full text.
+fn source_sample_key(source: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let bytes = source.as_bytes();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.len().hash(&mut hasher);
+    let stride = (bytes.len() / 1024).max(1);
+    for byte in bytes.iter().step_by(stride) {
+        byte.hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 /// The byte spans in `masked` where an `as` may rename: every `use ..;`
@@ -14381,11 +14402,14 @@ fn test_module_shadows_item(
         owner.map(|o| (o.file.to_path_buf(), o.name.to_string(), o.start_line)),
     );
     snapshot.shadow_answer(key, || {
-        let masked = mask_comments_and_strings(source);
+        // The snapshot is built from `source` (or is the index's snapshot of
+        // those same bytes), so its masked copy is the same text; mask once
+        // per file instead of once per (test, owner, name) key.
+        let masked = snapshot.masked_source(|| mask_comments_and_strings(source));
         let raw = format!("r#{base}");
         let declared = match kind {
-            ShadowKind::Type => declares_type(&masked, base) || file_aliases_type(source, base),
-            ShadowKind::Trait => declares_trait(&masked, base),
+            ShadowKind::Type => declares_type(masked, base) || file_aliases_type(source, base),
+            ShadowKind::Trait => declares_trait(masked, base),
         };
         if !declared && !masked.contains(raw.as_str()) {
             return false;

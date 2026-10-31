@@ -3730,7 +3730,7 @@ The JSON report is repo automation output with schema version `"0.1"`:
     {
       "rule_id": "ripr.seam.weakly_gripped",
       "level": "warning",
-      "fingerprint": "ripr.seam.weakly_gripped|abc123|src/lib.rs|42",
+      "fingerprint": "ripr.seam.weakly_gripped|src/lib.rs|0123456789abcdef0123456789abcdef|0",
       "uri": "src/lib.rs",
       "line": 42,
       "message": "weakly_gripped seam grip for predicate_boundary"
@@ -14438,7 +14438,8 @@ Field contract:
 - A root without `Cargo.toml` that `ripr doctor` detects as TypeScript or
   JavaScript (for example a `package.json` plus `.ts` files), not also as
   Python, and that has no `tsconfig.json` or `jsconfig.json` at the root and
-  no TypeScript under `src/` or `tests/` (`package.json` alone is not enough)
+  no `package.json` with JavaScript or TypeScript source at the root or under
+  `src/`, `test/` or `tests/` (`package.json` alone is not enough)
   reports `blocked_artifact` with
   `selected.reason_code = "typescript_project_marker_missing"` and no next
   command, not `wrong_root`. Its message says to add `tsconfig.json`
