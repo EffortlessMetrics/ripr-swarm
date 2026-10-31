@@ -429,6 +429,7 @@ async function stageAndPromote(
     await fs.promises.writeFile(archivePath, resolved.bytes, { flag: 'wx' });
     await fs.promises.mkdir(extractDir);
     await operations.extractArchive(archivePath, extractDir);
+    await assertExtractedTreeContained(extractDir);
     const foundExecutable = await findExecutable(extractDir, request.executableName);
     if (!foundExecutable) {
       throw new Error(`Downloaded archive did not contain ${request.executableName}.`);
@@ -574,6 +575,33 @@ async function sha256File(filePath: string): Promise<string> {
     input.on('data', (chunk) => hash.update(chunk));
     input.on('end', () => resolve(hash.digest('hex')));
   });
+}
+
+/**
+ * Rejects extracted archives that carry symlink or hard-link entries or paths
+ * that resolve outside the extraction root (#11477 item 5).
+ */
+export async function assertExtractedTreeContained(extractDir: string): Promise<void> {
+  const canonicalRoot = path.resolve(extractDir);
+  await walkExtractedEntries(canonicalRoot, canonicalRoot);
+}
+
+async function walkExtractedEntries(currentDir: string, root: string): Promise<void> {
+  const entries = await fs.promises.readdir(currentDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(currentDir, entry.name);
+    const stat = await fs.promises.lstat(fullPath);
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Refusing extracted symlink at ${fullPath}.`);
+    }
+    if (stat.isFile() && stat.nlink > 1) {
+      throw new Error(`Refusing extracted hard link at ${fullPath}.`);
+    }
+    assertDescendantPath(root, fullPath, 'Extracted archive entry');
+    if (stat.isDirectory()) {
+      await walkExtractedEntries(fullPath, root);
+    }
+  }
 }
 
 async function findExecutable(root: string, executableName: string): Promise<string | undefined> {
