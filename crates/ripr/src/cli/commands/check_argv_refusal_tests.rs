@@ -227,6 +227,7 @@ fn suppression_policy_is_refused_on_formats_that_cannot_apply_it() -> Result<(),
     let root = TempRoot::new("suppression-refusals")?;
     for format in [
         "sarif",
+        "agent",
         "badge-json",
         "repo-exposure-json",
         "repo-badge-json",

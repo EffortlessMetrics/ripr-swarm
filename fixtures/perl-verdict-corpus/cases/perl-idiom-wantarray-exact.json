@@ -58,7 +58,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-idiom-wantarray-exact.json",
-    "sha256": "411c26cb744f9e6cab684c758db2e2e850edbb03ca56303461691e1a5c917f84",
+    "sha256": "cc510b6359e7cd752afefc7da012bf821a45dbc9b93c8f8aeca30fc51516e218",
     "provenance": "producer"
   }
 }

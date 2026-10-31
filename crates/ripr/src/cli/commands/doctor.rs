@@ -8296,6 +8296,13 @@ mod tests {
         assert_eq!(format_bytes(1_048_575), "1.00 MB");
         assert_eq!(format_bytes(1_073_741_823), "1.00 GB");
         assert_eq!(format_bytes(1_048_000), "1023.44 KB");
+        // The promotion threshold is where two-decimal rounding reaches
+        // 1024.00: 1_048_570 B is 1023.994 KB, 1_048_571 B is 1023.995 KB.
+        assert_eq!(format_bytes(1_048_570), "1023.99 KB");
+        assert_eq!(format_bytes(1_048_571), "1.00 MB");
+        // The same threshold one unit up: 1023.995 MB is 1_073_736_581.12 B.
+        assert_eq!(format_bytes(1_073_736_581), "1023.99 MB");
+        assert_eq!(format_bytes(1_073_736_582), "1.00 GB");
     }
 
     #[test]
