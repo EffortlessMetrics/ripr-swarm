@@ -1,0 +1,8 @@
+fn enabled_base() -> u32 {
+    12
+}
+
+#[test]
+fn enabled_base_is_12() {
+    assert_eq!(enabled_base(), 12);
+}

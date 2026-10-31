@@ -26,7 +26,7 @@ pub(crate) use super::new_test_target::{
 pub(crate) const REPAIR_ROUTE_AUTHORITY_BOUNDARY: &str =
     "analysis/producer-owned-repair-route-readiness";
 const PRODUCER_DISCRIMINATOR_EVIDENCE: &str = "producer-owned missing discriminator fact";
-const SAFE_TEST_TARGET_EVIDENCE: &str = "safe test target";
+pub(crate) const SAFE_TEST_TARGET_EVIDENCE: &str = "safe test target";
 
 /// Plain-language rendering of one readiness-evidence string for human
 /// output surfaces only (#10644). A reader cannot act on the internal fact

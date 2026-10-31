@@ -86,7 +86,7 @@ from selection through completion; do not skip the preparation step.
 [VS Code](https://github.com/EffortlessMetrics/ripr/blob/main/docs/EDITOR_EXTENSION.md)
 provides saved-workspace feedback. [Advisory CI](https://github.com/EffortlessMetrics/ripr/blob/main/docs/CI.md#copyable-ripr-advisory-workflow)
 brings findings into PR review. The [command guide](https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/COMMAND_HIERARCHY.md)
-also covers PR evidence composition, read-only MCP status, and advanced commands.
+also covers PR evidence composition, the read-only MCP analysis session, and advanced commands.
 
 ## Output Formats
 
