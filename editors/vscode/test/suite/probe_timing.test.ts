@@ -1,8 +1,9 @@
 import * as assert from 'assert';
+import * as cp from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { instrumentFailure, runTimingInstrument } from '../probeTiming';
+import { ArmName, instrumentFailure, runTimingInstrument } from '../probeTiming';
 
 // #9631: the timing instrument must never turn an unsuccessful target into a
 // valid timing row. POSIX shell fakes stand in for ripr; the Windows wrapper
@@ -80,14 +81,39 @@ suite('Probe timing instrument', () => {
       first_round_valid_ms: [],
       later_rounds_median_ms: null
     });
-    assert.strictEqual(instrumentFailure({ ripr_version: arm(5), extension_probe: arm(5) }), null);
+    const posix: ArmName[] = ['ripr_version', 'extension_probe'];
+    const win: ArmName[] = ['ripr_version', 'powershell_empty', 'extension_probe'];
+    assert.strictEqual(instrumentFailure({ ripr_version: arm(5), extension_probe: arm(5) }, posix), null);
     assert.strictEqual(
-      instrumentFailure({ ripr_version: arm(5), extension_probe: arm(0) }),
+      instrumentFailure({ ripr_version: arm(5), extension_probe: arm(0) }, posix),
       'no valid trial for: extension_probe'
     );
     assert.strictEqual(
-      instrumentFailure({ ripr_version: arm(0), powershell_empty: arm(0), extension_probe: arm(5) }),
+      instrumentFailure({ ripr_version: arm(0), powershell_empty: arm(0), extension_probe: arm(5) }, win),
       'no valid trial for: ripr_version, powershell_empty'
     );
+  });
+
+  test('an arm missing from the summary fails the gate', () => {
+    const arm = { valid: 5, invalid: 0, min_ms: 1, median_ms: 1, max_ms: 1, first_round_valid_ms: [1], later_rounds_median_ms: 1 };
+    assert.strictEqual(
+      instrumentFailure({ ripr_version: arm }, ['ripr_version', 'extension_probe']),
+      'no valid trial for: extension_probe'
+    );
+    assert.strictEqual(
+      instrumentFailure({ ripr_version: arm }, ['ripr_version', 'powershell_empty', 'extension_probe']),
+      'no valid trial for: powershell_empty, extension_probe'
+    );
+  });
+
+  test('the CLI entry point exits 1 for an unsuccessful target and 0 for a good one', () => {
+    const cli = path.join(__dirname, '..', 'probeTiming.js');
+    const out = path.join(dir, 'report.json');
+    const bad = cp.spawnSync(process.execPath, [cli, fake('bad', 'exit 4'), out], { encoding: 'utf8' });
+    assert.strictEqual(bad.status, 1, bad.stderr);
+    assert.match(bad.stderr, /instrument invalid: no valid trial for: ripr_version, extension_probe/);
+    const good = cp.spawnSync(process.execPath, [cli, fake('good', 'echo "ripr 0.11.0 (abc)"'), out], { encoding: 'utf8' });
+    assert.strictEqual(good.status, 0, good.stderr);
+    assert.strictEqual(JSON.parse(fs.readFileSync(out, 'utf8')).schema, 2);
   });
 });

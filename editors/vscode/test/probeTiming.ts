@@ -231,21 +231,30 @@ function median(values: number[]): number | null {
   return sorted.length % 2 ? sorted[mid] : Math.round(((sorted[mid - 1] + sorted[mid]) / 2) * 10) / 10;
 }
 
+/** Arms a valid report must contain on this platform. */
+export function requiredArms(platform: NodeJS.Platform = process.platform): ArmName[] {
+  return platform === 'win32' ? ['ripr_version', 'powershell_empty', 'extension_probe'] : ['ripr_version', 'extension_probe'];
+}
+
 /**
- * Why the report cannot be trusted as a measurement, or null. Every measured arm
- * needs at least one valid trial: a wrapped probe that never succeeded must not
- * pass just because the direct target did.
+ * Why the report cannot be trusted as a measurement, or null. Every required arm
+ * must be present with at least one valid trial: a wrapped probe that never
+ * succeeded, or an arm missing from the summary, must not pass just because the
+ * direct target did.
  */
-export function instrumentFailure(summary: Partial<Record<ArmName, ArmSummary>>): string | null {
-  const empty = (Object.keys(summary) as ArmName[]).filter((arm) => summary[arm]?.valid === 0);
-  return empty.length > 0 ? `no valid trial for: ${empty.join(', ')}` : null;
+export function instrumentFailure(
+  summary: Partial<Record<ArmName, ArmSummary>>,
+  required: readonly ArmName[] = requiredArms()
+): string | null {
+  const bad = required.filter((arm) => !summary[arm] || summary[arm]?.valid === 0);
+  return bad.length > 0 ? `no valid trial for: ${bad.join(', ')}` : null;
 }
 
 export async function runTimingInstrument(options: TimingOptions): Promise<TimingReport> {
   const rounds = options.rounds ?? 5;
   const deadlineMs = options.deadlineMs ?? 60000;
   const closeGraceMs = options.closeGraceMs ?? 10000;
-  const armNames = (Object.keys(ARMS) as ArmName[]).filter((name) => isWin || name !== 'powershell_empty');
+  const armNames = requiredArms();
   const rows: TimingRow[] = [];
   let ordinal = 0;
   for (let round = 1; round <= rounds; round++) {
