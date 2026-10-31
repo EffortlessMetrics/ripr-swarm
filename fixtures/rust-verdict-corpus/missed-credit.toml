@@ -382,7 +382,7 @@ reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150
 
 [[entry]]
 case = "spec-b-0153-bench-common-helper"
-reason = "Runtime truth is discriminated, but this edit is a test-only helper in an executable bench, sibling test, declared target or composed cfg(test) child. Required silence is an abstention, not exposure credit; exact row comparison protects the source-role boundary (#10495)."
+reason = "Runtime truth is discriminated, but this edit is a test-only helper in the common module of an executable bench. Required silence is an abstention, not exposure credit; exact row comparison protects the source-role boundary (#10495)."
 
 [[entry]]
 case = "spec-b-0153-declared-test-target-helper"
@@ -390,19 +390,19 @@ reason = "Truth is discriminated but the edit is a test-only helper, so ripr rea
 
 [[entry]]
 case = "spec-b-0153-enabled-harness-helper"
-reason = "Runtime truth is discriminated, but this edit is a test-only helper in an executable bench, sibling test, declared target or composed cfg(test) child. Required silence is an abstention, not exposure credit; exact row comparison protects the source-role boundary (#10495)."
+reason = "Runtime truth is discriminated, but this edit is a test-only helper in a declared harness=true target. Required silence is an abstention, not exposure credit; exact row comparison protects the source-role boundary (#10495)."
 
 [[entry]]
 case = "spec-b-0153-executable-bench-helper"
-reason = "Runtime truth is discriminated, but this edit is a test-only helper in an executable bench, sibling test, declared target or composed cfg(test) child. Required silence is an abstention, not exposure credit; exact row comparison protects the source-role boundary (#10495)."
+reason = "Runtime truth is discriminated, but this edit is a test-only helper in an executable bench. Required silence is an abstention, not exposure credit; exact row comparison protects the source-role boundary (#10495)."
 
 [[entry]]
 case = "spec-b-0153-opt-in-sibling-helper"
-reason = "Runtime truth is discriminated, but this edit is a test-only helper in an executable bench, sibling test, declared target or composed cfg(test) child. Required silence is an abstention, not exposure credit; exact row comparison protects the source-role boundary (#10495)."
+reason = "Runtime truth is discriminated, but this edit is a test-only helper in a tests/ sibling outside production_like_targets. Required silence is an abstention, not exposure credit; exact row comparison protects the source-role boundary (#10495)."
 
 [[entry]]
 case = "spec-b-0153-registered-harness-helper"
-reason = "Runtime truth is discriminated, but this edit is a test-only helper in an executable bench, sibling test, declared target or composed cfg(test) child. Required silence is an abstention, not exposure credit; exact row comparison protects the source-role boundary (#10495)."
+reason = "Runtime truth is discriminated, but this edit is a test-only helper in a declared harness=false target with a custom path. Required silence is an abstention, not exposure credit; exact row comparison protects the source-role boundary (#10495)."
 
 [[entry]]
 case = "spec-b-0153-registered-harness-subject"
@@ -518,7 +518,7 @@ reason = "Truth is discriminated but the edit is a test-only helper, so ripr rea
 
 [[entry]]
 case = "spec-b-0169-include-directory-child-helper"
-reason = "Runtime truth is discriminated, but this edit is a test-only helper in an executable bench, sibling test, declared target or composed cfg(test) child. Required silence is an abstention, not exposure credit; exact row comparison protects the source-role boundary (#10495)."
+reason = "Runtime truth is discriminated, but this edit is a test-only helper in a cfg(test) child composed through include!. Required silence is an abstention, not exposure credit; exact row comparison protects the source-role boundary (#10495)."
 
 [[entry]]
 case = "spec-b-0169-out-of-line-cfg-test-helper"
@@ -526,7 +526,7 @@ reason = "Truth is discriminated but the edit is a test-only helper, so ripr rea
 
 [[entry]]
 case = "spec-b-0169-path-parent-child-helper"
-reason = "Runtime truth is discriminated, but this edit is a test-only helper in an executable bench, sibling test, declared target or composed cfg(test) child. Required silence is an abstention, not exposure credit; exact row comparison protects the source-role boundary (#10495)."
+reason = "Runtime truth is discriminated, but this edit is a test-only helper in a cfg(test) child composed through #[path]. Required silence is an abstention, not exposure credit; exact row comparison protects the source-role boundary (#10495)."
 
 [[entry]]
 case = "spec-b-0169-raw-path-cfg-test-helper"
