@@ -10872,7 +10872,7 @@ fn agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids()
             ("--seam-id", "agent receipt requires --seam-id"),
             (
                 "--json",
-                "agent receipt requires --json (the supported output for this subcommand)",
+                "agent receipt requires --json (the supported output for this subcommand); add --json to the command",
             ),
         ] {
             let mut incomplete = Vec::new();
