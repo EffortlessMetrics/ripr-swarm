@@ -1900,7 +1900,7 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
 
         fn stale_stat_unchanged_file(path: &Path) -> Result<(), String> {
             let past = SystemTime::now()
-                .checked_sub(Duration::from_secs(60 * 60 * 24 * 365))
+                .checked_sub(Duration::from_hours(8760))
                 .ok_or_else(|| "system clock too early for stale-stat fixture".to_string())?;
             let file =
                 std::fs::File::open(path).map_err(|err| format!("open for stale stat: {err}"))?;
