@@ -1113,7 +1113,10 @@ impl Backend {
         }
     }
 
-    fn open_rust_index_paths_for_root(&self, root: &Path) -> std::collections::BTreeSet<PathBuf> {
+    pub(super) fn open_rust_index_paths_for_root(
+        &self,
+        root: &Path,
+    ) -> std::collections::BTreeSet<PathBuf> {
         let Ok(mut documents) = self.quarantine.documents.lock() else {
             return Default::default();
         };

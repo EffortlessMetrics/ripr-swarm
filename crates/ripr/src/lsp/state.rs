@@ -1966,6 +1966,11 @@ impl DocumentStore {
             .collect()
     }
 
+    #[cfg(test)]
+    pub(super) fn rust_index_key_is_cached(&self, uri: &Uri) -> bool {
+        self.rust_index_keys.contains_key(uri)
+    }
+
     /// Forget resolved index keys so the next refresh re-resolves them against
     /// the current filesystem (a save or watched-file change can retarget a
     /// symlink).
