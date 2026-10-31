@@ -51,7 +51,7 @@ use super::uri::{
 use super::{
     COLLECT_CONTEXT_COMMAND, COLLECT_EVIDENCE_CONTEXT_COMMAND, COLLECT_RECEIPT_STATUS_COMMAND,
     COLLECT_REPAIR_PACKET_COMMAND, COLLECT_TOP_LIMITATION_COMMAND,
-    COLLECT_WORKSPACE_STATUS_COMMAND, REFRESH_COMMAND,
+    COLLECT_WORKSPACE_STATUS_COMMAND, REFRESH_COMMAND, SHOW_RELATED_TEST_COMMAND,
 };
 use crate::agent::loop_commands;
 use crate::analysis::ClassifiedSeam;
@@ -7175,6 +7175,42 @@ impl Backend {
         }
         if params.command == COLLECT_RECEIPT_STATUS_COMMAND {
             return Ok(self.collect_receipt_status());
+        }
+        if params.command == SHOW_RELATED_TEST_COMMAND {
+            // Generic-client related-test navigation: answer with
+            // `window/showDocument`, guarded by the negotiated capability
+            // and the current snapshot. Navigation only.
+            let snapshot = if self.analysis_health_snapshot().allows_current_repairs()
+                && self.workspace_root_authority().allows_analysis()
+            {
+                self.latest_analysis
+                    .lock()
+                    .ok()
+                    .and_then(|value| value.clone())
+            } else {
+                None
+            };
+            let client_features = self
+                .client_features
+                .lock()
+                .map(|features| features.clone())
+                .unwrap_or_else(|_| ClientFeatureProfile::unsupported());
+            let show = super::actions::show_related_test_params(
+                &params.arguments,
+                snapshot.as_ref().map(|snapshot| snapshot.as_ref()),
+                &client_features,
+            )
+            .map_err(LspError::invalid_params)?;
+            // Bounded by the shared client-request liveness bound (#5278): a
+            // client that advertises showDocument but never answers must not
+            // park the command handler. Any failure or timeout reports
+            // `shown: false`.
+            let shown = self
+                .bounded_client_request(self.client.show_document(show))
+                .await;
+            return Ok(Some(
+                serde_json::json!({ "shown": matches!(shown, Ok(true)) }),
+            ));
         }
         // Stable unsupported-command response (#1628): a command the server
         // does not execute — including client-registered `ripr.copy*` and

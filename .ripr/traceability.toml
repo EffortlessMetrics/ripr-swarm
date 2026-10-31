@@ -3520,6 +3520,14 @@ id = "RIPR-SPEC-0027"
 name = "TypeScript preview static facts"
 spec = "docs/specs/RIPR-SPEC-0027-typescript-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::single_const_in_callback_block_resolves",
+  "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::rebound_shadowed_or_computed_local_never_resolves",
+  "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::nested_only_or_unparsed_binding_is_refused_not_rescued_by_outer_scope",
+  "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::name_the_callback_only_reads_is_left_to_the_outer_scope",
+  "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::file_level_constant_resolves_only_when_single_and_immutable",
+  "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::non_file_level_scope_binding_blocks_the_module_constant",
+  "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::lowercase_local_constant_witnesses_the_boundary",
+  "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::local_constant_that_is_rebound_or_off_value_does_not_witness",
   "crates/ripr/src/analysis/language/typescript/typeof_kind_tests.rs::typeof_guard_names_the_kind_test_not_the_type_name_string",
   "crates/ripr/src/analysis/language/typescript/typeof_kind_tests.rs::typeof_guard_never_names_the_bare_operand_as_the_literal",
   "crates/ripr/src/analysis/language/typescript/typeof_kind_tests.rs::non_typeof_comparisons_keep_their_discriminator",
@@ -11959,6 +11967,7 @@ tests = [
   "crates/ripr/src/analysis/facts/test_styles/tests.rs::normalization_identity_keys_borrow_body_storage",
   "crates/ripr/src/analysis/facts/test_styles/tests.rs::borrowed_normalization_matches_owned_reference_with_duplicate_coordinates",
   "crates/ripr/src/analysis/workspace/source_role.rs::tests::layout_classifies_evidence_and_production",
+  "crates/ripr/src/analysis/workspace/source_role.rs::tests::cargo_fuzz_harness_is_test_evidence_even_when_declared_as_a_bin",
   "crates/ripr/src/analysis/workspace/source_role.rs::tests::cargo_autodiscovery_shapes_govern_benches_and_examples",
   "crates/ripr/src/analysis/workspace/source_role.rs::tests::declared_targets_and_opt_in_override_layout",
   "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::explicit_test_and_bench_paths_are_extracted",
