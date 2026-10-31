@@ -283,3 +283,26 @@ fn a_let_bound_from_a_parameter_or_outer_item_withdraws_every_row() -> Result<()
 fn source_of(calls: &str) -> String {
     source(HELPER_CALL, calls)
 }
+
+#[test]
+fn a_let_in_a_closed_inner_block_does_not_bind_a_later_use() -> Result<(), String> {
+    // `count` at the call is the module constant, not the block's `let`.
+    let calls = "        {\n            let count = 1;\n            let _ = count;\n        }\n        check(\"1 big\", ByteSize::kib(count), true);";
+    let source = source_of(calls).replace(
+        "pub struct ByteSize",
+        "pub const count: u64 = 3;\npub struct ByteSize",
+    );
+    assert!(owner_rows(&source)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_let_after_the_use_does_not_bind_it() -> Result<(), String> {
+    let calls = "        check(\"1 big\", ByteSize::kib(count), true);\n        let count = 1;\n        let _ = count;";
+    let source = source_of(calls).replace(
+        "pub struct ByteSize",
+        "pub const count: u64 = 3;\npub struct ByteSize",
+    );
+    assert!(owner_rows(&source)?.is_empty());
+    Ok(())
+}

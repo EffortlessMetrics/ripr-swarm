@@ -5382,6 +5382,7 @@ fn chain_entry_rows(
             // single-immutable-`let` authority, and only a plain decimal.
             crate::analysis::value_resolution::test_let_bound_literal(&test.body, name)
                 .filter(|value| !value.is_empty() && value.chars().all(|ch| ch.is_ascii_digit()))
+                .filter(|_| let_governs_every_use(&test.body, name))
         })
     };
     let receivers = ReceiverParameters {
@@ -5414,6 +5415,32 @@ fn chain_entry_rows(
         },
         &receivers,
     )
+}
+
+/// True when the body's one `let NAME` sits at the body's top block level and
+/// is the first mention of `NAME`: a `let` in a closed inner block, or after an
+/// earlier use, does not bind a later use (it may name a constant instead).
+fn let_governs_every_use(body: &str, name: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let Some(first) = masked.match_indices(name).map(|(at, _)| at).find(|at| {
+        !masked[..*at].chars().next_back().is_some_and(is_word)
+            && !masked[*at + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_word)
+    }) else {
+        return false;
+    };
+    let declared = masked[..first]
+        .trim_end()
+        .strip_suffix("mut")
+        .map_or(masked[..first].trim_end(), str::trim_end)
+        .ends_with("let");
+    let opens = masked[..first].matches('{').count();
+    let closes = masked[..first].matches('}').count();
+    // Depth 1 is the test function's own block.
+    declared && opens.saturating_sub(closes) == 1
 }
 
 /// One bound argument: a literal, or the caller's own parameter
