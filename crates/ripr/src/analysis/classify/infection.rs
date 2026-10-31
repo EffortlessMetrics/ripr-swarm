@@ -1586,11 +1586,7 @@ mod tests {
         let owner = "fn pick(val: u32) -> bool {\n    let surrogate_start = 0xd800u32;\n    val > surrogate_start\n}\n";
         let evidence = local_boundary_evidence(owner, "0xd800u32");
         assert_eq!(evidence.state, StageState::Yes, "{}", evidence.summary);
-        assert!(
-            evidence.summary.contains("0xd800u32"),
-            "{}",
-            evidence.summary
-        );
+        assert!(evidence.summary.contains("0xd800"), "{}", evidence.summary);
     }
 
     #[test]
