@@ -1,0 +1,47 @@
+# Flake ledger (project rule: fix the root cause; never add retries).
+#
+# One [[flake]] per intermittent or load-dependent failure found in CI history
+# or a local rerun. `cargo nextest` runs with `retries = 0` in every profile and
+# `xtask/tests/flake_ledger.rs` fails if that changes, so a flake can only
+# leave the ledger by being fixed. A `fixed` entry names the regression guard
+# test that pins the cause; the gate checks that the guard still exists. An
+# `open` entry names the GitHub issue that owns the fix.
+#
+# Evidence is a run id (Actions run) or a PR, never a retry count: a rerun that
+# turns green establishes nothing about the cause.
+
+[[flake]]
+id = "ts-parse-worker-armed-panic-leak"
+test = "analysis::language::typescript::tests::analyze_diff_collapses_test_extraction_partial_into_one_summary"
+lane = "rust-coverage (cargo test: tests are threads of one process)"
+class = "shared-state"
+status = "fixed"
+first_seen = "2026-10-31"
+evidence = ["run 41195638303 (main 3371ea49)", "run 41190928102 (main 049bd0a6)", "run 41188789260 (main 404a80d0)"]
+symptom = "parse_worker_failed limitation appears in an unrelated TypeScript test; the main coverage lane was red on 3 of 4 completed runs."
+root_cause = "(Fixed independently on main by #11338 while this ledger was in review.) The #11132 fault injection keyed an armed panic by a relative path (src/calc.ts) that many tests share. Under cargo test the other test's parse hit the armed path and its worker died. nextest runs one process per test, so the required lane never showed it."
+guard = "parse_worker_injection_is_scoped_to_the_arming_analysis"
+
+[[flake]]
+id = "check-artifact-text-file-busy"
+test = "ripr::cli_smoke context_from_consumes_artifact_written_with_no_unchanged_tests"
+lane = "Rust-only feature lane (cargo test --no-default-features --features lang-rust)"
+class = "fork-exec-etxtbsy"
+status = "fixed"
+first_seen = "2026-10-31"
+evidence = ["run 41185970332", "run 41188018645", "run 41189346010", "run 41190783031", "run 41191736434"]
+symptom = "spawn .../ripr: Text file busy (os error 26), about one PR in four on the Rust-only lane."
+root_cause = "(Fixed independently on main by #11463 while this ledger was in review.) stable_ripr_copy (#11197) wrote a copy of the multi-megabyte suite binary with fs::copy and then exec'd it. A peer test forking during the copy inherits the write descriptor until its own exec, and execve of a file open for writing fails with ETXTBSY."
+guard = "install_ripr_binary_links_the_built_inode_without_a_writer"
+
+[[flake]]
+id = "perl-variant-shared-binary-stamp"
+test = "xtask::bin/xtask tests::fixture_variants::perl_variant_build_never_rewrites_shared_debug_binary"
+lane = "Test Analytics (cargo nextest run --workspace --all-features)"
+class = "shared-state"
+status = "fixed"
+first_seen = "2026-10-31"
+evidence = ["run 41196607949 (main b3023dc7)", "run 41190928102 (main 049bd0a6)", "run 41188789260 (main 404a80d0)"]
+symptom = "in-suite variant build rewrote target/debug/ripr mid-suite; the test also ran 200+ seconds."
+root_cause = "The guard stamped the shared target/debug/ripr around a real variant build, so any unrelated Cargo run in the suite that relinked the shared binary during that window failed it, and the build waited on Cargo's lock behind other builds. Fixed independently on main by #11346, which asserts the routing (command, variant target dir, no shared write) in a simulation that a peer Cargo run cannot disturb."
+guard = "perl_variant_routing_simulation_records_no_shared_write"
