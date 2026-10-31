@@ -17460,7 +17460,11 @@ Field contract:
   the closing line names raising `RIPR_PILOT_SEAM_BUDGET` and
   `RIPR_REPO_EXPOSURE_SEAM_LIMIT` instead of "No gap to test", because the
   cut seams were never classified. `null` for partial summaries.
-- `top_actionable_seams[]` — ranked seams using class order
+- `top_actionable_seams[]` — ranked seams. Seams on lines of the current
+  change come first; inside each of those groups a seam with a repair route
+  (one `ripr agent repair` can start from) comes before one without, even
+  when the routable seam has a weaker class (#11292), so `next.repair_command`
+  can name a different seam than before. Then class order
   `weakly_gripped`, `ungripped`, `reachable_unrevealed` (static limitations are
   withheld, see above), with evidence tie-breakers for missing discriminator, related
   test, suggested assertion, and stable location. Within each class, each
