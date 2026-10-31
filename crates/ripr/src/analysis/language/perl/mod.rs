@@ -24,8 +24,11 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+mod boundary_input;
 mod fact_index;
 mod static_limit;
+
+use boundary_input::BoundaryInput;
 
 /// The `ripr-perl-facts-v1` packet schema. Re-uses the canonical declaration
 /// from `app` (Campaign 31 item 5) so the schema version has one source of
@@ -784,6 +787,14 @@ fn packet_to_findings_with_currentness(
             ExposureClass::StaticUnknown
         } else if related.is_empty() {
             ExposureClass::NoStaticPath
+        } else if sink_aligned_evidence
+            .as_ref()
+            .is_some_and(|aligned| aligned.boundary_input == BoundaryInput::Unestablished)
+        {
+            // RIPR-SPEC-0235 rule 22 (#8979): equal sink text on a changed
+            // ordering comparison names the predicate, not an input that
+            // crosses its threshold. Unknown, never `exposed`.
+            ExposureClass::StaticUnknown
         } else if sink_aligned_evidence.is_some() {
             // H2: established sink alignment → already observed. The strongest
             // honest claim in the conservative taxonomy. No repair gap is
@@ -832,6 +843,12 @@ fn packet_to_findings_with_currentness(
             class
         };
         let is_already_observed = class == ExposureClass::Exposed;
+        let predicate_input_unestablished = class == ExposureClass::StaticUnknown
+            && !class_blocked
+            && !partial_without_change_link
+            && sink_aligned_evidence
+                .as_ref()
+                .is_some_and(|aligned| aligned.boundary_input == BoundaryInput::Unestablished);
         let observable_unavailable = class == ExposureClass::StaticUnknown
             && !class_blocked
             && !partial_without_change_link
@@ -1124,6 +1141,12 @@ fn packet_to_findings_with_currentness(
                     "Make the related Perl test runner available, then add a focused assertion for the changed behavior and verify it."
                         .to_string()
                 }
+            } else if predicate_input_unestablished {
+                // RIPR-SPEC-0235 rule 22: say why this is unknown and what
+                // settles it, instead of crediting an input that may sit far
+                // from the threshold.
+                "A related Perl test asserts the value of the changed comparison, but ripr cannot establish that its owner call passes the threshold value (the packet carries no fact saying where the inputs fall), so it cannot tell whether moving the threshold would fail it. If it asserts a value on each side of the boundary, no change is needed; otherwise add one."
+                    .to_string()
             } else if coderef_unresolved {
                 // RIPR-SPEC-0235 rule 20: say why this is unknown and what
                 // settles it, instead of asking for an assertion that may exist.
@@ -3438,6 +3461,9 @@ struct SinkAlignedObservation {
     test_name: String,
     observed_sink: String,
     oracle_shape: String,
+    /// RIPR-SPEC-0235 rule 22: whether a changed ordering comparison has a
+    /// literal threshold input in this oracle's owner call.
+    boundary_input: BoundaryInput,
 }
 
 /// Whether this row's own evidence earned the finding's weak exposure (a
@@ -3497,6 +3523,10 @@ fn sink_aligned_observation(
         return None;
     }
 
+    // Rule 22: the first aligned oracle that is not an unestablished ordering
+    // comparison wins; otherwise the first aligned oracle is kept so the caller
+    // can tell "aligned but input unestablished" from "not aligned".
+    let mut unestablished: Option<SinkAlignedObservation> = None;
     for ev in related_evidence {
         // Only a direct owner call with positive reachability can prove
         // observation. Advisory relations (file_proximity, package_reference,
@@ -3542,17 +3572,37 @@ fn sink_aligned_observation(
         if sink_text_eq(observed_sink, changed_observable)
             || sink_text_eq(observed_sink, normalized_observable)
         {
-            return Some(SinkAlignedObservation {
+            // Any strong exact oracle of the same test may supply the
+            // threshold input: the producer links only some oracles to the
+            // owner, and each is an exact-value assertion on that test's call.
+            let boundary_input = boundary_input::boundary_input_for(
+                changed_observable,
+                &change.owner_id,
+                packet
+                    .oracles
+                    .iter()
+                    .filter(|candidate| {
+                        candidate.test_id == ev.test_id && candidate.is_strong_exact()
+                    })
+                    .filter_map(|candidate| candidate.expression.as_deref()),
+            );
+            let aligned = SinkAlignedObservation {
                 test_name: ev.test_name.clone(),
                 observed_sink: observed_sink.to_string(),
                 oracle_shape: ev
                     .oracle_shape
                     .clone()
                     .unwrap_or_else(|| change.behavior_hint.default_assertion_shape().to_string()),
-            });
+                boundary_input,
+            };
+            if boundary_input == BoundaryInput::Unestablished {
+                unestablished.get_or_insert(aligned);
+            } else {
+                return Some(aligned);
+            }
         }
     }
-    None
+    unestablished
 }
 
 /// Whether `text` applies a pattern: a `=~` or `!~` binding, or a `qr`, `m`,

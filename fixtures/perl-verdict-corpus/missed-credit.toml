@@ -61,6 +61,10 @@ case = "perl-moose-builder-join"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
+case = "perl-test2-close-month-subtest"
+reason = "Tests discriminate the change (a zero month and a month short by one straddle the threshold), but the threshold is reached through a sum, so the call carries no literal on it and ripr cannot establish the boundary input; it abstains rather than credit an input that may sit far from the threshold (RIPR-SPEC-0235 rule 22, #8979). Delete this entry when the producer emits the row-owned predicate-input fact (perl-lsp-swarm#17237, consumed by #5562) and the row credits."
+
+[[entry]]
 case = "perl-test2-net-change-imported"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 

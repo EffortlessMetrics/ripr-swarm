@@ -57,12 +57,13 @@ use crate::agent::loop_commands;
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::cancellation::AnalysisAbortKind;
 use crate::config::{
-    CONFIG_FILE_NAME, LspDiagnosticProfile, PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS,
-    TYPESCRIPT_PROJECT_MARKERS, TYPESCRIPT_SOURCE_DIR_MARKERS, is_detectable_python_source_name,
-    is_detectable_typescript_source_name, is_python_excluded_dir_everywhere,
-    is_typescript_excluded_dir_everywhere, python_project_marker_name,
-    python_source_dir_marker_name, typescript_project_marker_name,
-    typescript_source_dir_marker_name,
+    CONFIG_FILE_NAME, JAVASCRIPT_LED_MANIFESTS, JAVASCRIPT_LED_SOURCE_DIRS, LspDiagnosticProfile,
+    PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, TYPESCRIPT_PROJECT_MARKERS,
+    TYPESCRIPT_SOURCE_DIR_MARKERS, is_detectable_package_source_name,
+    is_detectable_python_source_name, is_detectable_typescript_source_name,
+    is_python_excluded_dir_everywhere, is_typescript_excluded_dir_everywhere,
+    javascript_led_manifest_name, python_project_marker_name, python_source_dir_marker_name,
+    typescript_project_marker_name, typescript_source_dir_marker_name,
 };
 use crate::domain::{StageEvidence, StageState};
 use crate::lsp::diagnostic_budget::DiagnosticDeliveryOutcome;
@@ -3493,13 +3494,22 @@ impl Backend {
             let Some(kind) = self.file_event_workspace_input_kind(event) else {
                 continue;
             };
+            // Package-led JavaScript detection reads only presence, so a
+            // content-only edit of `package.json` or a source file is no
+            // input at all (not even a config reload).
+            if kind == WorkspaceInputKind::JavascriptPackagePresence
+                && event.typ == tower_lsp_server::ls_types::FileChangeType::CHANGED
+            {
+                continue;
+            }
             kinds.config_changed |= kind.reloads_repository_config();
             kinds.workspace_graph_changed |= kind.invalidates_workspace_graph();
             // Source presence only matters when a file appears or disappears;
             // an ordinary save of an existing TypeScript file is not an input.
             kinds.typescript_input_changed |= match kind {
                 WorkspaceInputKind::TypescriptProjectMarker => true,
-                WorkspaceInputKind::TypescriptSourcePresence => {
+                WorkspaceInputKind::TypescriptSourcePresence
+                | WorkspaceInputKind::JavascriptPackagePresence => {
                     event.typ != tower_lsp_server::ls_types::FileChangeType::CHANGED
                 }
                 _ => false,
@@ -4263,6 +4273,11 @@ enum WorkspaceInputKind {
     TypescriptProjectMarker,
     /// Detectable TypeScript source below a root `src`/`tests` directory.
     TypescriptSourcePresence,
+    /// Package-led JavaScript detection input (#11336): root `package.json`,
+    /// or a detectable JS/TS source file at the root or below `src`/`test`/
+    /// `tests`. Presence-only like the source classes: a content-only edit is
+    /// not an input.
+    JavascriptPackagePresence,
     /// Root gap decision ledger or root `.git/HEAD` (#4896): diagnostics
     /// read both on every refresh, but neither is a configuration or
     /// workspace-graph input.
@@ -4277,6 +4292,7 @@ impl WorkspaceInputKind {
                 | Self::PythonSourcePresence
                 | Self::TypescriptProjectMarker
                 | Self::TypescriptSourcePresence
+                | Self::JavascriptPackagePresence
         )
     }
 
@@ -4330,8 +4346,39 @@ fn workspace_input_kind(root: &Path, path: &Path) -> Option<WorkspaceInputKind> 
     if path_is_detectable_source_dir_python(root, path) {
         return Some(WorkspaceInputKind::PythonSourcePresence);
     }
-    path_is_detectable_source_dir_typescript(root, path)
-        .then_some(WorkspaceInputKind::TypescriptSourcePresence)
+    if path_is_detectable_source_dir_typescript(root, path) {
+        return Some(WorkspaceInputKind::TypescriptSourcePresence);
+    }
+    if let Some(manifest) = javascript_led_manifest_name(name)
+        && path_matches_root_file(root, path, manifest)
+    {
+        return Some(WorkspaceInputKind::JavascriptPackagePresence);
+    }
+    path_is_detectable_package_source(root, path)
+        .then_some(WorkspaceInputKind::JavascriptPackagePresence)
+}
+
+/// Package-led JavaScript form of [`path_is_detectable_source_dir_typescript`]:
+/// a detectable JS/TS source file directly at the root or below a root
+/// `src`/`test`/`tests` directory, outside dot-directories and the excluded
+/// directories, exactly as `detect_javascript_led_root` walks. Presence-only.
+fn path_is_detectable_package_source(root: &Path, path: &Path) -> bool {
+    let Some(relative) = root_relative_components(root, path) else {
+        return false;
+    };
+    let Some((file_name, directories)) = relative.split_last() else {
+        return false;
+    };
+    if !is_detectable_package_source_name(file_name) {
+        return false;
+    }
+    let Some((marker, below)) = directories.split_first() else {
+        return true;
+    };
+    JAVASCRIPT_LED_SOURCE_DIRS.contains(&marker.as_str())
+        && below
+            .iter()
+            .all(|dir| !dir.starts_with('.') && !is_typescript_excluded_dir_everywhere(dir))
 }
 
 /// TypeScript form of [`path_is_detectable_source_dir_python`]: a detectable
@@ -4480,6 +4527,35 @@ fn workspace_input_watchers() -> Vec<LSPAny> {
             // Same root-scoped shape for the TypeScript detection extensions.
             serde_json::json!({"globPattern": format!("{dir}/**/*.{{ts,tsx,mts,cts}}")})
         }))
+        .chain(JAVASCRIPT_LED_MANIFESTS.iter().map(|manifest| {
+            // Package-led JavaScript detection (#11336): the root manifest
+            // plus JS/TS source at the root or below its source directories.
+            serde_json::json!({"globPattern": *manifest})
+        }))
+        .chain(javascript_led_source_globs())
+        .collect()
+}
+
+/// Root-scoped globs for the package-led JavaScript source files: direct
+/// children of the root plus each `JAVASCRIPT_LED_SOURCE_DIRS` subtree. Empty
+/// when the adapter is compiled out, like the other detection inputs.
+fn javascript_led_source_globs() -> Vec<LSPAny> {
+    if JAVASCRIPT_LED_MANIFESTS.is_empty() {
+        return Vec::new();
+    }
+    let extensions = crate::analysis::TYPESCRIPT_SOURCE_EXTENSIONS
+        .iter()
+        .chain(crate::analysis::JAVASCRIPT_SOURCE_EXTENSIONS)
+        .copied()
+        .collect::<Vec<_>>()
+        .join(",");
+    std::iter::once(format!("*.{{{extensions}}}"))
+        .chain(
+            JAVASCRIPT_LED_SOURCE_DIRS
+                .iter()
+                .map(|dir| format!("{dir}/**/*.{{{extensions}}}")),
+        )
+        .map(|glob| serde_json::json!({"globPattern": glob}))
         .collect()
 }
 
@@ -4626,7 +4702,6 @@ mod workspace_input_tests {
             );
         }
         for non_input in [
-            "src/app.js",
             "src/api.generated.ts",
             "src/types.d.ts",
             "src/node_modules/p/i.ts",
@@ -4642,6 +4717,69 @@ mod workspace_input_tests {
         assert!(WorkspaceInputKind::TypescriptProjectMarker.reloads_repository_config());
         assert!(WorkspaceInputKind::TypescriptSourcePresence.reloads_repository_config());
         assert!(!WorkspaceInputKind::TypescriptSourcePresence.invalidates_workspace_graph());
+    }
+
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn package_led_javascript_inputs_classify_like_the_detector() {
+        let root = std::env::temp_dir().join("ripr-workspace-input-root");
+        let outside = std::env::temp_dir().join("ripr-workspace-input-outside");
+
+        assert_eq!(
+            workspace_input_kind(&root, &root.join("package.json")),
+            Some(WorkspaceInputKind::JavascriptPackagePresence)
+        );
+        for non_input in ["pkg/package.json", "src/package.json"] {
+            assert_eq!(
+                workspace_input_kind(&root, &root.join(non_input)),
+                None,
+                "{non_input}"
+            );
+        }
+        assert_eq!(
+            workspace_input_kind(&root, &outside.join("package.json")),
+            None
+        );
+        for source in [
+            "index.js",
+            "test.mjs",
+            "app.ts",
+            "src/app.js",
+            "src/deep/view.jsx",
+            "test/a.cjs",
+            "test/a.ts",
+            "tests/a.js",
+        ] {
+            assert_eq!(
+                workspace_input_kind(&root, &root.join(source)),
+                Some(WorkspaceInputKind::JavascriptPackagePresence),
+                "{source}"
+            );
+        }
+        // src/tests TypeScript keeps its existing presence class.
+        assert_eq!(
+            workspace_input_kind(&root, &root.join("src/app.ts")),
+            Some(WorkspaceInputKind::TypescriptSourcePresence)
+        );
+        for non_input in [
+            "eslint.config.js",
+            ".eslintrc.cjs",
+            "app.min.js",
+            "src/webpack.config.mjs",
+            "src/node_modules/p/i.js",
+            "src/.cache/i.js",
+            "lib/app.js",
+            "scripts/app.js",
+            "README.md",
+        ] {
+            assert_eq!(
+                workspace_input_kind(&root, &root.join(non_input)),
+                None,
+                "{non_input}"
+            );
+        }
+        assert!(WorkspaceInputKind::JavascriptPackagePresence.reloads_repository_config());
+        assert!(!WorkspaceInputKind::JavascriptPackagePresence.invalidates_workspace_graph());
     }
 
     #[test]
@@ -4661,9 +4799,12 @@ mod workspace_input_tests {
 
         assert!(!WorkspaceInputKind::CargoGraph.reloads_repository_config());
         assert!(WorkspaceInputKind::CargoGraph.invalidates_workspace_graph());
+        // `package.json` is a package-led JavaScript input only with the
+        // TypeScript adapter compiled in.
         assert_eq!(
             workspace_input_kind(&root, &root.join("package.json")),
-            None
+            cfg!(feature = "lang-typescript")
+                .then_some(WorkspaceInputKind::JavascriptPackagePresence)
         );
         Ok(())
     }
@@ -4791,6 +4932,16 @@ mod workspace_input_tests {
                 TYPESCRIPT_SOURCE_DIR_MARKERS
                     .iter()
                     .map(|dir| format!("{dir}/**/*.{{ts,tsx,mts,cts}}")),
+            )
+            .chain(JAVASCRIPT_LED_MANIFESTS.iter().map(|name| name.to_string()))
+            .chain(
+                (!JAVASCRIPT_LED_MANIFESTS.is_empty())
+                    .then(|| "*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}".to_string()),
+            )
+            .chain(
+                JAVASCRIPT_LED_SOURCE_DIRS
+                    .iter()
+                    .map(|dir| format!("{dir}/**/*.{{ts,tsx,mts,cts,js,jsx,mjs,cjs}}")),
             )
             .collect::<BTreeSet<_>>();
 
