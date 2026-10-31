@@ -1,0 +1,1 @@
+crates/ripr/tests/field_write_repair_answer.rs|Command::new|2|11398-field-write-repair-answer|Fixture setup runs local git (init/commit) in a temp repository and the built ripr binary (check, repair) against it; no shell or network.
