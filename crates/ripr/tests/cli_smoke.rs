@@ -33760,7 +33760,10 @@ fn feedback_export_refuses_target_link_even_with_cache_dir_override() -> Result<
         .is_some();
     let _ = std::fs::remove_dir_all(&base);
     assert!(!output.status.success(), "link must be refused: {stderr}");
-    assert!(stderr.contains("resolves outside the workspace"), "{stderr}");
+    assert!(
+        stderr.contains("resolves outside the workspace"),
+        "{stderr}"
+    );
     assert!(!leaked, "nothing may be written through the link");
     Ok(())
 }

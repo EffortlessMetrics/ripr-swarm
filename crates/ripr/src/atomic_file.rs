@@ -114,11 +114,32 @@ fn ensure_default_output_contained_with(
 /// that follows. This resolves the deepest existing component of `target`
 /// (a dangling or looping link counts as unresolvable) and requires it to stay
 /// under the canonical workspace root, before anything is created.
+///
+/// A `..` component is refused outright: a not-yet-created `new/../..` prefix
+/// has no existing ancestor to resolve, so the OS would only apply the
+/// traversal after `create_dir_all` made `new`.
+///
+/// Non-claim: this is check-then-use. A link swapped in between this check and
+/// the later `create_dir_all`/write is not defended against; that needs
+/// `openat`-style handling and the threat here is a link already committed in
+/// a cloned repository.
 pub(crate) fn ensure_path_within_root(
     root: &Path,
     target: &Path,
     what: &str,
 ) -> Result<(), String> {
+    // Only the part below `root` is judged; `--root ../repo` is legitimate.
+    if target
+        .strip_prefix(root)
+        .unwrap_or(target)
+        .components()
+        .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        return Err(format!(
+            "refusing to write {what}: {} contains a `..` component",
+            target.display()
+        ));
+    }
     let canonical_root = root.canonicalize().map_err(|error| {
         format!(
             "refusing to write {what}: cannot resolve workspace root {}: {error}",
@@ -1059,10 +1080,13 @@ mod tests {
         std::os::unix::fs::symlink(&outside, ws.join("out")).map_err(|e| e.to_string())?;
         std::os::unix::fs::symlink(base.join("missing"), ws.join("dangling"))
             .map_err(|e| e.to_string())?;
+        let traversal =
+            super::ensure_path_within_root(&ws, &ws.join("new/../../outside/leaf"), "x");
         let direct = super::ensure_path_within_root(&ws, &ws.join("out"), "x");
         let below = super::ensure_path_within_root(&ws, &ws.join("out/not/yet"), "x");
         let dangling = super::ensure_path_within_root(&ws, &ws.join("dangling/leaf"), "x");
         let _ = std::fs::remove_dir_all(&base);
+        assert!(traversal.is_err_and(|e| e.contains("`..` component")));
         assert!(direct.is_err_and(|e| e.contains("resolves outside")));
         assert!(below.is_err());
         assert!(dangling.is_err_and(|e| e.contains("cannot be resolved")));
