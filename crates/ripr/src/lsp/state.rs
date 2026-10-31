@@ -1417,7 +1417,11 @@ impl DocumentState {
 /// counts lines the same way, so a buffer using bare CR terminators (or
 /// ending in one) must be addressable. A line past the last terminator is
 /// the empty or partial final line.
-fn document_line_extent(text: &str, target_line: usize) -> Option<(usize, usize)> {
+fn document_line_extent(
+    text: &str,
+    target_line: usize,
+    budget: &mut ScanBudget,
+) -> Option<(usize, usize)> {
     let bytes = text.as_bytes();
     let mut line = 0usize;
     let mut line_start = 0usize;
@@ -1434,13 +1438,39 @@ fn document_line_extent(text: &str, target_line: usize) -> Option<(usize, usize)
             continue;
         }
         if line == target_line {
+            budget.charge(index)?;
             return Some((line_start, index));
         }
         line += 1;
         index += terminator_len;
         line_start = index;
     }
+    budget.charge(bytes.len())?;
     (line == target_line).then_some((line_start, bytes.len()))
+}
+
+/// Maximum bytes one didChange notification may scan while resolving range
+/// positions (#11508). Every ranged position is resolved from the start of
+/// the retained buffer, so one notification of many tiny edits against a
+/// large buffer costs `edits * buffer size`; a 16 MiB message can carry
+/// ~190k edits. Past the budget the change list is refused through the same
+/// fail-closed invalid-incremental-change path as an out-of-range position,
+/// and the document stays quarantined until a full replacement arrives.
+const MAX_CHANGE_SCAN_BYTES: usize = 256 * 1024 * 1024;
+
+/// Remaining scan allowance for one didChange notification.
+struct ScanBudget(usize);
+
+impl ScanBudget {
+    fn new() -> Self {
+        Self(MAX_CHANGE_SCAN_BYTES)
+    }
+
+    /// Spend `bytes`; `None` once the allowance is exhausted.
+    fn charge(&mut self, bytes: usize) -> Option<()> {
+        self.0 = self.0.checked_sub(bytes)?;
+        Some(())
+    }
 }
 
 /// Convert one LSP position to a UTF-8 byte offset in the retained buffer.
@@ -1453,11 +1483,12 @@ fn document_position_byte_offset(
     text: &str,
     position: Position,
     encoding: &PositionEncodingKind,
+    budget: &mut ScanBudget,
 ) -> Option<usize> {
     let target_line = usize::try_from(position.line).ok()?;
     let target_units = usize::try_from(position.character).ok()?;
 
-    let (line_start, line_end) = document_line_extent(text, target_line)?;
+    let (line_start, line_end) = document_line_extent(text, target_line, budget)?;
     let line = text.get(line_start..line_end)?;
 
     let relative = if *encoding == PositionEncodingKind::UTF8 {
@@ -1503,15 +1534,16 @@ fn apply_document_content_change(
     text: &mut String,
     change: TextDocumentContentChangeEvent,
     encoding: &PositionEncodingKind,
+    budget: &mut ScanBudget,
 ) -> Result<(), ()> {
     let Some(range) = change.range else {
         *text = change.text;
         return Ok(());
     };
-    let Some(start) = document_position_byte_offset(text, range.start, encoding) else {
+    let Some(start) = document_position_byte_offset(text, range.start, encoding, budget) else {
         return Err(());
     };
-    let Some(end) = document_position_byte_offset(text, range.end, encoding) else {
+    let Some(end) = document_position_byte_offset(text, range.end, encoding, budget) else {
         return Err(());
     };
     if start > end {
@@ -1534,19 +1566,20 @@ fn apply_document_content_changes(
     changes: Vec<TextDocumentContentChangeEvent>,
     encoding: &PositionEncodingKind,
 ) -> Result<(), ()> {
+    let mut budget = ScanBudget::new();
     let mut changes = changes.into_iter();
     let Some(first) = changes.next() else {
         return Ok(());
     };
     let Some(second) = changes.next() else {
-        return apply_document_content_change(text, first, encoding);
+        return apply_document_content_change(text, first, encoding, &mut budget);
     };
 
     let mut candidate = text.clone();
-    apply_document_content_change(&mut candidate, first, encoding)?;
-    apply_document_content_change(&mut candidate, second, encoding)?;
+    apply_document_content_change(&mut candidate, first, encoding, &mut budget)?;
+    apply_document_content_change(&mut candidate, second, encoding, &mut budget)?;
     for change in changes {
-        apply_document_content_change(&mut candidate, change, encoding)?;
+        apply_document_content_change(&mut candidate, change, encoding, &mut budget)?;
     }
     *text = candidate;
     Ok(())
@@ -2387,6 +2420,47 @@ mod tests {
         assert_eq!(edit("ab\r\n", 1, 0)?, "ab\r\nX");
         assert_eq!(edit("a\nb\rc\r\nd", 3, 1)?, "a\nb\rc\r\ndX");
         assert_eq!(edit("a\nb\rc\r\nd", 2, 0)?, "a\nb\rXc\r\nd");
+        Ok(())
+    }
+
+    /// #11508: every ranged position is resolved from byte 0, so a change
+    /// list of many tiny edits against a large newline-free buffer cost
+    /// `edits * buffer size` with no bound. The scan budget refuses the list
+    /// through the ordinary invalid-change path and leaves the buffer intact.
+    #[test]
+    fn incremental_change_list_is_refused_past_the_scan_budget() -> Result<(), String> {
+        const DOCUMENT_BYTES: usize = 3 * 1024 * 1024;
+        let edits = |count: usize| -> Vec<TextDocumentContentChangeEvent> {
+            let end = Position {
+                line: 0,
+                character: u32::try_from(DOCUMENT_BYTES).unwrap_or(u32::MAX),
+            };
+            (0..count)
+                .map(|_| TextDocumentContentChangeEvent {
+                    range: Some(tower_lsp_server::ls_types::Range { start: end, end }),
+                    range_length: None,
+                    text: String::new(),
+                })
+                .collect()
+        };
+        let original = "a".repeat(DOCUMENT_BYTES);
+
+        // Each edit resolves two end-of-buffer positions: 10 edits scan
+        // about 60 MiB, within the budget.
+        let mut within = original.clone();
+        apply_document_content_changes(&mut within, edits(10), &PositionEncodingKind::UTF8)
+            .map_err(|()| "a change list within the scan budget was refused".to_string())?;
+
+        // 60 edits would scan about 360 MiB, past the 256 MiB budget.
+        let mut beyond = original.clone();
+        let refused =
+            apply_document_content_changes(&mut beyond, edits(60), &PositionEncodingKind::UTF8);
+        if refused.is_ok() {
+            return Err("a change list past the scan budget was accepted".to_string());
+        }
+        if beyond != original {
+            return Err("a refused change list partially committed".to_string());
+        }
         Ok(())
     }
 
