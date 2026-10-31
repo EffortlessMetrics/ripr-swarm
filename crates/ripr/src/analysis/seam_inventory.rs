@@ -1153,6 +1153,12 @@ pub(crate) struct ScopedClassifiedSeamInventory {
     /// was not asked for it or took the no-impact fast path (no index built);
     /// `Some(Err)` is an invalid seam-limit override.
     pub(crate) repo_seam_limit: Option<Result<Option<SeamLimitInfo>, String>>,
+    /// Raw Rust bytes this invocation's corpus pass observed (#7357), recorded
+    /// while each buffer was live and before parsing or any cache access. It is
+    /// never replayed from a memory or persisted result: those paths attach
+    /// the observations of the invocation that validated the corpus. Empty on
+    /// the no-impact fast path, which reads no Rust content.
+    pub(crate) consumed_sources: super::consumed_source::ConsumedRustSources,
 }
 
 /// Two-stage evidence for the diff-scoped inventory.
@@ -1616,6 +1622,7 @@ fn try_no_impact_fast_path(
             unevaluated_seams: 0,
             absent_changed_files: Vec::new(),
             repo_seam_limit: None,
+            consumed_sources: Default::default(),
         },
     )))
 }
@@ -1907,7 +1914,11 @@ mod bound_inventory_reuse {
         if entries.len() >= CAPACITY {
             entries.pop_front();
         }
-        entries.push_back((key.clone(), identity.to_vec(), inventory.clone()));
+        // A stored result never carries observations: the next reader attaches
+        // its own invocation's carrier.
+        let mut stored = inventory.clone();
+        stored.consumed_sources = Default::default();
+        entries.push_back((key.clone(), identity.to_vec(), stored));
     }
 }
 
@@ -2016,6 +2027,8 @@ mod persisted_bound_inventory {
             unevaluated_seams: persisted.unevaluated_seams,
             absent_changed_files: Vec::new(),
             repo_seam_limit,
+            // Never replayed: the caller attaches this invocation's carrier.
+            consumed_sources: Default::default(),
         }
     }
 }
@@ -2349,6 +2362,8 @@ fn inventory_diff_scoped_classified_seams_inner(
         );
         reused.absent_changed_files = absent_changed_files;
         // The entry is for the hashed corpus; confirm it is still those bytes.
+        // The carrier is this invocation's own observation of that corpus.
+        reused.consumed_sources = state.consumed.clone();
         state.verify_corpus_unchanged()?;
         cancellation::checkpoint()?;
         return Ok(reused);
@@ -2370,6 +2385,8 @@ fn inventory_diff_scoped_classified_seams_inner(
         persisted.absent_changed_files = absent_changed_files;
         // The disk entry is for the hashed corpus; confirm the corpus is
         // still those bytes before accepting it or seeding the process.
+        // The carrier is this invocation's own observation of that corpus.
+        persisted.consumed_sources = state.consumed.clone();
         state.verify_corpus_unchanged()?;
         cancellation::checkpoint()?;
         bound_inventory_reuse::store(&workspace_cache_key, identity, &persisted);
@@ -2400,6 +2417,9 @@ fn inventory_diff_scoped_classified_seams_inner(
     );
     let mut cached = state.build_index(config)?;
     // The index and cache key own their data; the state is not needed past here.
+    // `build_index` just re-read the corpus and refused any bytes other than
+    // the ones this carrier observed, so the observations are validated.
+    let consumed_sources = state.consumed.clone();
     drop(state);
     trace_latency_phase(
         "file_fact_cache",
@@ -2467,6 +2487,7 @@ fn inventory_diff_scoped_classified_seams_inner(
 
     cancellation::checkpoint()?;
     let inventory = ScopedClassifiedSeamInventory {
+        consumed_sources,
         classified,
         classified_seams_considered,
         file_fact_cache: cached.file_fact_cache,
@@ -3030,16 +3051,21 @@ fn collect_workspace_state_from_files(
     let mut sorted_files = rust_files;
     sorted_files.sort();
     let mut builder = FilesContentHashBuilder::new();
+    let mut consumed = super::consumed_source::ConsumedRustSources::default();
     for path in &sorted_files {
         cancellation::checkpoint()?;
         let bytes = std::fs::read(root.join(path))
             .map_err(|err| format!("read {} failed: {err}", path.display()))?;
         builder.push(path, &bytes);
+        // #7357: the raw buffer is observed here, before any parse or cache
+        // lookup; the later index read is refused unless it hashes the same.
+        consumed.record(path, Some(&bytes));
         // `bytes` drops here, before the next file is read.
     }
     #[cfg(test)]
     between_passes::run(root);
     Ok(OwnedWorkspaceState {
+        consumed,
         workspace_root: root.to_path_buf(),
         files: sorted_files,
         files_content_hash: builder.finish(),
@@ -3203,6 +3229,8 @@ fn read_optional(path: &Path) -> Option<String> {
 /// compile-time bound: reintroducing a retained corpus breaks the
 /// `workspace_state_holds_no_source_bytes` test build.
 struct OwnedWorkspaceState {
+    /// Per-path digests of the raw bytes the hashing pass read (#7357).
+    consumed: super::consumed_source::ConsumedRustSources,
     workspace_root: PathBuf,
     files: Vec<PathBuf>,
     files_content_hash: String,
@@ -9106,6 +9134,103 @@ marker = "libtest_mimic::Trial"
         let _ = std::fs::remove_dir_all(&root);
         assert!(evaluated > 0, "a content change must recompute");
         assert_ne!(scoped_projection(&warm)?, scoped_projection(&cold)?);
+        Ok(())
+    }
+
+    /// #7357: the inventory's consumed-source carrier is this invocation's own
+    /// observation of the raw corpus bytes on every path: computed, served from
+    /// the process-wide result, and served from the persisted result. A reused
+    /// result never replays an earlier carrier, and an edit changes it.
+    #[test]
+    fn bound_seams_inventory_attaches_this_invocations_consumed_bytes_on_every_path()
+    -> Result<(), String> {
+        use crate::analysis::consumed_source::ConsumedRustSources;
+        let root = make_tempdir("bound-seams-consumed-carrier")?;
+        bound_seams_layout(&root)?;
+        let config = RiprConfig::default();
+        let changed = [PathBuf::from("src/pricing.rs")];
+        let owners = ["discounted_total".to_string()];
+        let corpus = crate::analysis::workspace::discover_rust_files(&root)?;
+        assert!(!corpus.is_empty(), "the fixture must hold a Rust corpus");
+        let expected = |root: &Path| -> Result<ConsumedRustSources, String> {
+            let mut expected = ConsumedRustSources::default();
+            for path in &corpus {
+                let bytes = std::fs::read(root.join(path)).map_err(|error| error.to_string())?;
+                expected.record(path, Some(&bytes));
+            }
+            Ok(expected)
+        };
+        let assert_observes = |inventory: &ScopedClassifiedSeamInventory,
+                               root: &Path,
+                               path: &str|
+         -> Result<(), String> {
+            let expected = expected(root)?;
+            for file in &corpus {
+                if inventory.consumed_sources.digest(file) != expected.digest(file) {
+                    return Err(format!(
+                        "{path}: carrier lost or misattributed the bytes of {}",
+                        file.display()
+                    ));
+                }
+                if expected.digest(file).is_none() {
+                    return Err(format!("{path}: expected carrier is empty"));
+                }
+            }
+            Ok(())
+        };
+        let identity = {
+            let keys = changed
+                .iter()
+                .map(|path| inventory_scope_key(path))
+                .collect::<BTreeSet<_>>();
+            let names = owners.iter().map(String::as_str).collect::<BTreeSet<_>>();
+            bound_seams_reuse_identity(&keys, &names)
+        };
+
+        evaluation_probe::reset();
+        let cold =
+            inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners)?;
+        assert!(evaluation_probe::evaluated() > 0, "the cold run computes");
+        assert_observes(&cold, &root, "computed")?;
+
+        evaluation_probe::reset();
+        let memory =
+            inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners)?;
+        assert_eq!(evaluation_probe::evaluated(), 0, "the warm run is a reuse");
+        assert_observes(&memory, &root, "process-wide reuse")?;
+
+        bound_inventory_reuse::forget(&cold.workspace_cache_key, &identity);
+        evaluation_probe::reset();
+        let persisted =
+            inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners)?;
+        assert_eq!(
+            evaluation_probe::evaluated(),
+            0,
+            "the persisted run is a reuse"
+        );
+        assert_observes(&persisted, &root, "persisted reuse")?;
+
+        // An edit to a consumed file the changed scope does not name changes
+        // the corpus: the carrier follows the new bytes, not the cached ones.
+        let helper = root.join("src/unrelated.rs");
+        write_file(&helper, "pub fn unrelated_value() -> i32 {\n    41\n}\n")?;
+        let edited =
+            inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners)?;
+        let after_edit = expected(&root)?;
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(
+            edited
+                .consumed_sources
+                .digest(Path::new("src/unrelated.rs")),
+            after_edit.digest(Path::new("src/unrelated.rs")),
+        );
+        assert_ne!(
+            edited
+                .consumed_sources
+                .digest(Path::new("src/unrelated.rs")),
+            cold.consumed_sources.digest(Path::new("src/unrelated.rs")),
+            "the carrier must not replay the earlier observation"
+        );
         Ok(())
     }
 
