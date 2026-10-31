@@ -48,6 +48,197 @@ fn suffixed_decimal_arguments_preserve_whole_literal_boundaries() {
     }
 }
 
+#[test]
+fn observed_value_facts_cached_and_uncached_agree_across_seams() -> Result<(), String> {
+    let prod = PathBuf::from("src/pricing.rs");
+    let prod_src = r#"
+pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
+    if amount >= threshold {
+        amount - 10
+    } else if amount <= 0 {
+        0
+    } else {
+        amount
+    }
+}
+"#;
+    let tests = PathBuf::from("tests/pricing_tests.rs");
+    let tests_src = r#"
+#[test]
+fn multi_seam_calls() {
+    let threshold = 100;
+    assert_eq!(discounted_total(100, threshold), 90);
+    assert_eq!(discounted_total(50, 100), 50);
+}
+"#;
+    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let mut seams = inventory_seams_from_index(&[PathBuf::from("src/pricing.rs")], &index);
+    if seams.is_empty() {
+        return Err("inventory produced no seams".to_string());
+    }
+    if seams.len() < 2 {
+        let first = &seams[0];
+        seams.push(RepoSeam::new(
+            first.file(),
+            first.owner(),
+            SeamKind::ReturnValue,
+            first.byte_offset().saturating_add(1),
+            first.display_line(),
+            "amount - 10",
+            first.required_discriminator().clone(),
+            first.expected_sink(),
+        ));
+    }
+    let context =
+        CompactGripContext::try_new(&index).map_err(|error| format!("context: {error}"))?;
+    let indexed = context
+        .tests
+        .iter()
+        .find(|test| test.test.name == "multi_seam_calls")
+        .ok_or_else(|| "missing multi_seam_calls test".to_string())?;
+
+    OWNER_CALL_ARGS_MEMO.with(|memo| memo.borrow_mut().clear());
+
+    let mut compared = 0usize;
+    let mut memo_len_after_first = None;
+    for seam in &seams {
+        let Some(owner_fn) = context.owner_function(seam.file(), seam.display_line()) else {
+            continue;
+        };
+        let selection = observed_argument_selection(seam, owner_fn);
+        let cached = observed_value_facts_for_test(seam, indexed, &context, owner_fn, &selection);
+        let uncached =
+            observed_value_facts_for_test_uncached(seam, indexed, &context, owner_fn, &selection);
+        if cached != uncached {
+            return Err(format!(
+                "cached and uncached facts differ for seam {}: {cached:?} vs {uncached:?}",
+                seam.id().as_str()
+            ));
+        }
+        compared += 1;
+        if matches!(
+            selection,
+            ObservedArgumentSelection::UnresolvedBoundaryOperands
+        ) {
+            continue;
+        }
+        let len = OWNER_CALL_ARGS_MEMO.with(|memo| memo.borrow().len());
+        match memo_len_after_first {
+            None => {
+                if len == 0 {
+                    return Err("first resolved seam did not populate the memo".to_string());
+                }
+                memo_len_after_first = Some(len);
+            }
+            Some(first) => {
+                if len != first {
+                    return Err(format!(
+                        "later seam grew the (test, owner) memo from {first} to {len}"
+                    ));
+                }
+            }
+        }
+    }
+    if compared < 2 {
+        return Err(format!(
+            "expected to compare at least two seams, compared {compared}"
+        ));
+    }
+    if memo_len_after_first.is_none() {
+        return Err("no resolved seam populated the memo".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn observed_value_facts_repeat_reads_the_owner_call_memo() -> Result<(), String> {
+    let prod = PathBuf::from("src/pricing.rs");
+    let prod_src = r#"
+pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
+    if amount >= threshold { amount - 10 } else { amount }
+}
+"#;
+    let tests = PathBuf::from("tests/pricing_tests.rs");
+    let tests_src = r#"
+#[test]
+fn multi_seam_calls() {
+    assert_eq!(discounted_total(100, 100), 90);
+}
+"#;
+    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/pricing.rs")], &index);
+    let context =
+        CompactGripContext::try_new(&index).map_err(|error| format!("context: {error}"))?;
+    let indexed = context
+        .tests
+        .iter()
+        .find(|test| test.test.name == "multi_seam_calls")
+        .ok_or_else(|| "missing multi_seam_calls test".to_string())?;
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            let Some(owner_fn) = context.owner_function(seam.file(), seam.display_line()) else {
+                return false;
+            };
+            !matches!(
+                observed_argument_selection(seam, owner_fn),
+                ObservedArgumentSelection::UnresolvedBoundaryOperands
+            )
+        })
+        .ok_or_else(|| "no resolved owner-bearing seam".to_string())?;
+    let owner_fn = context
+        .owner_function(seam.file(), seam.display_line())
+        .ok_or_else(|| "missing owner".to_string())?;
+    let selection = observed_argument_selection(seam, owner_fn);
+
+    OWNER_CALL_ARGS_MEMO.with(|memo| memo.borrow_mut().clear());
+    let fresh = parse_owner_call_argument_lists(indexed, owner_fn);
+    if fresh.is_empty() {
+        return Err("expected at least one parsed owner call".to_string());
+    }
+    let _ = observed_value_facts_for_test(seam, indexed, &context, owner_fn, &selection);
+    let planted = vec![OwnerCallArgumentList {
+        line: 1,
+        text: "discounted_total(7, 8)".to_string(),
+        name: "discounted_total".to_string(),
+        args: vec![
+            OwnerCallArgument {
+                expression: "7".to_string(),
+                scalars: vec!["7".to_string()],
+            },
+            OwnerCallArgument {
+                expression: "8".to_string(),
+                scalars: vec!["8".to_string()],
+            },
+        ],
+    }];
+    assert_ne!(fresh, planted);
+    let key = owner_call_args_memo_key(indexed, owner_fn);
+    OWNER_CALL_ARGS_MEMO.with(|memo| {
+        memo.borrow_mut().insert(key, planted.clone());
+    });
+    let cached = observed_value_facts_for_test(seam, indexed, &context, owner_fn, &selection);
+    let uncached =
+        observed_value_facts_for_test_uncached(seam, indexed, &context, owner_fn, &selection);
+    let cached_has_plant = cached
+        .iter()
+        .any(|fact| fact.text == "discounted_total(7, 8)" && fact.value == "7");
+    let uncached_has_plant = uncached
+        .iter()
+        .any(|fact| fact.text == "discounted_total(7, 8)");
+    if !cached_has_plant {
+        return Err(format!(
+            "cached path did not read the planted memo entry: {cached:?}"
+        ));
+    }
+    if uncached_has_plant {
+        return Err(format!(
+            "uncached path must not read the memo: {uncached:?}"
+        ));
+    }
+    Ok(())
+}
+
 fn index_from_files(files: &[(PathBuf, &str)]) -> Result<FixtureIndex, String> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

@@ -1898,30 +1898,156 @@ fn observed_value_facts_for_test(
     owner_fn: &FunctionSummary,
     observed_argument_selection: &ObservedArgumentSelection,
 ) -> Vec<ValueFact> {
-    let index = context.index;
-    let owner_name = owner_fn.name.as_str();
-    let mut observed: Vec<ValueFact> = Vec::new();
     if matches!(
         observed_argument_selection,
         ObservedArgumentSelection::UnresolvedBoundaryOperands
     ) {
-        return observed;
+        return Vec::new();
     }
+    observed_value_facts_from_owner_calls(
+        seam,
+        indexed,
+        context,
+        owner_fn,
+        observed_argument_selection,
+        &owner_call_argument_lists_for_test(indexed, owner_fn),
+    )
+}
+
+/// Same facts as [`observed_value_facts_for_test`] without the
+/// (test, owner) argument-list memo. Tests compare the two paths.
+#[cfg(test)]
+fn observed_value_facts_for_test_uncached(
+    seam: &RepoSeam,
+    indexed: &CompactTest<'_>,
+    context: &CompactGripContext<'_>,
+    owner_fn: &FunctionSummary,
+    observed_argument_selection: &ObservedArgumentSelection,
+) -> Vec<ValueFact> {
+    if matches!(
+        observed_argument_selection,
+        ObservedArgumentSelection::UnresolvedBoundaryOperands
+    ) {
+        return Vec::new();
+    }
+    observed_value_facts_from_owner_calls(
+        seam,
+        indexed,
+        context,
+        owner_fn,
+        observed_argument_selection,
+        &parse_owner_call_argument_lists(indexed, owner_fn),
+    )
+}
+
+/// One owner call's parsed argument list and the seam-independent
+/// scalar-literal values of those arguments. Selection, projection,
+/// `bound_free_owner_calls`, and `ValueEnv` resolution stay per seam.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct OwnerCallArgumentList {
+    line: usize,
+    text: String,
+    name: String,
+    args: Vec<OwnerCallArgument>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct OwnerCallArgument {
+    expression: String,
+    scalars: Vec<String>,
+}
+
+/// Per-thread memo of parsed owner-call argument lists, keyed by
+/// (test identity, owner fn id). The lists depend only on the test body
+/// and the owner, but each related seam used to re-run `owner_call_text`
+/// + `call_arguments` + `scalar_values` (#10932).
+const OWNER_CALL_ARGS_MEMO_ENTRIES: usize = 4096;
+
+thread_local! {
+    static OWNER_CALL_ARGS_MEMO: std::cell::RefCell<
+        HashMap<(String, String), Vec<OwnerCallArgumentList>>,
+    > = std::cell::RefCell::new(HashMap::new());
+}
+
+fn owner_call_args_memo_key(
+    indexed: &CompactTest<'_>,
+    owner_fn: &FunctionSummary,
+) -> (String, String) {
+    (
+        format!(
+            "{}:{}:{}",
+            indexed.test.file.display(),
+            indexed.test.name,
+            indexed.test.start_line
+        ),
+        owner_fn.id.0.clone(),
+    )
+}
+
+fn owner_call_argument_lists_for_test(
+    indexed: &CompactTest<'_>,
+    owner_fn: &FunctionSummary,
+) -> Vec<OwnerCallArgumentList> {
+    let key = owner_call_args_memo_key(indexed, owner_fn);
+    OWNER_CALL_ARGS_MEMO.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        if let Some(lists) = memo.get(&key) {
+            return lists.clone();
+        }
+        let lists = parse_owner_call_argument_lists(indexed, owner_fn);
+        if memo.len() >= OWNER_CALL_ARGS_MEMO_ENTRIES {
+            memo.clear();
+        }
+        memo.insert(key, lists.clone());
+        lists
+    })
+}
+
+fn parse_owner_call_argument_lists(
+    indexed: &CompactTest<'_>,
+    owner_fn: &FunctionSummary,
+) -> Vec<OwnerCallArgumentList> {
+    let owner_name = owner_fn.name.as_str();
+    indexed
+        .test
+        .body_calls()
+        .filter(|call| call.name == owner_name)
+        .filter_map(|call| {
+            let args = owner_call_text(&call.text, owner_fn)
+                .and_then(|text| call_arguments(text, owner_name))?;
+            Some(OwnerCallArgumentList {
+                line: call.line,
+                text: call.text.to_string(),
+                name: call.name.clone(),
+                args: args
+                    .into_iter()
+                    .map(|expression| OwnerCallArgument {
+                        scalars: scalar_values(&expression),
+                        expression,
+                    })
+                    .collect(),
+            })
+        })
+        .collect()
+}
+
+fn observed_value_facts_from_owner_calls(
+    seam: &RepoSeam,
+    indexed: &CompactTest<'_>,
+    context: &CompactGripContext<'_>,
+    owner_fn: &FunctionSummary,
+    observed_argument_selection: &ObservedArgumentSelection,
+    calls: &[OwnerCallArgumentList],
+) -> Vec<ValueFact> {
+    let index = context.index;
+    let mut observed: Vec<ValueFact> = Vec::new();
     // Per-test resolution facts (let bindings, rstest cases, table
     // rows, same-file consts) are built lazily and then reused across
     // all owner calls in this test. Per `analysis/value-extraction-v2`.
     let value_facts = indexed.value_facts(index);
     let env = super::value_resolution::ValueEnv::new(seam, value_facts);
-    for call in indexed.test.body_calls() {
-        if call.name != owner_name {
-            continue;
-        }
-        let Some(args) =
-            owner_call_text(&call.text, owner_fn).and_then(|text| call_arguments(text, owner_name))
-        else {
-            continue;
-        };
-        for (arg_index, arg) in args.into_iter().enumerate() {
+    for call in calls {
+        for (arg_index, arg) in call.args.iter().enumerate() {
             let argument_operand = match observed_argument_selection {
                 ObservedArgumentSelection::ArgumentOperands(operands) => operands
                     .iter()
@@ -1936,8 +2062,11 @@ fn observed_value_facts_for_test(
             let Some(argument_operand) = argument_operand else {
                 continue;
             };
-            let arg = projected_argument_expression(&arg, argument_operand.projection.as_deref());
-            if suffixed_decimal_integer_value(&arg).is_some()
+            let arg_expr = projected_argument_expression(
+                &arg.expression,
+                argument_operand.projection.as_deref(),
+            );
+            if suffixed_decimal_integer_value(&arg_expr).is_some()
                 && !super::classify::bound_free_owner_calls(
                     index,
                     owner_fn,
@@ -1948,13 +2077,18 @@ fn observed_value_facts_for_test(
             {
                 continue;
             }
+            let scalars = if argument_operand.projection.is_some() {
+                scalar_values(&arg_expr)
+            } else {
+                arg.scalars.clone()
+            };
             let mut emitted = false;
             // Direct literal first (matches pre-v2 behavior).
-            for value in scalar_values(&arg) {
+            for value in scalars {
                 observed.push(ValueFact {
                     file: None,
                     line: call.line,
-                    text: call.text.to_string(),
+                    text: call.text.clone(),
                     value,
                     context: ValueContext::FunctionArgument,
                 });
@@ -1966,11 +2100,13 @@ fn observed_value_facts_for_test(
             // value-extraction-v2: try to resolve the arg through the
             // priority chain (let / rstest case / table row /
             // same-file const / Some/Ok/Err).
-            for (value, context) in env.resolve_at_call(&arg, call.line, &call.name, &call.text) {
+            for (value, context) in
+                env.resolve_at_call(&arg_expr, call.line, &call.name, &call.text)
+            {
                 observed.push(ValueFact {
                     file: None,
                     line: call.line,
-                    text: call.text.to_string(),
+                    text: call.text.clone(),
                     value,
                     context,
                 });
