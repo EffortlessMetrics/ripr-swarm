@@ -1,6 +1,6 @@
 # Kani native export contract fixtures
 
-The two JSON files are byte-identical published schema `0.1.0` contract fixtures.
+The two upstream JSON inputs are byte-identical published schema `0.1.0` contract fixtures.
 They are not claimed to be captured verifier runs or evidence of proof validity.
 
 The parser and failure fixture are pinned to
@@ -23,3 +23,8 @@ The published `kani-0.68.0` release predates this export profile and uses a diff
 Original fixture copyright: Kani Contributors; upstream license: `Apache-2.0 OR MIT`.
 See [`LICENSE-APACHE`](https://github.com/model-checking/kani/blob/744b3e84d6eb68fd5456826997568666791bd355/LICENSE-APACHE)
 and [`LICENSE-MIT`](https://github.com/model-checking/kani/blob/744b3e84d6eb68fd5456826997568666791bd355/LICENSE-MIT).
+
+The separate [native conformance subset](native-captures/README.md) contains eight
+genuine untouched exports, their exact source and a portable provenance projection.
+It supplements these contract examples with offline replay controls, retaining
+their distinct origin and the remaining profile-qualification limits.

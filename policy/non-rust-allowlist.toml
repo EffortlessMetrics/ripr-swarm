@@ -795,6 +795,15 @@ reason = "Pinned upstream Kani contract examples and an authored no-promotion re
 covered_by = ["cargo test -p ripr --lib kani_import", "cargo test -p ripr --lib kani_report"]
 
 [[allow]]
+glob = "crates/ripr/src/app/kani_import/fixtures/native-captures/**"
+kind = "kani_native_conformance_fixture"
+owner = "verification/kani-import"
+surface = "fixtures"
+classification = "fixture"
+reason = "Untouched native Kani exports, exact source data and an authored portable provenance projection; offline replay does not execute or authenticate the verifier."
+covered_by = ["cargo test -p ripr --lib kani_import", "cargo test -p ripr --lib kani_report"]
+
+[[allow]]
 glob = "crates/ripr/tests/fixtures/causal-attribution/*.json"
 kind = "causal_attribution_fixture"
 owner = "analysis/causal-attribution"
