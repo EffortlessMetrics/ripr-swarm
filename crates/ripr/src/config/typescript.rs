@@ -184,10 +184,9 @@ pub(crate) fn is_detectable_package_source_name(name: &str) -> bool {
             crate::analysis::ts_js_source_kind(extension)
                 == Some(crate::analysis::TsJsSourceKind::JavaScript)
         });
-    (is_javascript
-        && !is_detectable_generated_typescript_name(name)
-        && !is_javascript_tooling_config_name(name))
-        || is_detectable_typescript_source_name(name)
+    (is_javascript && !is_detectable_generated_typescript_name(name)
+        || is_detectable_typescript_source_name(name))
+        && !is_javascript_tooling_config_name(name)
 }
 
 /// Tooling config files (`eslint.config.js`, `webpack.config.mjs`,
@@ -526,6 +525,12 @@ mod tests {
         assert!(
             !detect_typescript_project(&root),
             "tooling config files are not source"
+        );
+        write(&root, "vite.config.ts")?;
+        write(&root, "jest.config.ts")?;
+        assert!(
+            !detect_typescript_project(&root),
+            "TypeScript tooling config is not source either"
         );
         write(&root, "index.js")?;
         assert!(detect_typescript_project(&root), "root-level JavaScript");

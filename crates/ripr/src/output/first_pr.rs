@@ -4483,16 +4483,20 @@ mod tests {
             r#"{"devDependencies":{"jest":"^30"}}"#,
         )
         .map_err(|err| format!("write package.json: {err}"))?;
+        // Source below an undetected directory (`lib/`): root-level or
+        // `src/`/`test/` source with a `package.json` is detected since
+        // #11336, so this is the manifest-without-marker shape that remains.
+        fs::create_dir_all(repo.join("lib")).map_err(|err| format!("create lib: {err}"))?;
         fs::write(
-            repo.join("pricing.ts"),
+            repo.join("lib/pricing.ts"),
             "export const p = (x: number) => x;\n",
         )
         .map_err(|err| format!("write pricing.ts: {err}"))?;
-        fs::write(repo.join("pricing.test.ts"), "test('p', () => {});\n")
+        fs::write(repo.join("lib/pricing.test.ts"), "test('p', () => {});\n")
             .map_err(|err| format!("write pricing.test.ts: {err}"))?;
         init_git_repo_with_initial_files(
             &repo,
-            &["package.json", "pricing.ts", "pricing.test.ts"],
+            &["package.json", "lib/pricing.ts", "lib/pricing.test.ts"],
         )?;
         let doctor_languages = crate::cli::commands::detect_languages(&repo);
         assert!(
