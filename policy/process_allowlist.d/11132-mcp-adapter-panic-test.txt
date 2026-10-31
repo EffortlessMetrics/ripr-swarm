@@ -1,0 +1,1 @@
+crates/ripr/src/mcp/server_tests.rs|Command::new|1|mcp-adapter-panic-test|#11132: the MCP adapter-panic containment regression builds a real temp git repo (init/config/add/commit) so diff analysis has committed state; test-only setup spawn that fails closed with the git stderr. One helper closure, no shell or descendants.

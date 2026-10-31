@@ -94,6 +94,9 @@ pub(super) struct FmtContext {
     competing_to_string: bool,
     /// Formatting macros a `macro_rules!` or non-std `use` can rebind.
     shadowed_macros: Vec<&'static str>,
+    /// Inherent associated fns of the self type whose only indexed
+    /// declaration returns `Self` or the type: `T::name(..)` builds a `T`.
+    constructors: Vec<String>,
 }
 
 impl FmtContext {
@@ -128,6 +131,7 @@ impl FmtContext {
             type_declared_once: declared == 1,
             competing_to_string,
             shadowed_macros,
+            constructors: super::inherent_constructor_names(index, &self_type),
         })
     }
 }
@@ -279,17 +283,17 @@ pub(super) fn test_dispatches_to_fmt(
     let masked = mask_comments_and_strings(&test.body);
     (fmt_trait == FmtTrait::Display
         && !context.competing_to_string
-        && to_string_dispatch(&masked, &self_type))
+        && to_string_dispatch(&masked, &self_type, &context.constructors))
         || macro_dispatch(&test.body, &masked, fmt_trait, &self_type, context)
 }
 
 /// `value.to_string()` where `value` is typed as `self_type` by the strict
 /// rule below (constructor literal or typed `let`).
-fn to_string_dispatch(masked: &str, self_type: &str) -> bool {
+fn to_string_dispatch(masked: &str, self_type: &str, constructors: &[String]) -> bool {
     let mut search = 0usize;
     while let Some(at) = masked[search..].find(".to_string").map(|at| search + at) {
         search = at + 1;
-        if to_string_dispatch_at(masked, at, self_type) {
+        if to_string_dispatch_at(masked, at, self_type, constructors) {
             return true;
         }
     }
@@ -297,7 +301,12 @@ fn to_string_dispatch(masked: &str, self_type: &str) -> bool {
 }
 
 /// The `.to_string` at `at` is a call whose receiver is typed `self_type`.
-fn to_string_dispatch_at(masked: &str, at: usize, self_type: &str) -> bool {
+fn to_string_dispatch_at(
+    masked: &str,
+    at: usize,
+    self_type: &str,
+    constructors: &[String],
+) -> bool {
     let after = masked[at + ".to_string".len()..].trim_start();
     if !after.starts_with("()") {
         return false;
@@ -309,6 +318,7 @@ fn to_string_dispatch_at(masked: &str, at: usize, self_type: &str) -> bool {
         Scope {
             lets: &lets,
             body: masked,
+            constructors,
         },
         self_type,
     )
@@ -594,7 +604,7 @@ pub(in crate::analysis) fn assertion_pins_display_string(
     masked
         .get(at..)
         .is_some_and(|rest| rest.starts_with(".to_string"))
-        && to_string_dispatch_at(&masked, at, &self_type)
+        && to_string_dispatch_at(&masked, at, &self_type, &context.constructors)
 }
 
 /// The receiver expression ending at `dot`: an identifier or a bracketed
@@ -706,6 +716,7 @@ fn macro_dispatch(
         let scope = Scope {
             lets: &lets,
             body: masked,
+            constructors: &context.constructors,
         };
         if args_dispatch(&args, format_index, scope, fmt_trait, self_type) {
             return true;
@@ -891,7 +902,9 @@ fn string_literal_content(raw: &str) -> Option<&str> {
 /// that constructs `Self` itself: the bare type name, a struct literal,
 /// tuple struct or enum variant, or a `let` binding initialized so (or
 /// annotated `: self_type`) before the macro. Associated consts and factory
-/// functions (`T::LABEL`, `T::make()`) may have another type and are refused.
+/// functions (`T::LABEL`, `T::make()`) may have another type and are refused,
+/// unless the index shows `make` is the type's only inherent associated fn of
+/// that name and its declared return is exactly `Self` or the type.
 fn expr_has_type(expr: &str, scope: Scope<'_>, self_type: &str) -> bool {
     let mut expr = expr.trim();
     loop {
@@ -910,30 +923,36 @@ fn expr_has_type(expr: &str, scope: Scope<'_>, self_type: &str) -> bool {
     if expr.bytes().all(is_ident_byte) {
         return expr == self_type || binding_has_type(scope, expr, self_type);
     }
-    initializer_is_one_head_expr(expr) && constructs_self(expr, self_type)
+    initializer_is_one_head_expr(expr) && constructs_self(expr, self_type, scope.constructors)
 }
 
-fn constructs_self(expr: &str, self_type: &str) -> bool {
+fn constructs_self(expr: &str, self_type: &str, constructors: &[String]) -> bool {
     let Some((segments, next)) = type_head(expr) else {
         return false;
     };
     let opens = matches!(next, Some(b'(' | b'{'));
     match segments.as_slice() {
-        // `Site(..)` / `m::Site { .. }`: only module (lowercase) prefixes may
+        // `Site(..)` / `crate::Site { .. }`: only an in-crate prefix may
         // precede the type, so `Error::Site(..)` (a variant named like the
-        // type) is not a `Site`.
-        [prefix @ .., last]
-            if opens
-                && *last == self_type
-                && prefix
-                    .iter()
-                    .all(|segment| segment.starts_with(|c: char| c.is_ascii_lowercase())) =>
-        {
-            true
+        // type) and `other_crate::Site { .. }` (a foreign type sharing the
+        // name) are not a `Site`.
+        [prefix @ .., last] if opens && *last == self_type && in_crate_prefix(prefix) => true,
+        [prefix @ .., ty, name] => {
+            *ty == self_type
+                && in_crate_prefix(prefix)
+                && (is_variant_name(name) || (opens && constructors.iter().any(|c| c == name)))
         }
-        [.., ty, variant] => *ty == self_type && is_variant_name(variant),
         _ => false,
     }
+}
+
+/// Whether a path prefix keeps naming the local type: empty, or only
+/// `crate`, `self` or `super` (the rule `binding_has_type` applies to
+/// annotations).
+fn in_crate_prefix(prefix: &[&str]) -> bool {
+    prefix
+        .iter()
+        .all(|segment| matches!(*segment, "crate" | "self" | "super"))
 }
 
 /// What a macro argument can be typed from: the statements finished before
@@ -942,6 +961,7 @@ fn constructs_self(expr: &str, self_type: &str) -> bool {
 struct Scope<'a> {
     lets: &'a str,
     body: &'a str,
+    constructors: &'a [String],
 }
 
 /// Whether `binding` is confined to the shapes that keep its type known:
@@ -1040,10 +1060,7 @@ fn binding_has_type(scope: Scope<'_>, binding: &str, self_type: &str) -> bool {
         // of another crate or module that merely shares the local type's
         // name; only an in-crate prefix keeps the annotation the local type.
         return type_head(&pattern[colon + 1..]).is_some_and(|(segments, _)| {
-            segments.last() == Some(&self_type)
-                && segments[..segments.len() - 1]
-                    .iter()
-                    .all(|segment| matches!(*segment, "crate" | "self" | "super"))
+            segments.last() == Some(&self_type) && in_crate_prefix(&segments[..segments.len() - 1])
         });
     }
     let init = statement[eq + 1..].trim();
@@ -1053,6 +1070,7 @@ fn binding_has_type(scope: Scope<'_>, binding: &str, self_type: &str) -> bool {
                 .trim_start()
                 .trim_start_matches("mut "),
             self_type,
+            scope.constructors,
         )
 }
 
@@ -1431,6 +1449,14 @@ mod tests {
                 "let merge = Merge;\nassert_eq!(format!(\"{:?}\", merge), \"a\");",
                 "let merge = Merge::new(vec![]);\nassert_eq!(merge.to_string(), \"a\");",
                 "let merge = Merge;\nassert_eq!(merge.len(), 0);",
+                // A path-qualified initializer names the local type only
+                // with an in-crate prefix, like an annotation.
+                "let merge = crate::Merge { labels: vec![] };\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge = self::Merge { labels: vec![] };\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge = super::Merge { labels: vec![] };\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge = other_crate::Merge { labels: vec![] };\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge = other_crate::Merge(vec![]);\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge = other_crate::Merge::Variant;\nassert_eq!(merge.to_string(), \"a\");",
                 // A path-qualified annotation names the local type only with
                 // an in-crate prefix.
                 "let merge: crate::Merge = Merge;\nassert_eq!(merge.to_string(), \"a\");",
@@ -1443,7 +1469,11 @@ mod tests {
             .filter(|(_, reason)| *reason == RelationReason::HelperOwnerCall)
             .map(|(name, _)| name.as_str())
             .collect();
-        assert_eq!(helper_calls, ["t0", "t1", "t6"], "{reasons:?}");
+        assert_eq!(
+            helper_calls,
+            ["t0", "t1", "t12", "t6", "t7", "t8"],
+            "{reasons:?}"
+        );
         assert!(
             !reasons
                 .iter()
@@ -2035,6 +2065,142 @@ mod tests {
         assert!(direct(&reasons(&owner, 0, &[unit_variant]), "t0"));
     }
 
+    /// An inherent `impl DecodeError` fn declared on line `line` of the extra
+    /// source `src/extra0.rs`, as the index records it.
+    fn inherent_fn(name: &str, line: usize, source: &str) -> FunctionSummary {
+        let mut function = fmt_function("src/extra0.rs", "DecodeError");
+        function.name = name.to_string();
+        function.id = SymbolId(format!("src/extra0.rs::impl DecodeError::{name}"));
+        function.start_line = line;
+        function.end_line = line;
+        function.item.container = crate::analysis::facts::FunctionContainer::Inherent {
+            self_ty: "DecodeError".to_string(),
+        };
+        function.item.has_body = true;
+        function.body = source
+            .lines()
+            .nth(line - 1)
+            .and_then(|text| {
+                text.find("fn ").map(|at| {
+                    text[at..]
+                        .trim_end()
+                        .strip_suffix('}')
+                        .unwrap_or(&text[at..])
+                        .trim_end()
+                })
+            })
+            .unwrap_or_default()
+            .into();
+        function
+    }
+
+    /// Whether the tests relate, with one indexed inherent `make` per source
+    /// line that declares it (none when the source declares no `make`).
+    fn ctor_reasons(source: &str, body: &str, owner: &str) -> bool {
+        let functions = source
+            .lines()
+            .enumerate()
+            .filter(|(_, text)| text.contains("fn make("))
+            .map(|(at, text)| {
+                let mut function = inherent_fn("make", at + 1, source);
+                function.item.has_self_param = text.contains("(self");
+                function
+            })
+            .collect();
+        direct(
+            &reasons_full(&[owner], 0, &[body], &[source], functions),
+            "t0",
+        )
+    }
+
+    #[test]
+    fn a_path_call_to_a_self_returning_inherent_constructor_types_the_receiver() {
+        let debug = "fmt::Debug for DecodeError";
+        let source = "impl DecodeError { pub fn make(n: u8) -> Self { DecodeError::Overflow } }\n";
+        for body in [
+            "let e = DecodeError::make(3);\nformat!(\"{:?}\", e);",
+            "let e = crate::DecodeError::make(3);\nformat!(\"{:?}\", e);",
+            "format!(\"{:?}\", DecodeError::make(3));",
+            "let mut e = DecodeError::make(3);\nassert_eq!(format!(\"{e:?}\"), \"x\");",
+        ] {
+            assert!(ctor_reasons(source, body, debug), "{body}");
+        }
+        let display = "fmt::Display for DecodeError";
+        let to_string = "let e = DecodeError::make(3);\nassert_eq!(e.to_string(), \"x\");";
+        assert!(ctor_reasons(source, to_string, display));
+        // A return of the type name, with generics, is the same type.
+        let named =
+            "impl DecodeError { pub fn make(n: u8) -> DecodeError { DecodeError::Overflow } }\n";
+        let body = "let e = DecodeError::make(3);\nformat!(\"{:?}\", e);";
+        assert!(ctor_reasons(named, body, debug));
+    }
+
+    #[test]
+    fn constructor_receivers_fail_closed_unless_the_index_proves_the_return() {
+        let debug = "fmt::Debug for DecodeError";
+        let body = "let e = DecodeError::make(3);\nformat!(\"{:?}\", e);";
+        let rows: [(&str, &str); 7] = [
+            (
+                "a Result wrapper",
+                "impl DecodeError { pub fn make(n: u8) -> Result<Self, ()> { Ok(DecodeError::Overflow) } }\n",
+            ),
+            (
+                "another type",
+                "impl DecodeError { pub fn make(n: u8) -> Other { Other } }\n",
+            ),
+            (
+                "no declared return",
+                "impl DecodeError { pub fn make(n: u8) { } }\n",
+            ),
+            (
+                "a method taking self",
+                "impl DecodeError { pub fn make(self) -> Self { self } }\n",
+            ),
+            (
+                "two declarations of the name",
+                "impl DecodeError { pub fn make(n: u8) -> Self { DecodeError::Overflow } }\nimpl DecodeError { pub fn make(n: u8) -> Self { DecodeError::Overflow } }\n",
+            ),
+            (
+                "an async constructor",
+                "impl DecodeError { pub async fn make(n: u8) -> Self { DecodeError::Overflow } }\n",
+            ),
+            ("no indexed declaration", "impl DecodeError { }\n"),
+        ];
+        for (label, source) in rows {
+            assert!(!ctor_reasons(source, body, debug), "{label}");
+        }
+        let source = "impl DecodeError { pub fn make(n: u8) -> Self { DecodeError::Overflow } }\n";
+        for body in [
+            "let e = DecodeError::make(3).unwrap();\nformat!(\"{:?}\", e);",
+            "let e = other::DecodeError::make(3);\nformat!(\"{:?}\", e);",
+            "let e = DecodeError::make(3);\nlet f = move || e;\nformat!(\"{:?}\", e);",
+            "format!(\"{:?}\", DecodeError::make);",
+            "format!(\"{:?}\", DecodeError::other(3));",
+        ] {
+            assert!(!ctor_reasons(source, body, debug), "{body}");
+        }
+    }
+
+    #[test]
+    fn a_trait_only_constructor_does_not_type_the_receiver() {
+        let source =
+            "impl Make for DecodeError { fn make(n: u8) -> Self { DecodeError::Overflow } }\n";
+        let mut make = inherent_fn("make", 1, source);
+        make.item.container = crate::analysis::facts::FunctionContainer::TraitImpl {
+            trait_path: "Make".to_string(),
+            self_ty: "DecodeError".to_string(),
+        };
+        let body = "let e = DecodeError::make(3);\nformat!(\"{:?}\", e);";
+        let related = reasons_full(
+            &["fmt::Debug for DecodeError"],
+            0,
+            &[body],
+            &[source],
+            vec![make],
+        );
+        assert!(related.is_empty(), "{related:?}");
+    }
+
     #[test]
     fn inherent_to_string_wins_over_display() {
         let body = format!("{CTOR}assert_eq!(e.to_string(), \"x\");");
@@ -2084,13 +2250,17 @@ mod tests {
         for body in [
             "format!(\"{:?}\", Error::DecodeError(inner));".to_string(),
             "let e = Error::DecodeError(inner);\nformat!(\"{:?}\", e);".to_string(),
+            // A module prefix may be another crate's module (#8999): only
+            // bare, `crate`, `self` and `super` prefixes name the local type.
+            "format!(\"{:?}\", m::DecodeError(inner));".to_string(),
+            "let e = crate::m::DecodeError(inner);\nformat!(\"{:?}\", e);".to_string(),
         ] {
             assert!(reasons(&owner, 0, &[&body]).is_empty(), "{body}");
         }
         for body in [
             "format!(\"{:?}\", DecodeError(inner));",
-            "format!(\"{:?}\", m::DecodeError(inner));",
-            "let e = crate::m::DecodeError(inner);\nformat!(\"{:?}\", e);",
+            "format!(\"{:?}\", crate::DecodeError(inner));",
+            "let e = super::DecodeError(inner);\nformat!(\"{:?}\", e);",
         ] {
             assert!(direct(&reasons(&owner, 0, &[body]), "t0"), "{body}");
         }

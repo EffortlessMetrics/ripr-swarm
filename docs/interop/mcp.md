@@ -107,6 +107,13 @@ limitation instead of leaving that to the first failed refresh. The field is a
 bounded marker probe, not a Git invocation, and is absent when a plausible
 marker exists: absence does not mean Git accepted it.
 
+When a committed refresh analyzed nothing (`no_scope`, `no_changed_lines` or
+`no_behavioral_candidates` with zero items), `ripr_refresh` adds an
+`empty_scope_hint` (`why`, `pass_base`, `pass_source`, #11213): the default base
+may have resolved to the analyzed commit (detached HEAD, `origin/HEAD` at HEAD),
+and `base` or `source: "worktree"` widen the diff. The hint never changes the
+outcome kind and an empty result is not an all-clear.
+
 `ripr_refresh` is read-only with respect to source, but the shared analysis
 writes its warm cache under the root's `target/ripr/`. Cargo projects normally
 gitignore `target/`; in a repository that does not, those files show as
@@ -342,13 +349,55 @@ once; a past-end `omitted_offset` is an empty disclosed window. Only a listing w
 (for example an oversized filter echo) cannot fit even one page fails closed
 with `result_too_large` naming `ripr://snapshot/{snapshot_id}` as the
 identity route. Other tool responses carry the document once at full fidelity:
-`content[0].text` is the compact JSON serialization, and
+by default `content[0].text` is the compact JSON serialization, and
 `structuredContent` repeats it in every successful response. Each tool
 advertises an `outputSchema`, so a success never ships without its
 structured copy: when the complete double-carry envelope does not fit the
 id-aware response budget, the call fails closed with the typed
 `result_too_large` refusal and that tool's recovery route (#7768) instead
 of silently dropping `structuredContent`.
+
+### Text content mode (compatibility decision, #9360)
+
+`structuredContent` is the single complete result and is identical in every
+mode. The MCP specification asks a tool that returns structured content to
+also return its serialization as a text block so hosts without structured
+support keep working, and that is why the default doubles the payload.
+Hosts differ in which copy they hand to the model, and a host that feeds only
+text content to its model would silently lose the result if the text were a
+digest — a worse failure than duplicated tokens — so the lossless copy stays
+the default and the token saver is an explicit opt-in per server process:
+
+| `RIPR_MCP_TEXT_CONTENT` | `content[0].text` on a successful result |
+|---|---|
+| unset, `full`, or any unrecognized value | the compact JSON copy of the document (default) |
+| `summary` (ASCII case-insensitive) | a digest, not a copy |
+
+Set it in the host's server `env` (for example `"env": {"RIPR_MCP_TEXT_CONTENT":
+"summary"}` beside `command` and `args`) only for a host known to read
+`structuredContent`. The digest starts with a header naming the schema
+version, saying it is not a copy and pointing at `structuredContent` and at
+`RIPR_MCP_TEXT_CONTENT=full` for text-only hosts. It then has one line per
+top-level field: scalars verbatim (strings longer than 200 characters are
+clipped with a marker that points back to `structuredContent`), arrays as
+entry counts with the first five `canonical_id` values so a text-only agent can
+still call `ripr_get_gap`, and objects as their field names. It adds and
+rewords no fact. Measured over stdio on a real repository (wire bytes of
+the whole JSON-RPC line, default then `summary`): `ripr_get_gap` 19187 to 9864
+(about half), `ripr_workspace_status` 5475 to 3362, `ripr_list_gaps` (6 items)
+7237 to 5607, `ripr_refresh` 2365 to 1916. The saving is largest for
+single-item evidence documents and grows with document size; a list page keeps
+its leading identities in the digest. An
+unrecognized value keeps the lossless default so a typo never shrinks what a
+text-only host receives.
+
+The mode changes only the text companion. Size admission is measured on the
+complete double-carry envelope in both modes, so paging, `result_too_large`
+and every other refusal fire at the same boundary whichever mode is set. The
+typed-failure result (`isError: true`) and the extra recovery sentence the
+status tool adds for an unavailable root are unchanged. The default is
+revisited once a host's handling of `structuredContent` is observed rather
+than assumed; changing it is a compatibility change for text-only hosts.
 
 Single-item gap overflow uses one captured-input recovery across the raw
 document, tool envelope and resource envelope. Its CLI command retains the
@@ -505,6 +554,15 @@ The card's `subject.canonical_gap_id` is the bound finding's own id, the same
 readable id `ripr_list_gaps` and `ripr_get_gap` return (#8638), so it can be passed back
 to those tools (they do not accept the seam-side hash); that hash rides additively as
 `subject.seam_content_gap_id`.
+
+For a card whose `readiness.repair_ready` is not true, the result also carries
+`finding_guidance` (#11213): the item's `missing` and `recommended_next_step`,
+read from the same evidence `ripr_get_gap` serves, plus the `ripr_get_gap`
+route. `ripr_prepare_repair` refusals carry the same `finding_guidance`. When
+the card names CLI routes (`ripr agent packet`, `ripr explain`, `ripr check`),
+`mcp_detail_routes` pairs each unchanged CLI string with `ripr_get_gap` and the
+`canonical_id`, which carries finding-level evidence over MCP (not the
+unbounded CLI packet). None of these fields changes readiness or any verdict.
 
 ## Typed failures
 

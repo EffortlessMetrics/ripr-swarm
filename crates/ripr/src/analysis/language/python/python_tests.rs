@@ -1248,6 +1248,7 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         class_facts: Default::default(),
         foreign_writes: Default::default(),
         version_conditional: false,
+        cli_subcommand: None,
     };
 
     let comment_only = "    # apply_discount(100)\n    other()\n";
@@ -1758,6 +1759,7 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         class_facts: Default::default(),
         foreign_writes: Default::default(),
         version_conditional: false,
+        cli_subcommand: None,
     };
     let dotted = PythonImport {
         imported: "src.pricing".to_string(),
@@ -1824,6 +1826,7 @@ fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Res
         class_facts: Default::default(),
         foreign_writes: Default::default(),
         version_conditional: false,
+        cli_subcommand: None,
     };
     let sources = [
         PathBuf::from("a/src/shared/calc.py"),
@@ -1912,6 +1915,7 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
         class_facts: Default::default(),
         foreign_writes: Default::default(),
         version_conditional: false,
+        cli_subcommand: None,
     };
     let sources = [
         PathBuf::from("src/shared/calc.py"),
@@ -1967,6 +1971,7 @@ fn same_stem_related_handles_missing_stems() {
         class_facts: Default::default(),
         foreign_writes: Default::default(),
         version_conditional: false,
+        cli_subcommand: None,
     };
     let test = PythonTest {
         setup_receivers: Vec::new(),
@@ -2539,6 +2544,53 @@ fn docstring_ranges_exclude_assigned_strings_and_fstrings() {
         facts.docstring_line_ranges,
         vec![1..=3],
         "only the plain first string expression of a real scope is a docstring"
+    );
+}
+
+#[test]
+fn docstring_ranges_include_attribute_docstrings() {
+    let source = concat!(
+        "class Box:\n",
+        "    name: str\n",
+        "    \"\"\"Attribute docs.\n",
+        "    More attribute docs.\n",
+        "    \"\"\"\n",
+        "    size = 1\n",
+        "    \"\"\"Size docs.\"\"\"\n",
+        "    f(1)\n",
+        "    \"\"\"Not after a call statement.\"\"\"\n",
+    );
+    let facts = extract_source_facts(Path::new("src/box.py"), source);
+
+    assert_eq!(
+        facts.docstring_line_ranges,
+        vec![3..=5, 7..=7],
+        "a plain string right after an assignment is an attribute docstring"
+    );
+}
+
+#[test]
+fn attribute_docstring_ranges_cover_module_and_stay_conservative() {
+    let source = concat!(
+        "LIMIT = 1\n",
+        "\"\"\"Module attribute docs.\n",
+        "More.\"\"\"\n",
+        "a = 1; \"shared with code\"\n",
+        "b = 2\n",
+        "f\"{b}\"\n",
+        "c = 3\n",
+        "b\"bytes\"\n",
+        "def fn():\n",
+        "    v = 1\n",
+        "    \"\"\"second string\"\"\"\n",
+        "    return v\n",
+    );
+    let facts = extract_source_facts(Path::new("src/mod.py"), source);
+
+    assert_eq!(
+        facts.docstring_line_ranges,
+        vec![2..=3],
+        "only the plain string after a module assignment counts"
     );
 }
 
@@ -4378,6 +4430,7 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         class_facts: Default::default(),
         foreign_writes: Default::default(),
         version_conditional: false,
+        cli_subcommand: None,
     };
     let line = "return retry_state.attempt_number > self.max_attempt_number";
     let strong = |oracle: &str| RelatedTest {
@@ -4461,6 +4514,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         class_facts: Default::default(),
         foreign_writes: Default::default(),
         version_conditional: false,
+        cli_subcommand: None,
     };
     let line = "return amount + 2";
     let related = [RelatedTest {
@@ -4548,6 +4602,7 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         class_facts: Default::default(),
         foreign_writes: Default::default(),
         version_conditional: false,
+        cli_subcommand: None,
     }
 }
 

@@ -246,7 +246,7 @@
         "verify": {
           "command": "npx --no-install jest tests/limiter.test.ts"
         },
-        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+        "why_not_actionable": "related test `parseLimit parses a numeric limit` asserts a different kind of behavior than this change, so ripr cannot safely choose which test to edit"
       },
       "preview_actionability": {
         "actionability_category": "incomplete_repair_packet",
@@ -279,7 +279,7 @@
         "repair_packet_ready": false,
         "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
         "unlock_condition": null,
-        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+        "why_not_actionable": "related test `parseLimit parses a numeric limit` asserts a different kind of behavior than this change, so ripr cannot safely choose which test to edit"
       },
       "stop_reasons": [],
       "oracle_kind": "unknown",
