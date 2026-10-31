@@ -1267,7 +1267,7 @@ mod tests {
         if !text.contains("Not ready to repair yet: no test file ripr may edit") {
             return Err(format!("refusal reason lost:\n{text}"));
         }
-        let mut ready = prose_test_card();
+        let ready = prose_test_card();
         let held = CardStartHold {
             reason: "the inline test target `src/lib.rs` has uncommitted changes; commit or stash them first".to_string(),
             next: Some("commit or stash `src/lib.rs`, then run `ripr repair s`".to_string()),
