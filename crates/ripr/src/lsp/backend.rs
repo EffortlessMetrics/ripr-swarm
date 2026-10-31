@@ -9810,8 +9810,6 @@ fn workspace_status_rejection_repair(
     }
 }
 
-
-
 impl Backend {
     /// `gap_id` is already validated by `optional_id_argument`: `None` means
     /// the caller asked for the top packet, never that a malformed id was
@@ -9939,7 +9937,6 @@ impl Backend {
         }))
     }
 }
-
 
 #[cfg(test)]
 mod gap_record_context_tests {
