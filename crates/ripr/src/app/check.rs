@@ -724,6 +724,37 @@ fn perl_facts_cache_dir(perl_config: &crate::config::PerlConfig, root: &Path) ->
     )
 }
 
+/// Config validation only checks `[perl].cache_dir` lexically, so a committed
+/// link inside the repository (`cache -> /elsewhere`) would still redirect the
+/// facts cache outside the analyzed root (#11477). Resolve the deepest existing
+/// ancestor, including a dangling link, and require it to stay under the root.
+fn ensure_perl_cache_dir_contained(root: &Path, cache_dir: &Path) -> Result<(), String> {
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|e| format!("cannot resolve workspace root {}: {e}", root.display()))?;
+    let mut existing = cache_dir;
+    while std::fs::symlink_metadata(existing).is_err() {
+        match existing.parent() {
+            Some(parent) => existing = parent,
+            None => break,
+        }
+    }
+    let resolved = existing.canonicalize().map_err(|e| {
+        format!(
+            "refusing to write Perl facts cache: cannot resolve {}: {e}",
+            existing.display()
+        )
+    })?;
+    if resolved.starts_with(&canonical_root) {
+        Ok(())
+    } else {
+        Err(format!(
+            "refusing to write Perl facts cache: {} resolves outside the workspace",
+            cache_dir.display()
+        ))
+    }
+}
+
 /// An external exporter gets an absent packet path inside an exclusively
 /// created attempt directory. The final cache key remains independent of
 /// attempt identity. Cleanup must not unlink another exporter's live packet.
@@ -930,6 +961,7 @@ fn invoke_perl_lsp_producer(
         .unwrap_or_else(|| default_executable_for_producer(perl_config.producer()));
 
     let cache_dir = perl_facts_cache_dir(perl_config, &input.root);
+    ensure_perl_cache_dir_contained(&input.root, &cache_dir)?;
 
     std::fs::create_dir_all(&cache_dir)
         .map_err(|e| format!("failed to create Perl facts cache dir: {e}"))?;
@@ -1199,6 +1231,33 @@ fn simple_hash(s: &str) -> u64 {
 
 #[cfg(test)]
 mod tests {
+
+    #[cfg(unix)]
+    #[test]
+    fn perl_cache_dir_refuses_link_outside_root_and_allows_inside() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!("ripr-perl-cache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("root");
+        let victim = base.join("victim");
+        std::fs::create_dir_all(root.join("inside")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&victim).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&victim, root.join("escape")).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(root.join("inside"), root.join("ok"))
+            .map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(base.join("missing"), root.join("dangling"))
+            .map_err(|e| e.to_string())?;
+
+        let refused = ensure_perl_cache_dir_contained(&root, &root.join("escape/facts"));
+        assert!(refused.is_err_and(|e| e.contains("outside the workspace")));
+        assert!(
+            ensure_perl_cache_dir_contained(&root, &root.join("dangling/facts"))
+                .is_err_and(|e| e.contains("cannot resolve"))
+        );
+        ensure_perl_cache_dir_contained(&root, &root.join("ok/facts"))?;
+        ensure_perl_cache_dir_contained(&root, &root.join("new/deep/facts"))?;
+        let _ = std::fs::remove_dir_all(&base);
+        Ok(())
+    }
 
     #[test]
     fn perl_facts_cache_dir_resolves_under_the_analyzed_root() {
