@@ -985,14 +985,16 @@ fn classify_git_root_probe(spawn: Result<bool, &str>) -> GitRootProbe {
     }
 }
 
-fn not_a_work_tree_message(root: &Path) -> String {
+pub(crate) fn not_a_work_tree_message(root: &Path) -> String {
+    // The remedy leads and the root path trails: clients that bound this text
+    // (the LSP `window/showMessage` warning keeps 240 characters) then shorten
+    // the cause, never the remedy.
     format!(
-        "`{}` is not inside a Git work tree (the analysis did not run). ripr diffs \
-         committed history, so run it from inside your repository, or pass `--root <path>` \
-         pointing at one. For whole-repository exploration of the current sources \
-         without Git history, use `{}`.",
-        root.display(),
+        "This root is not inside a Git work tree (the analysis did not run). Run from inside a \
+         repository or pass `--root <path>` to one; `{}` works without Git history. \
+         Root: `{}`",
         crate::domain::WHOLE_REPO_PILOT_COMMAND,
+        root.display(),
     )
 }
 
@@ -5376,7 +5378,7 @@ mod tests {
                 );
                 assert!(
                     !err.contains("not inside a Git work tree")
-                        && !err.contains("run it from inside your repository"),
+                        && !err.contains("Run from inside a repository"),
                     "generic work-tree advice must not be given for a missing gitdir in {}, got: {err}",
                     dir.display()
                 );

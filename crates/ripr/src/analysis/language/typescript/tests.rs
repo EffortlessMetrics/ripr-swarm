@@ -17937,38 +17937,6 @@ fn parse_worker_panic_is_a_typed_refusal_not_a_process_failure() -> Result<(), S
     Ok(())
 }
 
-/// An injected worker panic is confined to the arming test's own thread.
-/// `cargo test` runs tests as threads of one process and many tests parse the
-/// same relative path, so a path-only key made `src/calc.ts` panics leak into
-/// unrelated tests (the main-branch coverage lane failure).
-#[test]
-fn armed_parse_worker_panic_never_reaches_a_parse_from_another_thread() -> Result<(), String> {
-    let path = Path::new("src/armed-isolation.ts");
-    let _armed = super::parse::injected_worker_panic::arm(path, 0);
-    let other = std::thread::spawn(move || {
-        super::parse::parse_on_worker(
-            Path::new("src/armed-isolation.ts"),
-            "export const a = 1;\n",
-            |_file, source, _allocator| source.len(),
-        )
-    })
-    .join()
-    .map_err(|_| "other thread panicked".to_string())?;
-    assert_eq!(other, Ok(20), "another thread's parse must not be armed");
-    let own = super::parse::parse_on_worker(
-        path,
-        "export const a = 1;\n",
-        |_file, source, _allocator| source.len(),
-    );
-    assert!(
-        own.as_ref()
-            .err()
-            .is_some_and(|reason| super::parse::is_worker_failure(reason)),
-        "the arming thread's own parse still dies: {own:?}"
-    );
-    Ok(())
-}
-
 /// #11132: a worker that dies on a CHANGED file is disclosed as a typed
 /// `unsupported_syntax` finding plus a language-scope limitation naming the
 /// file, never as a clean result and never as an actionable repair signal.
@@ -18017,6 +17985,54 @@ fn analyze_diff_contains_a_parse_worker_panic_on_a_changed_file() -> Result<(), 
             finding.evidence
         );
     }
+    Ok(())
+}
+
+/// An armed analysis must not affect another concurrent analysis using the
+/// same relative file path under a different workspace root.
+#[test]
+fn parse_worker_injection_is_scoped_to_the_arming_analysis() -> Result<(), String> {
+    let armed_root = ts_unique_tempdir("workerpanic-isolation-armed")?;
+    let other_root = ts_unique_tempdir("workerpanic-isolation-other")?;
+    for root in [&armed_root, &other_root] {
+        ts_write_file(
+            &root.join("src/isolation.ts"),
+            "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
+        )?;
+    }
+    let run = |root: PathBuf| {
+        TypeScriptAdapter.analyze_diff(
+            &ts_analysis_options(root),
+            &OraclePolicy::default(),
+            &[changed_with_lines(
+                "src/isolation.ts",
+                &[(2, "  return a + b;")],
+            )],
+        )
+    };
+    let armed = super::parse::injected_worker_panic::arm(Path::new("src/isolation.ts"), 0);
+    // The other analysis completes while the first analysis's injection remains armed.
+    let other = std::thread::spawn(move || run(other_root))
+        .join()
+        .map_err(|_panic| "other analysis panicked".to_string())??;
+    assert!(
+        other.limitations.is_empty(),
+        "unrelated analysis: {:?}",
+        other.limitations
+    );
+    let failed = run(armed_root)?;
+    assert!(
+        failed.limitations.iter().any(|limit| {
+            limit.path.as_deref() == Some("src/isolation.ts")
+                && limit
+                    .bounded_detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("parse_worker_failed"))
+        }),
+        "armed analysis must disclose worker failure: {:?}",
+        failed.limitations
+    );
+    drop(armed);
     Ok(())
 }
 

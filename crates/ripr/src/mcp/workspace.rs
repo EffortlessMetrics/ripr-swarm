@@ -1901,6 +1901,7 @@ pub(crate) fn run_check(
             &inventory.candidate_seams,
             crate::app::agent_brief::AgentBriefPolicy::from_config(&config),
             &inventory.completeness,
+            Path::new(root),
         );
         let mut snapshot = Snapshot::from_output_admitted(
             &output,
@@ -1995,6 +1996,7 @@ fn run_worktree_check(
                 &inventory.candidate_seams,
                 crate::app::agent_brief::AgentBriefPolicy::from_config(config),
                 &inventory.completeness,
+                &root,
             );
             let mut snapshot = Snapshot::from_output_with_custody(
                 &output,

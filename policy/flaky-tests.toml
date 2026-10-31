@@ -19,8 +19,8 @@ status = "fixed"
 first_seen = "2026-10-31"
 evidence = ["run 41195638303 (main 3371ea49)", "run 41190928102 (main 049bd0a6)", "run 41188789260 (main 404a80d0)"]
 symptom = "parse_worker_failed limitation appears in an unrelated TypeScript test; the main coverage lane was red on 3 of 4 completed runs."
-root_cause = "The #11132 fault injection keyed an armed panic by a relative path (src/calc.ts) that many tests share. Under cargo test the other test's parse hit the armed path and its worker died. nextest runs one process per test, so the required lane never showed it."
-guard = "armed_parse_worker_panic_never_reaches_a_parse_from_another_thread"
+root_cause = "(Fixed independently on main by #11338 while this ledger was in review.) The #11132 fault injection keyed an armed panic by a relative path (src/calc.ts) that many tests share. Under cargo test the other test's parse hit the armed path and its worker died. nextest runs one process per test, so the required lane never showed it."
+guard = "parse_worker_injection_is_scoped_to_the_arming_analysis"
 
 [[flake]]
 id = "check-artifact-text-file-busy"
