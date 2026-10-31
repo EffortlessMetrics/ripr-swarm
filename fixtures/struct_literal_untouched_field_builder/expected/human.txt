@@ -45,5 +45,7 @@ Hidden:
         Each command below produces a stub, but ripr could not tell which seam your change touches.
         They do not establish a repair binding or close a static limitation.
         ripr agent stub --root <cwd>/fixtures/struct_literal_untouched_field_builder/input --seam-id 2de10479eb3ce440
+  Hidden classes:
+    weak = tests reach it but check it only loosely
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

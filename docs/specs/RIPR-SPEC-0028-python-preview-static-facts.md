@@ -640,7 +640,22 @@ is refused if it is a parameter, is stored, deleted, imported, declared
 `global`/`nonlocal`, bound by a `for`, `with`, `except`, walrus, comprehension,
 nested `def`/`class`/`lambda`, tuple unpack or augmented assignment, or if the
 body contains a `match`. A refused name stays unresolved, so the verdict is
-the weak one. Module-level constants are not resolved by this rule.
+the weak one.
+
+The same input also resolves when the name is a scalar-literal constant of the
+test's own module (`THRESHOLD = 50` above the tests, #10707). The module must
+bind it exactly once at top level, with no `global` rebind, no attribute
+assignment of it, no dynamic namespace write and no opaque construct; the
+test must not bind the name in any scope (parameter, store, loop or
+comprehension target, lambda or nested parameter, import, `match`); the body
+must not mention `monkeypatch`, `patch`, `setattr`, `globals`, `vars`, `exec`
+or `eval`; the module must hold no code that runs outside the tests (autouse
+fixture, `pytestmark`, setup or teardown hook, module-level call, or a
+`conftest.py` on the directory chain that declares a fixture or hook); and a
+test file that the diff also changes gets no credit. Anything else keeps the
+input unresolved. A plain write to the constant from another file that runs
+before the test (a sibling test module assigning `module.THRESHOLD` at
+import) is not seen; no extra fact is read for it.
 
 A changed line whose old and new text differ only in a trailing `#` comment or
 in whitespace between tokens emits no probe (#10706). Both lines are lexed and
@@ -1044,6 +1059,22 @@ argument (test locals, `*args`, a construct-call passing a dict), static
 evidence cannot see the activating input either way: the oracle verdict stands
 and an `exposed` finding carries a `boundary_activation_unresolved` evidence
 line naming that limitation.
+
+For an adjacent `>`/`>=` or `<`/`<=` while-bound edit with an unchanged
+integer bound, a closed generator walk can resolve a rebound parameter. It
+accepts only an owner consisting of the loop, whose body is `yield name`
+followed by one unconditional `name -= 1` (descending) or `name += 1`
+(ascending). Every strong call must bind a readable integer and occur in a
+direct whole-list or whole-tuple equality against an integer-literal sequence.
+The builtin constructor and imported free-function owner must retain their
+identity. A near-side or equal input reaches the bound; a past-bound input
+does not (#9733). Partial/lossy consumers such as `next` and `sum`, slices,
+unobserved calls, assertion-message calls, nested calls, shadowed constructors,
+and unsupported assertion shapes retain the unresolved limitation: potential
+iteration alone does not establish observation of the changed final element.
+Step-two, conditional, early-exit, pre-loop rebinding, other statements and
+unreadable calls retain the existing unresolved boundary limitation. This is
+not general loop evaluation.
 
 Static-limit findings must fail closed. They keep any observed reachability and
 oracle facts, but their infection and propagation stages remain `unknown`, the
