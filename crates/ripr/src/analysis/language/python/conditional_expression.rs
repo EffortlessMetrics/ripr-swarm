@@ -177,7 +177,9 @@ fn condition_truth(
     if is_identifier(condition) {
         // A bare owner parameter, read from the call's binding only (never a
         // same-named module constant), and only when the owner never rebinds it.
-        if name_rebound_in_owner(owner_source, owner, condition) {
+        if name_rebound_in_owner(owner_source, owner, condition)
+            || name_bound_by_statement(owner_source, owner, condition)
+        {
             return None;
         }
         return literal_truthiness(&row.bindings.get(condition)?.value);
@@ -190,6 +192,33 @@ fn condition_truth(
         owner_source,
         owner.start_line,
     )
+}
+
+/// Whether an owner-body statement binds, scopes or removes `name` without an
+/// assignment operator: `import x as name`, `from m import name`, a nested
+/// `def name` / `class name`, `del name`, `global name`, `nonlocal name`. The
+/// shared assignment reader does not see these, and after any of them the
+/// call's default no longer predicts what the expression reads. Over-refuses
+/// by design (any identifier-bounded mention on such a line).
+fn name_bound_by_statement(owner_source: &str, owner: &PythonOwner, name: &str) -> bool {
+    owner_source
+        .lines()
+        .skip(owner.start_line)
+        .take(owner.end_line.saturating_sub(owner.start_line))
+        .map(str::trim)
+        .any(|line| {
+            let mut words = line.split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'));
+            let first = words.find(|word| !word.is_empty());
+            match first {
+                Some("import" | "from" | "del" | "global" | "nonlocal") => {
+                    words.any(|word| word == name)
+                }
+                Some("def" | "class" | "async") => {
+                    words.find(|word| !word.is_empty() && !matches!(*word, "def")) == Some(name)
+                }
+                _ => false,
+            }
+        })
 }
 
 /// Python truthiness of a scalar literal, or `None` for anything else.
