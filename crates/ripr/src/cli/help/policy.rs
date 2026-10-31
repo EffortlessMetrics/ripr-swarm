@@ -122,7 +122,7 @@ Create options:
   --from PATH    Gate-decision JSON from `ripr gate evaluate`.
   --from-check PATH
                  Whole-repository `ripr check --format json` artifact, from
-                 `ripr check --candidate-tree HEAD^{tree}`. Baselines the gap
+                 `ripr check --candidate-tree $(git rev-parse HEAD^{tree})`. Baselines the gap
                  classes weakly_exposed, reachable_unrevealed and no_static_path
                  of the entire tree. Refuses a diff-scoped or incomplete artifact.
                  Give exactly one of --from or --from-check.
