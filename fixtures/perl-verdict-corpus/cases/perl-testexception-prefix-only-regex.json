@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testexception-prefix-only-regex.json",
-    "sha256": "72f24ddcf3d41d2e2bf1bdb39d63d0bf3d68daa877abd02ed528f770d21072e6",
+    "sha256": "91e96b1ea312c3ea5023e6ce2952508b2e5b9ded4998d3a0c34dc6aaa538c9fe",
     "provenance": "producer"
   }
 }
