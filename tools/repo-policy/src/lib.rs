@@ -763,9 +763,10 @@ pub fn workflow_plain_scalar_comment_violations(path: &str, text: &str) -> Vec<S
 /// Retired exceptions to the third-party action SHA-pin rule (#9303, #9529).
 pub const UNPINNED_ACTION_ALLOWLIST: &str = "policy/workflow_unpinned_action_allowlist.txt";
 
-/// Third-party `uses:` references in one workflow, as `(line, action@ref)`.
+/// External `uses:` references in one workflow, as `(line, action@ref)`.
 ///
-/// First-party `actions/*`, local `./` actions and comments are not third-party.
+/// Every non-local action, first-party `actions/*` included, must be SHA-pinned
+/// (#11692). Local `./` actions and comments are not external references.
 /// A `uses:` is recognised only as a step/job key (optionally after `- `), so
 /// the same text inside a `run:` string or a comment is not mistaken for one.
 fn third_party_action_refs(text: &str) -> Vec<(usize, String)> {
@@ -778,7 +779,7 @@ fn third_party_action_refs(text: &str) -> Vec<(usize, String)> {
         };
         let value = value.split(" #").next().unwrap_or("").trim();
         let value = value.trim_matches(|c| c == '"' || c == '\'');
-        if value.is_empty() || value.starts_with("./") || value.starts_with("actions/") {
+        if value.is_empty() || value.starts_with("./") {
             continue;
         }
         refs.push((index + 1, value.to_string()));
@@ -793,12 +794,13 @@ fn is_full_commit_sha(reference: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-/// Fail a third-party action (or reusable workflow) that is not pinned to a
+/// Fail an external action (or reusable workflow) that is not pinned to a
 /// full 40-hex commit SHA.
 ///
 /// A tag or branch is mutable: whoever controls it can change the code that
 /// runs beside this job's `GITHUB_TOKEN` and secrets. First-party `actions/*`
-/// follow the existing tag policy (`deprecated_workflow_action_refs`). Existing
+/// are pinned too (#11692); `deprecated_workflow_action_refs` still rejects
+/// retired major tags. Existing
 /// exceptions were held in `policy/workflow_unpinned_action_allowlist.txt` with
 /// a per-file count. The production entry point now requires that retired
 /// allowlist to remain empty, including rows whose count is zero (#9529).
@@ -1879,7 +1881,7 @@ pub fn deprecated_workflow_action_refs() -> &'static [(&'static str, &'static st
 }
 
 pub fn workflow_runtime_exception_patterns() -> &'static [&'static str] {
-    &["actions/dependency-review-action@v4"]
+    &["actions/dependency-review-action@"]
 }
 
 pub fn is_extension_node_workflow(path: &str) -> bool {
