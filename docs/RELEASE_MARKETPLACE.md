@@ -114,16 +114,25 @@ Use:
 .github/workflows/publish-extension.yml
 ```
 
-The workflow is `workflow_dispatch` only. Each dispatch publishes exactly one
-channel (`publish_vs_marketplace` or `publish_open_vsx`, not both, not neither),
-and the run must be dispatched at the receipted `source_sha` with the
-`v<version>` tag peeling to it. The first dispatch builds one VSIX and attaches
-it to the GitHub Release; the second reuses those bytes via `vsix_sha256`. Each
-publish job waits for approval on its protected environment.
+The workflow has no tag trigger; it runs only by `workflow_dispatch`, at the
+receipted release head. Each dispatch publishes to exactly one channel
+(`publish_vs_marketplace` or `publish_open_vsx`; zero or two is refused).
+The first dispatch packages the VSIX and attaches it to the existing
+`v<version>` GitHub Release (it never creates the Release). The second
+channel's dispatch reuses those attached bytes and must pass their digest as
+`vsix_sha256`. Each publish job waits for approval on its protected
+environment.
 
-The exact dispatch commands, inputs and receipts are in
-[RELEASE_TRANSACTION.md](RELEASE_TRANSACTION.md); do not dispatch by hand with
-only `version`.
+Every dispatch requires `version`, `source_sha` (the 40-hex head the release
+tag peels to; dispatch with `--ref` at that commit) and `manifest_sha256` (raw
+bytes of the published `ripr-server-manifest-v<version>.json`). The workflow
+normalizes tag names like `v0.8.0` to the package version `0.8.0` for the VSIX
+filename and duplicate-version checks.
+
+The exact commands for both channels, including the Open VSX dispatch with
+`--ref`, `source_sha`, `manifest_sha256` and `vsix_sha256`, are in
+[RELEASE_TRANSACTION.md](RELEASE_TRANSACTION.md) section 6. Do not dispatch
+from a hand-written sample.
 
 Publish the server binary assets before publishing the marketplace VSIX so the
 extension can download a matching `ripr` server on first activation. For

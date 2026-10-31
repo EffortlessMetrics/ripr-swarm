@@ -47,6 +47,11 @@ pub(crate) const AGENT_VERIFY_SCHEMA_VERSION: &str = "0.3";
 pub(crate) struct AgentVerifyArtifactBinding {
     pub(crate) before_content_sha256: String,
     pub(crate) after_content_sha256: String,
+    /// #3056: the before/after artifact is `Historical` and was produced from
+    /// a dirty worktree. Rendered only when true (additive, byte-stable
+    /// otherwise).
+    pub(crate) before_produced_from_dirty: bool,
+    pub(crate) after_produced_from_dirty: bool,
 }
 
 /// The one gap an `agent verify --gap-id` run bound its result to: open in
@@ -3538,10 +3543,72 @@ mod tests {
         }
     }
 
+    #[test]
+    fn agent_verify_json_discloses_produced_from_dirty_only_when_set() -> Result<(), String> {
+        let report = build_targeted_test_outcome_report(
+            &[],
+            &[],
+            "before.json".to_string(),
+            "after.json".to_string(),
+            OutcomeHeadIdentity::default(),
+        )?;
+        let render = |before: bool, after: bool| -> Result<Value, String> {
+            let mut binding = test_agent_verify_binding();
+            binding.before_produced_from_dirty = before;
+            binding.after_produced_from_dirty = after;
+            let json = render_json::render_agent_verify_json_with_currentness(
+                &report,
+                Some("historical_before_current_after"),
+                &binding,
+            )?;
+            serde_json::from_str(&json).map_err(|err| err.to_string())
+        };
+        let clean = render(false, false)?;
+        assert!(clean.get("before_produced_from_dirty").is_none());
+        assert!(clean.get("after_produced_from_dirty").is_none());
+        let dirty = render(true, false)?;
+        assert_eq!(dirty["before_produced_from_dirty"], true);
+        assert!(dirty.get("after_produced_from_dirty").is_none());
+        // The pair token is untouched by the additive field.
+        assert_eq!(dirty["artifact_currentness"], clean["artifact_currentness"]);
+        Ok(())
+    }
+
+    #[test]
+    fn agent_verify_json_discloses_after_produced_from_dirty_independently() -> Result<(), String> {
+        let report = build_targeted_test_outcome_report(
+            &[],
+            &[],
+            "before.json".to_string(),
+            "after.json".to_string(),
+            OutcomeHeadIdentity::default(),
+        )?;
+        let render = |before: bool, after: bool| -> Result<Value, String> {
+            let mut binding = test_agent_verify_binding();
+            binding.before_produced_from_dirty = before;
+            binding.after_produced_from_dirty = after;
+            let json = render_json::render_agent_verify_json_with_currentness(
+                &report,
+                Some("historical_noncurrent"),
+                &binding,
+            )?;
+            serde_json::from_str(&json).map_err(|err| err.to_string())
+        };
+        let after_only = render(false, true)?;
+        assert_eq!(after_only["after_produced_from_dirty"], true);
+        assert!(after_only.get("before_produced_from_dirty").is_none());
+        let both = render(true, true)?;
+        assert_eq!(both["before_produced_from_dirty"], true);
+        assert_eq!(both["after_produced_from_dirty"], true);
+        Ok(())
+    }
+
     fn test_agent_verify_binding() -> AgentVerifyArtifactBinding {
         AgentVerifyArtifactBinding {
             before_content_sha256: format!("sha256:{}", "b".repeat(64)),
             after_content_sha256: format!("sha256:{}", "c".repeat(64)),
+            before_produced_from_dirty: false,
+            after_produced_from_dirty: false,
         }
     }
     // --- #6031: the JSON receipt carries the pair's head/repository identity
