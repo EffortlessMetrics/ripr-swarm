@@ -1088,7 +1088,7 @@ fn first_field_construction(
     })
 }
 
-fn flow_sink(
+pub(super) fn flow_sink(
     kind: FlowSinkKind,
     text: impl Into<String>,
     line: usize,

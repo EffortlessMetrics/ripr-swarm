@@ -31,7 +31,16 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 #[cfg(test)]
+mod declaration_tests;
+#[cfg(test)]
 mod prefilter_tests;
+
+#[cfg(test)]
+thread_local! {
+    /// Test-only count of `macro_scope` parses `MacroVisibility::scope` ran
+    /// on this thread, so a test can assert the lookups do not re-parse.
+    static SCOPE_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 /// Child modules followed through `#[macro_use]` and parents followed
 /// upward. A deeper chain is refused.
@@ -51,8 +60,10 @@ pub(crate) struct MacroVisibility {
     generators: BTreeSet<String>,
     scopes: SyncMemo<BTreeMap<PathBuf, Option<Arc<MacroScope>>>>,
     /// Module name to the files that declare it with a `#[path]` or another
-    /// attribute; built on first use.
-    attributed: OnceLock<BTreeMap<String, BTreeSet<PathBuf>>>,
+    /// attribute (the first two found suffice); each name is resolved on
+    /// first ask, parsing only the files whose text can spell such a
+    /// declaration.
+    attributed: SyncMemo<BTreeMap<String, Arc<Vec<PathBuf>>>>,
     /// Generator name to every file that defines a macro of that name, with
     /// the definition when it is a plain `#[macro_export]`; files that spell
     /// `macro_export` somewhere unlisted. Built on first use.
@@ -87,6 +98,8 @@ fn shared_scope(source: &Arc<str>) -> Option<Arc<MacroScope>> {
     {
         return scope.clone();
     }
+    #[cfg(test)]
+    SCOPE_PARSES.with(|parses| parses.set(parses.get() + 1));
     let scope = macro_scope(source).map(Arc::new);
     if let Ok(mut guard) = SHARED_SCOPES.lock() {
         let map = guard.get_or_insert_with(HashMap::new);
@@ -107,7 +120,7 @@ impl Clone for MacroVisibility {
             sources: self.sources.clone(),
             generators: self.generators.clone(),
             scopes: SyncMemo::default(),
-            attributed: OnceLock::new(),
+            attributed: SyncMemo::default(),
             exports: OnceLock::new(),
         }
     }
@@ -149,6 +162,131 @@ fn may_call_generator(source: &str, names: &BTreeSet<String>) -> bool {
     })
 }
 
+/// ASCII whitespace as the lexer reads it: `is_ascii_whitespace` plus the
+/// vertical tab.
+fn is_lexer_whitespace(c: char) -> bool {
+    c.is_ascii_whitespace() || c == '\u{b}'
+}
+
+/// Whether `source` could declare an out-of-line module `name` (`mod name;`),
+/// with an attribute in front of it when `attributed`. A superset of what
+/// `macro_scope` lists, so a `false` skips its parse without changing the
+/// answer: the name at identifier boundaries, behind `mod` past any
+/// whitespace. A comment (`/` or a `//` line in the gap) or a non-ASCII byte
+/// counts as a maybe, and so does a `r#` prefix on the name. An attributed
+/// declaration also needs the `]` of its attribute (past an optional `pub`
+/// visibility) before the `mod`.
+fn may_declare_module_named(source: &str, name: &str, attributed: bool) -> bool {
+    let bytes = source.as_bytes();
+    let is_ident = |byte: u8| byte == b'_' || byte.is_ascii_alphanumeric();
+    if name.is_empty() {
+        return true;
+    }
+    source.match_indices(name).any(|(start, _)| {
+        if start > 0 && is_ident(bytes[start - 1]) {
+            return false;
+        }
+        if bytes
+            .get(start + name.len())
+            .is_some_and(|&byte| is_ident(byte))
+        {
+            return false;
+        }
+        let mut head = start;
+        if source[..head].ends_with("r#") {
+            head -= 2;
+        }
+        let before = source[..head].trim_end_matches(is_lexer_whitespace);
+        let own_line = source[..head]
+            .rsplit('\n')
+            .next()
+            .is_some_and(|line| line.chars().all(is_lexer_whitespace));
+        if ends_in_comment_or_unicode(before, own_line) {
+            return true;
+        }
+        let Some(item) = before.strip_suffix("mod") else {
+            return false;
+        };
+        if item.as_bytes().last().is_some_and(|&byte| is_ident(byte)) {
+            return false;
+        }
+        !attributed || may_follow_attribute(item)
+    })
+}
+
+/// `text` (trailing whitespace trimmed) ends in a block comment or a
+/// non-ASCII byte that the lexer may read as whitespace, or, when `own_line`,
+/// its last line holds a line comment (which only a name on a line of its own
+/// can follow; a name on the same line sits inside that comment).
+fn ends_in_comment_or_unicode(text: &str, own_line: bool) -> bool {
+    match text.as_bytes().last() {
+        None => false,
+        Some(&last) if last >= 0x80 => true,
+        Some(_) if text.ends_with("*/") => true,
+        Some(_) => own_line && text.rsplit('\n').next().unwrap_or(text).contains("//"),
+    }
+}
+
+/// Whether the text in front of a `mod` keyword can carry an attribute that
+/// `macro_scope` does not tolerate (see `module_attributes`): behind an
+/// optional `pub` or `pub(..)` visibility, a run of `#[..]` attributes that
+/// are not all a bare `macro_use`, `cfg(test)`, `allow(..)`, `warn(..)`,
+/// `deny(..)` or `doc..`. A comment, a non-ASCII byte, a keyword or an
+/// attribute this does not model is a maybe.
+fn may_follow_attribute(item: &str) -> bool {
+    let mut item = item.trim_end_matches(is_lexer_whitespace);
+    if ends_in_comment_or_unicode(item, true) || item.ends_with("unsafe") {
+        return true;
+    }
+    if item.ends_with(')') {
+        // Only a plain `pub(<path>)` is modelled; a comment, quote or paren
+        // inside or around it is a maybe.
+        let Some(open) = item.rfind('(') else {
+            return true;
+        };
+        let body = &item[open + 1..item.len() - 1];
+        if body
+            .bytes()
+            .any(|b| matches!(b, b'/' | b'(' | b')' | b'"' | b'\'') || b >= 0x80)
+        {
+            return true;
+        }
+        let visibility = item[..open].trim_end_matches(is_lexer_whitespace);
+        let Some(rest) = visibility.strip_suffix("pub") else {
+            return true;
+        };
+        item = rest;
+    } else if let Some(rest) = item.strip_suffix("pub") {
+        item = rest;
+    }
+    loop {
+        item = item.trim_end_matches(is_lexer_whitespace);
+        if ends_in_comment_or_unicode(item, true) {
+            return true;
+        }
+        if !item.ends_with(']') {
+            return false;
+        }
+        let Some(open) = item.rfind("#[") else {
+            return true;
+        };
+        let content: String = item[open + 2..item.len() - 1]
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        let tolerated = !content.contains(['[', ']', '"', '\'', '#', '/'])
+            && (content == "macro_use"
+                || content == "cfg(test)"
+                || ["allow(", "warn(", "deny(", "doc"]
+                    .iter()
+                    .any(|prefix| content.starts_with(prefix)));
+        if !tolerated {
+            return true;
+        }
+        item = &item[..open];
+    }
+}
+
 impl MacroVisibility {
     pub(crate) fn new(files: impl Iterator<Item = (PathBuf, Arc<str>)>) -> Self {
         let sources: BTreeMap<PathBuf, Arc<str>> = files.collect();
@@ -170,7 +308,7 @@ impl MacroVisibility {
             sources,
             generators,
             scopes: SyncMemo::default(),
-            attributed: OnceLock::new(),
+            attributed: SyncMemo::default(),
             exports: OnceLock::new(),
         }
     }
@@ -469,7 +607,15 @@ impl MacroVisibility {
         let (name, location) = module_identity(file)?;
         let mut found = Vec::new();
         for candidate in self.declarer_candidates(&location) {
-            if candidate == file || !self.sources.contains_key(&candidate) {
+            if candidate == file {
+                continue;
+            }
+            // A file that cannot spell `mod name` declares nothing: skip its
+            // parse.
+            let Some(source) = self.sources.get(&candidate) else {
+                continue;
+            };
+            if !may_declare_module_named(source, &name, false) {
                 continue;
             }
             let Some(scope) = self.scope(&candidate) else {
@@ -486,29 +632,44 @@ impl MacroVisibility {
         }
         // A `#[path]` or cfg'd declaration of the name anywhere can include
         // the same file in another crate, where the macros differ.
-        let other_declaration = self
-            .attributed_declarations()
-            .get(&name)
-            .is_some_and(|files| files.iter().any(|candidate| candidate != file));
+        let other_declaration = self.attributed_elsewhere(&name, file);
         (found.len() == 1 && !other_declaration).then(|| found.remove(0))
     }
 
-    fn attributed_declarations(&self) -> &BTreeMap<String, BTreeSet<PathBuf>> {
-        self.attributed.get_or_init(|| {
-            let mut index = BTreeMap::<String, BTreeSet<PathBuf>>::new();
-            for path in self.sources.keys() {
+    /// Whether a file other than `file` declares module `name` with a
+    /// `#[path]` or another attribute. Only files whose text can spell such a
+    /// declaration are parsed, and the scan stops at the second confirmed
+    /// declarer: two distinct files always include one that is not `file`.
+    /// Each name is answered once per run.
+    fn attributed_elsewhere(&self, name: &str, file: &Path) -> bool {
+        let cached = self.attributed.borrow().get(name).cloned();
+        let declarers = cached.unwrap_or_else(|| {
+            let mut found = Vec::new();
+            for (path, source) in &self.sources {
+                if !may_declare_module_named(source, name, true) {
+                    continue;
+                }
                 let Some(scope) = self.scope(path) else {
                     continue;
                 };
-                for module in scope.modules.iter().filter(|module| !module.plain) {
-                    index
-                        .entry(module.name.clone())
-                        .or_default()
-                        .insert(path.clone());
+                if scope
+                    .modules
+                    .iter()
+                    .any(|module| !module.plain && module.name == name)
+                {
+                    found.push(path.clone());
+                    if found.len() == 2 {
+                        break;
+                    }
                 }
             }
-            index
-        })
+            let found = Arc::new(found);
+            self.attributed
+                .borrow()
+                .insert(name.to_string(), found.clone());
+            found
+        });
+        declarers.iter().any(|candidate| candidate != file)
     }
 
     /// Files whose `mod name;` could resolve into `location`.
