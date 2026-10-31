@@ -101,6 +101,148 @@ pub(crate) fn baseline_create_report_from_gate_decision_json(
 ) -> Result<BaselineCreateReport, String> {
     let value = serde_json::from_str::<Value>(json_text)
         .map_err(|err| format!("parse gate-decision JSON failed: {err}"))?;
+    baseline_create_report_from_gate_decision_value(source_report, created_at, &value)
+}
+
+/// Build the baseline from a whole-repository `ripr check --format json`
+/// artifact (issue #11206 item 3). The artifact is projected onto the same
+/// per-decision shape `ripr gate evaluate` writes and then goes through the one
+/// entry builder, so identity, review and skip semantics have a single owner.
+///
+/// Fail-closed: only a complete outcome over the empty-tree base is accepted
+/// (a PR-scoped or incomplete artifact would silently baseline a slice), and
+/// only gap classes are baselined; every other finding is counted as skipped,
+/// never written.
+pub(crate) fn baseline_create_report_from_check_json(
+    source_report: &str,
+    created_at: &str,
+    json_text: &str,
+) -> Result<BaselineCreateReport, String> {
+    let value = serde_json::from_str::<Value>(json_text)
+        .map_err(|err| format!("parse check JSON failed: {err}; run `ripr check --candidate-tree HEAD^{{tree}} --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file"))?;
+    let decisions = check_findings_as_decisions(&value)?;
+    let projected = json!({
+        "schema_version": SCHEMA_VERSION,
+        "mode": WHOLE_REPO_CHECK_MODE,
+        "root": value.get("root").cloned().unwrap_or(Value::Null),
+        "subject": {},
+        "decisions": decisions,
+    });
+    let mut report =
+        baseline_create_report_from_gate_decision_value(source_report, created_at, &projected)?;
+    report.warnings.insert(
+        0,
+        "baseline built from a whole-repository `ripr check` artifact, not a gate decision; it records existing static gaps only and is unreviewed until a person confirms it"
+            .to_string(),
+    );
+    Ok(report)
+}
+
+/// Gap classes a whole-repository baseline records. Unknown and exposed
+/// classes are not debt a gate would block on, so they are skipped (counted),
+/// never baselined.
+const WHOLE_REPO_GAP_CLASSES: [&str; 3] =
+    ["weakly_exposed", "reachable_unrevealed", "no_static_path"];
+const WHOLE_REPO_CHECK_MODE: &str = "whole_repo_check";
+const EMPTY_TREE_IDS: [&str; 2] = [
+    "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+    "6ef19b41225c5369f1c104d45d8d85efa9d058d53bc6434cd0f5d23e5dc71d12",
+];
+
+fn check_findings_as_decisions(check: &Value) -> Result<Vec<Value>, String> {
+    let schema = check
+        .get("schema_version")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "check JSON missing schema_version; run `ripr check --candidate-tree HEAD^{tree} --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file".to_string())?;
+    if check.get("tool").and_then(Value::as_str) != Some("ripr") {
+        return Err(format!(
+            "input is not a `ripr check` JSON artifact (schema_version `{schema}`); run `ripr check --candidate-tree HEAD^{{tree}} --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file"
+        ));
+    }
+    let outcome = check.pointer("/analysis_outcome").ok_or_else(|| {
+        "check JSON carries no analysis_outcome, so completeness is not established; run `ripr check --candidate-tree HEAD^{tree} --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file".to_string()
+    })?;
+    let kind = outcome.pointer("/outcome/kind").and_then(Value::as_str);
+    let complete = outcome.get("analysis_complete").and_then(Value::as_bool) == Some(true);
+    if !complete
+        || !matches!(
+            kind,
+            Some("complete_with_findings" | "complete_no_findings")
+        )
+    {
+        return Err(format!(
+            "check analysis outcome is `{}` (analysis_complete = {complete}), not a complete whole-repository run; a partial run would baseline only part of the repository; run `ripr check --candidate-tree HEAD^{{tree}} --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file",
+            kind.unwrap_or("unknown")
+        ));
+    }
+    // A findings-budget-bounded document is a prefix, not the whole set (#5203,
+    // #9010): the omitted lowest-priority gaps would later read as new debt.
+    if crate::output::gate::discloses_limited_findings_bound(check)
+        || crate::output::gate::discloses_bounded_analysis_document(check)
+    {
+        return Err(format!(
+            "check artifact discloses a findings-budget-bounded document (a prefix of the findings, not the whole set), so a baseline from it would be incomplete; re-run with `{}=0` for the full set; run `ripr check --candidate-tree HEAD^{{tree}} --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file",
+            crate::output::json::CHECK_FINDINGS_BYTES_ENV
+        ));
+    }
+    // A partial-scope run is the same incomplete denominator the gate refuses
+    // as an input in every position the run state is disclosed.
+    if crate::output::gate::discloses_limited_partial_scope(check) {
+        return Err(
+            "check artifact discloses a partial-scope run (limited_partial_scope), so a baseline from it would cover only part of the repository; run `ripr check --candidate-tree HEAD^{tree} --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file"
+        .to_string());
+    }
+    let base_tree = outcome
+        .pointer("/outcome/identity/git_candidate_subject/base_tree")
+        .and_then(Value::as_str);
+    if !base_tree.is_some_and(|tree| EMPTY_TREE_IDS.contains(&tree)) {
+        return Err(format!(
+            "check artifact is not a whole-repository run (candidate base tree is {}); a diff-scoped artifact would baseline only the slice it saw; run `ripr check --candidate-tree HEAD^{{tree}} --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file",
+            base_tree.map_or_else(|| "absent".to_string(), |tree| format!("`{tree}`"))
+        ));
+    }
+    let findings = check
+        .get("findings")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "check JSON missing findings array; run `ripr check --candidate-tree HEAD^{tree} --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file".to_string())?;
+    Ok(findings.iter().map(check_finding_as_decision).collect())
+}
+
+fn check_finding_as_decision(finding: &Value) -> Value {
+    let class = string_field(finding.get("classification"));
+    if !class
+        .as_deref()
+        .is_some_and(|class| WHOLE_REPO_GAP_CLASSES.contains(&class))
+    {
+        // Not baselined: the existing builder counts it under `other`.
+        return json!({"decision": "not_a_gap_class"});
+    }
+    let path =
+        string_field(finding.pointer("/probe/file")).map(|path| normalize_fallback_path(&path));
+    json!({
+        "decision": "advisory",
+        "canonical_gap_id": finding.get("canonical_gap_id").cloned().unwrap_or(Value::Null),
+        "static_class": class,
+        "severity": finding.get("severity").cloned().unwrap_or(Value::Null),
+        "source": "whole_repo_check",
+        "placement": {
+            "path": path,
+            "line": finding.pointer("/probe/line").cloned().unwrap_or(Value::Null),
+        },
+        "evidence": {
+            "missing_discriminator": finding
+                .pointer("/missing_discriminators/0/value")
+                .cloned()
+                .unwrap_or(Value::Null),
+        },
+    })
+}
+
+fn baseline_create_report_from_gate_decision_value(
+    source_report: &str,
+    created_at: &str,
+    value: &Value,
+) -> Result<BaselineCreateReport, String> {
     let schema_version = value
         .get("schema_version")
         .and_then(Value::as_str)
@@ -126,10 +268,14 @@ pub(crate) fn baseline_create_report_from_gate_decision_json(
         // producing build cannot later distinguish "debt fixed" from
         // "identity scheme changed across analyzer builds", so its absence is
         // loud at creation time instead of silent at diff time.
-        warnings.push(
-            "source gate-decision report carries no subject.analyzer_version; the baseline records no producing-build identity, so later diffs cannot disclose analyzer-version identity discontinuity"
-                .to_string(),
-        );
+        let source_kind = if mode == WHOLE_REPO_CHECK_MODE {
+            "source check artifact"
+        } else {
+            "source gate-decision report"
+        };
+        warnings.push(format!(
+            "{source_kind} carries no subject.analyzer_version; the baseline records no producing-build identity, so later diffs cannot disclose analyzer-version identity discontinuity"
+        ));
     }
 
     for decision in decisions {
@@ -399,7 +545,278 @@ fn string_field(value: Option<&Value>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{baseline_create_report_from_gate_decision_json, render_baseline_create_json};
+    use super::{
+        baseline_create_report_from_check_json, baseline_create_report_from_gate_decision_json,
+        render_baseline_create_json,
+    };
+    use serde_json::{Value, json};
+
+    const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+    fn finding(class: &str, canonical: Option<&str>, file: &str, line: u64) -> Value {
+        json!({
+            "id": format!("probe:{file}:{line}"),
+            "canonical_gap_id": canonical,
+            "classification": class,
+            "severity": "warning",
+            "probe": {"file": file, "line": line},
+            "missing_discriminators": [{"value": "n == 10"}],
+        })
+    }
+
+    fn check_artifact(
+        kind: &str,
+        complete: bool,
+        base_tree: Option<&str>,
+        findings: Vec<Value>,
+    ) -> String {
+        json!({
+            "schema_version": "0.2",
+            "tool": "ripr",
+            "root": ".",
+            "analysis_outcome": {
+                "analysis_complete": complete,
+                "outcome": {
+                    "kind": kind,
+                    "identity": {"git_candidate_subject": {"base_tree": base_tree}},
+                },
+            },
+            "findings": findings,
+        })
+        .to_string()
+    }
+
+    fn from_check(text: &str) -> Result<super::BaselineCreateReport, String> {
+        baseline_create_report_from_check_json("check.json", "unix_ms:1", text)
+    }
+
+    #[test]
+    fn whole_repo_check_baselines_only_gap_classes_with_canonical_identity() -> Result<(), String> {
+        let text = check_artifact(
+            "complete_with_findings",
+            true,
+            Some(EMPTY_TREE),
+            vec![
+                finding(
+                    "weakly_exposed",
+                    Some("gap:rust:src/a.rs:a:p:x"),
+                    "./src/a.rs",
+                    3,
+                ),
+                finding(
+                    "reachable_unrevealed",
+                    Some("gap:rust:src/b.rs:b:p:y"),
+                    "src/b.rs",
+                    9,
+                ),
+                finding(
+                    "no_static_path",
+                    Some("gap:rust:src/c.rs:c:p:z"),
+                    "src/c.rs",
+                    1,
+                ),
+                finding("exposed", Some("gap:rust:src/d.rs:d:p:w"), "src/d.rs", 2),
+                finding(
+                    "static_unknown",
+                    Some("gap:rust:src/e.rs:e:p:v"),
+                    "src/e.rs",
+                    2,
+                ),
+                finding("weakly_exposed", None, "src/f.rs", 4),
+            ],
+        );
+        let report = from_check(&text)?;
+        let rendered: Value = serde_json::from_str(&render_baseline_create_json(&report)?)
+            .map_err(|err| err.to_string())?;
+        assert_eq!(rendered["kind"], "gate_baseline");
+        assert_eq!(rendered["mode"], "whole_repo_check");
+        assert_eq!(rendered["reviewed"], false);
+        assert_eq!(rendered["summary"]["entries"], 3);
+        // exposed + static_unknown are counted, the canonical-less gap is a
+        // refused fallback-only identity; none is written.
+        assert_eq!(rendered["summary"]["skipped"]["other"], 2);
+        assert_eq!(rendered["summary"]["skipped"]["fallback_only"], 1);
+        let ids: Vec<&str> = rendered["entries"]
+            .as_array()
+            .ok_or("entries")?
+            .iter()
+            .filter_map(|entry| entry.pointer("/identity/canonical_gap_id")?.as_str())
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                "gap:rust:src/a.rs:a:p:x",
+                "gap:rust:src/b.rs:b:p:y",
+                "gap:rust:src/c.rs:c:p:z"
+            ]
+        );
+        // The path is normalized like the gate-decision route's fallback.
+        assert_eq!(rendered["entries"][0]["path"], "src/a.rs");
+        assert_eq!(
+            rendered["entries"][0]["evidence"]["missing_discriminator"],
+            "n == 10"
+        );
+        assert!(
+            rendered["warnings"][0]
+                .as_str()
+                .is_some_and(|text| text.contains("whole-repository `ripr check` artifact"))
+        );
+        assert!(
+            rendered["warnings"][1]
+                .as_str()
+                .is_some_and(|text| text.starts_with("source check artifact carries no"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn whole_repo_check_entry_joins_on_the_same_identity_as_a_gate_decision() -> Result<(), String>
+    {
+        let canonical = "gap:rust:src/a.rs:a:p:x";
+        let from_gate = baseline_create_report_from_gate_decision_json(
+            "gate.json",
+            "unix_ms:1",
+            &json!({
+                "schema_version": "0.1",
+                "mode": "visible-only",
+                "decisions": [{
+                    "decision": "advisory",
+                    "canonical_gap_id": canonical,
+                    "static_class": "weakly_exposed",
+                    "placement": {"path": "src/a.rs", "line": 3},
+                }],
+            })
+            .to_string(),
+        )?;
+        let text = check_artifact(
+            "complete_with_findings",
+            true,
+            Some(EMPTY_TREE),
+            vec![finding("weakly_exposed", Some(canonical), "src/a.rs", 3)],
+        );
+        let from_check = from_check(&text)?;
+        let identity = |report: &super::BaselineCreateReport| -> Result<Value, String> {
+            let value: Value = serde_json::from_str(&render_baseline_create_json(report)?)
+                .map_err(|err| err.to_string())?;
+            Ok(value["entries"][0]["identity"].clone())
+        };
+        assert_eq!(identity(&from_check)?, identity(&from_gate)?);
+        Ok(())
+    }
+
+    #[test]
+    fn whole_repo_check_refuses_scoped_incomplete_or_foreign_artifacts() {
+        let gap = vec![finding("weakly_exposed", Some("gap:a"), "src/a.rs", 1)];
+        let diff_scoped = check_artifact(
+            "complete_with_findings",
+            true,
+            Some("1f0f141e3f5501c293980d256a55df8bbda6b24c"),
+            gap.clone(),
+        );
+        let no_subject = check_artifact("complete_with_findings", true, None, gap.clone());
+        let partial = check_artifact(
+            "partial_with_limitations",
+            false,
+            Some(EMPTY_TREE),
+            gap.clone(),
+        );
+        let flag_false = check_artifact("complete_with_findings", false, Some(EMPTY_TREE), gap);
+        for (name, text, needle) in [
+            ("diff-scoped", diff_scoped, "not a whole-repository run"),
+            ("no subject", no_subject, "not a whole-repository run"),
+            ("partial", partial, "not a complete whole-repository run"),
+            (
+                "flag false",
+                flag_false,
+                "not a complete whole-repository run",
+            ),
+            (
+                "gate decision",
+                r#"{"schema_version":"0.1","decisions":[]}"#.to_string(),
+                "not a `ripr check` JSON artifact",
+            ),
+            (
+                "no outcome",
+                r#"{"schema_version":"0.2","tool":"ripr","findings":[]}"#.to_string(),
+                "completeness is not established",
+            ),
+            ("not json", "nope".to_string(), "parse check JSON failed"),
+        ] {
+            let error = from_check(&text).err().unwrap_or_default();
+            assert!(error.contains(needle), "{name}: {error}");
+            if name != "not json" {
+                assert!(
+                    error.contains("--candidate-tree HEAD^{tree}"),
+                    "{name}: {error}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn whole_repo_check_refuses_bounded_and_partial_scope_documents() -> Result<(), String> {
+        let gap = vec![finding("weakly_exposed", Some("gap:a"), "src/a.rs", 1)];
+        let base: Value = serde_json::from_str(&check_artifact(
+            "complete_with_findings",
+            true,
+            Some(EMPTY_TREE),
+            gap,
+        ))
+        .map_err(|err| err.to_string())?;
+        let mut document_incomplete = base.clone();
+        document_incomplete["analysis_outcome"]["document_complete"] = json!(false);
+        document_incomplete["analysis_outcome"]["findings_rendered"] = json!(1);
+        document_incomplete["analysis_outcome"]["findings_total"] = json!(900);
+        let mut limited_run = base.clone();
+        limited_run["run_limitations"] = json!([
+            {"run_status": crate::output::json::FINDINGS_BOUND_RUN_STATUS}
+        ]);
+        for (name, doc) in [
+            ("document_complete:false", document_incomplete),
+            ("run_limitations", limited_run),
+        ] {
+            let error = from_check(&doc.to_string()).err().unwrap_or_default();
+            assert!(error.contains("findings-budget-bounded"), "{name}: {error}");
+            assert!(
+                error.contains("RIPR_CHECK_FINDINGS_BYTES=0"),
+                "{name}: {error}"
+            );
+        }
+        let mut partial_scope = base.clone();
+        partial_scope["analysis_scope"] = json!({"run_status": "limited_partial_scope"});
+        let error = from_check(&partial_scope.to_string())
+            .err()
+            .unwrap_or_default();
+        assert!(error.contains("partial-scope run"), "{error}");
+        let mut partial_language = base.clone();
+        partial_language["language_runs"] = json!([{"language": "rust", "status": "partial"}]);
+        let error = from_check(&partial_language.to_string())
+            .err()
+            .unwrap_or_default();
+        assert!(error.contains("partial-scope run"), "{error}");
+        // The same artifact without the bound is accepted.
+        assert!(
+            from_check(&base.to_string())
+                .is_ok_and(|report| super::baseline_entry_count(&report) == 1)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn whole_repo_check_without_findings_writes_an_empty_baseline() -> Result<(), String> {
+        let text = check_artifact("complete_no_findings", true, Some(EMPTY_TREE), vec![]);
+        let report = from_check(&text)?;
+        assert_eq!(super::baseline_entry_count(&report), 0);
+        // The sha256 empty tree is also a whole-repository base.
+        let sha256 = check_artifact(
+            "complete_no_findings",
+            true,
+            Some("6ef19b41225c5369f1c104d45d8d85efa9d058d53bc6434cd0f5d23e5dc71d12"),
+            vec![],
+        );
+        assert_eq!(super::baseline_entry_count(&from_check(&sha256)?), 0);
+        Ok(())
+    }
 
     #[test]
     fn fallback_identity_is_a_host_independent_stored_string() {

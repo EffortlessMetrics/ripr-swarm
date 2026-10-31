@@ -1,0 +1,26 @@
+# Registers the #private class method owner tests (#10440) under RIPR-SPEC-0243.
+[[extend]]
+id = "RIPR-SPEC-0243"
+tests = [
+  "crates/ripr/tests/cli_smoke/typescript_private_methods.rs::private_method_cli_output_keeps_unknown_reach_without_invented_test_evidence",
+  "crates/ripr/tests/cli_smoke/typescript_private_methods.rs::deleted_private_method_body_has_no_candidate_preview_card",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::changed_private_method_is_an_unknown_finding_not_partial_silence",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::changed_public_method_keeps_its_ordinary_verdict_beside_a_private_one",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::owner_extraction_gap_discloses_string_literal_method_key",
+  "crates/ripr/src/analysis/language/typescript/tests/private_method_owner_tests.rs::private_method_variants_keep_unknown_reach",
+  "crates/ripr/src/analysis/language/typescript/tests/private_method_owner_tests.rs::private_method_unsupported_keys_keep_file_partial_counts",
+  "crates/ripr/src/analysis/language/typescript/tests/private_method_owner_tests.rs::private_method_nested_boundaries_refuse_enclosing_public_credit",
+  "crates/ripr/src/analysis/language/typescript/tests/private_method_owner_tests.rs::private_method_replacement_and_removed_body_keep_unknown_reach",
+  "crates/ripr/src/analysis/language/typescript/tests/private_method_owner_tests.rs::private_method_nested_runtime_path_and_auto_accessor_stay_partial",
+]
+fixtures = [
+  "fixtures/typescript_private_method_unknown",
+  "fixtures/typescript_nested_private_method_partial",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0108"
+tests = [
+  "xtask/src/evidence_promotion/partial_analysis.rs::nested_private_corpus_rejects_lost_partial_outcome_despite_preview_advisory",
+  "xtask/src/evidence_promotion/partial_analysis.rs::partial_analysis_assertion_requires_every_identity_and_count_field",
+]

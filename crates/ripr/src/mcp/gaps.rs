@@ -305,6 +305,10 @@ pub(crate) struct GapItem {
     /// projection time so the limitation read re-uses the one vocabulary
     /// (`describe`/`next_step`) instead of re-deriving it.
     static_limit: Option<crate::domain::StaticLimitKind>,
+    /// The producer limit's reason as the CLI and LSP surfaces word it for this
+    /// finding's probe family (`describe_for_family`), so the MCP reason cannot
+    /// drift from them (#11821).
+    static_limit_reason: Option<String>,
 }
 
 impl GapItem {
@@ -370,6 +374,9 @@ impl GapItem {
             evidence_sha256,
             repair_readiness,
             static_limit: finding.static_limit_kind,
+            static_limit_reason: finding
+                .static_limit_kind
+                .map(|kind| kind.describe_for_family(&finding.probe.family).into_owned()),
         })
     }
 
@@ -414,7 +421,10 @@ impl GapItem {
             json!({
                 "kind": kind_token,
                 "stage": "producer_static_limit",
-                "reason": kind.describe(),
+                "reason": self
+                    .static_limit_reason
+                    .clone()
+                    .unwrap_or_else(|| kind.describe().to_string()),
                 "recovery": kind.next_step(),
                 "retryable": false,
                 "prohibited_claim": "any exposure verdict or repair route stronger than the producer's typed static limitation: no `exposed` grip, no repair-ready item, and no runtime outcome is claimed",

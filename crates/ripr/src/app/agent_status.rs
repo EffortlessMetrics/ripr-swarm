@@ -1266,7 +1266,7 @@ fn select_next_command(
         .filter(|attempt| attempt.disposition == "resumable")
         .collect::<Vec<_>>();
     let resumable_decision = if resumable.is_empty() {
-        Err("no resumable attempt".to_string())
+        Err("no resumable attempt; start one with `ripr agent start`".to_string())
     } else {
         canonical_next_action_for_inventory(root_display, &store, &resumable, &[])
     };
@@ -1350,7 +1350,7 @@ fn select_next_command(
     }
     let open_seam_ids = open.keys().copied().collect::<Vec<_>>();
     let open_decision = if open_seam_ids.is_empty() {
-        Err("no open seam".to_string())
+        Err("no open gap in the attempt inventory; start one with `ripr agent start`".to_string())
     } else {
         canonical_next_action_for_inventory(root_display, &store, &[], &open_seam_ids)
     };
@@ -2430,7 +2430,7 @@ pub(crate) fn render_agent_status_json(report: &AgentStatusReport) -> Result<Str
             rendered.push('\n');
             rendered
         })
-        .map_err(|err| format!("failed to render agent status JSON: {err}"))
+        .map_err(|err| format!("failed to render agent status JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String {
@@ -3441,7 +3441,7 @@ pub(crate) fn render_agent_attempt_status_json(
             rendered.push('\n');
             rendered
         })
-        .map_err(|err| format!("failed to render agent attempt status JSON: {err}"))
+        .map_err(|err| format!("failed to render agent attempt status JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn render_agent_attempt_status_markdown(report: &AgentAttemptStatusReport) -> String {
