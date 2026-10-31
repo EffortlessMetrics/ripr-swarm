@@ -95,7 +95,9 @@ of output lines containing the term when last lowered.
   exactly that base and the PR head (`GITHUB_SHA` must match HEAD); for
   `merge_group` HEAD must be the event head and the event base its ancestor.
   Mismatched or missing identities fail the check, as do uncommitted or ignored
-  golden files; the head side is read from HEAD's committed blobs. Other CI
+  golden files; the head side is read from HEAD's committed blobs. Selected
+  goldens must be regular files: symlinks and other nonregular entries fail
+  rather than being treated as output text. Other CI
   events (for example `push`) use the `origin/main` ref. Locally the base is the
   `origin/main` ref and the head is the working tree, so a local comparison is
   advisory when that ref is stale; the report records where each side came from.
