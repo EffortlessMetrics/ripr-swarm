@@ -1767,34 +1767,34 @@ fn pilot_withheld_message(
     seam_limit_applied: Option<bool>,
     declined_files: bool,
 ) -> String {
-    let seams = if withheld == 1 {
-        "1 gap".to_string()
+    let items = if withheld == 1 {
+        "1 item".to_string()
     } else {
-        format!("{withheld} gaps")
+        format!("{withheld} items")
     };
     let inspect = "Inspect them in `target/ripr/pilot/repo-exposure.md`, where each one names the stage ripr could not resolve";
     if seam_limit_applied.is_none() {
         // Fail closed: without the report, status cannot rule out a cut.
         return format!(
-            "the last complete `ripr pilot` run ranked no gap: it withheld {seams} whose static evidence is unknown or opaque, so they are static limitations, not gaps. `target/ripr/pilot/repo-exposure.json` is missing or unreadable, so status cannot tell whether a gap limit cut the run; rerun pilot, and if it reports a gap limit, raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT. {inspect}"
+            "the last complete `ripr pilot` run ranked no gap: it withheld {items} whose static evidence is unknown or opaque, so they are static limitations, not gaps. `target/ripr/pilot/repo-exposure.json` is missing or unreadable, so status cannot tell whether an analysis limit cut the run; rerun pilot, and if it reports an analysis limit, raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT. {inspect}"
         );
     }
     if seam_limit_applied == Some(true) {
         // A gap may sit past the cut, so "no repair applies" would claim an
         // absence the run did not establish; raising the limit is the step.
         return format!(
-            "the last complete `ripr pilot` run ranked no gap: it withheld at least {seams} whose static evidence is unknown or opaque, so they are static limitations, not gaps. A limit on how many gaps ripr analyzes cut the run short, so repairable gaps may sit past the cut: raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT, then rerun pilot. {inspect}"
+            "the last complete `ripr pilot` run ranked no gap: it withheld at least {items} whose static evidence is unknown or opaque, so they are static limitations, not gaps. A limit on how many spots ripr analyzes cut the run short, so repairable gaps may sit past the cut: raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT, then rerun pilot. {inspect}"
         );
     }
     if declined_files {
         // Seams in the declined files were never analyzed, so "no repair
         // applies" would claim an absence the run did not establish.
         return format!(
-            "the last complete `ripr pilot` run ranked no gap: it withheld {seams} whose static evidence is unknown or opaque, so they are static limitations, not gaps. It also declined Rust files with a parse limit (named in `target/ripr/pilot/pilot-summary.json` as `declined_rust_files`), so gaps in them were never analyzed: split those files below the Rust parse budget, then rerun pilot. {inspect}"
+            "the last complete `ripr pilot` run ranked no gap: it withheld {items} whose static evidence is unknown or opaque, so they are static limitations, not gaps. It also declined Rust files with a parse limit (named in `target/ripr/pilot/pilot-summary.json` as `declined_rust_files`), so spots in them were never analyzed: split those files below the Rust parse budget, then rerun pilot. {inspect}"
         );
     }
     format!(
-        "the last complete `ripr pilot` run ranked no gap: it withheld {seams} whose static evidence is unknown or opaque, so they are static limitations, not gaps, and running pilot again unchanged withholds them again. {inspect}; no repair attempt applies until a gap ranks"
+        "the last complete `ripr pilot` run ranked no gap: it withheld {items} whose static evidence is unknown or opaque, so they are static limitations, not gaps, and running pilot again unchanged withholds them again. {inspect}; no repair attempt applies until a gap ranks"
     )
 }
 
@@ -3789,6 +3789,31 @@ fn modified_unix_ms(time: Option<SystemTime>) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pilot_withheld_items_are_not_called_gaps() {
+        for (limit, declined) in [
+            (None, false),
+            (Some(true), false),
+            (Some(false), true),
+            (Some(false), false),
+        ] {
+            for (count, noun) in [(1, "1 item"), (2, "2 items")] {
+                let message = pilot_withheld_message(count, limit, declined);
+                assert!(
+                    message.contains(&format!(
+                        "{noun} whose static evidence is unknown or opaque"
+                    )),
+                    "{message}"
+                );
+                assert!(
+                    message.contains("static limitations, not gaps"),
+                    "{message}"
+                );
+                assert!(!message.contains(&format!("{count} gap")), "{message}");
+            }
+        }
+    }
+
     #[test]
     fn pilot_withheld_message_separates_declined_files_from_a_seam_cut() {
         // #9308: raising a seam limit cannot restore a declined file's seams.
@@ -6386,7 +6411,7 @@ mod tests {
             .ok_or_else(|| format!("expected a withheld warning: {:?}", report.warnings))?;
         assert_eq!(warning.artifact, PILOT_SUMMARY_ARTIFACT);
         for expected in [
-            "withheld 138 gaps whose static evidence is unknown or opaque",
+            "withheld 138 items whose static evidence is unknown or opaque",
             "target/ripr/pilot/repo-exposure.md",
             "no repair attempt applies until a gap ranks",
         ] {
@@ -6407,7 +6432,7 @@ mod tests {
             .find(|warning| warning.kind == "pilot_withheld_static_limitations_no_repair_target")
             .ok_or_else(|| format!("expected a withheld warning: {:?}", report.warnings))?;
         for expected in [
-            "withheld at least 138 gaps",
+            "withheld at least 138 items",
             "repairable gaps may sit past the cut",
             "raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT",
         ] {
