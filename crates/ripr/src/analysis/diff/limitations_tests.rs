@@ -319,3 +319,66 @@ fn context_line_conflict_markers_advance_coordinates_and_quarantine_region() -> 
     assert_eq!(file.added_lines[0].new_side_line, 6);
     Ok(())
 }
+
+#[test]
+fn rename_metadata_recovers_old_identity_for_unattributed_hunks() -> Result<(), String> {
+    let rename = "diff --git a/src/old b/name.rs b/src/new.rs\nsimilarity index 100%\nrename from src/old b/name.rs\nrename to src/new.rs\n+++ /dev/null\n";
+    for (hunk, kind) in [
+        (
+            "@@@ -1 -1 +1 @@@\n",
+            AnalysisLimitationKind::CombinedHunkUnsupported,
+        ),
+        ("@@ -0 +1 @@\n", AnalysisLimitationKind::MalformedDiff),
+    ] {
+        let parsed = parse_unified_diff_with_metadata(&format!("{rename}{hunk}"));
+        assert_eq!(
+            limitation_of_kind(&parsed, kind)?.path.as_deref(),
+            Some("src/old b/name.rs")
+        );
+    }
+    let normalized = "diff --git a/./src/old.rs b/src/new.rs\nsimilarity index 100%\nrename from ./src/old.rs\nrename to src/new.rs\n";
+    assert_eq!(
+        parse_unified_diff_with_metadata(normalized).pure_rename_file_count,
+        1
+    );
+    let normalized_embedded = "diff --git a/./src/old b/name.rs b/src/new.rs\nsimilarity index 100%\nrename from ./src/old b/name.rs\nrename to src/new.rs\n";
+    assert_eq!(
+        parse_unified_diff_with_metadata(normalized_embedded).pure_rename_file_count,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn normalized_old_quoted_new_with_embedded_separator() -> Result<(), String> {
+    use super::parse::parse_unified_diff_bounded_with_metadata;
+
+    // Synthetic accepted input: Git normally does not emit the old `/.` suffix.
+    let diff = "diff --git a/src/old.rs/. \"b/src/new b/name\\n.rs\"\nsimilarity index 100%\nrename from src/old.rs/.\nrename to \"src/new b/name\\n.rs\"\n";
+    let parsed = parse_unified_diff_with_metadata(diff);
+    assert_eq!(parsed.pure_rename_file_count, 1);
+    assert_eq!(
+        parsed.pure_rename_paths,
+        vec![std::path::PathBuf::from("src/new b/name\n.rs")]
+    );
+    for invalid in [
+        diff.replace("rename from src/old.rs/.", "rename from src/other.rs"),
+        diff.replace(
+            "rename to \"src/new b/name\\n.rs\"",
+            "rename to src/other.rs",
+        ),
+        diff.replace("\"b/src/new b/name\\n.rs\"", "\"b/src/new b/name\\n.rs"),
+    ] {
+        assert_ne!(invalid, diff);
+        assert_eq!(
+            parse_unified_diff_with_metadata(&invalid).pure_rename_file_count,
+            0
+        );
+    }
+    let deep = format!("diff --git a/{}old.rs b/src/new.rs\n", "a/".repeat(600));
+    let Err(error) = parse_unified_diff_bounded_with_metadata(&deep) else {
+        return Err("deep header must be refused".to_string());
+    };
+    assert!(error.contains("diff_path_too_deep"), "{error}");
+    Ok(())
+}

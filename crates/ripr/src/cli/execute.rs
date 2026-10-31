@@ -120,7 +120,7 @@ mod tests {
         assert_eq!(
             execute(CliCommand::Doctor(args(&["--profile", "foo"]))),
             Err(CommandError::Failure(
-                "unknown doctor profile `foo`; expected `analysis` or `source-build`".to_string()
+                "unknown doctor profile \"foo\". Accepted: analysis, source-build.".to_string()
             ))
         );
         assert_eq!(
@@ -168,7 +168,7 @@ mod tests {
         );
         assert_eq!(
             execute(CliCommand::Gate(args(&["evaluate", "--mode", "strict"]))),
-            Err(CommandError::Failure("unknown gate mode `strict`; expected `visible-only`, `acknowledgeable`, `baseline-check`, or `calibrated-gate`".to_string()))
+            Err(CommandError::Failure("unknown gate mode \"strict\". Accepted: visible-only, acknowledgeable, baseline-check, calibrated-gate.".to_string()))
         );
         assert_eq!(
             execute(CliCommand::Baseline(args(&["create", "--from"]))),
@@ -266,6 +266,20 @@ mod tests {
             execute(CliCommand::Diff(args(&["--format", "xml"]))),
             Err(CommandError::Failure(
                 "unknown diff format \"xml\". Accepted: human, text, md, markdown, json."
+                    .to_string()
+            ))
+        );
+        assert_eq!(
+            execute(CliCommand::Diff(args(&["--format", "jsn"]))),
+            Err(CommandError::Failure(
+                "unknown diff format \"jsn\". Did you mean `json`? Accepted: human, text, md, markdown, json."
+                    .to_string()
+            ))
+        );
+        assert_eq!(
+            execute(CliCommand::Doctor(args(&["--profile", "analyss"]))),
+            Err(CommandError::Failure(
+                "unknown doctor profile \"analyss\". Did you mean `analysis`? Accepted: analysis, source-build."
                     .to_string()
             ))
         );

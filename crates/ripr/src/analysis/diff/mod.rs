@@ -8,8 +8,10 @@ mod source;
 pub(crate) use source::reconstruct_old_source;
 pub mod records;
 
+#[cfg(test)]
+pub(crate) use load::not_a_work_tree_message;
 pub(crate) use load::{
-    AnalyzedRevisions, HeadRefState, probe_head_ref_state, resolve_analyzed_revisions,
+    AnalyzedRevisions, HeadRefState, LoadedDiff, probe_head_ref_state, resolve_analyzed_revisions,
     working_tree_has_uncommitted_changes,
 };
 pub(crate) use load::{

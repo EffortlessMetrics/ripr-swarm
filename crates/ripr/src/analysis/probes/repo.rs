@@ -1,4 +1,6 @@
-use super::super::rust_index::{RustIndex, error_path_twins, find_owner_function};
+use super::super::rust_index::{
+    FunctionSummary, RustIndex, error_path_twins, find_file_facts, find_owner_function,
+};
 use super::SeededProbe;
 use super::expectations::{expected_sinks, required_oracles};
 use super::family::family_for_probe_shape;
@@ -37,10 +39,15 @@ pub(crate) fn probes_for_repo_file_seeded(
         // #3284: harness-role functions never enter the production
         // subject inventory. A cfg(test)-module helper inside a
         // production file still contributes probe shapes to the file
-        // facts; an owner carrying the test/evidence role is skipped,
-        // mirroring the diff path and the seam inventory.
+        // facts; an owner carrying an unambiguous test/evidence role is
+        // skipped, mirroring the diff path and the seam inventory.
+        // #9119: a production fn sharing a physical line with a #[test]
+        // fn stays production-eligible (fail closed), matching
+        // `changed_line_is_test_evidence` in probes/diff.rs.
         let owner_function = find_owner_function(index, path, shape.start_line);
-        if owner_function.is_some_and(|function| function.source_role.is_evidence_role()) {
+        if owner_function.is_some_and(|function| {
+            repo_owner_is_unambiguous_test_evidence(index, path, shape.start_line, function)
+        }) {
             continue;
         }
         // Include facts keep their fragment path for source locations, while
@@ -90,6 +97,42 @@ pub(crate) fn probes_for_repo_file_seeded(
     probes
 }
 
+/// Whether a repo-mode probe whose `find_owner_function` owner carries an
+/// evidence role should still be skipped.
+///
+/// Ownership is line-granular: a production fn and a `#[test]` fn opening
+/// on one physical line both own it, and the later-listed one wins
+/// `find_owner_function`. Without columns the line cannot be attributed
+/// to the test, so it stays production-eligible (fail closed) rather than
+/// silently dropping the production candidate. Only the shared boundary
+/// line is ambiguous; later lines inside the nested evidence fn's body
+/// are unambiguously test evidence (#9076 / #9119).
+///
+/// Copied from `changed_line_is_test_evidence` in `probes/diff.rs` and
+/// extended here for a production fn that *ends* on the line where a
+/// test starts (different start lines). The helper lives in this file so
+/// the busy diff-mode lane is untouched.
+fn repo_owner_is_unambiguous_test_evidence(
+    index: &RustIndex,
+    path: &Path,
+    line: usize,
+    function: &FunctionSummary,
+) -> bool {
+    if !function.source_role.is_evidence_role() {
+        return false;
+    }
+    let shares_line_with_production = line == function.start_line
+        && find_file_facts(index, path).is_some_and(|facts| {
+            facts.functions.iter().any(|other| {
+                !other.source_role.is_evidence_role()
+                    && other.start_line <= line
+                    && line <= other.end_line
+                    && (other.start_line == function.start_line || other.end_line == line)
+            })
+        });
+    !shares_line_with_production
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::super::rust_index::{
@@ -100,6 +143,66 @@ mod tests {
     use crate::domain::{DeltaKind, ProbeFamily, SymbolId};
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
+
+    fn function_fact(
+        path: &Path,
+        id: &str,
+        name: &str,
+        start_line: usize,
+        end_line: usize,
+        source_role: FunctionSourceRole,
+    ) -> FunctionFact {
+        FunctionFact {
+            id: SymbolId(id.to_string()),
+            name: name.to_string(),
+            file: path.to_path_buf(),
+            start_line,
+            end_line,
+            body: String::new().into(),
+            calls: vec![],
+            returns: vec![],
+            literals: vec![],
+            source_role,
+            attrs: vec![],
+            impl_attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
+        }
+    }
+
+    fn predicate_shape(line: usize, text: &str) -> ProbeShapeFact {
+        ProbeShapeFact {
+            start_line: line,
+            end_line: line,
+            start_byte: 0,
+            end_byte: text.len(),
+            kind: ProbeShapeKind::Predicate,
+            text: text.into(),
+            value_consumed: false,
+            source_lines: None,
+        }
+    }
+
+    fn index_with_functions_and_shapes(
+        path: PathBuf,
+        functions: Vec<FunctionFact>,
+        probe_shapes: Vec<ProbeShapeFact>,
+    ) -> RustIndex {
+        RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files: BTreeMap::from([(
+                path.clone(),
+                FileFacts {
+                    path,
+                    functions,
+                    probe_shapes,
+                    ..FileFacts::default()
+                },
+            )]),
+            ..Default::default()
+        })
+    }
 
     #[test]
     fn probes_for_repo_file_emits_known_shape_with_owner() {
@@ -232,6 +335,115 @@ mod tests {
         assert_eq!(
             probes[0].owner,
             Some(SymbolId("src/lib.rs::impl Parser::clamp".to_string()))
+        );
+    }
+
+    /// #9119: a production fn and a `#[test]` fn opening on one physical
+    /// line must keep the production probe in repo mode. The last-listed
+    /// owner is the test, so a raw evidence-role skip drops it.
+    #[test]
+    fn repo_mode_keeps_production_probe_sharing_opening_line_with_test() {
+        let path = PathBuf::from("src/lib.rs");
+        let index = index_with_functions_and_shapes(
+            path.clone(),
+            vec![
+                function_fact(&path, "g", "g", 1, 1, FunctionSourceRole::Production),
+                function_fact(&path, "t", "t", 1, 1, FunctionSourceRole::TestAttribute),
+                function_fact(
+                    &path,
+                    "only_test",
+                    "only_test",
+                    3,
+                    4,
+                    FunctionSourceRole::TestAttribute,
+                ),
+            ],
+            vec![
+                predicate_shape(1, "x > 2"),
+                predicate_shape(4, "assert!(true)"),
+            ],
+        );
+
+        let probes = probes_for_repo_file(Path::new("workspace"), &path, &index);
+        assert!(
+            probes.iter().any(|probe| probe.expression == "x > 2"),
+            "production predicate sharing its opening line with a #[test] fn must seed a repo probe: {probes:?}"
+        );
+        assert!(
+            probes
+                .iter()
+                .all(|probe| probe.expression != "assert!(true)"),
+            "a line owned only by a #[test] fn must stay out of the repo inventory: {probes:?}"
+        );
+    }
+
+    /// #9119 nested-test control: later lines of a nested test body stay
+    /// test evidence even when the opening line is shared with production.
+    #[test]
+    fn repo_mode_skips_later_lines_of_nested_test_sharing_opening_line() {
+        let path = PathBuf::from("src/lib.rs");
+        let index = index_with_functions_and_shapes(
+            path.clone(),
+            vec![
+                function_fact(
+                    &path,
+                    "outer",
+                    "outer",
+                    1,
+                    3,
+                    FunctionSourceRole::Production,
+                ),
+                function_fact(
+                    &path,
+                    "helper",
+                    "helper",
+                    1,
+                    3,
+                    FunctionSourceRole::TestAttribute,
+                ),
+            ],
+            vec![predicate_shape(1, "x > 0"), predicate_shape(2, "n > 1")],
+        );
+
+        let probes = probes_for_repo_file(Path::new("workspace"), &path, &index);
+        assert!(
+            probes.iter().any(|probe| probe.expression == "x > 0"),
+            "shared opening line stays production-eligible: {probes:?}"
+        );
+        assert!(
+            probes.iter().all(|probe| probe.expression != "n > 1"),
+            "later nested-test body lines stay test evidence: {probes:?}"
+        );
+    }
+
+    /// #9119: a production fn that ends on the line where a test starts
+    /// still owns that boundary line; last-listed start-line ownership
+    /// must not drop the production probe.
+    #[test]
+    fn repo_mode_keeps_production_probe_ending_where_test_starts() {
+        let path = PathBuf::from("src/lib.rs");
+        let index = index_with_functions_and_shapes(
+            path.clone(),
+            vec![
+                function_fact(&path, "g", "g", 1, 2, FunctionSourceRole::Production),
+                function_fact(&path, "t", "t", 2, 4, FunctionSourceRole::TestAttribute),
+            ],
+            vec![
+                predicate_shape(2, "x > 2"),
+                predicate_shape(3, "assert!(true)"),
+            ],
+        );
+
+        let probes = probes_for_repo_file(Path::new("workspace"), &path, &index);
+        assert!(
+            probes.iter().any(|probe| probe.expression == "x > 2"),
+            "production predicate on the line where a test starts must seed a repo probe: {probes:?}"
+        );
+        assert!(
+            probes
+                .iter()
+                .all(|probe| probe.expression != "assert!(true)"),
+            "later test-only lines must stay out of the repo inventory: {probes:?}"
         );
     }
 }
