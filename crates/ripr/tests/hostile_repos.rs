@@ -1763,7 +1763,7 @@ fn corrupt_packed_refs_without_base_is_not_reported_as_unborn() -> Result<(), St
 }
 
 /// A checkout whose `.git` is a gitfile pointing at a vanished gitdir is
-/// still a repository checkout; "run it from inside your repository" is the
+/// still a repository checkout; "Run from inside a repository" is the
 /// wrong repair (#6927).
 #[test]
 fn missing_gitfile_gitdir_names_worktree_or_submodule_repair() -> Result<(), String> {
@@ -1787,10 +1787,7 @@ fn missing_gitfile_gitdir_names_worktree_or_submodule_repair() -> Result<(), Str
             return Err(format!("missing `{needle}`\n{}", ran.stderr));
         }
     }
-    for wrong in [
-        "not inside a Git work tree",
-        "run it from inside your repository",
-    ] {
+    for wrong in ["not inside a Git work tree", "Run from inside a repository"] {
         if ran.stderr.contains(wrong) {
             return Err(format!("wrong cause `{wrong}`\n{}", ran.stderr));
         }

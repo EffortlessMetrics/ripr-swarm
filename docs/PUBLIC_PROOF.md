@@ -23,7 +23,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 
 ## Scoreboard
 
-54 bars. ripr meets 24, is below the bar on 25, and has not measured 5. Bold values miss their bar. A comparable trend shows the baseline revision and prior value it compares. A cross-class trend shows the earlier runner class and, when available, its prior value; it does not compare measurements. A measured row with no earlier measurement is a first measurement. Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them. First-run bars are recomputed by this page from the raw walk receipts; an ingested scoreboard value owns its bar once one lands.
+54 bars. ripr meets 26, is below the bar on 23, and has not measured 5. Bold values miss their bar. A comparable trend shows the baseline revision and prior value it compares. A cross-class trend shows the earlier runner class and, when available, its prior value; it does not compare measurements. A measured row with no earlier measurement is a first measurement. Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them. First-run bars are recomputed by this page from the raw walk receipts; an ingested scoreboard value owns its bar once one lands.
 
 By board, so the weak areas show before the full table:
 
@@ -31,7 +31,7 @@ By board, so the weak areas show before the full table:
 | --- | --- | --- | --- | --- |
 | Speed and memory | 0 | 4 | 0 | 0 |
 | CI adoption | 1 | 1 | 1 | 0 |
-| Trust | 16 | 8 | 2 | 0 |
+| Trust | 18 | 6 | 2 | 0 |
 | Pasted commands | 2 | 0 | 0 | 0 |
 | First run | 3 | 3 | 2 | 0 |
 | corpus | 2 | 0 | 0 | 0 |
@@ -62,10 +62,10 @@ By board, so the weak areas show before the full table:
 | Trust | Authored Python edits the project's tests fully catch that ripr still flags as a gap | 0.0% | <= 5.0% | meets the bar | no earlier measurement (observed at 76651d1) |
 | Trust | Authored Python edits the project's tests miss that ripr credits as caught | 0.0% | <= 0.0% | meets the bar | no earlier measurement (observed at 76651d1) |
 | Trust | Authored Python edits the project's tests miss that ripr reports as fine | 0.0% | <= 0.0% | meets the bar | no earlier measurement (observed at 76651d1) |
-| Trust | Wrong Perl verdicts on the hand-checked Perl verdict corpus (producer packets) | **29.6%** | <= 5.0% | below the bar | no earlier measurement (observed at 76651d1) |
-| Trust | Hand-checked Perl edits the tests fully catch that ripr still flags as a gap (producer packets) | **33.3%** | <= 5.0% | below the bar | no earlier measurement (observed at 76651d1) |
-| Trust | Hand-checked Perl edits the tests miss that ripr credits as caught (producer packets) | **25.0%** | <= 0.0% | below the bar | no earlier measurement (observed at 76651d1) |
-| Trust | Hand-checked Perl edits the tests miss that ripr reports as fine (producer packets) | 0.0% | <= 0.0% | meets the bar | no earlier measurement (observed at 76651d1) |
+| Trust | Wrong Perl verdicts on the hand-checked Perl verdict corpus (producer packets) | 1.8% | <= 5.0% | meets the bar | no earlier measurement (observed at ea5229f) |
+| Trust | Hand-checked Perl edits the tests fully catch that ripr still flags as a gap (producer packets) | 0.0% | <= 5.0% | meets the bar | no earlier measurement (observed at ea5229f) |
+| Trust | Hand-checked Perl edits the tests miss that ripr credits as caught (producer packets) | **3.9%** | <= 0.0% | below the bar | no earlier measurement (observed at ea5229f) |
+| Trust | Hand-checked Perl edits the tests miss that ripr reports as fine (producer packets) | 0.0% | <= 0.0% | meets the bar | no earlier measurement (observed at ea5229f) |
 | Trust | Hand-checked Perl edits where ripr gives no specific verdict (producer packets) | **29.6%** | <= 20.0% | below the bar | no earlier measurement (observed at 76651d1) |
 | Trust | Verdict-corpus cases with a spec-adopted related-test oracle where ripr reports the same oracle kind and strength | 100.0% | >= 100.0% | meets the bar | no earlier measurement (observed at 76651d1) |
 | Trust | Verdict-corpus cases with a spec-adopted related-test oracle where ripr reports a stronger oracle than the spec adopts | 0.0% | <= 0.0% | meets the bar | no earlier measurement (observed at 76651d1) |
