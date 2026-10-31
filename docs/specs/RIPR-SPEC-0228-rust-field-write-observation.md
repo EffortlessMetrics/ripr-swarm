@@ -283,9 +283,16 @@ exists for a changed field assignment only when all of these hold:
 The seam is graded only by the same exact read that confirms the probe (an
 `assert_eq!` reading the field from the binding the test called the owner
 on, after the call, with nothing in between, and an expected value that is
-not default-like). If no related assertion mentions the field, the seam stays
+not default-like). The owner must borrow its receiver (`&mut self`): a
+by-value receiver (`self`, `mut self`, a builder's `fn retries(mut self, n)
+-> Self`) writes a moved copy, and for a `Copy` type the test's binding keeps
+its old field, so no read of that binding confirms the write. ripr cannot yet
+confirm a by-value builder's write through the value the call chain returns;
+such a write stays unjudged (limitation, #11398 review). If no related assertion mentions the field, the seam stays
 open, and check and repair both name the missing field check. If an
-assertion mentions the field but the exact rule does not confirm it (a builder
+assertion holds the field's name as a word (a plain word match, so a common
+name such as `count` or `id` also matches an unrelated read) but the exact
+rule does not confirm it (a builder
 chain such as `Req::new(..).timeout(10).timeout`, a weak `assert!(c.count >
 0)`, a read after `c.reset()`, a read of another binding), the discriminating
 stage is unknown: the answer is "ripr could not judge the read", never "no
@@ -299,8 +306,10 @@ only replaces "no code" with the specific missing check.
 call, which the stub cannot write. The `ripr check` hand-written step for it
 says to call the method with an input for which old and new code store
 different values and assert the changed field on the value the method was
-called on (for a builder, on the value the chain returns), instead of the
-struct-literal wording about a wrapper or `Err` variant.
+called on, and that a by-value builder's check cannot be confirmed yet,
+instead of the struct-literal wording about a wrapper or `Err` variant. The
+LSP hover and the agent packet's missing-check text use the same receiver
+wording.
 
 ## Required Evidence
 

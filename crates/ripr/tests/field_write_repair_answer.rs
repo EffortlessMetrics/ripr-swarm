@@ -224,6 +224,13 @@ fn assert_read_unjudged(case: &str, repo: &Repo) -> Result<(), String> {
             "{case}: repair must say the read could not be judged:\n{repair}"
         ));
     }
+    // `ripr check` reads the same change as unclear and names the same
+    // missing piece, never a gap ripr established.
+    if !check.contains("Static exposure: unknown") || !check.contains(UNJUDGED_READ) {
+        return Err(format!(
+            "{case}: check must call the change unclear and name the unjudged read:\n{check}"
+        ));
+    }
     Ok(())
 }
 
@@ -290,4 +297,31 @@ fn nested_field_path_write_has_no_field_seam() -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+#[test]
+fn copy_builder_read_of_the_unmoved_binding_is_not_a_check() -> Result<(), String> {
+    // #11398 review: `retries(mut self, ..)` writes a moved copy. For a `Copy`
+    // type the test's `o` keeps its old field, so `assert_eq!(o.retries, 3)`
+    // never sees the write and must not read as a check of it.
+    let old = "#[derive(Clone, Copy)]\npub struct Opts {\n    pub retries: u32,\n}\n\nimpl Opts {\n    pub fn retries(mut self, n: u32) -> Self {\n        self.retries = n;\n        self\n    }\n}\n";
+    let repo = Repo::create(
+        old,
+        &old.replace("self.retries = n;", "self.retries = n * 2;"),
+        "use fw::Opts;\n\n#[test]\nfn keeps() {\n    let o = Opts { retries: 3 };\n    o.retries(5);\n    assert_eq!(o.retries, 3);\n}\n",
+    )?;
+    assert_read_unjudged("copy builder", &repo)
+}
+
+#[test]
+fn default_like_expected_value_is_not_a_check_of_the_write() -> Result<(), String> {
+    // `false` is what the field holds without the write, so the assertion
+    // cannot tell a deleted write from a kept one.
+    let old = "pub struct Flags {\n    pub on: bool,\n}\n\nimpl Flags {\n    pub fn set(&mut self) {\n        self.on = false;\n    }\n}\n";
+    let repo = Repo::create(
+        old,
+        &old.replace("self.on = false;", "self.on = true;"),
+        "use fw::Flags;\n\n#[test]\nfn sets() {\n    let mut f = Flags { on: false };\n    f.set();\n    assert_eq!(f.on, false);\n}\n",
+    )?;
+    assert_read_unjudged("default-like expected value", &repo)
 }

@@ -679,10 +679,11 @@ fn hand_written_test_step(finding: &Finding, stub_refusal: &str, no_route: bool)
             "call the function and assert on what it returns: match the wrapper that carries the changed field (for example the `Err` variant) and check the field inside it, or compare the whole returned value"
         }
         // #11398: the change writes a field of `self` in a method, so the
-        // value to check is the receiver after the call (for a builder, the
-        // value the call chain hands back), not a struct literal.
+        // value to check is the receiver after the call, not a struct
+        // literal. A by-value receiver cannot be confirmed yet (#11398
+        // review), so the step says so instead of promising credit.
         _ if stub_refusal == TestStubRefusal::FieldWrittenInMethod.reason() => {
-            "call the method with an input for which the old and new code store different values, then assert the exact value of the changed field on the value you called it on (for a builder, on the value the call chain returns)"
+            "call the method with an input for which the old and new code store different values, then assert the exact value of the changed field on the value you called it on. If the method takes `self` by value (a builder), ripr cannot yet confirm that check, so it will still report this change as unclear"
         }
         // A unit-returning owner has no result to compare.
         _ if stub_refusal == TestStubRefusal::NoReturnValue.reason() => {
