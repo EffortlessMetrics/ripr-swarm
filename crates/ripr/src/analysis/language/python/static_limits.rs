@@ -1583,6 +1583,8 @@ fn edit_leaves_imported_symbols_untouched(old: &str, new: &str, imports: &[Pytho
         && !span_touches_import(new_span, new_before, new_after)
         && !edit_inside_imported_call(&old_tokens, prefix, imports)
         && !edit_inside_imported_call(&new_tokens, prefix, imports)
+        && !edits_lookup_fallback(&old_tokens, prefix)
+        && !edits_lookup_fallback(&new_tokens, prefix)
 }
 
 /// Whether the token at `at` sits inside the parentheses of a call whose callee
@@ -1619,6 +1621,35 @@ fn edit_inside_imported_call(tokens: &[String], at: usize, imports: &[PythonImpo
         }
     }
     stack.into_iter().any(|is_import| is_import)
+}
+
+/// Whether the token at `start` is a fallback argument of a lookup call
+/// (`os.environ.get("KEY", fallback)`, `os.getenv("KEY", fallback)`). A fallback
+/// is read only when the key is absent, and a test that sets the key never
+/// observes it, so the bypass above must not turn that unexercised path into
+/// credit: keep the missing-import-graph limit.
+fn edits_lookup_fallback(tokens: &[String], start: usize) -> bool {
+    let mut depth = 0usize;
+    let mut commas = 0usize;
+    let mut index = start;
+    while index > 0 {
+        index -= 1;
+        match tokens[index].as_str() {
+            ")" | "]" | "}" => depth += 1,
+            "(" | "[" | "{" if depth > 0 => depth -= 1,
+            "," if depth == 0 => commas += 1,
+            "(" => {
+                if commas > 0 && index > 0 && matches!(tokens[index - 1].as_str(), "get" | "getenv")
+                {
+                    return true;
+                }
+                commas = 0;
+            }
+            _ => {}
+        }
+    }
+    false
+}
 }
 
 /// Whether `token` is a string literal, with or without a `r`/`b`/`f`/`u`
@@ -2527,6 +2558,31 @@ pub(super) mod tests {
             ),
             limited
         );
+    }
+
+    #[test]
+    fn lookup_fallback_edit_keeps_the_import_limit() {
+        let os = vec![PythonImport {
+            imported: "os".to_string(),
+            alias: "os".to_string(),
+            source_module: String::new(),
+        }];
+        let untouched =
+            |old: &str, new: &str| edit_leaves_imported_symbols_untouched(old, new, &os);
+        assert!(!untouched(
+            "return os.environ.get(\"HOME_DIR\", \"/tmp\")",
+            "return os.environ.get(\"HOME_DIR\", \"/var\")"
+        ));
+        assert!(!untouched(
+            "return os.getenv(\"HOME_DIR\", \"/tmp\")",
+            "return os.getenv(\"HOME_DIR\", \"/var\")"
+        ));
+        // Any edit inside an imported call's arguments keeps the limit,
+        // a lookup key included (the callee consumes every argument).
+        assert!(!untouched(
+            "return os.environ.get(\"A\", \"/tmp\")",
+            "return os.environ.get(\"B\", \"/tmp\")"
+        ));
     }
 
     #[test]
