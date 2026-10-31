@@ -2,8 +2,9 @@
 //!
 //! Each test mutates a small valid seed with byte-level edits that target the
 //! lexical hazards parsers get wrong (quotes, comment and string openers,
-//! deep bracket runs, invalid UTF-8) and drives the public `check_workspace`
-//! entry point end to end on the result. An `Err` is a fine answer for
+//! deep bracket runs, invalid UTF-8) and runs `ripr check --diff` as a child
+//! process on the result (the CLI adapter enables the Python and TypeScript
+//! preview languages, and a child contains a stack-overflow abort). An `Err` is a fine answer for
 //! hostile input; a panic, an abort or a pass that exceeds the case deadline
 //! is the finding. The mutation list is the proptest input, so a failure
 //! shrinks to a short list of edits and prints the exact bytes.
@@ -15,7 +16,6 @@
 
 use proptest::prelude::*;
 use proptest::test_runner::Config;
-use ripr::{CheckInput, Mode, OutputFormat, check_workspace};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -317,33 +317,59 @@ impl Workspace {
         Ok(Self { root })
     }
 
-    /// Runs one check on its own thread so a panic or a hang is reported as a
-    /// finding with the case input, not as a stuck or aborted test binary.
+    fn command(&self) -> std::process::Command {
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_ripr"));
+        command
+            .args([
+                "check", "--quiet", "--format", "json", "--mode", "ready", "--root",
+            ])
+            .arg(&self.root)
+            .arg("--diff")
+            .arg(self.root.join("fuzz.diff"));
+        command
+    }
+
+    /// Runs one `ripr check` as a child process. The CLI adapter is what
+    /// enables the Python and TypeScript preview languages, and a child turns
+    /// a stack overflow or abort into a reportable signal instead of killing
+    /// the test binary. A signal, a Rust panic exit (101) or a missed
+    /// deadline is a finding; any other refusal is an acceptable answer to
+    /// hostile input.
     fn check_within_deadline(&self) -> Result<(), String> {
-        let (sender, receiver) = std::sync::mpsc::channel();
-        let input = CheckInput {
-            root: self.root.clone(),
-            diff_file: Some(self.root.join("fuzz.diff")),
-            mode: Mode::Ready,
-            format: OutputFormat::Json,
-            ..CheckInput::default()
-        };
-        let worker = std::thread::spawn(move || {
-            let _ = sender.send(check_workspace(input).map(|_| ()));
-        });
-        match receiver.recv_timeout(CASE_DEADLINE) {
-            // Ok or a refusal: both are acceptable answers to hostile input.
-            Ok(_) => worker
-                .join()
-                .map_err(|_payload| "worker panicked after answering".to_string()),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                Err(format!("no answer within {CASE_DEADLINE:?}"))
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                Err("check_workspace panicked (worker ended without an answer)".to_string())
+        let mut child = self
+            .command()
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|error| format!("spawn ripr failed: {error}"))?;
+        let started = std::time::Instant::now();
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => return judge(status),
+                Ok(None) if started.elapsed() >= CASE_DEADLINE => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!("no answer within {CASE_DEADLINE:?}"));
+                }
+                Ok(None) => std::thread::sleep(Duration::from_millis(5)),
+                Err(error) => return Err(format!("wait failed: {error}")),
             }
         }
     }
+}
+
+fn judge(status: std::process::ExitStatus) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(signal) = status.signal() {
+            return Err(format!("ripr check died from signal {signal}"));
+        }
+    }
+    if status.code() == Some(101) {
+        return Err("ripr check panicked (exit 101)".to_string());
+    }
+    Ok(())
 }
 
 impl Drop for Workspace {
@@ -366,6 +392,7 @@ fn config() -> Config {
 fn source_case(
     manifest: &str,
     manifest_name: &str,
+    ripr_toml: &str,
     path: &str,
     seed: &str,
     edited: &str,
@@ -376,6 +403,7 @@ fn source_case(
     let workspace = Workspace::create(&[
         (manifest_name, manifest.as_bytes()),
         (path, &mutated),
+        ("ripr.toml", ripr_toml.as_bytes()),
         ("fuzz.diff", &diff),
     ])
     .map_err(TestCaseError::fail)?;
@@ -383,6 +411,12 @@ fn source_case(
         .check_within_deadline()
         .map_err(|error| TestCaseError::fail(format!("{error}\nsource bytes: {mutated:?}")))
 }
+
+// Preview languages analyze only when enabled; without this the Python and
+// TypeScript suites would exercise nothing.
+const RUST_TOML: &str = "[languages]\nenabled = [\"rust\"]\n";
+const PYTHON_TOML: &str = "[languages]\nenabled = [\"python\"]\n";
+const TS_TOML: &str = "[languages]\nenabled = [\"typescript\"]\n";
 
 const CARGO_TOML: &str =
     "[package]\nname = \"fuzz-subject\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n";
@@ -392,7 +426,7 @@ proptest! {
 
     #[test]
     fn rust_sources_never_panic_or_hang(edits in edits()) {
-        source_case(CARGO_TOML, "Cargo.toml", "src/lib.rs", RUST_SEED, RUST_EDITED, &edits)?;
+        source_case(CARGO_TOML, "Cargo.toml", RUST_TOML, "src/lib.rs", RUST_SEED, RUST_EDITED, &edits)?;
     }
 
     #[test]
@@ -400,6 +434,7 @@ proptest! {
         source_case(
             "[project]\nname = \"fuzz-subject\"\nversion = \"0.0.0\"\n",
             "pyproject.toml",
+            PYTHON_TOML,
             "pkg/account.py",
             PYTHON_SEED,
             PYTHON_EDITED,
@@ -412,6 +447,7 @@ proptest! {
         source_case(
             "{\"name\":\"fuzz-subject\",\"version\":\"0.0.0\"}",
             "package.json",
+            TS_TOML,
             "src/account.ts",
             TS_SEED,
             TS_EDITED,
@@ -476,4 +512,61 @@ fn mutations_change_the_input_and_stay_bounded() {
         &[(5, 0, 0, 1_999), (5, 1, 1, 1_999), (5, 2, 2, 1_999)],
     );
     assert!(huge.len() <= MAX_INPUT_BYTES, "input exceeded the size cap");
+}
+
+/// Canary: every unmutated seed must analyze successfully with findings.
+/// Without this, a permanent early refusal would let every suite above pass
+/// without reaching analysis.
+#[test]
+fn unmutated_seeds_reach_analysis() -> Result<(), String> {
+    let cases: [(&str, &str, &str, &str, &str, &str); 3] = [
+        (
+            CARGO_TOML,
+            "Cargo.toml",
+            RUST_TOML,
+            "src/lib.rs",
+            RUST_SEED,
+            RUST_EDITED,
+        ),
+        (
+            "[project]\nname = \"fuzz-subject\"\nversion = \"0.0.0\"\n",
+            "pyproject.toml",
+            PYTHON_TOML,
+            "pkg/account.py",
+            PYTHON_SEED,
+            PYTHON_EDITED,
+        ),
+        (
+            "{\"name\":\"fuzz-subject\",\"version\":\"0.0.0\"}",
+            "package.json",
+            TS_TOML,
+            "src/account.ts",
+            TS_SEED,
+            TS_EDITED,
+        ),
+    ];
+    for (manifest, manifest_name, ripr_toml, path, seed, edited) in cases {
+        let diff = replace_diff(path, seed, edited.as_bytes());
+        let workspace = Workspace::create(&[
+            (manifest_name, manifest.as_bytes()),
+            (path, edited.as_bytes()),
+            ("ripr.toml", ripr_toml.as_bytes()),
+            ("fuzz.diff", &diff),
+        ])?;
+        let output = workspace
+            .command()
+            .output()
+            .map_err(|error| format!("spawn ripr failed: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "{path}: baseline refused: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        let report = String::from_utf8_lossy(&output.stdout);
+        if !report.contains("\"findings\": [\n    {") {
+            return Err(format!("{path}: baseline produced no findings"));
+        }
+    }
+    Ok(())
 }
