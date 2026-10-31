@@ -2629,7 +2629,9 @@ fn selector_location_misses_explain_syntax_and_preserve_retry_scope()
                         return Err("explain did not render the selected finding identity".into());
                     }
                 } else {
-                    if output.status.code() != Some(2) || !output.stdout.is_empty() {
+                    if output.status.code() != Some(2)
+                        || !selector_refusal_stdout_is_expected(command, &output.stdout)
+                    {
                         return Err(format!(
                             "selector miss changed the CLI failure contract: {output:?}"
                         )
@@ -2727,7 +2729,9 @@ fn selector_ambiguity_and_gap_identity_route_through_explain_and_context()
                     }
                 }
                 None => {
-                    if output.status.code() != Some(2) || !output.stdout.is_empty() {
+                    if output.status.code() != Some(2)
+                        || !selector_refusal_stdout_is_expected(command, &output.stdout)
+                    {
                         return Err(format!(
                             "selector refusal changed the CLI failure contract for {command} {selector:?}: {output:?}"
                         )
@@ -3978,11 +3982,12 @@ fn check_json_unresolvable_base_emits_refusal_envelope() -> Result<(), String> {
     Ok(())
 }
 
-/// #6834 (owner ruling): argv usage errors stay prose-only. There is no
-/// successfully parsed invocation to echo, so no envelope exists: exit 2,
-/// empty stdout, the cause on stderr.
+/// #11584 supersedes the #6834 prose-only ruling for argv usage errors under a
+/// JSON request: stdout carries the standalone `cli_refusal` document (the
+/// discriminated refusal shape, not a check envelope), while exit 2 and the
+/// stderr prose stay as before.
 #[test]
-fn check_json_argv_usage_errors_stay_prose_only() -> Result<(), String> {
+fn check_json_argv_usage_errors_write_the_refusal_document() -> Result<(), String> {
     let output = run_ripr(&["check", "--json", "--bogus-flag-6834"]);
     if output.status.code() != Some(2) {
         return Err(format!(
@@ -3991,17 +3996,29 @@ fn check_json_argv_usage_errors_stay_prose_only() -> Result<(), String> {
             String::from_utf8_lossy(&output.stderr)
         ));
     }
-    if !output.stdout.is_empty() {
-        return Err(format!(
-            "argv usage errors must not emit an envelope, got {} stdout bytes",
-            output.stdout.len()
-        ));
+    let document: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|err| format!("stdout must be the refusal document: {err}"))?;
+    if document["kind"] != "cli_refusal" || document["status"] != "refused" {
+        return Err(format!("not a discriminated refusal: {document}"));
+    }
+    if document.get("findings").is_some() {
+        return Err(format!("a usage error is not a check envelope: {document}"));
     }
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !stderr.contains("--bogus-flag-6834") {
         return Err(format!("stderr must name the flag, got: {stderr}"));
     }
     Ok(())
+}
+
+/// A `context` selector miss writes the refusal document; every other
+/// command keeps an empty stdout for a selector miss.
+fn selector_refusal_stdout_is_expected(command: &str, stdout: &[u8]) -> bool {
+    if command != "context" {
+        return stdout.is_empty();
+    }
+    serde_json::from_slice::<serde_json::Value>(stdout)
+        .is_ok_and(|document| document["kind"] == "cli_refusal" && document["status"] == "refused")
 }
 
 /// #6834: a `--root` Git cannot work with — a missing directory or a

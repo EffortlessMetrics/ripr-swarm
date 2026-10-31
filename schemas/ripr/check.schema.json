@@ -81,6 +81,10 @@
     "source_subject": { "$ref": "#/$defs/source_subject" },
     "canonical_next_action": { "$ref": "#/$defs/canonical_next_action" }
   },
+  "dependentRequired": {
+    "status": ["error"],
+    "error": ["status"]
+  },
   "$defs": {
     "nullable_string": { "type": ["string", "null"] },
     "refusal_error": {
@@ -91,18 +95,14 @@
         "code": { "type": "string", "minLength": 1 },
         "message": { "type": "string" },
         "next": {
-          "oneOf": [
-            { "type": "null" },
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["purpose", "command"],
-              "properties": {
-                "purpose": { "const": "recover" },
-                "command": { "type": "string", "minLength": 1 }
-              }
-            }
-          ]
+          "description": "The one command that recovers, or null when no single honest command exists. The key is always present.",
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["purpose", "command"],
+          "properties": {
+            "purpose": { "const": "recover" },
+            "command": { "type": "string", "minLength": 1 }
+          }
         }
       }
     },

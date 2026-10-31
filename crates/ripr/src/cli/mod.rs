@@ -155,13 +155,21 @@ fn json_output_requested(argv: &[String]) -> bool {
 }
 
 /// Machine-readable usage errors (#11584). An argv usage error (unknown
-/// flag, flag value or command) happens before the command writes anything,
-/// so under a JSON request stdout is free for the shared refusal document.
-/// The class comes from the usage-message builder that produced exactly this
-/// message ([`suggest::take_usage_refusal`]); an error no builder recorded
-/// stays prose-only. The exit code and the stderr prose are unchanged.
+/// flag, flag value or command) is raised while the command parses its
+/// arguments, before it writes anything, so under a JSON request stdout is
+/// free for the shared refusal document. The class comes from the
+/// usage-message builder that produced exactly this message
+/// ([`suggest::take_usage_refusal`], a process-wide keyed record that works
+/// across the check runner's worker thread); an error no builder recorded, or
+/// one that is not a plain exit-2 failure, stays prose-only. The exit code and
+/// the stderr prose are unchanged.
 fn announce_usage_refusal(argv: &[String], error: CommandError) -> CommandError {
     if !json_output_requested(argv) {
+        return error;
+    }
+    // Only a plain could-not-complete failure is a usage error: a decision
+    // (exit 3) or interruption keeps its own contract and is never recast.
+    if !matches!(error, CommandError::Failure(_)) {
         return error;
     }
     let Some(usage) = suggest::take_usage_refusal(error.message()) else {

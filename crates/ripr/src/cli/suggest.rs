@@ -12,7 +12,6 @@
 //! it suggestible with no second edit.
 
 use crate::cli::help;
-use std::cell::RefCell;
 
 /// The typed identity of a usage error whose message this module built.
 ///
@@ -20,6 +19,12 @@ use std::cell::RefCell;
 /// to guess their class from prose. The message builders below record the
 /// class beside the message they return; [`take_usage_refusal`] hands it back
 /// only for the exact message, so no renderer inspects error text.
+///
+/// The record is process-wide, not thread-local: a command may build its
+/// usage message on a worker thread (the interruptible `check` runner) while
+/// the dispatcher that renders the refusal runs on the main thread. Records
+/// are keyed by their message and bounded, so a concurrent unrelated error
+/// can neither clear nor inherit another error's class.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct UsageRefusal {
     /// Closed set: `unknown_argument`, `unknown_value`, `unknown_command`.
@@ -29,8 +34,17 @@ pub(crate) struct UsageRefusal {
     message: String,
 }
 
-thread_local! {
-    static LAST_USAGE_REFUSAL: RefCell<Option<UsageRefusal>> = const { RefCell::new(None) };
+/// Most recent usage records kept; older ones are dropped.
+const RECORDED_USAGE_LIMIT: usize = 16;
+
+static RECORDED_USAGE: std::sync::Mutex<Vec<UsageRefusal>> = std::sync::Mutex::new(Vec::new());
+
+fn recorded_usage() -> std::sync::MutexGuard<'static, Vec<UsageRefusal>> {
+    // A poisoned lock only means another thread panicked while holding it;
+    // the list stays a valid list of independent records.
+    RECORDED_USAGE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Record the class of the usage message just built and return the message.
@@ -39,23 +53,28 @@ pub(crate) fn record_usage_refusal(
     next_command: Option<String>,
     message: String,
 ) -> String {
-    LAST_USAGE_REFUSAL.with(|slot| {
-        *slot.borrow_mut() = Some(UsageRefusal {
-            code,
-            next_command,
-            message: message.clone(),
-        });
+    let mut recorded = recorded_usage();
+    recorded.retain(|existing| existing.message != message);
+    if recorded.len() >= RECORDED_USAGE_LIMIT {
+        recorded.remove(0);
+    }
+    recorded.push(UsageRefusal {
+        code,
+        next_command,
+        message: message.clone(),
     });
     message
 }
 
-/// The recorded class of `message`, if this thread built exactly that usage
-/// message. Taking clears the record, so a later unrelated error never
+/// The recorded class of `message`, if a usage builder produced exactly that
+/// message. Taking removes the record, so a later unrelated error never
 /// inherits a stale class.
 pub(crate) fn take_usage_refusal(message: &str) -> Option<UsageRefusal> {
-    LAST_USAGE_REFUSAL
-        .with(|slot| slot.borrow_mut().take())
-        .filter(|recorded| recorded.message == message)
+    let mut recorded = recorded_usage();
+    let index = recorded
+        .iter()
+        .position(|existing| existing.message == message)?;
+    Some(recorded.remove(index))
 }
 
 /// The help route an unknown-argument error points at. `check`'s default help
@@ -428,7 +447,7 @@ mod tests {
 
     #[test]
     fn usage_builders_record_a_typed_class_for_exactly_their_message() {
-        let message = unknown_argument("check", "--forma");
+        let message = unknown_argument("check", "--forma-record-11584");
         let recorded = take_usage_refusal(&message);
         assert_eq!(
             recorded.as_ref().map(|usage| usage.code),
@@ -438,15 +457,15 @@ mod tests {
             recorded.and_then(|usage| usage.next_command),
             Some("ripr check --help --all".to_string())
         );
-        // Taking clears the record: a stale class is never inherited.
+        // Taking removes the record: a stale class is never inherited.
         assert_eq!(take_usage_refusal(&message), None);
 
-        let value = unknown_value("mode", "turbo", &["fast", "deep"]);
+        let value = unknown_value("mode", "turbo-record-11584", &["fast", "deep"]);
         assert_eq!(
             take_usage_refusal(&value).map(|usage| usage.code),
             Some("unknown_value")
         );
-        let format = unknown_format_value("yaml", &["json", "human"]);
+        let format = unknown_format_value("yaml-record-11584", &["json", "human"]);
         assert_eq!(
             take_usage_refusal(&format).map(|usage| usage.code),
             Some("unknown_value")
@@ -455,14 +474,39 @@ mod tests {
 
     #[test]
     fn a_different_message_never_takes_the_recorded_class() {
-        let _ = unknown_argument("check", "--forma");
-        // An unrelated error with different text must stay prose-only, even
-        // while a class is recorded on this thread.
+        let message = unknown_argument("check", "--forma-other-11584");
+        // An unrelated error with different text stays prose-only and leaves
+        // the real record alone.
         assert_eq!(take_usage_refusal("some operational failure"), None);
         assert_eq!(
-            take_usage_refusal("unknown check argument \"--forma\""),
+            take_usage_refusal("unknown check argument \"--forma-other\""),
             None
         );
+        assert!(take_usage_refusal(&message).is_some());
+    }
+
+    #[test]
+    fn the_record_is_visible_across_threads() {
+        // The interruptible `check` runner builds its usage message on a
+        // worker thread; the dispatcher that renders the refusal is another.
+        let message = std::thread::spawn(|| unknown_argument("check", "--worker-11584"))
+            .join()
+            .unwrap_or_default();
+        assert!(!message.is_empty());
+        assert_eq!(
+            take_usage_refusal(&message).map(|usage| usage.code),
+            Some("unknown_argument")
+        );
+    }
+
+    #[test]
+    fn the_record_list_is_bounded() {
+        let first = unknown_argument("check", "--bounded-first-11584");
+        for index in 0..(RECORDED_USAGE_LIMIT + 4) {
+            let _ = unknown_argument("check", &format!("--bounded-fill-{index}-11584"));
+        }
+        // The oldest record was dropped, so it is prose-only, not retained forever.
+        assert_eq!(take_usage_refusal(&first), None);
     }
 
     #[test]

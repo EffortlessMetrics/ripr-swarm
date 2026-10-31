@@ -44,9 +44,20 @@ fn assert_refusal(
             return Err(format!("{pointer}: expected {expected}, got {actual}"));
         }
     }
-    let next = pointer_str(&value, "/error/next/command")?;
-    if !next.contains(next_contains) {
-        return Err(format!("next command {next:?} lacks {next_contains:?}"));
+    // `next` is always present; it is null when no single honest command
+    // exists, which the empty `next_contains` accepts.
+    match value.pointer("/error/next") {
+        Some(Value::Null) if next_contains.is_empty() => {}
+        Some(Value::Null) => {
+            return Err(format!("next is null, expected {next_contains:?}"));
+        }
+        Some(_) => {
+            let next = pointer_str(&value, "/error/next/command")?;
+            if !next.contains(next_contains) {
+                return Err(format!("next command {next:?} lacks {next_contains:?}"));
+            }
+        }
+        None => return Err("error.next key must always be present".to_string()),
     }
     if pointer_str(&value, "/error/message")?.is_empty() {
         return Err("error.message must carry the one-sentence why".to_string());
@@ -130,18 +141,29 @@ fn check_refusal_is_discriminated_from_a_clean_result() -> Result<(), String> {
         "analysis_failed"
     );
 
-    // Control: a completed run has neither discriminator.
-    std::fs::write(root.join("empty.patch"), "").map_err(|err| err.to_string())?;
+    // Control: a completed run has neither discriminator. The control needs
+    // a real workspace, so the run completes instead of refusing.
+    std::fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"refusal-envelope-check\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| err.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), "pub fn one() -> i32 {\n    1\n}\n")
+        .map_err(|err| err.to_string())?;
+    let patch = root.join("empty.patch");
+    std::fs::write(&patch, "").map_err(|err| err.to_string())?;
+    let patch_arg = patch.to_string_lossy().into_owned();
     let clean = run_ripr(&[
-        "check",
-        "--root",
-        &root_arg,
-        "--json",
-        "--quiet",
-        "--diff",
-        "empty.patch",
+        "check", "--root", &root_arg, "--json", "--quiet", "--diff", &patch_arg,
     ]);
-    assert_eq!(clean.status.code(), Some(0));
+    assert_eq!(
+        clean.status.code(),
+        Some(0),
+        "the control must complete:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&clean.stdout),
+        String::from_utf8_lossy(&clean.stderr)
+    );
     let clean = stdout_json(&clean)?;
     assert!(
         clean.get("status").is_none() && clean.get("error").is_none(),
@@ -216,5 +238,141 @@ fn context_selector_miss_writes_the_refusal_document() -> Result<(), String> {
     ]);
     let value = assert_refusal(&output, 2, "selector_miss", "ripr check")?;
     assert_eq!(pointer_str(&value, "/command")?, "context");
+    Ok(())
+}
+
+fn read_schema(name: &str) -> Result<Value, String> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../schemas/ripr")
+        .join(name);
+    let text = std::fs::read_to_string(&path).map_err(|err| format!("{name}: {err}"))?;
+    serde_json::from_str(&text).map_err(|err| format!("{name}: {err}"))
+}
+
+/// The recovery command is optional by design: a refusal with no single
+/// honest command carries `next: null`. Both published schemas must accept
+/// that shape, and the emitted document must be the shape they describe.
+#[test]
+fn schemas_accept_a_null_recovery_command_and_pair_status_with_error() -> Result<(), String> {
+    let refusal = read_schema("cli-refusal.schema.json")?;
+    let check = read_schema("check.schema.json")?;
+    for (label, next) in [
+        (
+            "cli-refusal",
+            refusal.pointer("/properties/error/properties/next"),
+        ),
+        (
+            "check",
+            check.pointer("/$defs/refusal_error/properties/next"),
+        ),
+    ] {
+        let next = next.ok_or_else(|| format!("{label}: next is undeclared"))?;
+        let types: Vec<&str> = next
+            .get("type")
+            .and_then(Value::as_array)
+            .map(|types| types.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        if !(types.contains(&"null") && types.contains(&"object")) {
+            return Err(format!(
+                "{label}: next must allow null or an object: {next}"
+            ));
+        }
+        if next.pointer("/required") != Some(&serde_json::json!(["purpose", "command"])) {
+            return Err(format!("{label}: a next object needs purpose and command"));
+        }
+    }
+    // The `error` block always carries `next`, even when it is null.
+    for (label, error) in [
+        ("cli-refusal", refusal.pointer("/properties/error")),
+        ("check", check.pointer("/$defs/refusal_error")),
+    ] {
+        let required = error
+            .and_then(|error| error.get("required"))
+            .and_then(Value::as_array)
+            .ok_or_else(|| format!("{label}: error.required is undeclared"))?;
+        for key in ["code", "message", "next"] {
+            if !required.iter().any(|entry| entry == key) {
+                return Err(format!("{label}: error.{key} must be required"));
+            }
+        }
+    }
+    // `status` and `error` appear together or not at all on a check document.
+    assert_eq!(
+        check.pointer("/dependentRequired"),
+        Some(&serde_json::json!({"status": ["error"], "error": ["status"]}))
+    );
+
+    // The emitted standalone document has exactly the declared keys, with
+    // `next` present and null for a usage error that has no single command.
+    let emitted = run_ripr(&["check", "--json", "--mode", "turbo"]);
+    let value = stdout_json(&emitted)?;
+    assert_eq!(value.pointer("/error/next"), Some(&Value::Null));
+    let declared: Vec<&String> = refusal
+        .get("properties")
+        .and_then(Value::as_object)
+        .map(|properties| properties.keys().collect())
+        .unwrap_or_default();
+    for key in value
+        .as_object()
+        .map(|object| object.keys())
+        .into_iter()
+        .flatten()
+    {
+        if !declared.iter().any(|declared| *declared == key) {
+            return Err(format!("emitted key {key} is not declared by the schema"));
+        }
+    }
+    let declared_codes = refusal
+        .pointer("/properties/error/properties/code/enum")
+        .and_then(Value::as_array)
+        .ok_or("code enum is undeclared")?;
+    let code = pointer_str(&value, "/error/code")?;
+    if !declared_codes.iter().any(|entry| entry == code) {
+        return Err(format!("emitted code {code} is not in the schema enum"));
+    }
+    Ok(())
+}
+
+/// `repair` accepts `--json` but writes nothing to stdout that is not one
+/// document: a refusal after the command parsed leaves the success path
+/// untouched, so the stdout of a refused run is exactly the refusal document.
+#[test]
+fn a_refused_json_run_writes_exactly_one_document() -> Result<(), String> {
+    let root = repair_fixture()?;
+    let _cleanup = DeclaredHunkScratch(root.clone());
+    let root_arg = root.to_string_lossy().into_owned();
+    let output = run_ripr(&["repair", "--json", "--root", &root_arg]);
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut documents = serde_json::Deserializer::from_str(&text).into_iter::<Value>();
+    let first = documents
+        .next()
+        .ok_or("a refusal under --json must write a document")?
+        .map_err(|err| err.to_string())?;
+    assert_eq!(first.pointer("/status"), Some(&Value::from("refused")));
+    if documents.next().is_some() {
+        return Err(format!("stdout carried more than one document:\n{text}"));
+    }
+    Ok(())
+}
+
+/// When the refusal document cannot reach stdout, the operational failure is
+/// reported instead of the usage class: a closed stdout must not look like
+/// a delivered machine answer. Unix only: it needs `/dev/full`.
+#[cfg(unix)]
+#[test]
+fn a_refusal_that_cannot_be_delivered_reports_the_write_failure() -> Result<(), String> {
+    let Ok(full) = std::fs::OpenOptions::new().write(true).open("/dev/full") else {
+        return Ok(());
+    };
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .args(["check", "--json", "--bogus-delivery-11584"])
+        .stdout(full)
+        .output()
+        .map_err(|err| err.to_string())?;
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains("write to stdout failed") && !stderr.contains("flush stdout failed") {
+        return Err(format!("the delivery failure must be named, got: {stderr}"));
+    }
     Ok(())
 }
