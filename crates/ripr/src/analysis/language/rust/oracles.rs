@@ -276,23 +276,25 @@ pub(super) fn apply_unresolved_property_macro_limit(
     // This is retained manifest/source authority, not a path-layout guess.
     // No per-finding filesystem reads or manifest resolution are performed.
     let owner_package = mentions.owner_package(owner_file);
-    // Prefer a relevant invocation whose actual verification failed over an
-    // earlier opaque sibling. The diagnostic stays attached to its own witness;
-    // it must never be copied onto the unsupported sibling's source pointer.
+    let eligible = |location: &&PropertyMacroLocation<'_>| {
+        match (owner_package, mentions.known_package(location.file)) {
+            (Some(owner), Some(mentioned)) => owner == mentioned,
+            // An unresolved package identity cannot prove unrelatedness.
+            _ => true,
+        }
+    };
+    // Prefer the eligible invocation that actually observed the failure;
+    // keep the pointer and diagnostic on that same witness.
+    let selected = locations
+        .iter()
+        .filter(eligible)
+        .find(|location| location.metadata_failure.is_some())
+        .or_else(|| locations.iter().find(eligible));
     let Some(PropertyMacroLocation {
         file,
         witness,
         metadata_failure,
-    }) = locations
-        .iter()
-        .filter(|location| {
-            match (owner_package, mentions.known_package(location.file)) {
-                (Some(owner), Some(mentioned)) => owner == mentioned,
-                // An unresolved package identity cannot prove unrelatedness.
-                _ => true,
-            }
-        })
-        .min_by_key(|location| location.metadata_failure.is_none())
+    }) = selected
     else {
         return false;
     };
@@ -1054,6 +1056,94 @@ mod tests {
                 &absolute_owner,
                 &mentions
             ));
+        }
+    }
+
+    #[test]
+    fn property_failure_preference_respects_known_package_scope() {
+        use crate::analysis::facts::{UnresolvedPropertyMacroFact, WorkspaceFileAuthority};
+        use crate::analysis::workspace::MetadataProbeFailure;
+        use std::collections::BTreeMap;
+        use std::path::Path;
+
+        let owner = Path::new("owner/src/lib.rs");
+        let local = Path::new("owner/tests/local.rs");
+        let other = Path::new("other/tests/other.rs");
+        let authority = |package: &str| WorkspaceFileAuthority {
+            source_digest: String::new(),
+            package_identity: package.into(),
+            valid: true,
+        };
+        let authorities = BTreeMap::from([
+            (owner.to_path_buf(), authority("owner")),
+            (local.to_path_buf(), authority("owner")),
+            (other.to_path_buf(), authority("other")),
+        ]);
+        let generic = UnresolvedPropertyMacroFact {
+            name: "proptest".into(),
+            line: 1,
+            mentioned_identifiers: vec!["gate".into()],
+        };
+        let supported = UnresolvedPropertyMacroFact {
+            line: 7,
+            ..generic.clone()
+        };
+        let failure = Some(MetadataProbeFailure::UnsuccessfulExit(Some(101)));
+        for local_failure in [false, true] {
+            for reverse in [false, true] {
+                let mut locations = vec![
+                    super::PropertyMacroLocation {
+                        file: other,
+                        witness: &supported,
+                        metadata_failure: failure,
+                    },
+                    super::PropertyMacroLocation {
+                        file: local,
+                        witness: &generic,
+                        metadata_failure: None,
+                    },
+                ];
+                if local_failure {
+                    locations.push(super::PropertyMacroLocation {
+                        file: local,
+                        witness: &supported,
+                        metadata_failure: failure,
+                    });
+                }
+                if reverse {
+                    locations.reverse();
+                }
+                let mentions = super::PropertyMacroMentionIndex {
+                    captured_root: None,
+                    selected_root: Path::new("/root"),
+                    by_identifier: BTreeMap::from([("gate", locations)]),
+                    package_authority: Some(&authorities),
+                };
+                let mut finding = no_static_path_finding();
+                assert!(super::apply_unresolved_property_macro_limit(
+                    &mut finding,
+                    "gate",
+                    &Path::new("/root").join(owner),
+                    &mentions
+                ));
+                let line = if local_failure { 7 } else { 1 };
+                assert!(
+                    finding
+                        .evidence
+                        .iter()
+                        .any(|e| e.contains(&format!("owner/tests/local.rs:{line}"))),
+                    "{:?}",
+                    finding.evidence
+                );
+                assert_eq!(
+                    finding
+                        .recommended_next_step
+                        .as_deref()
+                        .unwrap_or("")
+                        .contains("cargo metadata"),
+                    local_failure
+                );
+            }
         }
     }
 

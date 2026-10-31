@@ -8,6 +8,13 @@ mod path_dependencies;
 mod select;
 mod source_role;
 
+#[cfg_attr(
+    not(test),
+    expect(
+        unused_imports,
+        reason = "Preserve the Option compatibility entry point"
+    )
+)]
 pub(crate) use assertion_dependency::{
     AnyhowIdentity, LiteralJsonIdentity, MetadataProbeFailure, config_snapshot_identity,
     eligible_json_root, eligible_manifest, eligible_proptest_root, verified_anyhow_identity,

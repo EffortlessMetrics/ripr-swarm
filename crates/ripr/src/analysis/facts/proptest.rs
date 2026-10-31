@@ -29,6 +29,10 @@ pub(super) struct ProptestMetadataFailure {
 }
 
 impl RustIndex {
+    pub(crate) fn has_proptest_metadata_failures(&self) -> bool {
+        !self.proptest_metadata_failures.is_empty()
+    }
+
     pub(crate) fn proptest_metadata_failure(
         &self,
         path: &std::path::Path,

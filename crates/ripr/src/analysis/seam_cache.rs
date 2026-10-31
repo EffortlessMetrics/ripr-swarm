@@ -594,7 +594,8 @@ pub(crate) struct CachedSeamLimitInfo {
 /// no longer reads as comparing by its fields (#10684).
 /// `1.123`: return/error matches! assertions require shared test execution
 /// admission. Older entries may credit ignored or broad expected-panic tests.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.123";
+/// `1.124`: discard classified results that may have cached a failed provider probe.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.124";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -763,7 +764,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.123";
 /// `0.127`: same literal fold and sole-glob reach as full `1.120` (#10479).
 /// `0.128`: same Display placeholder-edit refusal as full `1.121` (#9836).
 /// `0.130`: same matches! execution admission as full `1.123`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.130";
+/// `0.131`: same provider-probe failure invalidation as full `1.124`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.131";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -934,7 +936,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.130";
 /// `0.127`: same literal fold and sole-glob reach as full `1.120` (#10479).
 /// `0.128`: same Display placeholder-edit refusal as full `1.121` (#9836).
 /// `0.130`: same matches! execution admission as full `1.123`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.130";
+/// `0.131`: same provider-probe failure invalidation as full `1.124`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.131";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1433,6 +1436,7 @@ pub(crate) struct RepoSeamCacheKey {
 }
 
 const CARGO_INPUT_IDENTITY_UNAVAILABLE: &str = "cargo_configuration_identity_unavailable";
+const PROPTEST_METADATA_UNAVAILABLE: &str = "proptest_metadata_unavailable";
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct RepoFileFactCacheKey {
@@ -1493,14 +1497,25 @@ impl RepoSeamCacheKey {
         !self
             .workspace_manifests_hash
             .ends_with(CARGO_INPUT_IDENTITY_UNAVAILABLE)
+            && !self
+                .workspace_manifests_hash
+                .ends_with(PROPTEST_METADATA_UNAVAILABLE)
     }
 
     pub(crate) fn require_reusable(&self) -> Result<(), String> {
         if self.is_reusable() {
             Ok(())
         } else {
+            let reason = if self
+                .workspace_manifests_hash
+                .ends_with(PROPTEST_METADATA_UNAVAILABLE)
+            {
+                PROPTEST_METADATA_UNAVAILABLE
+            } else {
+                CARGO_INPUT_IDENTITY_UNAVAILABLE
+            };
             Err(format!(
-                "{CARGO_INPUT_IDENTITY_UNAVAILABLE}: restore readable regular Cargo/toolchain configuration within the 1 MiB per-file and 16 MiB total identity limits, and ensure Cargo home can be discovered, then retry"
+                "{reason}: restore readable Cargo configuration and offline provider metadata, then retry"
             ))
         }
     }
@@ -1687,13 +1702,19 @@ impl WorkspaceKeyContext<'_> {
         } else {
             workspace_manifests_hash
         };
+        let mut proptest_metadata_failed = false;
         let workspace_manifests_hash =
             if super::workspace::eligible_proptest_root(self.workspace_root) {
-                let identity = super::workspace::verified_proptest_identity(self.workspace_root)
-                    .map_or_else(
-                        || "unverified".to_string(),
-                        |receipt| receipt.validation_digest,
-                    );
+                let identity = match super::workspace::verified_proptest_identity_result(
+                    self.workspace_root,
+                ) {
+                    Ok(Some(receipt)) => receipt.validation_digest,
+                    Ok(None) => "unverified".to_string(),
+                    Err(_) => {
+                        proptest_metadata_failed = true;
+                        "unverified".to_string()
+                    }
+                };
                 hash_str(&format!(
                     "{workspace_manifests_hash}:proptest-1.11-singleton:{identity}"
                 ))
@@ -1712,6 +1733,11 @@ impl WorkspaceKeyContext<'_> {
             .unwrap_or_else(|| {
                 format!("{workspace_manifests_hash}:{CARGO_INPUT_IDENTITY_UNAVAILABLE}")
             });
+        let workspace_manifests_hash = if proptest_metadata_failed {
+            format!("{workspace_manifests_hash}:{PROPTEST_METADATA_UNAVAILABLE}")
+        } else {
+            workspace_manifests_hash
+        };
         let lockfile_hash = hash_named_workspace_files(self.workspace_root, "Cargo.lock");
         let toolchain_hash = hash_str(
             std::env::var("RUSTUP_TOOLCHAIN")
@@ -5351,7 +5377,7 @@ mod tests {
         // 1.120 -> 1.121: Display placeholder-edit refusal (#9836).
         // 1.121 -> 1.122: foreign embedded-type equality reading (#10684).
         // 1.122 -> 1.123: return/error matches! execution admission.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.123");
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.124");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5461,8 +5487,8 @@ mod tests {
         // 0.127 -> 0.128: same Display placeholder-edit refusal as full 1.121.
         // 0.128 -> 0.129: same foreign embedded-type reading as full 1.122.
         // 0.129 -> 0.130: same matches! admission as full 1.123.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.130");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.130");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.131");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.131");
     }
 
     #[test]

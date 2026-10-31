@@ -30,6 +30,69 @@ fn require_withheld(finding: &Value) {
 }
 
 #[test]
+fn diagnostic_selects_the_supported_sibling_in_either_source_order() -> Result<(), String> {
+    let mut fixture = Fixture::new()?;
+    let healthy = finding(&fixture, "siblings-healthy", None)?;
+    assert_eq!(healthy["classification"], "exposed", "{healthy}");
+    assert_eq!(healthy["related_tests_total"], 1, "{healthy}");
+    let empty_home = fixture.0.join("target/siblings-empty-home");
+    std::fs::create_dir_all(&empty_home).map_err(|error| error.to_string())?;
+    fixture.1.cargo_home = Some(empty_home);
+
+    let supported = PROPERTY.trim();
+    let unsupported = supported.replace("100i32", "100");
+    assert_ne!(unsupported, supported);
+    for (label, source, supported_line) in [
+        (
+            "supported-first",
+            format!("{supported}\n{unsupported}\n"),
+            1,
+        ),
+        (
+            "unsupported-first",
+            format!("{unsupported}\n{supported}\n"),
+            unsupported.lines().count() + 1,
+        ),
+    ] {
+        fixture.write("tests/boundary.rs", &source)?;
+        let result = finding(&fixture, label, None)?;
+        require_withheld(&result);
+        assert!(action(&result)?.contains(METADATA_COMMAND), "{result}");
+        let expected = format!(
+            "limitation_last_established_edge: source invocation `proptest::proptest!` at tests/boundary.rs:{supported_line}"
+        );
+        let evidence = result["evidence"].as_array().ok_or("missing evidence")?;
+        assert!(
+            evidence
+                .iter()
+                .any(|line| line.as_str() == Some(expected.as_str())),
+            "expected {expected}: {result}"
+        );
+    }
+
+    // The syntax admission guard refuses expansion when two item-position
+    // macros share a line, so neither sibling may borrow a diagnostic.
+    let supported_one_line = supported.split_whitespace().collect::<Vec<_>>().join(" ");
+    let unsupported_one_line = unsupported.split_whitespace().collect::<Vec<_>>().join(" ");
+    for (label, source) in [
+        (
+            "same-line-supported-first",
+            format!("{supported_one_line} {unsupported_one_line}\n"),
+        ),
+        (
+            "same-line-unsupported-first",
+            format!("{unsupported_one_line} {supported_one_line}\n"),
+        ),
+    ] {
+        fixture.write("tests/boundary.rs", &source)?;
+        let result = finding(&fixture, label, None)?;
+        require_withheld(&result);
+        assert!(!action(&result)?.contains(METADATA_COMMAND), "{result}");
+    }
+    Ok(())
+}
+
+#[test]
 fn offline_metadata_diagnosis_is_scoped_and_recovers_without_purging_diff_cache()
 -> Result<(), String> {
     let mut fixture = Fixture::new()?;
@@ -78,40 +141,16 @@ fn offline_metadata_diagnosis_is_scoped_and_recovers_without_purging_diff_cache(
     assert_eq!(human.matches(REPORT).count(), 1, "{human}");
     assert_eq!(human.matches(REPORT_END).count(), 1, "{human}");
     let normalized_human = human.split_whitespace().collect::<Vec<_>>().join(" ");
-    let normalized_next = next.split_whitespace().collect::<Vec<_>>().join(" ");
+    let normalized_next = next
+        .trim_end_matches('.')
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     assert!(
         normalized_human.contains(&normalized_next),
         "JSON action absent from human-full output: {human}"
     );
     fixture.1.human = false;
-
-    // A lexically earlier unsupported sibling must not hide the supported
-    // invocation's observed failure or borrow its invocation pointer.
-    let opaque_sibling = PROPERTY.replace("100i32", "100");
-    assert_ne!(opaque_sibling, PROPERTY);
-    fixture.write("tests/a_opaque.rs", &opaque_sibling)?;
-    let siblings = finding(&fixture, "provider-opaque-sibling-first", None)?;
-    require_withheld(&siblings);
-    assert!(action(&siblings)?.contains(METADATA_COMMAND), "{siblings}");
-    let pointers = siblings["evidence"]
-        .as_array()
-        .ok_or("missing sibling evidence")?
-        .iter()
-        .filter_map(Value::as_str)
-        .filter(|line| line.starts_with("limitation_last_established_edge:"))
-        .collect::<Vec<_>>();
-    assert_eq!(pointers.len(), 1, "{siblings}");
-    assert!(pointers[0].contains("tests/boundary.rs:"), "{siblings}");
-    assert!(!pointers[0].contains("tests/a_opaque.rs:"), "{siblings}");
-    std::fs::remove_file(fixture.0.join("tests/boundary.rs")).map_err(|error| error.to_string())?;
-    let only_opaque = finding(&fixture, "provider-only-opaque-sibling", None)?;
-    require_withheld(&only_opaque);
-    assert!(
-        !action(&only_opaque)?.contains(METADATA_COMMAND),
-        "{only_opaque}"
-    );
-    fixture.write("tests/boundary.rs", PROPERTY)?;
-    std::fs::remove_file(fixture.0.join("tests/a_opaque.rs")).map_err(|error| error.to_string())?;
 
     // Same failing environment, unsupported syntax: no borrowed diagnosis.
     let unsupported = PROPERTY.replace("100i32", "100");

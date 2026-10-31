@@ -458,7 +458,7 @@ fn inventory_classified_seams_report_collect(
     }
     let compute_started = Instant::now();
     trace_latency_phase("cold_compute", "start", Duration::ZERO);
-    let (classified, limit_info, lexical_fallback_files) =
+    let (classified, limit_info, lexical_fallback_files, provider_failed) =
         match inventory_classified_seams_from_state_with_config(
             &state,
             config,
@@ -488,30 +488,34 @@ fn inventory_classified_seams_report_collect(
         ),
         Duration::ZERO,
     );
-    let store_status = match cache.store_classified_seams_with_limit_and_fallback(
-        &key,
-        &classified,
-        cached_limit_info.as_ref(),
-        &lexical_fallback_files,
-        store_limit,
-    ) {
-        Ok(status) => {
-            if let Some(advisory) = &status.advisory {
-                eprintln!("ripr: {advisory}");
+    let store_status = if provider_failed {
+        "provider_metadata_unavailable".to_string()
+    } else {
+        match cache.store_classified_seams_with_limit_and_fallback(
+            &key,
+            &classified,
+            cached_limit_info.as_ref(),
+            &lexical_fallback_files,
+            store_limit,
+        ) {
+            Ok(status) => {
+                if let Some(advisory) = &status.advisory {
+                    eprintln!("ripr: {advisory}");
+                }
+                status.label
             }
-            status.label
-        }
-        Err(reason) => {
-            eprintln!("ripr: repo seam cache store ignored ({reason})");
-            let label = cache_store_status_label(&reason);
-            family_store_failures.record_store_failure(
-                PathBuf::from(CLASSIFIED_SEAM_STORE_FAILURE_PATH),
-                FileFactStoreError {
-                    stage: FileFactStoreStage::ClassifiedSeamStore,
-                    message: reason,
-                },
-            );
-            label
+            Err(reason) => {
+                eprintln!("ripr: repo seam cache store ignored ({reason})");
+                let label = cache_store_status_label(&reason);
+                family_store_failures.record_store_failure(
+                    PathBuf::from(CLASSIFIED_SEAM_STORE_FAILURE_PATH),
+                    FileFactStoreError {
+                        stage: FileFactStoreStage::ClassifiedSeamStore,
+                        message: reason,
+                    },
+                );
+                label
+            }
         }
     };
     trace_latency_phase("cache_store", &store_status, store_started.elapsed());
@@ -914,7 +918,7 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
         }
     }
 
-    let (classified, lexical_fallback_files) =
+    let (classified, lexical_fallback_files, provider_failed) =
         inventory_compact_classified_seams_from_state_with_config(&state, config)?;
     let store_started = Instant::now();
     trace_latency_phase(
@@ -926,21 +930,25 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
         ),
         Duration::ZERO,
     );
-    let store_status = match cache.store_compact_classified_seams_with_limit_and_fallback(
-        &key,
-        &classified,
-        &lexical_fallback_files,
-        store_limit,
-    ) {
-        Ok(status) => {
-            if let Some(advisory) = &status.advisory {
-                eprintln!("ripr: {advisory}");
+    let store_status = if provider_failed {
+        "provider_metadata_unavailable".to_string()
+    } else {
+        match cache.store_compact_classified_seams_with_limit_and_fallback(
+            &key,
+            &classified,
+            &lexical_fallback_files,
+            store_limit,
+        ) {
+            Ok(status) => {
+                if let Some(advisory) = &status.advisory {
+                    eprintln!("ripr: {advisory}");
+                }
+                status.label
             }
-            status.label
-        }
-        Err(reason) => {
-            eprintln!("ripr: compact repo seam cache store ignored ({reason})");
-            cache_store_status_label(&reason)
+            Err(reason) => {
+                eprintln!("ripr: compact repo seam cache store ignored ({reason})");
+                cache_store_status_label(&reason)
+            }
         }
     };
     trace_latency_phase(
@@ -989,7 +997,7 @@ fn inventory_seam_grip_class_counts_uncached_with_config(
 fn inventory_compact_classified_seams_from_state_with_config(
     state: &OwnedWorkspaceState,
     config: &RiprConfig,
-) -> Result<(Vec<ClassifiedSeam>, Vec<PathBuf>), String> {
+) -> Result<(Vec<ClassifiedSeam>, Vec<PathBuf>, bool), String> {
     let production_files = production_files_from_state_with_role(state, config);
     let build_started = Instant::now();
     trace_latency_phase(
@@ -1023,10 +1031,19 @@ fn inventory_compact_classified_seams_from_state_with_config(
             class,
         });
     }
-    Ok((classified, lexical_fallback_files))
+    Ok((
+        classified,
+        lexical_fallback_files,
+        cached.index.has_proptest_metadata_failures(),
+    ))
 }
 
-type ClassifiedSeamInventory = (Vec<ClassifiedSeam>, Option<SeamLimitInfo>, Vec<PathBuf>);
+type ClassifiedSeamInventory = (
+    Vec<ClassifiedSeam>,
+    Option<SeamLimitInfo>,
+    Vec<PathBuf>,
+    bool,
+);
 
 fn inventory_classified_seams_from_state_with_config(
     state: &OwnedWorkspaceState,
@@ -1106,7 +1123,12 @@ fn inventory_classified_seams_from_state_with_config(
     );
     cancellation::checkpoint()?;
     trace_latency_phase("classify_seams", "ok", classify_started.elapsed());
-    Ok((classified, limit_info, lexical_fallback_files))
+    Ok((
+        classified,
+        limit_info,
+        lexical_fallback_files,
+        cached.index.has_proptest_metadata_failures(),
+    ))
 }
 
 #[derive(Clone, Debug)]

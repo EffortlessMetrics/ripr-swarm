@@ -59,6 +59,10 @@ pub(crate) fn eligible_proptest_root(root: &Path) -> bool {
 /// The function macro, Just strategy and assertion failure path audited in
 /// proptest 1.11.0. Cargo/cache integrity has the same instrument assumptions
 /// as the other registry receipts; a matching spelling is never authority.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "Preserve the Option compatibility entry point")
+)]
 pub(crate) fn verified_proptest_identity(root: &Path) -> Option<RegistryIdentity> {
     verified_proptest_identity_result(root).ok().flatten()
 }
