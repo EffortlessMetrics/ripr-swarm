@@ -21027,3 +21027,50 @@ fn given_integration_test_when_local_call_and_library_value_then_owner_keeps_rel
     assert_eq!(related, vec!["equality_boundary_discounts".to_string()]);
     Ok(())
 }
+
+#[test]
+fn given_integration_test_when_nested_module_rival_reached_through_super_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    let nested = "mod lib_proptest {\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 90 }\n}\n\nmod inner {\n    #[test]\n    fn equality_boundary_discounts() {\n        assert_eq!(super::lib_proptest::discounted_total(100, 100), 90);\n    }\n}\n";
+    let related = related_test_names_for_boundary_seam(nested)?;
+    assert!(
+        related.is_empty(),
+        "#10855: a `super::` path to a local module rival must not relate the owner: {related:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_unrelated_nested_module_shares_the_name_then_external_call_keeps_related_test()
+-> Result<(), String> {
+    let sources = [
+        "mod unrelated {\n    mod lib_proptest {\n        pub fn helper() {}\n    }\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 1 }\n}\n\n#[test]\nfn equality_boundary_discounts() {\n    assert_eq!(lib_proptest::discounted_total(100, 100), 90);\n}\n",
+        "// mod lib_proptest { }\nfn discounted_total(_amount: i32, _threshold: i32) -> i32 { 1 }\n\n#[test]\nfn equality_boundary_discounts() {\n    assert_eq!(lib_proptest::discounted_total(100, 100), 90);\n}\n",
+        "mod unrelated {\n    pub mod lib_proptest {\n        pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 1 }\n    }\n}\n\n#[test]\nfn equality_boundary_discounts() {\n    assert_eq!(lib_proptest::discounted_total(100, 100), 90);\n}\n",
+    ];
+    for source in sources {
+        let related = related_test_names_for_boundary_seam(source)?;
+        assert_eq!(
+            related,
+            vec!["equality_boundary_discounts".to_string()],
+            "{source}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_local_module_alias_reaches_rival_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    for import in ["use local as alias;", "use self::local as alias;"] {
+        let aliased = format!(
+            "mod local {{\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 {{ 777 }}\n}}\n{import}\n\n#[test]\nfn alias_rival() {{\n    assert_eq!(alias::discounted_total(100, 100), 777);\n}}\n"
+        );
+        let related = related_test_names_for_boundary_seam(&aliased)?;
+        assert!(
+            related.is_empty(),
+            "#10855: `{import}` to a local module rival must not relate the owner: {related:?}"
+        );
+    }
+    Ok(())
+}
