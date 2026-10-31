@@ -2189,6 +2189,17 @@ fn run_agent_repair_phase(
             // instead of three. The load precedes admission but writes no
             // workflow artifact, so F15-12 still holds.
             let packet_root = crate::agent::loop_commands::bound_root(&root.to_string_lossy());
+            // #11458: an already-unrepairable dirty production premise
+            // refuses here, before the inventory. Policy-free and
+            // conservative: any doubt falls through to the exact check below.
+            if let Some(violations) = early_dirty_premise_violations(&root, store_ref) {
+                return Err(before_phase_dirty_premise_refusal(
+                    &seam_id,
+                    &root,
+                    store_ref,
+                    &violations,
+                ));
+            }
             let (before_input, before_config) = load_root_input_and_config(&root)?;
             let before_report = analysis::inventory_classified_seams_report_at_with_config(
                 &before_input.root,
@@ -3690,6 +3701,14 @@ fn before_phase_dirty_premise_refusal(
     before_phase_dirty_premise_refusal_with_restart(&restart, violations)
 }
 
+/// The conservative pre-inventory dirty-premise preflight (#11458). `None`
+/// means "not certain": a HEAD read failure, a git failure or any path the
+/// exact policy might allow, so the caller proceeds to the exact check.
+fn early_dirty_premise_violations(root: &Path, store: Option<&Path>) -> Option<Vec<String>> {
+    let head = crate::agent::artifact::current_git_head(root).ok()?;
+    crate::app::repair_attempt::conservative_dirty_premise_violations(root, store, &head)
+}
+
 /// [`before_phase_dirty_premise_refusal`] for any start spelling: the seam
 /// and gap-bound (#9103) starts differ only in the command they name.
 fn before_phase_dirty_premise_refusal_with_restart(restart: &str, violations: &[String]) -> String {
@@ -3762,6 +3781,15 @@ fn run_gap_bound_before_phase(
         refusal.start_refused = true;
         format!("agent repair --gap-id `{gap_id}`: {error}. No repair attempt was started.")
     })?;
+    // #11458: refuse an already-unrepairable dirty production premise before
+    // the diff-scoped check runs; the exact policy check below stays the
+    // backstop for every case the conservative preflight cannot decide.
+    if let Some(violations) = early_dirty_premise_violations(root, store_ref) {
+        return Err(before_phase_dirty_premise_refusal_with_restart(
+            &restart,
+            &violations,
+        ));
+    }
     let snapshot = super::check::gap_check_findings_snapshot(root, &base_commit)?;
     let python = crate::app::gap_bound_repair::is_python_gap_bound_subject(gap_id);
     let lookup = if python {

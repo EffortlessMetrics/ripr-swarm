@@ -1443,3 +1443,90 @@ fn b6_after_phase_labels_recapture_spans() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// #11458: a dirty production premise refuses before the classified-seam
+/// inventory (seam arm) and before the diff-scoped check (gap arm). The
+/// subject id is deliberately unknown: HEAD only reaches the unknown-subject
+/// refusal after loading the inventory/check, so seeing the dirty-premise
+/// text instead proves the refusal fired first. A dirty `tests/` file is the
+/// negative: it must fall through to the pre-existing unknown-subject
+/// refusal, with no workflow artifact or attempt written either way.
+#[test]
+fn b6_dirty_production_premise_refuses_before_the_inventory_in_both_arms() -> Result<(), String> {
+    let root = unique_temp_workspace("agentic-b6-early-premise");
+    fs::create_dir_all(&root).map_err(|error| format!("create {}: {error}", root.display()))?;
+    let _owned = Fixture(root.clone());
+    init_fixture_repo(&root)?;
+    let root_arg = root.display().to_string();
+    let seam_args = [
+        "agent",
+        "repair",
+        "--root",
+        root_arg.as_str(),
+        "--seam-id",
+        "seam:does-not-exist",
+        "--phase",
+        "before",
+    ];
+    let gap_args = [
+        "agent",
+        "repair",
+        "--root",
+        root_arg.as_str(),
+        "--gap-id",
+        "gap:does-not-exist",
+        "--base",
+        "HEAD",
+        "--phase",
+        "before",
+    ];
+
+    // Negative: a dirty allowed-surface-shaped test file defers to HEAD
+    // behavior, which for an unknown subject is the unknown-subject refusal.
+    let test_path = root.join("tests/pricing.rs");
+    let mut test_source = fs::read_to_string(&test_path)
+        .map_err(|error| format!("read {}: {error}", test_path.display()))?;
+    test_source.push_str("\n// focused test edit\n");
+    fs::write(&test_path, test_source)
+        .map_err(|error| format!("write {}: {error}", test_path.display()))?;
+    for (label, args) in [("seam", &seam_args[..]), ("gap", &gap_args[..])] {
+        let output = run_ripr(&root, args)?;
+        let text = combined_output(&output);
+        if text.contains("needs your source changes committed first") {
+            return Err(format!(
+                "{label} arm: a dirty test file must not early-refuse:\n{text}"
+            ));
+        }
+        if output.status.success() {
+            return Err(format!("{label} arm: unknown subject must refuse:\n{text}"));
+        }
+    }
+
+    // Positive: a dirty production file refuses first, in both arms, with the
+    // existing text and no workflow artifact.
+    fixture_git_ok(&root, &["checkout", "--", "tests/pricing.rs"])
+        .map_err(|error| format!("restore tests/pricing.rs: {error}"))?;
+    edit_out_of_surface(&root)?;
+    for (label, args) in [("seam", &seam_args[..]), ("gap", &gap_args[..])] {
+        let output = run_ripr(&root, args)?;
+        assert_exit_code(&output, 2, label)?;
+        let text = combined_output(&output);
+        for fragment in [
+            "ripr repair needs your source changes committed first",
+            "Uncommitted: src/lib.rs.",
+            "Nothing was started.",
+        ] {
+            if !text.contains(fragment) {
+                return Err(format!(
+                    "{label} arm: early refusal must name `{fragment}`:\n{text}"
+                ));
+            }
+        }
+        if root.join("target/ripr/workflow").exists()
+            || root.join("target/ripr/repair-attempts").exists()
+        {
+            return Err(format!("{label} arm: early refusal wrote artifacts"));
+        }
+    }
+    Ok(())
+}
