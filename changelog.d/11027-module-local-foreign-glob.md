@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- Assertion credit no longer refuses `assert!` and the other standard assertion macros for a test because an unrelated file of the same crate holds a private `use rayon::prelude::*;` style glob: a private file-level foreign glob now blocks only the tests of its own file and the modules declared beneath it, and keeps the workspace-wide refusal whenever module composition is not established (`include!` fragments, unresolved `#[path]` or `include!`, withheld files, `pub` globs) (#11027).

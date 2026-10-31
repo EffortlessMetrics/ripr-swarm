@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- `ripr repair` no longer calls a changed `return Err(E::Variant)` "missing evidence: a test assertion that checks the changed return value" when an existing test pins exactly that variant: the return-value seam now reads the exact error-variant pin the same-span error-variant seam already credits, so repair and `ripr check` both read the change as gripped. A sibling-variant pin is not credited, and no repair start is added (#11111).

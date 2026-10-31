@@ -1,6 +1,9 @@
 {
   "schema_version": "0.2",
   "tool": "ripr",
+  "analysis_outcome": {
+    "analysis_complete": true
+  },
   "findings": [
     {
       "id": "probe:src_discount.ts:typescript_preview:2396aec1",

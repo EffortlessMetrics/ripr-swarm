@@ -123,3 +123,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_bare_import_control (10)
+
+Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
+
+Command:
+`cargo xtask goldens bless module_reach_bare_import_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

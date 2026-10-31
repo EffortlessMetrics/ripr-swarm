@@ -2077,10 +2077,10 @@ mod tests {
         TargetedRerunPathDependencyGraph, TargetedRerunPathDependencyNeighbors,
         TargetedRerunRelatedTest, TargetedRerunReport, TargetedRerunSeam, TargetedRerunSelector,
         add_cache_stats, cache_from, compare_selector_scoped_seams, entry_matches_selected_gap,
-        graph_provenance_unavailable_fields, input_fingerprint_changes, parity_mismatch_fields,
-        parse_options, render_human, rerun_changed_test, rerun_gap, resolve_gap_records,
-        route_from_gap_records, same_root, scopes_from_gap_records, seam_from,
-        seam_matches_resolved_scope,
+        graph_provenance_unavailable_fields, input_fingerprint_changes, normalize_changed_test,
+        parity_mismatch_fields, parse_options, render_human, rerun_changed_test, rerun_gap,
+        resolve_gap_records, resolve_output_path, route_from_gap_records, same_root,
+        scopes_from_gap_records, seam_from, seam_matches_resolved_scope, write_text_file,
     };
     use crate::analysis::ClassifiedSeam;
     use crate::analysis::classify_seam;
@@ -4023,6 +4023,173 @@ mod tests {
                 return Err(format!("missing {expected:?} from {rendered:?}"));
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn rerun_value_flags_refuse_a_missing_trailing_value() -> Result<(), String> {
+        for flag in [
+            "--root",
+            "--changed-test",
+            "--gap",
+            "--gap-ledger",
+            "--out",
+            "--before",
+        ] {
+            assert_eq!(
+                parse_options(&args(&[flag])),
+                Err(format!("missing value for {flag}")),
+                "{flag} without a value must name the flag"
+            );
+        }
+        // Single-change control: supplying the value clears the refusal.
+        parse_options(&args(&["--changed-test", "tests/a.rs"]))?;
+        Ok(())
+    }
+
+    #[test]
+    fn rerun_unknown_argument_is_refused_with_command_context() -> Result<(), String> {
+        let Err(message) = parse_options(&args(&["--changed-test", "tests/a.rs", "--bogus"]))
+        else {
+            return Err("an unknown flag must refuse".to_string());
+        };
+        assert!(message.starts_with("unknown rerun argument \"--bogus\""));
+        Ok(())
+    }
+
+    #[test]
+    fn rerun_selector_conflicts_and_orphan_ledger_are_refused() -> Result<(), String> {
+        let conflict = "rerun accepts exactly one selector".to_string();
+        // A gap after a changed-test is the same refusal as the reverse order.
+        assert_eq!(
+            parse_options(&args(&["--changed-test", "tests/a.rs", "--gap", "gap:x"])),
+            Err(conflict.clone())
+        );
+        assert_eq!(
+            parse_options(&args(&["--gap", "gap:x", "--changed-test", "tests/a.rs"])),
+            Err(conflict.clone())
+        );
+        assert_eq!(
+            parse_options(&args(&["--gap", "gap:x", "--gap", "gap:y"])),
+            Err(conflict)
+        );
+        // A ledger needs a gap, with or without a changed-test selector.
+        let orphan = "rerun --gap-ledger requires --gap".to_string();
+        assert_eq!(
+            parse_options(&args(&["--gap-ledger", "ledger.json"])),
+            Err(orphan.clone())
+        );
+        assert_eq!(
+            parse_options(&args(&[
+                "--changed-test",
+                "tests/a.rs",
+                "--gap-ledger",
+                "ledger.json"
+            ])),
+            Err(orphan)
+        );
+        // Control: gap plus ledger is the one accepted gap spelling.
+        let options = parse_options(&args(&["--gap", "gap:x", "--gap-ledger", "ledger.json"]))?;
+        if options.selector
+            != (RerunSelector::Gap {
+                canonical_gap_id: "gap:x".to_string(),
+                gap_ledger: PathBuf::from("ledger.json"),
+            })
+        {
+            return Err(format!("unexpected gap selector: {:?}", options.selector));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rerun_changed_test_selector_requires_a_file_and_trims_the_node() -> Result<(), String> {
+        assert_eq!(
+            parse_options(&args(&["--changed-test", "  "])),
+            Err("rerun --changed-test requires a file path".to_string())
+        );
+        assert_eq!(
+            parse_options(&args(&["--changed-test", "::case"])),
+            Err("rerun --changed-test requires a file path".to_string())
+        );
+        // A whitespace-only node is empty, like no node after the separator.
+        assert_eq!(
+            parse_options(&args(&["--changed-test", "tests/a.rs::  "])),
+            Err("rerun --changed-test test node must not be empty".to_string())
+        );
+        let options = parse_options(&args(&["--changed-test", "tests/a.rs:: case "]))?;
+        if options.selector
+            != (RerunSelector::ChangedTest {
+                file: PathBuf::from("tests/a.rs"),
+                node: Some("case".to_string()),
+            })
+        {
+            return Err(format!("node was not trimmed: {:?}", options.selector));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rerun_root_flag_marks_the_root_explicit() -> Result<(), String> {
+        let implicit = parse_options(&args(&["--changed-test", "tests/a.rs"]))?;
+        let explicit = parse_options(&args(&["--changed-test", "tests/a.rs", "--root", "."]))?;
+        assert!(!implicit.root_explicit);
+        assert!(explicit.root_explicit);
+        Ok(())
+    }
+
+    #[test]
+    fn normalize_changed_test_refuses_absolute_paths_outside_the_root() -> Result<(), String> {
+        let root = unique_temp_root("normalize-root")?;
+        let inside = root.join("tests").join("a.rs");
+        assert_eq!(
+            normalize_changed_test(&root, &inside)?,
+            PathBuf::from("tests").join("a.rs")
+        );
+        let outside = unique_temp_root("normalize-outside")?.join("b.rs");
+        let Err(message) = normalize_changed_test(&root, &outside) else {
+            return Err("an absolute path outside the root must refuse".to_string());
+        };
+        assert!(message.starts_with("rerun changed test "));
+        assert!(message.contains("is outside root"));
+        // Control: a relative path is passed through unchanged.
+        assert_eq!(
+            normalize_changed_test(&root, Path::new("tests/a.rs"))?,
+            PathBuf::from("tests/a.rs")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_output_path_joins_relative_and_keeps_absolute() -> Result<(), String> {
+        let root = unique_temp_root("out-root")?;
+        assert_eq!(
+            resolve_output_path(&root, Path::new("target/r.json")),
+            root.join("target/r.json")
+        );
+        let absolute = root.join("elsewhere.json");
+        assert_eq!(
+            resolve_output_path(Path::new("/ignored"), &absolute),
+            absolute
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn write_text_file_creates_missing_parents_and_reports_write_failure() -> Result<(), String> {
+        let root = unique_temp_root("write-text")?;
+        let nested = root.join("a").join("b").join("report.json");
+        write_text_file(&nested, "{}")?;
+        let written =
+            std::fs::read_to_string(&nested).map_err(|err| format!("read back failed: {err}"))?;
+        assert_eq!(written, "{}");
+        // Control: a parent path occupied by a file cannot become a directory.
+        let blocker = root.join("blocker");
+        write_file(&blocker, "x")?;
+        let Err(message) = write_text_file(&blocker.join("report.json"), "{}") else {
+            return Err("a file in place of a parent directory must refuse".to_string());
+        };
+        assert!(message.starts_with("create "));
+        assert!(message.contains("failed"));
         Ok(())
     }
 }

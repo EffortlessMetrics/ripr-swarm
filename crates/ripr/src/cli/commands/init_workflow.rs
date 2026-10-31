@@ -51,12 +51,13 @@ defaults:
     shell: bash
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.action || 'run' }}
   cancel-in-progress: true
 
 jobs:
   ripr:
     name: RIPR advisory reports
+    if: ${{ (github.event.action != 'labeled' && github.event.action != 'unlabeled') || (vars.RIPR_GATE_MODE != '' && vars.RIPR_GATE_MODE != 'visible-only') }}
     runs-on: ubuntu-latest
     # Advisory unless RIPR_GATE_MODE names a blocking mode.
     continue-on-error: ${{ vars.RIPR_GATE_MODE == '' || vars.RIPR_GATE_MODE == 'visible-only' }}
@@ -381,7 +382,7 @@ mod template_pin_tests {
     /// first line, and artifact paths, which the `generated_workflow_*` and
     /// `install_version_*` tests pin at the rendered level.
     const TEMPLATE_SHA256: &str =
-        "f0238ee00aba27aeb49a33594acc306e0ea332e4db6978663eb3f70c9494f520";
+        "102616375642b7b74bcb7b539efef6e2ceb05bf9b0bcce81ff06965b8aad3c15";
 
     #[test]
     fn template_matches_the_pinned_bytes() {
@@ -409,6 +410,19 @@ mod install_version_tests {
         for version in ["0.10.0", "0.9.0", "0.1.0", LATEST_RELEASED_VERSION] {
             assert_eq!(workflow_install_version(version), version, "{version}");
         }
+    }
+
+    /// The composite Action's default `version` is the same release the
+    /// generated workflow falls back to, so the two install routes cannot
+    /// drift apart when `LATEST_RELEASED_VERSION` advances.
+    #[test]
+    fn composite_action_default_version_tracks_the_latest_release() {
+        let action = include_str!("../../../../../.github/actions/ripr-check/action.yml");
+        let expected = format!("default: '{LATEST_RELEASED_VERSION}'");
+        assert!(
+            action.contains(&expected),
+            "update the `version` default in .github/actions/ripr-check/action.yml to {LATEST_RELEASED_VERSION}"
+        );
     }
 
     /// A version that always exceeds the release constant, so this test

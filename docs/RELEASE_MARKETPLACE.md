@@ -81,11 +81,12 @@ binary assets and manifest exist on the GitHub Release. See
 
 ## Secrets
 
-Repository secrets:
+Environment secrets, each scoped to the one publish environment that reads it
+(see [REPO_SETTINGS.md](REPO_SETTINGS.md#release-environments)):
 
 ```text
-VSCE_PAT
-OVSX_PAT
+VSCE_PAT   in environment vs-marketplace-publish
+OVSX_PAT   in environment open-vsx-publish
 ```
 
 The Open VSX namespace must exist before publish:
@@ -113,21 +114,25 @@ Use:
 .github/workflows/publish-extension.yml
 ```
 
-The workflow packages one VSIX, uploads it as an artifact, publishes that same
-VSIX to both registries, and attaches it to the GitHub Release when run from a
-tag.
+The workflow has no tag trigger; it runs only by `workflow_dispatch`, at the
+receipted release head. Each dispatch publishes to exactly one channel
+(`publish_vs_marketplace` or `publish_open_vsx`; zero or two is refused).
+The first dispatch packages the VSIX and attaches it to the existing
+`v<version>` GitHub Release (it never creates the Release). The second
+channel's dispatch reuses those attached bytes and must pass their digest as
+`vsix_sha256`. Each publish job waits for approval on its protected
+environment.
 
-The workflow normalizes tag names like `v0.8.0` to the package version
-`0.8.0` for the VSIX filename and duplicate-version checks.
+Every dispatch requires `version`, `source_sha` (the 40-hex head the release
+tag peels to; dispatch with `--ref` at that commit) and `manifest_sha256` (raw
+bytes of the published `ripr-server-manifest-v<version>.json`). The workflow
+normalizes tag names like `v0.8.0` to the package version `0.8.0` for the VSIX
+filename and duplicate-version checks.
 
-To publish only Open VSX from a manual workflow run:
-
-```bash
-gh workflow run publish-extension.yml \
-  --field version=0.8.0 \
-  --field publish_vs_marketplace=false \
-  --field publish_open_vsx=true
-```
+The exact commands for both channels, including the Open VSX dispatch with
+`--ref`, `source_sha`, `manifest_sha256` and `vsix_sha256`, are in
+[RELEASE_TRANSACTION.md](RELEASE_TRANSACTION.md) section 6. Do not dispatch
+from a hand-written sample.
 
 Publish the server binary assets before publishing the marketplace VSIX so the
 extension can download a matching `ripr` server on first activation. For

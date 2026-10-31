@@ -1,0 +1,120 @@
+name: Size Scaling
+
+# Nightly hostile-input size gate (#10362): runs `ripr check` against one
+# release binary on generated Rust, Python and TypeScript files at 1x, 2x and
+# 4x a base size and fails when cost stops being linear in file size, when a
+# step exceeds the ceiling, or when a run analyzes nothing. Not part of the
+# required PR workflow; the report is an artifact so the trend is readable
+# run over run. Wall time only; peak memory is not measured (docs/SIZE_SCALING.md).
+#
+# The warm-ab job (#10639) times a warm `ripr check` of two pinned diffs of this
+# repository with a baseline build and a candidate build on the same runner and
+# fails when the candidate costs more than 1.5x the baseline, so runner class
+# and load cancel. The pins are fixed commits; the pinned trees do not drift
+# with main.
+
+on:
+  workflow_dispatch:
+    inputs:
+      baseline_ref:
+        description: "Ref built as the warm-ab baseline (default: newest first-parent commit at least 24 hours older than the candidate)"
+        required: false
+        default: ""
+      candidate_ref:
+        description: "Ref built as the warm-ab candidate (default: this run's commit)"
+        required: false
+        default: ""
+  schedule:
+    - cron: "41 7 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  # Scheduled and dispatched runs use separate groups so a manual dispatch
+  # cannot cancel the nightly mid-measurement and consume its baseline window.
+  group: size-scaling-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  size-scaling:
+    runs-on: ubuntu-latest
+    # 11 cells x 3 steps x the 3-minute step deadline is 99 minutes in the worst
+    # case, plus the release build; the report is written only after the last
+    # cell, so the job must outlive that.
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          cache-on-failure: true
+
+      - name: Build the release binary
+        run: cargo build --release --locked -p ripr
+
+      # A run terminated at the timeout or cancelled by the concurrency group never
+      # reaches the command's own cleanup, and rust-cache saves target/ on
+      # failure, so reclaim earlier runs' pid-scoped workspaces first.
+      - name: Measure size scaling
+        run: |
+          rm -rf target/ripr/size-scaling
+          cargo xtask size-scaling --binary target/release/ripr --base-kib 512
+
+      - name: Upload size-scaling report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: size-scaling
+          path: target/ripr/reports/size-scaling.*
+          if-no-files-found: warn
+
+  # Same-run A/B on pinned ripr-on-ripr diffs (#10639). `warm-ab --pins` builds
+  # the baseline and candidate release binaries, checks out each pinned commit
+  # and runs the A/B on one runner with alternating warm runs. `baseline_ref` and `candidate_ref` exist so
+  # the negative control (a pre-fix build as candidate) can run on a hosted runner.
+  warm-ab:
+    runs-on: ubuntu-latest
+    # Worst case: 2 pins x (2 cold + 2x3 warm checks) x the 10-minute check
+    # deadline is 160 minutes, plus two cold release builds and checkout /
+    # toolchain setup; the report is written per pin, so the job must
+    # outlive that worst case rather than lose the verdict to the cap.
+    timeout-minutes: 200
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          cache-on-failure: true
+
+      # A run terminated at the timeout or cancelled by the concurrency group never
+      # reaches the command's own cleanup, and rust-cache saves target/ on
+      # failure, so reclaim earlier runs' pid-scoped workspaces first.
+      - name: Time the pinned diffs against a baseline build
+        env:
+          INPUT_BASELINE: ${{ inputs.baseline_ref }}
+          INPUT_CANDIDATE: ${{ inputs.candidate_ref }}
+        run: |
+          rm -rf target/ripr/warm-ab
+          cargo xtask warm-ab --baseline-ref "$INPUT_BASELINE" --candidate-ref "$INPUT_CANDIDATE" --pins xtask-tests=a58975de,product-rust=af8136f7
+
+      - name: Upload warm-ab report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: warm-ab
+          path: target/ripr/reports/warm-ab-*.*
+          if-no-files-found: warn

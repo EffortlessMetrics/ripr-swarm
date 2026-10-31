@@ -1,0 +1,10 @@
+diff --git a/benches/exposure.rs b/benches/exposure.rs
+--- a/benches/exposure.rs
++++ b/benches/exposure.rs
+@@ -1,5 +1,5 @@
+ fn bench_base() -> u32 {
+-    8
++    4 + 4
+ }
+ 
+ #[test]

@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- TypeScript analysis no longer hangs on deeply nested template-literal interpolations or aborts with a stack overflow on deeply nested JSX: the expression-nesting budget now counts `${` levels and JSX elements (in JSX-capable files), and the literal masker parses behind the same budget on the large-stack worker; over-budget files get the typed `expression_nesting_budget` limitation (#11541).

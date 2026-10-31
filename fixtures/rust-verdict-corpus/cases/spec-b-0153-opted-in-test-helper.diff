@@ -1,0 +1,10 @@
+diff --git a/tests/api_contract.rs b/tests/api_contract.rs
+--- a/tests/api_contract.rs
++++ b/tests/api_contract.rs
+@@ -1,5 +1,5 @@
+ fn opted_base() -> u32 {
+-    4
++    2 + 2
+ }
+ 
+ #[test]

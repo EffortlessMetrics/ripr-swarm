@@ -43,10 +43,13 @@ Write this test by hand: call the function, then assert the visible change the c
 
 Hidden:
   4 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:2 (unknown); kind: static_unknown; reason: No relevant oracle was detected
-    - ./src/lib.rs:3 (unknown); kind: static_unknown; reason: No relevant oracle was detected
-    - ./src/lib.rs:6 (unknown); kind: static_unknown; reason: No relevant oracle was detected
+    - ./src/lib.rs:2 (unknown: static analysis limited); kind: unclear; reason: No relevant oracle was detected
+    - ./src/lib.rs:3 (unknown: static analysis limited); kind: unclear; reason: No relevant oracle was detected
+    - ./src/lib.rs:6 (unknown: static analysis limited); kind: unclear; reason: No relevant oracle was detected
     - ./src/lib.rs:13 (no path); kind: call_deletion; reason: No relevant oracle was detected
+  Hidden classes:
+    no path = no test path was found
+    unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

@@ -78,6 +78,17 @@ git rev-list --first-parent --reverse MERGE_BASE..PARENT
 UTF-8 SHA lines joined with LF, then SHA-256
 ```
 
+Each changed-path inventory carries `path_record_count` and
+`path_record_sha256` under `path_inventories` (`source_changed`,
+`swarm_changed`, `swarm_only`), with the recipe retained beside them (#4006
+item 6). The recipe is: decoded UTF-8 paths from
+`git diff --name-only -z MERGE_BASE..PARENT`, sorted bytewise and
+deduplicated, each followed by one NUL byte, then SHA-256. It is not the
+LF-joined recipe used for commit SHAs, because a Git path may contain a newline
+and `a\nb` + `c` would collide with `a` + `b\nc`. A path the source preflight
+omits, adds or splits changes the count and digest. These fields are additive
+to the unreleased v2 receipt.
+
 It also inventories changed paths, source-survivor candidates, a
 set-differenced list of paths changed only on the swarm side, non-dispositive
 swarm-authority resolution candidates, and a real

@@ -133,13 +133,30 @@ pub(super) fn canonical_finding_groups(findings: &[Finding]) -> Vec<(Finding, Ve
 /// and class summaries can read the same group structure the listing and
 /// publishing paths see.
 pub(super) fn canonical_group_members(findings: &[Finding]) -> Vec<(&Finding, Vec<&Finding>)> {
+    // Gap-less findings that are one behavior seeded under several probe
+    // families (#11453) share the lowest member id as their group key, so a
+    // singleton keeps the `raw:<id>` key and ordering it always had.
+    let mut overlap_anchor = BTreeMap::<String, &str>::new();
+    for finding in findings {
+        if let Some(key) = overlap_signature(finding) {
+            let anchor = overlap_anchor.entry(key).or_insert(finding.id.as_str());
+            if finding.id.as_str() < *anchor {
+                *anchor = finding.id.as_str();
+            }
+        }
+    }
     let mut grouped = BTreeMap::<String, Vec<&Finding>>::new();
     for finding in findings {
         let key = finding
             .canonical_gap
             .as_ref()
             .map(|gap| format!("canonical:{}", gap.id))
-            .unwrap_or_else(|| format!("raw:{}", finding.id));
+            .unwrap_or_else(|| {
+                let anchor = overlap_signature(finding)
+                    .and_then(|key| overlap_anchor.get(&key).copied())
+                    .unwrap_or(finding.id.as_str());
+                format!("raw:{anchor}")
+            });
         grouped.entry(key).or_default().push(finding);
     }
 
@@ -151,6 +168,37 @@ pub(super) fn canonical_group_members(findings: &[Finding]) -> Vec<(&Finding, Ve
             Some((primary, group))
         })
         .collect()
+}
+
+/// Signature under which gap-less findings describe one behavior at one site
+/// (#11453): same file, line, column, owner and expression, and equal in every
+/// field other than the identity and the probe-family-derived seeding
+/// (`id`, `probe.id`, `probe.family`, `probe.delta`,
+/// `probe.expected_sinks`, `probe.required_oracles`). Everything else, including class, RIPR stages,
+/// confidence, evidence, missing facts, related tests, next step, static-limit
+/// and currentness state, must be equal, so any differing repair signal keeps
+/// the findings separate. Findings that carry a canonical gap are grouped by
+/// that gap instead and never take this path. `None` if the finding cannot be
+/// fingerprinted, which leaves it ungrouped.
+fn overlap_signature(finding: &Finding) -> Option<String> {
+    if finding.canonical_gap.is_some() {
+        return None;
+    }
+    let mut value = serde_json::to_value(finding).ok()?;
+    let object = value.as_object_mut()?;
+    object.remove("id");
+    object.remove("canonical_gap");
+    let probe = object.get_mut("probe")?.as_object_mut()?;
+    for field in [
+        "id",
+        "family",
+        "delta",
+        "expected_sinks",
+        "required_oracles",
+    ] {
+        probe.remove(field);
+    }
+    serde_json::to_string(&value).ok()
 }
 
 fn finding_primary_sort_key(finding: &Finding) -> String {
@@ -277,7 +325,9 @@ pub(super) fn add_canonical_group_data(
     data.insert("raw_signal_count".to_string(), serde_json::json!(raw.len()));
     data.insert(
         "group_reason".to_string(),
-        serde_json::json!(if raw.len() > 1 {
+        serde_json::json!(if raw.len() > 1 && primary.canonical_gap.is_none() {
+            "same_site_and_repair_signal"
+        } else if raw.len() > 1 {
             "same_canonical_owner_and_missing_discriminator"
         } else {
             "single_canonical_item"
@@ -432,7 +482,7 @@ pub(super) fn finding_diagnostics_by_uri_with_profile(
                 serde_json::Value::Bool(true),
             );
         }
-        if primary.canonical_gap.is_some() {
+        if primary.canonical_gap.is_some() || raw_findings.len() > 1 {
             add_canonical_group_data(root, &mut diagnostic, &primary, &raw_findings);
             if canonical_group_has_mixed_classes(&raw_findings) {
                 diagnostic.severity = Some(DiagnosticSeverity::INFORMATION);
@@ -492,6 +542,18 @@ fn bind_witness_explain_command(
     data.insert("explain_command".to_string(), command);
 }
 
+/// The three gap classes an actionable-profile finding may carry. One owner
+/// for visibility and for the withheld-preview disclosure, so the two cannot
+/// drift apart (#11296).
+pub(super) fn is_actionable_gap_class(class: &ExposureClass) -> bool {
+    matches!(
+        class,
+        ExposureClass::WeaklyExposed
+            | ExposureClass::ReachableUnrevealed
+            | ExposureClass::NoStaticPath
+    )
+}
+
 pub(super) fn finding_is_visible_in_profile(
     profile: LspDiagnosticProfile,
     finding: &Finding,
@@ -503,12 +565,7 @@ pub(super) fn finding_is_visible_in_profile(
         LspDiagnosticProfile::Full => true,
         LspDiagnosticProfile::Actionable => {
             finding.is_candidate_actionable()
-                && matches!(
-                    finding.class,
-                    ExposureClass::WeaklyExposed
-                        | ExposureClass::ReachableUnrevealed
-                        | ExposureClass::NoStaticPath
-                )
+                && is_actionable_gap_class(&finding.class)
                 && DiagnosticWitness::from_finding(finding).is_some_and(|witness| {
                     !witness.missing_discriminators.is_empty() && witness.fix_site.is_some()
                 })
@@ -750,7 +807,7 @@ pub(super) fn quarantine_withdrawal_diagnostic(reason: DocumentStalenessReason) 
         ),
         DocumentStalenessReason::NoAnalyzedSavedContent => (
             "save_then_refresh",
-            "Save a new file first, then refresh (`ripr.refresh`) so ripr can restore them.",
+            "Save the file if it is new, then refresh (`ripr.refresh`) so ripr can restore them.",
         ),
     };
     Diagnostic {
@@ -1517,6 +1574,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         language_view.as_ref(),
         &mut grouped,
     );
+    append_withheld_preview_diagnostics(&root, &findings, config, &origins, &mut grouped);
 
     let batches = canonicalize_diagnostic_batches(
         grouped
@@ -1554,6 +1612,132 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         language_view,
     };
     Ok(WorkspaceDiagnostics { snapshot, batches })
+}
+
+/// A preview-language (`language_status = "preview"`) finding of a gap class
+/// that the actionable profile withheld from diagnostics because it carries
+/// no producer-backed fix route (#11296). Actionable eligibility is NOT
+/// relaxed: this only names what `finding_is_visible_in_profile` withheld.
+/// The `*_unknown` classes are disclosed by their own set (#5276), so the
+/// two are disjoint.
+pub(super) fn finding_is_withheld_preview_gap(finding: &Finding) -> bool {
+    finding.language_status == Some(LanguageStatus::Preview)
+        && finding.is_candidate_actionable()
+        && is_actionable_gap_class(&finding.class)
+}
+
+/// The raw findings of unpublished canonical groups that are withheld
+/// preview gaps under the actionable profile (#11296); empty for any other
+/// profile. One owner for the editor marker and every disclosure count.
+pub(super) fn withheld_preview_gap_findings(
+    profile: LspDiagnosticProfile,
+    findings: &[Finding],
+) -> Vec<&Finding> {
+    if profile != LspDiagnosticProfile::Actionable {
+        return Vec::new();
+    }
+    canonical_group_members(findings)
+        .into_iter()
+        .filter(|(primary, _)| !finding_is_visible_in_profile(profile, primary))
+        .flat_map(|(_, members)| members)
+        .filter(|finding| finding_is_withheld_preview_gap(finding))
+        .collect()
+}
+
+/// Most withheld-preview markers one analysis snapshot publishes (files in
+/// path order). The budget exempts the marker, so the producer bounds it; the
+/// status `withheld_findings` counts still disclose every withheld finding.
+pub(super) const MAX_WITHHELD_PREVIEW_MARKERS: usize = 50;
+
+/// One Hint on each file whose preview findings the actionable profile
+/// withheld (#11296), anchored on the first withheld finding, so an empty
+/// list never reads as a clean file. It carries no finding identity, repair
+/// data, or actionability, and the delivery budget exempts it.
+fn append_withheld_preview_diagnostics(
+    root: &Path,
+    findings: &[Finding],
+    config: &LspAnalysisConfig,
+    origins: &crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
+    grouped: &mut BTreeMap<Uri, Vec<Diagnostic>>,
+) {
+    let mut by_file = BTreeMap::<PathBuf, Vec<&Finding>>::new();
+    for finding in withheld_preview_gap_findings(config.diagnostic_profile, findings) {
+        by_file
+            .entry(finding.probe.location.file.clone())
+            .or_default()
+            .push(finding);
+    }
+    for (file, mut members) in by_file.into_iter().take(MAX_WITHHELD_PREVIEW_MARKERS) {
+        members.sort_by(|a, b| {
+            (a.probe.location.line, a.probe.location.column, &a.id).cmp(&(
+                b.probe.location.line,
+                b.probe.location.column,
+                &b.id,
+            ))
+        });
+        let Some(first) = members.first() else {
+            continue;
+        };
+        let Ok(uri) = file_uri_for_path(&absolute_finding_path(root, first)) else {
+            continue;
+        };
+        let anchor = diagnostic_for_finding_with_causal(
+            root,
+            first,
+            config.repo_config().severity(),
+            None,
+            &config.position_encoding,
+            origins,
+        );
+        let language = first.language.map(|language| language.as_str());
+        let count = members.len();
+        let recovery = "set diagnosticProfile: full or run `ripr check`";
+        grouped
+            .entry(uri)
+            .or_default()
+            .push(withheld_preview_diagnostic(
+                anchor.range,
+                language,
+                count,
+                recovery,
+                &display_repo_path(root, &file).to_string(),
+            ));
+    }
+}
+
+pub(super) fn withheld_preview_diagnostic(
+    range: Range,
+    language: Option<&str>,
+    count: usize,
+    recovery: &str,
+    path: &str,
+) -> Diagnostic {
+    // Without a language the label is the bare "preview-language", never
+    // "preview preview-language".
+    let label = language.map_or_else(
+        || "preview-language".to_string(),
+        |language| format!("preview {language}"),
+    );
+    Diagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::HINT),
+        code: Some(NumberOrString::String(
+            super::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE.to_string(),
+        )),
+        source: Some("ripr".to_string()),
+        message: format!("preview: {count} {label} finding(s) not shown in the editor; {recovery}"),
+        // Deliberately no `delivery_eligible`, `finding_id`, repair, witness
+        // or `preview_actionability` data: this is a passive limitation.
+        data: Some(serde_json::json!({
+            "kind": "preview_findings_withheld",
+            "limitation": "actionable_profile_withheld_preview",
+            "language": language.unwrap_or("preview-language"),
+            "withheld_count": count,
+            "recovery": recovery,
+            "path": path,
+        })),
+        ..Default::default()
+    }
 }
 
 /// One Information diagnostic on each changed file whose language adapter is
@@ -6152,6 +6336,247 @@ mod diagnostic_policy_tests {
         Ok(())
     }
 
+    /// #11296: Python and TypeScript preview findings reach the editor as
+    /// INFORMATION diagnostics under the full profile, and the actionable
+    /// profile keeps withholding the same finding (no promotion).
+    #[test]
+    fn preview_findings_publish_as_information_only_under_full_profile() -> Result<(), String> {
+        for (language, file) in [
+            (crate::domain::LanguageId::Python, "src/click/core.py"),
+            (crate::domain::LanguageId::TypeScript, "src/v4/core/util.ts"),
+        ] {
+            let mut finding = policy_finding();
+            finding.class = ExposureClass::WeaklyExposed;
+            finding.probe.location.file = std::path::PathBuf::from(file);
+            finding.language = Some(language);
+            finding.language_status = Some(LanguageStatus::Preview);
+            let project = |profile| {
+                finding_diagnostics_by_uri_with_profile(
+                    Path::new("/workspace"),
+                    std::slice::from_ref(&finding),
+                    &SeverityConfig::default(),
+                    true,
+                    FindingDiagnosticProjection::new(
+                        profile,
+                        &PositionEncodingKind::UTF16,
+                        &crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default(),
+                    ),
+                )
+            };
+            let full = project(LspDiagnosticProfile::Full)?;
+            let diagnostic = full
+                .values()
+                .flatten()
+                .next()
+                .ok_or_else(|| format!("{file}: full profile dropped the preview finding"))?;
+            if diagnostic.severity != Some(DiagnosticSeverity::INFORMATION) {
+                return Err(format!(
+                    "{file}: preview severity must clamp to INFORMATION: {:?}",
+                    diagnostic.severity
+                ));
+            }
+            let actionable = project(LspDiagnosticProfile::Actionable)?;
+            if actionable.values().any(|list| !list.is_empty()) {
+                return Err(format!(
+                    "{file}: actionable profile must keep withholding a preview finding without a fix route"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn withheld_preview_config(profile: LspDiagnosticProfile) -> LspAnalysisConfig {
+        LspAnalysisConfig {
+            diagnostic_profile: profile,
+            ..LspAnalysisConfig::default()
+        }
+    }
+
+    fn preview_policy_finding(language: LanguageId, file: &str, line: usize, id: &str) -> Finding {
+        let mut finding = policy_finding();
+        finding.id = id.to_string();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.probe.location.file = std::path::PathBuf::from(file);
+        finding.probe.location.line = line;
+        finding.language = Some(language);
+        finding.language_status = Some(LanguageStatus::Preview);
+        finding
+    }
+
+    fn withheld_markers(
+        profile: LspDiagnosticProfile,
+        findings: &[Finding],
+    ) -> BTreeMap<Uri, Vec<Diagnostic>> {
+        let mut grouped = BTreeMap::new();
+        append_withheld_preview_diagnostics(
+            Path::new("/workspace"),
+            findings,
+            &withheld_preview_config(profile),
+            &crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default(),
+            &mut grouped,
+        );
+        grouped
+    }
+
+    /// #11296: a file whose Python/TypeScript preview findings the actionable
+    /// profile withheld carries exactly one passive Hint, anchored on the
+    /// first withheld finding, with no repair or actionability data.
+    #[test]
+    fn withheld_preview_findings_publish_one_passive_hint_per_file() -> Result<(), String> {
+        for (language, file, name) in [
+            (LanguageId::Python, "src/click/core.py", "python"),
+            (LanguageId::TypeScript, "src/v4/core/util.ts", "typescript"),
+        ] {
+            let late = preview_policy_finding(language, file, 40, "probe:late");
+            let first = preview_policy_finding(language, file, 7, "probe:first");
+            // Fixture check: the actionable profile really withholds both.
+            for finding in [&late, &first] {
+                if finding_is_visible_in_profile(LspDiagnosticProfile::Actionable, finding) {
+                    return Err(format!("{file}: fixture must be withheld"));
+                }
+            }
+            let grouped = withheld_markers(LspDiagnosticProfile::Actionable, &[late, first]);
+            let all = grouped.values().flatten().collect::<Vec<_>>();
+            let [marker] = all.as_slice() else {
+                return Err(format!("{file}: exactly one marker expected: {all:?}"));
+            };
+            if grouped.len() != 1 {
+                return Err(format!("{file}: one file expected: {:?}", grouped.keys()));
+            }
+            if marker.severity != Some(DiagnosticSeverity::HINT)
+                || marker.range.start.line != 6
+                || marker.code
+                    != Some(NumberOrString::String(
+                        super::super::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE
+                            .to_string(),
+                    ))
+                || !marker.message.starts_with("preview: 2 preview ")
+                || !marker.message.contains(name)
+                || !marker.message.contains("diagnosticProfile: full")
+                || !marker.message.contains("ripr check")
+            {
+                return Err(format!("{file}: marker shape wrong: {marker:?}"));
+            }
+            let data = marker.data.as_ref().ok_or("marker carries data")?;
+            for forbidden in [
+                "delivery_eligible",
+                "finding_id",
+                "canonical_gap_id",
+                "headline_eligible",
+                "preview_actionability",
+                "witness",
+                "verification_commands",
+                "receipt_command",
+            ] {
+                if data.get(forbidden).is_some() {
+                    return Err(format!("{file}: marker must not carry {forbidden}: {data}"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// #11296 negative controls: the full profile publishes the real
+    /// finding diagnostics instead of a duplicate marker, and a non-preview
+    /// hidden gap, an `*_unknown` preview finding, or a non-current finding
+    /// gets no marker.
+    #[test]
+    fn withheld_preview_marker_stays_silent_for_every_other_case() {
+        let preview = preview_policy_finding(LanguageId::Python, "a.py", 3, "probe:p");
+        assert!(
+            withheld_markers(LspDiagnosticProfile::Full, std::slice::from_ref(&preview)).is_empty(),
+            "full profile must not duplicate the real diagnostic with a marker"
+        );
+
+        let mut rust = preview.clone();
+        rust.language = Some(LanguageId::Rust);
+        rust.language_status = None;
+        assert!(
+            withheld_markers(LspDiagnosticProfile::Actionable, &[rust]).is_empty(),
+            "a non-preview hidden gap is named by hidden_gaps, not this marker"
+        );
+
+        let mut unknown = preview.clone();
+        unknown.class = ExposureClass::StaticUnknown;
+        assert!(
+            withheld_markers(LspDiagnosticProfile::Actionable, &[unknown]).is_empty(),
+            "*_unknown preview findings keep their own disclosure"
+        );
+
+        // Positive control for the same input, so the silences above are not
+        // a vacuous fixture.
+        assert_eq!(
+            withheld_markers(LspDiagnosticProfile::Actionable, &[preview])
+                .values()
+                .flatten()
+                .count(),
+            1
+        );
+    }
+
+    /// #11296: the exempt marker is bounded by the producer, per snapshot, in
+    /// path order; the cap neither drops the first files nor hides the
+    /// status counts of the files beyond it.
+    #[test]
+    fn withheld_preview_markers_are_capped_per_snapshot() -> Result<(), String> {
+        let total = MAX_WITHHELD_PREVIEW_MARKERS + 5;
+        let findings = (0..total)
+            .map(|index| {
+                preview_policy_finding(
+                    LanguageId::Python,
+                    &format!("src/m{index:03}.py"),
+                    3,
+                    &format!("probe:{index:03}"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let grouped = withheld_markers(LspDiagnosticProfile::Actionable, &findings);
+        if grouped.len() != MAX_WITHHELD_PREVIEW_MARKERS {
+            return Err(format!("cap not applied: {} markers", grouped.len()));
+        }
+        let uris = grouped
+            .keys()
+            .map(|uri| uri.as_str().to_string())
+            .collect::<Vec<_>>();
+        if !uris[0].ends_with("src/m000.py") || !uris[uris.len() - 1].ends_with("src/m049.py") {
+            return Err(format!(
+                "the first files in path order must keep markers: {uris:?}"
+            ));
+        }
+        // The disclosure counts still cover every withheld finding.
+        let withheld = withheld_preview_gap_findings(LspDiagnosticProfile::Actionable, &findings);
+        if withheld.len() != total {
+            return Err(format!("counts must stay uncapped: {}", withheld.len()));
+        }
+        // Below the cap nothing is dropped.
+        let few = withheld_markers(LspDiagnosticProfile::Actionable, &findings[..3]);
+        if few.len() != 3 {
+            return Err(format!(
+                "below the cap every file keeps a marker: {}",
+                few.len()
+            ));
+        }
+        Ok(())
+    }
+
+    /// A finding without a language labels the marker `preview-language`, not
+    /// "preview preview-language".
+    #[test]
+    fn withheld_preview_marker_language_fallback_has_no_doubled_preview() {
+        let unlabeled =
+            withheld_preview_diagnostic(Range::default(), None, 2, "recover", "src/a.py");
+        assert_eq!(
+            unlabeled.message,
+            "preview: 2 preview-language finding(s) not shown in the editor; recover"
+        );
+        let labeled =
+            withheld_preview_diagnostic(Range::default(), Some("python"), 2, "recover", "src/a.py");
+        assert_eq!(
+            labeled.message,
+            "preview: 2 preview python finding(s) not shown in the editor; recover"
+        );
+    }
+
     #[test]
     fn finding_span_width_uses_negotiated_encoding_end_to_end() -> Result<(), String> {
         // "café" is 4 UTF-16 code units, 4 UTF-32 scalars, and 5 UTF-8 bytes.
@@ -6932,7 +7357,7 @@ mod lsp_next_step_parity_tests {
             confidence: 0.4,
             evidence: vec![
                 "owner: applyDiscount".to_string(),
-                "gap_state: advisory".to_string(),
+                "gap_state: unknown".to_string(),
                 "actionability_category: incomplete_repair_packet".to_string(),
                 "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract".to_string(),
                 "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available".to_string(),

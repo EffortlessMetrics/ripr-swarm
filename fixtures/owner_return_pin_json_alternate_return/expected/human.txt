@@ -15,7 +15,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:rust:src/lib.rs:did_save_params:return_value:return_value:ok
   Changed behavior: Ok(())
-  Missing check: No strong discriminator was detected
+  Missing check: No strong assertion was detected
   Related test: tests/save.rs:4 checks (ripr could not confirm that this assertion observes the changed behavior)
   Next step: The related test `checks` already has an exact assertion; this does not establish
     observation of the returned value. Check whether the change can affect the returned value. If it
@@ -39,13 +39,15 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/owner_return_pin_json_alternate_return/input --diff <cwd>/fixtures/owner_return_pin_json_alternate_return/diff.patch --mode fast probe:src_lib.rs:return_value:9659b9fa
   ripr context --root <cwd>/fixtures/owner_return_pin_json_alternate_return/input --diff <cwd>/fixtures/owner_return_pin_json_alternate_return/diff.patch --mode fast --at probe:src_lib.rs:return_value:9659b9fa
-  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the whole seam and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the whole seam) and ripr does not start a repair on conflicting evidence; follow the Next step above
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/owner_return_pin_json_alternate_return/input --at src/lib.rs:6 --kind return_value
 
 Hidden:
   All 2 omitted finding(s) are base-side evidence, not candidate edit targets.
     - ./src/lib.rs:6 (weak); kind: error_path; reason: No exact error variant discriminator was detected
-    - ./src/lib.rs:6 (weak); kind: return_value; reason: No strong discriminator was detected
+    - ./src/lib.rs:6 (weak); kind: return_value; reason: No strong assertion was detected
+  Hidden classes:
+    weak = tests reach it but check it only loosely
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

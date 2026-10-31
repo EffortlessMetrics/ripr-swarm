@@ -1,0 +1,362 @@
+{
+  "purpose": "Receipt for the Perl producer-packet abstention population at ea5229f (#10809, #10897). Not a baseline: trust.perl_verdict_corpus_abstention stays at its 8/27 population.",
+  "revision": "ea5229fba660d284841b3954f73ca7948a88d0ea",
+  "source": "fixtures/perl-verdict-corpus/expected/rows/*.json at that revision, filtered to packet_provenance == producer",
+  "derivation": "git ls-tree --name-only <revision> fixtures/perl-verdict-corpus/expected/rows/ ; git show <revision>:<row>; count outcome == abstained over packet_provenance == producer",
+  "abstention_rate": {
+    "numerator": 40,
+    "denominator": 54
+  },
+  "ideal_to_abstained_since_76651d1": [
+    {
+      "case_id": "perl-test2-format-entry-like",
+      "at_76651d1": "ideal",
+      "at_ea5229f": "abstained",
+      "truth": "not_discriminated"
+    },
+    {
+      "case_id": "perl-testexception-close-out-dies-ok",
+      "at_76651d1": "ideal",
+      "at_ea5229f": "abstained",
+      "truth": "not_discriminated"
+    },
+    {
+      "case_id": "perl-testmore-points-cmp-ok-positive",
+      "at_76651d1": "ideal",
+      "at_ea5229f": "abstained",
+      "truth": "not_discriminated"
+    },
+    {
+      "case_id": "perl-testmore-round-cents-like",
+      "at_76651d1": "ideal",
+      "at_ea5229f": "abstained",
+      "truth": "partially_discriminated"
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "perl-bless-counter-inc",
+      "outcome": "abstained",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-bless-counter-start",
+      "outcome": "abstained",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-hostile-autoload-field",
+      "outcome": "abstained",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-hostile-constant-tax",
+      "outcome": "abstained",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-hostile-glob-double",
+      "outcome": "abstained",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-hostile-glob-triple-unexercised",
+      "outcome": "abstained",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-hostile-heredoc-greeting",
+      "outcome": "abstained",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-hostile-line-directive-pad",
+      "outcome": "abstained",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-hostile-string-eval-quad",
+      "outcome": "abstained",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-hostile-unicode-sub-name",
+      "outcome": "abstained",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-idiom-banner-repeat",
+      "outcome": "ideal",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap"
+    },
+    {
+      "case_id": "perl-idiom-closure-counter",
+      "outcome": "abstained",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-idiom-eval-safe-div",
+      "outcome": "abstained",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-idiom-local-separator",
+      "outcome": "abstained",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-idiom-regex-version",
+      "outcome": "ideal",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap"
+    },
+    {
+      "case_id": "perl-idiom-slugify-subst",
+      "outcome": "abstained",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-idiom-wantarray-exact",
+      "outcome": "ideal",
+      "ideal_verdict": "credited",
+      "observed_verdict": "credited"
+    },
+    {
+      "case_id": "perl-idiom-wantarray-smoke",
+      "outcome": "ideal",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap"
+    },
+    {
+      "case_id": "perl-moose-birthday-smoke",
+      "outcome": "abstained",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-moose-builder-join",
+      "outcome": "abstained",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-moose-is-adult-boundary",
+      "outcome": "abstained",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-test2-close-month-subtest",
+      "outcome": "ideal",
+      "ideal_verdict": "credited",
+      "observed_verdict": "credited"
+    },
+    {
+      "case_id": "perl-test2-deposit-lives-only",
+      "outcome": "ideal",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap"
+    },
+    {
+      "case_id": "perl-test2-fee-isnt-zero",
+      "outcome": "ideal",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap"
+    },
+    {
+      "case_id": "perl-test2-format-entry-like",
+      "outcome": "abstained",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-test2-net-change-imported",
+      "outcome": "abstained",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-test2-overdrawn-ok-smoke",
+      "outcome": "ideal",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap"
+    },
+    {
+      "case_id": "perl-test2-summary-deep-is-count",
+      "outcome": "ideal",
+      "ideal_verdict": "credited",
+      "observed_verdict": "credited"
+    },
+    {
+      "case_id": "perl-test2-withdraw-dies-like-message",
+      "outcome": "abstained",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-testdeep-adjust-exact-hash",
+      "outcome": "abstained",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-testdeep-label-pair-code",
+      "outcome": "abstained",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-testdeep-record-ignore",
+      "outcome": "abstained",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-testdeep-restock-superhashof",
+      "outcome": "abstained",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-testdeep-sku-re",
+      "outcome": "abstained",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-testdeep-tag-list-bag",
+      "outcome": "abstained",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-testexception-close-out-dies-ok",
+      "outcome": "abstained",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-testexception-freeze-class",
+      "outcome": "abstained",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-testexception-interest-lives-ok",
+      "outcome": "ideal",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap"
+    },
+    {
+      "case_id": "perl-testexception-lives-and-is",
+      "outcome": "ideal",
+      "ideal_verdict": "credited",
+      "observed_verdict": "credited"
+    },
+    {
+      "case_id": "perl-testexception-transfer-boundary-pair",
+      "outcome": "abstained",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-testexception-withdraw-throws-message",
+      "outcome": "abstained",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-testmore-bulk-subtest",
+      "outcome": "abstained",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-testmore-bundle-helper-sub",
+      "outcome": "abstained",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-testmore-can-ok-only",
+      "outcome": "abstained",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-testmore-cart-dynamic-dispatch",
+      "outcome": "abstained",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-testmore-cart-method-total",
+      "outcome": "abstained",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-testmore-clamp-isnt",
+      "outcome": "ideal",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap"
+    },
+    {
+      "case_id": "perl-testmore-discount-imported-boundary",
+      "outcome": "abstained",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-testmore-points-cmp-ok-positive",
+      "outcome": "abstained",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-testmore-quote-is-deeply-total",
+      "outcome": "abstained",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-testmore-round-cents-like",
+      "outcome": "abstained",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-testmore-shipping-smoke-ok",
+      "outcome": "ideal",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap"
+    },
+    {
+      "case_id": "perl-testmore-tax-table-loop",
+      "outcome": "abstained",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited"
+    },
+    {
+      "case_id": "perl-testmore-tier-far-from-boundary",
+      "outcome": "false_exposed",
+      "ideal_verdict": "gap",
+      "observed_verdict": "credited"
+    }
+  ]
+}

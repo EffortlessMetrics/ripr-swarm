@@ -25,6 +25,7 @@ const REPAIR: &str = "ripr agent repair --root . --seam-id s1 --phase before";
 /// Every heading the summary can print, in print order.
 const SECTIONS: &[&str] = &[
     "## RIPR advisory summary",
+    "### What RIPR found in this pull request",
     "### Start here",
     "#### First-run status",
     "### Language preview grouping",
@@ -130,6 +131,7 @@ impl Fixture {
             base_ref: base_ref.to_string(),
             upload_sarif: upload_sarif == "true",
             gate_baseline: !gate_baseline.is_empty(),
+            gate_configured: false,
             comment_mode: comment_mode.to_string(),
             configured_languages: languages.iter().map(|name| (*name).to_string()).collect(),
         };
@@ -918,6 +920,376 @@ fn preview_promotion_packets_follow_the_shell_glob() -> TestResult {
     Ok(())
 }
 
+/// #11161: when `target/ripr/pr/check.json` discloses a producer refusal,
+/// the summary opens First-run status with `#### PR analysis did not run`
+/// naming the typed status, the producer's own message, that nothing was
+/// analyzed, and the next step. A complete, absent, or malformed check
+/// document adds nothing; a non-refusal envelope adds nothing either.
+#[test]
+fn producer_refusal_check_document_is_named_while_others_add_nothing() -> TestResult {
+    let refusal = || {
+        json!({
+            "analysis_scope": {
+                "scope": "diff",
+                "run_status": "diff_scope_oversized",
+                "downstream_consumable": false,
+                "repair_route": "analysis/diff-scope-budget"
+            },
+            "run_limitations": [{
+                "category": "diff_scope_oversized",
+                "run_status": "diff_scope_oversized",
+                "downstream_consumable": false,
+                "message": "diff_scope_oversized: 2878 changed Rust lines exceed the limit (2000); analysis was not run.",
+                "repair_route": "analysis/diff-scope-budget"
+            }]
+        })
+    };
+    let fixture = Fixture::new("refusal-named")?;
+    fixture.json("target/ripr/pr/check.json", &refusal())?;
+    let summary = fixture.render(&[])?;
+    let first_run = block(&summary, "#### First-run status");
+    for line in [
+        "#### PR analysis did not run",
+        "- Producer run status: `diff_scope_oversized`",
+        "2878 changed Rust lines",
+        "nothing was analyzed",
+        "analysis/diff-scope-budget",
+    ] {
+        assert!(summary.contains(line), "missing {line:?}:\n{summary}");
+    }
+    assert!(
+        first_run.contains("#### PR analysis did not run"),
+        "the refusal block must open First-run status:\n{first_run}"
+    );
+    // A complete document (no refusal disclosure) adds nothing.
+    let fixture = Fixture::new("refusal-complete")?;
+    fixture.json("target/ripr/pr/check.json", &json!({"findings": []}))?;
+    assert!(
+        !fixture
+            .render(&[])?
+            .contains("#### PR analysis did not run"),
+        "a complete check document must add no refusal block"
+    );
+    // An absent check document adds nothing.
+    let fixture = Fixture::new("refusal-absent")?;
+    assert!(
+        !fixture
+            .render(&[])?
+            .contains("#### PR analysis did not run"),
+        "an absent check document must add no refusal block"
+    );
+    // A malformed check document adds nothing.
+    let fixture = Fixture::new("refusal-malformed")?;
+    fixture.write("target/ripr/pr/check.json", "{not json")?;
+    assert!(
+        !fixture
+            .render(&[])?
+            .contains("#### PR analysis did not run"),
+        "a malformed check document must add no refusal block"
+    );
+    // A non-refusal envelope (consumable, no outcome) adds nothing either.
+    let fixture = Fixture::new("refusal-non-refusal")?;
+    fixture.json(
+        "target/ripr/pr/check.json",
+        &json!({"schema_version": "0.2", "findings": []}),
+    )?;
+    assert!(
+        !fixture
+            .render(&[])?
+            .contains("#### PR analysis did not run"),
+        "a non-refusal envelope must add no refusal block"
+    );
+    // An unknown-status refusal still names the refusal with a fallback.
+    // Built as a literal (no mutation helpers) so the test stays off the
+    // panic-family allowlist.
+    let fixture = Fixture::new("refusal-unknown-status")?;
+    fixture.json(
+        "target/ripr/pr/check.json",
+        &json!({
+            "analysis_scope": {
+                "scope": "diff",
+                "downstream_consumable": false,
+                "repair_route": "analysis/diff-scope-budget"
+            },
+            "run_limitations": [{
+                "downstream_consumable": false,
+                "message": "diff_scope_oversized: 2878 changed Rust lines exceed the limit (2000); analysis was not run.",
+                "repair_route": "analysis/diff-scope-budget"
+            }]
+        }),
+    )?;
+    let summary = fixture.render(&[])?;
+    assert!(
+        summary.contains("#### PR analysis did not run"),
+        "an untyped refusal must still be named:\n{summary}"
+    );
+    assert!(
+        summary.contains("producer refusal"),
+        "fallback status:\n{summary}"
+    );
+    // A mixed bounded-plus-refusal document keeps the bounded handling: the
+    // bounded guard runs before the refusal reader, so no refusal block
+    // renders. The legacy limitations-only shape trips only the bounded
+    // guard (no `analysis_outcome`, so the incomplete guard stays quiet):
+    // removing the bounded guard would name the refusal here — the document
+    // carries an explicit non-consumable record — and fail this assertion.
+    // (The producer never emits this mix; it pins guard order.)
+    let fixture = Fixture::new("refusal-mixed-bounded")?;
+    let mut mixed = refusal();
+    mixed["run_limitations"] = json!([
+        {
+            "category": "limited_findings_bound",
+            "run_status": "limited_findings_bound",
+            "downstream_consumable": false,
+            "message": "findings array was cut by the byte budget",
+            "repair_route": "analysis/findings-budget"
+        },
+        {
+            "category": "diff_scope_oversized",
+            "run_status": "diff_scope_oversized",
+            "downstream_consumable": false,
+            "message": "diff_scope_oversized: 2878 changed Rust lines exceed the limit (2000); analysis was not run.",
+            "repair_route": "analysis/diff-scope-budget"
+        }
+    ]);
+    fixture.json("target/ripr/pr/check.json", &mixed)?;
+    assert!(
+        !fixture
+            .render(&[])?
+            .contains("#### PR analysis did not run"),
+        "a bounded document that also discloses a refusal must keep the bounded handling"
+    );
+    // A mixed partial-plus-refusal document keeps the partial handling: the
+    // partial guard runs before the refusal reader. Removing that guard
+    // would name the refusal here and fail this assertion.
+    let fixture = Fixture::new("refusal-mixed-partial")?;
+    let mut mixed = refusal();
+    mixed["language_runs"] = json!([{ "status": "partial" }]);
+    fixture.json("target/ripr/pr/check.json", &mixed)?;
+    assert!(
+        !fixture
+            .render(&[])?
+            .contains("#### PR analysis did not run"),
+        "a partial document that also discloses a refusal must keep the partial handling"
+    );
+    // A mixed incomplete-plus-refusal document keeps the incomplete
+    // handling: the incomplete guard runs before the refusal reader.
+    // Removing that guard would name the refusal here and fail this
+    // assertion.
+    let fixture = Fixture::new("refusal-mixed-incomplete")?;
+    let mut mixed = refusal();
+    mixed["analysis_outcome"] = json!({ "analysis_complete": false });
+    fixture.json("target/ripr/pr/check.json", &mixed)?;
+    assert!(
+        !fixture
+            .render(&[])?
+            .contains("#### PR analysis did not run"),
+        "an incomplete document that also discloses a refusal must keep the incomplete handling"
+    );
+    Ok(())
+}
+
+const HEADLINE: &str = "### What RIPR found in this pull request";
+
+fn card() -> Value {
+    json!({
+        "seam": {"file": "src/pricing.rs", "line": 88},
+        "owner": "pricing::discounted_total",
+        "missing_discriminator": "amount == discount_threshold",
+        "llm_guidance": {"repair_command": REPAIR},
+    })
+}
+
+#[test]
+fn the_pull_requests_own_verdict_comes_before_ripr_orientation() -> TestResult {
+    let fixture = Fixture::new("headline")?;
+    fixture.json(
+        "target/ripr/review/comments.json",
+        &json!({
+            "summary": {"comments": 1, "summary_only": 2},
+            "analysis_outcome": {"analysis_complete": true},
+            "comments": [card()],
+        }),
+    )?;
+    let summary = fixture.render(&[])?;
+    let headline = summary.find(HEADLINE).ok_or("headline is missing")?;
+    let start_here = summary
+        .find("### Start here\n")
+        .ok_or("start here is missing")?;
+    assert!(headline < start_here, "{summary}");
+    let head = block(&summary, HEADLINE);
+    assert!(
+        head.contains(
+            "**3 changed-behavior spots where the tests may not notice a wrong result.**"
+        ),
+        "{head}"
+    );
+    assert!(
+        head.contains("- First: `src/pricing.rs:88` in `pricing::discounted_total`"),
+        "{head}"
+    );
+    assert!(
+        head.contains("- Missing check: `amount == discount_threshold`"),
+        "{head}"
+    );
+    assert!(head.contains(&format!("- Next step: `{REPAIR}`")), "{head}");
+    Ok(())
+}
+
+#[test]
+fn a_clean_run_is_not_reported_as_an_unfinished_one() -> TestResult {
+    let clean = Fixture::new("headline-clean")?;
+    clean.json(
+        "target/ripr/review/comments.json",
+        &json!({"summary": {"comments": 0}, "analysis_outcome": {"analysis_complete": true}, "comments": []}),
+    )?;
+    let summary = clean.render(&[])?;
+    assert!(
+        block(&summary, HEADLINE).contains("No changed-behavior spot with weak test evidence"),
+        "{summary}"
+    );
+    // Discriminating alternate: the same empty report without a completed
+    // analysis must not read as clean.
+    let unfinished = Fixture::new("headline-unfinished")?;
+    unfinished.json(
+        "target/ripr/review/comments.json",
+        &json!({"summary": {"comments": 0}, "comments": []}),
+    )?;
+    let summary = unfinished.render(&[])?;
+    let head = block(&summary, HEADLINE);
+    assert!(head.contains("did not complete"), "{head}");
+    assert!(!head.contains("No changed-behavior spot"), "{head}");
+    Ok(())
+}
+
+#[test]
+fn no_review_report_means_no_headline_and_a_cut_command_is_not_shown() -> TestResult {
+    let none = Fixture::new("headline-none")?;
+    assert!(!none.render(&[])?.contains(HEADLINE));
+    let unparsable = Fixture::new("headline-bad")?;
+    unparsable.write("target/ripr/review/comments.json", "{not json")?;
+    assert!(!unparsable.render(&[])?.contains(HEADLINE));
+    let not_object = Fixture::new("headline-array")?;
+    not_object.write("target/ripr/review/comments.json", "[]")?;
+    let rendered = not_object.render(&[])?;
+    assert!(!rendered.contains(HEADLINE));
+    assert!(
+        rendered.starts_with(
+            "## RIPR advisory summary\n\nRIPR is advisory static evidence. It does not edit source, generate tests, or run mutation testing.\n\n### Start here"
+        ),
+        "no stray blank line:\n{rendered}"
+    );
+    let mut shell = card();
+    shell["llm_guidance"]["repair_command"] = json!("ripr agent repair; rm -rf .");
+    let hostile = Fixture::new("headline-hostile")?;
+    hostile.json(
+        "target/ripr/review/comments.json",
+        &json!({"summary": {}, "comments": [shell]}),
+    )?;
+    let head = block(&hostile.render(&[])?, HEADLINE).to_string();
+    assert!(!head.contains("Next step"), "{head}");
+    assert!(head.contains("1 changed-behavior spot where"), "{head}");
+    // A command that is plain but not a repair start is withheld too.
+    let mut other = card();
+    other["llm_guidance"]["repair_command"] = json!("rm -rf target");
+    let plain = Fixture::new("headline-plain")?;
+    plain.json(
+        "target/ripr/review/comments.json",
+        &json!({"summary": {}, "comments": [other]}),
+    )?;
+    assert!(!block(&plain.render(&[])?, HEADLINE).contains("Next step"));
+    Ok(())
+}
+
+#[test]
+fn report_text_is_cleaned_and_bounded_in_the_first_line() -> TestResult {
+    let mut row = card();
+    row["seam"]["file"] = json!("src/a\nb\u{202e}c\u{200b}d.rs");
+    row["owner"] = json!(format!("fn x @team{}", "o".repeat(300)));
+    row["missing_discriminator"] = json!("line1\nline2\u{202e}tick");
+    let fixture = Fixture::new("headline-clean-text")?;
+    fixture.json(
+        "target/ripr/review/comments.json",
+        &json!({"summary": {}, "comments": [row]}),
+    )?;
+    let summary = fixture.render(&[])?;
+    let head = block(&summary, HEADLINE);
+    let owner: String = format!("fn x @team{}", "o".repeat(300))
+        .chars()
+        .take(160)
+        .collect();
+    assert!(
+        head.contains(&format!("- First: `src/a bcd.rs:88` in `{owner}`\n")),
+        "{head}"
+    );
+    assert!(
+        head.contains("- Missing check: `line1 line2tick`\n"),
+        "{head}"
+    );
+    assert!(
+        !head.contains('\u{202e}') && !head.contains('\u{200b}'),
+        "{head}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_unproven_clean_report_is_never_clean() -> TestResult {
+    // analysis_complete with no comments array.
+    let missing = Fixture::new("headline-no-array")?;
+    missing.json(
+        "target/ripr/review/comments.json",
+        &json!({"analysis_outcome": {"analysis_complete": true}}),
+    )?;
+    let head = block(&missing.render(&[])?, HEADLINE).to_string();
+    assert!(!head.contains("No changed-behavior spot"), "{head}");
+    assert!(head.contains("not a clean result"), "{head}");
+    // summary.comments states rows the array does not carry.
+    let stated = Fixture::new("headline-stated")?;
+    stated.json(
+        "target/ripr/review/comments.json",
+        &json!({"summary": {"comments": 2}, "analysis_outcome": {"analysis_complete": true}, "comments": []}),
+    )?;
+    let head = block(&stated.render(&[])?, HEADLINE).to_string();
+    assert!(head.contains("**2 changed-behavior spots"), "{head}");
+    assert!(
+        head.contains("The items are in the PR guidance section below."),
+        "{head}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_summary_only_report_names_its_first_spot_from_the_root_array() -> TestResult {
+    // The producer writes the count under summary and the cards at the root.
+    let fixture = Fixture::new("headline-summary-only")?;
+    fixture.json(
+        "target/ripr/review/comments.json",
+        &json!({
+            "summary": {"comments": 0, "summary_only": 1},
+            "comments": [],
+            "summary_only": [card()],
+        }),
+    )?;
+    let head = block(&fixture.render(&[])?, HEADLINE).to_string();
+    assert!(head.contains("**1 changed-behavior spot where"), "{head}");
+    assert!(
+        head.contains("- First: `src/pricing.rs:88` in `pricing::discounted_total`"),
+        "{head}"
+    );
+    assert!(!head.contains("PR guidance section below"), "{head}");
+    // A count with no cards still points at the guidance section.
+    let counted = Fixture::new("headline-count-only")?;
+    counted.json(
+        "target/ripr/review/comments.json",
+        &json!({"summary": {"comments": 0, "summary_only": 2}, "comments": []}),
+    )?;
+    let head = block(&counted.render(&[])?, HEADLINE).to_string();
+    assert!(head.contains("**2 changed-behavior spots"), "{head}");
+    assert!(head.contains("PR guidance section below"), "{head}");
+    Ok(())
+}
+
 /// #11146: the summary and the packet's plan stage share one reading of
 /// `RIPR_COMMENT_MODE`: whitespace is ignored and empty means `off`.
 #[test]
@@ -928,4 +1300,405 @@ fn comment_mode_trims_and_reads_empty_as_off() {
     assert_eq!(effective_comment_mode(" inline "), "inline");
     assert_eq!(effective_comment_mode("plan"), "plan");
     assert_eq!(effective_comment_mode("post"), "post");
+}
+
+const GOVERNANCE_HEADINGS: [&str; 7] = [
+    "### Policy readiness\n",
+    "### Policy operations\n",
+    "### Policy history\n",
+    "### Policy promotion packets\n",
+    "### Preview promotion packets\n",
+    "### Waiver aging\n",
+    "### Suppression health\n",
+];
+
+fn render_gate(
+    fixture: &Fixture,
+    gate_configured: bool,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let input = CiSummaryInput {
+        root: fixture.root.clone(),
+        base_ref: "trunk".to_string(),
+        upload_sarif: true,
+        gate_baseline: false,
+        gate_configured,
+        comment_mode: String::new(),
+        configured_languages: vec!["rust".to_string()],
+    };
+    Ok(String::from_utf8(render_ci_summary(&input))?)
+}
+
+#[test]
+fn governance_sections_fold_unless_a_gate_is_configured() -> TestResult {
+    let fixture = Fixture::complete("fold-governance")?;
+    write_quiet(&fixture)?;
+    let folded = render_gate(&fixture, false)?;
+    let open = render_gate(&fixture, true)?;
+    let fold = "<details><summary>Policy and governance (advisory; no gate configured; no warnings or unknowns)</summary>";
+    let start = folded.find(fold).ok_or("governance fold is missing")?;
+    let gate = folded
+        .find("### Gate decision\n")
+        .or_else(|| folded.find("#### Gate decision at a glance"))
+        .ok_or("gate decision is missing")?;
+    assert!(start < gate, "{folded}");
+    let inside = &folded[start..gate];
+    for heading in GOVERNANCE_HEADINGS {
+        assert!(inside.contains(heading), "{heading:?} escaped the fold");
+        assert_eq!(folded.matches(heading).count(), 1, "{heading:?}");
+    }
+    // Full reports nest their own <details>; the fold must still be closed
+    // by its own marker before the gate section.
+    let opens = inside.matches("<details").count();
+    assert!(opens > 1, "expected nested full reports:\n{inside}");
+    assert_eq!(opens, inside.matches("</details>").count(), "{inside}");
+    assert!(inside.trim_end().ends_with("</details>"), "{inside}");
+    // Folded, not dropped: a configured gate leaves them unfolded.
+    assert!(!open.contains("Policy and governance"), "{open}");
+    for heading in GOVERNANCE_HEADINGS {
+        assert!(open.contains(heading), "{heading:?}");
+    }
+    Ok(())
+}
+
+const R: &str = "target/ripr/reports";
+
+/// Every folded report, parsed, with every count it states at exactly zero.
+fn quiet_reports() -> Vec<(String, serde_json::Value)> {
+    let warn = || json!({"warnings": [], "unknowns": []});
+    vec![
+        (format!("{R}/policy-readiness.json"), warn()),
+        (
+            format!("{R}/policy-operations.json"),
+            json!({"promotion_blockers": [], "warnings": [], "unknowns": []}),
+        ),
+        (format!("{R}/policy-history.json"), warn()),
+        (
+            format!("{R}/policy-promotion-acknowledgeable.json"),
+            json!({"target_mode": "acknowledgeable", "warnings": [], "unknowns": []}),
+        ),
+        (
+            format!("{R}/preview-promotion-typescript-boundary-gap.json"),
+            json!({"language": "typescript", "warnings": [], "unknowns": []}),
+        ),
+        (
+            format!("{R}/waiver-aging.json"),
+            json!({"summary": {"durable_suppression_candidates": 0, "warnings": 0}}),
+        ),
+        (
+            format!("{R}/suppression-health.json"),
+            json!({"summary": {
+                "missing_owner": 0, "missing_reason": 0, "stale": 0,
+                "overbroad_scope": 0, "unknown_selector": 0,
+                "preview_without_preview_label": 0, "warnings": 0, "config_errors": 0,
+            }}),
+        ),
+    ]
+}
+
+fn write_quiet(fixture: &Fixture) -> TestResult {
+    for (path, doc) in quiet_reports() {
+        fixture.json(&path, &doc)?;
+    }
+    Ok(())
+}
+
+fn set_path(doc: &mut serde_json::Value, path: &str, value: serde_json::Value) {
+    let mut node = doc;
+    let keys: Vec<&str> = path.split('.').collect();
+    for key in &keys[..keys.len() - 1] {
+        node = &mut node[*key];
+    }
+    node[keys[keys.len() - 1]] = value;
+}
+
+const OPEN: &str = "<details open><summary>Policy and governance";
+const CLEAN: &str = "no gate configured; no warnings or unknowns)";
+
+#[test]
+fn every_count_source_keeps_the_governance_fold_open_when_nonzero() -> TestResult {
+    let control = Fixture::complete("fold-control")?;
+    write_quiet(&control)?;
+    let summary = render_gate(&control, false)?;
+    assert!(
+        summary.contains(CLEAN) && !summary.contains(OPEN),
+        "{summary}"
+    );
+
+    let mut cases: Vec<(&str, String, serde_json::Value)> = Vec::new();
+    for file in [
+        "policy-readiness.json",
+        "policy-operations.json",
+        "policy-history.json",
+        "policy-promotion-acknowledgeable.json",
+        "preview-promotion-typescript-boundary-gap.json",
+    ] {
+        cases.push((file, "warnings".to_string(), json!(["w"])));
+        cases.push((file, "unknowns".to_string(), json!(["u"])));
+    }
+    cases.push((
+        "policy-operations.json",
+        "promotion_blockers".to_string(),
+        json!([{"repair_action": "fix"}]),
+    ));
+    for path in ["summary.durable_suppression_candidates", "summary.warnings"] {
+        cases.push(("waiver-aging.json", path.to_string(), json!(1)));
+    }
+    for path in [
+        "missing_owner",
+        "missing_reason",
+        "stale",
+        "overbroad_scope",
+        "unknown_selector",
+        "preview_without_preview_label",
+        "warnings",
+        "config_errors",
+    ] {
+        cases.push((
+            "suppression-health.json",
+            format!("summary.{path}"),
+            json!(1),
+        ));
+    }
+    for (file, path, value) in cases {
+        let fixture = Fixture::complete(&format!("fold-open-{file}-{path}"))?;
+        write_quiet(&fixture)?;
+        let full = format!("{R}/{file}");
+        let mut doc = quiet_reports()
+            .into_iter()
+            .find(|(name, _)| *name == full)
+            .map(|(_, doc)| doc)
+            .ok_or("unknown report")?;
+        set_path(&mut doc, &path, value);
+        fixture.json(&full, &doc)?;
+        let summary = render_gate(&fixture, false)?;
+        assert!(summary.contains(OPEN), "{file} {path}: {summary}");
+        assert!(!summary.contains(CLEAN), "{file} {path}");
+    }
+    Ok(())
+}
+
+#[test]
+fn removing_any_required_policy_category_keeps_the_fold_open_and_not_clean() -> TestResult {
+    let control = Fixture::complete("fold-required-control")?;
+    write_quiet(&control)?;
+    let summary = render_gate(&control, false)?;
+    assert!(
+        summary.contains(CLEAN) && !summary.contains(OPEN),
+        "{summary}"
+    );
+
+    // Each required category: the file names removed together. The promotion
+    // category is satisfied by any `policy-promotion-*.json`, so a second one
+    // is added and all of them are removed.
+    let categories: [(&str, &[&str]); 5] = [
+        ("readiness", &["policy-readiness.json"]),
+        ("operations", &["policy-operations.json"]),
+        ("history", &["policy-history.json"]),
+        ("suppression-health", &["suppression-health.json"]),
+        (
+            "promotion",
+            &[
+                "policy-promotion-acknowledgeable.json",
+                "policy-promotion-visible-only.json",
+            ],
+        ),
+    ];
+    for (category, files) in categories {
+        let fixture = Fixture::complete(&format!("fold-required-{category}"))?;
+        write_quiet(&fixture)?;
+        fixture.json(
+            &format!("{R}/policy-promotion-visible-only.json"),
+            &json!({"target_mode": "visible-only", "warnings": [], "unknowns": []}),
+        )?;
+        let clean = render_gate(&fixture, false)?;
+        assert!(
+            clean.contains(CLEAN) && !clean.contains(OPEN),
+            "{category} control: {clean}"
+        );
+        for file in files {
+            let path = fixture.root.join(R).join(file);
+            assert!(path.is_file(), "{category}: {file} was not written");
+            fs::remove_file(path)?;
+        }
+        let summary = render_gate(&fixture, false)?;
+        assert!(summary.contains(OPEN), "{category}: {summary}");
+        assert!(!summary.contains(CLEAN), "{category}: {summary}");
+    }
+    Ok(())
+}
+
+#[test]
+fn unreadable_wrong_shape_and_missing_counts_are_not_clean() -> TestResult {
+    let shapes: [(&str, Option<serde_json::Value>); 6] = [
+        ("array", Some(json!([]))),
+        ("number", Some(json!(42))),
+        (
+            "bool-count",
+            Some(json!({"warnings": true, "unknowns": []})),
+        ),
+        ("summary-array", Some(json!({"summary": []}))),
+        ("no-counts", Some(json!({"status": "ok"}))),
+        ("malformed", None),
+    ];
+    for (reports_file, _) in quiet_reports() {
+        for (shape, doc) in &shapes {
+            let fixture = Fixture::complete(&format!("fold-shape-{reports_file}-{shape}"))?;
+            write_quiet(&fixture)?;
+            match doc {
+                Some(doc) => fixture.json(&reports_file, doc)?,
+                None => fixture.write(&reports_file, "{not json")?,
+            }
+            let summary = render_gate(&fixture, false)?;
+            assert!(summary.contains(OPEN), "{reports_file} {shape}: {summary}");
+            assert!(!summary.contains(CLEAN), "{reports_file} {shape}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_missing_policy_report_keeps_the_fold_open_beside_clean_ones() -> TestResult {
+    let fixture = Fixture::complete("fold-partial")?;
+    write_quiet(&fixture)?;
+    fs::remove_file(
+        fixture
+            .root
+            .join("target/ripr/reports/policy-readiness.json"),
+    )?;
+    let summary = render_gate(&fixture, false)?;
+    assert!(
+        summary.contains("<details open><summary>Policy and governance (advisory; no gate configured; some policy reports not found)"),
+        "{summary}"
+    );
+    assert!(!summary.contains(CLEAN), "{summary}");
+    Ok(())
+}
+
+#[test]
+fn extra_promotion_files_cannot_stand_in_for_a_missing_category() -> TestResult {
+    let fixture = Fixture::complete("fold-promotion-stand-in")?;
+    write_quiet(&fixture)?;
+    let reports = "target/ripr/reports";
+    // Remove the only policy-promotion report. The non-promotion preview
+    // promotion and waiver reports stay clean and present, and must not
+    // stand in for the missing required category.
+    fs::remove_file(
+        fixture
+            .root
+            .join(reports)
+            .join("policy-promotion-acknowledgeable.json"),
+    )?;
+    assert!(
+        fixture
+            .root
+            .join(reports)
+            .join("preview-promotion-typescript-boundary-gap.json")
+            .is_file()
+    );
+    let summary = render_gate(&fixture, false)?;
+    assert!(summary.contains(OPEN), "{summary}");
+    assert!(!summary.contains(CLEAN), "{summary}");
+    Ok(())
+}
+
+#[test]
+fn conditional_preview_and_waiver_reports_are_not_required_for_a_clean_fold() -> TestResult {
+    let fixture = Fixture::complete("fold-conditional")?;
+    write_quiet(&fixture)?;
+    let reports = "target/ripr/reports";
+    fs::remove_file(fixture.root.join(reports).join("waiver-aging.json"))?;
+    fs::remove_file(
+        fixture
+            .root
+            .join(reports)
+            .join("preview-promotion-typescript-boundary-gap.json"),
+    )?;
+    fixture.json(
+        &format!("{reports}/policy-promotion-visible-only.json"),
+        &json!({"target_mode": "visible-only", "warnings": [], "unknowns": []}),
+    )?;
+    let summary = render_gate(&fixture, false)?;
+    assert!(
+        summary.contains(CLEAN) && !summary.contains(OPEN),
+        "{summary}"
+    );
+    Ok(())
+}
+
+#[test]
+fn no_policy_reports_keeps_the_fold_open_and_not_clean() -> TestResult {
+    let fixture = Fixture::new("fold-none")?;
+    let summary = render_gate(&fixture, false)?;
+    assert!(
+        summary.contains(
+            "<details open><summary>Policy and governance (advisory; no gate configured; no policy reports found)"
+        ),
+        "{summary}"
+    );
+    assert!(!summary.contains(CLEAN), "{summary}");
+    Ok(())
+}
+
+#[test]
+fn first_action_status_omits_not_available_rows() -> TestResult {
+    let fixture = Fixture::new("first-action-rows")?;
+    fixture.json(
+        "target/ripr/reports/first-useful-action.json",
+        &json!({"status": "no_action"}),
+    )?;
+    let summary = fixture.render(&[])?;
+    let status = block(&summary, "#### First-run status");
+    assert!(status.contains("- Status: `no_action`"), "{status}");
+    assert!(!status.contains("`not_available`"), "{status}");
+    assert!(!status.contains("- Title:"), "{status}");
+    Ok(())
+}
+
+#[test]
+fn an_index_without_a_start_here_path_prints_only_the_placeholder() -> TestResult {
+    let fixture = Fixture::new("index-no-start")?;
+    fixture.json("target/ripr/reports/index.json", &json!({"summary": {}}))?;
+    let summary = fixture.render(&[])?;
+    assert!(
+        summary.contains("- Start-here artifact: `not_available`\n"),
+        "{summary}"
+    );
+    Ok(())
+}
+
+#[test]
+fn first_run_status_omits_only_the_not_available_placeholder() -> TestResult {
+    let fixture = Fixture::new("status-rows")?;
+    fixture.json(
+        "target/ripr/reports/start-here.json",
+        &json!({"status": "no_action", "selected": {"state": "no_action"}}),
+    )?;
+    let summary = fixture.render(&[])?;
+    assert!(summary.contains("- Status: `no_action`"), "{summary}");
+    assert!(
+        summary.contains("- Selected state: `no_action`"),
+        "{summary}"
+    );
+    assert!(summary.contains("- Top gap/no-action: `none`"), "{summary}");
+    let status = block(&summary, "#### First-run status");
+    assert!(!status.contains("`not_available`"), "{status}");
+    assert!(!status.contains("- Repair target:"), "{status}");
+    Ok(())
+}
+
+#[test]
+fn start_here_is_named_by_artifact_not_a_target_path() -> TestResult {
+    let fixture = Fixture::new("artifact-name")?;
+    fixture.write("target/ripr/reports/start-here.md", "# Start\n")?;
+    let summary = fixture.render(&[])?;
+    let start = block(&summary, "### Start here");
+    assert!(
+        start.contains("`start-here.md` in the `ripr-reports` artifact"),
+        "{start}"
+    );
+    assert!(
+        !start.contains("Open `target/ripr/reports/start-here.md`"),
+        "{start}"
+    );
+    Ok(())
 }

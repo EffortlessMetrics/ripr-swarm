@@ -345,7 +345,7 @@ enabled adapter with a matching non-success `language_runs` entry carries
    `analysis::language::route` to that adapter.
 7. Diff contains only non-source files (`.md`, `.toml`, extensionless), zero
    probes (#2304) → a one-line stderr disclosure names the changed-file count
-   and observed extensions and states that the empty result is correct
+   and observed extensions and states that nothing was analyzed
    because ripr cannot analyze non-source files. It is not a Finding, not a
    `preview_languages` block, changes no JSON schema or golden, and the exit
    code stays 0. Any source-routed file, or an empty diff, suppresses it.

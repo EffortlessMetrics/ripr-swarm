@@ -1,7 +1,7 @@
-use crate::app::{CHECK_OUTPUT_SCHEMA_VERSION, CheckInput};
+use crate::app::{CHECK_OUTPUT_SCHEMA_VERSION, CHECK_REFUSAL_SCHEMA_VERSION, CheckInput};
 use crate::core_error::CoreError;
 use crate::output::json::render_pretty_with_newline;
-use serde_json::json;
+use serde_json::{Value, json};
 
 const DIFF_SCOPE_OVERSIZED_PREFIX: &str = "diff_scope_oversized:";
 const DIFF_SCOPE_REPAIR_ROUTE: &str = "analysis/diff-scope-budget";
@@ -130,10 +130,17 @@ pub(crate) struct RefusalEnvelopeContext<'a> {
 /// human diagnostic rides in `message`. The identity comes from
 /// [`CoreError::check_refusal`], matched structurally; this renderer never
 /// inspects message text.
-pub(crate) fn render_refusal_envelope(
-    context: &RefusalEnvelopeContext<'_>,
-    error: &CoreError,
-) -> Result<String, String> {
+/// Build the shared refusal document value for a post-argv-parse failure
+/// (#6834, generalized #7331).
+///
+/// Same envelope shape for every command — same keys, same zeroed summary,
+/// same empty findings, same non-consumable treatment — so a JSON consumer
+/// has one contract: the typed identity selects `run_status`/`category`/
+/// `limitation` (and `basis`, which names the limiting condition), and the
+/// human diagnostic rides in `message`. The identity comes from
+/// [`CoreError::check_refusal`], matched structurally; this renderer never
+/// inspects message text.
+fn refusal_envelope_value(context: &RefusalEnvelopeContext<'_>, error: &CoreError) -> Value {
     let notice = error.refusal_notice();
     let identity = notice.identity;
     let repair_route = notice.repair_route;
@@ -183,8 +190,14 @@ pub(crate) fn render_refusal_envelope(
     if let Some(base) = context.base {
         value["base"] = json!(base);
     }
+    value
+}
 
-    render_pretty_with_newline(&value, "limited check")
+pub(crate) fn render_refusal_envelope(
+    context: &RefusalEnvelopeContext<'_>,
+    error: &CoreError,
+) -> Result<String, String> {
+    render_pretty_with_newline(&refusal_envelope_value(context, error), "limited check")
 }
 
 /// Render the `check --json` refusal document for a failure that is not one
@@ -197,22 +210,39 @@ pub(crate) fn render_refusal_envelope(
 /// from [`CoreError::check_refusal`], matched structurally; this renderer
 /// never inspects message text.
 ///
+/// An `analysis_timeout` refusal consumes the stashed input-context
+/// projection (#10796): the envelope then renders at the amended refusal
+/// generation [`CHECK_REFUSAL_SCHEMA_VERSION`] with an `input_context` key
+/// carrying the requested echo, availability-qualified resolved facts, and
+/// one bounded retry. With no stashed projection the timeout refusal keeps
+/// the pre-amendment `0.2` bytes, so library callers and sibling surfaces
+/// see no change.
+///
 /// Callers try [`render_diff_scope_limited_check_json`] first, so scope-guard
 /// bytes stay frozen and #4861 keeps owning those identities.
 pub(crate) fn render_check_failure_json(
     input: &CheckInput,
     error: &CoreError,
 ) -> Result<String, String> {
-    render_refusal_envelope(
-        &RefusalEnvelopeContext {
-            schema_version: CHECK_OUTPUT_SCHEMA_VERSION,
-            scope: "diff",
-            mode: Some(input.mode.as_str()),
-            root: &input.root,
-            base: input.base.as_deref(),
-        },
-        error,
-    )
+    let identity = error.refusal_notice().identity;
+    let timeout_context = (identity == "analysis_timeout")
+        .then(crate::app::timeout_refusal::take_stashed)
+        .flatten();
+    let mut context = RefusalEnvelopeContext {
+        schema_version: CHECK_OUTPUT_SCHEMA_VERSION,
+        scope: "diff",
+        mode: Some(input.mode.as_str()),
+        root: &input.root,
+        base: input.base.as_deref(),
+    };
+    if timeout_context.is_some() {
+        context.schema_version = CHECK_REFUSAL_SCHEMA_VERSION;
+    }
+    let mut value = refusal_envelope_value(&context, error);
+    if let Some(projection) = timeout_context {
+        value["input_context"] = projection.input_context_value();
+    }
+    render_pretty_with_newline(&value, "limited check")
 }
 
 #[cfg(test)]
@@ -648,6 +678,13 @@ mod tests {
                 "analysis_timeout",
                 "analysis/timeout",
             ),
+            (
+                CoreError::analysis_worker_stopped(
+                    "analysis_worker_stopped: the ripr check analysis worker stopped",
+                ),
+                "analysis_worker_stopped",
+                "analysis/worker-stopped",
+            ),
         ];
         for (error, identity, route) in cases {
             let rendered = render_check_failure_json(&input(), &error)?;
@@ -753,6 +790,186 @@ mod tests {
                     "{label} root must use display_path spelling, got {root:?}"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn timeout_refusal_with_stashed_context_renders_input_context_at_generation_0_3()
+    -> Result<(), String> {
+        use crate::app::timeout_refusal;
+        use crate::core_error::CoreError;
+        timeout_refusal::clear_stashed();
+        // Late timeout: the loader and intake published before the deadline.
+        timeout_refusal::stash(timeout_refusal::build(
+            &input(),
+            timeout_refusal::RequestedSourceContext {
+                source: crate::analysis::InputSource::Committed,
+                worktree_explicit: false,
+                committed_explicit: true,
+                candidate_tree: None,
+                candidate_base: None,
+            },
+            std::time::Duration::from_mins(10),
+            true,
+            None,
+            None,
+            Some(crate::analysis::CapturedInputFacts {
+                facts: crate::analysis::PublishedInputFacts {
+                    source: Some(crate::analysis::InputSource::Committed),
+                    effective_base: Some("origin/main".to_string()),
+                    resolved_base_commit: Some("06e6aea".to_string()),
+                    merge_base_origin: None,
+                    scoped_changed_file_count: Some(6),
+                    out_of_scope_file_count: Some(0),
+                },
+                post_deadline: crate::analysis::PublishedInputFacts::default(),
+                loader_published: true,
+                intake_published: true,
+            }),
+        ));
+        let error = CoreError::analysis_timeout(
+            "analysis_timeout: ripr check exceeded its 600s wall-clock budget",
+        );
+        let rendered = render_check_failure_json(&input(), &error)?;
+        let value: Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse refusal JSON: {err}"))?;
+
+        // Generation 0.3 and the new key, only because the projection exists.
+        if value.pointer("/schema_version").and_then(Value::as_str) != Some("0.3") {
+            return Err(format!("timeout refusal must render at 0.3: {value}"));
+        }
+        for (pointer, expected) in [
+            ("/input_context/requested/source", "committed"),
+            ("/input_context/requested/base", "origin/main"),
+            ("/input_context/requested/analysis_mode", "draft"),
+            (
+                "/input_context/resolved/effective_base/value",
+                "origin/main",
+            ),
+            ("/input_context/resolved/base_commit/value", "06e6aea"),
+            ("/input_context/recovery/kind", "retry_with_larger_budget"),
+        ] {
+            let actual = value.pointer(pointer).and_then(Value::as_str);
+            if actual != Some(expected) {
+                return Err(format!("{pointer}: expected {expected}, got {actual:?}"));
+            }
+        }
+        // The scoped intake count is a JSON number, not a string.
+        if value
+            .pointer("/input_context/resolved/scoped_changed_files/value")
+            .and_then(Value::as_u64)
+            != Some(6)
+        {
+            return Err(format!("scoped_changed_files must read 6: {value}"));
+        }
+        // #10796 acceptance: the typed identity, zeroed summary, empty
+        // findings and non-consumable treatment are unchanged.
+        for (pointer, expected) in [
+            ("/analysis_scope/run_status", "analysis_timeout"),
+            ("/analysis_scope/basis", "analysis_timeout"),
+            ("/analysis_scope/repair_route", "analysis/timeout"),
+            ("/run_limitations/0/category", "analysis_timeout"),
+        ] {
+            let actual = value.pointer(pointer).and_then(Value::as_str);
+            if actual != Some(expected) {
+                return Err(format!("{pointer}: expected {expected}, got {actual:?}"));
+            }
+        }
+        if value.pointer("/analysis_scope/downstream_consumable") != Some(&Value::Bool(false))
+            || value.pointer("/run_limitations/0/downstream_consumable")
+                != Some(&Value::Bool(false))
+        {
+            return Err(format!(
+                "non-consumable treatment must be preserved: {value}"
+            ));
+        }
+        if value["findings"].as_array().map(Vec::len) != Some(0) {
+            return Err(format!("findings must stay empty: {value}"));
+        }
+        if value.pointer("/summary/changed_rust_files") != Some(&Value::from(0)) {
+            return Err(format!("summary must stay zeroed: {value}"));
+        }
+        // Input metadata must not imply any exposure/clean inference.
+        if value.pointer("/input_context/resolved/scoped_changed_files/available")
+            != Some(&Value::Bool(true))
+        {
+            return Err(format!("published scoped count must be available: {value}"));
+        }
+        // The stash is consumed exactly once.
+        if timeout_refusal::take_stashed().is_some() {
+            return Err("the render must consume the stashed projection".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn timeout_refusal_without_context_keeps_the_pre_amendment_bytes() -> Result<(), String> {
+        use crate::app::timeout_refusal;
+        use crate::core_error::CoreError;
+        timeout_refusal::clear_stashed();
+        let error = CoreError::analysis_timeout(
+            "analysis_timeout: ripr check exceeded its 600s wall-clock budget",
+        );
+        let rendered = render_check_failure_json(&input(), &error)?;
+        let value: Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse refusal JSON: {err}"))?;
+        // No stashed projection (library caller): unchanged 0.2 shape, no
+        // input_context key, so no caller-unsupplied value enters the doc.
+        if value.pointer("/schema_version").and_then(Value::as_str) != Some("0.2") {
+            return Err(format!(
+                "context-less timeout refusal must stay at 0.2: {value}"
+            ));
+        }
+        if value.get("input_context").is_some() {
+            return Err(format!(
+                "input_context must be absent without a projection: {value}"
+            ));
+        }
+        if value
+            .pointer("/analysis_scope/run_status")
+            .and_then(Value::as_str)
+            != Some("analysis_timeout")
+        {
+            return Err(format!("typed identity must be preserved: {value}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn non_timeout_refusals_ignore_a_stale_stash() -> Result<(), String> {
+        use crate::app::timeout_refusal;
+        use crate::core_error::CoreError;
+        timeout_refusal::clear_stashed();
+        // A stale projection must never leak into a non-timeout refusal.
+        timeout_refusal::stash(timeout_refusal::build(
+            &input(),
+            timeout_refusal::RequestedSourceContext {
+                source: crate::analysis::InputSource::Committed,
+                worktree_explicit: false,
+                committed_explicit: false,
+                candidate_tree: None,
+                candidate_base: None,
+            },
+            std::time::Duration::from_mins(1),
+            false,
+            None,
+            None,
+            None,
+        ));
+        let rendered = render_check_failure_json(
+            &input(),
+            &CoreError::base_unresolvable("the base `x` does not resolve to a commit"),
+        )?;
+        let value: Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse refusal JSON: {err}"))?;
+        if value.get("input_context").is_some() {
+            return Err(format!(
+                "non-timeout refusal must not gain input_context: {value}"
+            ));
+        }
+        if value.pointer("/schema_version").and_then(Value::as_str) != Some("0.2") {
+            return Err(format!("non-timeout refusal must stay at 0.2: {value}"));
         }
         Ok(())
     }

@@ -74,7 +74,7 @@ OFF preserved the existing conservative behavior; the amendment above flips it t
 every ambiguity:
 
 - Missing file, JSONC parse error, or missing `compilerOptions.baseUrl` â†’ `None`.
-- `extends` or `references` present â†’ `None` (no transitive following).
+- `references` present fails closed. `extends` chains are followed up to 8 hops only when every target is a relative path in the same directory as the extending config (#11204): bases merge first, a declared `paths` object replaces the inherited one whole (as `tsc` treats it, even when empty), and `baseUrl` is the nearest declaration. Package-name or cross-directory bases, cycles, and missing targets fail closed.
 - Empty or multi-entry `paths` value array, or a template with more than one
   `*` â†’ retain the literal/single-wildcard key as an unresolved blocker. A
   broader alias must not take over the blocked key's imports.
@@ -206,10 +206,11 @@ The longest-prefix rule follows the TypeScript
 
 ### Alias resolution scope
 
-Resolution is single-hop and file-only: `load_alias_map` reads only
+Resolution is file-only: `load_alias_map` reads
 `compilerOptions.baseUrl` and `compilerOptions.paths` from the first of
-`tsconfig.json` / `jsconfig.json` found at the workspace root. It does NOT
-follow `extends` or `references`.
+`tsconfig.json` / `jsconfig.json` found at the workspace root, merged
+over its `extends` chain under the same-directory limits above. It does
+NOT follow `references` or per-package tsconfigs.
 
 ### Resolution decision tree
 
@@ -303,7 +304,7 @@ nonempty extracted owners and tests.
 
 ## Non-Goals
 
-- Following `extends` or `references` chains â€” single-hop only.
+- Following `references` chains, package-name `extends`, or cross-directory `extends` bases (inherited templates cannot be rebased exactly).
 - Full TypeScript project-graph or per-package tsconfig resolution.
 - Node.js module resolution (bare specifier without paths alias).
 - Dynamic or computed paths keys.

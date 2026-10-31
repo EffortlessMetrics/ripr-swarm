@@ -1,0 +1,3 @@
+pub fn bench_shared() -> u32 {
+    20
+}

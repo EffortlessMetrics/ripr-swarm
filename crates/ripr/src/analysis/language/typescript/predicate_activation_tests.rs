@@ -215,6 +215,7 @@ fn evaluate_in(
         boundary: &boundary,
         boundary_fact,
         line_text: change.text,
+        source_line: change.text,
         owner: &owner,
         sibling_tests: &tests,
         alias_map: None,

@@ -26,15 +26,19 @@
 //!
 //! Test files carry the other half: [`python_test_rebinding`] records which
 //! names a test cannot be trusted to hold at their imported value, and which
-//! attributes the test file assigns (`pricing.DISCOUNT_THRESHOLD = 5`).
+//! attributes the test file assigns (`pricing.DISCOUNT_THRESHOLD = 5`). A
+//! workspace file that writes the test module's constant (`conftest.py`
+//! doing `module.THRESHOLD = 49`) is recorded as a foreign attribute write
+//! so boundary credit stays fail-closed (#11424).
 
-use super::PythonTest;
 use super::boundary::literal_value;
 use super::source_facts::parse_module_result;
 use super::source_utils::{SourceText, line_for_range_start, text_for_range};
+use super::{PythonImport, PythonTest, expr_full_name};
 use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
 use rustpython_parser::{Mode, Tok, lexer::lex};
 use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// A module-scope name bound once to a scalar literal and never rebound.
@@ -44,6 +48,17 @@ pub(super) struct PythonModuleConstant {
     /// Canonical literal text (`10_000` becomes `10000`).
     pub(super) value: String,
     pub(super) line: usize,
+}
+
+/// A write of `<module>.<attribute>` in one file (#11424).
+///
+/// `module` is the dotted import path (`tests.test_pricing`), or `*` when
+/// the write names a module this walk cannot resolve. `attribute` is the
+/// written name, or `*` when the call can name any attribute.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(super) struct PythonModuleAttributeWrite {
+    pub(super) module: String,
+    pub(super) attribute: String,
 }
 
 /// The module-scope literal constants of one parsed module.
@@ -530,6 +545,16 @@ pub(super) struct PythonTestRebinding {
     /// One import and one argument-free test with no definition-time
     /// expressions; only bounded dunder truthiness consumes this fact.
     pub(super) plain_test_module: bool,
+    /// The test module's own scalar-literal constants: bound once at module
+    /// scope, never `global`-rebound or attribute-assigned (#10707). Shared by
+    /// every test of the module.
+    #[serde(default)]
+    pub(super) module_constants: Arc<Vec<PythonModuleConstant>>,
+    /// Attribute names another workspace file assigns on this test's module
+    /// (`conftest.py` doing `module.TH = 49`), or `*` when a write cannot
+    /// name the module or attribute (#11424). Empty until the workspace pass.
+    #[serde(default)]
+    pub(super) foreign_attributes: Arc<Vec<String>>,
 }
 
 impl PythonTestRebinding {
@@ -545,10 +570,12 @@ impl PythonTestRebinding {
         self.module_names.iter().any(|bound| bound == name)
     }
 
-    /// Whether the test file may assign attribute `name` on another module.
+    /// Whether the test file may assign attribute `name` on another module,
+    /// or another workspace file assigns it on this test's module (#11424).
     pub(super) fn assigns_attribute(&self, name: &str) -> bool {
         self.attributes
             .iter()
+            .chain(self.foreign_attributes.iter())
             .any(|attribute| attribute == name || attribute == "*")
     }
 }
@@ -572,6 +599,8 @@ pub(super) fn python_test_rebinding(
         implicit_reach: false,
         header_reach: false,
         plain_test_module: false,
+        module_constants: Arc::default(),
+        foreign_attributes: Arc::default(),
     }
 }
 
@@ -579,7 +608,12 @@ pub(super) fn python_test_rebinding(
 /// more than once or any of its functions declares `global`, attributes it
 /// assigns, and constructs that bind names the walk cannot enumerate.
 /// Computed once per module.
-pub(super) fn with_module_rebinding(source: &str, statements: &[Stmt], tests: &mut [PythonTest]) {
+pub(super) fn with_module_rebinding(
+    source: &str,
+    statements: &[Stmt],
+    module_constants: &[PythonModuleConstant],
+    tests: &mut [PythonTest],
+) {
     let mut module = ScopeBindings::default();
     collect_scope_bindings(statements, &mut module);
     let dynamic = writes_namespace_dynamically(source);
@@ -610,8 +644,10 @@ pub(super) fn with_module_rebinding(source: &str, statements: &[Stmt], tests: &m
     module_bound.dedup();
     let module_bound = Arc::new(module_bound);
     let attributes = Arc::new(attributes);
+    let module_constants = Arc::new(module_constants.to_vec());
     for test in tests {
         let rebinding = &mut test.constant_rebinding;
+        rebinding.module_constants = Arc::clone(&module_constants);
         rebinding.opaque |= module.opaque || dynamic;
         rebinding.names.sort();
         rebinding.names.dedup();
@@ -620,6 +656,474 @@ pub(super) fn with_module_rebinding(source: &str, statements: &[Stmt], tests: &m
         rebinding.plain_test_module = plain_test_module;
         rebinding.module_bound = Arc::clone(&module_bound);
         rebinding.attributes = Arc::clone(&attributes);
+    }
+}
+
+/// Record, per test, the attributes other workspace files assign on that
+/// test's module so a test-module constant another file rewrote is not
+/// credited (#11424).
+pub(super) fn apply_foreign_module_attribute_writes(
+    tests: &mut [PythonTest],
+    writes_by_file: &[(PathBuf, Vec<PythonModuleAttributeWrite>)],
+) {
+    if tests.is_empty() || writes_by_file.iter().all(|(_, writes)| writes.is_empty()) {
+        return;
+    }
+    for test in tests {
+        let modules = test_module_import_paths(&test.file);
+        let mut attributes: Vec<String> = writes_by_file
+            .iter()
+            .filter(|(file, _)| file != &test.file)
+            .flat_map(|(_, writes)| writes)
+            .filter(|write| write_targets_modules(write, &modules))
+            .map(|write| write.attribute.clone())
+            .collect();
+        if attributes.is_empty() {
+            continue;
+        }
+        attributes.sort();
+        attributes.dedup();
+        test.constant_rebinding.foreign_attributes = Arc::new(attributes);
+    }
+}
+
+/// Writes of `<module>.<attr>` in `statements`: attribute assignment,
+/// `setattr(<mod>, "NAME", ...)`, and `monkeypatch.setattr` (#11424).
+pub(super) fn module_attribute_writes(
+    statements: &[Stmt],
+    imports: &[PythonImport],
+) -> Vec<PythonModuleAttributeWrite> {
+    let mut writes = Vec::new();
+    collect_attribute_assignment_writes(statements, imports, &mut writes);
+    visit_exprs_in_statements(statements, &mut |expr| {
+        if let Expr::Call(call) = expr {
+            collect_setattr_write(call, imports, &mut writes);
+        }
+    });
+    writes.sort_by(|left, right| {
+        left.module
+            .cmp(&right.module)
+            .then_with(|| left.attribute.cmp(&right.attribute))
+    });
+    writes.dedup();
+    writes
+}
+
+fn write_targets_modules(write: &PythonModuleAttributeWrite, modules: &[String]) -> bool {
+    write.module == "*" || modules.iter().any(|module| module == &write.module)
+}
+
+/// Import paths under which a test file can be the target of `<mod>.NAME`.
+/// The full repository-relative path is first; a `src`/`lib` layout root
+/// also yields the path below it, matching [`super::related_tests::owner_module_paths`].
+/// The file stem is last so `import test_pricing` in a pytest rootdir still
+/// names `tests/test_pricing.py`.
+fn test_module_import_paths(file: &Path) -> Vec<String> {
+    let paths = super::related_tests::owner_module_paths(file);
+    let Some(stem) = file.file_stem().and_then(|stem| stem.to_str()) else {
+        return paths;
+    };
+    if stem == "__init__" || paths.iter().any(|path| path == stem) {
+        return paths;
+    }
+    let mut paths = paths;
+    paths.push(stem.to_string());
+    paths
+}
+
+fn collect_attribute_assignment_writes(
+    statements: &[Stmt],
+    imports: &[PythonImport],
+    out: &mut Vec<PythonModuleAttributeWrite>,
+) {
+    assigned_attribute_targets(statements, &|attribute| {
+        let module = resolve_module_expr(attribute.value.as_ref(), imports)?;
+        Some(format!("{module}\0{}", attribute.attr))
+    })
+    .into_iter()
+    .for_each(|encoded| {
+        if let Some((module, attribute)) = encoded.split_once('\0') {
+            out.push(PythonModuleAttributeWrite {
+                module: module.to_string(),
+                attribute: attribute.to_string(),
+            });
+        }
+    });
+}
+
+fn collect_setattr_write(
+    call: &ast::ExprCall,
+    imports: &[PythonImport],
+    out: &mut Vec<PythonModuleAttributeWrite>,
+) {
+    let Some(func) = expr_full_name(call.func.as_ref()) else {
+        return;
+    };
+    if func != "setattr" && !func.ends_with(".setattr") {
+        return;
+    }
+    match call.args.as_slice() {
+        [] => out.push(PythonModuleAttributeWrite {
+            module: "*".to_string(),
+            attribute: "*".to_string(),
+        }),
+        [target] => match string_constant(target) {
+            Some(path) => push_dotted_write(&path, out),
+            None => out.push(PythonModuleAttributeWrite {
+                module: "*".to_string(),
+                attribute: "*".to_string(),
+            }),
+        },
+        [target, second, ..] => {
+            if let Some(path) = string_constant(target) {
+                if let Some(attribute) = string_constant(second) {
+                    out.push(PythonModuleAttributeWrite {
+                        module: path,
+                        attribute,
+                    });
+                } else {
+                    push_dotted_write(&path, out);
+                }
+                return;
+            }
+            let Some(module) = resolve_module_expr(target, imports) else {
+                return;
+            };
+            out.push(PythonModuleAttributeWrite {
+                module,
+                attribute: string_constant(second).unwrap_or_else(|| "*".to_string()),
+            });
+        }
+    }
+}
+
+fn push_dotted_write(path: &str, out: &mut Vec<PythonModuleAttributeWrite>) {
+    match dotted_module_and_attr(path) {
+        Some((module, attribute)) => out.push(PythonModuleAttributeWrite { module, attribute }),
+        None => out.push(PythonModuleAttributeWrite {
+            module: "*".to_string(),
+            attribute: "*".to_string(),
+        }),
+    }
+}
+
+fn dotted_module_and_attr(path: &str) -> Option<(String, String)> {
+    let (module, attribute) = path.rsplit_once('.')?;
+    if module.is_empty() || attribute.is_empty() {
+        return None;
+    }
+    Some((module.to_string(), attribute.to_string()))
+}
+
+fn string_constant(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Constant(constant) => match &constant.value {
+            ast::Constant::Str(text) => Some(text.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn resolve_module_expr(expr: &Expr, imports: &[PythonImport]) -> Option<String> {
+    match expr {
+        Expr::Name(_) | Expr::Attribute(_) => {
+            let name = expr_full_name(expr)?;
+            Some(resolve_imported_module(&name, imports).unwrap_or(name))
+        }
+        _ => None,
+    }
+}
+
+fn resolve_imported_module(name: &str, imports: &[PythonImport]) -> Option<String> {
+    for import in imports {
+        let path = imported_module_path(import);
+        if import.alias == name || import.imported == name || path == name {
+            return Some(path);
+        }
+        if let Some(rest) = name
+            .strip_prefix(&import.alias)
+            .and_then(|rest| rest.strip_prefix('.'))
+        {
+            return Some(if path.is_empty() {
+                rest.to_string()
+            } else {
+                format!("{path}.{rest}")
+            });
+        }
+        if !path.is_empty()
+            && let Some(rest) = name
+                .strip_prefix(&path)
+                .and_then(|rest| rest.strip_prefix('.'))
+        {
+            return Some(format!("{path}.{rest}"));
+        }
+    }
+    None
+}
+
+fn imported_module_path(import: &PythonImport) -> String {
+    if import.source_module.is_empty() || import.imported == "*" {
+        if import.source_module.is_empty() {
+            import.imported.clone()
+        } else {
+            import.source_module.clone()
+        }
+    } else {
+        format!("{}.{}", import.source_module, import.imported)
+    }
+}
+
+fn visit_exprs_in_statements(statements: &[Stmt], visit: &mut impl FnMut(&Expr)) {
+    visit_statements(statements, &mut |stmt| match stmt {
+        Stmt::FunctionDef(function) => {
+            for decorator in &function.decorator_list {
+                walk_expr(decorator, visit);
+            }
+            walk_arguments(&function.args, visit);
+            if let Some(returns) = &function.returns {
+                walk_expr(returns, visit);
+            }
+        }
+        Stmt::AsyncFunctionDef(function) => {
+            for decorator in &function.decorator_list {
+                walk_expr(decorator, visit);
+            }
+            walk_arguments(&function.args, visit);
+            if let Some(returns) = &function.returns {
+                walk_expr(returns, visit);
+            }
+        }
+        Stmt::ClassDef(class) => {
+            for decorator in &class.decorator_list {
+                walk_expr(decorator, visit);
+            }
+            for base in &class.bases {
+                walk_expr(base, visit);
+            }
+            for keyword in &class.keywords {
+                walk_expr(&keyword.value, visit);
+            }
+        }
+        Stmt::Assign(assign) => {
+            for target in &assign.targets {
+                walk_expr(target, visit);
+            }
+            walk_expr(&assign.value, visit);
+        }
+        Stmt::AnnAssign(assign) => {
+            walk_expr(&assign.target, visit);
+            walk_expr(&assign.annotation, visit);
+            if let Some(value) = assign.value.as_deref() {
+                walk_expr(value, visit);
+            }
+        }
+        Stmt::AugAssign(assign) => {
+            walk_expr(&assign.target, visit);
+            walk_expr(&assign.value, visit);
+        }
+        Stmt::For(stmt) => {
+            walk_expr(&stmt.target, visit);
+            walk_expr(&stmt.iter, visit);
+        }
+        Stmt::AsyncFor(stmt) => {
+            walk_expr(&stmt.target, visit);
+            walk_expr(&stmt.iter, visit);
+        }
+        Stmt::While(stmt) => walk_expr(&stmt.test, visit),
+        Stmt::If(stmt) => walk_expr(&stmt.test, visit),
+        Stmt::With(stmt) => {
+            for item in &stmt.items {
+                walk_expr(&item.context_expr, visit);
+                if let Some(vars) = &item.optional_vars {
+                    walk_expr(vars, visit);
+                }
+            }
+        }
+        Stmt::AsyncWith(stmt) => {
+            for item in &stmt.items {
+                walk_expr(&item.context_expr, visit);
+                if let Some(vars) = &item.optional_vars {
+                    walk_expr(vars, visit);
+                }
+            }
+        }
+        Stmt::Raise(stmt) => {
+            if let Some(exc) = &stmt.exc {
+                walk_expr(exc, visit);
+            }
+            if let Some(cause) = &stmt.cause {
+                walk_expr(cause, visit);
+            }
+        }
+        Stmt::Assert(stmt) => {
+            walk_expr(&stmt.test, visit);
+            if let Some(msg) = &stmt.msg {
+                walk_expr(msg, visit);
+            }
+        }
+        Stmt::Expr(stmt) => walk_expr(&stmt.value, visit),
+        Stmt::Return(stmt) => {
+            if let Some(value) = &stmt.value {
+                walk_expr(value, visit);
+            }
+        }
+        Stmt::Delete(stmt) => {
+            for target in &stmt.targets {
+                walk_expr(target, visit);
+            }
+        }
+        Stmt::Match(stmt) => walk_expr(&stmt.subject, visit),
+        _ => {}
+    });
+}
+
+fn walk_arguments(args: &ast::Arguments, visit: &mut impl FnMut(&Expr)) {
+    for default in args
+        .posonlyargs
+        .iter()
+        .chain(&args.args)
+        .chain(&args.kwonlyargs)
+        .filter_map(|arg| arg.default.as_deref())
+    {
+        walk_expr(default, visit);
+    }
+    if let Some(vararg) = &args.vararg
+        && let Some(annotation) = vararg.annotation.as_deref()
+    {
+        walk_expr(annotation, visit);
+    }
+    if let Some(kwarg) = &args.kwarg
+        && let Some(annotation) = kwarg.annotation.as_deref()
+    {
+        walk_expr(annotation, visit);
+    }
+}
+
+fn walk_expr(expr: &Expr, visit: &mut impl FnMut(&Expr)) {
+    visit(expr);
+    match expr {
+        Expr::BoolOp(bool_op) => {
+            for value in &bool_op.values {
+                walk_expr(value, visit);
+            }
+        }
+        Expr::NamedExpr(named) => {
+            walk_expr(&named.target, visit);
+            walk_expr(&named.value, visit);
+        }
+        Expr::BinOp(bin_op) => {
+            walk_expr(&bin_op.left, visit);
+            walk_expr(&bin_op.right, visit);
+        }
+        Expr::UnaryOp(unary) => walk_expr(&unary.operand, visit),
+        Expr::Lambda(lambda) => walk_expr(&lambda.body, visit),
+        Expr::IfExp(if_exp) => {
+            walk_expr(&if_exp.test, visit);
+            walk_expr(&if_exp.body, visit);
+            walk_expr(&if_exp.orelse, visit);
+        }
+        Expr::Dict(dict) => {
+            for key in dict.keys.iter().flatten() {
+                walk_expr(key, visit);
+            }
+            for value in &dict.values {
+                walk_expr(value, visit);
+            }
+        }
+        Expr::Set(set) => {
+            for value in &set.elts {
+                walk_expr(value, visit);
+            }
+        }
+        Expr::ListComp(list_comp) => {
+            walk_expr(&list_comp.elt, visit);
+            walk_comprehensions(&list_comp.generators, visit);
+        }
+        Expr::SetComp(set_comp) => {
+            walk_expr(&set_comp.elt, visit);
+            walk_comprehensions(&set_comp.generators, visit);
+        }
+        Expr::DictComp(dict_comp) => {
+            walk_expr(&dict_comp.key, visit);
+            walk_expr(&dict_comp.value, visit);
+            walk_comprehensions(&dict_comp.generators, visit);
+        }
+        Expr::GeneratorExp(generator) => {
+            walk_expr(&generator.elt, visit);
+            walk_comprehensions(&generator.generators, visit);
+        }
+        Expr::Await(await_expr) => walk_expr(&await_expr.value, visit),
+        Expr::Yield(yield_expr) => {
+            if let Some(value) = &yield_expr.value {
+                walk_expr(value, visit);
+            }
+        }
+        Expr::YieldFrom(yield_expr) => walk_expr(&yield_expr.value, visit),
+        Expr::Compare(compare) => {
+            walk_expr(&compare.left, visit);
+            for comparator in &compare.comparators {
+                walk_expr(comparator, visit);
+            }
+        }
+        Expr::Call(call) => {
+            walk_expr(&call.func, visit);
+            for arg in &call.args {
+                walk_expr(arg, visit);
+            }
+            for keyword in &call.keywords {
+                walk_expr(&keyword.value, visit);
+            }
+        }
+        Expr::FormattedValue(formatted) => {
+            walk_expr(&formatted.value, visit);
+            if let Some(format_spec) = &formatted.format_spec {
+                walk_expr(format_spec, visit);
+            }
+        }
+        Expr::JoinedStr(joined) => {
+            for value in &joined.values {
+                walk_expr(value, visit);
+            }
+        }
+        Expr::Attribute(attribute) => walk_expr(&attribute.value, visit),
+        Expr::Subscript(subscript) => {
+            walk_expr(&subscript.value, visit);
+            walk_expr(&subscript.slice, visit);
+        }
+        Expr::Starred(starred) => walk_expr(&starred.value, visit),
+        Expr::List(list) => {
+            for value in &list.elts {
+                walk_expr(value, visit);
+            }
+        }
+        Expr::Tuple(tuple) => {
+            for value in &tuple.elts {
+                walk_expr(value, visit);
+            }
+        }
+        Expr::Slice(slice) => {
+            if let Some(lower) = &slice.lower {
+                walk_expr(lower, visit);
+            }
+            if let Some(upper) = &slice.upper {
+                walk_expr(upper, visit);
+            }
+            if let Some(step) = &slice.step {
+                walk_expr(step, visit);
+            }
+        }
+        Expr::Constant(_) | Expr::Name(_) => {}
+    }
+}
+
+fn walk_comprehensions(generators: &[ast::Comprehension], visit: &mut impl FnMut(&Expr)) {
+    for comprehension in generators {
+        walk_expr(&comprehension.target, visit);
+        walk_expr(&comprehension.iter, visit);
+        for guard in &comprehension.ifs {
+            walk_expr(guard, visit);
+        }
     }
 }
 

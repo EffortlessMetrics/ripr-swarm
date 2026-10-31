@@ -1,0 +1,17 @@
+use libtest_mimic::{Arguments, Failed, Trial};
+
+fn registered_base() -> u32 {
+    10
+}
+
+fn check_registered() -> Result<(), Failed> {
+    assert_eq!(registered_base(), 10);
+    assert_eq!(specb_configured::shipped_value(10), 26);
+    Ok(())
+}
+
+fn main() {
+    let args = Arguments::from_args();
+    let trials = vec![Trial::test("registered_base_is_ten", check_registered)];
+    libtest_mimic::run(&args, trials).exit();
+}

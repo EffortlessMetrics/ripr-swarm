@@ -26,6 +26,11 @@
 //! degraded to a direct-child kill whenever `taskkill` was missing or
 //! reported success before the parent had exited.
 //!
+//! A force-terminated owner runs no `Drop`, so the binaries also call
+//! [`bind_process_lifetime`] once at startup: the owner process joins one
+//! kill-on-close Job Object and the OS ends every descendant when the owner
+//! dies by any route (#9564).
+//!
 //! Ownership is never dropped without cleanup: [`Drop`] terminates the job
 //! and reaps the direct child even on panic unwinding. Unix MCP attempts opt
 //! into process-group containment through their captured cancellation token.
@@ -37,6 +42,71 @@ use std::time::{Duration, Instant};
 
 #[cfg(windows)]
 use process_wrap::std::{ChildWrapper, CommandWrap, JobObject};
+
+/// Bind the calling process's lifetime to its descendants (#9564, #9323 F2).
+///
+/// Windows: puts the current process in one Job Object created with
+/// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and keeps its only handle open for
+/// the rest of the process. The OS closes that handle when the process ends
+/// by *any* route, including `TerminateProcess`, a runner teardown or an
+/// editor force-kill, which kills every process still in the job. That is the
+/// one case [`OwnedProcess`]'s `Drop` cannot cover, because no user code runs
+/// on a hard kill. The per-child jobs that `process-wrap` creates are
+/// unchanged and nest inside this job (Windows 8 and later).
+///
+/// Why the owner is bound, not each child job: `process-wrap` 10 hard-codes
+/// the per-child job without the kill-on-close flag and keeps its handle
+/// private, so the flag cannot be set from outside without `unsafe` code or a
+/// fork. Why this is safe for ripr: every shipped `OwnedProcess` caller is a
+/// bounded command (git, the cargo metadata and Perl probes, xtask test and
+/// verify runners) that must not outlive the process that asked for it, and no
+/// ripr path intentionally leaves a detached child behind. Closing the job at
+/// a normal exit therefore ends only processes that should not outlive the
+/// owner; a descendant that outlives it by design (a build-cache daemon started
+/// by a plain `cargo`, for example) is also ended and restarts on its next use.
+///
+/// Call this once, first thing in a binary's `main`. It is deliberately not
+/// called from [`OwnedProcess::spawn`] so that a program embedding the `ripr`
+/// library is never silently placed in a kill-on-close job. It is idempotent;
+/// repeated calls return the first outcome.
+///
+/// Best effort: an `Err` (for example a host job that forbids nesting on a
+/// pre-Windows-8 system) leaves the pre-existing behavior in place: `Drop`
+/// still covers exit, timeout, error and unwinding. Other platforms: no-op,
+/// `Ok`; Unix process-group containment is configured per spawn.
+pub fn bind_process_lifetime() -> Result<(), String> {
+    static OUTCOME: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
+    bind_once(&OUTCOME, platform_bind_process_lifetime)
+}
+
+/// Run `bind` at most once per `slot` and return the recorded outcome to every
+/// caller, so a second call can never create a second job or re-attempt a
+/// failed assignment.
+fn bind_once(
+    slot: &std::sync::OnceLock<Result<(), String>>,
+    bind: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    slot.get_or_init(bind).clone()
+}
+
+#[cfg(windows)]
+fn platform_bind_process_lifetime() -> Result<(), String> {
+    let mut limits = win32job::ExtendedLimitInfo::new();
+    limits.limit_kill_on_job_close();
+    let job = win32job::Job::create_with_limit_info(&limits)
+        .map_err(|err| format!("create kill-on-close job: {err}"))?;
+    job.assign_current_process()
+        .map_err(|err| format!("assign current process to kill-on-close job: {err}"))?;
+    // The job's handle must stay open until the process ends: closing it is
+    // what kills the descendants. `into_handle` releases it without closing.
+    let _leaked_for_process_lifetime = job.into_handle();
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn platform_bind_process_lifetime() -> Result<(), String> {
+    Ok(())
+}
 
 /// First sleep of a child-exit poll. Short-lived probes (`git rev-parse`,
 /// `git diff` on a small repository) exit within a few milliseconds, so the
@@ -75,12 +145,18 @@ impl PollBackoff {
         delay
     }
 
-    /// Sleep for the next delay, never past `deadline` when one is given.
-    pub(crate) fn sleep(&mut self, deadline: Option<Instant>) {
+    /// Next poll delay after applying an optional deadline clamp at `now`.
+    pub(crate) fn clamped_delay(&mut self, deadline: Option<Instant>, now: Instant) -> Duration {
         let mut delay = self.next_delay();
         if let Some(deadline) = deadline {
-            delay = delay.min(deadline.saturating_duration_since(Instant::now()));
+            delay = delay.min(deadline.saturating_duration_since(now));
         }
+        delay
+    }
+
+    /// Sleep for the next delay, never past `deadline` when one is given.
+    pub(crate) fn sleep(&mut self, deadline: Option<Instant>) {
+        let delay = self.clamped_delay(deadline, Instant::now());
         if !delay.is_zero() {
             std::thread::sleep(delay);
         }
@@ -352,9 +428,10 @@ impl OwnedProcess {
     /// platforms: the direct child kill and reap.
     ///
     /// An already-exited child is reaped and — on Windows and Unix — its
-    /// job or process group is still terminated, because `KILL_ON_JOB_CLOSE`
-    /// is deliberately off and descendants the child spawned may outlive it
-    /// in the job or group. A
+    /// job or process group is still terminated, because the per-child job
+    /// is not kill-on-close (the owner-wide job from
+    /// [`bind_process_lifetime`] only fires when the owner process ends) and
+    /// descendants the child spawned may outlive it in the job or group. A
     /// FAILED termination request falls back to a bounded best-effort
     /// direct-child kill and reap and is returned as an error that reports
     /// the incomplete tree cleanup: waiting on a process that refused to
@@ -650,6 +727,159 @@ mod tests {
         }
     }
 
+    /// #9564: the bind runs its action once per slot and every caller sees
+    /// that first outcome, so a failed assignment is neither retried nor
+    /// replaced by a second job. Negative experiment: calling `bind` on every
+    /// invocation (no `OnceLock`) makes the counter 2 and fails the assertion.
+    #[test]
+    fn bind_once_runs_the_action_once_and_replays_its_outcome() {
+        use std::sync::OnceLock;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let calls = AtomicUsize::new(0);
+        let slot: OnceLock<Result<(), String>> = OnceLock::new();
+        let first = bind_once(&slot, || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Err("nested job refused".to_string())
+        });
+        let second = bind_once(&slot, || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        });
+        assert_eq!(first, Err("nested job refused".to_string()));
+        assert_eq!(second, first, "a later call must replay the first outcome");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// Off Windows there is nothing to bind: the call is an `Ok` no-op, and
+    /// repeated calls stay `Ok` (Unix containment is configured per spawn).
+    #[cfg(not(windows))]
+    #[test]
+    fn bind_process_lifetime_is_an_idempotent_no_op_off_windows() {
+        assert_eq!(bind_process_lifetime(), Ok(()));
+        assert_eq!(bind_process_lifetime(), Ok(()));
+    }
+
+    /// Environment names of the re-exec'd hard-kill helper (#9564).
+    #[cfg(windows)]
+    const KILL_HELPER_MODE_ENV: &str = "RIPR_OWNER_KILL_HELPER_MODE";
+    #[cfg(windows)]
+    const KILL_HELPER_MARKER_ENV: &str = "RIPR_OWNER_KILL_HELPER_MARKER";
+
+    /// Helper entry, executed only in a process re-exec'd by
+    /// `force_terminated_owner_ends_descendants_only_when_bound`; a plain test run
+    /// returns immediately. It plays the owner: optionally binds its lifetime,
+    /// spawns an `OwnedProcess` whose primary starts a long-lived descendant
+    /// and records the descendant PID, then idles until the test hard-kills it.
+    #[cfg(windows)]
+    #[test]
+    fn hard_kill_helper_owner_entry() -> Result<(), String> {
+        let Ok(mode) = std::env::var(KILL_HELPER_MODE_ENV) else {
+            return Ok(());
+        };
+        let marker = std::env::var(KILL_HELPER_MARKER_ENV)
+            .map_err(|err| format!("helper marker path: {err}"))?;
+        if mode == "bind" {
+            bind_process_lifetime()?;
+        }
+        let marker = marker.replace('\'', "''");
+        let mut command = Command::new("powershell");
+        command.args([
+            "-NoProfile",
+            "-Command",
+            &format!(
+                "$p = Start-Process -FilePath powershell -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 40') -NoNewWindow -PassThru; \
+                 Set-Content -LiteralPath '{marker}' -Value $p.Id; Start-Sleep -Seconds 40"
+            ),
+        ]);
+        command.stdin(Stdio::null()).stdout(Stdio::null());
+        let _owned = OwnedProcess::spawn(command).map_err(|err| format!("helper spawn: {err}"))?;
+        std::thread::sleep(Duration::from_mins(2));
+        Ok(())
+    }
+
+    /// Re-exec this test binary as the helper owner in `mode`, wait until its
+    /// descendant is demonstrably alive, then hard-kill the helper with
+    /// `TerminateProcess` (std `Child::kill`), so no `Drop` can run.
+    /// Returns the descendant PID.
+    #[cfg(windows)]
+    fn hard_kill_helper_owner(mode: &str) -> Result<u32, String> {
+        let marker_path = std::env::temp_dir().join(format!(
+            "ripr-owner-hardkill-{mode}-{}.pid",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&marker_path);
+        let exe = std::env::current_exe().map_err(|err| format!("current_exe: {err}"))?;
+        let mut helper = Command::new(exe)
+            .args([
+                "--exact",
+                "process_owner::tests::hard_kill_helper_owner_entry",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(KILL_HELPER_MODE_ENV, mode)
+            .env(KILL_HELPER_MARKER_ENV, &marker_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|err| format!("spawn helper owner: {err}"))?;
+        let descendant_pid = match wait_for_descendant_marker(&marker_path) {
+            Ok(pid) => pid,
+            Err(err) => {
+                let _ = helper.kill();
+                let _ = helper.wait();
+                return Err(err);
+            }
+        };
+        let _ = std::fs::remove_file(&marker_path);
+        if !alive_on_windows(descendant_pid) {
+            let _ = helper.kill();
+            let _ = helper.wait();
+            return Err(format!(
+                "setup failure: descendant {descendant_pid} was not alive before the owner was terminated"
+            ));
+        }
+        helper
+            .kill()
+            .map_err(|err| format!("hard-kill helper owner: {err}"))?;
+        helper
+            .wait()
+            .map_err(|err| format!("reap helper owner: {err}"))?;
+        Ok(descendant_pid)
+    }
+
+    /// #9564 / #9323 F2: a force-terminated owner must not leak descendants once it
+    /// has called `bind_process_lifetime`, and the same owner without the bind
+    /// does leak, which proves the helper really bypasses `Drop` and the
+    /// assertion can fail. Native Windows only; proved by the advisory lane's
+    /// `process_owner::tests::force_terminated_owner_ends_descendants_only_when_bound`.
+    #[cfg(windows)]
+    #[test]
+    fn force_terminated_owner_ends_descendants_only_when_bound() -> Result<(), String> {
+        // Control: an unbound owner's descendant survives the hard kill.
+        let leaked_pid = hard_kill_helper_owner("nobind")?;
+        std::thread::sleep(Duration::from_secs(3));
+        let leaked = alive_on_windows(leaked_pid);
+        // Clean the control's survivor before asserting so a failure leaks nothing.
+        let _ = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                &format!("Stop-Process -Id {leaked_pid} -Force -ErrorAction SilentlyContinue"),
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        if !leaked {
+            return Err(format!(
+                "control invalid: descendant {leaked_pid} of an unbound force-terminated owner did not survive, so the bound cell proves nothing"
+            ));
+        }
+        // Subject: a bound owner's descendant ends with it.
+        let bound_pid = hard_kill_helper_owner("bind")?;
+        assert_descendant_terminated(bound_pid, "hard kill of a kill-on-close-bound owner")
+    }
+
     /// #5348: the child-exit poll starts at 1 ms and doubles to the 50 ms
     /// ceiling. Negative experiment: a constant 50 ms schedule (the
     /// pre-#5348 `WAIT_POLL_INTERVAL`) fails the first-delay assertion.
@@ -670,17 +900,57 @@ mod tests {
         );
     }
 
-    /// A deadline already in the past makes the backoff sleep return at
-    /// once instead of sleeping the scheduled delay past it.
+    /// Deadline clamping is asserted on the computed delay, not wall-clock sleep
+    /// (see #10592).
     #[test]
-    fn poll_backoff_sleep_never_passes_the_deadline() {
+    fn poll_backoff_clamped_delay_respects_deadline() {
+        let now = Instant::now();
+
+        let mut past_deadline = PollBackoff::new();
+        for _ in 0..8 {
+            let _ = past_deadline.next_delay();
+        }
+        assert_eq!(
+            past_deadline.clamped_delay(Some(now), now),
+            Duration::ZERO,
+            "a deadline already in the past must clamp to zero"
+        );
+
+        let mut no_deadline = PollBackoff::new();
+        assert_eq!(
+            no_deadline.clamped_delay(None, now),
+            POLL_BACKOFF_FIRST,
+            "without a deadline the scheduled delay is returned"
+        );
+
+        let mut near_deadline = PollBackoff::new();
+        for _ in 0..8 {
+            let _ = near_deadline.next_delay();
+        }
+        let remaining = Duration::from_millis(10);
+        assert_eq!(
+            near_deadline.clamped_delay(Some(now + remaining), now),
+            remaining,
+            "a near deadline must clamp the scheduled ceiling delay"
+        );
+    }
+
+    /// Mutant guard: returning the scheduled delay while ignoring the deadline
+    /// would fail the past-deadline case above.
+    #[test]
+    fn poll_backoff_clamped_delay_deadline_clamp_is_load_bearing() {
+        let now = Instant::now();
         let mut backoff = PollBackoff::new();
         for _ in 0..8 {
             let _ = backoff.next_delay();
         }
-        let started = Instant::now();
-        backoff.sleep(Some(started));
-        assert!(started.elapsed() < POLL_BACKOFF_CEILING / 2);
+        let clamped = backoff.clamped_delay(Some(now), now);
+        assert_eq!(clamped, Duration::ZERO);
+        assert_eq!(POLL_BACKOFF_CEILING, Duration::from_millis(50));
+        assert_ne!(
+            POLL_BACKOFF_CEILING, clamped,
+            "ignoring the deadline would return the ceiling delay"
+        );
     }
 
     /// Normal completion, captured output and pipe teardown through the
@@ -1060,7 +1330,8 @@ mod tests {
     /// The primary exits successfully on its own while a descendant keeps
     /// running: ending ownership must still terminate the descendant even
     /// though no explicit termination was requested — the early-exit
-    /// `Drop` arm (KILL_ON_JOB_CLOSE is deliberately off).
+    /// `Drop` arm (the per-child job is not kill-on-close; an owner that
+    /// stays alive must end the tree itself).
     #[cfg(windows)]
     #[test]
     fn owner_drop_kills_descendants_after_the_primary_exits() -> Result<(), String> {

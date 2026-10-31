@@ -21,7 +21,7 @@ Shared evidence and guidance
   E3 [findings 1, 2]: propagation unknown: TypeScript preview adapter does not yet model propagation
   E4 [findings 1, 2]: observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)
   E5 [findings 1, 2]: discriminator weak: TypeScript preview adapter: strong oracle found but the preview adapter does not recognise the shape of the changed line; discriminate unknown
-  E6 [findings 1, 2]: related test test/audit.test.ts:4 writes once uses strong exact value oracle: assert.equal(...); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  E6 [findings 1, 2]: related test test/audit.test.ts:4 writes once uses strong exact value oracle: assert.equal(...); unconfirmed: the preview adapter could not confirm that this assertion observes the changed behavior
   N1 [findings 1, 2]: TypeScript preview advisory: add a test that exercises the changed behavior with an exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`); no actionable repair packet is emitted until the target shape is explicit
 
 Finding 1: WARNING src/audit.ts:2
@@ -39,7 +39,7 @@ Language
   owner kind: function
 Preview actionability
   authority: preview_advisory_only
-  gap state: advisory
+  gap state: unknown
   category: missing_target_shape
   repair packet ready: false
   why not actionable: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape
@@ -96,7 +96,7 @@ Language
   owner kind: function
 Preview actionability
   authority: preview_advisory_only
-  gap state: advisory
+  gap state: unknown
   category: missing_target_shape
   repair packet ready: false
   why not actionable: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape

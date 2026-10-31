@@ -1,0 +1,36 @@
+# Bind the MCP saved-worktree producer-custody agreement to its proof (#7357).
+[[extend]]
+id = "RIPR-SPEC-0211"
+tests = [
+  "crates/ripr/src/mcp/workspace.rs::tests::established_custody_commitment_is_load_bearing_snapshot_identity",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::agreeing_producers_establish_custody_and_serve_a_card",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::source_movement_between_findings_and_inventory_withholds_the_card",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::test_oracle_movement_between_findings_and_inventory_withholds_the_card",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::head_movement_between_findings_and_inventory_withholds_the_card",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::untracked_helper_is_bound_by_the_inventory_and_moves_identity",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::tracked_test_file_equal_result_edit_moves_commitment_and_stales_pinned_ids",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::tracked_source_file_equal_result_staged_edit_moves_commitment_and_stales_pinned_ids",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_and_worktree_refreshes_do_not_share_custody_or_identity",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::inventory_failure_degrades_to_withheld_custody_and_keeps_findings",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::deleted_tracked_rust_file_keeps_custody_and_card_producers_consistent",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_over_edited_consumed_rust_file_withholds_naming_the_path",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_with_source_moved_after_findings_withholds_the_card",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_with_deleted_consumed_rust_file_withholds",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_over_unrelated_dirty_files_keeps_the_card",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_over_untracked_rust_file_withholds_with_a_commit_remedy",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::withheld_verdict_keeps_an_earlier_finding_level_reason",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_with_no_findings_over_dirty_tree_makes_no_custody_claim",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_over_dirty_rust_helper_outside_the_diff_withholds",
+  "crates/ripr/src/mcp/workspace.rs::tests::committed_refusal_dirty_rust_rule_is_isolated_from_the_agreement",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_with_head_moved_after_findings_withholds_the_card",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::card_request_refuses_after_an_unrefreshed_edit_to_a_bound_file",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::card_request_refuses_after_a_commit_that_moved_a_bound_file",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::card_request_survives_edits_outside_the_evidence_scope_and_restored_bytes",
+  "crates/ripr/src/analysis/consumed_source.rs::tests::first_drift_flags_changed_or_unreadable_captured_paths_only",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0215"
+tests = [
+  "crates/ripr/tests/mcp_stdio.rs::refresh_source_worktree_serves_repair_card_and_readiness_with_established_custody",
+]

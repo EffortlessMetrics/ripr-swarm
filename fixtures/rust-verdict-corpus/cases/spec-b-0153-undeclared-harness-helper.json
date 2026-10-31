@@ -1,0 +1,55 @@
+{
+  "case_id": "spec-b-0153-undeclared-harness-helper",
+  "subject_id": "authored-spec-b-configured",
+  "diff": "cases/spec-b-0153-undeclared-harness-helper.diff",
+  "anchor": {
+    "file": "src/unregistered.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "undeclared_harness_helper",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test --locked",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "13",
+        "mutated_line": "13",
+        "outcome": "tests_failed",
+        "failing_test": "unregistered::tests::undeclared_base_is_14",
+        "equivalence_review": "not equivalent: unregistered::tests::undeclared_base_is_14 expects 14, not 13"
+      },
+      {
+        "replacement": "15",
+        "mutated_line": "15",
+        "outcome": "tests_failed",
+        "failing_test": "unregistered::tests::undeclared_base_is_14",
+        "equivalence_review": "not equivalent: unregistered::tests::undeclared_base_is_14 expects 14, not 15"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "This module is compiled by the library but is not a declared Cargo test target. Its configured custom-harness registration must not demote it; the production helper remains probeable. Its literal unit assertion rejects both neighboring results. Typed refusal is separate from the projected verdict row.",
+  "spec_examples": [
+    "RIPR-SPEC-0153#7"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "5abb7591b0510f2fe563c086b42c381d8b4a2164",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

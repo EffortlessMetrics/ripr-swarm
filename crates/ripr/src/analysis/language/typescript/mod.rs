@@ -60,6 +60,9 @@ mod assertion_selection_tests;
 mod boundary_input;
 #[cfg(test)]
 mod boundary_input_tests;
+#[cfg(test)]
+mod boundary_label_tests;
+mod boundary_selection;
 mod bounded_read;
 mod bun_bridge;
 mod call_removal_guard;
@@ -73,6 +76,7 @@ mod classifier;
 mod committed_snapshot;
 mod comparison_edit_guard;
 mod custom_matcher_guard;
+mod declaration_bindings;
 mod decorated_entries;
 mod deleted_lines;
 #[cfg(test)]
@@ -84,6 +88,10 @@ mod error_payload_guard;
 mod extraction_cache;
 mod fact_store;
 pub(crate) use fact_store::TypeScriptFileFactStore;
+mod comment_whitespace_only;
+type MultilineRanges = (Vec<(usize, usize)>, Vec<(usize, usize)>);
+#[cfg(test)]
+mod comment_whitespace_only_tests;
 #[cfg(test)]
 mod fact_store_tests;
 mod field_update_guard;
@@ -199,6 +207,7 @@ pub(crate) use assertion_selection::{
 };
 pub(crate) use boolean_pin_guard::*;
 pub(crate) use boundary_input::*;
+pub(crate) use boundary_selection::typescript_changed_boundary_text;
 pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
 pub(crate) use class_entries::*;
@@ -541,7 +550,28 @@ impl TypeScriptAdapter {
         // the test file itself changed in this diff.
         let workspace_scan =
             collect_workspace_typescript_files_with_handwritten(&options.root, handwritten);
-        let workspace_files = workspace_scan.files;
+        let mut workspace_files = workspace_scan.files;
+        if workspace_scan.truncated {
+            // #11767: a cut-short walk may never reach a file the diff itself
+            // names, which would leave that change with no owner and no
+            // finding at all. The diff is the authority for what changed, so
+            // every accepted changed source joins the partial set.
+            for changed in changed_files {
+                let excluded = is_detectable_generated_typescript_path(&changed.path)
+                    || (is_detectable_excluded_typescript_path(&changed.path)
+                        && !crate::config::is_declared_handwritten_typescript_path(
+                            handwritten,
+                            &changed.path,
+                        ));
+                if TypeScriptAdapter.accepts_path(&changed.path)
+                    && !excluded
+                    && !workspace_files.contains(&changed.path)
+                {
+                    workspace_files.push(changed.path.clone());
+                }
+            }
+            workspace_files.sort();
+        }
         let changed_paths = changed_files
             .iter()
             .map(|changed| normalized_path(&changed.path))
@@ -974,12 +1004,35 @@ impl TypeScriptAdapter {
                 continue;
             }
 
+            let private_boundaries = source_by_normalized
+                .get(&normalized_path(&changed.path))
+                .map(|source| {
+                    unsupported_private_member_ranges(
+                        &changed.path,
+                        source,
+                        &options.root,
+                        alias_map_ref,
+                    )
+                })
+                .unwrap_or_default();
             // Owner-extraction gap detection (#4104-A): a changed line inside
             // an owner shape the extractor does not index produces NO finding
             // below, so this bounded disclosure is the only honest signal.
             if let Some(source) = source_by_normalized.get(&normalized_path(&changed.path)) {
-                let changed_lines: Vec<usize> =
-                    changed.added_lines.iter().map(|added| added.line).collect();
+                let changed_lines: Vec<usize> = changed
+                    .added_lines
+                    .iter()
+                    .map(|added| added.line)
+                    .chain(
+                        changed
+                            .removed_lines
+                            .iter()
+                            .map(|removed| removed.new_side_line)
+                            .filter(|line| {
+                                inside_private_member_boundary(&private_boundaries, *line)
+                            }),
+                    )
+                    .collect();
                 if let Some(gap) = detect_owner_extraction_gap(
                     &changed.path,
                     source,
@@ -1094,7 +1147,31 @@ impl TypeScriptAdapter {
             // pairing: by position in an even block, by content in an uneven
             // one, by coordinate where a removed line interrupts the run.
             let counterparts = changed.aligned_counterparts();
+            let mut multiline_lines: Option<Option<MultilineRanges>> = None;
+            // #11250: one facts lookup and one line-table build per
+            // changed file, not per added line. `file_facts_cached`
+            // re-hashes the whole source for its key on every call and
+            // `lines().nth(n)` re-scans from the file start, so per-line
+            // calls cost O(changed lines x file bytes); the facts cache
+            // itself already avoids re-parsing, and the phase-2 consumers
+            // above have already warmed it for this file. Parse-error
+            // files yield no facts, so the classifier keeps its
+            // line-text fallback exactly as before.
+            let ast_probe_facts = source_by_normalized.get(&changed_norm).and_then(|source| {
+                let facts = extraction_cache::file_facts_cached(
+                    &changed.path,
+                    source,
+                    &options.root,
+                    alias_map_ref,
+                )
+                .ok()
+                .filter(|facts| facts.parse_error.is_none())?;
+                Some((source.lines().collect::<Vec<_>>(), facts))
+            });
             for added in &changed.added_lines {
+                if inside_private_member_boundary(&private_boundaries, added.line) {
+                    continue;
+                }
                 if !is_probe_candidate(added.line, &added.text) {
                     continue;
                 }
@@ -1140,6 +1217,47 @@ impl TypeScriptAdapter {
                 let old_line_text = counterparts
                     .get(&added.line)
                     .map(|removed| removed.text.as_str());
+                // Trailing-comment / trailing-whitespace guard (#10706): the
+                // same statement with a `//` comment or trailing space added
+                // runs identically, so there is no behavior delta and no
+                // probe; the gap id and discriminator would otherwise embed
+                // the comment text. Fails closed without a parse of the file
+                // or inside a construct that crosses a line break.
+                if let (Some(old), Some(removed)) = (old_line_text, counterparts.get(&added.line))
+                    && old != added.text
+                    && infection_shape::same_executable_text(old, &added.text)
+                {
+                    // Multiline-construct ranges of the new file and of the
+                    // reconstructed old file; either missing means no guard.
+                    let ranges = multiline_lines.get_or_insert_with(|| {
+                        let source = source_by_normalized.get(&changed_norm)?;
+                        let old_source = comment_whitespace_only::reconstruct_old_source(
+                            source,
+                            &changed.added_lines,
+                            &changed.removed_lines,
+                        )?;
+                        Some((
+                            comment_whitespace_only::multiline_construct_lines(
+                                &changed.path,
+                                source,
+                            )?,
+                            comment_whitespace_only::multiline_construct_lines(
+                                &changed.path,
+                                &old_source,
+                            )?,
+                        ))
+                    });
+                    if ranges.as_ref().is_some_and(|(new_ranges, old_ranges)| {
+                        comment_whitespace_only::is_trailing_comment_or_whitespace_only_change(
+                            old,
+                            &added.text,
+                            (added.line, new_ranges),
+                            (removed.line, old_ranges),
+                        )
+                    }) {
+                        continue;
+                    }
+                }
                 let resolved_finding = owner_plan
                     .owner_index_and_ref_for_line(added.line)
                     .and_then(|(owner_idx, owner)| {
@@ -1174,6 +1292,18 @@ impl TypeScriptAdapter {
                             &reexport_index,
                             alias_map_ref,
                             alias_load_gap.as_ref(),
+                            // #11250: an AST fact describes the source
+                            // line at this number; when the changed text
+                            // is not that line (a pre-change workspace, a
+                            // stale diff coordinate), the fact is absent
+                            // and the classifier keeps its line-text shape.
+                            ast_probe_facts.as_ref().and_then(|(lines, facts)| {
+                                let disk_line = lines.get(added.line.checked_sub(1)?)?;
+                                if disk_line.trim() != added.text.trim() {
+                                    return None;
+                                }
+                                facts.phase_two.probe_shape_for_line(added.line).cloned()
+                            }),
                         )
                     });
                 if let Some(mut finding) = resolved_finding {
@@ -1185,7 +1315,7 @@ impl TypeScriptAdapter {
                     // inference returns `None`. `typescript_test_runner_unresolved`
                     // names a missing runner, so emit it only when neither a
                     // framework nor a package-manager runner resolved. An empty
-                    // `related_tests` list also yields `None` (`max_by_key`
+                    // `related_tests` list also yields `None` (`min_by_key`
                     // over an empty iterator); that is a missing test target,
                     // not an unknown runner. When the runner is already known
                     // (`typescript_test_runner: vitest`, mocha detected, npm
@@ -1195,7 +1325,10 @@ impl TypeScriptAdapter {
                     let inferred_cmd = finding
                         .related_tests
                         .iter()
-                        .max_by_key(|t| t.oracle_strength.rank())
+                        // #11228: the first of the strongest rows, the one the
+                        // headline, card and packet name (`max_by_key` would
+                        // return the last of equal strength).
+                        .min_by_key(|t| std::cmp::Reverse(t.oracle_strength.rank()))
                         .and_then(|best_test| {
                             verify_command_for_discovery(&pkg_discovery, &best_test.file)
                         });
@@ -1244,6 +1377,9 @@ impl TypeScriptAdapter {
                 &all_owners,
                 &findings,
                 |line, text, owner| {
+                    if inside_private_member_boundary(&private_boundaries, line) {
+                        return None;
+                    }
                     // The wrapper's owner lookup is the span check only: the
                     // caller already resolved the sole owner this closure
                     // receives (its file matched by normalized path), so a
@@ -1286,6 +1422,9 @@ impl TypeScriptAdapter {
                         &reexport_index,
                         alias_map_ref,
                         alias_load_gap.as_ref(),
+                        // Old-side text has no new-side AST fact; the
+                        // classifier keeps its line-text fallback (#11250).
+                        None,
                     )
                 },
             );
@@ -1558,7 +1697,7 @@ impl TypeScriptAdapter {
                     )?,
                 )
                 .with_detail(format!(
-                    "Workspace discovery stopped at the {}-entry visit cap ({TS_MAX_WORKSPACE_FILES_ENV}); discovered files are a partial set.",
+                    "Workspace discovery stopped at the {}-entry visit cap ({TS_MAX_WORKSPACE_FILES_ENV}) before covering the workspace; discovered files are a partial set, so a finding that reports no related test may reflect tests that were never read.",
                     ts_workspace_file_limit()
                 ))?,
             );
@@ -1588,6 +1727,17 @@ impl TypeScriptAdapter {
         // owner share a content-addressed probe id (path/family/owner/
         // expression, no line number); the ordinal pass keeps them
         // distinct (mirror of the Rust path's `dedup_probe_ids`).
+        if workspace_scan.truncated {
+            // #11767: a truncated walk cannot back "no test reaches this".
+            let entry_cap = ts_workspace_file_limit();
+            for finding in &mut findings {
+                crate::analysis::classify::withhold_truncated_discovery_gap(
+                    finding,
+                    entry_cap,
+                    TS_MAX_WORKSPACE_FILES_ENV,
+                );
+            }
+        }
         dedup_typescript_probe_ids(&mut findings, &minted_owners);
         Ok(LanguageDiffResult {
             value_origins: Default::default(),

@@ -3962,7 +3962,12 @@ pub(crate) fn normalized_relative_import_module(
     // (`require('..')`, #4546) exactly like `./` and `../` prefixes do.
     if is_relative_specifier(source) {
         // Standard relative resolution.
-        let mut parts = normalized_path(test_file.parent().unwrap_or_else(|| Path::new("")))
+        // An absolute test file keeps its leading `/` (#4207), matching the
+        // alias branch and `normalized_module_path`, so both sides of a
+        // module comparison spell the same file identically.
+        let parent_path = normalized_path(test_file.parent().unwrap_or_else(|| Path::new("")));
+        let absolute = parent_path.starts_with('/');
+        let mut parts = parent_path
             .split('/')
             .filter(|part| !part.is_empty() && *part != ".")
             .map(ToString::to_string)
@@ -3983,8 +3988,10 @@ pub(crate) fn normalized_relative_import_module(
         // Directory resolution only for an extensionless specifier whose
         // join stayed inside the workspace root; otherwise the historical
         // lexical module is kept.
+        // An absolute join is not workspace-relative, so root probes are skipped.
         if let Some(root) = workspace_root
             && !escaped_root
+            && !absolute
             && module == joined
             && let Some(resolved) = resolve_directory_module(root, &module)
         {
@@ -3997,6 +4004,7 @@ pub(crate) fn normalized_relative_import_module(
         // directory, or a symlink to something else (#4800 review).
         if let Some(root) = workspace_root
             && !escaped_root
+            && !absolute
             && let Some(out_dir_map) = out_dir_map_for(root)
             && out_dir_map.contains(&joined)
             && std::fs::symlink_metadata(root.join(&joined)).is_err()
@@ -4005,14 +4013,18 @@ pub(crate) fn normalized_relative_import_module(
         {
             return Some(source_module);
         }
-        return Some(module);
+        return Some(if absolute {
+            format!("/{module}")
+        } else {
+            module
+        });
     }
 
     // Non-relative specifier — consult alias map if available.
     let alias_map = alias_map?;
     let root = workspace_root?;
     let _ = root; // root is captured by alias_map already
-    let resolved_path = alias_map.resolve(source)?;
+    let resolved_path = run_cached_alias_resolution(alias_map, source)?;
     // Normalize the resolved workspace-relative path to a module string.
     let normalized = normalized_path(&resolved_path);
     Some(strip_typescript_module_extension(&normalized))
@@ -4096,6 +4108,8 @@ fn out_dir_map_for(root: &Path) -> Option<TsOutDirMap> {
 struct RunResolverCache {
     directory_modules: HashMap<(PathBuf, String), Option<String>>,
     out_dir_maps: HashMap<PathBuf, Option<TsOutDirMap>>,
+    /// Alias-map answers keyed by `(alias-map digest, specifier)` (#10925).
+    alias_resolutions: HashMap<((u64, u64), String), Option<PathBuf>>,
     /// The committed-snapshot reader's verdict per config directory
     /// (RIPR-SPEC-0258, #7708): `Some(mentions_vitest)` when the directory's
     /// configs are clean, `None` when one refuses. Keyed by the directory and
@@ -4111,6 +4125,34 @@ struct RunResolverCache {
 }
 
 const MAX_RUN_SHADOW_INDEXES: usize = 4096;
+
+#[cfg(test)]
+thread_local! {
+    /// Alias-map resolutions actually computed (not served from the run memo).
+    pub(crate) static ALIAS_RESOLUTIONS_COMPUTED: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
+/// `alias_map.resolve(specifier)`, memoized for one analysis run (#10925).
+///
+/// A non-relative specifier is resolved against the same immutable alias map
+/// and package table for every owner x test x import combination (about 65k
+/// calls over ~200 distinct specifiers on zod), and each uncached answer
+/// scans the package table and probes source paths. The key carries the
+/// map's content digest, so two maps in one scope never answer for each
+/// other. Outside a [`DirectoryModuleCacheScope`] nothing is stored and every
+/// call resolves afresh, like the directory-module memo beside it.
+fn run_cached_alias_resolution(alias_map: &TsAliasMap, specifier: &str) -> Option<PathBuf> {
+    run_memoized(
+        &(alias_map.cache_digest(), specifier.to_string()),
+        |cache| &mut cache.alias_resolutions,
+        || {
+            #[cfg(test)]
+            ALIAS_RESOLUTIONS_COMPUTED.with(|count| count.set(count.get() + 1));
+            alias_map.resolve(specifier)
+        },
+    )
+}
 
 /// The per-body shadow index for `body_text`, built once per analysis run
 /// (#10925). `None` outside a [`DirectoryModuleCacheScope`] or past the
@@ -5639,6 +5681,41 @@ mod module_extension_tests {
                     "{source} from {test_file} resolved to {resolved}, not the {owner_file} owner module {EXPECTED}"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    /// #4207: an absolute test file keeps its leading `/` on the relative
+    /// branch, so it matches an absolute owner module identity exactly as the
+    /// alias branch and `normalized_module_path` spell it. A different absolute
+    /// module still resolves to a different identity, so a negative assertion
+    /// cannot pass vacuously because the two sides can never be equal.
+    #[test]
+    fn normalized_relative_import_module_keeps_leading_slash_for_absolute_inputs()
+    -> Result<(), String> {
+        let resolved = normalized_relative_import_module(
+            Path::new("/ws/pkg/tests/cart.test.mts"),
+            "../src/cart.mjs",
+            None,
+            None,
+        )
+        .ok_or("absolute relative import must resolve")?;
+        if resolved != "/ws/pkg/src/cart" {
+            return Err(format!("expected /ws/pkg/src/cart, got {resolved}"));
+        }
+        let owner = normalized_module_path(Path::new("/ws/pkg/src/cart.mts"));
+        if resolved != owner {
+            return Err(format!("{resolved} must equal owner module {owner}"));
+        }
+        let other = normalized_relative_import_module(
+            Path::new("/ws/pkg/tests/cart.test.mts"),
+            "../src/basket.mjs",
+            None,
+            None,
+        )
+        .ok_or("absolute relative import must resolve")?;
+        if other == owner {
+            return Err("a different module must not equal the owner".to_string());
         }
         Ok(())
     }

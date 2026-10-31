@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- `ripr agent status --out ./target/ripr/workflow` (and other lexically equivalent spellings of the one accepted directory) no longer fails "not supported": the comparison cleans both sides lexically before comparing, so only genuinely different directories stay refused; a symlink before `..` also stays refused because filesystem `..` resolution after a symlink target can name a different directory than the lexical spelling (#10542, #10624 review).

@@ -1,0 +1,3 @@
+crates/ripr/src/output/gap_source_subject/shared.rs|input_source_subject_malformed
+crates/ripr/src/output/gap_source_subject/shared.rs|input_source_subject_missing
+crates/ripr/src/output/gap_source_subject/shared.rs|input_source_subject_unsupported_digest

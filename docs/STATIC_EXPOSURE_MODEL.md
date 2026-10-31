@@ -207,7 +207,8 @@ or import alias) or the changed sink (the attribute, field, or value the change
 touches). A strong-but-orthogonal oracle downgrades to `weakly_exposed` with a
 typed reason and routes a repair, rather than being silently called covered.
 
-For Rust diff findings, `return_value`, `error_path` and `predicate` evidence from a bare
+For Rust diff findings, `return_value`, `field_construction`, `error_path` and
+`predicate` evidence from a bare
 `assert_eq!`, execution and macro binding must be statically established before
 matching, observation or oracle strength can credit that assertion
 (RIPR-SPEC-0197). Match-arm evidence applies the same execution and macro

@@ -20,7 +20,9 @@ use super::diagnostics::{
     delivered_diagnostics_for_uri, delivery_omission_diagnostic, diagnostic_refresh_plan,
     take_all_uris, withdrawn_quarantine_diagnostics,
 };
-use super::hover::NoEvidenceState;
+use super::hover::{
+    NoEvidenceState, UnanalyzedFileCause, classify_unanalyzed_file, unanalyzed_file_hover_route,
+};
 use super::hover::{
     classified_seam_hover_response, diagnostic_at_position, diagnostic_covers_position,
     diagnostic_hover_response, finding_hover_response, hover_response_without_evidence,
@@ -39,10 +41,10 @@ use super::refresh_scheduler::{
 };
 use super::state::{
     AnalysisAttemptState, AnalysisFailure, AnalysisFailureKind, AnalysisHealth, AnalysisSnapshot,
-    ConfigPullState, DocumentStalenessReason, DocumentState, DocumentStore, QuarantineTransition,
-    WorkspaceFolderEntry, WorkspaceFolderEventRejection, WorkspaceFolderSelection,
-    WorkspaceFolderSet, WorkspaceRootAuthority, WorkspaceRootState, content_digest,
-    format_duration,
+    ConfigPullCoordinator, ConfigPullState, DocumentStalenessReason, DocumentState,
+    QuarantineLedger, QuarantineTransition, WorkspaceFolderEntry, WorkspaceFolderEventRejection,
+    WorkspaceFolderSelection, WorkspaceFolderSet, WorkspaceRootAuthority, WorkspaceRootState,
+    content_digest, format_duration,
 };
 use super::uri::{
     CappedArtifactRead, absolute_join, display_path, file_uri_for_path, file_uri_is_within_root,
@@ -57,11 +59,13 @@ use crate::agent::loop_commands;
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::cancellation::AnalysisAbortKind;
 use crate::config::{
-    CONFIG_FILE_NAME, LspDiagnosticProfile, PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS,
-    TYPESCRIPT_PROJECT_MARKERS, TYPESCRIPT_SOURCE_DIR_MARKERS, is_detectable_python_source_name,
-    is_detectable_typescript_source_name, is_python_excluded_dir_everywhere,
-    is_typescript_excluded_dir_everywhere, python_project_marker_name,
-    python_source_dir_marker_name, typescript_project_marker_name,
+    CONFIG_FILE_NAME, JAVASCRIPT_LED_MANIFESTS, JAVASCRIPT_LED_SOURCE_DIRS, LspDiagnosticProfile,
+    PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, TYPESCRIPT_PROJECT_MARKERS,
+    TYPESCRIPT_SOURCE_DIR_MARKERS, is_detectable_package_source_name,
+    is_detectable_python_source_name, is_detectable_typescript_source_name,
+    is_python_excluded_dir_everywhere, is_typescript_excluded_dir_everywhere,
+    javascript_led_manifest_name, javascript_led_source_dir_marker_name,
+    python_project_marker_name, python_source_dir_marker_name, typescript_project_marker_name,
     typescript_source_dir_marker_name,
 };
 use crate::domain::{StageEvidence, StageState};
@@ -79,7 +83,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 /// Debounce window for interactive refresh triggers (did_open, did_save,
@@ -144,6 +148,9 @@ use tower_lsp_server::ls_types::{
 };
 use tower_lsp_server::{Client, LanguageServer};
 
+mod command_handler;
+use command_handler::*;
+
 pub(super) struct Backend {
     client: Client,
     /// Test-only fault injection: the next `textDocument/hover` unwinds, so
@@ -163,11 +170,9 @@ pub(super) struct Backend {
     /// optional full-list reconciliation query is a separately versioned
     /// confirmation step bound to the folder-set epoch.
     workspace_folders: Mutex<WorkspaceFolderSet>,
-    documents: Mutex<DocumentStore>,
-    /// Per-document save digest plus the workspace revision that save
-    /// produced; the revision lets a failed refresh drop only the digests no
-    /// successful snapshot has covered yet.
-    saved_content_digests: Mutex<BTreeMap<tower_lsp_server::ls_types::Uri, (String, u64)>>,
+    /// Owns open documents, save digests and the last published
+    /// diagnostics (#2941).
+    quarantine: QuarantineLedger,
     /// Highest workspace revision a published snapshot analyzed.
     last_published_workspace_revision: AtomicU64,
     analysis_config: Mutex<LspAnalysisConfig>,
@@ -179,28 +184,14 @@ pub(super) struct Backend {
     /// the client advertised. The negotiated session fields below are
     /// populated from it; the bounded status projection is rendered from it.
     client_features: Mutex<ClientFeatureProfile>,
-    /// Epoch guarding pull responses: `workspace/didChangeConfiguration` in
-    /// pull mode bumps it, and a response arriving for an older epoch is
-    /// dropped. Mirrors `workspace_root_epoch`.
-    config_pull_epoch: AtomicU64,
-    config_pull_state: Mutex<ConfigPullState>,
-    /// Coalesces pull scheduling to one in-flight request plus at most one
-    /// queued re-pull for the latest epoch.
-    config_pull_coordinator: Mutex<ConfigPullCoordinator>,
-    /// The root the currently retained pulled layer was scoped to. Pulled
-    /// settings are valid only for that root; any transition landing on a
-    /// different analysis-capable root must re-pull. Compared rather than
-    /// derived from transition deltas so a direct A -> B switch (which
-    /// rewrites to a non-analyzable `RootChanged` state and is re-selected
-    /// later with `root_changed == false`) is still caught.
-    config_pull_scope_root: Mutex<Option<PathBuf>>,
+    /// Config-pull epoch, lifecycle state, coalescing and scope root (#2942).
+    config_pull: ConfigPullCoordinator,
     last_diagnostic_uris: Mutex<BTreeSet<Uri>>,
     /// URIs whose latest push publication is the analysis-pending marker
     /// rather than committed diagnostics (#8732): the first snapshot commit
     /// (or a root/shutdown clear) must retract the marker with the
     /// established empty-clear so the pending state never outlives it.
     pending_push_marker_uris: Mutex<BTreeMap<Uri, String>>,
-    last_diagnostics: Mutex<BTreeMap<Uri, Vec<Diagnostic>>>,
     latest_analysis: Mutex<Option<Arc<AnalysisSnapshot>>>,
     diagnostic_result_ids: Mutex<Option<Arc<DiagnosticResultIdCache>>>,
     analysis_health: Mutex<AnalysisHealth>,
@@ -253,7 +244,7 @@ pub(super) struct Backend {
     /// omission locally instead of dropping it silently. Reflects the most
     /// recent disclosure attempt.
     initialize_failure_disclosure_omitted: AtomicBool,
-    refresh_scheduler: RefreshScheduler,
+    refresh_scheduler: Arc<RefreshScheduler>,
     workspace_revision: Mutex<u64>,
     /// One in-flight interactive debounce window (#8528). A trigger that
     /// finds this set returns immediately; the owner sleeps, then drops the
@@ -318,12 +309,6 @@ struct DiagnosticsInputWatch {
     registered: bool,
 }
 
-#[derive(Default)]
-struct ConfigPullCoordinator {
-    in_flight: bool,
-    queued: bool,
-}
-
 pub(super) struct RefreshTransaction {
     pub(super) plan: DiagnosticRefreshPlan,
     pub(super) snapshot: AnalysisSnapshot,
@@ -367,20 +352,15 @@ impl Backend {
             workspace_root_epoch: AtomicU64::new(0),
             workspace_root_transition: AsyncMutex::new(()),
             workspace_folders: Mutex::new(WorkspaceFolderSet::default()),
-            documents: Mutex::new(DocumentStore::default()),
-            saved_content_digests: Mutex::new(BTreeMap::new()),
+            quarantine: QuarantineLedger::default(),
             last_published_workspace_revision: AtomicU64::new(0),
             analysis_config: Mutex::new(LspAnalysisConfig::default()),
             configuration_failure: Mutex::new(None),
             configuration_mode: Mutex::new(ConfigurationMode::InitializationOnly),
             client_features: Mutex::new(ClientFeatureProfile::unsupported()),
-            config_pull_epoch: AtomicU64::new(0),
-            config_pull_state: Mutex::new(ConfigPullState::NotApplicable),
-            config_pull_coordinator: Mutex::new(ConfigPullCoordinator::default()),
-            config_pull_scope_root: Mutex::new(None),
+            config_pull: ConfigPullCoordinator::default(),
             last_diagnostic_uris: Mutex::new(BTreeSet::new()),
             pending_push_marker_uris: Mutex::new(BTreeMap::new()),
-            last_diagnostics: Mutex::new(BTreeMap::new()),
             latest_analysis: Mutex::new(None),
             diagnostic_result_ids: Mutex::new(None),
             analysis_health: Mutex::new(AnalysisHealth::default()),
@@ -397,7 +377,7 @@ impl Backend {
             last_analysis_failure_shown: Mutex::new(None),
             unavailable_language_notices_shown: Mutex::new(BTreeSet::new()),
             initialize_failure_disclosure_omitted: AtomicBool::new(false),
-            refresh_scheduler: RefreshScheduler::default(),
+            refresh_scheduler: Arc::new(RefreshScheduler::default()),
             workspace_revision: Mutex::new(0),
             interactive_debounce_window_open: AtomicBool::new(false),
             refresh_idle: Notify::new(),
@@ -1128,7 +1108,7 @@ impl Backend {
     }
 
     fn open_rust_index_paths_for_root(&self, root: &Path) -> std::collections::BTreeSet<PathBuf> {
-        let Ok(documents) = self.documents.lock() else {
+        let Ok(documents) = self.quarantine.documents.lock() else {
             return Default::default();
         };
         documents
@@ -1278,7 +1258,7 @@ impl Backend {
         }
         bind_seam_evidence_identity(&mut snapshot, &mut batches);
         snapshot.prepare_diagnostic_uri_index();
-        let Ok(last_diagnostics) = self.last_diagnostics.lock() else {
+        let Ok(last_diagnostics) = self.quarantine.last_diagnostics.lock() else {
             return None;
         };
         if snapshot.diagnostics_by_uri != diagnostics_by_uri_from_batches(&batches) {
@@ -1294,7 +1274,7 @@ impl Backend {
         // Rust uses the raw-byte commitments carried by the completed producer,
         // never a reread after analysis. Other languages retain their existing
         // saved-content identity behavior. State advances only at commit.
-        let Ok(documents) = self.documents.lock() else {
+        let Ok(documents) = self.quarantine.documents.lock() else {
             return None;
         };
         let (pending_analyzed, pending_entered) =
@@ -1343,7 +1323,7 @@ impl Backend {
         let Ok(mut last_diagnostic_uris) = self.last_diagnostic_uris.lock() else {
             return None;
         };
-        let Ok(mut last_diagnostics) = self.last_diagnostics.lock() else {
+        let Ok(mut last_diagnostics) = self.quarantine.last_diagnostics.lock() else {
             return None;
         };
         let Ok(mut latest_analysis) = self.latest_analysis.lock() else {
@@ -1352,7 +1332,7 @@ impl Backend {
         let Ok(mut stored_result_ids) = self.diagnostic_result_ids.lock() else {
             return None;
         };
-        let Ok(mut documents) = self.documents.lock() else {
+        let Ok(mut documents) = self.quarantine.documents.lock() else {
             return None;
         };
         // Advance document identities atomically with the snapshot commit.
@@ -1450,7 +1430,7 @@ impl Backend {
         let Ok(mut last_diagnostic_uris) = self.last_diagnostic_uris.lock() else {
             return Vec::new();
         };
-        if let Ok(mut last_diagnostics) = self.last_diagnostics.lock() {
+        if let Ok(mut last_diagnostics) = self.quarantine.last_diagnostics.lock() {
             last_diagnostics.clear();
         }
         if let Ok(mut latest_analysis) = self.latest_analysis.lock() {
@@ -1507,6 +1487,7 @@ impl Backend {
         };
         let signature = Self::pending_push_marker_signature(&recovery, withdrawn);
         let uris = self
+            .quarantine
             .documents
             .lock()
             .map(|documents| documents.documents.keys().cloned().collect::<Vec<_>>())
@@ -1567,6 +1548,14 @@ impl Backend {
         let sink = Arc::new(super::progress::RecordingSink::default());
         self.progress.install_recorder(Arc::clone(&sink));
         sink
+    }
+
+    /// Cancels every active and pending refresh when the session ends
+    /// (`exit` or end of input), without the terminal diagnostics clear that
+    /// `shutdown` performs (#11439).
+    pub(super) fn session_end_hook(&self) -> super::session_end::SessionEndHook {
+        let scheduler = Arc::clone(&self.refresh_scheduler);
+        Arc::new(move || scheduler.stop())
     }
 
     #[cfg(test)]
@@ -1785,7 +1774,12 @@ impl Backend {
         uri: &Uri,
         project: impl FnOnce(&DocumentState) -> R,
     ) -> Option<R> {
-        self.documents.lock().ok()?.state_for_uri(uri).map(project)
+        self.quarantine
+            .documents
+            .lock()
+            .ok()?
+            .state_for_uri(uri)
+            .map(project)
     }
 
     /// Clears intentionally bind no version (#1747): a clear must apply
@@ -1899,12 +1893,22 @@ impl Backend {
 
     #[cfg(test)]
     pub(super) fn document_state_for_test(&self, uri: &Uri) -> Option<super::state::DocumentState> {
-        self.documents.lock().ok()?.state_for_uri(uri).cloned()
+        self.quarantine
+            .documents
+            .lock()
+            .ok()?
+            .state_for_uri(uri)
+            .cloned()
     }
 
     #[cfg(test)]
     pub(super) fn last_diagnostics_for_uri_for_test(&self, uri: &Uri) -> Option<Vec<Diagnostic>> {
-        self.last_diagnostics.lock().ok()?.get(uri).cloned()
+        self.quarantine
+            .last_diagnostics
+            .lock()
+            .ok()?
+            .get(uri)
+            .cloned()
     }
 
     fn analysis_health_snapshot(&self) -> AnalysisHealth {
@@ -1915,9 +1919,34 @@ impl Backend {
     }
 
     #[cfg(test)]
+    pub(super) fn set_interactive_debounce_open_for_test(&self, open: bool) {
+        self.interactive_debounce_window_open
+            .store(open, Ordering::Release);
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_pending_attempt_for_test(&self, id: Option<u64>) {
+        if let Ok(mut health) = self.analysis_health.lock() {
+            health.pending_attempt_id = id;
+        }
+    }
+
+    #[cfg(test)]
     pub(super) fn set_snapshot_run_status_for_test(&self, run_status: &str) {
         if let Ok(mut health) = self.analysis_health.lock() {
             health.snapshot_run_status = Some(run_status.to_string());
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn analysis_attempt_state_for_test(&self) -> AnalysisAttemptState {
+        self.analysis_health_snapshot().state
+    }
+
+    #[cfg(test)]
+    pub(super) fn clear_latest_analysis_for_test(&self) {
+        if let Ok(mut latest) = self.latest_analysis.lock() {
+            *latest = None;
         }
     }
 
@@ -2301,7 +2330,7 @@ impl Backend {
         self.client
             .send_notification::<ShowMessage>(ShowMessageParams {
                 typ: MessageType::WARNING,
-                message: bounded_failure_message(&format!("ripr analysis failed: {message}")),
+                message: analysis_failure_shown_message(message),
             })
             .await;
     }
@@ -2555,7 +2584,7 @@ impl Backend {
                         })
                         .collect::<Vec<_>>(),
                     value.analysis_outcome.clone(),
-                    withheld_unknown_summary(value),
+                    withheld_findings_summary(value),
                     value.partial_scope.clone(),
                 )
             })
@@ -2629,7 +2658,7 @@ impl Backend {
                 // interleave a state change into a torn payload (e.g. a
                 // failure from a newer state beside an older state string).
                 "state": pull_state.as_str(),
-                "epoch": self.config_pull_epoch.load(Ordering::Relaxed),
+                "epoch": self.config_pull.epoch(),
                 "failure": pull_state.failure().map(|failure| serde_json::json!({
                     "kind": failure.kind.as_str(),
                     "message": failure.message,
@@ -2768,47 +2797,8 @@ impl Backend {
     }
 
     async fn apply_workspace_root_resolution(&self, resolution: WorkspaceRootResolution) {
-        self.apply_workspace_root_authority(Self::workspace_root_authority_for_resolution(
-            resolution,
-        ))
-        .await;
-    }
-
-    fn workspace_root_authority_for_resolution(
-        resolution: WorkspaceRootResolution,
-    ) -> WorkspaceRootAuthority {
-        match resolution {
-            WorkspaceRootResolution::Selected(root) => {
-                if !root.is_absolute() {
-                    WorkspaceRootAuthority::unavailable(format!(
-                        "workspace root is not absolute: {}",
-                        root.display()
-                    ))
-                } else if !root.is_dir() {
-                    WorkspaceRootAuthority::unavailable(format!(
-                        "workspace root is inaccessible or not a directory: {}",
-                        root.display()
-                    ))
-                } else {
-                    WorkspaceRootAuthority::selected(root)
-                }
-            }
-            WorkspaceRootResolution::Ambiguous(candidates) => {
-                if candidates
-                    .iter()
-                    .any(|root| !root.is_absolute() || !root.is_dir())
-                {
-                    WorkspaceRootAuthority::unavailable(
-                        "one or more workspace folders are inaccessible or not directories",
-                    )
-                } else {
-                    WorkspaceRootAuthority::ambiguous(candidates)
-                }
-            }
-            WorkspaceRootResolution::Unavailable(detail) => {
-                WorkspaceRootAuthority::unavailable(detail)
-            }
-        }
+        self.apply_workspace_root_authority(WorkspaceRootAuthority::from_resolution(resolution))
+            .await;
     }
 
     async fn apply_workspace_root_authority(&self, authority: WorkspaceRootAuthority) {
@@ -2909,7 +2899,7 @@ impl Backend {
             && root_changed
             && self.configuration_mode() == ConfigurationMode::Pull
         {
-            self.config_pull_epoch.fetch_add(1, Ordering::SeqCst);
+            self.config_pull.bump_epoch();
         }
         if changed {
             self.refresh_scheduler.invalidate_input();
@@ -2965,11 +2955,7 @@ impl Backend {
         // schedules after the transition guard is released.
         let pull_scope_stale = {
             let restartable = {
-                let in_flight = self
-                    .config_pull_coordinator
-                    .lock()
-                    .map(|coordinator| coordinator.in_flight)
-                    .unwrap_or(false);
+                let in_flight = self.config_pull.in_flight();
                 in_flight
                     || matches!(
                         self.config_pull_state(),
@@ -2977,12 +2963,7 @@ impl Backend {
                     )
             };
             restartable
-                && self
-                    .config_pull_scope_root
-                    .lock()
-                    .ok()
-                    .and_then(|scope_root| scope_root.clone())
-                    != self.workspace_root_authority().effective_root
+                && self.config_pull.scope_root() != self.workspace_root_authority().effective_root
         };
         let schedule_deferred_pull = self.configuration_mode() == ConfigurationMode::Pull
             && (matches!(self.config_pull_state(), ConfigPullState::Deferred) || pull_scope_stale)
@@ -3303,16 +3284,11 @@ impl Backend {
     }
 
     fn config_pull_state(&self) -> ConfigPullState {
-        self.config_pull_state
-            .lock()
-            .map(|state| state.clone())
-            .unwrap_or(ConfigPullState::NotApplicable)
+        self.config_pull.state()
     }
 
     fn set_config_pull_state(&self, state: ConfigPullState) {
-        if let Ok(mut current) = self.config_pull_state.lock() {
-            *current = state;
-        }
+        self.config_pull.set_state(state);
     }
 
     /// Schedule one coalesced `workspace/configuration` pull (#2031). At most
@@ -3321,34 +3297,15 @@ impl Backend {
     /// The pull is a pure LSP round-trip: it never launches analysis, git,
     /// network beyond the LSP connection, or edits.
     async fn schedule_configuration_pull(&self) {
-        {
-            let Ok(mut coordinator) = self.config_pull_coordinator.lock() else {
-                return;
-            };
-            if coordinator.in_flight {
-                coordinator.queued = true;
-                return;
-            }
-            coordinator.in_flight = true;
+        if !self.config_pull.begin_or_queue() {
+            return;
         }
         loop {
-            let epoch = self.config_pull_epoch.load(Ordering::SeqCst);
+            let epoch = self.config_pull.epoch();
             self.set_config_pull_state(ConfigPullState::Pending);
             self.publish_analysis_status().await;
             self.pull_and_apply_configuration(epoch).await;
-            let queued = {
-                let Ok(mut coordinator) = self.config_pull_coordinator.lock() else {
-                    return;
-                };
-                if coordinator.queued {
-                    coordinator.queued = false;
-                    true
-                } else {
-                    coordinator.in_flight = false;
-                    false
-                }
-            };
-            if !queued {
+            if !self.config_pull.finish_cycle() {
                 return;
             }
         }
@@ -3383,7 +3340,7 @@ impl Backend {
             .await;
         // Epoch guard: a response for an older epoch is dropped; the queued
         // re-pull for the current epoch owns the disclosed state.
-        if self.config_pull_epoch.load(Ordering::SeqCst) != epoch {
+        if self.config_pull.epoch() != epoch {
             return;
         }
         match result {
@@ -3393,9 +3350,7 @@ impl Backend {
                     // The retained layer is scoped to the root it was pulled
                     // for; root transitions compare against this to decide
                     // whether a re-pull is needed.
-                    if let Ok(mut scope_root) = self.config_pull_scope_root.lock() {
-                        *scope_root = Some(root);
-                    }
+                    self.config_pull.set_scope_root(root);
                 }
                 Err(message) => {
                     self.set_config_pull_state(ConfigPullState::Failed(AnalysisFailure {
@@ -3459,7 +3414,7 @@ impl Backend {
     /// are dropped) and schedule one coalesced re-pull. The retained pulled
     /// layer stays in effect as last-known-good until the re-pull resolves.
     async fn handle_pull_mode_configuration_change(&self) {
-        self.config_pull_epoch.fetch_add(1, Ordering::SeqCst);
+        self.config_pull.bump_epoch();
         self.schedule_configuration_pull().await;
     }
 
@@ -3493,13 +3448,22 @@ impl Backend {
             let Some(kind) = self.file_event_workspace_input_kind(event) else {
                 continue;
             };
+            // Package-led JavaScript detection reads only presence, so a
+            // content-only edit of `package.json` or a source file is no
+            // input at all (not even a config reload).
+            if kind == WorkspaceInputKind::JavascriptPackagePresence
+                && event.typ == tower_lsp_server::ls_types::FileChangeType::CHANGED
+            {
+                continue;
+            }
             kinds.config_changed |= kind.reloads_repository_config();
             kinds.workspace_graph_changed |= kind.invalidates_workspace_graph();
             // Source presence only matters when a file appears or disappears;
             // an ordinary save of an existing TypeScript file is not an input.
             kinds.typescript_input_changed |= match kind {
                 WorkspaceInputKind::TypescriptProjectMarker => true,
-                WorkspaceInputKind::TypescriptSourcePresence => {
+                WorkspaceInputKind::TypescriptSourcePresence
+                | WorkspaceInputKind::JavascriptPackagePresence => {
                     event.typ != tower_lsp_server::ls_types::FileChangeType::CHANGED
                 }
                 _ => false,
@@ -3521,7 +3485,8 @@ impl Backend {
         params: DidOpenTextDocumentParams,
     ) -> Option<(Uri, QuarantineTransition)> {
         let uri = params.text_document.uri.clone();
-        self.documents
+        self.quarantine
+            .documents
             .lock()
             .ok()
             .map(|mut documents| (uri, documents.open(params)))
@@ -3532,7 +3497,8 @@ impl Backend {
     /// store lock is treated as a changed input: the conservative route is
     /// the interactive refresh, never silently skipping it.
     fn open_document_matches_saved_content(&self, uri: &Uri) -> bool {
-        self.documents
+        self.quarantine
+            .documents
             .lock()
             .ok()
             .map(|documents| documents.open_matches_persisted_saved_content(uri))
@@ -3553,9 +3519,13 @@ impl Backend {
         let Some((digest, input_identity)) = committed else {
             return false;
         };
-        self.documents.lock().ok().is_some_and(|mut documents| {
-            documents.adopt_committed_identity(uri, &digest, input_identity)
-        })
+        self.quarantine
+            .documents
+            .lock()
+            .ok()
+            .is_some_and(|mut documents| {
+                documents.adopt_committed_identity(uri, &digest, input_identity)
+            })
     }
 
     /// Whether a clean open still carries an input the committed snapshot
@@ -3578,6 +3548,7 @@ impl Backend {
             return false;
         };
         let saved_digest_matches = self
+            .quarantine
             .documents
             .lock()
             .ok()
@@ -3604,7 +3575,7 @@ impl Backend {
         let uri = params.text_document.uri.clone();
         let version = params.text_document.version;
         let position_encoding = self.selected_position_encoding();
-        let mut documents = self.documents.lock().ok()?;
+        let mut documents = self.quarantine.documents.lock().ok()?;
         let transition = match position_encoding {
             Some(position_encoding) => documents.change(params, &position_encoding),
             None => documents.invalidate_change(&uri, version),
@@ -3623,7 +3594,7 @@ impl Backend {
         saved_digest: Option<String>,
         text: Option<String>,
     ) -> Option<(QuarantineTransition, Option<i32>)> {
-        self.documents.lock().ok().map(|mut documents| {
+        self.quarantine.documents.lock().ok().map(|mut documents| {
             let transition = documents.save(uri, saved_digest, text);
             let version = documents.state_for_uri(uri).and_then(|state| state.version);
             (transition, version)
@@ -3631,14 +3602,15 @@ impl Backend {
     }
 
     fn close_document(&self, params: DidCloseTextDocumentParams) {
-        let Ok(mut documents) = self.documents.lock() else {
+        let Ok(mut documents) = self.quarantine.documents.lock() else {
             return;
         };
         documents.close(params);
     }
 
     fn document_text(&self, uri: &tower_lsp_server::ls_types::Uri) -> Option<String> {
-        self.documents
+        self.quarantine
+            .documents
             .lock()
             .ok()?
             .documents
@@ -3650,7 +3622,8 @@ impl Backend {
     /// (#1746): after a rejected incremental change the retained text is not
     /// the client's document and must never supply a save identity.
     fn document_buffer_authority_unknown(&self, uri: &tower_lsp_server::ls_types::Uri) -> bool {
-        self.documents
+        self.quarantine
+            .documents
             .lock()
             .ok()
             .and_then(|documents| {
@@ -3688,7 +3661,7 @@ impl Backend {
                     "ripr could not apply one incremental edit and stopped trusting the retained text; saving cannot fix this. Undo the edit or revert the file so ripr receives the full document again."
                 }
                 DocumentStalenessReason::NoAnalyzedSavedContent => {
-                    "ripr has not analyzed this file's saved content yet; its evidence appears after the next refresh (`ripr.refresh`) completes. A new file must be saved first."
+                    unanalyzed_file_hover_route(self.unanalyzed_file_cause(uri))
                 }
             };
             return markdown_hover(format!(
@@ -3703,6 +3676,25 @@ impl Backend {
         hover_response_without_evidence(
             self.no_evidence_state(),
             &self.configured_language_labels(),
+        )
+    }
+
+    /// The observed cause behind a `no_analyzed_saved_content` quarantine
+    /// (#11452), read from the file, the committed snapshot and the latest
+    /// attempt state.
+    fn unanalyzed_file_cause(&self, uri: &Uri) -> UnanalyzedFileCause {
+        let file_on_disk = self
+            .document_path_for_uri(uri)
+            .is_some_and(|path| path.is_file());
+        let snapshot_committed = self
+            .latest_analysis
+            .lock()
+            .ok()
+            .is_some_and(|value| value.is_some());
+        classify_unanalyzed_file(
+            file_on_disk,
+            self.analysis_health_snapshot().state,
+            snapshot_committed,
         )
     }
 
@@ -3771,10 +3763,7 @@ impl Backend {
         let Some(text) = self.document_text(uri) else {
             return false;
         };
-        if std::fs::metadata(&path).map(|meta| meta.len()).ok() != u64::try_from(text.len()).ok() {
-            return false;
-        }
-        std::fs::read(&path).is_ok_and(|disk| disk == text.as_bytes())
+        disk_bytes_equal_text(&path, &text)
     }
 
     /// The quarantine state of an open document, as `(path, reason)`.
@@ -3784,31 +3773,18 @@ impl Backend {
         &self,
         uri: &Uri,
     ) -> Option<(PathBuf, DocumentStalenessReason)> {
-        let documents = self.documents.lock().ok()?;
-        let state = documents.state_for_uri(uri)?;
-        quarantine_from_state(state)
+        self.quarantine.document_quarantine(uri)
     }
 
     fn document_path_for_uri(&self, uri: &Uri) -> Option<PathBuf> {
-        self.documents
-            .lock()
-            .ok()?
-            .state_for_uri(uri)
-            .map(|state| state.path.clone())
+        self.quarantine.document_path_for_uri(uri)
     }
 
     /// Mark the document's withdrawal as disclosed, returning `(path,
     /// reason)` only on the first disclosure of the episode so one episode
     /// emits exactly one disclosure.
     fn mark_withdrawal_disclosed(&self, uri: &Uri) -> Option<(PathBuf, DocumentStalenessReason)> {
-        let mut documents = self.documents.lock().ok()?;
-        let state = documents.state_for_uri_mut(uri)?;
-        let quarantine = state.quarantine.as_mut()?;
-        if quarantine.withdrawal_disclosed {
-            return None;
-        }
-        quarantine.withdrawal_disclosed = true;
-        Some((state.path.clone(), quarantine.reason))
+        self.quarantine.mark_withdrawal_disclosed(uri)
     }
 
     /// Mark the pull-side partial-delivery disclosures for one snapshot input
@@ -3857,7 +3833,8 @@ impl Backend {
     }
 
     fn last_diagnostics_has_any(&self, uri: &Uri) -> bool {
-        self.last_diagnostics
+        self.quarantine
+            .last_diagnostics
             .lock()
             .ok()
             .and_then(|last| last.get(uri).map(|diagnostics| !diagnostics.is_empty()))
@@ -3865,7 +3842,7 @@ impl Backend {
     }
 
     fn set_last_diagnostics_for_uri(&self, uri: &Uri, diagnostics: Vec<Diagnostic>) {
-        if let Ok(mut last) = self.last_diagnostics.lock() {
+        if let Ok(mut last) = self.quarantine.last_diagnostics.lock() {
             last.insert(uri.clone(), diagnostics);
         }
     }
@@ -4060,11 +4037,7 @@ impl Backend {
         uri: &tower_lsp_server::ls_types::Uri,
         digest: &str,
     ) -> bool {
-        self.saved_content_digests
-            .lock()
-            .ok()
-            .and_then(|digests| digests.get(uri).map(|(recorded, _)| recorded.clone()))
-            .is_some_and(|recorded| recorded == digest)
+        self.quarantine.saved_content_digest_matches(uri, digest)
     }
 
     /// Record a save digest and advance the workspace revision as one step,
@@ -4081,9 +4054,8 @@ impl Backend {
             return;
         };
         let next = revision.saturating_add(1);
-        if let Ok(mut digests) = self.saved_content_digests.lock() {
-            digests.insert(uri.clone(), (digest, next));
-        }
+        self.quarantine
+            .record_saved_content_digest(uri, digest, next);
         *revision = next;
     }
 
@@ -4096,9 +4068,7 @@ impl Backend {
         let covered = self
             .last_published_workspace_revision
             .load(Ordering::Acquire);
-        if let Ok(mut digests) = self.saved_content_digests.lock() {
-            digests.retain(|_, (_, revision)| *revision <= covered);
-        }
+        self.quarantine.retain_covered_digests(covered);
     }
 
     pub(super) fn hover_for_position(&self, params: &HoverParams) -> Option<Hover> {
@@ -4212,7 +4182,7 @@ impl Backend {
             }
         }
 
-        let Ok(last_diagnostics) = self.last_diagnostics.lock() else {
+        let Ok(last_diagnostics) = self.quarantine.last_diagnostics.lock() else {
             return None;
         };
         let diagnostics = last_diagnostics.get(uri)?;
@@ -4263,6 +4233,11 @@ enum WorkspaceInputKind {
     TypescriptProjectMarker,
     /// Detectable TypeScript source below a root `src`/`tests` directory.
     TypescriptSourcePresence,
+    /// Package-led JavaScript detection input (#11336): root `package.json`,
+    /// or a detectable JS/TS source file at the root or below `src`/`test`/
+    /// `tests`. Presence-only like the source classes: a content-only edit is
+    /// not an input.
+    JavascriptPackagePresence,
     /// Root gap decision ledger or root `.git/HEAD` (#4896): diagnostics
     /// read both on every refresh, but neither is a configuration or
     /// workspace-graph input.
@@ -4277,6 +4252,7 @@ impl WorkspaceInputKind {
                 | Self::PythonSourcePresence
                 | Self::TypescriptProjectMarker
                 | Self::TypescriptSourcePresence
+                | Self::JavascriptPackagePresence
         )
     }
 
@@ -4330,8 +4306,39 @@ fn workspace_input_kind(root: &Path, path: &Path) -> Option<WorkspaceInputKind> 
     if path_is_detectable_source_dir_python(root, path) {
         return Some(WorkspaceInputKind::PythonSourcePresence);
     }
-    path_is_detectable_source_dir_typescript(root, path)
-        .then_some(WorkspaceInputKind::TypescriptSourcePresence)
+    if path_is_detectable_source_dir_typescript(root, path) {
+        return Some(WorkspaceInputKind::TypescriptSourcePresence);
+    }
+    if let Some(manifest) = javascript_led_manifest_name(name)
+        && path_matches_root_file(root, path, manifest)
+    {
+        return Some(WorkspaceInputKind::JavascriptPackagePresence);
+    }
+    path_is_detectable_package_source(root, path)
+        .then_some(WorkspaceInputKind::JavascriptPackagePresence)
+}
+
+/// Package-led JavaScript form of [`path_is_detectable_source_dir_typescript`]:
+/// a detectable JS/TS source file directly at the root or below a root
+/// `src`/`test`/`tests` directory, outside dot-directories and the excluded
+/// directories, exactly as `detect_javascript_led_root` walks. Presence-only.
+fn path_is_detectable_package_source(root: &Path, path: &Path) -> bool {
+    let Some(relative) = root_relative_components(root, path) else {
+        return false;
+    };
+    let Some((file_name, directories)) = relative.split_last() else {
+        return false;
+    };
+    if !is_detectable_package_source_name(file_name) {
+        return false;
+    }
+    let Some((marker, below)) = directories.split_first() else {
+        return true;
+    };
+    javascript_led_source_dir_marker_name(marker).is_some()
+        && below
+            .iter()
+            .all(|dir| !dir.starts_with('.') && !is_typescript_excluded_dir_everywhere(dir))
 }
 
 /// TypeScript form of [`path_is_detectable_source_dir_python`]: a detectable
@@ -4480,6 +4487,35 @@ fn workspace_input_watchers() -> Vec<LSPAny> {
             // Same root-scoped shape for the TypeScript detection extensions.
             serde_json::json!({"globPattern": format!("{dir}/**/*.{{ts,tsx,mts,cts}}")})
         }))
+        .chain(JAVASCRIPT_LED_MANIFESTS.iter().map(|manifest| {
+            // Package-led JavaScript detection (#11336): the root manifest
+            // plus JS/TS source at the root or below its source directories.
+            serde_json::json!({"globPattern": *manifest})
+        }))
+        .chain(javascript_led_source_globs())
+        .collect()
+}
+
+/// Root-scoped globs for the package-led JavaScript source files: direct
+/// children of the root plus each `JAVASCRIPT_LED_SOURCE_DIRS` subtree. Empty
+/// when the adapter is compiled out, like the other detection inputs.
+fn javascript_led_source_globs() -> Vec<LSPAny> {
+    if JAVASCRIPT_LED_MANIFESTS.is_empty() {
+        return Vec::new();
+    }
+    let extensions = crate::analysis::TYPESCRIPT_SOURCE_EXTENSIONS
+        .iter()
+        .chain(crate::analysis::JAVASCRIPT_SOURCE_EXTENSIONS)
+        .copied()
+        .collect::<Vec<_>>()
+        .join(",");
+    std::iter::once(format!("*.{{{extensions}}}"))
+        .chain(
+            JAVASCRIPT_LED_SOURCE_DIRS
+                .iter()
+                .map(|dir| format!("{dir}/**/*.{{{extensions}}}")),
+        )
+        .map(|glob| serde_json::json!({"globPattern": glob}))
         .collect()
 }
 
@@ -4626,7 +4662,6 @@ mod workspace_input_tests {
             );
         }
         for non_input in [
-            "src/app.js",
             "src/api.generated.ts",
             "src/types.d.ts",
             "src/node_modules/p/i.ts",
@@ -4642,6 +4677,83 @@ mod workspace_input_tests {
         assert!(WorkspaceInputKind::TypescriptProjectMarker.reloads_repository_config());
         assert!(WorkspaceInputKind::TypescriptSourcePresence.reloads_repository_config());
         assert!(!WorkspaceInputKind::TypescriptSourcePresence.invalidates_workspace_graph());
+    }
+
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn package_led_javascript_inputs_classify_like_the_detector() {
+        let root = std::env::temp_dir().join("ripr-workspace-input-root");
+        let outside = std::env::temp_dir().join("ripr-workspace-input-outside");
+
+        assert_eq!(
+            workspace_input_kind(&root, &root.join("package.json")),
+            Some(WorkspaceInputKind::JavascriptPackagePresence)
+        );
+        for non_input in ["pkg/package.json", "src/package.json"] {
+            assert_eq!(
+                workspace_input_kind(&root, &root.join(non_input)),
+                None,
+                "{non_input}"
+            );
+        }
+        assert_eq!(
+            workspace_input_kind(&root, &outside.join("package.json")),
+            None
+        );
+        for source in [
+            "index.js",
+            "test.mjs",
+            "app.ts",
+            "src/app.js",
+            "src/deep/view.jsx",
+            "test/a.cjs",
+            "test/a.ts",
+            "tests/a.js",
+        ] {
+            assert_eq!(
+                workspace_input_kind(&root, &root.join(source)),
+                Some(WorkspaceInputKind::JavascriptPackagePresence),
+                "{source}"
+            );
+        }
+        // src/tests TypeScript keeps its existing presence class.
+        assert_eq!(
+            workspace_input_kind(&root, &root.join("src/app.ts")),
+            Some(WorkspaceInputKind::TypescriptSourcePresence)
+        );
+        for non_input in [
+            "eslint.config.js",
+            ".eslintrc.cjs",
+            "app.min.js",
+            "src/webpack.config.mjs",
+            "src/node_modules/p/i.js",
+            "src/.cache/i.js",
+            "lib/app.js",
+            "scripts/app.js",
+            "README.md",
+        ] {
+            assert_eq!(
+                workspace_input_kind(&root, &root.join(non_input)),
+                None,
+                "{non_input}"
+            );
+        }
+        assert!(WorkspaceInputKind::JavascriptPackagePresence.reloads_repository_config());
+        assert!(!WorkspaceInputKind::JavascriptPackagePresence.invalidates_workspace_graph());
+
+        // #11419: source-directory markers resolve through the host
+        // filesystem, so on a case-insensitive host (Windows, macOS) the
+        // differently-cased spellings classify like the canonical ones —
+        // exactly what the detector sees through `root.join(dir)`.
+        if crate::output::path::host_paths_case_insensitive() {
+            for source in ["Src/app.js", "Test/a.js", "TESTS/a.js", "Src/deep/view.jsx"] {
+                assert_eq!(
+                    workspace_input_kind(&root, &root.join(source)),
+                    Some(WorkspaceInputKind::JavascriptPackagePresence),
+                    "{source}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -4661,9 +4773,12 @@ mod workspace_input_tests {
 
         assert!(!WorkspaceInputKind::CargoGraph.reloads_repository_config());
         assert!(WorkspaceInputKind::CargoGraph.invalidates_workspace_graph());
+        // `package.json` is a package-led JavaScript input only with the
+        // TypeScript adapter compiled in.
         assert_eq!(
             workspace_input_kind(&root, &root.join("package.json")),
-            None
+            cfg!(feature = "lang-typescript")
+                .then_some(WorkspaceInputKind::JavascriptPackagePresence)
         );
         Ok(())
     }
@@ -4791,6 +4906,16 @@ mod workspace_input_tests {
                 TYPESCRIPT_SOURCE_DIR_MARKERS
                     .iter()
                     .map(|dir| format!("{dir}/**/*.{{ts,tsx,mts,cts}}")),
+            )
+            .chain(JAVASCRIPT_LED_MANIFESTS.iter().map(|name| name.to_string()))
+            .chain(
+                (!JAVASCRIPT_LED_MANIFESTS.is_empty())
+                    .then(|| "*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}".to_string()),
+            )
+            .chain(
+                JAVASCRIPT_LED_SOURCE_DIRS
+                    .iter()
+                    .map(|dir| format!("{dir}/**/*.{{ts,tsx,mts,cts,js,jsx,mjs,cjs}}")),
             )
             .collect::<BTreeSet<_>>();
 
@@ -4997,6 +5122,7 @@ pub(super) struct RefreshLogSummary {
     gap_artifact_rejections: usize,
     gap_artifact_rejection_kinds: Vec<&'static str>,
     withheld_unknown: usize,
+    withheld_preview: usize,
     enabled_languages: usize,
     enabled_language_names: Vec<&'static str>,
 }
@@ -5059,6 +5185,7 @@ impl RefreshLogSummary {
                 .into_iter()
                 .collect(),
             withheld_unknown: withheld_unknown_summary(snapshot).map_or(0, |(count, _)| count),
+            withheld_preview: withheld_preview_summary(snapshot).0,
             enabled_languages: 1,
             enabled_language_names: vec!["rust"],
         }
@@ -5219,7 +5346,7 @@ fn refresh_completed_log_message_with_telemetry(
 ) -> String {
     let duration = format_duration(summary.duration);
     format!(
-        "ripr analysis refresh completed in {duration}: generation={}, diagnostics={}, files={}, findings={}, preview_findings={}, static_limits={}, seam_diagnostics={}, gap_artifacts={}, actionable_gap_artifacts={}, preview_gap_artifacts={}, no_action_gap_artifacts={}, gap_static_limits={}, gap_artifact_rejections={}, gap_artifact_rejection_kinds={}, withheld_unknown={}, enabled_languages={}, enabled_language_names={}, computed_files={}, published_files={}, unchanged_files={}, cleared_files={}, published_payload_bytes={}, suppressed_payload_bytes={}",
+        "ripr analysis refresh completed in {duration}: generation={}, diagnostics={}, files={}, findings={}, preview_findings={}, static_limits={}, seam_diagnostics={}, gap_artifacts={}, actionable_gap_artifacts={}, preview_gap_artifacts={}, no_action_gap_artifacts={}, gap_static_limits={}, gap_artifact_rejections={}, gap_artifact_rejection_kinds={}, withheld_unknown={}, withheld_preview={}, enabled_languages={}, enabled_language_names={}, computed_files={}, published_files={}, unchanged_files={}, cleared_files={}, published_payload_bytes={}, suppressed_payload_bytes={}",
         summary.generation,
         summary.diagnostics,
         summary.files,
@@ -5235,6 +5362,7 @@ fn refresh_completed_log_message_with_telemetry(
         summary.gap_artifact_rejections,
         summary.gap_artifact_rejection_kinds.join("|"),
         summary.withheld_unknown,
+        summary.withheld_preview,
         summary.enabled_languages,
         summary.enabled_language_names.join("|"),
         summary.files,
@@ -5297,12 +5425,93 @@ fn bounded_failure_message(message: &str) -> String {
     super::component_outcome::bounded_message(message)
 }
 
+/// The `window/showMessage` text for a failed analysis (#8583), bounded and
+/// path-redacted like every client-visible failure message.
+fn analysis_failure_shown_message(message: &str) -> String {
+    bounded_failure_message(&format!("ripr analysis failed: {message}"))
+}
+
 #[cfg(test)]
 mod interactive_debounce_fold_tests;
 
 #[cfg(test)]
 mod bounded_failure_message_tests {
-    use super::bounded_failure_message;
+    use super::{analysis_failure_shown_message, bounded_failure_message};
+
+    /// A workspace that is not a Git work tree: the shown warning must keep
+    /// the remedy (where to run, `--root`, the no-history pilot command)
+    /// within the 240-character bound, shortening only the cause. The long
+    /// root has spaces so the path redaction cannot absorb it.
+    #[test]
+    fn non_git_workspace_warning_keeps_the_remedy_inside_the_bound() -> Result<(), String> {
+        let root = crate::lsp::tests::unique_lsp_test_root("non-git-remedy")?;
+        let deep = root
+            .path()
+            .join("a long folder name with spaces ".repeat(6))
+            .join("another long folder name");
+        std::fs::create_dir_all(&deep).map_err(|error| format!("create root failed: {error}"))?;
+        // The production builder of the non-Git refusal; a non-Git temp root
+        // is not constructible here because unit-test temp roots sit inside
+        // the checkout's own work tree.
+        let error = crate::core_error::CoreError::repository_root_unusable(
+            crate::analysis::not_a_work_tree_message(&deep),
+        );
+        let shown = analysis_failure_shown_message(
+            &error.with_context("workspace analysis failed").to_string(),
+        );
+        assert!(shown.contains("is not inside a Git work tree"), "{shown}");
+        for remedy in [
+            "pass `--root <path>` to one",
+            "`ripr pilot --root .` works without Git history",
+        ] {
+            assert!(shown.contains(remedy), "remedy {remedy:?} cut: {shown}");
+        }
+        assert!(
+            shown.chars().count()
+                <= super::super::component_outcome::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND,
+            "{shown}"
+        );
+        assert!(
+            shown.ends_with('…'),
+            "the long root cause must be the part shortened: {shown}"
+        );
+        Ok(())
+    }
+
+    /// The shortest root and a multibyte root go through the same
+    /// composition: the remedy survives and the bound counts scalars.
+    #[test]
+    fn non_git_workspace_warning_keeps_the_remedy_for_short_and_multibyte_roots() {
+        let long_multibyte = format!("/{}", "é ".repeat(200));
+        for root in ["/", long_multibyte.as_str()] {
+            let error = crate::core_error::CoreError::repository_root_unusable(
+                crate::analysis::not_a_work_tree_message(std::path::Path::new(root)),
+            );
+            let shown = analysis_failure_shown_message(
+                &error.with_context("workspace analysis failed").to_string(),
+            );
+            for remedy in [
+                "pass `--root <path>` to one",
+                "`ripr pilot --root .` works without Git history",
+            ] {
+                assert!(shown.contains(remedy), "remedy {remedy:?} cut: {shown}");
+            }
+            assert!(
+                shown.chars().count()
+                    <= super::super::component_outcome::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND,
+                "{shown}"
+            );
+        }
+    }
+
+    /// Negative control: a short failure is shown whole and unchanged.
+    #[test]
+    fn short_analysis_failure_warning_is_unchanged() {
+        assert_eq!(
+            analysis_failure_shown_message("workspace analysis failed: Cargo.toml not found"),
+            "ripr analysis failed: workspace analysis failed: Cargo.toml not found"
+        );
+    }
 
     /// #8584: `ripr/analysisStatus` copies `AnalysisFailure.message`, which
     /// is bounded here. The wrapper must keep the truncation marker inside
@@ -6283,7 +6492,7 @@ impl LanguageServer for Backend {
         }
         let authority = match derived.0 {
             None => WorkspaceRootAuthority::removed(self.effective_root()),
-            Some(resolution) => Self::workspace_root_authority_for_resolution(resolution),
+            Some(resolution) => WorkspaceRootAuthority::from_resolution(resolution),
         };
         let previous = self.workspace_root_authority();
         self.apply_workspace_folder_set_authority(authority, folder_set_epoch)
@@ -6462,9 +6671,8 @@ impl LanguageServer for Backend {
             self.verbose_params_bytes(&params),
         )
         .await;
-        if let Ok(mut digests) = self.saved_content_digests.lock() {
-            digests.remove(&params.text_document.uri);
-        }
+        self.quarantine
+            .forget_saved_content_digest(&params.text_document.uri);
         // #8732: the closing client clears its own view; drop the URI from
         // the pending-marker set so a later commit or shutdown does not
         // publish a retraction for a document nobody tracks. Push clients
@@ -7471,7 +7679,7 @@ impl Backend {
         &self,
         snapshot: Option<&AnalysisSnapshot>,
     ) -> serde_json::Value {
-        let Ok(documents) = self.documents.lock() else {
+        let Ok(documents) = self.quarantine.documents.lock() else {
             return serde_json::json!([]);
         };
         let statuses = documents
@@ -7868,17 +8076,47 @@ fn withheld_unknown_summary(snapshot: &AnalysisSnapshot) -> Option<(usize, Vec<&
     Some((count, classes.into_iter().collect()))
 }
 
+/// Count/class summary of the preview-language gap-class findings the
+/// actionable profile withholds (#11296). Counted per canonical group, like
+/// `withheld_unknown_summary`. A non-actionable profile withholds nothing.
+fn withheld_preview_summary(snapshot: &AnalysisSnapshot) -> (usize, Vec<&'static str>) {
+    let withheld = super::diagnostics::withheld_preview_gap_findings(
+        snapshot.diagnostic_profile,
+        &snapshot.findings,
+    );
+    let classes = withheld
+        .iter()
+        .map(|finding| finding.class.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    (withheld.len(), classes.into_iter().collect())
+}
+
+/// Combined disclosure summary (#5276, #11296): `*_unknown` plus preview gap
+/// findings withheld by the actionable profile, with the preview share kept
+/// separate so a client can say "preview" without re-deriving it.
+fn withheld_findings_summary(
+    snapshot: &AnalysisSnapshot,
+) -> Option<(usize, Vec<&'static str>, usize)> {
+    let (unknown, mut classes) = withheld_unknown_summary(snapshot)?;
+    let (preview, preview_classes) = withheld_preview_summary(snapshot);
+    classes.extend(preview_classes);
+    classes.sort_unstable();
+    classes.dedup();
+    Some((unknown + preview, classes, preview))
+}
+
 /// The status-surface payload for profile withholding (#5276): present with
 /// a zero count when nothing is withheld, and `null` only when no snapshot
-/// exists.
-fn withheld_findings_status_payload(summary: Option<(usize, Vec<&'static str>)>) -> LSPAny {
+/// exists. `preview_count` (#11296) is the preview-language share of `count`.
+fn withheld_findings_status_payload(summary: Option<(usize, Vec<&'static str>, usize)>) -> LSPAny {
     match summary {
         None => serde_json::Value::Null,
-        Some((0, _)) => {
-            serde_json::json!({ "count": 0, "classes": [], "recovery_route": serde_json::Value::Null })
+        Some((0, _, _)) => {
+            serde_json::json!({ "count": 0, "preview_count": 0, "classes": [], "recovery_route": serde_json::Value::Null })
         }
-        Some((count, classes)) => serde_json::json!({
+        Some((count, classes, preview_count)) => serde_json::json!({
             "count": count,
+            "preview_count": preview_count,
             "classes": classes,
             "recovery_route": diagnostic_profile_full_recovery_route(),
         }),
@@ -7890,10 +8128,19 @@ fn withheld_findings_status_payload(summary: Option<(usize, Vec<&'static str>)>)
 /// the same one-line disclosure the status and listing surfaces carry names
 /// the withholding and the `full` escape hatch here too.
 fn profile_withholding_pull_disclosure(snapshot: &AnalysisSnapshot) -> Option<String> {
-    let (count, _) = withheld_unknown_summary(snapshot)?;
+    let (count, _, preview) = withheld_findings_summary(snapshot)?;
     (count > 0).then(|| {
+        // The `*_unknown` wording is unchanged when no preview finding is
+        // withheld; the preview share is named only when it exists.
+        let subject = match (count - preview, preview) {
+            (_, 0) => format!("{count} finding(s) of the *_unknown classes"),
+            (0, _) => format!("{count} preview-language finding(s)"),
+            (unknown, preview) => format!(
+                "{count} finding(s) ({unknown} of the *_unknown classes, {preview} preview-language)"
+            ),
+        };
         format!(
-            "ripr withheld {count} finding(s) of the *_unknown classes from diagnostics (actionable profile, RIPR-SPEC-0069); {}",
+            "ripr withheld {subject} from diagnostics (actionable profile, RIPR-SPEC-0069); {}",
             diagnostic_profile_full_recovery_route()
         )
     })
@@ -8281,9 +8528,11 @@ fn quarantine_withdrawal_log_message(path: &Path, reason: DocumentStalenessReaso
         DocumentStalenessReason::InvalidIncrementalChange => {
             "revert the file or close and reopen it so ripr receives the full document again"
         }
-        DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent
-        | DocumentStalenessReason::NoAnalyzedSavedContent => {
+        DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent => {
             "save the file to analyze the new saved state"
+        }
+        DocumentStalenessReason::NoAnalyzedSavedContent => {
+            "save the file if it is new, then refresh (`ripr.refresh`)"
         }
     };
     format!(
@@ -8666,7 +8915,10 @@ fn workspace_status_top_actionable_packet(snapshot: &AnalysisSnapshot) -> serde_
         .first()
         .map(String::as_str)
         .unwrap_or("");
-    let repair_kind = artifact.gap_state.as_deref().unwrap_or("actionable");
+    let repair_kind = artifact
+        .gap_state
+        .as_deref()
+        .unwrap_or(crate::domain::EvidenceState::Actionable.as_str());
     serde_json::json!({
         "canonical_gap_id": canonical_gap_id,
         "file": file,
@@ -9571,173 +9823,6 @@ fn workspace_status_rejection_repair(
     }
 }
 
-/// Extract the String payload from rejection variants that carry one.
-/// Unit and `&str`-reason variants emit an empty list.
-/// gap_id-bearing sample sources are a deferred follow-up — the rejection does
-/// not carry a gap_id.
-fn limitation_sample_sources(
-    rejection: &super::gap_artifacts::GapArtifactRejection,
-) -> Vec<String> {
-    use super::gap_artifacts::GapArtifactRejection;
-    match rejection {
-        GapArtifactRejection::DisabledLanguage(s)
-        | GapArtifactRejection::MalformedCommandPayload(s)
-        | GapArtifactRejection::OutOfWorkspacePath(s)
-        | GapArtifactRejection::UnavailableLanguage(s)
-        | GapArtifactRejection::UnsupportedKind(s)
-        | GapArtifactRejection::UnsupportedSchema(s)
-        | GapArtifactRejection::UnsupportedStaticLimitKind(s)
-        | GapArtifactRejection::WrongRoot(s)
-        | GapArtifactRejection::StaleSubject(s) => vec![s.clone()],
-        GapArtifactRejection::UnverifiableSubject(reason) => vec![(*reason).to_string()],
-        GapArtifactRejection::MalformedArtifact(_)
-        | GapArtifactRejection::MissingIdentity
-        | GapArtifactRejection::StaleCorpus
-        | GapArtifactRejection::StaleArtifact => vec![],
-    }
-}
-
-/// Per-category static non-claims table.
-/// Vocabulary: approved static-exposure terms only (exposed/weakly_exposed/etc.).
-fn limitation_non_claims(category: &str) -> Vec<&'static str> {
-    match category {
-        "disabled_language" | "unavailable_language" => vec![
-            "not a Rust repair packet",
-            "does not indicate the behavior is reachable",
-            "does not indicate tests are absent",
-        ],
-        "wrong_root" | "out_of_workspace_path" => vec![
-            "not a repair packet",
-            "path resolution required before exposure can be assessed",
-        ],
-        "stale_artifact"
-        | "stale_subject"
-        | "unverifiable_subject"
-        | "missing_identity"
-        | "malformed_artifact"
-        | "malformed_command_payload" => vec![
-            "not a repair packet",
-            "artifact regeneration required before exposure can be assessed",
-        ],
-        "unsupported_schema" | "unsupported_kind" | "unsupported_static_limit_kind" => vec![
-            "not a repair packet",
-            "ripr upgrade required before exposure can be assessed",
-        ],
-        _ => vec!["not a repair packet"],
-    }
-}
-
-fn collect_gap_record_context_packet(
-    root: &Path,
-    repo_config: &crate::config::RiprConfig,
-    args: &serde_json::Map<String, serde_json::Value>,
-    gap_id: &str,
-) -> Option<LSPAny> {
-    let gap_id = gap_id.trim();
-    if gap_id.is_empty() {
-        return None;
-    }
-    let ledger_arg = args
-        .get("gap_ledger")
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(DEFAULT_GAP_DECISION_LEDGER_OUT);
-    let ledger_path = absolute_join(root, Path::new(ledger_arg));
-    // Client-supplied path: confine reads to the workspace root so a client
-    // message cannot make the long-running server read arbitrary files.
-    // `absolute_join` passes absolute paths through unchanged, so an
-    // out-of-root absolute path or a symlink escape is rejected here
-    // (canonicalizing both sides, like `validate_agent_brief_diff_path`).
-    if !path_is_within_root(root, &ledger_path) {
-        return None;
-    }
-    let contents = match read_artifact_capped(&ledger_path) {
-        CappedArtifactRead::Contents(contents) => contents,
-        // Absent ledger: no packet is available, which is a normal state.
-        CappedArtifactRead::Missing => return None,
-        // Present but oversize/unreadable: typed sentinel, not a silent None.
-        CappedArtifactRead::Unusable => {
-            return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON));
-        }
-    };
-    let records = match parse_gap_records_json_for_root(&contents, Some(root)) {
-        Ok(records) => records,
-        Err(_) => return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON)),
-    };
-    let record = records
-        .iter()
-        .find(|record| gap_record_matches(record, gap_id))?;
-    if let Some(sentinel) = ledger_source_subject_sentinel(root, repo_config, &contents) {
-        return Some(sentinel);
-    }
-    let rendered = render_agent_gap_record_packet_json(&display_path(&ledger_path), record).ok()?;
-    serde_json::from_str(&rendered).ok()
-}
-
-/// #4544: a command-time packet read re-checks the ledger's `source_subject`
-/// stamp through the shared validator, so a packet computed for other file
-/// contents is a typed stale disclosure instead of a current repair route.
-fn ledger_source_subject_sentinel(
-    root: &Path,
-    repo_config: &crate::config::RiprConfig,
-    contents: &str,
-) -> Option<LSPAny> {
-    let Ok(artifact) = serde_json::from_str::<serde_json::Value>(contents) else {
-        return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON));
-    };
-    source_subject_sentinel(
-        root,
-        repo_config,
-        &artifact,
-        super::gap_artifacts::GapArtifactKind::GapDecisionLedger,
-        "gap-decision-ledger.json",
-        "ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json",
-    )
-}
-
-fn source_subject_sentinel(
-    root: &Path,
-    repo_config: &crate::config::RiprConfig,
-    artifact: &serde_json::Value,
-    kind: super::gap_artifacts::GapArtifactKind,
-    artifact_name: &str,
-    regenerate: &str,
-) -> Option<LSPAny> {
-    use super::gap_artifacts::GapArtifactRejection;
-    let context = super::gap_artifacts::GapArtifactValidationContext {
-        root,
-        enabled_languages: repo_config.languages().enabled(),
-        repo_config,
-    };
-    let recovery = format!(
-        "regenerate from fresh analysis in the selected workspace: capture ripr check --format repo-exposure-json as target/ripr/reports/repo-exposure.json then {regenerate}"
-    );
-    match super::gap_artifacts::validate_gap_artifact(artifact, &context) {
-        Ok(validated) if validated.kind == kind => None,
-        Ok(_) => Some(repair_packet_sentinel(&format!(
-            "unsupported_kind: expected {artifact_name}"
-        ))),
-        Err(GapArtifactRejection::StaleSubject(path)) => Some(repair_packet_sentinel(&format!(
-            "stale_subject: {path} changed since {artifact_name} was written; {recovery}"
-        ))),
-        Err(GapArtifactRejection::StaleCorpus) => Some(repair_packet_sentinel(&format!(
-            "stale_corpus: the analyzed Rust source/test corpus changed since {artifact_name} was written; {recovery}"
-        ))),
-        Err(GapArtifactRejection::UnverifiableSubject(reason)) => {
-            Some(repair_packet_sentinel(&format!(
-                "unverifiable_subject: {reason}: {artifact_name} cannot be matched to the current analyzed source inputs; {recovery}"
-            )))
-        }
-        Err(GapArtifactRejection::WrongRoot(_)) => Some(repair_packet_sentinel(&format!(
-            "wrong_root: {artifact_name} belongs to another workspace; select its producer workspace or regenerate it for the selected workspace"
-        ))),
-        Err(other) => Some(repair_packet_sentinel(other.as_str())),
-    }
-}
-
-const DEFAULT_ACTIONABLE_GAPS_OUT: &str = "target/ripr/reports/actionable-gaps.json";
-
 impl Backend {
     /// `gap_id` is already validated by `optional_id_argument`: `None` means
     /// the caller asked for the top packet, never that a malformed id was
@@ -9745,7 +9830,18 @@ impl Backend {
     fn collect_repair_packet(&self, gap_id: Option<&str>) -> Option<LSPAny> {
         let health = self.analysis_health_snapshot();
         if !health.allows_current_repairs() {
-            return Some(repair_packet_sentinel("analysis_snapshot_stale"));
+            // The reason stays `analysis_snapshot_stale` and the packet stays
+            // withheld; the added fields only tell a client whether to retry
+            // or recover (#4427).
+            let (refresh_state, recovery) = health.repair_block_guidance(
+                self.interactive_debounce_window_open
+                    .load(Ordering::Acquire),
+            );
+            let mut sentinel = repair_packet_sentinel("analysis_snapshot_stale");
+            sentinel["refresh_state"] = serde_json::json!(refresh_state);
+            sentinel["attempt_state"] = serde_json::json!(health.state.as_str());
+            sentinel["recovery"] = serde_json::json!(recovery);
+            return Some(sentinel);
         }
         let authority = self.workspace_root_authority();
         if !authority.allows_analysis() {
@@ -9863,735 +9959,6 @@ impl Backend {
             "client_features": self.client_features_projection(),
             "limits_note": "Static evidence only; advisory, not a gate decision.",
         }))
-    }
-}
-
-/// Derive `receipt_status`, `missing_receipt_reason`, and `copy_receipt_command`
-/// from the top actionable gap artifact plus the snapshot's first-safe-receipt-command
-/// path.
-///
-/// Honesty rules:
-/// - `copy_receipt_command` is only emitted when the packet is COMPLETE
-///   (verify_command + receipt_command both present). A limitation or
-///   incomplete packet MUST NOT surface a repair receipt command.
-/// - `receipt_status` reports the real movement value (or "not_available"
-///   when no gap artifact or receipt object exists).
-fn collect_receipt_status_fields(
-    root: &std::path::Path,
-    top_gap: Option<&super::gap_artifacts::ValidatedGapArtifact>,
-    snapshot: &super::state::AnalysisSnapshot,
-) -> (serde_json::Value, serde_json::Value, serde_json::Value) {
-    let not_available = serde_json::Value::String("not_available".to_string());
-
-    // Top-level limitation present → no repair receipt command (RIPR-SPEC-0076
-    // harmonization: limitations must never show a repair receipt command).
-    let has_limitation = !snapshot.gap_artifact_rejections.is_empty();
-
-    let Some(artifact) = top_gap else {
-        return (not_available.clone(), not_available.clone(), not_available);
-    };
-
-    // receipt_status: from the gap-decision-ledger receipt.movement field.
-    // Read directly from the artifact's receipt object via the ledger.
-    // For LSP we can derive from the artifact's receipt_commands presence
-    // as a proxy; the real movement comes from the ledger receipt record.
-    let ledger_path =
-        root.join(crate::output::gap_decision_ledger::DEFAULT_GAP_DECISION_LEDGER_OUT);
-    let (receipt_status_val, missing_receipt_reason_val) =
-        receipt_status_from_ledger(root, &ledger_path, artifact);
-
-    // copy_receipt_command: only for complete packets (verify + receipt
-    // commands both present). Incomplete packets → not_available.
-    let copy_receipt_cmd_val = if has_limitation {
-        // Limitation surface — never show receipt command.
-        not_available
-    } else {
-        let has_verify = !artifact.verify_commands.is_empty();
-        let has_receipt = !artifact.receipt_commands.is_empty();
-        if has_verify && has_receipt {
-            // Use the existing first_safe_receipt_command path from actions.rs
-            // by reading it directly from the artifact.
-            let cmd = artifact
-                .receipt_commands
-                .first()
-                .map(String::as_str)
-                .unwrap_or("");
-            let bound = super::gap_artifacts::command_payload_is_safe(root, cmd)
-                .then(|| super::gap_artifacts::bind_portable_command(root, cmd))
-                .flatten();
-            serde_json::Value::String(bound.unwrap_or_else(|| "not_available".to_string()))
-        } else {
-            // Incomplete packet — no receipt command shown.
-            serde_json::Value::String("not_available".to_string())
-        }
-    };
-
-    (
-        receipt_status_val,
-        missing_receipt_reason_val,
-        copy_receipt_cmd_val,
-    )
-}
-
-/// Read the gap-decision-ledger to get the real receipt movement + missing_reason
-/// for the given gap artifact. Falls back to not_available on any read/parse error.
-fn receipt_status_from_ledger(
-    root: &std::path::Path,
-    ledger_path: &std::path::Path,
-    artifact: &super::gap_artifacts::ValidatedGapArtifact,
-) -> (serde_json::Value, serde_json::Value) {
-    let not_available = "not_available".to_string();
-
-    let contents = match fs::read_to_string(ledger_path) {
-        Ok(c) => c,
-        Err(_) => {
-            return (
-                serde_json::Value::String(not_available.clone()),
-                serde_json::Value::String(not_available),
-            );
-        }
-    };
-    let records = match crate::output::gap_decision_ledger::parse_gap_records_json_for_root(
-        &contents,
-        Some(root),
-    ) {
-        Ok(r) => r,
-        Err(_) => {
-            return (
-                serde_json::Value::String(not_available.clone()),
-                serde_json::Value::String(not_available),
-            );
-        }
-    };
-
-    // Match the ledger record to the top artifact using canonical_gap_id.
-    let canonical_gap_id = artifact
-        .identities
-        .first()
-        .and_then(|id| id.canonical_gap_id.as_deref())
-        .unwrap_or("");
-
-    let record = records.iter().find(|r| {
-        r.canonical_gap_id == canonical_gap_id
-            || (!canonical_gap_id.is_empty() && r.gap_id == canonical_gap_id)
-    });
-
-    let Some(record) = record else {
-        // The artifact exists in the snapshot but the ledger doesn't have a
-        // matching record — movement is genuinely unknown, not zero.
-        return (
-            serde_json::Value::String(not_available.clone()),
-            serde_json::Value::String(not_available),
-        );
-    };
-
-    // receipt.movement is the only reliably-populated field in production.
-    let movement_val = match record.receipt.as_ref().and_then(|r| r.movement.as_deref()) {
-        Some(m) => serde_json::Value::String(m.to_string()),
-        None => serde_json::Value::String(not_available.clone()),
-    };
-
-    // missing_receipt_reason: only meaningful when the gap is actionable
-    // but has no receipt. Otherwise not_available.
-    let missing_receipt_reason_val = if record.gap_state == "actionable"
-        && record
-            .receipt
-            .as_ref()
-            .and_then(|r| r.movement.as_deref())
-            .is_none()
-        && record.receipt_command.is_some()
-    {
-        // Receipt command exists but no movement yet — emit honest "no_attempt_recorded".
-        serde_json::Value::String("no_attempt_recorded".to_string())
-    } else {
-        serde_json::Value::String(not_available)
-    };
-
-    (movement_val, missing_receipt_reason_val)
-}
-
-/// Read swarm-attempt-ledger.json and surface the latest attempt's outcome
-/// for the canonical_gap_id of the top actionable gap. Returns not_available
-/// when the artifact is absent (absence != no outcome) or when no matching
-/// attempt entry is found.
-fn read_latest_attempt_outcome(
-    ledger_path: &std::path::Path,
-    top_gap: Option<&super::gap_artifacts::ValidatedGapArtifact>,
-) -> serde_json::Value {
-    let not_available = serde_json::Value::String("not_available".to_string());
-
-    // Artifact absent → not_available (do not fabricate).
-    let contents = match fs::read_to_string(ledger_path) {
-        Ok(c) => c,
-        Err(_) => return not_available,
-    };
-    let report: serde_json::Value = match serde_json::from_str(&contents) {
-        Ok(v) => v,
-        Err(_) => return not_available,
-    };
-
-    let canonical_gap_id = top_gap
-        .and_then(|a| a.identities.first())
-        .and_then(|id| id.canonical_gap_id.as_deref())
-        .unwrap_or("");
-
-    // latest_attempts is the preferred section; fall back to attempts.
-    let attempts_val = report
-        .get("latest_attempts")
-        .and_then(|v| v.as_array())
-        .or_else(|| report.get("attempts").and_then(|v| v.as_array()));
-
-    let Some(attempts) = attempts_val else {
-        return not_available;
-    };
-
-    let entry = if canonical_gap_id.is_empty() {
-        attempts.first()
-    } else {
-        // Another gap's attempt is not this gap's outcome.
-        attempts.iter().find(|entry| {
-            entry
-                .get("canonical_gap_id")
-                .and_then(|v| v.as_str())
-                .is_some_and(|cid| cid == canonical_gap_id)
-        })
-    };
-
-    entry
-        .and_then(|e| e.get("outcome"))
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(|s| serde_json::Value::String(s.to_string()))
-        .unwrap_or(not_available)
-}
-
-/// Read route-quality.json (RIPR-SPEC-0080 output) and surface a compact
-/// summary. Returns not_available when the artifact is absent OR when
-/// status = "blocked" (no real data to summarize).
-fn read_route_quality_summary(path: &std::path::Path) -> serde_json::Value {
-    let not_available = serde_json::Value::String("not_available".to_string());
-
-    let contents = match fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(_) => return not_available,
-    };
-    let report: serde_json::Value = match serde_json::from_str(&contents) {
-        Ok(v) => v,
-        Err(_) => return not_available,
-    };
-
-    // If status = "blocked", the rows are empty and there's nothing real to
-    // summarize — emit not_available to be honest.
-    if report.get("status").and_then(|v| v.as_str()) == Some("blocked") {
-        return not_available;
-    }
-
-    // Produce a compact summary: top repair_kind rows from the latest array.
-    let rows = report
-        .get("repair_route_quality_latest")
-        .and_then(|v| v.as_array());
-
-    let Some(rows) = rows else {
-        return not_available;
-    };
-
-    if rows.is_empty() {
-        return not_available;
-    }
-
-    // Emit up to 3 top rows, carrying repair_kind and success_rate.
-    let summary_rows: Vec<serde_json::Value> = rows
-        .iter()
-        .take(3)
-        .map(|row| {
-            let repair_kind = row
-                .get("repair_kind")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            let success_rate = row
-                .get("repair_kind_success_rate")
-                .cloned()
-                .unwrap_or(serde_json::Value::Null);
-            let attempted = row
-                .get("repair_kind_attempted")
-                .cloned()
-                .unwrap_or(serde_json::Value::Null);
-            serde_json::json!({
-                "repair_kind": repair_kind,
-                "attempted": attempted,
-                "success_rate": success_rate,
-            })
-        })
-        .collect();
-
-    serde_json::json!({
-        "report": "route-quality",
-        "status": report.get("status").and_then(|v| v.as_str()).unwrap_or("unknown"),
-        "top_repair_kind_rows": summary_rows,
-    })
-}
-
-fn workspace_receipt_status_report_paths() -> serde_json::Value {
-    serde_json::json!({
-        "gap_decision_ledger": crate::output::gap_decision_ledger::DEFAULT_GAP_DECISION_LEDGER_OUT,
-        "swarm_attempt_ledger": "target/ripr/reports/swarm-attempt-ledger.json",
-        "route_quality": "target/ripr/reports/route-quality.json",
-    })
-}
-
-fn collect_repair_packet_from_actionable_gaps(
-    root: &Path,
-    repo_config: &crate::config::RiprConfig,
-    path: &Path,
-    gap_id: Option<&str>,
-) -> Option<LSPAny> {
-    let contents = match read_artifact_capped(path) {
-        CappedArtifactRead::Contents(contents) => contents,
-        // Absent artifact: falling back to the next packet source is honest.
-        CappedArtifactRead::Missing => return None,
-        // Present but oversize/unreadable: typed sentinel so the client can
-        // distinguish a corrupt source from "no packet"; no fallback.
-        CappedArtifactRead::Unusable => {
-            return Some(repair_packet_sentinel(MALFORMED_ACTIONABLE_GAPS_REASON));
-        }
-    };
-    let report: serde_json::Value = match serde_json::from_str(&contents) {
-        Ok(report) => report,
-        Err(_) => return Some(repair_packet_sentinel(MALFORMED_ACTIONABLE_GAPS_REASON)),
-    };
-    let packets = report.get("packets").and_then(|v| v.as_array())?;
-    // A requested gap must match exactly. Answering an unknown id with the
-    // first packet handed out another gap's repair instructions; `None` lets
-    // the caller try the ledger, then say which gap has no packet.
-    let packet = if let Some(id) = gap_id {
-        packets.iter().find(|p| {
-            p.get("canonical_gap_id")
-                .and_then(|v| v.as_str())
-                .is_some_and(|cid| cid == id)
-        })?
-    } else {
-        packets
-            .iter()
-            .find(|p| {
-                p.get("gap_state")
-                    .and_then(|v| v.as_str())
-                    .is_some_and(|s| s == "actionable")
-            })
-            .or_else(|| packets.first())?
-    };
-
-    if let Some(sentinel) = source_subject_sentinel(
-        root,
-        repo_config,
-        &report,
-        super::gap_artifacts::GapArtifactKind::ActionableGaps,
-        "actionable-gaps.json",
-        "cargo xtask lane1-evidence-audit",
-    ) {
-        return Some(sentinel);
-    }
-
-    // Require the packet to be actionable to emit a complete repair packet.
-    if packet
-        .get("gap_state")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        != "actionable"
-    {
-        return Some(repair_packet_sentinel(
-            "gap is not actionable in actionable-gaps.json",
-        ));
-    }
-    validate_and_render_actionable_gap_packet(root, packet)
-}
-
-fn validate_and_render_actionable_gap_packet(
-    root: &Path,
-    packet: &serde_json::Value,
-) -> Option<LSPAny> {
-    use super::gap_artifacts::{GapArtifactRejection, require_actionable_packet_render_fields};
-
-    // The render-field contract is owned by the ingest boundary
-    // (`lsp::gap_artifacts::require_actionable_packet_render_fields`,
-    // RIPR-SPEC-0087 §8); this command-time re-check calls the same shared
-    // validator instead of re-walking packet fields.
-    if let Err(rejection) = require_actionable_packet_render_fields(packet) {
-        let reason = match rejection {
-            GapArtifactRejection::MalformedArtifact(message) => message.to_string(),
-            other => other.as_str().to_string(),
-        };
-        return Some(repair_packet_sentinel(&reason));
-    }
-
-    let str_field = |key: &str| -> Option<String> {
-        packet
-            .get(key)
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(ToOwned::to_owned)
-    };
-
-    // The shared validator above has already established that these fields
-    // are present and well-formed; the let-else fallbacks are defensive only.
-    let Some(canonical_gap_id) = str_field("canonical_gap_id") else {
-        return Some(repair_packet_sentinel(
-            "actionable packet is missing canonical_gap_id",
-        ));
-    };
-    let Some(repair_kind) = str_field("repair_kind") else {
-        return Some(repair_packet_sentinel(
-            "actionable packet is missing repair_kind",
-        ));
-    };
-    let Some(verify_command) = str_field("verify_command") else {
-        return Some(repair_packet_sentinel(
-            "actionable packet is missing verify_command",
-        ));
-    };
-    let Some(receipt_command) = str_field("receipt_command") else {
-        return Some(repair_packet_sentinel(
-            "actionable packet is missing receipt_command",
-        ));
-    };
-    // #4001: the copied commands name the selected workspace, not `.`.
-    let (Some(verify_command), Some(receipt_command)) = (
-        super::gap_artifacts::bind_portable_command(root, &verify_command),
-        super::gap_artifacts::bind_portable_command(root, &receipt_command),
-    ) else {
-        return Some(repair_packet_sentinel(UNBOUND_PACKET_COMMANDS_REASON));
-    };
-
-    let allowed_edit_surface: Vec<serde_json::Value> = packet
-        .get("allowed_edit_surface")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    let must_not_change: Vec<serde_json::Value> = packet
-        .get("must_not_change")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    let raw_evidence_refs: Vec<serde_json::Value> = packet
-        .get("raw_evidence_refs")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    let confidence = packet
-        .get("confidence_basis")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .unwrap_or("static_only")
-        .to_owned();
-
-    // Derive language from raw_evidence_refs or canonical_gap_id.
-    let language = raw_evidence_refs
-        .iter()
-        .find_map(|r| {
-            r.get("language")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-                .map(ToOwned::to_owned)
-        })
-        .unwrap_or_default();
-
-    // Resolve source location from primary_anchor — never fabricate.
-    let anchor = packet.get("primary_anchor");
-    let anchor_file = anchor
-        .and_then(|a| a.get("file"))
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(ToOwned::to_owned);
-    let anchor_line = anchor
-        .and_then(|a| a.get("line"))
-        .and_then(|v| v.as_u64())
-        .filter(|&n| n > 0);
-
-    let source_location = match (anchor_file, anchor_line) {
-        (Some(file), Some(line)) => serde_json::json!({ "file": file, "line": line }),
-        (Some(file), None) => serde_json::json!({
-            "status": "source_location_unresolved",
-            "file": file,
-        }),
-        _ => serde_json::json!({ "status": "source_location_unresolved" }),
-    };
-
-    let result = serde_json::json!({
-        "schema_version": "0.1",
-        "tool": "ripr",
-        "kind": "repair_packet",
-        "canonical_gap_id": canonical_gap_id,
-        "language": language,
-        "repair_kind": repair_kind,
-        "source_location": source_location,
-        "allowed_edit_surface": allowed_edit_surface,
-        "verify_command": verify_command,
-        "receipt_command": receipt_command,
-        "must_not_change": must_not_change,
-        "raw_evidence_refs": raw_evidence_refs,
-        "confidence": confidence,
-        "limits_note": "Static evidence only; advisory, not a gate decision.",
-    });
-    serde_json::from_value(result).ok()
-}
-
-fn collect_repair_packet_from_ledger(
-    root: &Path,
-    repo_config: &crate::config::RiprConfig,
-    path: &Path,
-    gap_id: Option<&str>,
-) -> Option<LSPAny> {
-    let contents = match read_artifact_capped(path) {
-        CappedArtifactRead::Contents(contents) => contents,
-        // Absent artifact: no packet is available, which is a normal state.
-        CappedArtifactRead::Missing => return None,
-        // Present but oversize/unreadable: typed sentinel, not a silent None.
-        CappedArtifactRead::Unusable => {
-            return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON));
-        }
-    };
-    let records = match parse_gap_records_json_for_root(&contents, Some(root)) {
-        Ok(records) => records,
-        Err(_) => return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON)),
-    };
-    let record = if let Some(id) = gap_id {
-        records
-            .iter()
-            .find(|r| r.gap_id == id || r.canonical_gap_id == id)?
-    } else {
-        records.iter().find(|r| r.gap_state == "actionable")?
-    };
-    if let Some(sentinel) = ledger_source_subject_sentinel(root, repo_config, &contents) {
-        return Some(sentinel);
-    }
-    // Use the existing validator for completeness gate.
-    if let Err(reason) = validate_agent_gap_record_packet(record) {
-        return Some(serde_json::json!({
-            "schema_version": "0.1",
-            "tool": "ripr",
-            "kind": "repair_packet",
-            "status": "not_actionable_or_incomplete",
-            "reason": reason,
-        }));
-    }
-
-    let route = record.repair_route.as_ref()?;
-    // #4001: the copied commands name the selected workspace, not `.`.
-    let bind = |command: &str| super::gap_artifacts::bind_portable_command(root, command);
-    let (Some(verify_command), Some(receipt_command)) = (
-        bind(record.verification_commands.first()?),
-        bind(record.receipt_command.as_deref()?),
-    ) else {
-        return Some(repair_packet_sentinel(UNBOUND_PACKET_COMMANDS_REASON));
-    };
-    let allowed_edit_surface =
-        crate::output::agent_seam_packets::allowed_edit_surface_for_gap_route(route);
-    let must_not_change: Vec<String> =
-        crate::output::agent_seam_packets::gap_record_packet_do_not_do(record);
-
-    let anchor = record.anchor.as_ref();
-    let anchor_file = anchor
-        .and_then(|a| a.file.as_deref())
-        .filter(|s| !s.is_empty())
-        .map(crate::output::path::display_path_text);
-    let anchor_line = anchor.and_then(|a| a.line).filter(|&n| n > 0);
-    let source_location = match (anchor_file, anchor_line) {
-        (Some(file), Some(line)) => serde_json::json!({ "file": file, "line": line }),
-        (Some(file), None) => serde_json::json!({
-            "status": "source_location_unresolved",
-            "file": file,
-        }),
-        _ => serde_json::json!({ "status": "source_location_unresolved" }),
-    };
-
-    let canonical_gap_id = if record.canonical_gap_id.trim().is_empty() {
-        &record.gap_id
-    } else {
-        &record.canonical_gap_id
-    };
-
-    let result = serde_json::json!({
-        "schema_version": "0.1",
-        "tool": "ripr",
-        "kind": "repair_packet",
-        "canonical_gap_id": canonical_gap_id,
-        "language": &record.language,
-        "repair_kind": route.route_kind.as_str(),
-        "source_location": source_location,
-        "allowed_edit_surface": allowed_edit_surface,
-        "verify_command": verify_command,
-        "receipt_command": receipt_command,
-        "must_not_change": must_not_change,
-        "raw_evidence_refs": &record.evidence_ids,
-        "confidence": "static_only",
-        "limits_note": "Static evidence only; advisory, not a gate decision.",
-    });
-    serde_json::from_value(result).ok()
-}
-
-fn no_repair_packet_reason(gap_id: Option<&str>) -> String {
-    let subject = match gap_id {
-        Some(id) => {
-            let mut echoed: String = id.chars().take(ECHOED_ID_MAX_CHARS).collect();
-            if echoed.len() < id.len() {
-                echoed.push_str("...");
-            }
-            format!("no repair packet for gap `{echoed}`")
-        }
-        None => "no repair packet".to_string(),
-    };
-    format!(
-        "{subject}: neither {DEFAULT_ACTIONABLE_GAPS_OUT} nor {DEFAULT_GAP_DECISION_LEDGER_OUT} \
-holds one; run `ripr pilot --root .` for seams with their repair commands, or write the gap \
-ledger with `ripr reports gap-ledger --check-output PATH` from saved `ripr check --format json` \
-output"
-    )
-}
-
-fn repair_packet_sentinel(reason: &str) -> LSPAny {
-    serde_json::json!({
-        "schema_version": "0.1",
-        "tool": "ripr",
-        "kind": "repair_packet",
-        "status": "not_actionable_or_incomplete",
-        "reason": reason,
-    })
-}
-
-/// Typed-degradation reasons for a present-but-unparseable packet source.
-/// Vocabulary mirrors `limitation_non_claims("malformed_artifact")`: the
-/// client must be able to tell "no packet" apart from "packet source corrupt;
-/// artifact regeneration required before exposure can be assessed".
-const MALFORMED_ACTIONABLE_GAPS_REASON: &str = "actionable-gaps.json is malformed; artifact regeneration required before exposure can be assessed";
-const UNBOUND_PACKET_COMMANDS_REASON: &str =
-    "packet commands cannot be bound to the selected workspace";
-
-const MALFORMED_GAP_LEDGER_REASON: &str = "gap-decision-ledger.json is malformed; artifact regeneration required before exposure can be assessed";
-
-fn gap_record_matches(record: &GapRecord, gap_id: &str) -> bool {
-    record.gap_id == gap_id || record.canonical_gap_id == gap_id
-}
-
-fn evidence_context_packet(snapshot: &AnalysisSnapshot, entry: &ClassifiedSeam) -> LSPAny {
-    // #4001/#3999: loop commands bind the snapshot's selected workspace root,
-    // not the language-server process working directory; the packet's
-    // `root` field stays the portable role.
-    let root = loop_commands::bound_root(&snapshot.root.to_string_lossy());
-    let seam = &entry.seam;
-    let evidence = &entry.evidence;
-    let seam_id = seam.id().as_str();
-    let outline = targeted_test_brief_outline_for_classified_seam(entry);
-    let related_test = evidence.related_tests.first();
-    let missing_discriminator = evidence
-        .missing_discriminators
-        .first()
-        .map(|missing| missing.value.as_str());
-    serde_json::json!({
-        "schema_version": "0.1",
-        "tool": "ripr",
-        "root": ".",
-        "base": snapshot.base.as_deref(),
-        "mode": snapshot.mode.as_str(),
-        "seam_id": seam_id,
-        "file": display_path(seam.file()),
-        "range": {
-            "start": seam.display_line(),
-            "end": seam.display_line(),
-        },
-        "class": entry.class.as_str(),
-        "seam_kind": seam.kind().as_str(),
-        "owner": seam.owner(),
-        "expression": seam.expression(),
-        "required_discriminator": seam.required_discriminator().as_str(),
-        "expected_sink": seam.expected_sink().as_str(),
-        "evidence_path": {
-            "reach": evidence_stage_status(&evidence.reach),
-            "activate": evidence_stage_status(&evidence.activate),
-            "propagate": evidence_stage_status(&evidence.propagate),
-            "observe": evidence_stage_status(&evidence.observe),
-            "discriminate": evidence_stage_status(&evidence.discriminate),
-        },
-        "evidence_summaries": {
-            "reach": evidence.reach.summary.as_str(),
-            "activate": evidence.activate.summary.as_str(),
-            "propagate": evidence.propagate.summary.as_str(),
-            "observe": evidence.observe.summary.as_str(),
-            "discriminate": evidence.discriminate.summary.as_str(),
-        },
-        "missing_discriminator": missing_discriminator,
-        "missing_discriminators": evidence.missing_discriminators.iter().map(|missing| {
-            serde_json::json!({
-                "value": missing.value.as_str(),
-                "reason": missing.reason.as_str(),
-            })
-        }).collect::<Vec<_>>(),
-        "related_test": related_test.map(|test| {
-            format!("{}::{}", display_path(&test.file), test.test_name)
-        }),
-        "related_test_location": related_test.map(|test| {
-            serde_json::json!({
-                "file": display_path(&test.file),
-                "line": test.line,
-                "test_name": test.test_name.as_str(),
-                "oracle_kind": test.oracle_kind.as_str(),
-                "oracle_strength": test.oracle_strength.as_str(),
-            })
-        }),
-        "suggested_assertion": suggested_assertion_for_classified_seam(entry),
-        "suggested_test": {
-            "file": outline.suggested_file,
-            "name": outline.suggested_name,
-            "candidate_value": outline.candidate_value,
-            "assertion_shape": outline.assertion_shape,
-        },
-        // The repair start only for a seam `agent repair` would accept (the
-        // fail-closed repair-packet flip, RIPR-SPEC-0087 §8, plus a
-        // test-surface target); `null` otherwise (#3906).
-        "repair_command": repair_start_command_for(entry, &root),
-        "agent_packet_command": loop_commands::agent_packet_command(
-            &root,
-            seam_id,
-            loop_commands::EDITOR_AGENT_PACKET_ARTIFACT,
-        ),
-        "agent_brief_command": loop_commands::agent_brief_command(
-            &root,
-            seam_id,
-            loop_commands::EDITOR_AGENT_BRIEF_ARTIFACT,
-        ),
-        "after_snapshot_command": loop_commands::check_repo_exposure_command_with_base(
-            &root,
-            snapshot.base.as_deref(),
-            snapshot.mode.as_str(),
-            loop_commands::PILOT_AFTER_SNAPSHOT_ARTIFACT,
-        ),
-        "verify_command": loop_commands::agent_verify_command(
-            &root,
-            loop_commands::PILOT_BEFORE_SNAPSHOT_ARTIFACT,
-            loop_commands::PILOT_AFTER_SNAPSHOT_ARTIFACT,
-            Some(loop_commands::EDITOR_AGENT_VERIFY_ARTIFACT),
-        ),
-        "receipt_command": loop_commands::agent_receipt_command(
-            &root,
-            loop_commands::EDITOR_AGENT_VERIFY_ARTIFACT,
-            seam_id,
-            Some(loop_commands::EDITOR_AGENT_RECEIPT_ARTIFACT),
-        ),
-        "limits_note": "Static evidence only; no runtime mutation execution.",
-    })
-}
-
-fn evidence_stage_status(evidence: &StageEvidence) -> &'static str {
-    match evidence.state {
-        StageState::Yes => "present",
-        StageState::Weak => "weak",
-        StageState::No => "missing",
-        StageState::Unknown => "unknown",
-        StageState::Opaque => "opaque",
-        StageState::NotApplicable => "not_applicable",
     }
 }
 
@@ -12796,13 +12163,8 @@ mod work_done_progress_guard_tests {
             backend.record_health_outcome(&first, RefreshAttemptOutcome::Published);
             // `uncovered` is saved afterwards; the still-active refresh is aborted.
             backend.record_saved_content_digest_and_advance(&uncovered_uri, "u".to_string());
-            let held = |backend: &Backend| -> Vec<Uri> {
-                backend
-                    .saved_content_digests
-                    .lock()
-                    .map(|digests| digests.keys().cloned().collect())
-                    .unwrap_or_default()
-            };
+            let held =
+                |backend: &Backend| -> Vec<Uri> { backend.quarantine.saved_content_digest_uris() };
             if held(backend).len() != 2 {
                 return Err("precondition: both digests recorded".to_string());
             }
@@ -13587,6 +12949,75 @@ mod list_actionable_items_tests {
         Ok(())
     }
 
+    fn preview_finding(language: crate::domain::LanguageId, file: &str) -> crate::domain::Finding {
+        let mut finding = crate::lsp::tests::sample_finding();
+        finding.probe.location.file = PathBuf::from(file);
+        finding.language = Some(language);
+        finding.language_status = Some(crate::domain::LanguageStatus::Preview);
+        finding
+    }
+
+    /// #11296: Python and TypeScript preview findings withheld by the
+    /// actionable profile (no producer-backed fix route) must be disclosed
+    /// on the pull channel, never silently reading as a clean file. The
+    /// actionable eligibility predicate stays unchanged: nothing is
+    /// promoted to a diagnostic here.
+    #[test]
+    fn actionable_profile_discloses_withheld_python_and_typescript_preview_findings()
+    -> Result<(), String> {
+        for (language, file) in [
+            (crate::domain::LanguageId::Python, "src/click/core.py"),
+            (crate::domain::LanguageId::TypeScript, "src/v4/core/util.ts"),
+        ] {
+            let mut snapshot = snapshot_with_selection(Some(applied_selection()?));
+            snapshot.findings = vec![preview_finding(language, file)];
+            snapshot.diagnostic_profile = LspDiagnosticProfile::Actionable;
+
+            // Fail-closed: the finding is still not an eligible diagnostic.
+            assert_eq!(snapshot.actionable_diagnostic_count(), 0, "{file}");
+            let disclosure = super::profile_withholding_pull_disclosure(&snapshot)
+                .ok_or_else(|| format!("{file}: withheld preview finding must disclose"))?;
+            assert!(
+                disclosure.contains("1 preview-language finding(s)")
+                    && disclosure.contains("diagnosticProfile"),
+                "{file}: {disclosure}"
+            );
+            let (count, classes, preview) =
+                super::withheld_findings_summary(&snapshot).ok_or("a snapshot yields a summary")?;
+            assert_eq!((count, preview), (1, 1), "{file}");
+            assert_eq!(classes, vec!["weakly_exposed"], "{file}");
+            let status = super::withheld_findings_status_payload(Some((count, classes, preview)));
+            assert_eq!(status["count"], 1, "{status}");
+            assert_eq!(status["preview_count"], 1, "{status}");
+            assert!(status["recovery_route"].is_string(), "{status}");
+
+            // Negative control: the full profile publishes it instead, so
+            // there is nothing withheld to disclose.
+            snapshot.diagnostic_profile = LspDiagnosticProfile::Full;
+            assert_eq!(super::profile_withholding_pull_disclosure(&snapshot), None);
+        }
+        Ok(())
+    }
+
+    /// #11296 negative control: a withheld non-preview (Rust) gap-class
+    /// finding is already named by `hidden_gaps`; it must not be counted as
+    /// a preview withholding, and a preview finding that is not candidate
+    /// current stays silent.
+    #[test]
+    fn preview_withholding_disclosure_ignores_non_preview_and_non_current_findings()
+    -> Result<(), String> {
+        let mut snapshot = snapshot_with_selection(Some(applied_selection()?));
+        snapshot.diagnostic_profile = LspDiagnosticProfile::Actionable;
+        snapshot.findings = vec![crate::lsp::tests::sample_finding()];
+        assert_eq!(
+            super::profile_withholding_pull_disclosure(&snapshot),
+            None,
+            "a non-preview hidden gap is not a preview withholding"
+        );
+        assert_eq!(super::withheld_preview_summary(&snapshot).0, 0);
+        Ok(())
+    }
+
     /// Sort a JSON object's keys for a closed-shape comparison.
     fn sorted_keys(value: &serde_json::Value) -> Vec<String> {
         let mut keys: Vec<String> = value
@@ -13978,5 +13409,181 @@ mod pull_disclosure_dedup_tests {
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
         })
+    }
+}
+
+/// Stat identity for on-disk bytes used by [`disk_bytes_equal_text`]. When it
+/// is unchanged, the bounded read and digest are reused.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DiskContentStatKey {
+    len: u64,
+    modified: Option<(u64, u32)>,
+    ino: u64,
+}
+
+fn disk_content_stat_key(meta: &fs::Metadata) -> DiskContentStatKey {
+    let ino = {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            meta.ino()
+        }
+        #[cfg(not(unix))]
+        {
+            0
+        }
+    };
+    let modified = meta.modified().ok().map(|instant| {
+        let duration = instant
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        (duration.as_secs(), duration.subsec_nanos())
+    });
+    DiskContentStatKey {
+        len: meta.len(),
+        modified,
+        ino,
+    }
+}
+
+type DiskEqualityDigestCache = Mutex<BTreeMap<PathBuf, (DiskContentStatKey, Option<String>)>>;
+
+static DISK_EQUALITY_DIGEST_CACHE: LazyLock<DiskEqualityDigestCache> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
+#[cfg(test)]
+thread_local! {
+    static DISK_EQUALITY_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn reset_disk_equality_read_cache_for_tests() {
+    if let Ok(mut cache) = DISK_EQUALITY_DIGEST_CACHE.lock() {
+        cache.clear();
+    }
+    DISK_EQUALITY_READS.with(|reads| reads.set(0));
+}
+
+fn cached_disk_content_digest(path: &Path, stat_key: &DiskContentStatKey) -> Option<String> {
+    if let Ok(cache) = DISK_EQUALITY_DIGEST_CACHE.lock()
+        && let Some((cached_key, digest)) = cache.get(path)
+        && cached_key == stat_key
+    {
+        return digest.clone();
+    }
+
+    #[cfg(test)]
+    DISK_EQUALITY_READS.with(|reads| reads.set(reads.get() + 1));
+
+    let digest = super::state::read_saved_bytes(path).map(|disk| content_digest(&disk));
+    if let Ok(mut cache) = DISK_EQUALITY_DIGEST_CACHE.lock() {
+        cache.insert(path.to_path_buf(), (stat_key.clone(), digest.clone()));
+    }
+    digest
+}
+
+/// Whether the regular file at the client-named `path` holds exactly `text`.
+/// A cheap length check precedes the read. The path may be a device or FIFO
+/// (`/dev/zero` reports length 0), so the read goes through the bounded
+/// regular-file reader, never an unbounded `fs::read`. Unchanged on-disk
+/// content is digested once per `(len, mtime, ino)` stat key.
+fn disk_bytes_equal_text(path: &Path, text: &str) -> bool {
+    let Ok(text_len) = u64::try_from(text.len()) else {
+        return false;
+    };
+    let Ok(meta) = fs::metadata(path) else {
+        return false;
+    };
+    if meta.len() != text_len {
+        return false;
+    }
+    let stat_key = disk_content_stat_key(&meta);
+    let Some(disk_digest) = cached_disk_content_digest(path, &stat_key) else {
+        return false;
+    };
+    disk_digest == content_digest(text.as_bytes())
+}
+
+#[cfg(test)]
+mod disk_bytes_equal_text_tests {
+    use super::{
+        DISK_EQUALITY_READS, disk_bytes_equal_text, reset_disk_equality_read_cache_for_tests,
+    };
+
+    fn temp_disk_path(label: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "ripr-disk-equal-{}-{}-{:?}.txt",
+            label,
+            std::process::id(),
+            std::thread::current().id()
+        ))
+    }
+
+    #[test]
+    fn device_and_directory_paths_never_equal_empty_text() {
+        reset_disk_equality_read_cache_for_tests();
+        // `/dev/zero` stats as length 0, so an empty buffer passes the length
+        // check; the unbounded read that followed grew RSS past 5 GB.
+        #[cfg(target_os = "linux")]
+        assert!(!disk_bytes_equal_text(
+            std::path::Path::new("/dev/zero"),
+            ""
+        ));
+        assert!(!disk_bytes_equal_text(&std::env::temp_dir(), ""));
+    }
+
+    #[test]
+    fn regular_file_equality_is_exact() -> Result<(), String> {
+        reset_disk_equality_read_cache_for_tests();
+        let path = temp_disk_path("exact");
+        std::fs::write(&path, "abc").map_err(|err| format!("write failed: {err}"))?;
+        let equal = disk_bytes_equal_text(&path, "abc");
+        let same_len_different = disk_bytes_equal_text(&path, "abd");
+        let shorter = disk_bytes_equal_text(&path, "ab");
+        let _ = std::fs::remove_file(&path);
+        if !equal || same_len_different || shorter {
+            return Err(format!(
+                "equal={equal} same_len_different={same_len_different} shorter={shorter}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn same_length_buffer_checks_read_unchanged_disk_once() -> Result<(), String> {
+        reset_disk_equality_read_cache_for_tests();
+        let path = temp_disk_path("read-once");
+        std::fs::write(&path, "abc").map_err(|err| format!("write failed: {err}"))?;
+        assert!(!disk_bytes_equal_text(&path, "abd"));
+        assert!(!disk_bytes_equal_text(&path, "abe"));
+        assert!(!disk_bytes_equal_text(&path, "abx"));
+        let reads = DISK_EQUALITY_READS.with(std::cell::Cell::get);
+        let _ = std::fs::remove_file(&path);
+        if reads != 1 {
+            return Err(format!("expected one disk read, got {reads}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn disk_rewrite_rereads_and_finds_equality() -> Result<(), String> {
+        reset_disk_equality_read_cache_for_tests();
+        let path = temp_disk_path("rewrite");
+        std::fs::write(&path, "abc").map_err(|err| format!("write failed: {err}"))?;
+        if !disk_bytes_equal_text(&path, "abc") {
+            return Err("initial equality check failed".to_string());
+        }
+        std::fs::write(&path, "abd").map_err(|err| format!("rewrite failed: {err}"))?;
+        if !disk_bytes_equal_text(&path, "abd") {
+            return Err("post-rewrite equality check failed".to_string());
+        }
+        let reads = DISK_EQUALITY_READS.with(std::cell::Cell::get);
+        let _ = std::fs::remove_file(&path);
+        if reads != 2 {
+            return Err(format!(
+                "expected two disk reads after rewrite, got {reads}"
+            ));
+        }
+        Ok(())
     }
 }

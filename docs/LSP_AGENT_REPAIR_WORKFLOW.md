@@ -58,11 +58,11 @@ Show Status
             -> edit ONLY allowed_edit_surface
             -> run verify_command
             -> run receipt_command
-            -> Show Receipt Status
-            -> Show Route Quality
+            -> Show Result Record Status
+            -> Show Repair Route Summary
             -> outcome improved? -> done for this gap
                outcome unchanged/regressed? -> inspect route-quality guidance; do NOT repeat blindly
-     NO  -> inspect top limitation via Show Top Limitation
+     NO  -> inspect top limitation via Show Main Analysis Limit
             -> repair_route describes what would unlock it
             -> do NOT run a repair receipt command for a limitation
 ```
@@ -176,7 +176,7 @@ invocation. It writes a structured receipt artifact that records:
   `ripr receipt write` records `verify_status` (`passed`, `failed`, `not_run`,
   or `unknown`)
 
-In the editor, `ripr: Show Receipt Status` projects the top gap's receipt
+In the editor, `ripr: Show Result Record Status` projects the top gap's receipt
 movement as `receipt_status`. A receipt movement of `improved` means the static exposure evidence moved in the
 expected direction. It does not mean the behavior is semantically verified or
 runtime-correct.
@@ -187,9 +187,9 @@ different outcome; inspect the route-quality guidance in step 7 instead.
 
 ---
 
-## Step 6 — Show Receipt Status (`ripr.collectReceiptStatus`)
+## Step 6 — Show Result Record Status (`ripr.collectReceiptStatus`)
 
-**Command palette:** `ripr: Show Receipt Status`
+**Command palette:** `ripr: Show Result Record Status`
 **LSP executeCommand:** `ripr.collectReceiptStatus`
 
 Run after the receipt command completes.
@@ -213,9 +213,9 @@ repeat the edit blindly. Proceed to step 7.
 
 ---
 
-## Step 7 — Show Route Quality (VS Code command)
+## Step 7 — Show Repair Route Summary (VS Code command)
 
-**Command palette:** `ripr: Show Route Quality`
+**Command palette:** `ripr: Show Repair Route Summary`
 **Backing LSP executeCommand:** `ripr.collectReceiptStatus`
 
 Run when the receipt outcome is `unchanged`, `regressed`, or `unknown`, or any
@@ -244,7 +244,7 @@ limitation.
 When Show Status reports a limitation at the top instead of an actionable
 packet, the loop takes a different branch:
 
-**Command palette:** `ripr: Show Top Limitation`
+**Command palette:** `ripr: Show Main Analysis Limit`
 **LSP executeCommand:** `ripr.collectTopLimitation`
 
 The limitation panel reports:
@@ -276,12 +276,12 @@ explanation.
 | `ripr: Show Status` | `ripr.collectWorkspaceStatus` | Start of every loop iteration |
 | `ripr: Copy Top Repair Packet` | `ripr.collectRepairPacket` | When an actionable packet is available |
 | `ripr: Copy Verify Command (Top Repair Packet)` | `ripr.copyTopVerifyCommand` | Copy the verify command to the clipboard |
-| `ripr: Copy Receipt Command (Top Repair Packet)` | `ripr.copyTopReceiptCommand` | Copy the top packet's receipt command to the clipboard |
-| `ripr: Copy Receipt Command (Receipt Status)` | `ripr.copyReceiptCommand` | Copy the current gap's receipt command to the clipboard |
-| `ripr: Show Receipt Status` | `ripr.collectReceiptStatus` | After the receipt command completes |
-| `ripr: Show Route Quality` | `ripr.showRouteQuality` | When outcome is unchanged, regressed, or unknown |
-| `ripr: Show Top Limitation` | `ripr.collectTopLimitation` | When no actionable packet is available |
-| `ripr: Open Attempt Ledger` | `ripr.openAttemptLedger` | Inspect the full attempt history for this gap |
+| `ripr: Copy Result Record Command (Top Repair Packet)` | `ripr.copyTopReceiptCommand` | Copy the top packet's receipt command to the clipboard |
+| `ripr: Copy Result Record Command (Result Record Status)` | `ripr.copyReceiptCommand` | Copy the current gap's receipt command to the clipboard |
+| `ripr: Show Result Record Status` | `ripr.collectReceiptStatus` | After the receipt command completes |
+| `ripr: Show Repair Route Summary` | `ripr.showRouteQuality` | When outcome is unchanged, regressed, or unknown |
+| `ripr: Show Main Analysis Limit` | `ripr.collectTopLimitation` | When no actionable packet is available |
+| `ripr: Open Repair Attempt History` | `ripr.openAttemptLedger` | Inspect the full attempt history for this gap |
 | `ripr: Open Report` | `ripr.openReport` | Open the full RIPR report for this workspace |
 
 ---

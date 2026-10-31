@@ -126,6 +126,17 @@ whose one argument is the owner call itself. A helper that rebuilds or
 transforms its argument (`return { ...p, adult: true }`) is not an
 identity and keeps the weak reading.
 
+**Scalar expected value** (rule 4, #11256). `toMatchObject` with a string,
+number, boolean or `null` literal (or a signed number) is not an object
+subset. Vitest compares a non-object expected value for plain equality
+(`equals(actual, expected, [..., subsetEquality])`); Jest throws a matcher
+error unless the received value is an object. Which reading applies depends on
+the runner, so the assertion reads `unknown` / unknown, neither "too weak" nor
+`exact_value`, and names `typescript_match_object_scalar_unresolved` (not
+"unrecognised matcher"). The finding offers no repair start. Objects and arrays
+(rule 1 and the literal-container reading), `.not.toMatchObject` and
+`.rejects.toMatchObject` are unchanged.
+
 ### Decisions
 
 The owner delegated these choices on 2026-10-04 ("make reasonable
@@ -223,6 +234,12 @@ documented decisions and proceed"). Recorded on #6654.
    `adult: age >= 18, senior: 18 <= age,` line where only `senior` changed:
    rule 1 reads no pin.
 
+7. `expect(buildProfile("bo", 18)).toMatchObject("bo")` (a scalar literal),
+   or `5`, `true`, `null`: the row reads `unknown` / unknown, the finding
+   lists `typescript_match_object_scalar_unresolved`, is not `exposed` and
+   offers no repair start; `toMatchObject({ name: "bo" })` keeps its weak
+   reading.
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs`
@@ -230,6 +247,10 @@ documented decisions and proceed"). Recorded on #6654.
   `match_object_pin_looks_through_a_test_local_identity_helper` pins the
   amended example 4; `match_object_pin_reads_a_test_body_object_const`
   pins the amended example 5.
+- `match_object_with_a_scalar_literal_reads_unknown_while_containers_keep_their_grade`
+  and `match_object_scalar_names_its_own_limitation_and_withholds_the_packet`
+  pin example 7 (rule 4); `match_object_scalar_limitation_withholds_the_start_with_its_own_wording`
+  in `crates/ripr/src/output/typescript_packet_projection.rs` pins its wording.
 - `fixtures/typescript-verdict-corpus` pins example 1:
   `jest-mined-tomatchobject-field` reads `credited`; the amended example
   4: `jest-spec0250-ex04-normalized-result` reads `credited`; the amended

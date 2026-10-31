@@ -1045,7 +1045,7 @@ fn generated_init_config_banner_discloses_defaults_and_language_pin() -> Result<
     let generated = generated_init_config();
     for needle in [
         "every value below is a built-in",
-        "this file pins to [\"rust\"]",
+        "which starts at [\"rust\"] plus any Python or",
         "enables languages it detects from project markers",
         "deleting this file is not identical",
         "ripr config validate",
@@ -2962,12 +2962,46 @@ fn missing_config_ignores_nested_typescript_that_is_vendored_hidden_too_deep_or_
 
 #[cfg(feature = "lang-typescript")]
 #[test]
-fn missing_config_ignores_package_json_and_plain_javascript() -> Result<(), String> {
+fn missing_config_detects_package_source_beside_a_rust_project() -> Result<(), String> {
     let root = temp_root("ts-not-detected")?;
     write_file(&root.join("package.json"), "{}")?;
+    write_file(&root.join("Cargo.toml"), "[package]\nname = \"demo\"\n")?;
     write_file(&root.join("src/app.js"), "export {};\n")?;
     let config = load_for_root(&root)?;
+    assert_eq!(
+        config.languages().enabled_owned(),
+        vec![LanguageId::Rust, LanguageId::TypeScript]
+    );
+    let _ = fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// A manifest alone, or tooling config files, selects nothing (#10941).
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn missing_config_ignores_a_manifest_with_only_tooling_config() -> Result<(), String> {
+    let root = temp_root("ts-tooling-only")?;
+    write_file(&root.join("package.json"), "{}")?;
+    write_file(&root.join("eslint.config.js"), "export default [];\n")?;
+    let config = load_for_root(&root)?;
     assert_eq!(config.languages().enabled_owned(), vec![LanguageId::Rust]);
+    let _ = fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// #11336: a plain JavaScript package (manifest plus JavaScript, no Cargo or
+/// Python project) is analyzed without a hand-written `ripr.toml`.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn missing_config_detects_a_javascript_led_package() -> Result<(), String> {
+    let root = temp_root("js-led-detected")?;
+    write_file(&root.join("package.json"), "{}")?;
+    write_file(&root.join("index.js"), "export {};\n")?;
+    let config = load_for_root(&root)?;
+    assert_eq!(
+        config.languages().enabled_owned(),
+        vec![LanguageId::Rust, LanguageId::TypeScript]
+    );
     let _ = fs::remove_dir_all(&root);
     Ok(())
 }
@@ -3004,5 +3038,80 @@ fn explicit_config_wins_when_markers_and_source_both_detect() -> Result<(), Stri
         "explicit list is used verbatim: no duplicate, order preserved"
     );
     let _ = fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// #11563: the `toml` lexer needs ~27x the text size, so `parse_config` itself
+/// refuses text past the metadata cap (the candidate-tree blob never passes
+/// through the bounded file read).
+#[test]
+fn parse_config_refuses_text_over_the_metadata_cap() -> Result<(), String> {
+    let cap = crate::bounded_input::MAX_METADATA_TOML_BYTES as usize;
+    let at_cap = "\n".repeat(cap);
+    parse_config(&at_cap)?;
+    let over = "\n".repeat(cap + 1);
+    let error = parse_config(&over)
+        .err()
+        .ok_or("text over the cap must be refused")?;
+    assert!(error.contains("metadata limit"), "{error}");
+    Ok(())
+}
+
+/// #11560: a hostile `ripr.toml` may list tens of thousands of entries. The
+/// duplicate check must stay linear, and still name the first duplicate.
+#[test]
+fn large_path_lists_parse_in_linear_time_and_still_reject_duplicates() -> Result<(), String> {
+    let render = |key: &str, table: &str, entries: &[String]| {
+        let items = entries
+            .iter()
+            .map(|entry| format!("\"{entry}\""))
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("[{table}]\n{key} = [{items}]\n")
+    };
+    let patterns: Vec<String> = (0..60_000).map(|i| format!("gen{i}/**/*.rs")).collect();
+    let files: Vec<String> = (0..60_000).map(|i| format!("src/f{i}.rs")).collect();
+    let roots: Vec<String> = (0..60_000).map(|i| format!("tests/t{i}")).collect();
+    let started = std::time::Instant::now();
+    let config = parse_config(&render(
+        "generated_file_patterns",
+        "languages.rust",
+        &patterns,
+    ))?;
+    assert_eq!(
+        config.languages().rust.generated_file_patterns.len(),
+        60_000
+    );
+    let config = parse_config(&render("handwritten_files", "languages.rust", &files))?;
+    assert_eq!(config.languages().rust.handwritten_files.len(), 60_000);
+    let bun = format!(
+        "{}bridge_hints = \"hints.json\"\n",
+        render("test_roots", "profiles.bun_ub", &roots)
+    );
+    let config = parse_config(&bun)?;
+    assert_eq!(
+        config
+            .profiles()
+            .bun_ub
+            .as_ref()
+            .map(|p| p.test_roots.len()),
+        Some(60_000)
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "60k-entry path lists must parse in linear time, took {:?}",
+        started.elapsed()
+    );
+
+    let mut duplicated = patterns.clone();
+    duplicated.push("gen17/**/*.rs".to_string());
+    let error = parse_config(&render(
+        "generated_file_patterns",
+        "languages.rust",
+        &duplicated,
+    ))
+    .err()
+    .ok_or("duplicate pattern must be rejected")?;
+    assert!(error.contains("`gen17/**/*.rs` more than once"), "{error}");
     Ok(())
 }

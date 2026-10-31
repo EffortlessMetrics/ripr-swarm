@@ -12,7 +12,7 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: this TypeScript preview finding's repair packet is not ready (boundary operand `threshold` in the missing discriminator `amount == threshold` is not bound to a concrete value by the observed call input `discount(50, 100)`, so that input is…); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
+  Safe next action: this TypeScript preview finding's repair packet is not ready (derive an input where `amount == threshold` holds before this repair can be handed to an agent: boundary operand `threshold` is not bound to a concrete value by the observed call…); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
   File: src/pricing.ts:3
   Language: typescript
   Language status: preview
@@ -23,7 +23,7 @@ Start here:
   Missing check (1 of 2): Related tests reach `discount` with a strong oracle, but no strong
     assertion observes a `discount(...)` call at the changed predicate boundary `amount ==
     threshold`; inputs on one side of the boundary do not discriminate the changed comparison
-  Related test (1 of 2 matched rows): tests/pricing.test.ts:3 no discount below threshold (ripr could not confirm that this assertion observes the changed behavior)
+  Related test (1 of 2 matched rows): tests/pricing.test.ts:3 no discount below threshold (the preview adapter could not confirm that this assertion observes the changed behavior)
   Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `amount == threshold`; no actionable repair packet is emitted until verify,
     receipt, and edit-boundary fields are available

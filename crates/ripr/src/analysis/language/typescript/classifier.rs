@@ -1688,6 +1688,8 @@ pub(crate) struct TsBoundaryRowContext<'a> {
     /// not witness reads it.
     pub(crate) boundary_fact: Option<&'a TypeScriptBoundaryFact>,
     pub(crate) line_text: &'a str,
+    /// Full changed source line for branch/source provenance checks.
+    pub(crate) source_line: &'a str,
     pub(crate) owner: &'a TypeScriptOwner,
     /// Every parsed test, so a row can blank its file's other test bodies.
     pub(crate) sibling_tests: &'a [TypeScriptTest],
@@ -1768,6 +1770,7 @@ pub(crate) fn ts_predicate_boundary_row_activation(
         boundary,
         boundary_fact,
         line_text,
+        source_line,
         owner,
         sibling_tests,
         alias_map,
@@ -1911,8 +1914,9 @@ pub(crate) fn ts_predicate_boundary_row_activation(
             }
             if let Some(expected) = assertion.expected_value_or_variant.as_deref()
                 && !left.starts_with("typeof ")
-                && expected_side_is_live(
+                && expected_side_is_live_at_source(
                     owner,
+                    source_line,
                     line_text,
                     &effective_left,
                     &effective_right,
@@ -5142,9 +5146,24 @@ pub(super) fn balanced_close_offset(inner: &str) -> Option<usize> {
 /// behavior took the opposite branch — that is exactly what makes the input
 /// discriminating. Crate-visible so the typescript unit tests can pin the
 /// `None` fail-closed contract directly.
+#[cfg(test)]
 pub(crate) fn expected_side_is_live(
     owner: &TypeScriptOwner,
     line_text: &str,
+    left: &str,
+    right: &str,
+    arguments: &[String],
+    expected: &str,
+) -> Option<bool> {
+    expected_side_is_live_at_source(
+        owner, line_text, line_text, left, right, arguments, expected,
+    )
+}
+
+fn expected_side_is_live_at_source(
+    owner: &TypeScriptOwner,
+    source_line: &str,
+    boundary_text: &str,
     left: &str,
     right: &str,
     arguments: &[String],
@@ -5163,7 +5182,9 @@ pub(crate) fn expected_side_is_live(
     } else {
         Some(signed_numeric_expected_value(expected)?)
     };
-    let operator = changed_comparison_operator(line_text)?;
+    // The changed operator comes from the selected comparison identity; the
+    // branch locator below reads the full source line (#10399).
+    let operator = changed_comparison_operator(boundary_text)?;
     let lines: Vec<&str> = source.lines().collect();
     // Locate the changed line inside the owner body. Uniqueness runs before
     // the declared offset (#4117 review): a multiline variable declarator can
@@ -5174,7 +5195,7 @@ pub(crate) fn expected_side_is_live(
     let mut matching = lines
         .iter()
         .enumerate()
-        .filter(|(_, candidate)| candidate.trim() == line_text.trim())
+        .filter(|(_, candidate)| candidate.trim() == source_line.trim())
         .map(|(index, _)| index);
     let start = matching.next()?;
     if matching.next().is_some() {
@@ -6415,6 +6436,7 @@ pub(crate) fn classify_change_with_alias_state(
         reexport_index,
         alias_map,
         alias_unavailable,
+        None,
     )
 }
 
@@ -6705,7 +6727,7 @@ fn decorated_return_changed(owner: &TypeScriptOwner, line: usize) -> bool {
 /// for the deleted-lines closure and the test-only wrapper.
 #[allow(
     clippy::too_many_arguments,
-    reason = "12 structurally-distinct context tokens; bundling forces heap allocation; count is stable"
+    reason = "13 structurally-distinct context tokens; bundling forces heap allocation; count is stable"
 )]
 pub(crate) fn classify_resolved_owner(
     file: &Path,
@@ -6720,6 +6742,7 @@ pub(crate) fn classify_resolved_owner(
     reexport_index: &ReExportIndex,
     alias_map: Option<&TsAliasMap>,
     alias_unavailable: Option<&TsAliasMapLoadGap>,
+    ast_shape: Option<TypeScriptProbeShape>,
 ) -> Option<Finding> {
     // RIPR-SPEC-0243 rule 21: a decorated-method reach observes only an edit
     // to the wrapper's pass-through return. Any other line of the decorator
@@ -6755,7 +6778,19 @@ pub(crate) fn classify_resolved_owner(
     // `ts_oracle_kind_matches_seam` filter that `strongest_family_matching_oracle`
     // applies below, so a row never displays a wrong-family assertion while
     // classification judges another.
-    let probe_shape = classify_probe_shape_detail(line_text);
+    // #11250: the AST-derived shape for this line wins when the single
+    // parse produced one; absent facts (old-side lines, parse errors,
+    // test-only paths) keep the line-text classification.
+    // #11487: a function opened and closed on the changed line carries several
+    // statements on it, so the AST fact keeps only the last one (a trailing
+    // `return`). Read such a line by its first statement, as the same code
+    // formatted over several lines would be read.
+    let one_line_function = one_line_function_body(line_text).len() != line_text.len();
+    let probe_shape = if one_line_function {
+        classify_probe_shape_detail(line_text)
+    } else {
+        ast_shape.unwrap_or_else(|| classify_probe_shape_detail(line_text))
+    };
     // A one-line guard whose condition is unchanged was edited in its
     // statement (`if (n > 100) return n - 20;`), so the guard's boundary is not
     // the changed behavior; the shape stays unrecognised rather than crediting
@@ -7107,13 +7142,24 @@ pub(crate) fn classify_resolved_owner(
     // lets a row establish a definite miss; it reads and parses the owner's
     // module, so it is loaded only when some row is still unresolved, and
     // the same value later feeds the boundary-input evidence line.
-    let predicate_boundary = ts_predicate_boundary(&probe_shape, line_text);
+    // #10399: the boundary is the comparison the edit changed, never a
+    // neighbouring one on the same line.
+    let boundary_text =
+        typescript_changed_boundary_text(file, &probe_shape.family, old_line_text, line_text);
+    let boundary_text = boundary_text.as_ref();
+    let predicate_boundary = ts_predicate_boundary(&probe_shape, boundary_text);
+    // #11256: a boundary operand no test call can set names its own limitation.
+    let named_limitations_from_derived_operand: Vec<TypeScriptNamedLimitation> =
+        derived_boundary_operand_limitation(owner, &predicate_boundary)
+            .into_iter()
+            .collect();
     let row_activation = |candidate: &TypeScriptRelatedCandidate<'_>,
                           boundary_fact: Option<&TypeScriptBoundaryFact>| {
         let context = TsBoundaryRowContext {
             boundary: &predicate_boundary,
             boundary_fact,
-            line_text,
+            line_text: boundary_text,
+            source_line: line_text,
             owner,
             sibling_tests: all_tests,
             alias_map,
@@ -7143,6 +7189,11 @@ pub(crate) fn classify_resolved_owner(
                     )
             });
     if fact_can_change_a_row {
+        // The fact path keeps the full changed source line: its whole-side
+        // and verbatim-line module gates (boundary_input.rs) read statement
+        // context and line identity the narrowed label text does not carry,
+        // so narrowed label text here would make every boundary-input and
+        // parameters fact inert on compound lines (#10399 sweep review).
         let fact =
             ts_boundary_fact_for_change(&probe_shape, line, line_text, owner, workspace_root);
         if let Some(fact) = &fact {
@@ -7193,7 +7244,23 @@ pub(crate) fn classify_resolved_owner(
                 },
             ));
 
-    let (class, reach_state, observe_state, discriminate_state, missing) = if related.is_empty() {
+    let (class, reach_state, observe_state, discriminate_state, missing) = if related.is_empty()
+        && is_private_member_owner(owner)
+    {
+        // #10440: a `#private` member cannot be named by a test, so an empty
+        // relation set says nothing about whether a public caller reaches it.
+        // Unknown, not the confident negative `no_static_path` would be.
+        (
+            ExposureClass::StaticUnknown,
+            StageState::Unknown,
+            StageState::Unknown,
+            StageState::Unknown,
+            vec![format!(
+                "`{}` is a `#private` class member, so no test can call it by name; whether a test reaches it through a public method of the class is not established either way.",
+                owner.name
+            )],
+        )
+    } else if related.is_empty() {
         (
             ExposureClass::NoStaticPath,
             StageState::No,
@@ -7335,9 +7402,9 @@ pub(crate) fn classify_resolved_owner(
                     )
                 })
         } else if boundary_witnessed {
-            ts_observation_guard_limitation(&probe_shape, line_text)
+            ts_observation_guard_limitation(&probe_shape, boundary_text)
         } else {
-            ts_predicate_boundary_limitation(&probe_shape, line_text, &owner.name)
+            ts_predicate_boundary_limitation(&probe_shape, boundary_text, &owner.name)
         };
         (
             ExposureClass::WeaklyExposed,
@@ -7391,8 +7458,10 @@ pub(crate) fn classify_resolved_owner(
         matches!(verdict.class, ExposureClass::StaticUnknown) && !ladder_entry_unknown;
     // Same unknown arm, different cause: the registration, not an assertion
     // callback, is what static analysis cannot resolve (#10438, #10501).
-    let conditional_registration_unknown =
-        ladder_unresolved_unknown && only_conditionally_registered_tests(related_candidates);
+    let private_member_unknown = ladder_unresolved_unknown && is_private_member_owner(owner);
+    let conditional_registration_unknown = ladder_unresolved_unknown
+        && !private_member_unknown
+        && only_conditionally_registered_tests(related_candidates);
     let post_ladder_context = TsPostLadderContext {
         all_tests,
         line,
@@ -7525,7 +7594,12 @@ pub(crate) fn classify_resolved_owner(
         && !ladder_entry_unknown
         && !hook_owner_unknown
         && !loop_count_unknown;
+    // #10440: a `#private` owner's unknown is unmodeled reach through a public
+    // caller, not an assertion in an unresolved callback.
+    let private_reach_unknown =
+        matches!(class, ExposureClass::StaticUnknown) && private_member_unknown;
     let unresolved_callback_unknown = matches!(class, ExposureClass::StaticUnknown)
+        && !private_member_unknown
         && (ladder_unresolved_unknown || hook_owner_unknown);
     let entry_reach_unknown = matches!(class, ExposureClass::StaticUnknown) && ladder_entry_unknown;
     // Collect named TS-specific limitations (RIPR-SPEC-0085 §PR4 taxonomy).
@@ -7550,7 +7624,7 @@ pub(crate) fn classify_resolved_owner(
         && has_owner_call_evidence
         && static_limit.is_none()
     {
-        typescript_missing_discriminators(&probe_shape, line, line_text, flow_sink.as_ref())
+        typescript_missing_discriminators(&probe_shape, line, boundary_text, flow_sink.as_ref())
     } else {
         Vec::new()
     };
@@ -7600,6 +7674,7 @@ pub(crate) fn classify_resolved_owner(
         has_owner_call_evidence,
         &missing_discriminators,
         observed_evidence_label(&related),
+        private_member_unknown,
     );
     missing.push(actionability.missing_summary());
 
@@ -7667,6 +7742,8 @@ pub(crate) fn classify_resolved_owner(
         "TypeScript preview adapter: the related tests reach the changed owner only through a same-module caller; discriminate unknown (RIPR-SPEC-0027).".to_string()
     } else if hook_owner_unknown {
         "TypeScript preview adapter: a synchronous mocha setup hook calls the changed owner outside every test body; discriminate unknown (RIPR-SPEC-0246 rule 7).".to_string()
+    } else if private_member_unknown {
+        "TypeScript preview adapter: the changed owner is a `#private` class member no test can call by name; discriminate unknown (RIPR-SPEC-0243).".to_string()
     } else if conditional_registration_unknown {
         "TypeScript preview adapter: every related test is registered under a condition or loop static analysis cannot evaluate; discriminate unknown (RIPR-SPEC-0243).".to_string()
     } else if ladder_unresolved_unknown {
@@ -7753,6 +7830,9 @@ pub(crate) fn classify_resolved_owner(
         ExposureClass::StaticUnknown if hook_owner_unknown => {
             "TypeScript preview advisory: a mocha setup hook calls the changed owner outside every test body, so a test may observe the state it set; no new assertion is needed on that evidence, and no repair packet is emitted.".to_string()
         }
+        ExposureClass::StaticUnknown if private_member_unknown => {
+            "TypeScript preview advisory: the changed owner is a `#private` class member, so no test can reference it directly and reach through a public method is not established; no new assertion is needed on that evidence, and no repair packet is emitted.".to_string()
+        }
         ExposureClass::StaticUnknown if conditional_registration_unknown => {
             "TypeScript preview advisory: every related test is registered under a condition or loop static analysis cannot evaluate, so whether it runs is not established; no new assertion is needed on that evidence, and no repair packet is emitted.".to_string()
         }
@@ -7827,6 +7907,8 @@ pub(crate) fn classify_resolved_owner(
     // an observed input that does not reach the boundary.
     if !missing_discriminators.is_empty()
         && let Some(fact) = boundary_fact.unwrap_or_else(|| {
+            // Full changed source line, as above: the narrowed label text
+            // cannot pass the module gates (#10399 sweep review).
             ts_boundary_fact_for_change(&probe_shape, line, line_text, owner, workspace_root)
         })
     {
@@ -7851,6 +7933,7 @@ pub(crate) fn classify_resolved_owner(
     for named_limit in named_limitations_from_static
         .iter()
         .chain(named_limitations_from_oracle.iter())
+        .chain(named_limitations_from_derived_operand.iter())
         .chain(named_limitations_from_ownership.iter())
         .chain(alias_gap.iter().map(|gap| &gap.limitation))
         .chain(named_limitations_from_spy.iter())
@@ -7948,6 +8031,8 @@ pub(crate) fn classify_resolved_owner(
             vec![StopReason::InfectionEvidenceUnknown]
         } else if static_unknown_by_mock {
             vec![StopReason::StaticProbeUnknown]
+        } else if private_reach_unknown {
+            vec![StopReason::TransitiveReachUnresolved]
         } else if unresolved_callback_unknown || loop_count_unknown {
             vec![StopReason::GapEvidenceUnresolved]
         } else if entry_reach_unknown {

@@ -107,6 +107,11 @@ pub(crate) struct CallIdentityMemos {
     /// a guard held across a query would serialize every worker and could
     /// re-enter on the rayon thread that steals a sibling seam mid-scan.
     pub(super) receiver_pin_syntax: super::OwnerPinSyntax,
+    /// #11509: the whole-workspace macro-site scan, parsed once per index and
+    /// absorbed by every owner-pin syntax instance over it (the diff pass's
+    /// candidate index, the seam walk, the receiver owner above, the seam
+    /// inventory). Keyed by the index state it was computed under.
+    pub(super) macro_site_scans: super::owner_pin::SharedMacroScans,
     /// #9218: the same per owner, built even when the owner has no
     /// same-named rival, for resolving a qualified call's spelled path.
     solo_identities: Mutex<SoloIdentities>,
@@ -2754,6 +2759,215 @@ fn qualified_call_names_owner(
     anchored && module_reexports_owner(index, owner, &owner_path, &owner_crate, rest)
 }
 
+/// Whether every call of `name` in `test` is spelled through a module that the
+/// test's own file declares and that file also defines a body-ful function of
+/// that name (#10855). Such a call names the test-local definition, not an
+/// owner in another file, even when the module is spelled like the owner's
+/// library crate. Used when no [`OwnerCallIdentity`] exists to settle the call
+/// (the rival sits in another crate class, so the identity rule is off).
+///
+/// `true` withholds the owner; `false` keeps the production relation. The
+/// reading is lexical and keeps the production relation whenever it is
+/// unsure. Documented cases that therefore still keep it although Rust would
+/// resolve to the local rival: a bare `use local::f; f()`, `use local::*`, a
+/// rival module nested inside another module, a `mod tests` calling a
+/// top-level rival without `super::`, a wrapper module that delegates to the
+/// library, and a fn-body `use` shadowing a file-level alias.
+pub(in crate::analysis) fn test_calls_only_through_local_rival_module(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+) -> bool {
+    if test.file == owner.file {
+        return false;
+    }
+    let defines_rival = index.functions().iter().any(|function| {
+        function.file == test.file
+            && function.name == owner.name
+            && function.item.container == FunctionContainer::Free
+            && function.item.has_body
+    });
+    if !defines_rival {
+        return false;
+    }
+    let Some(facts) = index.files().get(&test.file) else {
+        return false;
+    };
+    let source = &facts.data().source;
+    let integration_crate = under_tests_dir(&test.file);
+    let modules = LocalModules::scan(source, &owner.name, &test.name, test.start_line);
+    let through_local_module = |qualifier: &Option<Vec<String>>| {
+        qualifier
+            .as_deref()
+            .is_some_and(|segments| modules.names_rival(segments, integration_crate))
+    };
+    // The owner used as a value (`let f = memory_fixture::name;`) is no call,
+    // so a value mention outside the local module may still reach the owner.
+    if !value_mentions(&test.body, &owner.name)
+        .iter()
+        .all(through_local_module)
+    {
+        return false;
+    }
+    let qualifiers = call_qualifiers(&test.body, &owner.name);
+    !qualifiers.is_empty() && qualifiers.iter().all(through_local_module)
+}
+
+/// Lexical module facts of one test file for the local-rival predicate
+/// (#10855): which file-top-level `mod M { .. }` bodies directly define a
+/// body-ful `fn <owner>`, which top-level `use [self::]M as A;` aliases name
+/// such a module, and the module path enclosing the test. Anything nested,
+/// grouped, glob-imported or otherwise unreadable is not local, which keeps
+/// the production relation (fail closed).
+struct LocalModules {
+    rivals: BTreeSet<String>,
+    aliases: BTreeMap<String, String>,
+    scope: Vec<String>,
+}
+
+#[derive(PartialEq)]
+enum LexToken {
+    Word(String),
+    Open,
+    Close,
+    Semi,
+}
+
+impl LocalModules {
+    fn scan(source: &str, owner: &str, test_name: &str, test_start_line: usize) -> Self {
+        let masked = mask_comments_and_strings(source);
+        let test_offset = match test_start_line.checked_sub(2) {
+            Some(newlines) => masked
+                .match_indices('\n')
+                .nth(newlines)
+                .map_or(0, |(at, _)| at),
+            None => 0,
+        };
+        let mut tokens: Vec<(usize, LexToken)> = Vec::new();
+        let mut word_start: Option<usize> = None;
+        for (at, ch) in masked.char_indices().chain([(masked.len(), ' ')]) {
+            if is_ident_char(ch) {
+                word_start.get_or_insert(at);
+                continue;
+            }
+            if let Some(start) = word_start.take() {
+                let word = masked.get(start..at).unwrap_or_default();
+                tokens.push((start, LexToken::Word(word.to_string())));
+            }
+            match ch {
+                '{' => tokens.push((at, LexToken::Open)),
+                '}' => tokens.push((at, LexToken::Close)),
+                ';' => tokens.push((at, LexToken::Semi)),
+                _ => {}
+            }
+        }
+        let word_at = |index: usize| match tokens.get(index) {
+            Some((_, LexToken::Word(word))) => Some(word.as_str()),
+            _ => None,
+        };
+        let mut found = Self {
+            rivals: BTreeSet::new(),
+            aliases: BTreeMap::new(),
+            scope: Vec::new(),
+        };
+        let mut scope_set = false;
+        let mut depth = 0usize;
+        // Open modules: (name, brace depth of its body).
+        let mut stack: Vec<(String, usize)> = Vec::new();
+        for (index, (offset, token)) in tokens.iter().enumerate() {
+            // The test's own `fn` token, not the start of its line: a one-line
+            // `mod inner { #[test] fn t() { .. } }` opens its module on the
+            // same line.
+            let at_test_fn = *offset >= test_offset
+                && matches!(token, LexToken::Word(word) if word == "fn")
+                && word_at(index + 1) == Some(test_name);
+            if !scope_set && at_test_fn {
+                found.scope = stack.iter().map(|(name, _)| name.clone()).collect();
+                scope_set = true;
+            }
+            match token {
+                LexToken::Open => {
+                    depth += 1;
+                    let opens_module = index
+                        .checked_sub(2)
+                        .and_then(word_at)
+                        .is_some_and(|word| word == "mod");
+                    if let (true, Some(name)) =
+                        (opens_module, index.checked_sub(1).and_then(word_at))
+                    {
+                        stack.push((name.to_string(), depth));
+                    }
+                }
+                LexToken::Close => {
+                    if stack.last().is_some_and(|(_, inner)| *inner == depth) {
+                        stack.pop();
+                    }
+                    depth = depth.saturating_sub(1);
+                }
+                LexToken::Word(word) if word == "fn" && word_at(index + 1) == Some(owner) => {
+                    let body = tokens
+                        .iter()
+                        .skip(index + 2)
+                        .find(|(_, token)| matches!(token, LexToken::Open | LexToken::Semi));
+                    if let ([(module, inner)], Some((_, LexToken::Open))) = (stack.as_slice(), body)
+                        && *inner == depth
+                    {
+                        found.rivals.insert(module.clone());
+                    }
+                }
+                LexToken::Word(word) if word == "use" && depth == 0 => {
+                    let mut words = Vec::new();
+                    for (_, token) in tokens.iter().skip(index + 1) {
+                        match token {
+                            LexToken::Word(word) => words.push(word.as_str()),
+                            LexToken::Semi => break,
+                            _ => {
+                                words.clear();
+                                break;
+                            }
+                        }
+                    }
+                    if let [first, "as", alias] | ["self", first, "as", alias] = words.as_slice() {
+                        found
+                            .aliases
+                            .insert((*alias).to_string(), (*first).to_string());
+                    }
+                }
+                LexToken::Word(_) | LexToken::Semi => {}
+            }
+        }
+        found
+    }
+
+    /// Whether the module path `segments` (the qualifier of a call) names a
+    /// top-level module of this file that defines the rival, as spelled from
+    /// the test's own module.
+    fn names_rival(&self, segments: &[String], integration_crate: bool) -> bool {
+        let mut scope = self.scope.clone();
+        let mut rest = segments;
+        while let Some((first, tail)) = rest.split_first() {
+            match first.as_str() {
+                "self" => {}
+                "crate" if integration_crate => scope.clear(),
+                "super" => {
+                    if scope.pop().is_none() {
+                        return false;
+                    }
+                }
+                _ => break,
+            }
+            rest = tail;
+        }
+        let [module] = rest else {
+            return false;
+        };
+        scope.is_empty()
+            && self
+                .rivals
+                .contains(self.aliases.get(module).unwrap_or(module))
+    }
+}
+
 /// The spelled module path of every mention of `name` in `body` that is no
 /// call and could be the function used as a value (`.map(a::render)`, `let
 /// f = render;`), in the same shape as [`call_qualifiers`]. Calls, method
@@ -2924,6 +3138,31 @@ mod tests {
             call_qualifiers("fn t() { assert_eq!(crate::r#b::render(2), 4); }", "render"),
             vec![None]
         );
+    }
+
+    #[test]
+    fn crate_path_names_the_local_module_only_in_an_integration_test_file() {
+        let prod =
+            "pub fn discounted_total(a: i32, t: i32) -> i32 { if a >= t { a - 10 } else { a } }\n";
+        let test_src = "mod lib_proptest {\n    pub fn discounted_total(_a: i32, _t: i32) -> i32 { 90 }\n}\n\n#[test]\nfn equality_boundary_discounts() {\n    assert_eq!(crate::lib_proptest::discounted_total(100, 100), 90);\n}\n";
+        let withheld = |test_path: &str| {
+            let index = index(&[("src/lib.rs", prod), (test_path, test_src)]);
+            let owner = index
+                .functions()
+                .iter()
+                .find(|function| function.file == Path::new("src/lib.rs"));
+            let test = index
+                .tests()
+                .iter()
+                .find(|test| test.name == "equality_boundary_discounts");
+            owner.zip(test).map(|(owner, test)| {
+                test_calls_only_through_local_rival_module(&index, owner, test)
+            })
+        };
+        // Positive control: the integration crate root is the test file.
+        assert_eq!(withheld("tests/boundary.rs"), Some(true));
+        // `crate::` is the library root elsewhere: the production relation stays.
+        assert_eq!(withheld("src/boundary.rs"), Some(false));
     }
 
     fn strings(segments: &[&str]) -> Vec<String> {

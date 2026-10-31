@@ -1024,7 +1024,7 @@ fn pilot_summary_md_spells_out_first_screen_recommendation() {
         "- Focused test: none: this seam has no test target that `ripr agent repair` can use (for example, the only tests are inline `#[cfg(test)]` in a file outside the test-surface paths, the only tests are in another crate, or static evidence names no exact discriminator), so it will not start a repair attempt here",
         "Target seam:",
         "Target placement blocked:",
-        "## Ranked Seams\n\nOrder: change-touched seams first, then grip class, then one pick per owning function per round, then missing-discriminator evidence, related tests, and assertion readiness.\n\nNone of these seams can start a repair attempt (`ripr agent repair`); they are ranked for inspection by hand. Repair scope: `ripr agent repair --help`.",
+        "## Ranked Seams\n\nOrder: change-touched seams first, then seams ripr can start a repair for, then grip class, then one pick per owning function per round, then missing-discriminator evidence, related tests, and assertion readiness.\n\nNone of these seams can start a repair attempt (`ripr agent repair`); they are ranked for inspection by hand. Repair scope: `ripr agent repair --help`.",
         "## Next Commands",
         "No repair attempt is available for the top seam. Next, add a test for `pricing::discounted_total` in the crate that owns src/pricing.rs, then rerun repo exposure and compare the snapshots:",
         "ripr outcome --before <cwd>/target/ripr/pilot/repo-exposure.json",
@@ -1066,7 +1066,7 @@ fn pilot_human_output_labels_seams_exploratory_not_ranked_by_mutant_yield() {
     let md = render_pilot_summary_md(&entries, pilot_context(&artifacts));
     // #9368 item 3: the mechanism leads, the precision limit follows.
     assert!(
-        md.contains("Order: change-touched seams first, then grip class"),
+        md.contains("Order: change-touched seams first, then seams ripr can start a repair for, then grip class"),
         "{md}"
     );
     assert!(
@@ -1077,7 +1077,7 @@ fn pilot_human_output_labels_seams_exploratory_not_ranked_by_mutant_yield() {
     let ranked = md.find("## Ranked").map_or("", |start| &md[start..]);
     assert!(
         ranked.contains(
-            "Order: change-touched seams first, then grip class, then one pick per owning function per round"
+            "Order: change-touched seams first, then seams ripr can start a repair for, then grip class, then one pick per owning function per round"
         ),
         "{md}"
     );
@@ -2076,6 +2076,10 @@ fn why_line_falls_back_to_class_label_when_no_summary_or_missing_discriminator()
 /// The missing-discriminator shape and a fully observed `discriminate` stage
 /// are what `repair_route_readiness` needs to select a target.
 fn route_ready_entry(test_files: &[&str]) -> ClassifiedSeam {
+    route_ready_entry_at(test_files, "src/pricing.rs", 88)
+}
+
+fn route_ready_entry_at(test_files: &[&str], file: &str, line: usize) -> ClassifiedSeam {
     let related = test_files
         .iter()
         .map(|file| {
@@ -2086,8 +2090,8 @@ fn route_ready_entry(test_files: &[&str]) -> ClassifiedSeam {
         .collect();
     let mut entry = classified_with(
         SeamGripClass::WeaklyGripped,
-        "src/pricing.rs",
-        88,
+        file,
+        line,
         vec![MissingDiscriminatorFact {
             value: "discount_threshold (equality boundary)".to_string(),
             reason: "observed values do not include the equality-boundary case".to_string(),
@@ -2196,6 +2200,184 @@ fn pilot_offers_agent_repair_only_past_the_repair_packet_flip() -> Result<(), St
         }
     }
     Ok(())
+}
+
+/// #11292: `has_repair_route` mirrors the two conjuncts of
+/// `repair_start_command_for`; this keeps the two from drifting.
+#[test]
+fn has_repair_route_agrees_with_repair_start_command_for() -> Result<(), String> {
+    use super::commands::has_repair_route;
+    use crate::output::evidence_record::repair_start_command_for;
+
+    let mut routable = route_ready_entry_at(&["tests/pricing.rs"], "src/zeta.rs", 5);
+    routable.class = SeamGripClass::Ungripped;
+    let entries = [
+        route_ready_entry(&["src/pricing.rs"]),
+        route_ready_entry(&[]),
+        route_ready_entry(&["tests/pricing.rs"]),
+        routable,
+        classified_in_owner(SeamGripClass::WeaklyGripped, "src/a.rs", "f", 1),
+    ];
+    let mut routes = 0;
+    for entry in &entries {
+        let expected = repair_start_command_for(entry, ".").is_some();
+        if has_repair_route(entry) != expected {
+            return Err(format!("predicates disagree for {:?}", entry.seam.id()));
+        }
+        routes += usize::from(expected);
+    }
+    if routes == 0 || routes == entries.len() {
+        return Err("fixtures must include both routable and unroutable seams".to_string());
+    }
+    Ok(())
+}
+
+/// #11292: a gap with a repair route outranks one without, even at a weaker
+/// class, because a headline the repair loop cannot start from reads as a
+/// broken loop. The unroutable seam is `weakly_gripped` (the better class) and
+/// route-ready, but its recommended test is an inline module in a production
+/// file the cage will not edit (the shape `src/tests.rs` and doctest targets
+/// share: ready readiness, no edit target). Class order alone puts it first, so
+/// only the route preference can put the `ungripped` routable seam on top.
+#[test]
+fn pilot_headline_prefers_a_gap_that_has_a_repair_route() -> Result<(), String> {
+    use super::commands::has_repair_route;
+    use crate::analysis::repair_route::repair_packet_eligibility;
+
+    let unroutable = route_ready_entry(&["src/pricing.rs"]);
+    let mut routable = route_ready_entry_at(&["tests/pricing.rs"], "src/zeta.rs", 5);
+    routable.class = SeamGripClass::Ungripped;
+    if !repair_packet_eligibility(&unroutable).eligible() || has_repair_route(&unroutable) {
+        return Err("fixture: pricing seam must be eligible but have no edit target".to_string());
+    }
+    if !has_repair_route(&routable) {
+        return Err("fixture: zeta seam must have a repair route".to_string());
+    }
+    let entries = [unroutable, routable];
+    // Mutation record: with `has_repair_route` removed from the rank key this
+    // order is `pricing:88, zeta:5` and the assertion below fails.
+    assert_eq!(
+        ranked_places(&top_actionable_seams(&entries, 2, None)),
+        ranked_places(&[&entries[1], &entries[0]])
+    );
+
+    let artifacts = pilot_artifacts();
+    let terminal = render_pilot_terminal(&entries, pilot_context(&artifacts));
+    assert!(terminal.contains("src/zeta.rs:5"), "{terminal}");
+    assert!(!terminal.contains("repair route:"), "{terminal}");
+    Ok(())
+}
+
+/// #11292: the "no route anywhere" note needs both conjuncts. A routable gap
+/// exists elsewhere, but the current change puts the unroutable one on top:
+/// that top gap has no repair start, yet the note must stay absent because
+/// the list does have a route.
+#[test]
+fn pilot_route_note_is_absent_when_a_routable_gap_exists_elsewhere() -> Result<(), String> {
+    use super::commands::has_repair_route;
+
+    let unroutable = route_ready_entry(&["src/pricing.rs"]);
+    let routable = route_ready_entry_at(&["tests/pricing.rs"], "src/zeta.rs", 5);
+    if has_repair_route(&unroutable) || !has_repair_route(&routable) {
+        return Err("fixture: one routable and one unroutable seam".to_string());
+    }
+    let entries = [unroutable, routable];
+    let change = changed("src/pricing.rs", 88);
+    let artifacts = pilot_artifacts();
+    let mut context = pilot_context(&artifacts);
+    context.current_change = Some(&change);
+    let top = top_actionable_seams(&entries, 1, context.current_change);
+    assert_eq!(ranked_places(&top), ranked_places(&[&entries[0]]));
+    let terminal = render_pilot_terminal(&entries, context);
+    assert!(terminal.contains("src/pricing.rs:88"), "{terminal}");
+    assert!(!terminal.contains("repair route:"), "{terminal}");
+    Ok(())
+}
+
+/// #11292: the route preference never reorders across current-change buckets:
+/// an in-change unroutable seam stays ahead of an out-of-change routable one.
+#[test]
+fn pilot_route_preference_does_not_cross_current_change_buckets() -> Result<(), String> {
+    use super::commands::has_repair_route;
+
+    let unroutable = route_ready_entry(&["src/pricing.rs"]);
+    let routable = route_ready_entry_at(&["tests/pricing.rs"], "src/zeta.rs", 5);
+    if has_repair_route(&unroutable) || !has_repair_route(&routable) {
+        return Err("fixture: one routable and one unroutable seam".to_string());
+    }
+    let entries = [routable, unroutable];
+    let change = changed("src/pricing.rs", 88);
+    let ranked = top_actionable_seams(&entries, 2, Some(&change));
+    assert_eq!(
+        ranked_places(&ranked),
+        ranked_places(&[&entries[1], &entries[0]])
+    );
+    // Without the change the routable seam leads.
+    let ranked = top_actionable_seams(&entries, 2, None);
+    assert_eq!(
+        ranked_places(&ranked),
+        ranked_places(&[&entries[0], &entries[1]])
+    );
+    Ok(())
+}
+
+/// #11292: when no actionable gap has a repair route, the terminal says so
+/// plainly with the by-hand remedy, instead of leaving the lone "no test file"
+/// line on the top seam to speak for the whole list. (The Markdown ranked list
+/// already carries "None of these seams can start a repair attempt".)
+#[test]
+fn pilot_says_plainly_when_no_gap_has_a_repair_route() {
+    let first = classified_with(
+        SeamGripClass::WeaklyGripped,
+        "src/a.rs",
+        10,
+        vec![missing()],
+        vec![related_test()],
+    );
+    let second = classified_with(
+        SeamGripClass::Ungripped,
+        "src/b.rs",
+        20,
+        vec![missing()],
+        Vec::new(),
+    );
+    let entries = [first, second];
+    let artifacts = pilot_artifacts();
+    let terminal = render_pilot_terminal(&entries, pilot_context(&artifacts));
+    assert!(
+        terminal.contains(
+            "  repair route: none of the gaps pilot found has a route to a repair attempt, so ripr will not start one"
+        ),
+        "{terminal}"
+    );
+    assert!(terminal.contains("add the tests by hand"), "{terminal}");
+    assert_eq!(terminal.matches("repair route:").count(), 1, "{terminal}");
+    // The note names no cause it did not derive.
+    assert!(!terminal.contains("src/tests.rs"), "{terminal}");
+    assert!(!terminal.contains("doctest"), "{terminal}");
+}
+
+/// #11292 no-tests control: a crate with no tests at all gets the same
+/// truthful note, with no `mod tests;` or doctest example it never established.
+#[test]
+fn pilot_route_note_names_no_cause_when_the_crate_has_no_tests() {
+    let entry = classified_with(
+        SeamGripClass::Ungripped,
+        "src/a.rs",
+        10,
+        vec![missing()],
+        Vec::new(),
+    );
+    let artifacts = pilot_artifacts();
+    let terminal = render_pilot_terminal(&[entry], pilot_context(&artifacts));
+    assert!(
+        terminal.contains("  repair route: none of the gaps pilot found"),
+        "{terminal}"
+    );
+    assert!(terminal.contains("add the tests by hand"), "{terminal}");
+    for cause in ["src/tests.rs", "mod tests;", "doctest"] {
+        assert!(!terminal.contains(cause), "{cause} in:\n{terminal}");
+    }
 }
 
 /// The repair-start line family follows the canonical pilot decision (#6986):

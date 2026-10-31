@@ -1,0 +1,5 @@
+crates/ripr/src/output/baseline.rs|failed to render gate baseline JSON: {err}
+crates/ripr/src/output/baseline.rs|gate-decision JSON missing decisions array
+crates/ripr/src/output/baseline.rs|gate-decision JSON missing schema_version
+crates/ripr/src/output/baseline.rs|parse gate-decision JSON failed: {err}
+crates/ripr/src/output/baseline.rs|unsupported gate-decision schema_version `{schema_version}`; expected `{SCHEMA_VERSION}`

@@ -5,6 +5,9 @@ mod startup;
 use ripr::cli::CommandError;
 
 fn main() {
+    // #9564: on Windows, end every descendant if this process is force-terminated.
+    // Best effort; `OwnedProcess` still cleans up on every ordinary exit.
+    let _ = ripr::process_owner::bind_process_lifetime();
     run_startup(startup::run);
 }
 

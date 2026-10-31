@@ -1,6 +1,6 @@
 //! #10720: a fresh selector miss retains producer-owned run-scope limits.
 #[cfg(feature = "lang-typescript")]
-use super::printed_ripr_args;
+use super::{printed_ripr_args, rendered_path};
 use super::{run_command, run_git, unique_temp_workspace};
 use serde_json::Value;
 use std::fs;
@@ -195,7 +195,12 @@ fn disabled_preview_misses_disclose_scope_and_replay_exact_listing() -> TestResu
             } else if label == "worktree" {
                 assert!(args.contains(&"--worktree"), "{listing}");
             } else {
-                assert!(args.contains(&patch) && args.contains(&"fast"), "{listing}");
+                // Printed paths use the host rendering (`/` separators on Windows).
+                let printed_patch = rendered_path(patch);
+                assert!(
+                    args.contains(&printed_patch.as_str()) && args.contains(&"fast"),
+                    "{listing}"
+                );
             }
         }
     }

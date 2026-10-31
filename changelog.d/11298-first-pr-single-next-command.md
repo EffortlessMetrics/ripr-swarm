@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- `ripr first-pr` on a fresh repo now prints one next command instead of three regeneration commands: the human summary and Start Here markdown show only the first `Missing artifact` command and a `Later steps` line naming the gap ledger and review cards, so you rerun `first-pr` to get each next command. The packet JSON keeps the full `also_missing` chain, and `first-pr` still reads artifact presence only and runs no analysis (#11298)

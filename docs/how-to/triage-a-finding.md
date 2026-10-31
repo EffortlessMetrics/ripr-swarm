@@ -72,6 +72,7 @@ already supplies the discriminator.
 | assertion not credited: ripr could not establish that this assertion counts here | `assertion_not_credited` | An assertion exists, but ripr could not confirm it counts here: a same-named local macro or a feature cfg on the test, for example. It does not yet say whether the assertion is inert. The finding's note names the cause; if it is a macro, read it. If it expands to a real check, file an analyzer follow-up; if not, replace it with the language's standard assertion. |
 | assertion too weak to tell the old behavior from the new | `weak_assertion` | Replace `is_ok`, `unwrap` or a broad comparison with the exact expected value. |
 | ripr could not confirm that this assertion observes the changed behavior | `observation_unconfirmed` | This is an unknown, not a found miss: an assertion may already exist. Check by hand whether it observes the changed value before changing the test; if it does, treat it as an analyzer gap and file a follow-up. |
+| the preview adapter could not confirm that this assertion observes the changed behavior | `observation_unconfirmed` | The TypeScript and JavaScript form of the row above: the same unknown, not a found miss, with the reason named. Check by hand whether the assertion observes the changed behavior. |
 | no test input reaches `<boundary>` | `missing_input` | Add a case whose input is the boundary value named. |
 | no assertion pins `<value>` | `missing_exact_assertion` | Assert the exact value named, such as the error variant or field. |
 

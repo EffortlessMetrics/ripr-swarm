@@ -43,6 +43,8 @@ Next: drill into the top finding:
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
     - ./src/other.rs:2 (no path); kind: predicate; reason: An integration test may reach this change through a crate public API or test-helper path ripr cannot fully trace. This is a named limitation, not a coverage claim.
+  Hidden classes:
+    no path = no test path was found
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

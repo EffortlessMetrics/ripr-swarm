@@ -93,10 +93,10 @@ fn worktree_failed_base_recovery_preserves_saved_edits_and_last_good() -> Result
                 .is_some_and(|n| n > 0)
         );
         assert_ne!(refreshed["snapshot"]["snapshot_id"], committed_id);
-        assert_eq!(refreshed["scope"]["repair_cards"], "withheld");
+        assert_eq!(refreshed["scope"]["repair_cards"], "available");
         assert_eq!(
             refreshed["scope"]["consumed_source_commitment"],
-            "not_established"
+            "established"
         );
     }
     assert_eq!(
@@ -191,10 +191,10 @@ fn config_failure_literal_retry_preserves_requested_worktree_and_nondefault_base
             .is_some_and(|n| n > 0)
     );
     assert_ne!(recovered["snapshot"]["snapshot_id"], committed_id);
-    assert_eq!(recovered["scope"]["repair_cards"], "withheld");
+    assert_eq!(recovered["scope"]["repair_cards"], "available");
     assert_eq!(
         recovered["scope"]["consumed_source_commitment"],
-        "not_established"
+        "established"
     );
     assert_eq!(
         std::fs::read_to_string(&source).map_err(|error| error.to_string())?,

@@ -21,6 +21,9 @@ import {
 import { compatibleLspEvidence } from './testCompatibility';
 import { shouldShowMainStatusBar, type RiprStatusKind } from '../../src/statusRender';
 
+/** Main status text fragment for unsaved-buffer staleness (#5319). */
+const UNSAVED_STATUS_FRAGMENT = 'ripr: unsaved changes';
+
 suite('Extension Smoke', () => {
   suiteSetup(async function (this: Mocha.Context) {
     // Activation awaits full server start: candidate compatibility probe
@@ -498,13 +501,13 @@ suite('Extension Smoke', () => {
       diagnostic.range.start.character + 1
     );
     const hoverText = await waitForHoverText(uri, hoverPosition, (text) =>
-      text.includes('**ripr** behavioral seam') &&
-      text.includes('`weakly_gripped`') &&
-      text.includes('## Missing discriminator')
+      text.includes('**ripr** changed behavior') &&
+      text.includes('Tests only loosely check this') &&
+      text.includes('Weak / missing evidence:')
     );
-    assert.ok(hoverText.includes('**ripr** behavioral seam'), hoverText);
-    assert.ok(hoverText.includes('`weakly_gripped`'), hoverText);
-    assert.ok(hoverText.includes('## Missing discriminator'), hoverText);
+    assert.ok(hoverText.includes('**ripr** changed behavior'), hoverText);
+    assert.ok(hoverText.includes('Tests only loosely check this'), hoverText);
+    assert.ok(hoverText.includes('Weak / missing evidence:'), hoverText);
 
     const actions = await vscode.commands.executeCommand<Array<vscode.CodeAction | vscode.Command>>(
       'vscode.executeCodeActionProvider',
@@ -941,7 +944,7 @@ suite('Extension Smoke', () => {
         diagnostic.range.start.character + 1
       );
       const hoverText = await waitForHoverText(uri, hoverPosition, (text) =>
-        text.includes('**ripr** gap decision') &&
+        text.includes('**ripr** test gap') &&
         text.includes('- Language: `typescript`') &&
         text.includes('- Status: `preview`') &&
         text.includes('Static limit: missing_import_graph') &&
@@ -2039,7 +2042,7 @@ suite('Extension Smoke', () => {
         root_recovery_route: 'refresh'
       });
 
-      assert.ok(context.status.text.includes('ripr: stale'));
+      assert.ok(context.status.text.includes(UNSAVED_STATUS_FRAGMENT));
       assert.ok(String(context.status.tooltip).includes('root_changed'));
       assert.ok(String(context.status.tooltip).includes('new root'));
     } finally {
@@ -2064,7 +2067,13 @@ suite('Extension Smoke', () => {
         snapshot_id: 'snapshot:dirty-refresh'
       });
 
-      assert.ok(context.status.text.includes('ripr: stale'));
+      assert.ok(context.status.text.includes(UNSAVED_STATUS_FRAGMENT));
+      assert.ok(!context.status.text.includes('$(warning)'), context.status.text);
+      assert.strictEqual(
+        (context.status.backgroundColor as { id?: string } | undefined)?.id,
+        undefined,
+        'unsaved-buffer stale must not use statusBarItem.warningBackground'
+      );
       assert.ok(String(context.status.tooltip).includes('unsaved routed-file changes remain'));
       assert.ok(String(context.status.tooltip).includes('Current diagnostics describe the last saved workspace state.'));
     } finally {
@@ -2121,7 +2130,7 @@ suite('Extension Smoke', () => {
       assertDegraded([
         'ripr analysis completed on a bounded partition of the diff.',
         'the remainder was not evaluated',
-        'Next safe action: Run ripr: Show Top Limitation to see which budget stopped the run (RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET), raise it or narrow the diff'
+        'Next safe action: Run ripr: Show Main Analysis Limit to see which budget stopped the run (RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET), raise it or narrow the diff'
       ]);
 
       emitSucceededWithRunStatus('limited_incomplete_input');
@@ -2184,7 +2193,7 @@ suite('Extension Smoke', () => {
         run_status: 'stale',
         unavailable_languages: [{ language: 'python', file_count: 1 }]
       });
-      assert.ok(context.status.text.includes('ripr: stale'), context.status.text);
+      assert.ok(context.status.text.includes(UNSAVED_STATUS_FRAGMENT), context.status.text);
     } finally {
       await context.dispose();
     }
@@ -2362,7 +2371,7 @@ suite('Extension Smoke', () => {
       // The artifact recovery does not widen the diff partition, so the canned
       // budget remedy must survive composition with the component recovery.
       assert.ok(
-        tooltip.includes('Next safe action: Run ripr: Show Top Limitation to see which budget stopped the run (RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET), raise it or narrow the diff, then run ripr: Refresh Diagnostics. Run ripr check to regenerate the gap decision ledger'),
+        tooltip.includes('Next safe action: Run ripr: Show Main Analysis Limit to see which budget stopped the run (RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET), raise it or narrow the diff, then run ripr: Refresh Diagnostics. Run ripr check to regenerate the gap decision ledger'),
         tooltip
       );
     } finally {
@@ -2527,9 +2536,11 @@ suite('Extension Smoke', () => {
       emitSucceededWithRunStatus(undefined);
       assert.ok(context.status.text.includes('$(check) ripr: diagnostics'), context.status.text);
 
-      // 'stale' keeps today's degraded presentation and retry wording.
+      // Server run_status 'stale' uses the same neutral unsaved-buffer presentation (#5319).
       emitSucceededWithRunStatus('stale');
-      assert.ok(context.status.text.includes('$(warning) ripr: stale'), context.status.text);
+      assert.ok(context.status.text.includes('$(circle-outline)'), context.status.text);
+      assert.ok(context.status.text.includes(UNSAVED_STATUS_FRAGMENT), context.status.text);
+      assert.ok(!context.status.text.includes('$(warning)'), context.status.text);
       const staleTooltip = String(context.status.tooltip);
       assert.ok(staleTooltip.includes('ripr analysis completed with stale or limited evidence.'), staleTooltip);
       assert.ok(
@@ -2558,7 +2569,7 @@ suite('Extension Smoke', () => {
         snapshot_id: 'snapshot:dirty-deferred'
       });
 
-      assert.ok(context.status.text.includes('ripr: stale'), context.status.text);
+      assert.ok(context.status.text.includes(UNSAVED_STATUS_FRAGMENT), context.status.text);
       const tooltip = String(context.status.tooltip);
       assert.ok(tooltip.includes('unsaved routed-file changes remain'), tooltip);
       assert.ok(tooltip.includes('Current diagnostics describe the last saved workspace state.'), tooltip);
@@ -4060,7 +4071,7 @@ suite('Extension Smoke', () => {
       const document = await vscode.workspace.openTextDocument(workspaceFileUri('src/lib.rs'));
       context.controller.markWorkspaceStale(document);
 
-      assert.ok(context.status.text.includes('ripr: stale'));
+      assert.ok(context.status.text.includes(UNSAVED_STATUS_FRAGMENT));
       assert.ok(String(context.status.tooltip).includes('editor evidence is stale'));
       assert.ok(!context.status.text.includes('first action'));
 
@@ -4655,12 +4666,12 @@ suite('Extension Smoke', () => {
 
       context.controller.markWorkspaceStale(document);
 
-      assert.ok(context.status.text.includes('ripr: stale'));
+      assert.ok(context.status.text.includes(UNSAVED_STATUS_FRAGMENT));
       assert.ok(String(context.status.tooltip).includes(document.uri.fsPath));
       context.client.emitNotification('window/logMessage', {
         message: 'ripr analysis refresh completed in 42 ms: generation=4, diagnostics=2, files=1, findings=1, seam_diagnostics=1, published_files=1, cleared_files=0'
       });
-      assert.ok(context.status.text.includes('ripr: stale'));
+      assert.ok(context.status.text.includes(UNSAVED_STATUS_FRAGMENT));
       assert.ok(String(context.status.tooltip).includes('last saved workspace state'));
 
       context.controller.markWorkspaceSaved(document);
@@ -4703,7 +4714,7 @@ suite('Extension Smoke', () => {
       assert.ok(context.status.text.includes('ripr: language off'), context.status.text);
 
       context.controller.markWorkspaceStale(document);
-      assert.ok(context.status.text.includes('ripr: stale'), context.status.text);
+      assert.ok(context.status.text.includes(UNSAVED_STATUS_FRAGMENT), context.status.text);
       context.controller.markWorkspaceClosed(document);
       // The restored status is the typed one, not a log-derived form that
       // carries no unavailable-language rows.
@@ -4781,10 +4792,10 @@ suite('Extension Smoke', () => {
         schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'cancelled',
         retry_command: 'ripr.refresh'
       });
-      assert.ok(context.status.text.includes('ripr: stale'));
+      assert.ok(context.status.text.includes(UNSAVED_STATUS_FRAGMENT));
 
       context.controller.markWorkspaceClosed(document);
-      assert.ok(context.status.text.includes('ripr: stale'));
+      assert.ok(context.status.text.includes(UNSAVED_STATUS_FRAGMENT));
       assert.ok(String(context.status.tooltip).includes('retained evidence is stale'));
     } finally {
       await context.dispose();
@@ -4799,12 +4810,12 @@ suite('Extension Smoke', () => {
 
       context.controller.markWorkspaceStale(pythonDocument);
 
-      assert.ok(context.status.text.includes('ripr: stale'));
+      assert.ok(context.status.text.includes(UNSAVED_STATUS_FRAGMENT));
       assert.ok(String(context.status.tooltip).includes('src'));
       context.client.emitNotification('window/logMessage', {
         message: 'ripr analysis refresh completed in 42 ms: generation=6, diagnostics=2, files=1, findings=1, seam_diagnostics=1, published_files=1, cleared_files=0'
       });
-      assert.ok(context.status.text.includes('ripr: stale'));
+      assert.ok(context.status.text.includes(UNSAVED_STATUS_FRAGMENT));
       assert.ok(String(context.status.tooltip).includes('Unsaved routed files'));
 
       context.controller.markWorkspaceSaved(pythonDocument);

@@ -18,8 +18,10 @@ touches nothing else in the ledger.
 
 Rows with a long-lived dependency, for orientation:
 
-- `perl-testmore-tier-far-from-boundary` waits on the Perl producer chain
-  (#8979, perl-lsp-swarm#17237, then consumer #5562).
+- `perl-testmore-tier-far-from-boundary` is fixed ripr-side (#8979): it reads
+  `limited` through RIPR-SPEC-0235 rule 22. The producer fact
+  (perl-lsp-swarm#17237, consumer #5562) would restore the credit on
+  `perl-test2-close-month-subtest`, an accepted missed credit.
 - Missed credit (a row that reads `static_unknown` although the tests do
   discriminate) is not a false verdict and is tracked separately (#9619).
 

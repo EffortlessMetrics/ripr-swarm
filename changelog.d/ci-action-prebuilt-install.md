@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- The `ripr-check` composite Action installs a checksum-verified prebuilt ripr (a `version` input pinned to the latest release, with a `cargo install --version` fallback) instead of compiling an unversioned `cargo install ripr` or trusting whatever `ripr` was on PATH, and derives the pull request base from `GITHUB_BASE_REF`, fetching that branch when the checkout lacks it. `docs/CI.md` documents the Action (#11540).

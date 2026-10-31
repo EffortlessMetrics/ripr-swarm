@@ -9,4 +9,4 @@ Analysis outcome: limitations below (analysis incomplete)
   Zero findings is not a clean result because the analyzed scope is incomplete.
   Limitation: some changed files were not analyzed during language analysis; affected items: 1; recovery: rename the generated-marked source — Not analyzed by the Python preview adapter: src/schema_pb2.py. Its file name marks it as generated, and generated-name skips have no configuration override — declaring the path in `[languages.python] handwritten_files` cannot admit it; if it is actually hand-written, rename it so the name no longer marks it generated and re-run the analysis.
 
-No findings: ripr checked no changed behavior.
+No findings reported: the analysis was incomplete, so this is not a clean result.

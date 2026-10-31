@@ -843,9 +843,25 @@ pub(crate) fn build_gap_decision_ledger_report(
     .to_string();
 
     let check_output_provenance = match input.source_kind {
-        GapDecisionLedgerSourceKind::CheckOutput => Some(serde_json::json!({
-            "root": input_root.clone(),
-        })),
+        GapDecisionLedgerSourceKind::CheckOutput => {
+            let mut origin = serde_json::Map::new();
+            origin.insert("root".to_string(), serde_json::json!(input_root));
+            // Retain the producer's own values verbatim, including malformed
+            // values. This is provenance, not a currentness decision: the
+            // derived source_subject and its limitation remain authoritative
+            // for existing consumers, and absent fields stay absent.
+            if let Some(source) = source_value_snapshot.as_ref().and_then(Value::as_object) {
+                if let Some(raw_root) = source.get("root") {
+                    origin.insert("source_root_raw".to_string(), raw_root.clone());
+                }
+                for key in ["source_subject", "base", "base_commit", "head", "mode"] {
+                    if let Some(value) = source.get(key) {
+                        origin.insert(key.to_string(), value.clone());
+                    }
+                }
+            }
+            Some(Value::Object(origin))
+        }
         GapDecisionLedgerSourceKind::Records => source_value_snapshot.as_ref().and_then(|value| {
             value.get("check_output_provenance").cloned().or_else(|| {
                 (value.pointer("/inputs/source_kind").and_then(Value::as_str)
@@ -5596,7 +5612,25 @@ mod tests {
         // #11103: `python_len_local_boundary_repair_gap` derives its once-bound
         // `visible = len(text)` operand, so the weak boundary finding names
         // `visible == limit` and carries one direct-aligned card.
-        if (direct, no_strong, orthogonal, family_selection) != (19, 27, 30, 1) {
+        // #10707: `python_boundary_local_rebound_not_credited` keeps a rebound
+        // test local unresolved at the boundary, so its weak finding adds one
+        // direct-aligned card; `python_boundary_local_input_credited` is exposed.
+        // #9733: `python_while_counter_past_bound` keeps a generator loop whose
+        // counter steps by one past the changed bound `weakly_exposed` when its
+        // only test starts below it; the weak finding names the missing
+        // `start == 0` boundary and carries one direct-aligned card.
+        // #10707: `python_boundary_module_constant_rebound_not_credited` keeps a
+        // twice-bound test-module constant unresolved, one more direct card.
+        // #9185: `python_message_pin_local_no_exposed_credit` is the two-step
+        // `msg = "..."` / `raise Exc(msg)` form of the same downgrade, one more
+        // direct-aligned weak card; `python_message_pin_local_control` is
+        // exposed, no card.
+        // #10990: `python_boundary_local_rebound_not_credited` and
+        // `python_boundary_module_constant_rebound_not_credited` keep rebound
+        // inputs no call binds unresolved, so their weak boundary findings
+        // name no discriminator and carry no repair card; the direct-aligned
+        // inventory drops by two.
+        if (direct, no_strong, orthogonal, family_selection) != (21, 27, 30, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));
@@ -5911,7 +5945,7 @@ mod tests {
             finding["preview_actionability"]["why_not_actionable"].as_str()
         );
         assert!(record.static_limit_detail.as_deref().is_some_and(|detail| detail
-            .contains("validator: is not agent-packet eligible: observed call input `login('alice')` does not reach the missing discriminator `user.length == 3`")));
+            .contains("validator: is not agent-packet eligible: derive an input that hits the boundary before this repair can be handed to an agent: observed call input `login('alice')` does not reach the missing discriminator `user.length == 3`")));
         assert!(record.static_limits.iter().any(|limit| {
             limit["kind"] == "not_delegatable_target_shape"
                 && limit["detail"] == "Add an exact boundary assertion for `user.length == 3`."
@@ -6313,6 +6347,104 @@ mod tests {
             !receipt_cmd.contains("ripr outcome"),
             "gap-ledger receipt command must not reuse outcome receipt syntax, got: {receipt_cmd}"
         );
+        Ok(())
+    }
+
+    /// #10709: the TypeScript ledger record carries the producer's
+    /// `source_currentness` and the run's `analysis_outcome`, which the shared
+    /// agent-packet validator and `first-pr` read before they recommend the
+    /// gap-bound `ripr agent repair` start. The checked-in portable ledger must
+    /// agree with what the producer emits for the saved check output, and a
+    /// finding without an established candidate-current source must not form
+    /// an agent-packet-eligible record.
+    #[test]
+    fn typescript_preview_fixture_ledger_carries_producer_currentness_and_outcome()
+    -> Result<(), String> {
+        fn produce(payload: &Value) -> GapDecisionLedgerReport {
+            build_gap_decision_ledger_report(GapDecisionLedgerInput {
+                root: ".".to_string(),
+                generated_at: "test".to_string(),
+                source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+                records_path: "typescript-check.json".to_string(),
+                records_json: Ok(payload.to_string()),
+            })
+        }
+        let payload: Value = serde_json::from_str(&typescript_preview_gap_before_check_output())
+            .map_err(|error| format!("parse TypeScript fixture: {error}"))?;
+        let report = produce(&payload);
+        let record = report
+            .records
+            .first()
+            .ok_or("TypeScript fixture produced no record")?;
+        assert_eq!(
+            record.source_currentness.as_deref(),
+            Some("candidate_current")
+        );
+        assert!(projection_eligible(record, "agent_packet"));
+        assert_eq!(
+            report
+                .analysis_outcome
+                .as_ref()
+                .and_then(|outcome| outcome.get("analysis_complete"))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+
+        let ledger: Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/first_successful_pr/typescript-preview-gap/inputs/reports/gap-decision-ledger.json"
+        ))
+        .map_err(|error| format!("parse checked-in TypeScript ledger: {error}"))?;
+        assert_eq!(
+            ledger["analysis_outcome"],
+            report.analysis_outcome.clone().unwrap_or(Value::Null)
+        );
+        let produced = gap_record_json_value(record)?;
+        for key in [
+            "canonical_gap_id",
+            "source_currentness",
+            "language",
+            "repairability",
+        ] {
+            assert_eq!(
+                ledger["records"][0][key], produced[key],
+                "checked-in ledger record drifted from the producer on `{key}`"
+            );
+        }
+
+        // Discriminating negatives: no established candidate-current source
+        // (missing or unknown) keeps the record but turns the authority
+        // projection off; a stale (moved) source forms no record at all.
+        for currentness in [None, Some("unknown")] {
+            let mut stale = payload.clone();
+            let finding = stale["findings"][0]
+                .as_object_mut()
+                .ok_or("TypeScript finding must be an object")?;
+            match currentness {
+                Some(value) => {
+                    finding.insert("source_currentness".to_string(), Value::from(value));
+                }
+                None => {
+                    finding.remove("source_currentness");
+                }
+            }
+            let report = produce(&stale);
+            let record = report
+                .records
+                .first()
+                .ok_or("a non-current TypeScript finding still forms an advisory record")?;
+            assert_ne!(
+                record.source_currentness.as_deref(),
+                Some("candidate_current"),
+                "{currentness:?}"
+            );
+            assert!(
+                !projection_eligible(record, "agent_packet"),
+                "{currentness:?}"
+            );
+        }
+        let mut moved = payload;
+        moved["findings"][0]["source_currentness"] = Value::from("moved_or_renamed");
+        assert!(produce(&moved).records.is_empty());
         Ok(())
     }
 

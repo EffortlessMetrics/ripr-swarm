@@ -51,7 +51,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-hostile-constant-tax.json",
-    "sha256": "70e3a0d426062eae9ff7b891fb373194e6f610ed710682def45e93c792090bcf",
+    "sha256": "e832b7c5154fe1e9ed1d000231e4b9905012fb4f1f3088359c40d65194d6096d",
     "provenance": "producer"
   }
 }

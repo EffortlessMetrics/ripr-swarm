@@ -22,6 +22,7 @@
 use crate::analysis;
 use crate::app::agent_brief::AgentBriefPolicy;
 use crate::app::repair_card_handoff::AgentCardError;
+use crate::app::task_first::CardStartHold;
 use crate::cli::CommandError;
 use crate::cli::agent::AgentCardOptions;
 use crate::cli::commands_context::{ensure_command_root, write_stdout_refusal_json};
@@ -56,7 +57,7 @@ pub(super) fn run_agent_card(options: AgentCardOptions) -> Result<(), CommandErr
 /// to what [`run_agent_card`] writes on success.
 pub(super) fn agent_card_stdout(options: AgentCardOptions) -> Result<String, CommandError> {
     ensure_command_root(&options.root, "agent card")?;
-    let card = match render_agent_card(&options) {
+    let (card, hold) = match render_agent_card(&options) {
         Ok(card) => card,
         Err(AgentCardError::Refusal { kind, message }) => {
             // A deliberate named refusal maps to the decision exit code 3,
@@ -94,9 +95,15 @@ pub(super) fn agent_card_stdout(options: AgentCardOptions) -> Result<String, Com
     // Default: the short plain brief. `--verbose` keeps the full field ledger
     // (producer, subject, non-claim, detail routes); `--json` is the contract.
     let lines = if crate::is_verbose() {
-        agent_card_prose_lines(&card, &packet_command, Some(&options.root))
+        let mut lines = agent_card_prose_lines(&card, &packet_command, Some(&options.root));
+        // #11397: the card's own readiness is evidence readiness; the start
+        // gate `ripr repair` applies is a separate fact, so name it here.
+        if let Some(hold) = &hold {
+            lines.insert(1, format!("  repair start: held ({})", hold.reason));
+        }
+        lines
     } else {
-        agent_card_plain_lines(&card, &packet_command, Some(&options.root))
+        agent_card_plain_lines(&card, &packet_command, Some(&options.root), hold.as_ref())
     };
     for line in lines {
         rendered.push_str(&line);
@@ -159,7 +166,9 @@ fn refusal_remedy_route(
     }
 }
 
-fn render_agent_card(options: &AgentCardOptions) -> Result<RepairCardV1, AgentCardError> {
+fn render_agent_card(
+    options: &AgentCardOptions,
+) -> Result<(RepairCardV1, Option<CardStartHold>), AgentCardError> {
     let config = load_for_root(&options.root).map_err(AgentCardError::operational)?;
     let (classified, limit_info) =
         analysis::inventory_classified_seams_at_with_config(&options.root, &config)
@@ -202,12 +211,16 @@ fn render_agent_card(options: &AgentCardOptions) -> Result<RepairCardV1, AgentCa
         ));
     }
 
-    crate::app::repair_card_handoff::repair_card_for_entry(
+    let card = crate::app::repair_card_handoff::repair_card_for_entry(
         entry,
         &options.root,
         &config,
         &classified,
-    )
+    )?;
+    // #11397: the start gate `ripr repair` applies, asked once here, so the
+    // plain brief never says "ready" for a gap the repair command refuses.
+    let hold = crate::app::task_first::card_start_hold(&options.root, entry, policy);
+    Ok((card, hold))
 }
 
 /// The typed refusal for a truncated seam candidate inventory: `Some` only
@@ -453,10 +466,29 @@ pub(crate) fn agent_card_plain_lines(
     card: &RepairCardV1,
     packet_command: &str,
     paste_root: Option<&std::path::Path>,
+    hold: Option<&CardStartHold>,
 ) -> Vec<String> {
     let mut lines = vec![format!("Repair brief for gap {}", card.subject.seam_id)];
     lines.push(format!("  Changed behavior: {}", card.changed_behavior));
-    if card.readiness.repair_ready {
+    // One verdict: the shared start gate (`hold`) outranks the card's own
+    // evidence readiness, so "ready" is only printed when `ripr repair`
+    // would also start (#11397, #11381).
+    // Any gate refusal means `ripr repair` would not start, so it forces
+    // `ready` and `started` off (fail closed). Only the held-file cause,
+    // which carries its own next step, also replaces the card's wording and
+    // next action; other refusals keep the card's evidence wording and
+    // canonical next action, and the gate's reason is only the fallback.
+    let refused = hold.is_some();
+    let hold_with_next = hold.filter(|hold| hold.next.is_some());
+    let started = card.attempt.is_some() && card.readiness.repair_ready && !refused;
+    let ready = card.readiness.repair_ready && !refused;
+    if let Some(hold) = hold_with_next {
+        lines.push(format!("  Not ready to repair yet: {}.", hold.reason));
+    } else if started {
+        lines.push(
+            "  Ready to repair. The repair has started and is waiting for your test.".to_string(),
+        );
+    } else if ready {
         lines.push("  Ready to repair.".to_string());
     } else {
         let missing = card
@@ -468,11 +500,14 @@ pub(crate) fn agent_card_plain_lines(
             .join("; ");
         // Plain evidence words first; the producer's blocker string can carry
         // internal vocabulary, so it is only the fallback.
-        let reason = (!missing.is_empty()).then_some(missing).or_else(|| {
-            card.exact_blocker
-                .clone()
-                .filter(|blocker| !blocker.is_empty())
-        });
+        let reason = (!missing.is_empty())
+            .then_some(missing)
+            .or_else(|| {
+                card.exact_blocker
+                    .clone()
+                    .filter(|blocker| !blocker.is_empty())
+            })
+            .or_else(|| hold.map(|hold| hold.reason.clone()));
         lines.push(match reason {
             Some(reason) => format!("  Not ready to repair yet: {reason}"),
             None => "  Not ready to repair yet.".to_string(),
@@ -485,6 +520,11 @@ pub(crate) fn agent_card_plain_lines(
             card.instruction.has_suggested_assertion
         ) {
             (Some(detail), true) => detail.clone(),
+            // A repair that can start or has started has a route, so the
+            // "no bounded repair route" wording would contradict it.
+            _ if ready || started => {
+                "none; ripr has no exact assertion to suggest for this gap.".to_string()
+            }
             _ => instruction_plain_words(card.instruction.state).to_string(),
         }
     ));
@@ -497,7 +537,58 @@ pub(crate) fn agent_card_plain_lines(
         }
         None => {}
     }
+    let own_route = card
+        .canonical_next_action
+        .as_ref()
+        .is_some_and(|action| action.command().is_some());
+    let root_arg = || {
+        crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+            &paste_root.map_or_else(|| ".".to_string(), |r| r.to_string_lossy().into_owned()),
+        ))
+    };
+    let start_command = || {
+        format!(
+            "ripr repair {} --root {}",
+            crate::agent::loop_commands::shell_arg(&card.subject.seam_id),
+            root_arg()
+        )
+    };
     match &card.canonical_next_action {
+        _ if hold_with_next.is_some() => {
+            if let Some(next) = hold_with_next.and_then(|hold| hold.next.as_ref()) {
+                lines.push(format!("  Next: {next}"));
+                if let Some(command) = hold_with_next.and_then(|hold| hold.command.as_deref()) {
+                    lines.extend(powershell_pair(command));
+                }
+            }
+        }
+        // No runnable command of the card's own, a repair not yet started,
+        // and the start gate holds nothing: the one next step is the repair
+        // start itself (#11397), the command the pilot printed.
+        _ if ready && !started && !own_route => {
+            let command = start_command();
+            lines.push(format!("  Next: {command}"));
+            lines.extend(powershell_pair(&command));
+        }
+        // A started attempt with no stop of its own: the next step is the
+        // attempt's, not "no ready command" (#11381).
+        Some(action)
+            if started
+                && !own_route
+                && action.stop().is_none_or(|stop| {
+                    matches!(stop, crate::domain::NextActionStop::Unsupported { .. })
+                }) =>
+        {
+            if let Some(attempt) = &card.attempt {
+                let command = format!(
+                    "ripr continue --root {} --attempt {}",
+                    root_arg(),
+                    crate::agent::loop_commands::shell_arg(&attempt.attempt_id)
+                );
+                lines.push(format!("  Next: write the test, then run `{command}`"));
+                lines.extend(powershell_pair(&command));
+            }
+        }
         Some(action) => {
             lines.extend(
                 crate::output::next_action::render_next_action_plain_at_root(action, paste_root),
@@ -563,6 +654,14 @@ pub(crate) fn agent_card_plain_lines(
     }
     lines.push("  More fields: add --verbose.".to_string());
     lines
+}
+
+/// The `(PowerShell)` pair line for a printed bash command, from the shared
+/// translator every plain-text command surface uses; `None` when PowerShell
+/// runs the bash spelling unchanged.
+fn powershell_pair(command: &str) -> Option<String> {
+    crate::output::markdown::powershell_text_variant(command)
+        .map(|form| format!("  (PowerShell) {form}"))
 }
 
 /// Plain spelling of what a missing suggestion means; exhaustive so a new
@@ -1116,7 +1215,8 @@ mod tests {
         card.allowed_files = vec!["tests/t.rs".to_string()];
         card.forbidden_files = vec!["src/lib.rs".to_string()];
         card.limitations = (0..6).map(|i| format!("limit {i}")).collect();
-        let lines = agent_card_plain_lines(&card, "ripr agent packet --root 'a b' --json", None);
+        let lines =
+            agent_card_plain_lines(&card, "ripr agent packet --root 'a b' --json", None, None);
         let text = lines.join("\n");
         if !text.contains("Not ready to repair yet: a test assertion that pins the changed boundary value exactly") {
             return Err(format!("not-ready reason not plain:\n{text}"));
@@ -1130,13 +1230,131 @@ mod tests {
         Ok(())
     }
 
+    /// #11397: a gate refusal without its own next step (route not ready)
+    /// keeps the card's evidence wording and canonical next action; only the
+    /// held-file cause, which carries a next step, replaces them.
+    #[test]
+    fn plain_brief_keeps_card_wording_for_a_gate_refusal_without_a_next_step() -> Result<(), String>
+    {
+        use crate::app::task_first::CardStartHold;
+        let mut card = prose_test_card();
+        card.readiness.repair_ready = false;
+        card.readiness.missing_evidence =
+            vec!["producer-owned missing discriminator fact: boundary_value".to_string()];
+        let route_not_ready = CardStartHold {
+            reason: "repair route not ready".to_string(),
+            next: None,
+            command: None,
+        };
+        let text = agent_card_plain_lines(
+            &card,
+            "ripr agent packet --json",
+            None,
+            Some(&route_not_ready),
+        )
+        .join("\n");
+        if !text.contains("Not ready to repair yet: a test assertion that pins the changed boundary value exactly")
+            || text.contains("repair route not ready")
+            || text.contains("cannot start a repair")
+        {
+            return Err(format!("gate refusal replaced the card's wording:\n{text}"));
+        }
+        // Fail closed: a refusal without its own next step still withdraws
+        // "ready" and the repair-start command from a repair_ready card.
+        let refused = CardStartHold {
+            reason: "no test file ripr may edit".to_string(),
+            next: None,
+            command: None,
+        };
+        let mut ready_card = prose_test_card();
+        ready_card.canonical_next_action = Some(prose_test_decision()?);
+        let lines = agent_card_plain_lines(
+            &ready_card,
+            "ripr agent packet --json",
+            None,
+            Some(&refused),
+        );
+        let text = lines.join("\n");
+        if text.contains("Ready to repair.") || text.contains("Next: ripr repair") {
+            return Err(format!("refused card still offers a start:\n{text}"));
+        }
+        if !text.contains("Next: ripr agent packet --seam-id seam:demo --json") {
+            return Err(format!("canonical next action lost:\n{text}"));
+        }
+        if !text.contains("Not ready to repair yet: no test file ripr may edit") {
+            return Err(format!("refusal reason lost:\n{text}"));
+        }
+        let ready = prose_test_card();
+        let held = CardStartHold {
+            reason: "the inline test target `src/lib.rs` has uncommitted changes; commit or stash them first".to_string(),
+            next: Some("commit or stash `src/lib.rs`, then run `ripr repair s`".to_string()),
+            command: Some("ripr repair s".to_string()),
+        };
+        let text = agent_card_plain_lines(&ready, "ripr agent packet --json", None, Some(&held))
+            .join("\n");
+        if !text.contains("Not ready to repair yet: the inline test target")
+            || !text.contains("Next: commit or stash `src/lib.rs`")
+            || text.contains("Ready to repair.")
+        {
+            return Err(format!("held-file cause not shown:\n{text}"));
+        }
+        Ok(())
+    }
+
+    /// #11397: the commands the brief now prints (repair start, continue) are
+    /// bash spellings, so a root with an apostrophe gets the shared
+    /// `(PowerShell)` pair line directly after each, like every other
+    /// plain-text command surface.
+    #[test]
+    fn plain_brief_pairs_new_commands_with_a_powershell_form() -> Result<(), String> {
+        let root = std::path::Path::new("/tmp/it's here");
+        let mut card = prose_test_card();
+        card.instruction.state = FixInstructionState::Unavailable;
+        let lines = agent_card_plain_lines(&card, "ripr agent packet --json", Some(root), None);
+        let at = lines
+            .iter()
+            .position(|line| line.starts_with("  Next: ripr repair "))
+            .ok_or_else(|| format!("no repair-start next step:\n{}", lines.join("\n")))?;
+        if !lines[at + 1].starts_with("  (PowerShell) ") {
+            return Err(format!(
+                "repair start has no PowerShell pair:\n{}",
+                lines.join("\n")
+            ));
+        }
+        let held = CardStartHold {
+            reason: "held".to_string(),
+            next: Some(
+                "commit or stash `src/lib.rs`, then run `ripr repair s --root 'it'\\''s'`"
+                    .to_string(),
+            ),
+            command: Some("ripr repair s --root 'it'\\''s'".to_string()),
+        };
+        let lines =
+            agent_card_plain_lines(&card, "ripr agent packet --json", Some(root), Some(&held));
+        let at = lines
+            .iter()
+            .position(|line| line.starts_with("  Next: commit or stash"))
+            .ok_or_else(|| format!("no held next step:\n{}", lines.join("\n")))?;
+        if !lines[at + 1].starts_with("  (PowerShell) ") {
+            return Err(format!(
+                "held step has no PowerShell pair:\n{}",
+                lines.join("\n")
+            ));
+        }
+        Ok(())
+    }
+
     #[test]
     fn plain_brief_is_short_and_free_of_ledger_vocabulary() -> Result<(), String> {
         let mut card = prose_test_card();
         card.allowed_files = vec!["tests/t.rs".to_string()];
         card.forbidden_files = vec!["src/lib.rs".to_string()];
-        let lines =
-            agent_card_plain_lines(&card, "ripr agent packet --seam-id seam:demo --json", None);
+        let lines = agent_card_plain_lines(
+            &card,
+            "ripr agent packet --seam-id seam:demo --json",
+            None,
+            None,
+        );
         let text = lines.join("\n");
         for needle in [
             "Repair brief for gap ",

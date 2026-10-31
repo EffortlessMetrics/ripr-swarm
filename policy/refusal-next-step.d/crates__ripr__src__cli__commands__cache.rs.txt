@@ -1,0 +1,20 @@
+crates/ripr/src/cli/commands/cache.rs|cache export {arg} requires a path
+crates/ripr/src/cli/commands/cache.rs|cache root {} is not an existing directory
+crates/ripr/src/cli/commands/cache.rs|failed to get current dir: {error}
+crates/ripr/src/cli/commands/cache.rs|failed to inspect cache layer {}: {error}; no files were removed
+crates/ripr/src/cli/commands/cache.rs|failed to inspect cache path component {}: {error}; no files were removed
+crates/ripr/src/cli/commands/cache.rs|failed to inspect {display}: {error} ok refusing to clear {}: cache layer `{name}` inspection is {}; no files
+crates/ripr/src/cli/commands/cache.rs|refusing to clear {display}: a cache root must sit at least two directories below the filesystem root
+crates/ripr/src/cli/commands/cache.rs|refusing to clear {display}: it contains a `..` or `.` component; \              set {CACHE_DIR_ENV} to an abs
+crates/ripr/src/cli/commands/cache.rs|refusing to clear {display}: it is not a directory failed to inspect {display}: {error} ok refusing to clear {
+crates/ripr/src/cli/commands/cache.rs|refusing to clear {display}: {resolved}; no files were removed
+crates/ripr/src/cli/commands/cache.rs|refusing to clear {}: cache layer `{name}` inspection is {}; no files were removed
+crates/ripr/src/cli/commands/cache.rs|refusing to clear {}: cache layer `{}` became a symlink; no further files were removed refusing to clear {}: c
+crates/ripr/src/cli/commands/cache.rs|refusing to clear {}: cache layer `{}` changed after inspection ({error}); no further files were removed
+crates/ripr/src/cli/commands/cache.rs|refusing to clear {}: cache layer `{}` is no longer a directory; no further files were removed refusing to cle
+crates/ripr/src/cli/commands/cache.rs|refusing to clear {}: path component {} is a symlink; no files were removed
+crates/ripr/src/cli/commands/cache.rs|refusing to clear {}: recognized cache layer `{marker}` is a symlink; no files were removed
+crates/ripr/src/cli/commands/cache.rs|refusing to clear {}: recognized cache layer `{marker}` is not a directory; no files were removed
+crates/ripr/src/cli/commands/cache.rs|resolve cache root {} failed: {error}
+crates/ripr/src/cli/commands/cache.rs|resolve cache root {} failed: {error} resolve cache root {} failed: {error}
+crates/ripr/src/cli/commands/cache.rs|{command} --root requires a path

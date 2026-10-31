@@ -41,8 +41,8 @@
       "evidence_path": ["reach yes: 1 related test(s) found for owner `computedConstant`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `score == 50`.", "related test tests/computedConstant.test.ts:5 computed initializer uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator score == 50: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [
       ],
-      "evidence": ["owner: computedConstant", "missing_discriminator: score == 50", "typescript_oracle_observed: computedConstant(edge)", "typescript_oracle_expected: \"gold\"", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/computedConstant.test.ts:6", "gap_state: advisory", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/computedConstant.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_computedConstant.ts:typescript_preview:5b45c899;owner=computedConstant", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["Related tests reach `computedConstant` with a strong oracle, but no strong assertion observes a `computedConstant(...)` call at the changed predicate boundary `score == 50`; inputs on one side of the boundary do not discriminate the changed comparison.", "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "evidence": ["owner: computedConstant", "missing_discriminator: score == 50", "typescript_oracle_observed: computedConstant(edge)", "typescript_oracle_expected: \"gold\"", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/computedConstant.test.ts:6", "gap_state: unknown", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/computedConstant.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_computedConstant.ts:typescript_preview:5b45c899;owner=computedConstant", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Related tests reach `computedConstant` with a strong oracle, but no strong assertion observes a `computedConstant(...)` call at the changed predicate boundary `score == 50`; inputs on one side of the boundary do not discriminate the changed comparison.", "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
       "assertion_texts": {
       },
       "activation": {
@@ -77,7 +77,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "why": "the preview adapter could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {
@@ -117,7 +117,7 @@
         "actionability_category": "incomplete_repair_packet",
         "authority_boundary": "preview_advisory_only",
         "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
-        "gap_state": "advisory",
+        "gap_state": "unknown",
         "missing_actionability_fields": [
           "canonical_gap_id",
           "repair_kind",
@@ -188,8 +188,8 @@
       "evidence_path": ["reach yes: 1 related test(s) found for owner `importedConstant`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `score == 50`.", "related test tests/importedConstant.test.ts:5 import that does not resolve uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator score == 50: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [
       ],
-      "evidence": ["owner: importedConstant", "missing_discriminator: score == 50", "typescript_oracle_observed: importedConstant(edge)", "typescript_oracle_expected: \"gold\"", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/importedConstant.test.ts:6", "gap_state: advisory", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/importedConstant.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_importedConstant.ts:typescript_preview:53bee618;owner=importedConstant", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["Related tests reach `importedConstant` with a strong oracle, but no strong assertion observes a `importedConstant(...)` call at the changed predicate boundary `score == 50`; inputs on one side of the boundary do not discriminate the changed comparison.", "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "evidence": ["owner: importedConstant", "missing_discriminator: score == 50", "typescript_oracle_observed: importedConstant(edge)", "typescript_oracle_expected: \"gold\"", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/importedConstant.test.ts:6", "gap_state: unknown", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/importedConstant.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_importedConstant.ts:typescript_preview:53bee618;owner=importedConstant", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Related tests reach `importedConstant` with a strong oracle, but no strong assertion observes a `importedConstant(...)` call at the changed predicate boundary `score == 50`; inputs on one side of the boundary do not discriminate the changed comparison.", "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
       "assertion_texts": {
       },
       "activation": {
@@ -224,7 +224,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "why": "the preview adapter could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {
@@ -264,7 +264,7 @@
         "actionability_category": "incomplete_repair_packet",
         "authority_boundary": "preview_advisory_only",
         "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
-        "gap_state": "advisory",
+        "gap_state": "unknown",
         "missing_actionability_fields": [
           "canonical_gap_id",
           "repair_kind",
@@ -335,8 +335,8 @@
       "evidence_path": ["reach yes: 1 related test(s) found for owner `innerBlockConstant`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `score == 50`.", "related test tests/innerBlockConstant.test.ts:3 declaration in an inner block uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator score == 50: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [
       ],
-      "evidence": ["owner: innerBlockConstant", "missing_discriminator: score == 50", "typescript_oracle_observed: innerBlockConstant(edge)", "typescript_oracle_expected: \"gold\"", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/innerBlockConstant.test.ts:8", "gap_state: advisory", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/innerBlockConstant.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_innerBlockConstant.ts:typescript_preview:f4e58f91;owner=innerBlockConstant", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["Related tests reach `innerBlockConstant` with a strong oracle, but no strong assertion observes a `innerBlockConstant(...)` call at the changed predicate boundary `score == 50`; inputs on one side of the boundary do not discriminate the changed comparison.", "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "evidence": ["owner: innerBlockConstant", "missing_discriminator: score == 50", "typescript_oracle_observed: innerBlockConstant(edge)", "typescript_oracle_expected: \"gold\"", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/innerBlockConstant.test.ts:8", "gap_state: unknown", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/innerBlockConstant.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_innerBlockConstant.ts:typescript_preview:f4e58f91;owner=innerBlockConstant", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Related tests reach `innerBlockConstant` with a strong oracle, but no strong assertion observes a `innerBlockConstant(...)` call at the changed predicate boundary `score == 50`; inputs on one side of the boundary do not discriminate the changed comparison.", "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
       "assertion_texts": {
       },
       "activation": {
@@ -371,7 +371,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "why": "the preview adapter could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {
@@ -411,7 +411,7 @@
         "actionability_category": "incomplete_repair_packet",
         "authority_boundary": "preview_advisory_only",
         "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
-        "gap_state": "advisory",
+        "gap_state": "unknown",
         "missing_actionability_fields": [
           "canonical_gap_id",
           "repair_kind",
@@ -482,8 +482,8 @@
       "evidence_path": ["reach yes: 1 related test(s) found for owner `letConstant`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `score == 50`.", "related test tests/letConstant.test.ts:5 let binding uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator score == 50: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [
       ],
-      "evidence": ["owner: letConstant", "missing_discriminator: score == 50", "typescript_oracle_observed: letConstant(edge)", "typescript_oracle_expected: \"gold\"", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/letConstant.test.ts:6", "gap_state: advisory", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/letConstant.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_letConstant.ts:typescript_preview:39af648d;owner=letConstant", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["Related tests reach `letConstant` with a strong oracle, but no strong assertion observes a `letConstant(...)` call at the changed predicate boundary `score == 50`; inputs on one side of the boundary do not discriminate the changed comparison.", "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "evidence": ["owner: letConstant", "missing_discriminator: score == 50", "typescript_oracle_observed: letConstant(edge)", "typescript_oracle_expected: \"gold\"", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/letConstant.test.ts:6", "gap_state: unknown", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/letConstant.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_letConstant.ts:typescript_preview:39af648d;owner=letConstant", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Related tests reach `letConstant` with a strong oracle, but no strong assertion observes a `letConstant(...)` call at the changed predicate boundary `score == 50`; inputs on one side of the boundary do not discriminate the changed comparison.", "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
       "assertion_texts": {
       },
       "activation": {
@@ -518,7 +518,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "why": "the preview adapter could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {
@@ -558,7 +558,7 @@
         "actionability_category": "incomplete_repair_packet",
         "authority_boundary": "preview_advisory_only",
         "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
-        "gap_state": "advisory",
+        "gap_state": "unknown",
         "missing_actionability_fields": [
           "canonical_gap_id",
           "repair_kind",
@@ -629,8 +629,8 @@
       "evidence_path": ["reach yes: 1 related test(s) found for owner `mutatedConstant`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `score == 50`.", "related test tests/mutatedConstant.test.ts:6 mutated object property uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator score == 50: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [
       ],
-      "evidence": ["owner: mutatedConstant", "missing_discriminator: score == 50", "typescript_oracle_observed: mutatedConstant(config.edge)", "typescript_oracle_expected: \"gold\"", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/mutatedConstant.test.ts:7", "gap_state: advisory", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/mutatedConstant.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_mutatedConstant.ts:typescript_preview:4ac57412;owner=mutatedConstant", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["Related tests reach `mutatedConstant` with a strong oracle, but no strong assertion observes a `mutatedConstant(...)` call at the changed predicate boundary `score == 50`; inputs on one side of the boundary do not discriminate the changed comparison.", "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "evidence": ["owner: mutatedConstant", "missing_discriminator: score == 50", "typescript_oracle_observed: mutatedConstant(config.edge)", "typescript_oracle_expected: \"gold\"", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/mutatedConstant.test.ts:7", "gap_state: unknown", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/mutatedConstant.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_mutatedConstant.ts:typescript_preview:4ac57412;owner=mutatedConstant", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Related tests reach `mutatedConstant` with a strong oracle, but no strong assertion observes a `mutatedConstant(...)` call at the changed predicate boundary `score == 50`; inputs on one side of the boundary do not discriminate the changed comparison.", "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
       "assertion_texts": {
       },
       "activation": {
@@ -665,7 +665,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "why": "the preview adapter could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {
@@ -705,7 +705,7 @@
         "actionability_category": "incomplete_repair_packet",
         "authority_boundary": "preview_advisory_only",
         "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
-        "gap_state": "advisory",
+        "gap_state": "unknown",
         "missing_actionability_fields": [
           "canonical_gap_id",
           "repair_kind",
@@ -776,8 +776,8 @@
       "evidence_path": ["reach yes: 1 related test(s) found for owner `nestedClosureConstant`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `score == 50`.", "related test tests/nestedClosureConstant.test.ts:5 declaration inside a nested closure uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator score == 50: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [
       ],
-      "evidence": ["owner: nestedClosureConstant", "missing_discriminator: score == 50", "typescript_oracle_observed: nestedClosureConstant(edge)", "typescript_oracle_expected: \"gold\"", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/nestedClosureConstant.test.ts:9", "gap_state: advisory", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/nestedClosureConstant.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_nestedClosureConstant.ts:typescript_preview:0b33091f;owner=nestedClosureConstant", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["Related tests reach `nestedClosureConstant` with a strong oracle, but no strong assertion observes a `nestedClosureConstant(...)` call at the changed predicate boundary `score == 50`; inputs on one side of the boundary do not discriminate the changed comparison.", "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "evidence": ["owner: nestedClosureConstant", "missing_discriminator: score == 50", "typescript_oracle_observed: nestedClosureConstant(edge)", "typescript_oracle_expected: \"gold\"", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/nestedClosureConstant.test.ts:9", "gap_state: unknown", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/nestedClosureConstant.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_nestedClosureConstant.ts:typescript_preview:0b33091f;owner=nestedClosureConstant", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Related tests reach `nestedClosureConstant` with a strong oracle, but no strong assertion observes a `nestedClosureConstant(...)` call at the changed predicate boundary `score == 50`; inputs on one side of the boundary do not discriminate the changed comparison.", "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
       "assertion_texts": {
       },
       "activation": {
@@ -812,7 +812,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "why": "the preview adapter could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {
@@ -852,7 +852,7 @@
         "actionability_category": "incomplete_repair_packet",
         "authority_boundary": "preview_advisory_only",
         "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
-        "gap_state": "advisory",
+        "gap_state": "unknown",
         "missing_actionability_fields": [
           "canonical_gap_id",
           "repair_kind",
@@ -923,8 +923,8 @@
       "evidence_path": ["reach yes: 1 related test(s) found for owner `nestedFunctionConstant`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `score == 50`.", "related test tests/nestedFunctionConstant.test.ts:3 declaration inside a nested function uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator score == 50: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [
       ],
-      "evidence": ["owner: nestedFunctionConstant", "missing_discriminator: score == 50", "typescript_oracle_observed: nestedFunctionConstant(edge)", "typescript_oracle_expected: \"gold\"", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/nestedFunctionConstant.test.ts:9", "gap_state: advisory", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/nestedFunctionConstant.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_nestedFunctionConstant.ts:typescript_preview:d2a9ced3;owner=nestedFunctionConstant", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["Related tests reach `nestedFunctionConstant` with a strong oracle, but no strong assertion observes a `nestedFunctionConstant(...)` call at the changed predicate boundary `score == 50`; inputs on one side of the boundary do not discriminate the changed comparison.", "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "evidence": ["owner: nestedFunctionConstant", "missing_discriminator: score == 50", "typescript_oracle_observed: nestedFunctionConstant(edge)", "typescript_oracle_expected: \"gold\"", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/nestedFunctionConstant.test.ts:9", "gap_state: unknown", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/nestedFunctionConstant.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_nestedFunctionConstant.ts:typescript_preview:d2a9ced3;owner=nestedFunctionConstant", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Related tests reach `nestedFunctionConstant` with a strong oracle, but no strong assertion observes a `nestedFunctionConstant(...)` call at the changed predicate boundary `score == 50`; inputs on one side of the boundary do not discriminate the changed comparison.", "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
       "assertion_texts": {
       },
       "activation": {
@@ -959,7 +959,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "why": "the preview adapter could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {
@@ -999,7 +999,7 @@
         "actionability_category": "incomplete_repair_packet",
         "authority_boundary": "preview_advisory_only",
         "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
-        "gap_state": "advisory",
+        "gap_state": "unknown",
         "missing_actionability_fields": [
           "canonical_gap_id",
           "repair_kind",
@@ -1070,8 +1070,8 @@
       "evidence_path": ["reach yes: 1 related test(s) found for owner `offValueConstant`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `score == 50`.", "related test tests/offValueConstant.test.ts:5 off-value constant uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator score == 50: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [
       ],
-      "evidence": ["owner: offValueConstant", "missing_discriminator: score == 50", "typescript_oracle_observed: offValueConstant(edge)", "typescript_oracle_expected: \"gold\"", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/offValueConstant.test.ts:6", "gap_state: advisory", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/offValueConstant.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_offValueConstant.ts:typescript_preview:cff0f021;owner=offValueConstant", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["Related tests reach `offValueConstant` with a strong oracle, but no strong assertion observes a `offValueConstant(...)` call at the changed predicate boundary `score == 50`; inputs on one side of the boundary do not discriminate the changed comparison.", "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "evidence": ["owner: offValueConstant", "missing_discriminator: score == 50", "typescript_oracle_observed: offValueConstant(edge)", "typescript_oracle_expected: \"gold\"", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/offValueConstant.test.ts:6", "gap_state: unknown", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/offValueConstant.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_offValueConstant.ts:typescript_preview:cff0f021;owner=offValueConstant", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Related tests reach `offValueConstant` with a strong oracle, but no strong assertion observes a `offValueConstant(...)` call at the changed predicate boundary `score == 50`; inputs on one side of the boundary do not discriminate the changed comparison.", "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
       "assertion_texts": {
       },
       "activation": {
@@ -1106,7 +1106,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "why": "the preview adapter could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {
@@ -1146,7 +1146,7 @@
         "actionability_category": "incomplete_repair_packet",
         "authority_boundary": "preview_advisory_only",
         "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
-        "gap_state": "advisory",
+        "gap_state": "unknown",
         "missing_actionability_fields": [
           "canonical_gap_id",
           "repair_kind",
@@ -1217,8 +1217,8 @@
       "evidence_path": ["reach yes: 1 related test(s) found for owner `reassignedConstant`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `score == 50`.", "related test tests/reassignedConstant.test.ts:6 reassigned binding uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator score == 50: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [
       ],
-      "evidence": ["owner: reassignedConstant", "missing_discriminator: score == 50", "typescript_oracle_observed: reassignedConstant(edge)", "typescript_oracle_expected: \"gold\"", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/reassignedConstant.test.ts:7", "gap_state: advisory", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/reassignedConstant.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_reassignedConstant.ts:typescript_preview:20acee55;owner=reassignedConstant", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["Related tests reach `reassignedConstant` with a strong oracle, but no strong assertion observes a `reassignedConstant(...)` call at the changed predicate boundary `score == 50`; inputs on one side of the boundary do not discriminate the changed comparison.", "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "evidence": ["owner: reassignedConstant", "missing_discriminator: score == 50", "typescript_oracle_observed: reassignedConstant(edge)", "typescript_oracle_expected: \"gold\"", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/reassignedConstant.test.ts:7", "gap_state: unknown", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/reassignedConstant.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_reassignedConstant.ts:typescript_preview:20acee55;owner=reassignedConstant", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Related tests reach `reassignedConstant` with a strong oracle, but no strong assertion observes a `reassignedConstant(...)` call at the changed predicate boundary `score == 50`; inputs on one side of the boundary do not discriminate the changed comparison.", "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
       "assertion_texts": {
       },
       "activation": {
@@ -1253,7 +1253,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "why": "the preview adapter could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {
@@ -1293,7 +1293,7 @@
         "actionability_category": "incomplete_repair_packet",
         "authority_boundary": "preview_advisory_only",
         "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
-        "gap_state": "advisory",
+        "gap_state": "unknown",
         "missing_actionability_fields": [
           "canonical_gap_id",
           "repair_kind",
@@ -1364,8 +1364,8 @@
       "evidence_path": ["reach yes: 1 related test(s) found for owner `shadowedConstant`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `score == 50`.", "related test tests/shadowedConstant.test.ts:5 shadowing callback parameter uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator score == 50: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [
       ],
-      "evidence": ["owner: shadowedConstant", "missing_discriminator: score == 50", "typescript_oracle_observed: shadowedConstant(49)", "typescript_oracle_expected: \"gold\"", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/shadowedConstant.test.ts:7", "gap_state: advisory", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/shadowedConstant.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_shadowedConstant.ts:typescript_preview:0e8fae71;owner=shadowedConstant", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["Related tests reach `shadowedConstant` with a strong oracle, but no strong assertion observes a `shadowedConstant(...)` call at the changed predicate boundary `score == 50`; inputs on one side of the boundary do not discriminate the changed comparison.", "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "evidence": ["owner: shadowedConstant", "missing_discriminator: score == 50", "typescript_oracle_observed: shadowedConstant(49)", "typescript_oracle_expected: \"gold\"", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/shadowedConstant.test.ts:7", "gap_state: unknown", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/shadowedConstant.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_shadowedConstant.ts:typescript_preview:0e8fae71;owner=shadowedConstant", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Related tests reach `shadowedConstant` with a strong oracle, but no strong assertion observes a `shadowedConstant(...)` call at the changed predicate boundary `score == 50`; inputs on one side of the boundary do not discriminate the changed comparison.", "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
       "assertion_texts": {
       },
       "activation": {
@@ -1400,7 +1400,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "why": "the preview adapter could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {
@@ -1440,7 +1440,7 @@
         "actionability_category": "incomplete_repair_packet",
         "authority_boundary": "preview_advisory_only",
         "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
-        "gap_state": "advisory",
+        "gap_state": "unknown",
         "missing_actionability_fields": [
           "canonical_gap_id",
           "repair_kind",

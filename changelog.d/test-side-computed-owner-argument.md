@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- An owner-call argument that is plain arithmetic over the test's own literal bindings (`score(base + 1)` after `let base = 9;`) now supplies the number it computes as an input row, so a boundary the test pins through it is observed instead of reading `infection_unknown`. A binding that is `mut`, assigned, shadowed or reused by a `for`, closure or `if let` pattern, and any call, method, cast, suffixed literal or non-decimal initializer around an operand, still leaves the argument unread (#9637).

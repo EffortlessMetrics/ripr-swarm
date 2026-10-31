@@ -111,20 +111,38 @@ enum Origin {
 /// longest path prefix with it goes first) and stops when it is found. Only
 /// a file the walk cannot find costs a full traversal, and the explored
 /// state carries over to the next file asked about. Production roots are
-/// exhausted before evidence roots, so a file found in the evidence phase is
-/// known to be unreachable from production.
+/// exhausted before evidence roots, except when the asked-for file sits
+/// under the package's `tests/`, `benches/` or `examples/`: those searches
+/// drain evidence first and stop on a hit, falling back to the production
+/// walk only when evidence does not reach the file or a `#[path]` /
+/// `include!` load edge was seen. A file found in the evidence phase after
+/// production was exhausted is unreachable from production; when evidence
+/// ran first, a later production reach upgrades the origin.
 #[derive(Debug)]
 struct PackageWalk {
     /// Pending `(file, anchor)` entries for the current phase.
     queue: Vec<(PathBuf, ChildAnchor)>,
-    /// The evidence roots, queued once the production phase is exhausted.
-    evidence_roots: Option<Vec<PathBuf>>,
+    /// Roots of the other phase, queued once the current phase is exhausted.
+    /// Production-first walks store evidence here; an evidence-first search
+    /// for a `tests/` / `benches/` / `examples/` target stores production.
+    /// Entries keep their child anchors so a fallback does not re-home a
+    /// `#[path]` / `include!` leftover as a crate root.
+    other_phase_roots: Option<(Origin, Vec<(PathBuf, ChildAnchor)>)>,
     phase: Origin,
+    /// Package directory this walk was built from, used to recognize
+    /// `tests/` / `benches/` / `examples/` targets. `None` for a route walk
+    /// seeded from `#[path]` / `include!` files.
+    package_dir: Option<PathBuf>,
+    /// Set when this walk expands a `#[path]`, `include!`, or unresolved
+    /// `#[path]` edge. An evidence-first hit then falls back to production.
+    seen_load_edge: bool,
     /// Entries already expanded in the current phase. The anchor is part of
     /// the key: a file reached both as `mod foo;` and through `#[path]`
     /// resolves its children under both directories.
     visited: BTreeSet<(PathBuf, ChildAnchor)>,
-    /// Every reached file with the first phase that reached it.
+    /// Every reached file with the origin that reached it. Production
+    /// overwrites Evidence, so a later production reach wins when evidence
+    /// ran first.
     reached: BTreeMap<PathBuf, Origin>,
     production_roots: BTreeSet<PathBuf>,
     production_root_read: bool,
@@ -393,11 +411,32 @@ struct WorkspaceListing {
     symlink_targets: Vec<PathBuf>,
 }
 
+/// Complete manifest-directory inventory for negative target-identity checks.
+/// Reuse the bounded module-graph listing, including normally skipped source
+/// directories and the committed-source missing-file guard. A symlink can
+/// hide another manifest owner, so it cannot establish a closed inventory.
+pub(crate) fn target_manifest_directories(workspace_root: &Path) -> Option<Vec<PathBuf>> {
+    // A declared Cargo package may itself live below `target/`; generated
+    // output exclusions cannot establish absence of an importable owner.
+    let listing = list_workspace_including_targets(workspace_root, true)?;
+    listing
+        .symlink_targets
+        .is_empty()
+        .then_some(listing.manifest_dirs)
+}
+
 /// Lists the workspace, or `None` when the listing is cut short or cannot
 /// describe the tree the analysis reads: under a committed-source overlay,
 /// a Rust file or manifest that exists only at `HEAD` is missing from the
 /// working-tree listing.
 fn list_workspace(workspace_root: &Path) -> Option<WorkspaceListing> {
+    list_workspace_including_targets(workspace_root, false)
+}
+
+fn list_workspace_including_targets(
+    workspace_root: &Path,
+    include_targets: bool,
+) -> Option<WorkspaceListing> {
     if !crate::analysis::committed_source::committed_workspace_paths_missing_on_disk(workspace_root)
         .is_empty()
     {
@@ -434,7 +473,7 @@ fn list_workspace(workspace_root: &Path) -> Option<WorkspaceListing> {
                     listing.symlink_targets.push(target);
                 }
             } else if file_type.is_dir() {
-                if !escaping_scan_skips(&path) {
+                if !escaping_scan_skips(&path) || (include_targets && entry.file_name() != ".git") {
                     pending.push(path);
                 }
             } else if path.file_name().is_some_and(|name| name == "Cargo.toml") {
@@ -754,13 +793,22 @@ impl PackageWalk {
         let (manifest_text, manifest) = read_manifest(workspace_root, package_dir)?;
         let production_roots = production_roots(&manifest, package_dir);
         let evidence_roots = evidence_roots(&manifest, &manifest_text, package_dir);
+        let package_dir = lexical(&normalize(package_dir));
         Some(Self {
             queue: production_roots
                 .iter()
                 .map(|root| (root.clone(), ChildAnchor::Directory))
                 .collect(),
-            evidence_roots: Some(evidence_roots.into_iter().collect()),
+            other_phase_roots: Some((
+                Origin::Evidence,
+                evidence_roots
+                    .into_iter()
+                    .map(|root| (root, ChildAnchor::Directory))
+                    .collect(),
+            )),
             phase: Origin::Production,
+            package_dir: Some(package_dir),
+            seen_load_edge: false,
             visited: BTreeSet::new(),
             reached: BTreeMap::new(),
             production_roots,
@@ -782,8 +830,10 @@ impl PackageWalk {
     fn from_loaded_files(files: Vec<(PathBuf, ChildAnchor)>) -> Self {
         Self {
             queue: files,
-            evidence_roots: None,
+            other_phase_roots: None,
             phase: Origin::Production,
+            package_dir: None,
+            seen_load_edge: false,
             visited: BTreeSet::new(),
             reached: BTreeMap::new(),
             production_roots: BTreeSet::new(),
@@ -840,14 +890,94 @@ impl PackageWalk {
     /// first, then canonical), exploring only as far as needed.
     fn find(&mut self, workspace_root: &Path, targets: &[PathBuf]) -> Option<Origin> {
         let direction = targets.first()?.clone();
+        let evidence_first = self.begin_evidence_first_if_applicable(&direction);
+        let mut confirm_production = false;
         loop {
-            if let Some(origin) = targets.iter().find_map(|target| self.reached.get(target)) {
-                return Some(*origin);
+            if let Some(origin) = targets
+                .iter()
+                .find_map(|target| self.reached.get(target).copied())
+            {
+                match origin {
+                    Origin::Production => return Some(origin),
+                    Origin::Evidence
+                        if evidence_first && self.seen_load_edge && !confirm_production =>
+                    {
+                        confirm_production = self.start_deferred_production();
+                        if !confirm_production {
+                            return Some(origin);
+                        }
+                    }
+                    Origin::Evidence if confirm_production && self.phase == Origin::Production => {
+                        // Keep expanding production so a load-edge hit can
+                        // still upgrade to Production.
+                    }
+                    Origin::Evidence => return Some(origin),
+                }
             }
             if !self.step(workspace_root, &direction) {
-                return None;
+                return targets
+                    .iter()
+                    .find_map(|target| self.reached.get(target).copied());
             }
         }
+    }
+
+    /// Whether `target` sits under this package's `tests/`, `benches/`, or
+    /// `examples/` directory.
+    fn target_is_under_package_evidence_dir(&self, target: &Path) -> bool {
+        let Some(package_dir) = &self.package_dir else {
+            return false;
+        };
+        ["tests", "benches", "examples"].iter().any(|dir| {
+            let base = lexical(&normalize(&package_dir.join(dir)));
+            target.starts_with(&base)
+        })
+    }
+
+    /// Swap the pending production queue for evidence roots when this is a
+    /// fresh walk toward a `tests/` / `benches/` / `examples/` file.
+    fn begin_evidence_first_if_applicable(&mut self, target: &Path) -> bool {
+        if !self.visited.is_empty() || !self.scans.is_empty() {
+            return false;
+        }
+        if self.phase != Origin::Production {
+            return false;
+        }
+        if self.production_roots.contains(target) {
+            return false;
+        }
+        if !self.target_is_under_package_evidence_dir(target) {
+            return false;
+        }
+        let Some((Origin::Evidence, evidence)) = self.other_phase_roots.take() else {
+            return false;
+        };
+        if evidence.is_empty() {
+            self.other_phase_roots = Some((Origin::Evidence, evidence));
+            return false;
+        }
+        let production: Vec<(PathBuf, ChildAnchor)> = self.queue.drain(..).collect();
+        self.queue = evidence;
+        self.other_phase_roots = Some((Origin::Production, production));
+        self.phase = Origin::Evidence;
+        self.seen_load_edge = false;
+        true
+    }
+
+    /// Jump from a still-pending evidence queue to the deferred production
+    /// roots, keeping leftover evidence for a later file on this walk.
+    fn start_deferred_production(&mut self) -> bool {
+        let Some((Origin::Production, roots)) = self.other_phase_roots.take() else {
+            return false;
+        };
+        let leftover: Vec<(PathBuf, ChildAnchor)> = self.queue.drain(..).collect();
+        self.phase = Origin::Production;
+        self.visited.clear();
+        self.queue = roots;
+        if !leftover.is_empty() {
+            self.other_phase_roots = Some((Origin::Evidence, leftover));
+        }
+        true
     }
 
     /// Reads and scans `file` together with the unscanned queue entries the
@@ -941,14 +1071,11 @@ impl PackageWalk {
             self.queue.len().checked_sub(1)
         };
         let Some(position) = position else {
-            return match self.evidence_roots.take() {
-                Some(roots) => {
-                    self.phase = Origin::Evidence;
+            return match self.other_phase_roots.take() {
+                Some((phase, roots)) => {
+                    self.phase = phase;
                     self.visited.clear();
-                    self.queue = roots
-                        .into_iter()
-                        .map(|root| (root, ChildAnchor::Directory))
-                        .collect();
+                    self.queue = roots;
                     true
                 }
                 None => false,
@@ -963,7 +1090,7 @@ impl PackageWalk {
                 // Stop exploring: the tree is too large to judge.
                 self.complete = false;
                 self.queue.clear();
-                self.evidence_roots = None;
+                self.other_phase_roots = None;
                 return false;
             }
             if !self.read_ahead.contains_key(&file) {
@@ -999,14 +1126,30 @@ impl PackageWalk {
             self.production_root_read = true;
         }
         let tag = self.route_tags.get(&(file.clone(), anchor)).copied();
-        self.reached.entry(file.clone()).or_insert(self.phase);
+        match self.phase {
+            Origin::Production => {
+                self.reached.insert(file.clone(), Origin::Production);
+            }
+            Origin::Evidence => {
+                self.reached.entry(file.clone()).or_insert(Origin::Evidence);
+            }
+        }
         if let Some(tag) = tag {
             self.reached_tags.entry(file.clone()).or_insert(tag);
         }
         if let Ok(canonical) = std::fs::canonicalize(&file)
             && canonical != file
         {
-            self.reached.entry(canonical.clone()).or_insert(self.phase);
+            match self.phase {
+                Origin::Production => {
+                    self.reached.insert(canonical.clone(), Origin::Production);
+                }
+                Origin::Evidence => {
+                    self.reached
+                        .entry(canonical.clone())
+                        .or_insert(Origin::Evidence);
+                }
+            }
             if let Some(tag) = tag {
                 self.reached_tags.entry(canonical).or_insert(tag);
             }
@@ -1023,9 +1166,11 @@ impl PackageWalk {
                     }
                 }
                 RustModuleTreeEdge::Path(target) => {
+                    self.seen_load_edge = true;
                     pending.push((lexical(&directory.join(target)), ChildAnchor::Both));
                 }
                 RustModuleTreeEdge::Include(target) => {
+                    self.seen_load_edge = true;
                     pending.push((lexical(&directory.join(target)), ChildAnchor::Included));
                 }
                 RustModuleTreeEdge::UnresolvedPath {
@@ -1035,6 +1180,7 @@ impl PackageWalk {
                     candidates,
                     default_applies,
                 } => {
+                    self.seen_load_edge = true;
                     // A `cfg_attr` path that does not apply leaves default
                     // resolution, so the default targets are routes too.
                     let mut targets = candidates
@@ -2157,6 +2303,263 @@ mod tests {
                 PathBuf::from("a/src/y.rs"),
                 (PathBuf::from("a/src/lib.rs"), 4)
             )]),
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    const WIDE_PRODUCTION_MODULES: usize = 24;
+
+    fn wide_package_files(extra: &[(&str, &str)]) -> Vec<(String, String)> {
+        let mut files = vec![
+            ("Cargo.toml".to_owned(), MANIFEST.to_owned()),
+            ("tests/it.rs".to_owned(), String::new()),
+            ("benches/hot.rs".to_owned(), String::new()),
+            ("examples/demo.rs".to_owned(), String::new()),
+            ("src/orphan.rs".to_owned(), String::new()),
+        ];
+        let mut lib = String::new();
+        for index in 0..WIDE_PRODUCTION_MODULES {
+            lib.push_str(&format!("mod m{index:02};\n"));
+            files.push((format!("src/m{index:02}.rs"), String::new()));
+        }
+        files.push(("src/lib.rs".to_owned(), lib));
+        for (path, text) in extra {
+            files.push(((*path).to_owned(), (*text).to_owned()));
+        }
+        files
+    }
+
+    fn wide_package_refs(files: &[(String, String)]) -> Vec<(&str, &str)> {
+        files
+            .iter()
+            .map(|(path, text)| (path.as_str(), text.as_str()))
+            .collect()
+    }
+
+    fn module_graph_verdict_bytes(context: &SourceRoleContext) -> String {
+        format!(
+            "{:?}\n{:?}\n{:?}",
+            context.module_graph_orphans,
+            context.declared_production_sources,
+            context.module_graph_unresolved_routes
+        )
+    }
+
+    #[test]
+    fn evidence_target_does_not_scan_the_production_module_tree() -> Result<(), String> {
+        let files = wide_package_files(&[]);
+        let root = fixture("evidence-first-scans", &wide_package_refs(&files))?;
+        let package = lexical(&normalize(&root));
+        let path = |relative: &str| lexical(&normalize(&root.join(relative)));
+        let mut walk = PackageWalk::new(&root, &package).ok_or("fixture has no package")?;
+        assert_eq!(
+            walk.find(&root, &[path("tests/it.rs")]),
+            Some(Origin::Evidence)
+        );
+        let scanned = walk.scans.len() + walk.read_ahead.len();
+        assert!(
+            scanned < 6,
+            "a tests/*.rs hit must not expand ~{WIDE_PRODUCTION_MODULES} production modules: {scanned} scans"
+        );
+        assert!(
+            !walk.scans.contains_key(&path("src/lib.rs")),
+            "production root must stay unexpanded after an evidence-only hit"
+        );
+
+        let mut benches = PackageWalk::new(&root, &package).ok_or("fixture has no package")?;
+        assert_eq!(
+            benches.find(&root, &[path("benches/hot.rs")]),
+            Some(Origin::Evidence)
+        );
+        let scanned = benches.scans.len() + benches.read_ahead.len();
+        assert!(
+            scanned < 6,
+            "a benches/*.rs hit must not expand the production tree: {scanned} scans"
+        );
+
+        let mut examples = PackageWalk::new(&root, &package).ok_or("fixture has no package")?;
+        assert_eq!(
+            examples.find(&root, &[path("examples/demo.rs")]),
+            Some(Origin::Evidence)
+        );
+        let scanned = examples.scans.len() + examples.read_ahead.len();
+        assert!(
+            scanned < 6,
+            "an examples/*.rs hit must not expand the production tree: {scanned} scans"
+        );
+
+        let mut production = PackageWalk::new(&root, &package).ok_or("fixture has no package")?;
+        assert_eq!(
+            production.find(&root, &[path("src/m00.rs")]),
+            Some(Origin::Production)
+        );
+        assert!(
+            production.scans.contains_key(&path("src/lib.rs")),
+            "a production hit still walks from the crate root"
+        );
+        assert!(
+            !production.scans.contains_key(&path("tests/it.rs")),
+            "a production hit must not drain evidence"
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn evidence_first_walk_keeps_orphan_and_origin_verdicts_byte_identical() -> Result<(), String> {
+        let files = wide_package_files(&[]);
+        let root = fixture("evidence-first-verdicts", &wide_package_refs(&files))?;
+        let package = lexical(&normalize(&root));
+        let path = |relative: &str| lexical(&normalize(&root.join(relative)));
+
+        let mut production_first =
+            PackageWalk::new(&root, &package).ok_or("fixture has no package")?;
+        assert_eq!(
+            production_first.find(&root, &[path("src/missing.rs")]),
+            None,
+            "exhaust production then evidence so origins are the pre-reorder baseline"
+        );
+        let mut evidence_first =
+            PackageWalk::new(&root, &package).ok_or("fixture has no package")?;
+        assert_eq!(
+            evidence_first.find(&root, &[path("tests/it.rs")]),
+            production_first.reached.get(&path("tests/it.rs")).copied()
+        );
+        assert_eq!(
+            evidence_first.find(&root, &[path("src/m00.rs")]),
+            production_first.reached.get(&path("src/m00.rs")).copied()
+        );
+        assert_eq!(
+            evidence_first.find(&root, &[path("src/orphan.rs")]),
+            production_first
+                .reached
+                .get(&path("src/orphan.rs"))
+                .copied()
+        );
+        assert_eq!(
+            evidence_first.proves_unreached(),
+            production_first.proves_unreached()
+        );
+
+        let evidence_first_order = evidence_for(
+            &root,
+            &[
+                "tests/it.rs",
+                "benches/hot.rs",
+                "examples/demo.rs",
+                "src/orphan.rs",
+                "src/m00.rs",
+            ],
+        );
+        let production_first_order = evidence_for(
+            &root,
+            &[
+                "src/m00.rs",
+                "tests/it.rs",
+                "benches/hot.rs",
+                "examples/demo.rs",
+                "src/orphan.rs",
+            ],
+        );
+        assert_eq!(
+            module_graph_verdict_bytes(&evidence_first_order),
+            module_graph_verdict_bytes(&production_first_order)
+        );
+        assert_eq!(
+            evidence_first_order.module_graph_orphans,
+            BTreeSet::from([PathBuf::from("src/orphan.rs")])
+        );
+        assert!(
+            !evidence_first_order
+                .module_graph_orphans
+                .contains(Path::new("tests/it.rs"))
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn evidence_path_escape_falls_back_to_the_production_walk() -> Result<(), String> {
+        let files = wide_package_files(&[
+            (
+                "tests/it.rs",
+                "#[path = \"../src/m00.rs\"]\nmod m00;\n#[path = \"helper.rs\"]\nmod helper;\n",
+            ),
+            ("tests/helper.rs", "mod child;\n"),
+            ("tests/helper/child.rs", ""),
+        ]);
+        let root = fixture("evidence-first-escape", &wide_package_refs(&files))?;
+        let package = lexical(&normalize(&root));
+        let path = |relative: &str| lexical(&normalize(&root.join(relative)));
+        let mut walk = PackageWalk::new(&root, &package).ok_or("fixture has no package")?;
+        assert_eq!(
+            walk.find(&root, &[path("tests/it.rs")]),
+            Some(Origin::Evidence)
+        );
+        assert!(
+            walk.scans.contains_key(&path("src/lib.rs")),
+            "a #[path] in the evidence tree must fall back to production"
+        );
+        assert_eq!(
+            walk.reached.get(&path("src/m00.rs")).copied(),
+            Some(Origin::Production),
+            "production must win when both phases reach the file"
+        );
+
+        let mut baseline = PackageWalk::new(&root, &package).ok_or("fixture has no package")?;
+        assert_eq!(baseline.find(&root, &[path("src/missing.rs")]), None);
+        assert_eq!(
+            walk.reached.get(&path("tests/it.rs")).copied(),
+            baseline.reached.get(&path("tests/it.rs")).copied()
+        );
+        assert_eq!(
+            walk.reached.get(&path("src/m00.rs")).copied(),
+            baseline.reached.get(&path("src/m00.rs")).copied()
+        );
+        let mut leftover = PackageWalk::new(&root, &package).ok_or("fixture has no package")?;
+        assert_eq!(
+            leftover.find(&root, &[path("tests/it.rs")]),
+            Some(Origin::Evidence)
+        );
+        assert_eq!(
+            leftover.find(&root, &[path("tests/helper/child.rs")]),
+            Some(Origin::Evidence),
+            "fallback must keep the #[path] child's stem anchor"
+        );
+        assert_eq!(
+            leftover
+                .reached
+                .get(&path("tests/helper/child.rs"))
+                .copied(),
+            baseline
+                .reached
+                .get(&path("tests/helper/child.rs"))
+                .copied()
+        );
+
+        let evidence_first_order = evidence_for(
+            &root,
+            &[
+                "tests/it.rs",
+                "tests/helper/child.rs",
+                "src/orphan.rs",
+                "src/m00.rs",
+            ],
+        );
+        let production_first_order = evidence_for(
+            &root,
+            &[
+                "src/m00.rs",
+                "tests/it.rs",
+                "tests/helper/child.rs",
+                "src/orphan.rs",
+            ],
+        );
+        assert_eq!(
+            module_graph_verdict_bytes(&evidence_first_order),
+            module_graph_verdict_bytes(&production_first_order)
+        );
+        assert_eq!(
+            evidence_first_order.module_graph_orphans,
+            BTreeSet::from([PathBuf::from("src/orphan.rs")])
         );
         std::fs::remove_dir_all(root).map_err(|error| error.to_string())
     }

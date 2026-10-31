@@ -1,0 +1,53 @@
+{
+  "case_id": "spec-b-0153-opt-in-sibling-helper",
+  "subject_id": "authored-spec-b-configured",
+  "diff": "cases/spec-b-0153-opt-in-sibling-helper.diff",
+  "anchor": {
+    "file": "tests/other.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "opt_in_sibling_helper",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test --locked",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "5",
+        "mutated_line": "5",
+        "outcome": "tests_failed",
+        "failing_test": "other_base_is_6",
+        "equivalence_review": "not equivalent: other_base_is_6 expects 6, not 5"
+      },
+      {
+        "replacement": "7",
+        "mutated_line": "7",
+        "outcome": "tests_failed",
+        "failing_test": "other_base_is_6",
+        "equivalence_review": "not equivalent: other_base_is_6 expects 6, not 7"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The retained opt-in names only tests/api_contract.rs. This sibling target stays test evidence and silent despite a discriminating runtime assertion. Together the cases label both sides of the exact-target override.",
+  "spec_examples": [
+    "RIPR-SPEC-0153#6"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "5abb7591b0510f2fe563c086b42c381d8b4a2164",
+    "full_checkout_verdict": "silent",
+    "full_checkout_classifications": [],
+    "excerpt_parity": "matched"
+  }
+}

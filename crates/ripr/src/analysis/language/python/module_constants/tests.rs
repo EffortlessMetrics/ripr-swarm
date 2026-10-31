@@ -253,7 +253,22 @@ fn constant_name_not_imported_from_the_owner_module_does_not_bind() -> Result<()
     let tests = "from src.pricing import discounted_total\nfrom config import DISCOUNT_THRESHOLD\n\ndef test_other():\n    assert discounted_total(5_000) == 5_000\n    assert discounted_total(DISCOUNT_THRESHOLD) == 9_000\n";
     let finding = classify("DISCOUNT_THRESHOLD = 10_000\n", tests)?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
-    assert_eq!(discriminators(&finding), ["amount == DISCOUNT_THRESHOLD"]);
+    // The wrong-module call does not bind the owner's constant, and its
+    // unresolved input could sit on the boundary, so no concrete
+    // discriminator is named (#10990).
+    assert!(
+        discriminators(&finding).is_empty(),
+        "{:?}",
+        discriminators(&finding)
+    );
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|line| line.contains("unresolved inputs")),
+        "{:?}",
+        finding.missing
+    );
     Ok(())
 }
 

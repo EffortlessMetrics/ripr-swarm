@@ -95,6 +95,21 @@ pub(crate) fn probes_for_file_with_relations(
         .map(|facts| prose_lines(&facts.source))
         .unwrap_or_default();
     let removed_prose = old_source.map(prose_lines).unwrap_or_default();
+    // RIPR-SPEC-0368: contract attributes and ghost/logic items are read by a
+    // verifier, never by a test; the run discloses them as a typed limitation
+    // instead of probing them.
+    let added_verification = find_file_facts(index, &changed.path)
+        .map(|facts| super::verification_erased::verification_only_lines(&facts.source))
+        .unwrap_or_default();
+    let removed_verification = old_source
+        .map(super::verification_erased::verification_only_lines)
+        .unwrap_or_default();
+    for (flag, line) in skip_added.iter_mut().zip(&changed.added_lines) {
+        *flag |= added_verification.contains(&line.new_side_line);
+    }
+    for (flag, line) in skip_removed.iter_mut().zip(&changed.removed_lines) {
+        *flag |= removed_verification.contains(&line.line);
+    }
     let added_at = changed
         .added_lines
         .iter()
@@ -212,6 +227,12 @@ pub(crate) fn probes_for_file_with_relations(
     // lazily, only when a line sits in a wrapped signature (#8999).
     let signature_cx = SignatureContext::default();
     for (added_index, added) in changed.added_lines.iter().enumerate() {
+        // #11439: a cancelled run stops seeding. The result is discarded by
+        // the caller's next (sticky) checkpoint, so the partial list is never
+        // published.
+        if crate::analysis::cancellation::checkpoint().is_err() {
+            break;
+        }
         let text = added.text.trim();
         // Blank and comment-only lines are never probed. The other
         // `should_ignore_changed_line` exclusions (`#`, `use`, `mod`) apply
@@ -552,6 +573,9 @@ pub(crate) fn probes_for_file_with_relations(
 
     let represented_short_lines = represented_short_replacements(changed, &probes);
     for (removed_index, removed) in changed.removed_lines.iter().enumerate() {
+        if crate::analysis::cancellation::checkpoint().is_err() {
+            break;
+        }
         let text = removed.text.trim();
         if text.is_empty()
             || text.starts_with("//")
@@ -1329,23 +1353,34 @@ fn position_macro_lines(source: &str) -> std::collections::BTreeSet<usize> {
 /// probes.
 fn macro_invocation_lines(source: &str, names: &[&str]) -> std::collections::BTreeSet<usize> {
     let masked = mask_comments_and_strings(source);
-    let bytes = masked.as_bytes();
-    let newlines = bytes
-        .iter()
+    let newlines = masked
+        .bytes()
         .enumerate()
-        .filter(|(_, byte)| **byte == b'\n')
+        .filter(|(_, byte)| *byte == b'\n')
         .map(|(at, _)| at)
         .collect::<Vec<_>>();
     let line_of = |at: usize| newlines.partition_point(|&newline| newline < at) + 1;
-    let mut lines = std::collections::BTreeSet::new();
-    let mut bangs = macro_bangs(&masked, names);
+    macro_invocation_extents(&masked, names)
+        .into_iter()
+        .flat_map(|(at, end)| line_of(at)..=line_of(end))
+        .collect()
+}
+
+/// Byte extents `(name offset, closing delimiter offset)` of each invocation
+/// of a macro named in `names` in `masked` text, outermost first. An
+/// invocation that never closes ends at `masked.len()` and is the last entry,
+/// since it already covers every later invocation.
+pub(super) fn macro_invocation_extents(masked: &str, names: &[&str]) -> Vec<(usize, usize)> {
+    let bytes = masked.as_bytes();
+    let mut extents = Vec::new();
+    let mut bangs = macro_bangs(masked, names);
     bangs.sort_unstable();
     let mut covered_to = 0usize;
     for (at, after_bang) in bangs {
         if at < covered_to {
             continue;
         }
-        let cursor = skip_rust_whitespace(&masked, after_bang);
+        let cursor = skip_rust_whitespace(masked, after_bang);
         if !matches!(bytes.get(cursor), Some(b'(' | b'[' | b'{')) {
             continue;
         }
@@ -1364,15 +1399,13 @@ fn macro_invocation_lines(source: &str, names: &[&str]) -> std::collections::BTr
                 _ => {}
             }
         }
-        lines.extend(line_of(at)..=line_of(end));
+        extents.push((at, end));
         if end == bytes.len() {
-            // Unclosed: it already runs to the end of the file, so every later
-            // invocation is covered and rescanning would be quadratic.
             break;
         }
         covered_to = end;
     }
-    lines
+    extents
 }
 
 fn neutral_spelling(line: &str) -> String {
@@ -6778,6 +6811,115 @@ mod source_currentness_tests {
                 .iter()
                 .any(|probe| probe.location.line == 10 && probe.family == ProbeFamily::Predicate),
             "ordinary fn body beside the macro keeps its probe: {probes:?}"
+        );
+    }
+
+    /// RIPR-SPEC-0369: changed lines inside `verus! { .. }` are Verus syntax.
+    /// Exec text, `ensures`, `spec fn` and `proof` lines seed one
+    /// `static_unknown` probe per region and diff side (a replaced line pairs its
+    /// old text into the added-side probe), never an expression family; an
+    /// ordinary fn beside the block keeps its normal probe.
+    #[test]
+    fn verus_region_lines_seed_one_static_unknown_not_expression_probes() {
+        let source = "use vstd::prelude::*;\nverus! {\nfn inc(x: u32) -> (r: u32)\n    requires x < 100,\n    ensures r <= 200,\n{\n    x + 2\n}\nspec fn adult(age: u32) -> bool { age >= 21 }\nproof fn lemma(x: int) {\n    assert(x / 2 <= x + 1) by (nonlinear_arith);\n}\n}\nfn check(n: usize) -> bool {\n    n >= 4\n}\n";
+        let path = PathBuf::from("src/lib.rs");
+        let line = |number: usize, text: &str| ChangedLine {
+            line: number,
+            new_side_line: number,
+            text: text.to_string(),
+        };
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![
+                line(4, "requires x < 100,"),
+                line(5, "ensures r <= 200,"),
+                line(7, "x + 2"),
+                line(9, "spec fn adult(age: u32) -> bool { age >= 21 }"),
+                line(11, "assert(x / 2 <= x + 1) by (nonlinear_arith);"),
+                line(15, "n >= 4"),
+            ],
+            removed_lines: vec![line(5, "ensures r <= 100,"), line(15, "n > 4")],
+        };
+        let index = macro_source_index(&path, source);
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        let inside = probes
+            .iter()
+            .filter(|probe| probe.location.line <= 13)
+            .collect::<Vec<_>>();
+        assert!(
+            inside
+                .iter()
+                .all(|probe| probe.family == ProbeFamily::StaticUnknown),
+            "{inside:?}"
+        );
+        // A removed line replaced by an added one is paired into the added-side
+        // probe (`before` carries the old text); only a removed line with no
+        // added counterpart gets a removed-side probe (see the removed-only test).
+        assert_eq!(
+            inside.len(),
+            1,
+            "one paired probe for the region: {inside:?}"
+        );
+        assert!(
+            inside[0].before.is_some() && inside[0].after.is_some(),
+            "removed text is paired into the added-side probe: {inside:?}"
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.location.line == 15 && probe.family == ProbeFamily::Predicate),
+            "ordinary fn beside the block keeps its probe: {probes:?}"
+        );
+    }
+
+    /// RIPR-SPEC-0369: a removed-only edit inside a region seeds exactly one
+    /// removed-side `static_unknown` probe from the old-source region, even when
+    /// the new file no longer holds the deleted lines.
+    #[test]
+    fn removed_only_verus_region_lines_seed_one_removed_side_static_unknown() {
+        let source =
+            "verus! {\nfn inc(x: u32) -> (r: u32)\n    requires x < 100,\n{\n    x + 2\n}\n}\n";
+        let path = PathBuf::from("src/lib.rs");
+        let line = |number: usize, new_side: usize, text: &str| ChangedLine {
+            line: number,
+            new_side_line: new_side,
+            text: text.to_string(),
+        };
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![],
+            removed_lines: vec![line(4, 4, "ensures r <= 200,"), line(5, 4, "decreases x,")],
+        };
+        let index = macro_source_index(&path, source);
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        assert_eq!(probes.len(), 1, "{probes:?}");
+        assert_eq!(probes[0].family, ProbeFamily::StaticUnknown);
+        assert!(probes[0].after.is_none() && probes[0].before.is_some());
+    }
+
+    /// RIPR-SPEC-0369: a changed line that also holds code outside the `verus!`
+    /// extent keeps ordinary seeding end to end.
+    #[test]
+    fn a_line_mixing_verus_region_and_outside_code_keeps_ordinary_probes() {
+        let source = "fn a(n: usize) -> bool { verus! { fn b() {} } n >= 4 }\n";
+        let path = PathBuf::from("src/lib.rs");
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![ChangedLine {
+                line: 1,
+                new_side_line: 1,
+                text: "fn a(n: usize) -> bool { verus! { fn b() {} } n >= 4 }".to_string(),
+            }],
+            removed_lines: vec![],
+        };
+        let index = macro_source_index(&path, source);
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        assert!(
+            probes
+                .iter()
+                .all(|probe| probe.family != ProbeFamily::StaticUnknown)
+                && !probes.is_empty(),
+            "{probes:?}"
         );
     }
 

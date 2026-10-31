@@ -77,7 +77,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "why": "the preview adapter could not confirm that this assertion observes the changed behavior"
         },
         {
           "name": "discounts far above threshold",
@@ -102,7 +102,7 @@
         "limits": [
           "Syntax-first TypeScript/JavaScript preview evidence only.",
           "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
-          "This card is advisory and is not a repair packet."
+          "This card is an advisory summary; the complete repair packet is projected separately and is also advisory."
         ],
         "missing_discriminator": "amount == threshold",
         "oracle_kind": "exact_value",

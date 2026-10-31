@@ -16,8 +16,8 @@ WARNING ./src/display.rs:7
   id: probe:src_display.rs:return_value:f7797365
 
 Changed
-  before: write!(f, "/u{7b}/u{7d}°C", self.0)
-  after:  write!(f, "/u{7b}:?/u{7d}°C", self.0)
+  before: write!(f, "\u{7b}\u{7d}°C", self.0)
+  after:  write!(f, "\u{7b}:?\u{7d}°C", self.0)
 
 Change type
   a returned value changed
@@ -32,10 +32,10 @@ Static exposure
 Evidence
   - reach yes: Related tests appear to reach fmt: exact_display_pin
   - infection yes: Reachable tests can plausibly activate this changed behavior
-  - propagation yes: Complete propagation witness reaches returned value: write!(f, "/u{7b}:?/u{7d}°C", self.0)
+  - propagation yes: Complete propagation witness reaches returned value: write!(f, "\u{7b}:?\u{7d}°C", self.0)
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
-  - local flow reaches returned value: write!(f, "/u{7b}:?/u{7d}°C", self.0) (line 7)
+  - local flow reaches returned value: write!(f, "\u{7b}:?\u{7d}°C", self.0) (line 7)
   - related test src/display.rs:16 exact_display_pin uses strong exact value oracle: assert_eq!(Temp(21).to_string(), "21°C"); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source assertion argument value "21°C" at line 17
   - source assertion argument value 21 at line 17

@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -83,7 +83,7 @@
+ pub fn render_document(pairs: &[(&str, i64)]) -> String {
+     let mut out = String::new();
+     for (key, value) in pairs {
+-        out.push_str(&format!("{key} = {value}\n"));
++        out += &format!("{key} = {value}\n");
+     }
+     out
+ }

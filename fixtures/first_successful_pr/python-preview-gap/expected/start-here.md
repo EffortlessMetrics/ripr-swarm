@@ -8,6 +8,9 @@ State: actionable
 - State: `top_gap`
 - Output state: `preview_limited`
 - Safe next action: repair one named preview Python gap.
+- Recommended repair start: `ripr agent repair --gap-id 'gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold' --base origin/main --root <cwd>/fixtures/first_successful_pr/python-preview-gap --phase before`
+- Commit any uncommitted production change first; the start refuses otherwise.
+- Alternative, by hand: add the test yourself and use the verify and receipt commands below.
 - Top actionable gap: missing boundary assertion
 - Changed behavior: `if amount >= threshold:`
 - Why this matters: A related Python test reaches this change, but no boundary discriminator was found for the changed behavior.

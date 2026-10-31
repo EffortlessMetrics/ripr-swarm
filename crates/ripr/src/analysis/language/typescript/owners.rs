@@ -81,6 +81,7 @@ pub(crate) fn owners_from_program(
         &repeated_names,
     );
     assign_decorated_entries(program, source, &mut owners);
+    reshare_owner_imports(&mut owners);
     owners
 }
 
@@ -1105,7 +1106,7 @@ pub(crate) fn owner_from_variable_declarator(
             class_name: None,
             decorated: false,
             exported_as_default: false,
-            imports: imports.to_vec(),
+            imports: imports.to_vec().into(),
             method_kind: TypeScriptMethodKind::Ordinary,
             class_default_export: false,
             default_object_member: false,
@@ -1161,7 +1162,7 @@ pub(crate) fn owner_from_function(
         class_name: None,
         decorated,
         exported_as_default: false,
-        imports: imports.to_vec(),
+        imports: imports.to_vec().into(),
         method_kind: TypeScriptMethodKind::Ordinary,
         class_default_export: false,
         default_object_member: false,
@@ -1193,7 +1194,7 @@ pub(crate) fn owner_from_arrow(
         class_name: None,
         decorated,
         exported_as_default: false,
-        imports: imports.to_vec(),
+        imports: imports.to_vec().into(),
         method_kind: TypeScriptMethodKind::Ordinary,
         class_default_export: false,
         default_object_member: false,
@@ -1243,10 +1244,7 @@ pub(crate) fn owner_from_method(
     class_name: Option<&str>,
     imports: &[TypeScriptImport],
 ) -> Option<TypeScriptOwner> {
-    if method.computed {
-        return None;
-    }
-    let name = property_key_name(&method.key)?;
+    let name = method_key_name(method)?;
     let (arity, params) = parameter_facts(&method.value.params);
     Some(TypeScriptOwner {
         name,
@@ -1261,7 +1259,7 @@ pub(crate) fn owner_from_method(
         class_name: class_name.map(str::to_string),
         decorated: class_decorated || !method.decorators.is_empty(),
         exported_as_default: false,
-        imports: imports.to_vec(),
+        imports: imports.to_vec().into(),
         method_kind: match method.kind {
             oxc_ast::ast::MethodDefinitionKind::Constructor => TypeScriptMethodKind::Constructor,
             oxc_ast::ast::MethodDefinitionKind::Get => TypeScriptMethodKind::Getter,
@@ -1284,6 +1282,30 @@ pub(crate) fn binding_identifier_name<'a>(pattern: &'a BindingPattern<'a>) -> Op
         BindingPattern::BindingIdentifier(identifier) => Some(identifier.name.as_str()),
         _ => None,
     }
+}
+
+/// A class method's owner name: a plain identifier, or a `#private` name kept
+/// with its `#` so it can never collide with a public member of the same name
+/// and cannot match a test's `receiver.name(` needle (#10440).
+fn method_key_name(method: &MethodDefinition<'_>) -> Option<String> {
+    if method.computed {
+        return None;
+    }
+    match &method.key {
+        PropertyKey::PrivateIdentifier(identifier)
+            if method.kind == oxc_ast::ast::MethodDefinitionKind::Method =>
+        {
+            Some(format!("#{}", identifier.name))
+        }
+        PropertyKey::PrivateIdentifier(_) => None,
+        key => property_key_name(key),
+    }
+}
+
+/// `true` for an owner extracted from a `#private` class member. Tests cannot
+/// name it, so reach is established only through a public caller (#10440).
+pub(crate) fn is_private_member_owner(owner: &TypeScriptOwner) -> bool {
+    owner.name.starts_with('#')
 }
 
 pub(crate) fn property_key_name(key: &PropertyKey<'_>) -> Option<String> {
@@ -1870,12 +1892,36 @@ pub(crate) struct PhaseTwoFacts {
     /// first entry whose line range intersects a changed line reproduces the
     /// previous first-hit short-circuit exactly.
     pub(crate) gap_shapes: Vec<GapShape>,
+    /// Sorted, disjoint unsupported private-member spans. A changed line in
+    /// one must not inherit an enclosing public owner's test relations.
+    pub(crate) private_member_boundaries: Vec<(usize, usize)>,
     /// Non-declare enum members with `EnumName::member_name` identities (the
     /// names, not the lines, identify a member so finding ids survive line
     /// shifts).
     pub(crate) enum_members: Vec<EnumMember>,
     /// 1-based inclusive line ranges of top-level ambient declarations.
     pub(crate) ambient_ranges: Vec<(usize, usize)>,
+    /// Per-line probe shapes derived from the AST (#11250), resolved so
+    /// each covered line carries exactly one shape. Lines with no fact
+    /// keep the classifier's line-text fallback.
+    pub(crate) probe_shapes: Vec<ProbeShapeFact>,
+}
+
+impl PhaseTwoFacts {
+    pub(crate) fn probe_shape_for_line(&self, line: usize) -> Option<&TypeScriptProbeShape> {
+        self.probe_shapes
+            .iter()
+            .find(|fact| fact.line == line)
+            .map(|fact| &fact.shape)
+    }
+}
+
+/// One line's AST-derived probe shape (#11250). Modeled on [`GapShape`]:
+/// computed from the single parse and persisted with the file facts.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct ProbeShapeFact {
+    pub(crate) line: usize,
+    pub(crate) shape: TypeScriptProbeShape,
 }
 
 /// One unsupported owner shape: its disclosure label, byte span (for the
@@ -1962,9 +2008,440 @@ pub(crate) fn phase_two_facts_from_program(
     let text = SourceText::new(source);
     let mut facts = PhaseTwoFacts::default();
     collect_gap_shapes(&program.body, &text, &mut facts.gap_shapes);
+    if source.contains('#') {
+        collect_private_member_boundaries(program, &text, &mut facts);
+    }
     collect_enum_members(&program.body, source, &text, &mut facts.enum_members);
     collect_ambient_ranges(&program.body, &text, &mut facts.ambient_ranges);
+    facts.probe_shapes = collect_probe_shapes(program, &text);
     facts
+}
+
+/// The ordinary owner extractor is shallow. Walk private members separately
+/// to disclose unsupported nested members without inventing nested ownership
+/// or changing the extraction-order priority of existing public owners.
+fn collect_private_member_boundaries(
+    program: &oxc_ast::ast::Program<'_>,
+    source: &SourceText<'_>,
+    facts: &mut PhaseTwoFacts,
+) {
+    let mut admitted = std::collections::BTreeSet::new();
+    for statement in &program.body {
+        let class = match statement {
+            Statement::ClassDeclaration(class) => Some(class.as_ref()),
+            Statement::ExportNamedDeclaration(export) => match export.declaration.as_ref() {
+                Some(Declaration::ClassDeclaration(class)) => Some(class.as_ref()),
+                _ => None,
+            },
+            Statement::ExportDefaultDeclaration(export) => match &export.declaration {
+                ExportDefaultDeclarationKind::ClassDeclaration(class) => Some(class.as_ref()),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(class) = class {
+            for element in &class.body.body {
+                if let ClassElement::MethodDefinition(method) = element
+                    && matches!(method.key, PropertyKey::PrivateIdentifier(_))
+                    && method_key_name(method).is_some()
+                {
+                    admitted.insert((method.span.start, method.span.end));
+                }
+            }
+        }
+    }
+    struct Boundaries {
+        admitted: std::collections::BTreeSet<(u32, u32)>,
+        spans: Vec<oxc_span::Span>,
+    }
+    impl<'a> oxc_ast_visit::Visit<'a> for Boundaries {
+        fn visit_method_definition(&mut self, method: &MethodDefinition<'a>) {
+            if matches!(method.key, PropertyKey::PrivateIdentifier(_))
+                && !self
+                    .admitted
+                    .contains(&(method.span.start, method.span.end))
+            {
+                self.spans.push(method.span);
+            }
+            oxc_ast_visit::walk::walk_method_definition(self, method);
+        }
+
+        fn visit_property_definition(&mut self, property: &oxc_ast::ast::PropertyDefinition<'a>) {
+            if matches!(property.key, PropertyKey::PrivateIdentifier(_))
+                && property.value.as_ref().is_some_and(is_function_value)
+            {
+                self.spans.push(property.span);
+            }
+            oxc_ast_visit::walk::walk_property_definition(self, property);
+        }
+
+        fn visit_accessor_property(&mut self, property: &oxc_ast::ast::AccessorProperty<'a>) {
+            if matches!(property.key, PropertyKey::PrivateIdentifier(_)) {
+                self.spans.push(property.span);
+            }
+            oxc_ast_visit::walk::walk_accessor_property(self, property);
+        }
+    }
+    let mut boundaries = Boundaries {
+        admitted,
+        spans: Vec::new(),
+    };
+    oxc_ast_visit::walk::walk_program(&mut boundaries, program);
+    let mut disclosed: std::collections::BTreeSet<_> =
+        facts.gap_shapes.iter().map(|shape| shape.span).collect();
+    for span in boundaries.spans {
+        let lines = (
+            source.line_for_offset(span.start as usize),
+            source.line_for_offset(span.end as usize),
+        );
+        facts.private_member_boundaries.push(lines);
+        if disclosed.insert((span.start as usize, span.end as usize)) {
+            facts.gap_shapes.push(GapShape {
+                shape: "unextracted private class member",
+                span: (span.start as usize, span.end as usize),
+                lines,
+            });
+        }
+    }
+    facts.private_member_boundaries.sort_unstable();
+    let mut disjoint: Vec<(usize, usize)> = Vec::new();
+    for &(start, end) in &facts.private_member_boundaries {
+        if let Some(last) = disjoint.last_mut()
+            && start <= last.1
+        {
+            last.1 = last.1.max(end);
+        } else {
+            disjoint.push((start, end));
+        }
+    }
+    facts.private_member_boundaries = disjoint;
+}
+
+pub(crate) fn unsupported_private_member_ranges(
+    file: &Path,
+    source: &str,
+    workspace_root: &Path,
+    alias_map: Option<&super::tsconfig::TsAliasMap>,
+) -> Vec<(usize, usize)> {
+    if !source.contains('#') {
+        return Vec::new();
+    }
+    super::extraction_cache::phase_two_facts_cached(file, source, workspace_root, alias_map)
+        .map(|facts| facts.private_member_boundaries)
+        .unwrap_or_default()
+}
+
+pub(crate) fn inside_private_member_boundary(ranges: &[(usize, usize)], line: usize) -> bool {
+    ranges
+        .partition_point(|(start, _)| *start <= line)
+        .checked_sub(1)
+        .and_then(|index| ranges.get(index))
+        .is_some_and(|(_, end)| line <= *end)
+}
+
+/// Collect AST probe-shape candidates and resolve them to one shape per
+/// line (#11250). Candidates apply in source-start order, so a node that
+/// starts later (a statement inside a switch arm, a conditional test
+/// inside a return) overwrites an enclosing node's shape for its lines,
+/// while lines only the enclosing node covers keep that node's shape (a
+/// multiline return-ternary continuation keeps the return's shape).
+fn collect_probe_shapes(
+    program: &oxc_ast::ast::Program<'_>,
+    source: &SourceText<'_>,
+) -> Vec<ProbeShapeFact> {
+    struct Collector<'s> {
+        source: &'s SourceText<'s>,
+        candidates: Vec<(u8, usize, usize, usize, TypeScriptProbeShape)>,
+        concise_arrow_depth: usize,
+        keep_concise_arrow_body: bool,
+        top_start: usize,
+    }
+    impl Collector<'_> {
+        fn push(&mut self, span: oxc_span::Span, shape: TypeScriptProbeShape) {
+            self.candidates.push((
+                1,
+                span.start as usize,
+                span.end as usize,
+                self.top_start,
+                shape,
+            ));
+        }
+        /// A guard test (`if`/`while`/conditional) outranks a statement
+        /// sharing its line (`if (s >= 404) { return 1; }` is the guard's
+        /// change, not the return's); other tests rank with statements so
+        /// a switch arm's own statement, starting later, wins its line.
+        fn predicate(&mut self, span: oxc_span::Span) {
+            self.candidates.push((
+                1,
+                span.start as usize,
+                span.end as usize,
+                self.top_start,
+                TypeScriptProbeShape::new(ProbeFamily::Predicate, DeltaKind::Control),
+            ));
+        }
+        fn guard_predicate(&mut self, span: oxc_span::Span) {
+            self.candidates.push((
+                2,
+                span.start as usize,
+                span.end as usize,
+                self.top_start,
+                TypeScriptProbeShape::new(ProbeFamily::Predicate, DeltaKind::Control),
+            ));
+        }
+    }
+    fn is_promise_reject(expression: &Expression<'_>) -> bool {
+        let Expression::CallExpression(call) = expression.get_inner_expression() else {
+            return false;
+        };
+        let Expression::StaticMemberExpression(member) = call.callee.get_inner_expression() else {
+            return false;
+        };
+        member.property.name.as_str() == "reject"
+            && matches!(member.object.get_inner_expression(), Expression::Identifier(id) if id.name.as_str() == "Promise")
+    }
+    fn value_shape(expression: &Expression<'_>) -> TypeScriptProbeShape {
+        match expression.get_inner_expression() {
+            Expression::AwaitExpression(awaited) if is_promise_reject(&awaited.argument) => {
+                TypeScriptProbeShape::new(ProbeFamily::ErrorPath, DeltaKind::Control)
+            }
+            expr if is_promise_reject(expr) => {
+                TypeScriptProbeShape::new(ProbeFamily::ErrorPath, DeltaKind::Control)
+            }
+            Expression::ObjectExpression(_) => {
+                TypeScriptProbeShape::new(ProbeFamily::FieldConstruction, DeltaKind::Value)
+            }
+            Expression::BinaryExpression(binary)
+                if matches!(
+                    binary.operator,
+                    oxc_ast::ast::BinaryOperator::LessThan
+                        | oxc_ast::ast::BinaryOperator::LessEqualThan
+                        | oxc_ast::ast::BinaryOperator::GreaterThan
+                        | oxc_ast::ast::BinaryOperator::GreaterEqualThan
+                ) =>
+            {
+                TypeScriptProbeShape::new(ProbeFamily::Predicate, DeltaKind::Control)
+            }
+            _ => TypeScriptProbeShape::new(ProbeFamily::ReturnValue, DeltaKind::Value),
+        }
+    }
+    impl<'a> oxc_ast_visit::Visit<'a> for Collector<'_> {
+        fn visit_program(&mut self, it: &oxc_ast::ast::Program<'a>) {
+            for statement in &it.body {
+                self.top_start = oxc_span::GetSpan::span(statement).start as usize;
+                oxc_ast_visit::walk::walk_statement(self, statement);
+            }
+        }
+        fn visit_return_statement(&mut self, it: &oxc_ast::ast::ReturnStatement<'a>) {
+            let shape = it.argument.as_ref().map_or_else(
+                || TypeScriptProbeShape::new(ProbeFamily::ReturnValue, DeltaKind::Value),
+                value_shape,
+            );
+            self.push(it.span, shape);
+            if let Some(argument) = &it.argument
+                && let Expression::ConditionalExpression(conditional) =
+                    argument.get_inner_expression()
+            {
+                self.guard_predicate(conditional.test.span());
+            }
+            oxc_ast_visit::walk::walk_return_statement(self, it);
+        }
+        fn visit_arrow_function_expression(
+            &mut self,
+            it: &oxc_ast::ast::ArrowFunctionExpression<'a>,
+        ) {
+            // A concise body is represented as an expression statement;
+            // it is a returned value, not a bare call statement. A block
+            // body starts a fresh statement context: reset the depth while
+            // walking it and restore it afterwards, so statements inside a
+            // nested block-bodied arrow or function are not mistaken for
+            // the concise body's returned value.
+            let saved = self.concise_arrow_depth;
+            self.concise_arrow_depth = if it.expression { saved + 1 } else { 0 };
+            self.keep_concise_arrow_body = it.expression;
+            oxc_ast_visit::walk::walk_arrow_function_expression(self, it);
+            self.keep_concise_arrow_body = false;
+            self.concise_arrow_depth = saved;
+        }
+        fn visit_function_body(&mut self, it: &oxc_ast::ast::FunctionBody<'a>) {
+            // A function body is a fresh statement context, like a block
+            // arrow body: statements inside it are not a concise arrow's
+            // returned value. The one exception is a concise arrow's own
+            // body, which the arrow visitor marks so its single expression
+            // statement keeps the returned-value treatment.
+            if self.keep_concise_arrow_body {
+                self.keep_concise_arrow_body = false;
+                oxc_ast_visit::walk::walk_function_body(self, it);
+                return;
+            }
+            let saved = std::mem::take(&mut self.concise_arrow_depth);
+            oxc_ast_visit::walk::walk_function_body(self, it);
+            self.concise_arrow_depth = saved;
+        }
+        fn visit_throw_statement(&mut self, it: &oxc_ast::ast::ThrowStatement<'a>) {
+            self.push(
+                it.span,
+                TypeScriptProbeShape::new(ProbeFamily::ErrorPath, DeltaKind::Control),
+            );
+            oxc_ast_visit::walk::walk_throw_statement(self, it);
+        }
+        fn visit_if_statement(&mut self, it: &oxc_ast::ast::IfStatement<'a>) {
+            self.guard_predicate(it.test.span());
+            oxc_ast_visit::walk::walk_if_statement(self, it);
+        }
+        fn visit_while_statement(&mut self, it: &oxc_ast::ast::WhileStatement<'a>) {
+            self.guard_predicate(it.test.span());
+            oxc_ast_visit::walk::walk_while_statement(self, it);
+        }
+        fn visit_do_while_statement(&mut self, it: &oxc_ast::ast::DoWhileStatement<'a>) {
+            self.guard_predicate(it.test.span());
+            oxc_ast_visit::walk::walk_do_while_statement(self, it);
+        }
+        fn visit_for_statement(&mut self, it: &oxc_ast::ast::ForStatement<'a>) {
+            if let Some(test) = &it.test {
+                self.predicate(test.span());
+            }
+            oxc_ast_visit::walk::walk_for_statement(self, it);
+        }
+        fn visit_switch_statement(&mut self, it: &oxc_ast::ast::SwitchStatement<'a>) {
+            self.predicate(it.discriminant.span());
+            oxc_ast_visit::walk::walk_switch_statement(self, it);
+        }
+        fn visit_switch_case(&mut self, it: &oxc_ast::ast::SwitchCase<'a>) {
+            if let Some(test) = &it.test {
+                self.predicate(test.span());
+            }
+            oxc_ast_visit::walk::walk_switch_case(self, it);
+        }
+        fn visit_catch_clause(&mut self, it: &oxc_ast::ast::CatchClause<'a>) {
+            // Only the catch header (`catch (e)`) is the error-path shape;
+            // statements in the body carry their own candidates and must
+            // not be stamped ErrorPath by the enclosing clause.
+            self.push(
+                oxc_span::Span::new(it.span.start, it.body.span.start),
+                TypeScriptProbeShape::new(ProbeFamily::ErrorPath, DeltaKind::Control),
+            );
+            oxc_ast_visit::walk::walk_catch_clause(self, it);
+        }
+        fn visit_expression_statement(&mut self, it: &oxc_ast::ast::ExpressionStatement<'a>) {
+            let inner = it.expression.get_inner_expression();
+            let awaited = match inner {
+                Expression::AwaitExpression(awaited) => Some(&awaited.argument),
+                _ => None,
+            };
+            let call_target = awaited.unwrap_or(inner);
+            if let Expression::ConditionalExpression(conditional) = inner {
+                self.guard_predicate(conditional.test.span());
+            } else if is_promise_reject(call_target) {
+                self.push(
+                    it.span,
+                    TypeScriptProbeShape::new(ProbeFamily::ErrorPath, DeltaKind::Control),
+                );
+            } else if self.concise_arrow_depth == 0
+                && let Expression::CallExpression(_call) = call_target.get_inner_expression()
+            {
+                // Computed callees keep a specific shape: the existing
+                // sink/discriminator guards already refuse a computed
+                // sink from the line text, and a non-specific shape
+                // would arm unrelated `!specific` post-overrides.
+                self.push(
+                    it.span,
+                    TypeScriptProbeShape::new(ProbeFamily::SideEffect, DeltaKind::Effect),
+                );
+            }
+            oxc_ast_visit::walk::walk_expression_statement(self, it);
+        }
+        fn visit_assignment_expression(&mut self, it: &oxc_ast::ast::AssignmentExpression<'a>) {
+            // Only member and plain binding `=` assignments construct a
+            // field value; compound assignments (`t += x`) and other
+            // targets (destructuring) keep the fallback, whose
+            // returned-state override owns compound writes.
+            if it.operator != oxc_ast::ast::AssignmentOperator::Assign
+                || !matches!(
+                    &it.left,
+                    oxc_ast::ast::AssignmentTarget::ComputedMemberExpression(_)
+                        | oxc_ast::ast::AssignmentTarget::StaticMemberExpression(_)
+                        | oxc_ast::ast::AssignmentTarget::AssignmentTargetIdentifier(_)
+                )
+            {
+                oxc_ast_visit::walk::walk_assignment_expression(self, it);
+                return;
+            }
+            // Computed targets keep a specific shape for the same reason
+            // as computed callees above: the sink guards refuse the sink,
+            // and a non-specific shape arms `!specific` post-overrides
+            // (the default-export-object corpus pins that credit).
+            self.push(
+                it.span,
+                TypeScriptProbeShape::new(ProbeFamily::FieldConstruction, DeltaKind::Value),
+            );
+            oxc_ast_visit::walk::walk_assignment_expression(self, it);
+        }
+        fn visit_variable_declarator(&mut self, it: &oxc_ast::ast::VariableDeclarator<'a>) {
+            // An object property needs no own candidate: a returned object
+            // already carries FieldConstruction from its return node, and
+            // a standalone property line keeps the line-text field shape.
+            // A property candidate would also claim a lookup-table
+            // declarator line that must stay non-specific (#11250).
+            if let Some(init) = &it.init
+                && let Expression::ArrowFunctionExpression(arrow) = init.get_inner_expression()
+                && arrow.expression
+                && let [Statement::ExpressionStatement(body)] = arrow.body.statements.as_slice()
+                && !matches!(
+                    body.expression.get_inner_expression(),
+                    Expression::ArrowFunctionExpression(_)
+                )
+            {
+                if let Expression::ConditionalExpression(conditional) =
+                    body.expression.get_inner_expression()
+                {
+                    self.guard_predicate(conditional.test.span());
+                }
+                let shape = value_shape(&body.expression);
+                self.push(body.expression.span(), shape);
+            }
+            oxc_ast_visit::walk::walk_variable_declarator(self, it);
+        }
+    }
+    let mut collector = Collector {
+        source,
+        candidates: Vec::new(),
+        concise_arrow_depth: 0,
+        keep_concise_arrow_body: false,
+        top_start: 0,
+    };
+    oxc_ast_visit::Visit::visit_program(&mut collector, program);
+    collector
+        .candidates
+        .sort_by_key(|(tier, start, end, _, _)| (*tier, *start, std::cmp::Reverse(*end)));
+    let mut by_line: std::collections::BTreeMap<
+        usize,
+        (usize, usize, usize, TypeScriptProbeShape),
+    > = std::collections::BTreeMap::new();
+    // A line covered by disjoint candidate spans from different top-level
+    // statements belongs to more than one owner (a minified one-line file):
+    // no single AST shape describes the change, so the line keeps the
+    // classifier's line-text fallback rather than crediting a sibling
+    // owner's shape. Disjoint spans inside one statement (a switch case
+    // test and its consequent) still resolve by source order.
+    let mut ambiguous: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+    for (_, start, end, top, shape) in &collector.candidates {
+        let first = collector.source.line_for_offset(*start);
+        let last = collector.source.line_for_offset(*end);
+        for line in first..=last {
+            if let Some((prev_start, prev_end, prev_top, _)) = by_line.get(&line)
+                && *top != *prev_top
+                && (*end <= *prev_start || *start >= *prev_end)
+            {
+                ambiguous.insert(line);
+            }
+            by_line.insert(line, (*start, *end, *top, shape.clone()));
+        }
+    }
+    by_line
+        .into_iter()
+        .filter(|(line, _)| !ambiguous.contains(line))
+        .map(|(line, (_, _, _, shape))| ProbeShapeFact { line, shape })
+        .collect()
 }
 
 /// Walk top-level statements for unsupported owner shapes, collecting every
@@ -2129,10 +2606,10 @@ fn collect_class_element_shapes(
             ClassElement::StaticBlock(block) => ("class static block", block.span),
             ClassElement::AccessorProperty(accessor) => ("accessor auto-accessor", accessor.span),
             ClassElement::MethodDefinition(method) => {
-                // `#private`, string-literal, numeric, and computed keys are
-                // all skipped by `property_key_name`; changed lines inside
-                // them are silent today (#4104-A F2b).
-                if property_key_name(&method.key).is_some() {
+                // String-literal, numeric, and computed keys are skipped by
+                // `method_key_name`; changed lines inside them are silent
+                // today (#4104-A F2b). `#private` names are owners (#10440).
+                if method_key_name(method).is_some() {
                     continue;
                 }
                 ("class method with unsupported key", method.span)

@@ -36,8 +36,8 @@ Evidence
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   - local flow reaches returned value: write!(f, r#"quoted"marker"{:?}°C"#, self.0) (line 7)
-  - related test src/display.rs:16 exact_display_pin uses strong exact value oracle: assert_eq!(Temp(21).to_string(), "quoted/"marker/"21°C"); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source assertion argument value "quoted/"marker/"21°C" at line 17
+  - related test src/display.rs:16 exact_display_pin uses strong exact value oracle: assert_eq!(Temp(21).to_string(), "quoted\"marker\"21°C"); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - source assertion argument value "quoted\"marker\"21°C" at line 17
   - source assertion argument value 21 at line 17
 
 Weakness

@@ -100,7 +100,7 @@ fn validate<'a, T: 'a>(
         }
         if id.offset >= arena.len() {
             return Err(format!(
-                "invalid {kind} fact membership: {} >= {}",
+                "invalid {kind} fact membership: {} >= {}; report this as a ripr bug with the command and workspace shape",
                 id.offset,
                 arena.len()
             ));
@@ -172,6 +172,10 @@ pub struct RustIndex {
     pub(super) doctest_sources: BTreeMap<(PathBuf, usize), (String, std::sync::Arc<str>)>,
     pub(super) proptest_receipts:
         BTreeMap<(PathBuf, usize, String), super::proptest::ProptestReceipt>,
+    /// Analysis-local failed verification, never part of raw FileFacts or a
+    /// serialized provider receipt. Rebuilt together with property registration.
+    pub(super) proptest_metadata_failures:
+        BTreeMap<(PathBuf, usize, String), super::proptest::ProptestMetadataFailure>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -716,6 +720,8 @@ impl RustIndex {
         self.doctest_sources
             .retain(|(file, _), _| file.as_path() != path);
         self.proptest_receipts
+            .retain(|(file, _, _), _| file.as_path() != path);
+        self.proptest_metadata_failures
             .retain(|(file, _, _), _| file.as_path() != path);
         // Positions follow the retained orders; rebuild them now so slot
         // lookups never answer from the pre-removal layout.

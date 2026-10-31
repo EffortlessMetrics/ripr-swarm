@@ -57,6 +57,7 @@ pub fn qualify_legacy_ripr_plus_receipt(
 mod selector;
 pub(crate) mod temp_diff;
 pub(crate) mod test_stub;
+pub(crate) mod timeout_refusal;
 pub(crate) mod verification_execution;
 
 pub use crate::output::format::OutputFormat;
@@ -123,6 +124,13 @@ use crate::output;
 use std::path::PathBuf;
 
 pub(crate) const CHECK_OUTPUT_SCHEMA_VERSION: &str = "0.2";
+
+/// Refusal-envelope schema generation for the `analysis_timeout`
+/// input-context amendment (#10796, RIPR-SPEC-0241): generation `0.3` adds
+/// the `input_context` key, required (and present only) on `analysis_timeout`
+/// refusals of `ripr check`. Every other refusal identity and every sibling
+/// command keeps its existing generation.
+pub(crate) const CHECK_REFUSAL_SCHEMA_VERSION: &str = "0.3";
 
 /// Input contract for [`check_workspace`].
 ///

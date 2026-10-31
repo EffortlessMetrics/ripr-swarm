@@ -1,0 +1,2 @@
+crates/ripr/tests/repair_infer_base.rs|Command::new|2|cli-tests|#11246: runs git (fixture repository setup, branches and commits) and the built ripr binary (`check`, `repair`) against an isolated temp workspace. No shell, network, or user-repository mutation.
+crates/ripr/tests/repair_infer_base.rs|use std::process::Command|1|cli-tests|#11246: imports Command for the git and ripr invocations above.

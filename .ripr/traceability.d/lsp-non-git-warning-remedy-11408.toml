@@ -1,0 +1,8 @@
+[[extend]]
+id = "RIPR-SPEC-0084"
+tests = [
+  "crates/ripr/src/lsp/backend.rs::bounded_failure_message_tests::non_git_workspace_warning_keeps_the_remedy_inside_the_bound",
+  "crates/ripr/src/lsp/backend.rs::bounded_failure_message_tests::non_git_workspace_warning_keeps_the_remedy_for_short_and_multibyte_roots",
+  "crates/ripr/src/lsp/backend.rs::bounded_failure_message_tests::short_analysis_failure_warning_is_unchanged",
+]
+code = ["crates/ripr/src/analysis/diff/load.rs", "crates/ripr/src/lsp/backend.rs"]

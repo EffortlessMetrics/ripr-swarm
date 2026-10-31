@@ -90,7 +90,18 @@ outcome whatever the assertion does. The syntax scan names an
 outcome-settling attribute as the refusal wherever it sits among the test's
 attributes, ahead of `async` and other attributes, so a feature gate listed
 first cannot hide an `#[ignore]`. A gated module stays a gap because
-`cfg(any())` is indistinguishable from a feature gate at that refusal.
+`cfg(any())` is indistinguishable from a feature gate at that refusal, with
+one exception (#9643): when every unevaluated `cfg` gate on the test and its
+enclosing modules is also carried, spelled identically (whitespace aside), by
+the changed owner or its enclosing items in the same file, the test is
+compiled whenever the changed code is, and which feature set a run enables is
+not known statically. That refusal is an analyzer limit
+(`unestablished_cfg_gates_of_fn`): `#[cfg(feature = "v4")] pub mod v4 { fn
+stamp .. #[cfg(test)] mod tests { .. } }` reads `static_unknown`, neither a
+gap nor credit. A gate only the test carries (the default run never compiles
+the test), a different gate, a provably disabled gate (`cfg(any())`), a
+`cfg_attr` or unreadable gate, an owner in another file and an `#[ignore]`
+test keep the gap.
 `cfg(false)` is read through the same shared evaluator, which does not yet
 evaluate the literal, so a test gated only by it is withheld rather than kept.
 Likewise `#[cfg_attr(test, ignore)]` and `#[cfg_attr(test, should_panic)]`
@@ -409,8 +420,55 @@ non-ignored related test matches one of these shapes:
   `x.owner(..)` for a `let [mut] x = helper();` earlier in the test. `helper`
   is a function of the test's file other than the owner. An inline struct
   literal receiver, a non-literal expectation and `assert_ne!` keep the
-  finding. The closure runs over data the helper builds, which ripr does not
-  read; the exact pin may still miss the change, so nothing is credited.
+  finding. The withholding rule does not read arbitrary helper data.
+  The bounded #9766 exception in `owner_pin/fixture_receiver.rs` credits
+  `assert_eq!(fixture().total(), 42)` (either operand order, or one preceding
+  immutable receiver binding) only when the owner's whole body is
+  `self.field.iter().map(|(.., price, ..)| price).sum()`, returning `u32`.
+  The actual tuple pattern has exactly one identifier and otherwise wildcards;
+  rest patterns are not read. The receiver is an ordinary single-field record
+  whose field is a standard `Vec` of tuples of `String` and `u32`, and the
+  projected component is `u32`. A unique, unattributed zero-argument helper
+  in the test's own file and module returns only that record literal, with a
+  nonempty `vec!` of literal tuples (strings use literal `.to_string()`).
+  Each numeric component must be literal. Attributes anywhere inside the
+  vector data withhold credit: a cfg-pruned tuple cannot supply a live row or
+  separate projected sums. The paired old expression must also
+  be the same-field, same-arity `iter().map(tuple projection).sum()` pipeline,
+  with a projected `u32` column. Unknown or other old pipelines (including
+  product-to-sum changes) supply no new credit. Equal projected positions are
+  equivalent binding rewrites and keep their existing reading, including
+  single-row or zero-valued data; no all-mutants adequacy rule is inferred.
+  Different projected columns are different functions: a row with 0 and 1
+  separates them. Their checked `u32` sums over the actual literal fixture
+  must differ. Equal aggregate totals (including cross-row cancellation) or
+  overflow withhold the pin. This is an edit-specific activation check, not
+  evaluation of arbitrary helpers or hypothetical alternative reductions.
+  The indexed receiver method matching the owner must be unique after raw-name
+  normalization; a competing by-value trait method can win dispatch over the
+  inherent borrowed owner even when spelled with `r#`. Pipeline dispatch also fails closed
+  for indexed receiver methods named `iter`, `map`, `sum` or `to_string`, an indexed
+  `no_implicit_prelude` declaration, or imports, extern crates and item macro
+  invocations (including trait/impl associated items) in the owner module
+  or its same-file ancestors. Module and method raw identifiers use the same
+  normalized identity. Helper construction also requires a closed scope in
+  the owner's file; only exact `use super::*` from a helper directly inside
+  the already-closed owner module is accepted. Other helper imports and
+  item/associated macros remain unread. This can withhold
+  unrelated imports or methods; general method resolution is not claimed.
+  Declaration attributes come from the indexed declaration facts, not the
+  function-body substring. The test has no parameters and contains only the eager
+  assertion and its optional immutable fixture binding. Existing assertion
+  execution, macro binding, receiver/type/import identity and plain-drop gates
+  still apply. Only a pin credited through these gates can supply the
+  corresponding returned-sum propagation fact and remove the resolved
+  `fixture_opaque` stop reason. Computed or unresolved data,
+  empty collections, extra helper statements, alternate exits, mutable or
+  aliased receivers, rebound `vec!`, duplicate helpers, unrelated fields and
+  nonliteral projected tuple components receive no new credit. General helper
+  interpretation, other collection pipelines and recording doubles stay
+  outside this exception. The corpus fixture-total row can read `credited`;
+  its historical labeling observation remains unchanged.
 - **recording double** (#9610): a `call_deletion` or `side_effect` probe
   whose changed line calls a method on a parameter typed `&mut dyn Trait`,
   and a `direct_owner_call` test that declares `let mut rec = Type { .. }`
@@ -793,7 +851,9 @@ keeps its class. A call that names the owner decides reach itself and is
 judged by its own evidence: `.name(`, `<Money as Trait>::name(` where the
 qualifier is exactly the impl type and `Trait` is the owner's trait, spelled bare
 or under `std::ops`/`core::ops` and implemented once for the type (`Add<f64>`
-beside `Add<Money>` is ambiguous), or
+beside `Add<Money>` is ambiguous; spelled trait arguments, as in
+`<Money as Add<Money>>::name(`, must equal the impl header's, with an omitted
+right-hand side read as the self type), or
 `Money::name(` when the type has no other method of that name (an inherent
 `name` wins the path, and a second trait's `name` makes it ambiguous). Another
 type's `name`, another trait's, a type that only ends in the impl type, a
@@ -815,10 +875,14 @@ definition and is admitted only when the impl header spells its self type as a
 bare name; with a qualified header (`impl Add for other::Money`) a same-module
 `type Money = ..` or other rebinding refuses the lift. A local alias to the owner still
 fails closed at the relation stage. The test must also reach this impl directly
-to be judged this way. The related rows are capped for display; a finding whose
-rows were cut stays withheld, because a naming test may be among the cut rows
-and which rows survive depends on test names. The cap counts rows, so one
-test with more than eight assertion rows also stays withheld. The call only lifts the withholding: the finding is then
+to be judged this way. Related rows are capped for display, but this decision
+reads the admitted direct rows before that cap. A named call outside the display
+window, or in a test with more than eight assertion rows, can therefore lift the
+syntax-only withholding. For capped findings, a `.name(` call lifts the
+withholding only when the bounded receiver and scope checks tie that call to the
+owner; a foreign or unresolved receiver does not. The existing uncapped method
+reading is unchanged. A capped operator-only relation still stays withheld,
+and an ignored named test does not lift that withholding. The call only lifts the withholding: the finding is then
 classified from its own stages, and an assertion-free path call leaves it an
 unconfirmed `weakly_exposed` rather than borrowing evidence.
 A confirmed
@@ -931,9 +995,31 @@ assertions that do not call the owner: they could not have been its oracle,
 or they are real gaps pinned by the runtime controls. A weak assertion alone
 stays `weakly_exposed`.
 
+### A TypeScript workspace walk cut short at its entry cap (#11767)
+
+TypeScript discovery visits at most `RIPR_TS_MAX_WORKSPACE_FILES` directory
+entries (20,000 by default), counting entries that are never indexed. When the
+cap trips, the test universe is partial, so a finding that would say no test
+reaches the change rests on tests the walk may never have read.
+
+When discovery was truncated, every TypeScript or JavaScript finding classed
+`no_static_path` with no earlier `static_limit_kind` is rewritten through
+`withhold_gap` to `static_unknown` under `typescript_workspace_discovery_truncated`.
+The first unresolved edge names the cap and the next step names the setting
+(and the read budget) or a narrower root. Findings that have a related test
+are not touched, and a walk that finishes under the cap changes nothing.
+
+The diff names what changed, so a changed source file the adapter accepts joins
+the partial file set even when the walk stopped before reaching it. Without
+that, a cut-short walk leaves the change with no owner and no finding at all.
+
+This does not make the cut-short run complete: the cap limitation still marks
+the outcome partial. Walk order, budgeting by candidate source files and the
+read budget are separate work.
+
 ## Scope boundary
 
-- Rust check findings only. The pilot seam rule is RIPR-SPEC-0230 (#5569).
+- Rust check findings only, except the TypeScript truncated-discovery rule above. The pilot seam rule is RIPR-SPEC-0230 (#5569).
 - `weakly_exposed` findings are out of scope except for the framework
   oracles above and the profile-dependent `debug_assert_eq!` above (which the
   owner pin would credit as `assert_eq!`): a credited weak oracle is read
@@ -950,6 +1036,10 @@ stays `weakly_exposed`.
 - Unit tests pin the withholding, its confidence rescore, idempotence, the
   marker contract, and that named limits and non-gap classes are untouched.
 - Unit tests pin `is_analyzer_limit` for each refusal kind and attribute.
+- `shared_cfg_gate_owner_pin.rs` pins the shared-gate exception (#9643): the
+  nested `cfg(feature)` module and a spelling-insensitive shared gate read
+  `static_unknown`, while an ungated owner, another feature, `cfg(any())` and
+  an ignored test keep the gap.
 - A paired fixture: a default-feature `cfg` test is withheld
   (`gap_withheld_feature_gated_test`); an `#[ignore]` test keeps the gap
   (`gap_kept_ignored_test`).
@@ -1042,8 +1132,15 @@ Tests in `crates/ripr/src/analysis/classify/framework_oracle.rs` and
 - `an_arm_chosen_by_the_environment_is_withheld` and its keeps-the-gap control
 - `an_expect_debug_literal_is_withheld` and its keeps-the-gap control
 - `an_unredacted_insta_field_is_withheld` and its keeps-the-gap control
-- `a_helper_built_receiver_pinned_to_a_literal_is_withheld` and
-  `a_fixture_receiver_shape_that_differs_keeps_the_finding`
+- `fixtures/fixture_receiver_coincident_data` and its independent honesty case
+  retain equal-column, single-row product/sum and all-zero product/sum refusals.
+- `fixture_receiver_literal_pin_reads_helper_data` and
+  `a_fixture_receiver_shape_that_differs_keeps_the_finding` and
+  `fixture_receiver_credit_requires_readable_carried_data`,
+  `fixture_receiver_projection_edit_needs_distinct_literal_totals`,
+  `fixture_receiver_unread_old_pipeline_supplies_no_pin`,
+  `fixture_receiver_equivalent_binding_edits_keep_degenerate_literals` and
+  `fixture_receiver_gate_does_not_lend_propagation_to_a_forwarding_entry_pin`
 - `a_hand_written_recorder_compared_by_field_is_withheld`,
   `a_recorder_shape_that_differs_keeps_the_finding` and
   `a_vec_pushed_into_by_the_changed_call_keeps_the_gap`
@@ -1080,6 +1177,8 @@ Tests in `crates/ripr/tests/operator_call_credit.rs` and
 `crates/ripr/src/analysis/classify/related_tests/operator_dispatch.rs`
 (#9567):
 
+- `repo_operator_cap_uses_uncapped_direct_relations` exercises the repository producer and its capped fallback;
+  `capped_rows_do_not_hide_a_named_operator_call` and the crowded named-call controls in `a_credit_no_assertion_confirms_is_withheld_not_a_gap` preserve pre-cap decisions and operator-only withholding (#10625).
 - `typed_operands_reach_each_operator_impl` (`Add`, `Sub`, `Neg`, `Not`,
   `AddAssign`) and `an_operator_impl_reached_through_the_operator_is_credited`
 - `operands_that_are_not_established_as_the_impl_type_stay_unrelated`
@@ -1130,6 +1229,10 @@ local and known executors, item macro, `cfg_attr` and trailing-comment
 controls) and `cfg_predicates::tests::cfg_attr_introduces_test_only_under_a_predicate_known_true`.
 
 Fixtures: `gap_withheld_feature_gated_test`, `gap_kept_ignored_test`.
+
+`crates/ripr/tests/typescript_truncated_discovery.rs` (a finished walk keeps
+`no_static_path`; a truncated walk withholds it, names the cap, keeps the changed
+file in scope and leaves the outcome partial).
 
 Wire strings are pinned by
 `crates/ripr/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable`

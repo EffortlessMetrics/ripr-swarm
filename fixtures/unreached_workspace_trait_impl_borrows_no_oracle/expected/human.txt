@@ -45,6 +45,8 @@ Write a test for it:
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
     - ./src/lib.rs:11 (no path); kind: error_path; reason: No exact error variant discriminator was detected
+  Hidden classes:
+    no path = no test path was found
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

@@ -5,6 +5,12 @@ on:
     types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main, master]
+  # New RUSTSEC advisories and yanked crates appear without any repository
+  # change; a weekly run on main surfaces them instead of waiting for the next
+  # merge. Advisory check only, so it stays cheap (#11529).
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read

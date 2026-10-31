@@ -1076,8 +1076,8 @@ fn macro_argument_without_the_owner_or_an_exact_pin_keeps_the_gap() -> Result<()
 fn owner_named_only_in_a_wrapper_string_literal_does_not_abstain() -> Result<(), String> {
     // `banner` names `title` only inside its format string; the test calls
     // `title()` itself and pins `banner()`. No macro edge, no abstention.
-    let source = "fn title() -> &'static str {\n    concat!(\"ri\", \"pr\")\n}\n\npub fn banner() -> String {\n    format!(\"title\")\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn banner_reads_title() {\n        let _ = title();\n        assert_eq!(banner(), \"title\");\n    }\n}\n";
-    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n fn title() -> &'static str {\n-    \"ripr\"\n+    concat!(\"ri\", \"pr\")\n }\n";
+    let source = "fn title() -> &'static str {\n    stringify!(ripr)\n}\n\npub fn banner() -> String {\n    format!(\"title\")\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn banner_reads_title() {\n        let _ = title();\n        assert_eq!(banner(), \"title\");\n    }\n}\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n fn title() -> &'static str {\n-    \"ripr\"\n+    stringify!(ripr)\n }\n";
     let finding = family_finding(source, diff, "return_value")?;
     assert_eq!(finding["probe"]["line"], 2, "{finding}");
     assert_eq!(finding["classification"], "weakly_exposed", "{finding}");
@@ -1089,11 +1089,11 @@ fn owner_named_only_in_a_wrapper_string_literal_does_not_abstain() -> Result<(),
     Ok(())
 }
 
-const TITLE_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n fn title() -> &'static str {\n-    \"ripr\"\n+    concat!(\"ri\", \"pr\")\n }\n";
+const TITLE_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n fn title() -> &'static str {\n-    \"ripr\"\n+    stringify!(ripr)\n }\n";
 
 fn banner_finding(wrapper: &str, test: &str) -> Result<Value, String> {
     let source = format!(
-        "fn title() -> &'static str {{\n    concat!(\"ri\", \"pr\")\n}}\n\npub fn banner() -> String {{\n    {wrapper}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn banner_check() {{\n        {test}\n    }}\n}}\n"
+        "fn title() -> &'static str {{\n    stringify!(ripr)\n}}\n\npub fn banner() -> String {{\n    {wrapper}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn banner_check() {{\n        {test}\n    }}\n}}\n"
     );
     let finding = family_finding(&source, TITLE_DIFF, "return_value")?;
     assert_eq!(
@@ -1178,7 +1178,7 @@ fn exact_or_mixed_oracle_behind_a_non_forwarding_hop_abstains() -> Result<(), St
 
 fn title_item_finding(items: &str, test: &str) -> Result<Value, String> {
     let source = format!(
-        "fn title() -> &'static str {{\n    concat!(\"ri\", \"pr\")\n}}\n\n{items}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn banner_check() {{\n        {test}\n    }}\n}}\n"
+        "fn title() -> &'static str {{\n    stringify!(ripr)\n}}\n\n{items}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn banner_check() {{\n        {test}\n    }}\n}}\n"
     );
     family_finding(&source, TITLE_DIFF, "return_value")
 }
@@ -1291,7 +1291,7 @@ fn caller_that_branches_on_the_owner_abstains_under_a_loose_check() -> Result<()
 
 #[test]
 fn test_local_helper_hop_is_part_of_the_oracle() -> Result<(), String> {
-    let source = "fn title() -> &'static str {\n    concat!(\"ri\", \"pr\")\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    fn titled(suffix: &str) -> String {\n        format!(\"{}{}\", title(), suffix)\n    }\n\n    #[test]\n    fn banner_check() {\n        assert!(titled(\"!\").len() > 0);\n    }\n}\n";
+    let source = "fn title() -> &'static str {\n    stringify!(ripr)\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    fn titled(suffix: &str) -> String {\n        format!(\"{}{}\", title(), suffix)\n    }\n\n    #[test]\n    fn banner_check() {\n        assert!(titled(\"!\").len() > 0);\n    }\n}\n";
     let finding = family_finding(source, TITLE_DIFF, "return_value")?;
     assert_abstains_through_hop(&finding, "test-local helper");
     // The same data-carrying caller in production keeps the weak gap.

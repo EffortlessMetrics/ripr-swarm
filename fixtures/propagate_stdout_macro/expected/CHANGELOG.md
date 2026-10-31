@@ -443,3 +443,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — propagate_stdout_macro (25)
+
+Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
+
+Command:
+`cargo xtask goldens bless propagate_stdout_macro --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

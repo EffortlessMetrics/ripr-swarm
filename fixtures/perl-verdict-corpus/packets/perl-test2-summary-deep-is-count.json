@@ -160,7 +160,7 @@
       "confidence": "medium",
       "expected_expression": null,
       "expression": "like(dies { Ledger::withdraw(10, 20) }, qr/insufficient funds/, 'overdrawing names the reason')",
-      "kind": "predicate_boundary_assertion",
+      "kind": "exception_observer",
       "observed_sink": null,
       "oracle_id": "oracle:t/ledger.t:like:311-406",
       "provenance_refs": [
@@ -172,27 +172,7 @@
         "start_column": 0,
         "start_line": 11
       },
-      "strength": "weak_broad",
-      "target_owner_id": null,
-      "test_id": "test:t/ledger.t"
-    },
-    {
-      "confidence": "medium",
-      "expected_expression": null,
-      "expression": "dies { Ledger::withdraw(10, 20) }, qr/insufficient funds/, 'overdrawing names the reason'",
-      "kind": "exception_observer",
-      "observed_sink": null,
-      "oracle_id": "oracle:t/ledger.t:dies:316-405",
-      "provenance_refs": [
-        "prov:oracle_extraction:file:t/ledger.t"
-      ],
-      "range": {
-        "end_column": 94,
-        "end_line": 11,
-        "start_column": 5,
-        "start_line": 11
-      },
-      "strength": "weak_broad",
+      "strength": "strong_exact",
       "target_owner_id": null,
       "test_id": "test:t/ledger.t"
     },
@@ -472,7 +452,7 @@
       }
     }
   ],
-  "packet_fingerprint": "sha256:c2943a995e498aa1a54b5feaa581f7456bcb9565026fc9bf7d3bde75de06641d",
+  "packet_fingerprint": "sha256:855066ab8a76a009071746155475d7487b2385bc1c7ec4714ccfd648d49c95c1",
   "packet_id": "perl-lsp-ripr-facts-ripr-perl-facts-v1-s-files,owners,changes,tests,oracles,relations,dynamic_boundaries,verify_commands,limitations,provenance",
   "packet_status": "partial",
   "producer": {
@@ -487,7 +467,8 @@
       "verify_commands",
       "limitations",
       "provenance",
-      "test_facts"
+      "test_facts",
+      "oracle_matcher_grading"
     ],
     "name": "perl-lsp",
     "version": "0.17.0"

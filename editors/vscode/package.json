@@ -95,6 +95,9 @@
     },
     "mocha": {
       "serialize-javascript": "^7.0.5"
+    },
+    "vscode-languageclient": {
+      "minimatch": "^11.0.3"
     }
   },
   "capabilities": {
@@ -183,13 +186,13 @@
         "ripr.includeUnchangedTests": {
           "type": "boolean",
           "default": true,
-          "description": "Include unchanged tests as static evidence when analyzing editor diagnostics. Forwarded as initializationOptions.includeUnchangedTests and workspace/configuration.",
+          "description": "Also look at tests you have not changed when checking whether your changes are covered.",
           "scope": "resource"
         },
         "ripr.seamDiagnostics": {
           "type": "boolean",
           "default": true,
-          "description": "Enable saved-workspace repository seam diagnostics in addition to diff-derived findings. Forwarded as initializationOptions.seamDiagnostics.",
+          "description": "Also report gaps found elsewhere in the saved workspace, not only in the code you changed.",
           "scope": "resource"
         },
         "ripr.diagnosticProfile": {
@@ -199,24 +202,24 @@
             "full"
           ],
           "enumDescriptions": [
-            "Actionable: publish only producer-backed bounded finding routes",
-            "Full: preserve audit and debug finding and seam visibility"
+            "Actionable: show only findings that come with a specific suggested next step",
+            "Full: show every finding, including extra detail for troubleshooting"
           ],
           "default": "actionable",
-          "description": "Diagnostic projection profile forwarded as initializationOptions.diagnosticProfile.",
+          "description": "How much ripr shows in the Problems panel. 'actionable' shows only findings with a specific suggested next step; 'full' shows everything, including extra detail for troubleshooting.",
           "scope": "resource"
         },
         "ripr.gitTimeoutMs": {
           "type": "integer",
           "minimum": 1000,
           "default": 30000,
-          "description": "Deadline in milliseconds for each git invocation in the ripr language server's refresh path. A git command that exceeds the deadline is terminated and the refresh commits a limited snapshot naming git_invocation_timeout; run the ripr.refreshDiagnostics command to retry."
+          "description": "Longest time, in milliseconds, ripr waits for each git command while refreshing. A slower git command is stopped and ripr shows a limited result that says git timed out; run ripr: Refresh Diagnostics to try again."
         },
         "ripr.refreshDeadlineMs": {
           "type": "integer",
           "minimum": 1000,
           "default": 600000,
-          "description": "Physical deadline in milliseconds for one whole refresh analysis attempt in the ripr language server. An attempt that exceeds the deadline is dropped fail-closed with the named deadline_exceeded outcome and an 'analysis deadline exceeded' progress end — no limited snapshot is committed; the next save or the ripr.refreshDiagnostics command starts a fresh attempt."
+          "description": "Longest time, in milliseconds, one analysis refresh may run before ripr stops it. A stopped refresh shows no new results and reports 'analysis deadline exceeded'; save a file or run ripr: Refresh Diagnostics to start a fresh attempt."
         },
         "ripr.trace.server": {
           "type": "string",
@@ -228,10 +231,10 @@
           "enumDescriptions": [
             "Off: no trace output",
             "Messages: log request/response method names and byte counts",
-            "Verbose: log full message transport (not analysis reasoning)"
+            "Verbose: log full messages (not how findings were reached)"
           ],
           "default": "off",
-          "description": "Trace ripr language-server message transport in the ripr output channel. This traces LSP JSON-RPC messages, not analysis-stage reasoning — use `ripr explain` or `ripr check --json` for analysis detail."
+          "description": "Log the messages passed between VS Code and the ripr server in the ripr output channel. This does not show how ripr reached its findings; use `ripr explain` or `ripr check --json` for that."
         }
       }
     },
@@ -298,11 +301,11 @@
       },
       {
         "command": "ripr.copyFirstPrReceiptCommand",
-        "title": "ripr: First PR - Copy Receipt Command"
+        "title": "ripr: First PR - Copy Result Record Command"
       },
       {
         "command": "ripr.copyFirstPrRegenerationGuidance",
-        "title": "ripr: First PR - Copy Regeneration Guidance"
+        "title": "ripr: First PR - Copy Steps to Regenerate Packet"
       },
       {
         "command": "ripr.copyContext",
@@ -338,7 +341,7 @@
       },
       {
         "command": "ripr.copyAgentReceiptCommand",
-        "title": "ripr: Review Result - Copy Receipt Command"
+        "title": "ripr: Review Result - Copy Result Record Command"
       },
       {
         "command": "ripr.openRelatedTest",
@@ -358,7 +361,7 @@
       },
       {
         "command": "ripr.copyTopReceiptCommand",
-        "title": "ripr: Copy Receipt Command (Top Repair Packet)"
+        "title": "ripr: Copy Result Record Command (Top Repair Packet)"
       },
       {
         "command": "ripr.openReport",
@@ -366,23 +369,23 @@
       },
       {
         "command": "ripr.showTopLimitation",
-        "title": "ripr: Show Top Limitation"
+        "title": "ripr: Show Main Analysis Limit"
       },
       {
         "command": "ripr.showReceiptStatus",
-        "title": "ripr: Show Receipt Status"
+        "title": "ripr: Show Result Record Status"
       },
       {
         "command": "ripr.copyReceiptCommand",
-        "title": "ripr: Copy Receipt Command (Receipt Status)"
+        "title": "ripr: Copy Result Record Command (Result Record Status)"
       },
       {
         "command": "ripr.openAttemptLedger",
-        "title": "ripr: Open Attempt Ledger"
+        "title": "ripr: Open Repair Attempt History"
       },
       {
         "command": "ripr.showRouteQuality",
-        "title": "ripr: Show Route Quality"
+        "title": "ripr: Show Repair Route Summary"
       }
     ],
     "submenus": [

@@ -104,6 +104,22 @@ pub(crate) fn render_agent_verify_json_with_bound_gap(
         "new_gaps": report.new.iter().map(|seam| agent_verify_seam_json(seam, "new")).collect::<Vec<_>>(),
         "resolved_gaps": report.removed.iter().map(|seam| agent_verify_seam_json(seam, "resolved")).collect::<Vec<_>>()
     });
+    if let Some(object) = value.as_object_mut() {
+        // #3056: additive, emitted only when a historical side was produced
+        // from a dirty worktree, so every other verify render is unchanged.
+        if binding.before_produced_from_dirty {
+            object.insert(
+                "before_produced_from_dirty".to_string(),
+                serde_json::Value::Bool(true),
+            );
+        }
+        if binding.after_produced_from_dirty {
+            object.insert(
+                "after_produced_from_dirty".to_string(),
+                serde_json::Value::Bool(true),
+            );
+        }
+    }
     if let (Some(gap), Some(object)) = (bound_gap, value.as_object_mut()) {
         object.insert(
             "bound_gap".to_string(),

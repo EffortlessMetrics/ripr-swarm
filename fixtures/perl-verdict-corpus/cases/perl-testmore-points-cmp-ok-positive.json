@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testmore-points-cmp-ok-positive.json",
-    "sha256": "b30cf526c93ea9e62399b9a379e457222e3df56846560cd01ab798c4ebffeb83",
+    "sha256": "849bfbb25e784675f125171a53d68d0e5ef81415d60293e7ed43d8c226f4e3ad",
     "provenance": "producer"
   }
 }

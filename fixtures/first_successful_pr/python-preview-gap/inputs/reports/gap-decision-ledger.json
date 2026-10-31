@@ -3,6 +3,9 @@
   "tool": "ripr",
   "kind": "gap_decision_ledger",
   "status": "advisory",
+  "analysis_outcome": {
+    "analysis_complete": true
+  },
   "records": [
     {
       "gap_id": "gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold",

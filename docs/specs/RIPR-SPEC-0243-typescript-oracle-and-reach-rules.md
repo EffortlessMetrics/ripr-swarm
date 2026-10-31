@@ -250,6 +250,23 @@ tests. A loop over a known non-empty literal keeps its expansion (Rule 13). A
 loop variable or callback parameter named `test`, `it` or `describe` is not
 descended. The dropped-registration disclosure no longer fires for these shapes.
 
+**Rule 21a. A `#private` class method is an owner whose reach is unknown (#10440).**
+A direct ordinary method of a top-level class declared with a `#name` key is extracted as an owner named with its
+`#` (`#calculateDelay`), so a change inside it no longer reads as a
+`typescript_owner_extraction_partial` gap with no finding. No test can call it
+by name, and reach through a public method of the class (`this.#name(...)`) is
+not modeled, so an empty relation set says nothing either way: the finding reads
+`static_unknown` with reach, observation and discrimination unknown, never the
+confident `no_static_path`, and a public caller's assertion earns it no credit.
+String-literal, numeric and computed method keys, private accessors and
+function-valued private fields keep the partial-extraction disclosure. Private
+methods, accessors and function-valued fields nested inside an enclosing owner also keep that disclosure, and their
+changed lines must not borrow the enclosing public owner's test credit. The
+disclosure counts affected files, not methods or changed lines. Human stop
+reasons, actionability and preview cards must not invent a candidate test path
+or prescribe an assertion for this unknown. Resolving the call chain from the
+tests' public entry, extracting nested private owners and disclosing a wholly deleted private member (boundaries come from candidate-side source, so removing the entire method stays a silent gap) are future work.
+
 **Rule 22. A test inside `describe.skipIf(cond)` / `describe.runIf(cond)` is reached, never credited (#10629).**
 Vitest's conditional suite factories take a runtime condition static analysis
 does not evaluate. A `describe.skipIf(cond)('name', () => { ... })` or
@@ -313,6 +330,27 @@ The resolved test/suite kind must agree with the supported local spelling.
 Mismatched aliases (`describe as test` or `test as describe`) receive no trusted
 test record and retain a typed partial-extraction limitation, including an
 assertion-only callback with no nested test call. This does not expand aliases.
+
+Skipped-suite disclosure resolves the referenced lexical runner binding, not
+its spelling (#10169). Known runner imports and immutable aliases (including
+namespace members) may establish a dormant suite callback. Parameters,
+block/catch/loop/namespace locals, unrelated imports, writes and opaque code
+cannot establish that fact. Only the dormant callback is omitted; evaluated
+registration arguments and later siblings remain eligible for a partial
+extraction notice. This disclosure rule does not expand test extraction or
+oracle credit. Computed aliases, mutable aliases and unresolved flows retain
+the conservative notice.
+
+Runner values escaping through throws, iterable values, arrow returns, tagged
+substitutions or computed member reads cannot establish dormancy. An ambient
+global-object write removes only the written property name from runner
+identity, for both bare and qualified reads of that name; a write through a
+global-object name shadowed by a local still counts as a whole-file mutation.
+The `x`-prefixed spellings (`xdescribe`, `xcontext`, `xsuite`, `xit`, `xtest`,
+`xspecify`) are dormant runner roots.
+Evaluated inline ordinary
+function constructors and tags retain body registration notices; their parameter
+shadows and uncalled function values remain separate from runner registrations.
 
 ### Assertion collection
 
@@ -2119,6 +2157,13 @@ keys); do not take the next number.
   with a discriminating negative each; `error_payload_guard.rs` unit tests pin the readers. The corpus cases
   `mocha-throw-class-changed`, `mocha-throw-message-reworded`,
   `node-match-anchored-slug` and `node-retry-last-error` read `credited`.
+- #10170: the same `assertion_form_tests.rs` pins rule 20's whole-owner
+  lexical scan: nested callback calls and later nested throws withhold credit,
+  an uncaught parameter callback withholds credit despite another caught call,
+  and a neighboring owner before or after the changed owner does not affect
+  its guard. Matched positive controls keep credit. The forwarded-local
+  controls require literal absence from the new `String(err)`, including its
+  class prefix; a different message still containing the literal stays weak.
 - Existing: `crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs`
   and the `tests/` modules beside it: `mock_form_tests.rs`,
   `scope_receiver_tests.rs`, `reexport_chain_tests.rs`.

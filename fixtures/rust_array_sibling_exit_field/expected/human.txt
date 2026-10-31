@@ -42,5 +42,7 @@ No test stub here: the seam a stub would target is not a reported gap in the sea
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
     - ./src/lib.rs:6 (exposed); kind: return_value; reason: Strong oracle found: exact value or pattern assertion
+  Hidden classes:
+    exposed = tests appear to notice the change
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

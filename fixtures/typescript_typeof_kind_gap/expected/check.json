@@ -41,8 +41,8 @@
       "evidence_path": ["reach yes: 2 related test(s) found for owner `resolveValue`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `typeof input == \"function\"`.", "related test tests/utils.test.ts:4 resolveValue returns a number unchanged uses strong exact value oracle: expect(...).toBe(...)", "related test tests/utils.test.ts:8 resolveValue returns the string 'function' unchanged uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator typeof input == \"function\": changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [
       ],
-      "evidence": ["owner: resolveValue", "missing_discriminator: typeof input == \"function\"", "typescript_oracle_observed: resolveValue(\"function\" as any)", "typescript_oracle_expected: \"function\"", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/utils.test.ts:9", "gap_state: advisory", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/utils.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_utils.ts:typescript_preview:7534e133;owner=resolveValue", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["Related tests reach `resolveValue` with a strong oracle, but no strong assertion observes a `resolveValue(...)` call whose argument is written as a value of the kind the changed test checks (`typeof input == \"function\"`); a call that passes a value of another kind, or the kind's name as a string, does not discriminate the changed comparison.", "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "evidence": ["owner: resolveValue", "missing_discriminator: typeof input == \"function\"", "typescript_oracle_observed: resolveValue(\"function\" as any)", "typescript_oracle_expected: \"function\"", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/utils.test.ts:9", "gap_state: unknown", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/utils.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_utils.ts:typescript_preview:7534e133;owner=resolveValue", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Related tests reach `resolveValue` with a strong oracle, but no strong assertion observes a `resolveValue(...)` call whose argument is written as a value of the kind the changed test checks (`typeof input == \"function\"`); a call that passes a value of another kind, or the kind's name as a string, does not discriminate the changed comparison.", "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
       "assertion_texts": {
       },
       "activation": {
@@ -77,7 +77,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "why": "the preview adapter could not confirm that this assertion observes the changed behavior"
         },
         {
           "name": "resolveValue returns the string 'function' unchanged",
@@ -89,7 +89,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "why": "the preview adapter could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {
@@ -112,8 +112,8 @@
         "probe_family": "predicate",
         "related_test": {
           "file": "tests/utils.test.ts",
-          "line": 8,
-          "name": "resolveValue returns the string 'function' unchanged"
+          "line": 4,
+          "name": "resolveValue returns a number unchanged"
         },
         "repair_packet_ready": false,
         "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
@@ -129,7 +129,7 @@
         "actionability_category": "incomplete_repair_packet",
         "authority_boundary": "preview_advisory_only",
         "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
-        "gap_state": "advisory",
+        "gap_state": "unknown",
         "missing_actionability_fields": [
           "canonical_gap_id",
           "repair_kind",

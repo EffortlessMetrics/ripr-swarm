@@ -165,6 +165,42 @@ impl ExposureClass {
         }
     }
 
+    /// #9373: the plain label for a row that lists a finding without room for a
+    /// full explanation (the default digest's `Hidden:` rows). The shared
+    /// `plain_label` (#8165) is unchanged; the three unknown classes keep the
+    /// word `unknown` and add which stage the analysis could not judge, so a
+    /// reader can tell them apart without rerunning `--format human-full`.
+    pub(crate) fn plain_label_with_stage(&self) -> &'static str {
+        match self {
+            ExposureClass::InfectionUnknown => "unknown: infection unclear",
+            ExposureClass::PropagationUnknown => "unknown: propagation unclear",
+            ExposureClass::StaticUnknown => "unknown: static analysis limited",
+            other => other.plain_label(),
+        }
+    }
+
+    /// #9373: a one-line plain meaning for this class, the vocabulary of
+    /// `plain_label_with_stage`. Prose only, no schema tokens.
+    pub(crate) fn plain_gloss(&self) -> &'static str {
+        match self {
+            ExposureClass::Exposed => "tests appear to notice the change",
+            ExposureClass::WeaklyExposed => "tests reach it but check it only loosely",
+            ExposureClass::ReachableUnrevealed => {
+                "tests reach it but nothing appears to notice a change"
+            }
+            ExposureClass::NoStaticPath => "no test path was found",
+            ExposureClass::InfectionUnknown => {
+                "ripr could not tell what input makes the change take effect"
+            }
+            ExposureClass::PropagationUnknown => {
+                "ripr could not follow the change through an opaque boundary"
+            }
+            ExposureClass::StaticUnknown => {
+                "reading the code was not enough for ripr to judge (analysis limited, not a verdict)"
+            }
+        }
+    }
+
     /// `plain word (` for the bounded (default) human digest (#8165): the
     /// schema value (`as_str`) is not repeated here; it stays available in
     /// `--format human-full`, JSON, and `ripr explain`.

@@ -112,17 +112,20 @@ published-versus-development split and build times.
 | Work in VS Code | Inspect saved-workspace diagnostics, open a related test, and copy a test brief. | [Editor quickstart](docs/QUICKSTART.md#vs-code-first-hour) |
 | Review in GitHub | Run `ripr init --ci github` to generate an advisory PR workflow with a summary and downloadable evidence. | [CI quickstart](docs/QUICKSTART.md#ci-first-hour) |
 
-`ripr check` inspects a change. `ripr pilot` explores the repository more broadly.
+`ripr check` inspects a change. `ripr pilot` is optional broader repository exploration.
 `ripr repair` records a supported before/edit/after attempt, continued with
 `ripr continue` and inspected with `ripr status` (`ripr agent repair` and
 `ripr agent status` are the advanced spellings of the same transaction); you or
 your agent write the test. `ripr first-pr` composes existing PR evidence rather than
 running analysis. See the [command guide](docs/COMMAND_HIERARCHY.md) for the
-complete paths, including read-only [MCP status](docs/interop/mcp.md).
+complete paths, including the read-only [MCP analysis session](docs/interop/mcp.md).
 
-Using a coding agent? Run `ripr check`, then run the follow-up commands it
+Using a coding agent? `ripr init --agents claude|codex|cursor|all` adds a short
+find-gap, write-test, verify loop with an explicit done and stop rule to your
+agent's instruction file (see the [agent quickstart](docs/AGENT_QUICKSTART.md)).
+Or run `ripr check`, then run the follow-up commands it
 prints exactly as printed; their IDs belong to that run. For repairs,
-`ripr pilot --root .` names one supported repair or explains why none is ready.
+`ripr check` prints the `ripr repair` command when an eligible repair exists; `ripr pilot --root .` is optional broader exploration.
 Add `--format json` for machine-readable results. Repair-attempt file rules,
 card handoff and exit codes are in the
 [agent repair details](docs/QUICKSTART.md#agent-repair-details),
@@ -193,7 +196,9 @@ with the command, version, expected result, and a small example where possible.
 
 Development happens in `EffortlessMetrics/ripr-swarm`; releases and package
 publishing come from `EffortlessMetrics/ripr`. Start with
-[Contributing](CONTRIBUTING.md) and [Agent instructions](AGENTS.md).
+[Contributing](CONTRIBUTING.md); [AGENTS.md](AGENTS.md) is the operating contract
+for agents developing `ripr` itself. To use `ripr` from your own coding agent, see
+the [agent quickstart](docs/AGENT_QUICKSTART.md).
 
 <details>
 <summary>Contributor references</summary>

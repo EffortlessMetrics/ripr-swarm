@@ -250,6 +250,50 @@ fn empty_scope_note(output: &CheckOutput) -> Option<String> {
     ))
 }
 
+/// True when the analysis was complete but no source file was examined: either
+/// nothing was in scope, or files changed and none routed to a language adapter
+/// (docs/config-only diffs). The same predicate the pipeline uses for its
+/// non-source disclosure: no Rust files and no per-language changed files.
+fn no_source_examined(output: &CheckOutput) -> bool {
+    use crate::analysis_outcome::AnalysisOutcomeKind::{
+        NoBehavioralCandidates, NoChangedLines, NoScope,
+    };
+    let Some(outcome) = &output.analysis_outcome else {
+        // No producer outcome: a run with no scope examined nothing.
+        return output.no_scope_provided;
+    };
+    match outcome.kind {
+        NoScope => true,
+        NoChangedLines | NoBehavioralCandidates => {
+            outcome.counts.changed_file_count > 0
+                && output.summary.changed_rust_files == 0
+                && output
+                    .summary
+                    .changed_files_by_language
+                    .iter()
+                    .all(|count| count.files == 0)
+        }
+        _ => false,
+    }
+}
+
+/// The empty-findings headline. An incomplete analysis checked less than it
+/// was asked to, so claiming it "checked no changed behavior" would contradict
+/// the `Analysis outcome` disclosure printed just above it.
+fn no_findings_line(output: &CheckOutput) -> &'static str {
+    match &output.analysis_outcome {
+        Some(outcome) if !outcome.kind.is_complete() => {
+            "No findings reported: the analysis was incomplete, so this is not a clean result.\n"
+        }
+        // #11396: nothing in scope, or only non-source files changed, examined
+        // no behavior; say what was not checked instead of "No findings".
+        _ if no_source_examined(output) => {
+            "Nothing to check: no changed Rust, Python or TypeScript source was available to analyze, so ripr examined no behavior.\n"
+        }
+        _ => "No findings: ripr checked no changed behavior.\n",
+    }
+}
+
 pub(crate) fn render_bounded_with_config_and_navigation(
     output: &CheckOutput,
     config: &RiprConfig,
@@ -262,7 +306,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
     render_partial_scope_disclosure(&mut out, output);
 
     if output.findings.is_empty() {
-        out.push_str("No findings: ripr checked no changed behavior.\n");
+        out.push_str(no_findings_line(output));
         if output.no_scope_provided {
             let triage = triage::select_human_triage(output, config);
             triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
@@ -318,7 +362,7 @@ pub(crate) fn render_full_with_config_and_navigation(
     render_partial_scope_disclosure(&mut out, output);
 
     if output.findings.is_empty() {
-        out.push_str("No findings: ripr checked no changed behavior.\n");
+        out.push_str(no_findings_line(output));
         // RIPR-SPEC-0083: disclose when no analysis scope was provided
         // (#4012: or when the established range is empty — the note then
         // names the compared base instead of claiming no scope).
@@ -647,9 +691,10 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
     // a partial run with findings gets the scope caveat instead. #4952: the
     // EOL-only churn disclosure does not scope the analysis down, so the
     // incomplete-scope hedges stay off when it is the only limitation.
-    let scoped_down = outcome.limitations.iter().any(|limitation| {
-        limitation.kind != crate::analysis_outcome::AnalysisLimitationKind::EolOnlyChurn
-    });
+    let scoped_down = outcome
+        .limitations
+        .iter()
+        .any(|limitation| !limitation.kind.is_advisory_disclosure());
     if scoped_down {
         if output.findings.is_empty() {
             out.push_str(
@@ -1312,6 +1357,9 @@ fn push_powershell_variant(out: &mut String, indent: &str, command: &str) {
     }
 }
 
+mod agent;
+#[cfg(test)]
+mod agent_tests;
 mod evidence_lines;
 mod explain;
 #[cfg(test)]
@@ -1319,6 +1367,17 @@ mod hidden_locations_tests;
 mod sections;
 mod shared;
 mod triage;
+
+/// `ripr check --format agent` (#11580): the compact agent projection of the
+/// human triage. Library callers without navigation get bare finding ids.
+pub(crate) fn render_agent_with_config_and_navigation(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    drill_in: Option<&FindingDrillIn>,
+    provenance: CheckDiffProvenance,
+) -> String {
+    agent::render(output, config, drill_in, provenance)
+}
 
 pub(crate) use evidence_lines::{JsonPointerWording, plain_observation_wording};
 pub(crate) use sections::HUMAN_EVIDENCE_LEGEND;
@@ -1452,6 +1511,41 @@ mod tests {
         })
     }
 
+    /// An incomplete analysis must not headline "checked no changed behavior":
+    /// that contradicts the `Analysis outcome` line above it, so both human
+    /// forms say the result is not clean instead.
+    #[test]
+    fn incomplete_analysis_does_not_claim_no_changed_behavior() -> Result<(), String> {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+            AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+            AnalysisStage,
+        };
+        let mut output = empty_range_output(None, AnalysisOutcomeKind::NoScope, 0)?;
+        output.analysis_outcome = Some(AnalysisOutcome::new(
+            AnalysisOutcomeKind::UnsupportedInput,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts::default(),
+            vec![AnalysisLimitation::new(
+                AnalysisLimitationKind::MalformedDiff,
+                AnalysisStage::DiffParse,
+                AnalysisRecovery::new(
+                    AnalysisRecoveryKind::Retry,
+                    "Provide a valid unified diff and re-run the analysis.",
+                )?,
+            )],
+        )?);
+        for rendered in [
+            render(&output),
+            render_full_with_config(&output, &RiprConfig::default()),
+        ] {
+            assert!(rendered.contains("analysis incomplete"));
+            assert!(rendered.contains("this is not a clean result"));
+            assert!(!rendered.contains("ripr checked no changed behavior"));
+        }
+        Ok(())
+    }
+
     /// #9033: an explicit `--base` whose range holds no analyzable changed
     /// files (for example `--base HEAD`) must say so, not end on the bare "No
     /// diff-derived static exposure probes found." line, and must not claim
@@ -1491,6 +1585,15 @@ mod tests {
                 render_full_with_config(output, &config),
             ] {
                 assert!(rendered.contains(expected), "{rendered}");
+                // #11396: the headline states what was not examined and does
+                // not open with an all-clear style "No findings".
+                assert!(
+                    rendered.contains(
+                        "Nothing to check: no changed Rust, Python or TypeScript source was available to analyze"
+                    ),
+                    "{rendered}"
+                );
+                assert!(!rendered.contains("No findings:"), "{rendered}");
                 assert!(
                     rendered.contains("does NOT mean no behavior changed"),
                     "{rendered}"
@@ -1504,6 +1607,44 @@ mod tests {
                     "{rendered}"
                 );
             }
+        }
+        Ok(())
+    }
+
+    /// #11396 negative control: only `NoScope` gets the "Nothing to check"
+    /// headline. A range that held changed lines but no behavior keeps the
+    /// established wording, so the new text is not applied to every empty result.
+    #[test]
+    fn nothing_to_check_headline_needs_no_source_examined() -> Result<(), String> {
+        use crate::analysis_outcome::AnalysisOutcomeKind;
+        let config = RiprConfig::default();
+        let mut other = empty_range_output(Some("main"), AnalysisOutcomeKind::NoChangedLines, 1)?;
+        // A Rust file was analyzed (comment-only edit): the established
+        // headline stays.
+        other.summary.changed_rust_files = 1;
+        // Docs-only: a file changed but no adapter read it.
+        let mut docs_only =
+            empty_range_output(Some("main"), AnalysisOutcomeKind::NoChangedLines, 1)?;
+        docs_only.summary.changed_rust_files = 0;
+        for rendered in [
+            render_with_config(&other, &config),
+            render_full_with_config(&other, &config),
+        ] {
+            assert!(!rendered.contains("Nothing to check"), "{rendered}");
+            assert!(
+                rendered.contains("No findings: ripr checked no changed behavior."),
+                "{rendered}"
+            );
+        }
+        for rendered in [
+            render_with_config(&docs_only, &config),
+            render_full_with_config(&docs_only, &config),
+        ] {
+            assert!(
+                rendered.contains("Nothing to check: no changed Rust, Python or TypeScript source"),
+                "{rendered}"
+            );
+            assert!(!rendered.contains("No findings:"), "{rendered}");
         }
         Ok(())
     }
@@ -2522,9 +2663,98 @@ mod tests {
             "{dirty}"
         );
 
+        // #10709: this Rust finding is not a Python/TypeScript preview gap, so
+        // its Safe next action does not name the start and nothing is labelled
+        // recommended; the start keeps its plain "Then start the repair:".
+        assert!(dirty.contains("Then start the repair:"), "{dirty}");
+        assert!(!dirty.contains("Recommended"), "{dirty}");
+
         let clean = render_with(Vec::new());
         assert!(clean.contains(start), "{clean}");
         assert!(!clean.contains("git commit"), "{clean}");
+        assert!(!clean.contains("Recommended"), "{clean}");
+    }
+
+    /// #10709: when `Next` prints a gap-bound start, the Safe next action
+    /// names that same start as the recommended route and the by-hand edit as
+    /// the single alternative; with no route (the validator or the run refused
+    /// it) the line keeps the by-hand route alone and recommends nothing.
+    #[test]
+    fn safe_next_action_and_next_block_name_one_recommended_route() {
+        let finding = typescript_preview_finding(true);
+        let finding_id = finding.id.clone();
+        let output = single_finding_output(finding);
+        let config = crate::config::RiprConfig::default();
+        let with_route = {
+            let navigation = crate::app::FindingDrillIn::Commands(
+                crate::app::FindingNavigation::legacy().with_repair_route_outcome(
+                    crate::app::CheckRepairRoute::GapRoute(crate::app::GapRepairRoute {
+                        finding_id,
+                        gap_id: "gap:typescript:typescript_preview:abcd1234".to_string(),
+                        base: "HEAD~1".to_string(),
+                        uncommitted_files: Vec::new(),
+                    }),
+                ),
+            );
+            super::render_bounded_with_config_and_navigation(
+                &output,
+                &config,
+                Some(&navigation),
+                crate::app::CheckDiffProvenance::CommittedHistory,
+            )
+        };
+        assert!(
+            with_route.contains(
+                "the repair packet is complete. Recommended: start the repair with the `ripr agent repair` command under Next; alternative, by hand: in `tests/discount.test.ts`,"
+            ),
+            "{with_route}"
+        );
+        // `--base` is quoted for the host shell (single quotes on Unix,
+        // double quotes on the Windows console).
+        let base = crate::agent::loop_commands::shell_arg("HEAD~1");
+        #[cfg(unix)]
+        assert_eq!(base, "'HEAD~1'");
+        assert!(
+            with_route.contains(&format!(
+                "Recommended follow-through (start the repair):\n  ripr agent repair --gap-id gap:typescript:typescript_preview:abcd1234 --base {base} --phase before"
+            )),
+            "{with_route}"
+        );
+        assert_eq!(with_route.matches("Recommended").count(), 2, "{with_route}");
+
+        // Negative: a route beside a packet the validator did not complete
+        // recommends nothing, in either place.
+        let blocked = typescript_preview_finding(false);
+        let blocked_id = blocked.id.clone();
+        let blocked_output = single_finding_output(blocked);
+        let navigation = crate::app::FindingDrillIn::Commands(
+            crate::app::FindingNavigation::legacy().with_repair_route_outcome(
+                crate::app::CheckRepairRoute::GapRoute(crate::app::GapRepairRoute {
+                    finding_id: blocked_id,
+                    gap_id: "gap:typescript:typescript_preview:abcd1234".to_string(),
+                    base: "HEAD~1".to_string(),
+                    uncommitted_files: Vec::new(),
+                }),
+            ),
+        );
+        let blocked_rendered = super::render_bounded_with_config_and_navigation(
+            &blocked_output,
+            &config,
+            Some(&navigation),
+            crate::app::CheckDiffProvenance::CommittedHistory,
+        );
+        assert!(
+            !blocked_rendered.contains("Recommended"),
+            "{blocked_rendered}"
+        );
+
+        // Negative: no gap route means no recommendation anywhere.
+        let without_route = render(&output);
+        assert!(!without_route.contains("Recommended"), "{without_route}");
+        assert!(
+            without_route.contains("the repair packet is complete: in `tests/discount.test.ts`"),
+            "{without_route}"
+        );
     }
 
     #[test]
@@ -3989,7 +4219,8 @@ mod tests {
         // a concrete diff scope or whole-repository pilot exploration.
         assert!(rendered.contains("`ripr check --base BASE`"));
         assert!(rendered.contains("`ripr pilot --root .`"));
-        assert!(rendered.contains("No findings: ripr checked no changed behavior."));
+        assert!(rendered.contains("Nothing to check:"));
+        assert!(!rendered.contains("No findings:"));
     }
 
     /// #8165: the bounded (default) render leaks no schema token, while
@@ -4554,7 +4785,7 @@ mod tests {
             &crate::config::RiprConfig::default(),
             Path::new("."),
         );
-        if !digest.contains("  Missing check (1 of 2): No strong discriminator was detected") {
+        if !digest.contains("  Missing check (1 of 2): No strong assertion was detected") {
             return Err(format!(
                 "a finding with a real missing discriminator keeps its label:
 {digest}"
@@ -4681,9 +4912,36 @@ mod tests {
         );
 
         assert!(
-            digest.contains("  Missing check (1 of 2): No strong discriminator was detected\n"),
+            digest.contains("  Missing check (1 of 2): No strong assertion was detected\n"),
             "prose entries must render unchanged; got:\n{digest}"
         );
+    }
+
+    /// #10691: the default text names the classifier's "nothing strong notices
+    /// this" entry and the catch-all change type in plain words, while the
+    /// producer's wording stays in `missing` (JSON, `human-full`) and every
+    /// other change type keeps its stable token.
+    #[test]
+    fn default_text_plain_words_cover_only_the_two_fixed_forms() {
+        use crate::domain::ProbeFamily;
+        assert_eq!(
+            super::evidence_lines::plain_default_missing("No strong discriminator was detected"),
+            "No strong assertion was detected"
+        );
+        assert_eq!(
+            super::evidence_lines::plain_default_missing("Missing discriminator value: 100"),
+            "Missing discriminator value: 100",
+            "other entries are not this fixed form"
+        );
+        assert_eq!(
+            super::evidence_lines::plain_probe_family(&ProbeFamily::StaticUnknown),
+            "unclear"
+        );
+        assert_eq!(
+            super::evidence_lines::plain_probe_family(&ProbeFamily::ReturnValue),
+            "return_value"
+        );
+        assert_eq!(ProbeFamily::StaticUnknown.as_str(), "static_unknown");
     }
 
     /// A prose entry past the line budget used to hard-cut at 180 characters
@@ -5267,7 +5525,7 @@ mod tests {
         finding.probe.location = SourceLocation::new("src/lib.ts", 2, 1);
         finding.evidence = vec![
             "owner: applyDiscount".to_string(),
-            "gap_state: advisory".to_string(),
+            "gap_state: unknown".to_string(),
             "actionability_category: incomplete_repair_packet".to_string(),
             "why_not_actionable: TypeScript preview lacks a complete repair packet contract"
                 .to_string(),
@@ -7112,7 +7370,7 @@ mod tests {
         finding.owner_kind = Some(crate::domain::OwnerKind::Function);
         finding.evidence = vec![
             "owner: discountedTotal".to_string(),
-            "gap_state: advisory".to_string(),
+            "gap_state: unknown".to_string(),
             "actionability_category: incomplete_repair_packet".to_string(),
             "why_not_actionable: TypeScript preview lacks a complete repair packet contract"
                 .to_string(),
@@ -7122,19 +7380,19 @@ mod tests {
             "raw_evidence_ref: file=src/lib.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_lib.ts:2:typescript_preview;owner=discountedTotal".to_string(),
         ];
         finding.missing = vec![
-            "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: duplicate summary".to_string(),
+            "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: duplicate summary".to_string(),
         ];
 
         let rendered = render_finding(&finding);
 
         assert!(rendered.contains("Preview actionability\n"));
         assert!(rendered.contains("  authority: preview_advisory_only\n"));
-        assert!(rendered.contains("  gap state: advisory\n"));
+        assert!(rendered.contains("  gap state: unknown\n"));
         assert!(rendered.contains("  category: incomplete_repair_packet\n"));
         assert!(rendered.contains("  repair packet ready: false\n"));
         assert!(rendered.contains("  raw evidence: src/lib.ts:2 (typescript_preview_probe)"));
         assert!(rendered.contains("  - owner: discountedTotal\n"));
-        assert!(!rendered.contains("  - gap_state: advisory\n"));
+        assert!(!rendered.contains("  - gap_state: unknown\n"));
         assert!(!rendered.contains("duplicate summary"));
     }
 

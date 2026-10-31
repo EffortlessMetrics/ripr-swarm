@@ -161,8 +161,8 @@ When the packet is safe, use:
 - `ripr: First PR - Copy Summary`
 - `ripr: First PR - Copy Repair Packet`
 - `ripr: First PR - Copy Verify Command`
-- `ripr: First PR - Copy Receipt Command`
-- `ripr: First PR - Copy Regeneration Guidance`
+- `ripr: First PR - Copy Result Record Command`
+- `ripr: First PR - Copy Steps to Regenerate Packet`
 
 The stronger copy actions require the current diagnostic identity to match the
 packet's typed `canonical_gap_id` or `gap_id`. The editor does not match

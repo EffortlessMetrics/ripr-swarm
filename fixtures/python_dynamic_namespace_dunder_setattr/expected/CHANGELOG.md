@@ -71,3 +71,32 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_dynamic_namespace_dunder_setattr (6)
+
+Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
+
+Command:
+`cargo xtask goldens bless python_dynamic_namespace_dunder_setattr --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_dynamic_namespace_dunder_setattr (7)
+
+Reason:
+RIPR-SPEC-0028 / #10990: mixed resolved and unresolved strong calls keep the finding weak but no longer state a concrete aggregate boundary claim - the infection summary now says static evidence does not place a strong related test input at the changed boundary, and the missing text names unresolved inputs instead of asserting no strong related test call places amount; the #11124 operand-naming refusal no longer matches the withheld phrasing, so the composed no-card safe action uses the generic no-concrete-missing-discriminator wording; classifications, stages and discriminators unchanged
+
+Operation:
+Manual edit: replaced the infection clause in infect.summary/evidence_path/human evidence lines and the missing-discriminator reason (human text rewrapped) with the wording the changed code emits.
+
+Execution:
+Strings authored from source (crates/ripr/src/analysis/language/python/{classify.rs,boundary.rs}); no native goldens-bless command executed on this Windows host per lane protocol; verified by re-running `cargo xtask goldens check` locally on the composed tree; hosted Linux CI goldens check remains the merge authority.
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

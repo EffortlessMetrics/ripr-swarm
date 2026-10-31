@@ -85,6 +85,17 @@ pub(crate) fn ts_unmodeled_infection(
     None
 }
 
+/// Whether two lines have the same executable text (a trailing `//` comment
+/// and surrounding whitespace aside; the semicolon is part of the text) and
+/// both split into code and comment reliably (#10706).
+pub(crate) fn same_executable_text(old: &str, new: &str) -> bool {
+    let (old_exec, new_exec) = (without_comment(old), without_comment(new));
+    !is_undecidable_line(old)
+        && !is_undecidable_line(new)
+        && old_exec == new_exec
+        && !new_exec.is_empty()
+}
+
 /// The line with a trailing `//` comment and a trailing `;` removed. Quotes
 /// are tracked so a `//` inside a string literal is kept.
 fn without_comment(line: &str) -> &str {
@@ -148,9 +159,21 @@ fn is_undecidable_line(line: &str) -> bool {
             {
                 return true;
             }
+            // A block comment can hide a `//` (`x /* a // b */ y`), which the
+            // line-comment cut would misread; fail closed (#11723).
+            '/' if chars.get(index + 1) == Some(&'*') => return true,
+            // A trailing `//` comment ends the code; its text is not scanned.
+            '/' if chars.get(index + 1) == Some(&'/')
+                && index
+                    .checked_sub(1)
+                    .is_none_or(|p| chars[p].is_whitespace()) =>
+            {
+                break;
+            }
             // A `/` after an operator or opener starts a regex literal.
             '/' if chars.get(index + 1) != Some(&'/')
-                && previous_code.is_none_or(|p| "(,=:[!&|?{};+-*%~^".contains(p)) =>
+                && (previous_code.is_none_or(|p| "(,=:[!&|?{};+-*%~^".contains(p))
+                    || follows_regex_keyword(&chars[..index])) =>
             {
                 return true;
             }
@@ -161,6 +184,33 @@ fn is_undecidable_line(line: &str) -> bool {
         }
     }
     quote.is_some()
+}
+
+/// Whether the text before a `/` ends in a keyword after which `/` opens a
+/// regex literal (`return /a/`), not a division.
+fn follows_regex_keyword(before: &[char]) -> bool {
+    let text: String = before.iter().collect();
+    let word = text
+        .trim_end()
+        .rsplit(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+        .next()
+        .unwrap_or_default();
+    matches!(
+        word,
+        "return"
+            | "typeof"
+            | "case"
+            | "in"
+            | "of"
+            | "delete"
+            | "void"
+            | "throw"
+            | "new"
+            | "else"
+            | "do"
+            | "yield"
+            | "await"
+    )
 }
 
 fn is_arithmetic_noop(old: &str, new: &str) -> bool {

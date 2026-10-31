@@ -55,6 +55,8 @@ Hidden:
     - src/profile.ts:5 (weak); kind: side_effect; reason: Only heuristic TypeScript test links were found for `updateProfile`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
     - src/view.jsx:2 (weak); kind: side_effect; reason: Only heuristic TypeScript test links were found for `StatusView`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
     - src/widget.tsx:4 (weak); kind: field_construction; reason: Only heuristic TypeScript test links were found for `PriceBadge`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
+  Hidden classes:
+    weak = tests reach it but check it only loosely
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

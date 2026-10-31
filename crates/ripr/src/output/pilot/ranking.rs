@@ -3,12 +3,14 @@ use crate::analysis::seams::SeamGripClass;
 use crate::output::agent_seam_packets::suggested_assertion_for_classified_seam;
 use crate::output::path::display_path;
 use crate::output::pilot::PilotCurrentChange;
+use crate::output::pilot::commands::has_repair_route;
 use std::collections::BTreeMap;
 use std::path::Path;
 
 /// Rank actionable seams. Seams on lines the current change touches come
-/// first; within each group (and when there is no change) the existing
-/// class/evidence/location order holds.
+/// first; inside each of those groups a seam with a repair route leads one
+/// without (#11292), then the class/evidence/location order holds, with the
+/// owner spread below.
 pub(crate) fn top_actionable_seams<'a>(
     classified: &'a [ClassifiedSeam],
     max_seams: usize,
@@ -16,10 +18,25 @@ pub(crate) fn top_actionable_seams<'a>(
 ) -> Vec<&'a ClassifiedSeam> {
     let in_change =
         |entry: &ClassifiedSeam| current_change.is_some_and(|change| change.touches(entry));
+    // #11292: inside each current-change bucket a seam with a repair route
+    // leads one without. The headline otherwise promised a gap on crates (the
+    // regex-family `src/tests.rs` layout) where the ranked top seam could never
+    // start `ripr agent repair`, while a routable seam sat lower in the list.
+    // The route is pilot's one `has_repair_route`, which mirrors the two
+    // conjuncts of `repair_start_command_for`, so this only reorders and
+    // cannot widen what is offered.
     let mut actionable = classified
         .iter()
         .filter(|entry| class_rank(entry.class).is_some())
-        .map(|entry| (bool_rank(in_change(entry)), entry))
+        .map(|entry| {
+            (
+                (
+                    bool_rank(in_change(entry)),
+                    bool_rank(has_repair_route(entry)),
+                ),
+                entry,
+            )
+        })
         .collect::<Vec<_>>();
     // The rank key holds `suggested_assertion_for_classified_seam`, which
     // derives repair-route readiness from the seam's evidence; computing it
@@ -47,16 +64,19 @@ pub(super) fn actionable_in_change(
 /// any function's second (#5770). Adjacent seams of one owner share its
 /// tests, so when those tests are good every one of them is wrong together;
 /// ranked by location alone they filled the top ten (8 of semver's 10 sat in
-/// two `Identifier` methods). The class still leads, so a weak seam is never
-/// pushed below an unrevealed one, and `RankKey` order holds inside each round.
+/// two `Identifier` methods). Within a (change, route) bucket the class still
+/// leads, so a weak seam is never pushed below an unrevealed one of the same
+/// bucket, and `RankKey` order holds inside each round.
 ///
 /// Rounds count across classes on purpose: a function already listed for a
 /// weak seam does not get a fresh first pick among the unrevealed ones, so
 /// one function cannot claim a slot per class.
 ///
-/// The current-change bucket still leads (#5480): the key is
-/// `(in_change, class, round)`, so spreading never lifts an unchanged seam
-/// above a changed one.
+/// The current-change bucket still leads (#5480) and the repair-route bucket
+/// follows it (#11292): the key is `((in_change, no_route), class, round)`,
+/// so spreading never lifts an unchanged seam above a changed one, or an
+/// unroutable seam above a routable one of the same change bucket. Rounds
+/// walk in that route-then-`RankKey` order.
 fn spread_across_owners<C: Ord + Copy>(ranked: &mut Vec<(C, &ClassifiedSeam)>) {
     let mut taken: BTreeMap<(&Path, &str), usize> = BTreeMap::new();
     let mut keyed = ranked
@@ -134,6 +154,15 @@ pub(super) fn withheld_static_limitations(classified: &[ClassifiedSeam]) -> usiz
     classified
         .iter()
         .filter(|entry| entry.class.is_static_limitation())
+        .count()
+}
+
+/// Actionable seams that have a repair route. Zero with a nonzero
+/// [`actionable_total`] means the headline gap can only be closed by hand.
+pub(super) fn routable_total(classified: &[ClassifiedSeam]) -> usize {
+    classified
+        .iter()
+        .filter(|entry| class_rank(entry.class).is_some() && has_repair_route(entry))
         .count()
 }
 

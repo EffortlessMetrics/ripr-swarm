@@ -51,7 +51,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-hostile-line-directive-pad.json",
-    "sha256": "3e440133beba5055b11e2472d733b7ce347a3f85df57e790b2964888b7b9dce7",
+    "sha256": "47a5c2d49c1574ffa6351c877c4a629ed77619bf14cb52568768881c874b52d1",
     "provenance": "producer"
   }
 }

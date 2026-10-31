@@ -516,6 +516,18 @@ fn repository_root() -> Result<PathBuf, PrecommitError> {
     })
 }
 
+const MERGE_BASE_RECOVERY_FETCH: &str = "git fetch origin main:refs/remotes/origin/main";
+
+fn merge_base_unavailable_message(failure_details: &str) -> String {
+    format!(
+        "no accepted merge base was available: {failure_details}. \
+Precommit needs a locally available `origin/main` or `main` commit that shares Git history with HEAD. \
+Repository policy checks and Clippy did not run. \
+If `origin` tracks the default branch, you can recover with: `{MERGE_BASE_RECOVERY_FETCH}` \
+(only when you are authorized to fetch; precommit does not run fetch for you)."
+    )
+}
+
 fn resolve_merge_base(root: &Path) -> Result<(String, String), PrecommitError> {
     let mut failures = Vec::new();
     let mut infrastructure_failures = 0;
@@ -544,10 +556,7 @@ fn resolve_merge_base(root: &Path) -> Result<(String, String), PrecommitError> {
         } else {
             PrecommitFailureKind::IncompleteEvidence
         },
-        format!(
-            "no accepted merge base was available: {}",
-            failures.join("; ")
-        ),
+        merge_base_unavailable_message(&failures.join("; ")),
     ))
 }
 
@@ -1680,6 +1689,94 @@ mod tests {
         require(
             matches!(error.kind, PrecommitFailureKind::IncompleteEvidence),
             "missing merge base was not incomplete evidence",
+        )?;
+        require(
+            error.message.contains("origin/main")
+                && error.message.contains("`main`")
+                && error.message.contains("Clippy did not run")
+                && error.message.contains(MERGE_BASE_RECOVERY_FETCH),
+            format!(
+                "missing merge base message was not actionable: {}",
+                error.message
+            ),
+        )
+    }
+
+    #[test]
+    fn merge_base_unavailable_message_retains_git_detail_and_names_recovery() -> Result<(), String>
+    {
+        let detail = "origin/main: unavailable or incomplete (resolve merge base: fatal: bad ref)";
+        let message = merge_base_unavailable_message(detail);
+        require(message.contains(detail), "git detail was dropped")?;
+        require(
+            message.contains("shares Git history with HEAD")
+                && message.contains("policy checks and Clippy did not run")
+                && message.contains(MERGE_BASE_RECOVERY_FETCH)
+                && message.contains("precommit does not run fetch"),
+            format!("message missing guidance: {message}"),
+        )
+    }
+
+    #[test]
+    fn resolve_merge_base_missing_local_base_refs_is_actionable() -> Result<(), String> {
+        let fixture = TestRepo::new()?;
+        fixture.write("tracked.txt", "one\n")?;
+        fixture.git(&["add", "tracked.txt"])?;
+        fixture.git(&["commit", "-m", "seed"])?;
+        fixture.git(&["checkout", "--orphan", "work"])?;
+        fixture.write("work.txt", "two\n")?;
+        fixture.git(&["add", "work.txt"])?;
+        fixture.git(&["commit", "-m", "work"])?;
+        fixture.git(&["update-ref", "-d", "refs/heads/main"])?;
+
+        let error = resolve_merge_base(&fixture.path)
+            .err()
+            .ok_or("expected merge-base failure without main or origin/main")?;
+        require(
+            matches!(error.kind, PrecommitFailureKind::IncompleteEvidence),
+            "missing refs were not incomplete evidence",
+        )?;
+        require(
+            error.message.contains("origin/main")
+                && error.message.contains(MERGE_BASE_RECOVERY_FETCH),
+            format!("missing-ref message was not actionable: {}", error.message),
+        )
+    }
+
+    #[test]
+    fn resolve_merge_base_unrelated_histories_is_actionable() -> Result<(), String> {
+        let fixture = TestRepo::new()?;
+        fixture.write("local.txt", "local\n")?;
+        fixture.git(&["add", "local.txt"])?;
+        fixture.git(&["commit", "-m", "local"])?;
+
+        let remote = TestRepo::new()?;
+        remote.write("remote.txt", "remote\n")?;
+        remote.git(&["add", "remote.txt"])?;
+        remote.git(&["commit", "-m", "remote"])?;
+        let remote_root = remote.path.display().to_string();
+
+        fixture.git(&["remote", "add", "origin", &remote_root])?;
+        fixture.git(&["fetch", "origin", "main:refs/remotes/origin/main"])?;
+        fixture.git(&["update-ref", "-d", "refs/heads/main"])?;
+
+        let error = resolve_merge_base(&fixture.path)
+            .err()
+            .ok_or("expected merge-base failure for unrelated histories")?;
+        require(
+            matches!(error.kind, PrecommitFailureKind::IncompleteEvidence),
+            "unrelated histories were not incomplete evidence",
+        )?;
+        require(
+            error
+                .message
+                .contains("no accepted merge base was available")
+                && error.message.contains("origin/main")
+                && error.message.contains("Clippy did not run"),
+            format!(
+                "unrelated-history message was not actionable: {}",
+                error.message
+            ),
         )
     }
 

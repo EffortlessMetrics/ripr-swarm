@@ -30,6 +30,18 @@ id = "dx-scoreboard"
 paths = ["target/ripr/reports/dx-scoreboard.json", "target/ripr/reports/dx-scoreboard.md"]
 
 [[artifact_family]]
+id = "size-scaling"
+paths = ["target/ripr/reports/size-scaling.json", "target/ripr/reports/size-scaling.md"]
+
+[[artifact_family]]
+id = "fuzz-findings"
+paths = ["target/ripr/fuzz-findings"]
+
+[[artifact_family]]
+id = "warm-ab"
+paths = ["target/ripr/reports/warm-ab-xtask-tests.json", "target/ripr/reports/warm-ab-xtask-tests.md", "target/ripr/reports/warm-ab-product-rust.json", "target/ripr/reports/warm-ab-product-rust.md"]
+
+[[artifact_family]]
 id = "rust-corpus"
 paths = ["target/ripr/reports/rust-corpus-smoke.json", "target/ripr/reports/rust-corpus-smoke.md", "target/ripr/reports/dx-scoreboard.json", "target/ripr/reports/dx-scoreboard.md"]
 
@@ -162,6 +174,26 @@ commands = ["cargo xtask dx-scoreboard --clone --include-heavy --corpus-dir \"$R
 estimated_lem = 40
 artifact_families = ["dx-scoreboard"]
 description = "Nightly developer-experience scoreboards on the pinned real-repository corpus; fails only when a metric regresses past its margin against the committed baseline or an instrument breaks."
+
+[[lane]]
+id = "size-scaling"
+posture = "advisory"
+workflow = ".github/workflows/size-scaling.yml"
+jobs = ["size-scaling", "warm-ab"]
+commands = ["cargo build --release --locked -p ripr", "rm -rf target/ripr/size-scaling", "cargo xtask size-scaling --binary target/release/ripr --base-kib 512", "rm -rf target/ripr/warm-ab", "cargo xtask warm-ab --baseline-ref <ref> --candidate-ref <ref> --pins <id=commit>"]
+estimated_lem = 60
+artifact_families = ["size-scaling", "warm-ab"]
+description = "Nightly hostile-input size gate: runs ripr check on generated Rust, Python and TypeScript files at 1x, 2x and 4x a base size against a release binary; fails when cost stops being linear in file size, a step exceeds the ceiling, or a run analyzes nothing. The warm-ab job times a warm check of two pinned diffs of this repository with a baseline and a candidate build on one runner and fails when the candidate exceeds 1.5x the baseline. Wall time only."
+
+[[lane]]
+id = "fuzz"
+posture = "advisory"
+workflow = ".github/workflows/fuzz.yml"
+jobs = ["fuzz"]
+commands = ["cargo test --locked -p ripr --test fuzz_panic_freedom --test fuzz_protocol_frames", "mkdir -p target/ripr/fuzz-findings; cp -r /tmp/ripr-fuzz-* target/ripr/fuzz-findings/ || true"]
+estimated_lem = 40
+artifact_families = ["fuzz-findings"]
+description = "Weekly and manual panic and hang fuzzing: mutated source, diff, config and MCP/LSP stdio frames through the built binary with a raised proptest case count; fails on a panic, a signal or a missed deadline and uploads leftover case workspaces."
 
 [[lane]]
 id = "rust-corpus"
@@ -422,3 +454,13 @@ commands = []
 estimated_lem = 30
 artifact_families = ["release-readiness"]
 description = "Full installed-product and release readiness proof."
+
+[[lane]]
+id = "windows-subset-qualification"
+posture = "advisory"
+workflow = ".github/workflows/windows-subset-qualification.yml"
+jobs = ["windows-advisory-subset"]
+commands = []
+estimated_lem = 5
+artifact_families = []
+description = "Reusable native Windows subset: test outcomes advisory, source/status/log/receipt and nonempty execution evidence mandatory. Called after merge-ready admission or explicit standalone diagnostics."

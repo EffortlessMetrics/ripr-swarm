@@ -1,0 +1,2 @@
+crates/ripr/tests/report_writer_link_containment.rs|Command::new|1|report-writer-link-containment-tests|#11477: runs the exact ripr binary (CARGO_BIN_EXE_ripr) with RIPR_CACHE_DIR set and a committed escaping target/ripr link, to prove receipt write and feedback record refuse before writing. Two tests, no shell or descendants, output() waits for exit, scratch dirs removed on drop.
+crates/ripr/tests/report_writer_link_containment.rs|use std::process::Command|1|report-writer-link-containment-tests|#11477: import for the exact-binary runs above.

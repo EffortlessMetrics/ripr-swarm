@@ -1,0 +1,4 @@
+editors/vscode/test/probeTiming.ts|child_process|1|lsp/editor|Diagnostic timing instrument (#9631) spawns the direct server and an empty powershell.exe to time them against the extension's wrapped probe.
+editors/vscode/test/probeTiming.ts|cp.spawn|2|lsp/editor|Diagnostic timing instrument (#9631) spawns ripr --version and powershell.exe without shell expansion, under a per-trial deadline.
+editors/vscode/test/suite/probe_timing.test.ts|child_process|1|lsp/editor|Suite test runs the compiled timing-instrument CLI to pin its exit-code contract (#9631).
+editors/vscode/test/suite/probe_timing.test.ts|cp.spawn|2|lsp/editor|Suite test spawns the compiled timing-instrument CLI with fake POSIX targets, without shell expansion (#9631).

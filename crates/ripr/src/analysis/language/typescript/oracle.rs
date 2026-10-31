@@ -1326,6 +1326,18 @@ pub(crate) fn expect_assertion_from_expression(
         // An error object this extraction could not read stays unresolved
         // (RIPR-SPEC-0250 reads only the returned object).
         (OracleKind::Unknown, OracleStrength::Unknown)
+    } else if !negated
+        && matcher == "toMatchObject"
+        && outer_call
+            .arguments
+            .first()
+            .is_some_and(is_scalar_literal_argument)
+    {
+        // RIPR-SPEC-0250 rule 4: a scalar literal is not an object subset.
+        // Vitest reads it as plain equality and Jest throws a matcher error
+        // for a non-object received value, so neither the relational "too
+        // weak" grade nor an exact grade is knowable from the source (#11256).
+        (OracleKind::Unknown, OracleStrength::Unknown)
     } else if inline_snapshot_is_literal(matcher, outer_call) {
         // RIPR-SPEC-0247 rule 3: the expected text is written in the test.
         (OracleKind::Snapshot, OracleStrength::Strong)
@@ -3238,6 +3250,13 @@ pub(crate) fn is_literal_argument(arg: &Argument<'_>) -> bool {
         // elements, etc. are all treated as dynamic / non-resolvable.
         _ => false,
     }
+}
+
+/// A string, number, boolean or `null` literal, or a sign applied directly to
+/// a numeric literal: the scalar spellings of [`is_literal_argument`], without
+/// its object case.
+pub(crate) fn is_scalar_literal_argument(arg: &Argument<'_>) -> bool {
+    !matches!(arg, Argument::ObjectExpression(_)) && is_literal_argument(arg)
 }
 
 /// An array literal whose elements are all scalar literals or nested

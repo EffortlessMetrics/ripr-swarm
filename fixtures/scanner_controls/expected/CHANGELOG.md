@@ -431,3 +431,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — scanner_controls (36)
+
+Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
+
+Command:
+`cargo xtask goldens bless scanner_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

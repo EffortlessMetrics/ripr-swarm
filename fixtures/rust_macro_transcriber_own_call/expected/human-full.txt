@@ -24,7 +24,6 @@ Change type
   family: predicate
   delta:  control (changes which code path runs)
   owner:  src/lib.rs::bulk
-  gap id (for scripts): gap:rust:src/lib.rs:bulk:predicate_boundary:predicate:n==100
 
 Static exposure
   infection_unknown (warning, confidence 0.66)
@@ -40,16 +39,29 @@ Evidence
   - source assertion argument value false at line 16
 
 Weakness
-  - No detected boundary input for the changed predicate
-  - No strong discriminator was detected
-  - Related tests pass no literal ripr can compare with the changed boundary [100] (inputs are strings, computed values or fixtures); activation/infection is unknown, and if a test input drives the compared value, one that sits exactly on the boundary would settle it
+  - A test directly invokes a Rust macro whose definition mentions this change, but ripr cannot expand the macro to confirm the path. This is a named limitation, not a coverage claim
 
 Stop reasons:
   - ripr could not tell whether a test input reaches a value that makes the change matter (infection_evidence_unknown)
     Next: Add a test input that reaches the changed value, such as a boundary value, then assert on the result.
+  - a candidate test path stops at a same-repo macro ripr does not expand (macro_reach_unresolved)
+    Next: Call the changed owner directly from a plain `#[test]` body if tests can name it; if it sits behind a macro ripr does not expand, the edge stays unresolved even with an exact assertion.
+
+Static limitation
+  rust_macro_wrapped_test_call_unresolved — A test directly invokes a Rust macro whose definition mentions this change, but ripr cannot expand the macro to confirm the path. This is a named limitation, not a coverage claim.
+  Next: Call the changed owner from the `#[test]` body itself, outside the macro, and assert on its result.
+
+Where to look
+  For example, the test `small_orders_are_not_bulk` (src/lib.rs:15) directly invokes macro `check_small!` at src/lib.rs:16 whose definition lexically mentions the changed owner name. The macro path may lead here. Inspect it to judge whether this change is observed.
+
+Limitation detail
+  last established edge: test `small_orders_are_not_bulk` (src/lib.rs:15) -> direct macro `check_small!` at src/lib.rs:16
+  first unresolved edge: macro `check_small!` expansion toward owner `bulk`
+  analyzer route: analysis/rust-macro-aware-reach
+  non-claim: named limitation only; ripr cannot confirm or deny that the macro-generated path observes the change
 
 Next step
-  Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
+  Check whether `small_orders_are_not_bulk`, which may reach `bulk` through `check_small!`, asserts on the changed behavior; ripr does not trace that path, so this limitation does not establish a missing test
 Drill in:
   ripr explain --root <cwd>/fixtures/rust_macro_transcriber_own_call/input --diff <cwd>/fixtures/rust_macro_transcriber_own_call/diff.patch --mode fast probe:src_lib.rs:predicate:7ce86f3b
   ripr context --root <cwd>/fixtures/rust_macro_transcriber_own_call/input --diff <cwd>/fixtures/rust_macro_transcriber_own_call/diff.patch --mode fast --at probe:src_lib.rs:predicate:7ce86f3b

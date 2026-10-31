@@ -66,13 +66,41 @@ pub(in crate::analysis) fn build_finding_with_origins(
         reaching_summaries
     };
     let mut stop_reasons = stop_reasons(context.probe, context.owner_fn, &test_summaries);
+    if evidence.literal_fixture_receiver_pinned {
+        stop_reasons.retain(|reason| *reason != StopReason::FixtureOpaque);
+    }
+    if context.probe.family == ProbeFamily::ReturnValue
+        && context
+            .owner_fn
+            .and_then(|owner| crate::analysis::classify::concat_literal_tail(owner, context.index))
+            .is_some_and(|(line, expression, _)| {
+                line == context.probe.location.line && expression == context.probe.expression
+            })
+    {
+        stop_reasons.retain(|reason| *reason != StopReason::ProcMacroOpaque);
+    }
     // RIPR-SPEC-0048: a constant decided by evaluation has a reader and tests
     // the evaluation read, so "no changed Rust line" no longer describes it.
     if context.const_flow.is_some() {
         stop_reasons.retain(|reason| reason.as_str() != StopReason::NoChangedRustLine.as_str());
     }
     ensure_unknown_stop_reason(&class, &mut stop_reasons);
+    // RIPR-SPEC-0263: no related test call enters the guard around the
+    // changed line, so the repair is an input, not a stronger assertion.
+    let unentered_guard = (class == ExposureClass::WeaklyExposed)
+        .then(|| {
+            input_boundary_fact(
+                &evidence.activation.missing_discriminators,
+                &context.probe.family,
+            )
+        })
+        .flatten()
+        .filter(|fact| fact.reason.starts_with(GUARD_UNENTERED_REASON_PREFIX))
+        .map(|fact| fact.value.clone());
+    // An exact oracle on another branch does not cover a sink no test enters
+    // (#11147), so the rows still get their `missing_input` miss.
     let exact_oracle_covers_direct_sink = evidence.discriminate.state == StageState::Yes
+        && unentered_guard.is_none()
         && matches!(
             context.probe.family,
             ProbeFamily::ReturnValue | ProbeFamily::ErrorPath | ProbeFamily::FieldConstruction
@@ -116,18 +144,6 @@ pub(in crate::analysis) fn build_finding_with_origins(
             &evidence.implicit_dispatch_tests,
         );
     }
-    // RIPR-SPEC-0263: no related test call enters the guard around the
-    // changed line, so the repair is an input, not a stronger assertion.
-    let unentered_guard = (class == ExposureClass::WeaklyExposed)
-        .then(|| {
-            input_boundary_fact(
-                &evidence.activation.missing_discriminators,
-                &context.probe.family,
-            )
-        })
-        .flatten()
-        .filter(|fact| fact.reason.starts_with(GUARD_UNENTERED_REASON_PREFIX))
-        .map(|fact| fact.value.clone());
     // RIPR-SPEC-0229 / #11024: no related test input selects the changed
     // match arm, so the repair is an input that selects it, not a stronger
     // assertion. The arm pattern is the backticked span of the fact reason.
@@ -1202,10 +1218,13 @@ mod tests {
             propagation_witness: None,
             activation: ActivationEvidence::default(),
             related_tests_matched_total: related_tests.len(),
+            complete_proximity_oracles_only: false,
+            direct_rows: Vec::new(),
             related_tests,
             reach: yes.clone(),
             infect: yes.clone(),
             propagate: StageEvidence::new(StageState::Weak, Confidence::Low, "propagation weak"),
+            literal_fixture_receiver_pinned: false,
             observe: yes.clone(),
             discriminate: yes,
             reach_ruled_out: true,

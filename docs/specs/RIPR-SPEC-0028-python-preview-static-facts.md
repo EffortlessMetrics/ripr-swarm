@@ -404,14 +404,19 @@ delimiter nested in a field (3.12), a single-line f-string with a field of its
 own inside a field (3.12 same-quote nesting), a field or nested literal that is
 not closed, and nesting deeper than four levels. A colon that may or may not be
 the spec colon hides. The triple-quoted scanning here gives up and hides
-rather than inventing a call for the cases above. Known limits: inside
+rather than inventing a call for the cases above. A top-level single-line
+f-string (any `f`/`rf`/`fr` prefix, either quote) whose quote pairing cannot be
+followed also hides the rest of the text: its own quote nested inside a
+replacement field (Python 3.12: `f"{ "helper(1)" }"`, `f"{y["helper(1)"]}"`) or
+a newline inside a field (`f"{\n y\n}  helper(1)"`). Pairing that does follow
+(`f"{x}"`, `f"{d['k']}"`, `f"{{"`, a nested spec field) typically keeps a real call after
+it visible; a brace or quote inside a nested string literal in a field
+(`f"{'{'}"`) or a quote in format-spec text can over-hide, which is a miss and
+fails closed (#9230). Known limits: inside
 triple-quoted f-strings a replacement field on the same line as the opening
-quote is hidden by the line-prefix quote check, and a real call after a field the
-scanner gave up on is hidden too (misses). Separately, and not changed by this
-change, top-level single-line f-strings that use Python 3.12 same-quote nesting
-(`f"{ "helper(1)" }"`, `f"{y["helper(1)"]}"`) or a newline inside a
-replacement field (`f"{\n y\n}  helper(1)"`) can expose text that is not a
-call (#9230).
+quote is hidden by the line-prefix quote check, a real call after a field the
+scanner gave up on is hidden too, and a real call after a single-line f-string
+the pairing cannot follow is hidden (misses).
 
 A pytest test that names a module-level `@pytest.fixture` function (in its own
 module or a `conftest.py` up its directory chain, nearest wins) as a parameter
@@ -476,7 +481,7 @@ comments, strings, and docstrings:
   loop/with header targets too; #9531), loop, `with`, walrus or augmented target
   (`(r) += ...` and `(r): list = ...` included), or not the whole bound value,
   is not credited, as is an augmented assignment after a header or `;`
-  (`if c: r += 1`), an `import r` or `nonlocal r`, and any `case` pattern line that
+  (`if c: r += 1`), an `import r`, `nonlocal r`, `global r`, `del r` or `type r = ...`, and any `case` pattern line that
   mentions the name other than as a dotted value or class pattern (`case (r):`,
   `case {"k": r}:`, `case Foo(x=r):`; a guard read such as `case x if r:` is
   demoted too, a deliberate miss). Within one
@@ -627,6 +632,30 @@ source assertion, independently of the boolean oracle's normalized gate text.
 A workspace assignment to a function's `__code__`, `__defaults__`, `__kwdefaults__` or
 `__closure__` can replace a reader without rebinding its name, so it withholds the module
 constant's credit for scalar and table constants alike (#10626).
+
+A boundary input that a test passes as a plain name resolves like a literal
+when the name is bound once in the test body, by a top-level single-target
+assignment of a literal before the call (#10707). The test is parsed; the name
+is refused if it is a parameter, is stored, deleted, imported, declared
+`global`/`nonlocal`, bound by a `for`, `with`, `except`, walrus, comprehension,
+nested `def`/`class`/`lambda`, tuple unpack or augmented assignment, or if the
+body contains a `match`. A refused name stays unresolved, so the verdict is
+the weak one.
+
+The same input also resolves when the name is a scalar-literal constant of the
+test's own module (`THRESHOLD = 50` above the tests, #10707). The module must
+bind it exactly once at top level, with no `global` rebind, no attribute
+assignment of it, no dynamic namespace write and no opaque construct; the
+test must not bind the name in any scope (parameter, store, loop or
+comprehension target, lambda or nested parameter, import, `match`); the body
+must not mention `monkeypatch`, `patch`, `setattr`, `globals`, `vars`, `exec`
+or `eval`; the module must hold no code that runs outside the tests (autouse
+fixture, `pytestmark`, setup or teardown hook, module-level call, or a
+`conftest.py` on the directory chain that declares a fixture or hook); and a
+test file that the diff also changes gets no credit. Anything else keeps the
+input unresolved. A plain write to the constant from another file that runs
+before the test (a sibling test module assigning `module.THRESHOLD` at
+import) is not seen; no extra fact is read for it.
 
 A changed line whose old and new text differ only in a trailing `#` comment or
 in whitespace between tokens emits no probe (#10706). Both lines are lexed and
@@ -791,7 +820,8 @@ it with the source. Timestamp and checked-hash pycs are trusted the way
 CPython trusts them; the residual risk is a stale timestamp pyc after a
 same-size edit whose mtime lands in the compile second or is restored
 (`rsync -t`, `tar`, CI caches), which CPython itself would load. A pytest or
-tox configuration beside any workspace source, or above one, whose
+tox configuration (including `pytest.toml` and `.pytest.toml`) beside any
+workspace source, or above one, whose
 `pythonpath`, `python_paths` or `PYTHONPATH` setting names anything but its
 own directory refuses the credit: any other entry (an archive, a directory
 the workspace walk excludes, a root holding only compiled extensions, a path
@@ -961,13 +991,16 @@ so a test must notice a wrong version of the new line. Python's mutation
 tool shifts a number literal up by one (mutmut `n` -> `n + 1`), and for
 `v > C` and `v <= C` (and their mirrors) that shifted bound first differs
 at `v == C + 1`. There `exposed` also needs a strong call that places the
-name at `C + 1`; otherwise the finding is `weakly_exposed` and names
-`v == C + 1` as the missing discriminator (#10842). `v >= C` and `v < C`
+name at `C + 1`; otherwise the finding is `weakly_exposed`, and names
+`v == C + 1` only when all relevant calls can be placed (#10842). `v >= C` and `v < C`
 shift onto the equality point and need no further row. A behavior change
 keeps the equality rule, because the equality row notices the edit itself
-(RIPR-SPEC-0238 example 39). When every non-literal operand is bound by some call, the boundary is
-named as the missing discriminator (`amount == threshold`, with the observed
-operand values in its reason). An operand ripr cannot bind (an attribute such
+(RIPR-SPEC-0238 example 39). When every relevant strong call can be placed and
+none witnesses the boundary, the boundary is named as the missing discriminator
+(`amount == threshold`, with the observed
+operand values in its reason). A resolved boundary witness remains valid even
+if another call cannot be placed. If no witness is resolved, an unreadable
+call or an operand ripr cannot bind (an attribute such
 as `item.on_hand`, a computed `len(name)`, a comprehension local, or a line
 with several comparisons) never counts as observed, and such a boundary is not
 named as a typed repair target: the test input may already sit on it at runtime
@@ -1030,6 +1063,22 @@ argument (test locals, `*args`, a construct-call passing a dict), static
 evidence cannot see the activating input either way: the oracle verdict stands
 and an `exposed` finding carries a `boundary_activation_unresolved` evidence
 line naming that limitation.
+
+For an adjacent `>`/`>=` or `<`/`<=` while-bound edit with an unchanged
+integer bound, a closed generator walk can resolve a rebound parameter. It
+accepts only an owner consisting of the loop, whose body is `yield name`
+followed by one unconditional `name -= 1` (descending) or `name += 1`
+(ascending). Every strong call must bind a readable integer and occur in a
+direct whole-list or whole-tuple equality against an integer-literal sequence.
+The builtin constructor and imported free-function owner must retain their
+identity. A near-side or equal input reaches the bound; a past-bound input
+does not (#9733). Partial/lossy consumers such as `next` and `sum`, slices,
+unobserved calls, assertion-message calls, nested calls, shadowed constructors,
+and unsupported assertion shapes retain the unresolved limitation: potential
+iteration alone does not establish observation of the changed final element.
+Step-two, conditional, early-exit, pre-loop rebinding, other statements and
+unreadable calls retain the existing unresolved boundary limitation. This is
+not general loop evaluation.
 
 Static-limit findings must fail closed. They keep any observed reachability and
 oracle facts, but their infection and propagation stages remain `unknown`, the

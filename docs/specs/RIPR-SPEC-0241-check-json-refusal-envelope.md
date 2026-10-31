@@ -193,10 +193,11 @@ machine-readable `check` formats carry their own refusal documents:
   agent brief and agent packet; agent brief echoes the caller-supplied
   `--base` when its working set selected one. Exit stays `2`, prose stays on
   stderr, and argv usage errors stay prose-only with empty stdout.
-- The closed identity vocabulary includes seven members. All but
-  `analysis_timeout` make no claim that analysis ran; `analysis_timeout`
-  (#5369) means the wall-clock budget expired before the budgeted check
-  analysis returned:
+- The closed identity vocabulary includes eight members. All but
+  `analysis_timeout` and `analysis_worker_stopped` make no claim that analysis
+  ran; `analysis_timeout` (#5369) means the wall-clock budget expired before
+  the budgeted check analysis returned, and `analysis_worker_stopped` (#11116)
+  means the analysis worker died before returning:
 
 | Identity | Repair route | Meaning |
 |---|---|---|
@@ -207,6 +208,7 @@ machine-readable `check` formats carry their own refusal documents:
 | `seam_policy_omitted` | `analysis/seam-policy` | A named `ripr agent packet`, `ripr agent start`, or `ripr agent repair --phase before` `--seam-id` matches a seam that agent policy withholds (configured off, already gripped, or not agent-visible) (#10712). |
 | `diff_input_unsupported` | `analysis/diff-input` | An `agent brief --diff` or `--base` working set carries a shared-parser limitation, admission refusal, or truncated textual section; brief selection did not run. Empty valid patches retain their successful brief behavior. |
 | `analysis_timeout` | `analysis/timeout` | The `ripr check` wall-clock budget (`--timeout SECS`, `RIPR_CHECK_TIMEOUT`) ran out before analysis finished (#5369). No findings are produced and the result is never a clean pass. |
+| `analysis_worker_stopped` | `analysis/worker-stopped` | The `ripr check` analysis worker stopped without producing a result, almost always a panic (#11116). No findings are produced and the result is never a clean pass. |
 
 - For `ripr check`, the machine-readable formats `sarif`, `github`,
   `badge-json`, `repo-exposure-json`, and `agent-seam-packets-json` render a
@@ -255,7 +257,7 @@ all renderers.
 
 ## Implementation Mapping (Amendment #7331, #7332)
 
-- `crates/ripr/src/core_error.rs::CheckFailureKind::{CheckArtifactUnusable, GapLedgerUnusable, SeamIdUnknown, SeamPolicyOmitted, SeamNotActionable, DiffInputUnsupported, AnalysisTimeout}`
+- `crates/ripr/src/core_error.rs::CheckFailureKind::{CheckArtifactUnusable, GapLedgerUnusable, SeamIdUnknown, SeamPolicyOmitted, SeamNotActionable, DiffInputUnsupported, AnalysisTimeout, AnalysisWorkerStopped}`
 - `crates/ripr/src/cli/commands/check_budget.rs::run_with_budget`
 - `crates/ripr/src/cli/commands_agent_support.rs::agent_brief_checked_lines_from_diff`
 - `crates/ripr/src/core_error.rs::RefusalNotice`
@@ -289,3 +291,100 @@ Selector misses and ambiguity remain usage-class under RIPR-SPEC-0003: exit 2,
 empty stdout, and recovery guidance on stderr. Supplied-artifact refusals retain
 `check_artifact_unusable`. Public String-returning library compatibility wrappers
 keep their existing error text.
+
+## Amendment (#10796): input context and bounded recovery in analysis-timeout refusals
+
+The same-keys rule above ("same keys ... plus the matching `repair_route`")
+and the no-caller-unsupplied-values rule ("No other caller-unsupplied value
+enters the document") are amended, not silently violated, for one identity:
+
+- An `analysis_timeout` refusal of `ripr check` renders at the new refusal
+  generation `schema_version: "0.3"` and carries one additional key,
+  `input_context`. Every other identity of every command — including
+  `analysis_timeout` refusals without a stashed projection (library callers
+  that never registered the capture) — keeps generation `0.2` and the exact
+  pre-amendment key set. Scope-guard envelopes stay frozen at `0.2` per
+  #4861, and sibling commands (`diff`, `rerun`, `context`, `agent brief`,
+  `agent packet`) keep their own versions byte-for-byte: none gains
+  `input_context`.
+- `input_context` has three fixed keys: `requested`, `resolved`, and
+  `recovery`. `requested` echoes only what the invocation already
+  established — root, the requested input source (`committed`,
+  `working-tree`, `supplied-diff`, `git-candidate`), base, diff file, the
+  `--path`/`--exclude` scope, and the analysis effort mode under the key
+  `analysis_mode` (the source mode and the analysis mode are different
+  quantities and never substitute for one another). `resolved` carries the
+  base/head/merge-base revision facts and the scoped intake file counts,
+  each as `{available: true, value}` or `{available: false, reason}`.
+  `reason` is `not_published_before_deadline` when the fact's own producing
+  stage had not completed when the budget fired (an early timeout; a
+  progress heartbeat alone never establishes discovery),
+  `not_computed_for_source` when that stage completed but never computes the
+  fact for that input source (for example a merge base on a committed-history
+  diff, or any base fact for a supplied diff), and `published_after_deadline`
+  when the publish landed at or after the deadline stamp — a producer
+  finishing inside the cancel grace must not read as available context.
+- Only producers that completed before the deadline may populate a fact:
+  the diff loader publishes the resolved base/commit/merge-base after its
+  load returns, and the scoped intake publishes its counts after the scope
+  partition. The check budget owner stamps the deadline instant when the
+  budget starts and registers the capture slot on the worker thread with
+  that stamp, so a grace-window publish is masked `published_after_deadline`
+  per fact rather than blended into the available set; every other surface
+  (LSP refresh, library callers) runs with no registered capture, so
+  publishing is a no-op. No new Git discovery, analysis, or cleanup runs
+  after the deadline to enrich the refusal, and no run pays for capture
+  when no budget is registered.
+- `recovery` offers at most one bounded next action. For a replayable input
+  it is `retry_with_larger_budget`: a shell-safe literal command rebuilt
+  from the invocation authority that actually ran — the raw root (never the
+  `display_path` echo, which escapes `%` and would name another directory),
+  an explicit base, an explicit `--worktree` / `--committed` / `--diff` /
+  candidate selection, the scope patterns, the effective analysis settings
+  that change the finding set (the effective `--mode`, including draft,
+  `--no-unchanged-tests` when unchanged tests were excluded, and
+  the explicit `--perl-facts` / `--suppression-policy` paths) so the retry
+  reproduces the requested analysis, the output selection (the explicit
+  `--format VALUE` spelling when one was given, otherwise `--json` when the
+  run was JSON), and a finite doubled budget (`--timeout 2*N` for an expired
+  `N`-second budget; "disable all time limits" is never the continuation).
+  An explicit `--output-dir` destination is never repeated: the refused
+  output set occupies that directory and custody rejects an existing
+  destination, so `note` names the occupied destination and the caller names
+  a new one. For a stdin diff (`--diff -`) no literal
+  command is offered: the consumed bytes cannot be replayed, so the action
+  is `save_stdin_diff_to_named_file` with `command: null` and the note names
+  the honest continuation. `rereads` names what a retry re-reads (`base-ref`
+  and `head-ref` for the committed `<base>...HEAD` range, `worktree-bytes`
+  with the base/head merge-base re-resolution for a working-tree diff,
+  `diff-file-bytes`, or none for immutable Git candidate objects) and `note`
+  states that a live-ref or worktree retry is not pinned to the timed-out
+  run's snapshot. The recovery is advisory: execution stays with the
+  caller.
+- Enrichment changes no verdict semantics: exit stays `2`, the typed
+  `analysis_timeout` identity, repair route `analysis/timeout`, empty
+  findings, the zeroed analysis summary, and `downstream_consumable: false`
+  are unchanged, and no `exposed`/clean/repair-ready inference follows from
+  input metadata.
+- Strict readers: generation `0.2` documents keep the closed key set of the
+  pre-amendment contract; generation `0.3` documents keep that key set plus
+  the required `input_context` key. The published machine schemas split the
+  same way: `schemas/ripr/check.schema.json` keeps pinning generation `0.2`
+  and `schemas/ripr/check-timeout-refusal.schema.json` pins `0.3` with
+  `input_context` required, so every emitted refusal has a published schema
+  that admits it.
+
+## Test Mapping (Amendment #10796)
+
+The [traceability slice](../../.ripr/traceability.d/10796-timeout-refusal-input-context.toml)
+lists the input-facts, budget, refusal, output and CLI controls for this amendment.
+
+## Implementation Mapping (Amendment #10796)
+
+- `crates/ripr/src/analysis/input_facts.rs` (`PublishedInputFacts`, `CapturedInputFacts` with the post-deadline mask, capture slot, publish/take)
+- `crates/ripr/src/analysis/pipeline.rs` (loader and scoped-intake publish sites)
+- `crates/ripr/src/app/timeout_refusal.rs` (`RequestedSourceContext`, `TimeoutRefusalProjection`, stash)
+- `crates/ripr/src/app.rs::CHECK_REFUSAL_SCHEMA_VERSION`
+- `crates/ripr/src/cli/commands/check_budget.rs` (deadline stamp, worker capture registration)
+- `crates/ripr/src/cli/commands/check.rs` (`stash_timeout_refusal`, human recovery prose)
+- `crates/ripr/src/output/limited_check.rs::render_check_failure_json` (generation 0.3 and `input_context`)

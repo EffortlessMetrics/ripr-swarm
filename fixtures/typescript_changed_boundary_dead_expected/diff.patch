@@ -1,0 +1,11 @@
+diff --git a/src/discount.ts b/src/discount.ts
+--- a/src/discount.ts
++++ b/src/discount.ts
+@@ -1,6 +1,6 @@
+ export function applyDiscount(total: number, ready: boolean): number {
+-  if ((total > 100) || ready) {
++  if ((total >= 100) || ready) {
+     return total * 0.9;
+   }
+   return total;
+ }

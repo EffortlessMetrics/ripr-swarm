@@ -23,8 +23,9 @@ that server with `cargo install ripr`. Workspace analysis and
 test execution still need their own tooling on the workspace host.
 
 ripr analyzes Rust out of the box. TypeScript/JavaScript and Python are preview
-languages: the editor routes their files to ripr, but the server analyzes them
-only when the language is enabled in a `ripr.toml` file at the workspace root:
+languages: the editor routes their files to ripr, and the server analyzes them
+when the language is auto-detected (see below) or enabled in a `ripr.toml` file
+at the workspace root:
 
 ```toml
 [languages]
@@ -33,8 +34,10 @@ enabled = ["rust", "typescript"]
 
 After changing `enabled`, run **ripr: Restart Server** (or reload the window).
 With no `ripr.toml`, Python auto-enables on Python project markers or
-detectable `.py` files under root `src/` or `tests/`, while
-TypeScript/JavaScript stay off.
+detectable `.py` files under root `src/` or `tests/`, and TypeScript
+auto-enables on a `tsconfig.json` or `jsconfig.json`, or detectable
+`.ts`/`.tsx` files under `src/` or `tests/`; a `package.json` or JavaScript
+files alone do not enable it.
 [Support tiers](https://github.com/EffortlessMetrics/ripr/blob/main/docs/status/SUPPORT_TIERS.md)
 lists per-language conditions.
 
@@ -141,8 +144,8 @@ The development extension also exposes the following commands:
 - `ripr: First PR - Copy Repair Packet`
 - `ripr: Copy Repair Packet at Cursor`
 - `ripr: First PR - Copy Verify Command`
-- `ripr: First PR - Copy Receipt Command`
-- `ripr: First PR - Copy Regeneration Guidance`
+- `ripr: First PR - Copy Result Record Command`
+- `ripr: First PR - Copy Steps to Regenerate Packet`
 - `ripr: Inspect Test Gap - Copy Context`
 - `ripr: Write Targeted Test - Copy Suggested Assertion`
 - `ripr: Write Targeted Test - Copy Brief`
@@ -151,19 +154,19 @@ The development extension also exposes the following commands:
 - `ripr: Agent Handoff - Copy Brief Command`
 - `ripr: Verify After Test - Copy After Snapshot Command`
 - `ripr: Verify After Test - Copy Verify Command`
-- `ripr: Review Result - Copy Receipt Command`
+- `ripr: Review Result - Copy Result Record Command`
 - `ripr: Write Targeted Test - Open Best Related Test`
 - `ripr: Open Settings`
 - `ripr: Copy Top Repair Packet`
 - `ripr: Copy Verify Command (Top Repair Packet)`
-- `ripr: Copy Receipt Command (Top Repair Packet)`
+- `ripr: Copy Result Record Command (Top Repair Packet)`
 - `ripr: Open Report`
-- `ripr: Show Top Limitation`
-- `ripr: Show Receipt Status`
+- `ripr: Show Main Analysis Limit`
+- `ripr: Show Result Record Status`
 - `ripr: Show Repair Attempt Status`
-- `ripr: Copy Receipt Command (Receipt Status)`
-- `ripr: Open Attempt Ledger`
-- `ripr: Show Route Quality`
+- `ripr: Copy Result Record Command (Result Record Status)`
+- `ripr: Open Repair Attempt History`
+- `ripr: Show Repair Route Summary`
 
 </details>
 

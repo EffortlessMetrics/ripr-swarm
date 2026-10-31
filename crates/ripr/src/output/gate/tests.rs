@@ -1094,6 +1094,105 @@ fn refusal_input_error_requires_explicit_consumable_false() -> Result<(), String
 }
 
 #[test]
+fn producer_refusal_pairs_message_and_route_from_one_record() -> Result<(), String> {
+    // #11161 review: an unrelated earlier limitation must not lend its message
+    // to the refusal-bearing record's route.
+    let multi = json!({
+        "run_limitations": [
+            {
+                "category": "note",
+                "message": "unrelated advisory note",
+                "repair_route": "analysis/unrelated"
+            },
+            {
+                "run_status": "diff_scope_oversized",
+                "downstream_consumable": false,
+                "message": "diff_scope_oversized: analysis was not run.",
+                "repair_route": "analysis/diff-scope-budget"
+            }
+        ]
+    });
+    let named = producer_refusal(&multi).ok_or_else(|| "refusal must be named".to_string())?;
+    assert_eq!(named.message, "diff_scope_oversized: analysis was not run.");
+    assert_eq!(named.repair_route, "analysis/diff-scope-budget");
+    Ok(())
+}
+
+#[test]
+fn producer_refusal_names_status_message_and_repair_route() -> Result<(), String> {
+    // #11161: the shared refusal reader names the typed run status when the
+    // document carries a known one, the producer's own first limitation
+    // message, and its repair route. It fires only for an explicit
+    // non-consumable record — a complete, absent, or malformed document, or
+    // a consumable envelope without an outcome, yields `None` and keeps its
+    // downstream generic handling. Literals only (no mutation helpers) so
+    // the test stays off the panic-family allowlist.
+    let refusal = json!({
+        "analysis_scope": {
+            "scope": "diff",
+            "run_status": "diff_scope_oversized",
+            "downstream_consumable": false,
+            "repair_route": "analysis/diff-scope-budget"
+        },
+        "run_limitations": [{
+            "category": "diff_scope_oversized",
+            "run_status": "diff_scope_oversized",
+            "downstream_consumable": false,
+            "message": "diff_scope_oversized: 2878 changed Rust lines across 11 Rust files exceed the limit (2000); analysis was not run.",
+            "repair_route": "analysis/diff-scope-budget"
+        }]
+    });
+    let named = producer_refusal(&refusal).ok_or_else(|| "refusal must be named".to_string())?;
+    assert_eq!(named.status.as_deref(), Some("diff_scope_oversized"));
+    assert!(
+        named.message.contains("2878 changed Rust lines"),
+        "unexpected message: {}",
+        named.message
+    );
+    assert_eq!(named.repair_route, "analysis/diff-scope-budget");
+    // An untyped refusal still yields the message and route with no status.
+    let untyped = json!({
+        "analysis_scope": {
+            "scope": "diff",
+            "downstream_consumable": false,
+            "repair_route": "analysis/diff-scope-budget"
+        },
+        "run_limitations": [{
+            "downstream_consumable": false,
+            "message": "diff_scope_oversized: 2878 changed Rust lines across 11 Rust files exceed the limit (2000); analysis was not run.",
+            "repair_route": "analysis/diff-scope-budget"
+        }]
+    });
+    let untyped =
+        producer_refusal(&untyped).ok_or_else(|| "untyped refusal must be named".to_string())?;
+    assert_eq!(untyped.status, None);
+    assert!(untyped.message.contains("2878 changed Rust lines"));
+    assert_eq!(untyped.repair_route, "analysis/diff-scope-budget");
+    // Complete, consumable-without-outcome, malformed-shape, and
+    // explicitly-consumable documents all yield `None`.
+    assert_eq!(producer_refusal(&json!({"findings": []})), None);
+    assert_eq!(
+        producer_refusal(&json!({"schema_version": "0.2", "findings": []})),
+        None
+    );
+    assert_eq!(
+        producer_refusal(&json!({
+            "run_status": "diff_scope_oversized",
+            "run_limitations": [{"downstream_consumable": true}]
+        })),
+        None
+    );
+    assert_eq!(
+        producer_refusal(&json!({
+            "run_status": "diff_scope_oversized",
+            "run_limitations": [{"downstream_consumable": "false"}]
+        })),
+        None
+    );
+    Ok(())
+}
+
+#[test]
 fn gate_admits_consumable_document_with_known_refusal_status() -> Result<(), String> {
     // #10733 review repair: a document carrying a known refusal run status
     // but NO explicit `downstream_consumable: false` discloses no refusal;
@@ -2378,7 +2477,15 @@ fn gate_mode_parse_covers_all_values_and_unknowns() {
     );
     assert_eq!(
         GateMode::parse("hard"),
-        Err("unknown gate mode `hard`; expected `visible-only`, `acknowledgeable`, `baseline-check`, or `calibrated-gate`".to_string())
+        Err("unknown gate mode \"hard\". Accepted: visible-only, acknowledgeable, baseline-check, calibrated-gate.".to_string())
+    );
+    assert_eq!(
+        GateMode::parse("baseline-chek"),
+        Err("unknown gate mode \"baseline-chek\". Did you mean `baseline-check`? Accepted: visible-only, acknowledgeable, baseline-check, calibrated-gate.".to_string())
+    );
+    assert_eq!(
+        GateMode::parse("visible-onlyy"),
+        Err("unknown gate mode \"visible-onlyy\". Did you mean `visible-only`? Accepted: visible-only, acknowledgeable, baseline-check, calibrated-gate.".to_string())
     );
 }
 

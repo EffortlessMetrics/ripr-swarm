@@ -255,7 +255,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     // stderr-only stage lines `ripr check` projects (throttled heartbeats
     // included) disclose the work without touching machine stdout. The
     // `--from` artifact path runs no pipeline and wires no sink.
-    let progress = (!quiet).then(|| {
+    let progress = (!crate::cli::progress::progress_silenced(quiet)).then(|| {
         crate::cli::progress::CliProgressSink::for_stderr(
             std::io::IsTerminal::is_terminal(&std::io::stderr()),
             crate::cli::progress::ProgressPolicy::STANDARD,

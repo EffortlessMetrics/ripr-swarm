@@ -359,3 +359,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — infection_expected_value_literal (30)
+
+Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
+
+Command:
+`cargo xtask goldens bless infection_expected_value_literal --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

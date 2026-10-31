@@ -17,36 +17,7 @@
       }
     }
   ],
-  "dynamic_boundaries": [
-    {
-      "boundary_id": "boundary:t/forms.t:eval_or_string_code:1",
-      "confidence": "high",
-      "file_id": "file:t/forms.t",
-      "kind": "eval_or_string_code",
-      "owner_id": null,
-      "provenance_refs": [],
-      "range": {
-        "end_column": 6,
-        "end_line": 13,
-        "start_column": 0,
-        "start_line": 13
-      }
-    },
-    {
-      "boundary_id": "boundary:t/forms.t:eval_or_string_code:2",
-      "confidence": "high",
-      "file_id": "file:t/forms.t",
-      "kind": "eval_or_string_code",
-      "owner_id": null,
-      "provenance_refs": [],
-      "range": {
-        "end_column": 6,
-        "end_line": 18,
-        "start_column": 0,
-        "start_line": 18
-      }
-    }
-  ],
+  "dynamic_boundaries": [],
   "files": [
     {
       "digest": "sha256:4475a27cfb3874b85283972e4040c4a326890d0bb361163f23d013b96541aa65",
@@ -95,22 +66,6 @@
   },
   "limitations": [
     {
-      "evidence_refs": [
-        "file:t/forms.t"
-      ],
-      "kind": "eval_or_string_code",
-      "limitation_id": "limitation:boundary:t/forms.t:eval_or_string_code:1",
-      "message": "Dynamic boundary `eval {` detected in t/forms.t; ripr fails closed on this boundary kind."
-    },
-    {
-      "evidence_refs": [
-        "file:t/forms.t"
-      ],
-      "kind": "eval_or_string_code",
-      "limitation_id": "limitation:boundary:t/forms.t:eval_or_string_code:2",
-      "message": "Dynamic boundary `eval {` detected in t/forms.t; ripr fails closed on this boundary kind."
-    },
-    {
       "evidence_refs": [],
       "kind": "partial_emitter",
       "limitation_id": "emitter-partial",
@@ -158,8 +113,8 @@
         "start_column": 0,
         "start_line": 6
       },
-      "strength": "weak_broad",
-      "target_owner_id": null,
+      "strength": "strong_exact",
+      "target_owner_id": "owner:lib/Forms.pm:sub:Forms::prefix_only:201-303",
       "test_id": "test:t/forms.t"
     },
     {
@@ -178,7 +133,7 @@
         "start_column": 0,
         "start_line": 8
       },
-      "strength": "weak_broad",
+      "strength": "strong_exact",
       "target_owner_id": null,
       "test_id": "test:t/forms.t"
     },
@@ -198,7 +153,7 @@
         "start_column": 0,
         "start_line": 10
       },
-      "strength": "weak_broad",
+      "strength": "strong_exact",
       "target_owner_id": null,
       "test_id": "test:t/forms.t"
     },
@@ -226,7 +181,7 @@
       "confidence": "medium",
       "expected_expression": null,
       "expression": "like($@, qr/zero not allowed/, 'zero is refused')",
-      "kind": "predicate_boundary_assertion",
+      "kind": "exception_observer",
       "observed_sink": null,
       "oracle_id": "oracle:t/forms.t:like:465-514",
       "provenance_refs": [
@@ -238,7 +193,7 @@
         "start_column": 0,
         "start_line": 14
       },
-      "strength": "weak_broad",
+      "strength": "strong_exact",
       "target_owner_id": null,
       "test_id": "test:t/forms.t"
     },
@@ -475,7 +430,7 @@
       }
     }
   ],
-  "packet_fingerprint": "sha256:c4af3f4e20537fed2eecce3d9e8e97bc1154050fb7081267374861445e2cbb0c",
+  "packet_fingerprint": "sha256:094d5728577838e7f03978beb50f6856b860147a7f9338ab2f91ab5f12aac7e2",
   "packet_id": "perl-lsp-ripr-facts-ripr-perl-facts-v1-s-files,owners,changes,tests,oracles,relations,dynamic_boundaries,verify_commands,limitations,provenance",
   "packet_status": "partial",
   "producer": {
@@ -490,7 +445,8 @@
       "verify_commands",
       "limitations",
       "provenance",
-      "test_facts"
+      "test_facts",
+      "oracle_matcher_grading"
     ],
     "name": "perl-lsp",
     "version": "0.17.0"
@@ -538,6 +494,72 @@
       "reachability_hint": "weakly_reachable",
       "relation_id": "relation:file:t/forms.t:lib/Forms.pm:owner_lib/Forms.pm_package_Forms__Error_0-20",
       "relation_kind": "file_proximity",
+      "test_id": "test:t/forms.t"
+    },
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Forms.pm:sub:Forms::class_only:305-421",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/forms.t:lib/Forms.pm:owner_lib/Forms.pm_sub_Forms__class_only_305-421",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/forms.t"
+    },
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Forms.pm:sub:Forms::class_then_message:423-549",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/forms.t:lib/Forms.pm:owner_lib/Forms.pm_sub_Forms__class_then_message_423-549",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/forms.t"
+    },
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Forms.pm:sub:Forms::eval_like:551-647",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/forms.t:lib/Forms.pm:owner_lib/Forms.pm_sub_Forms__eval_like_551-647",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/forms.t"
+    },
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Forms.pm:sub:Forms::eval_ok:706-758",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/forms.t:lib/Forms.pm:owner_lib/Forms.pm_sub_Forms__eval_ok_706-758",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/forms.t"
+    },
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Forms.pm:sub:Forms::lives_weak:649-704",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/forms.t:lib/Forms.pm:owner_lib/Forms.pm_sub_Forms__lives_weak_649-704",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/forms.t"
+    },
+    {
+      "change_id": "change:file:lib/Forms.pm:19:19",
+      "confidence": "medium",
+      "oracle_id": "oracle:t/forms.t:throws_ok:75-160",
+      "owner_id": "owner:lib/Forms.pm:sub:Forms::prefix_only:201-303",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/forms.t:lib/Forms.pm:owner_lib/Forms.pm_sub_Forms__prefix_only_201-303:change:file:lib/Forms.pm:19:19",
+      "relation_kind": "direct_owner_call",
       "test_id": "test:t/forms.t"
     }
   ],
