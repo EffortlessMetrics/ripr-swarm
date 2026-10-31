@@ -33226,6 +33226,12 @@ jobs:
     assert!(enforced.contains(&("check-agent-skills".to_string(), String::new())));
     assert!(super::workflow_run_xtask_invocation("cargo policy preflight || true").is_none());
     assert!(super::workflow_run_xtask_invocation("# cargo policy preflight").is_none());
+    assert_eq!(
+        super::workflow_run_xtask_invocation("\"$xtask\" verify-test-shards \\"),
+        Some(("verify-test-shards".to_string(), String::new()))
+    );
+    assert!(super::workflow_run_xtask_invocation("$xtask verify-test-shards").is_none());
+    assert!(super::workflow_run_xtask_invocation("\"$other\" verify-test-shards").is_none());
     assert!(enforced.contains(&("check-network-policy".to_string(), String::new())));
     assert!(enforced.contains(&("goldens".to_string(), "check".to_string())));
     assert!(enforced.contains(&("ripr-pr".to_string(), String::new())));
@@ -56639,20 +56645,26 @@ fn check_pr_bounded_error_lines_are_crlf_normalized_and_capped() {
 }
 
 /// Remove a test-owned scratch directory, retrying a Windows sharing or lock
-/// violation (os error 32/33) for up to five seconds. A process another test
-/// spawned while this test held the cwd there, or a scanner opening the new
-/// report, can keep a handle briefly; hosted Windows failed this cleanup after
-/// the oracle had passed (#10344). Any other error, or a holder that outlasts
-/// the bound, still fails.
+/// violation (os error 32/33) or a directory-not-empty answer (os error 145)
+/// for up to five seconds. A process another test spawned while this test held
+/// the cwd there, or a scanner opening the new report, can keep a handle
+/// briefly; hosted Windows failed this cleanup after the oracle had passed
+/// (#10344). Error 145 is the same holder seen one level up: a file whose
+/// delete is pending keeps its parent non-empty until the handle closes
+/// (#10866). Any other error, or a holder that outlasts the bound, still fails.
 fn remove_owned_scratch_dir(root: &Path) -> std::io::Result<()> {
     const SHARING_VIOLATION: i32 = 32;
     const LOCK_VIOLATION: i32 = 33;
+    const DIR_NOT_EMPTY: i32 = 145;
     let mut attempts = 0;
     loop {
         match fs::remove_dir_all(root) {
             Err(err)
                 if attempts < 50
-                    && matches!(err.raw_os_error(), Some(SHARING_VIOLATION | LOCK_VIOLATION)) =>
+                    && matches!(
+                        err.raw_os_error(),
+                        Some(SHARING_VIOLATION | LOCK_VIOLATION | DIR_NOT_EMPTY)
+                    ) =>
             {
                 attempts += 1;
                 std::thread::sleep(std::time::Duration::from_millis(100));
