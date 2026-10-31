@@ -7588,7 +7588,7 @@ mod tests {
             "weak = partial evidence",
             "no = evidence not found",
             "unknown/opaque = analysis limited",
-            "missing = no matching assertion in tests",
+            "missing = a needed test input or assertion is absent",
             "not established = assertion unconfirmed",
             "not applicable = stage unused",
             // #9244 item 4: the words the Summary count line prints.
@@ -7813,6 +7813,15 @@ mod tests {
             "the compact line must not contradict the missing-discriminator wording; got:\n{digest}"
         );
 
+        assert!(
+            digest.contains("missing = a needed test input or assertion is absent"),
+            "{digest}"
+        );
+        assert!(
+            !digest.contains("missing = no matching assertion in tests"),
+            "{digest}"
+        );
+
         // Missing facts also come from assertion gaps, even when the test
         // already supplies the activating input (weak_error_oracle fixture).
         finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
@@ -7827,10 +7836,10 @@ mod tests {
         );
         assert!(digest.contains("· assertion missing\n"), "{digest}");
         assert!(
-            digest.contains("missing = no matching assertion in tests"),
+            digest.contains("missing = a needed test input or assertion is absent"),
             "{digest}"
         );
-        assert!(!digest.contains("missing = named input absent from tests"));
+        assert!(!digest.contains("missing = no matching assertion in tests"));
 
         let missing = finding.activation.missing_discriminators.clone();
         finding.activation.missing_discriminators = Vec::new();

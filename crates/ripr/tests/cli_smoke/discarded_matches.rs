@@ -32,7 +32,7 @@ const BOUNDED_EVIDENCE_LEGEND: &str = concat!(
     "      propagation = changed effect reaches output; observation = related test/assertion evidence;\n",
     "      assertion = a test assertion tells intended from wrong behavior\n",
     "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
-    "      missing = no matching assertion in tests; not established = assertion unconfirmed; not applicable = stage unused\n",
+    "      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused\n",
     "    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;\n",
     "      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;\n",
     "      no test path = no test path found; unclear = analysis limited, not a verdict;\n",
