@@ -576,3 +576,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_same_line_duplicate_collapse (28)
+
+Reason:
+RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+
+Command:
+`cargo xtask goldens bless python_same_line_duplicate_collapse --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

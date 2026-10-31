@@ -623,3 +623,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_return_value_shape (27)
+
+Reason:
+RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+
+Command:
+`cargo xtask goldens bless python_return_value_shape --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

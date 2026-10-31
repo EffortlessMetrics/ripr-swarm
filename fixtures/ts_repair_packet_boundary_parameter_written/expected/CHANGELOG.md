@@ -373,3 +373,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_parameter_written (32)
+
+Reason:
+RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_parameter_written --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

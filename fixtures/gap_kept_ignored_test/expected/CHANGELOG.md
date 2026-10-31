@@ -217,3 +217,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — gap_kept_ignored_test (19)
+
+Reason:
+RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+
+Command:
+`cargo xtask goldens bless gap_kept_ignored_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

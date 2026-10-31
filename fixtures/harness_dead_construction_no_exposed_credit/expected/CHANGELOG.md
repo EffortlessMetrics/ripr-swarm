@@ -493,3 +493,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — harness_dead_construction_no_exposed_credit (36)
+
+Reason:
+RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+
+Command:
+`cargo xtask goldens bless harness_dead_construction_no_exposed_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

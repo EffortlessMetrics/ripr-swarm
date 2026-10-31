@@ -623,3 +623,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_owner_file_match (28)
+
+Reason:
+RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+
+Command:
+`cargo xtask goldens bless python_owner_file_match --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

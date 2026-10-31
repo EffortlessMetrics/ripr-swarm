@@ -779,3 +779,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_parse_error_unsupported_syntax (32)
+
+Reason:
+RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+
+Command:
+`cargo xtask goldens bless typescript_parse_error_unsupported_syntax --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -73,3 +73,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_build_script_no_test_reach (6)
+
+Reason:
+RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+
+Command:
+`cargo xtask goldens bless rust_build_script_no_test_reach --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -1668,14 +1668,14 @@ const fn rule(prefix: &'static str) -> RefusalRule {
 /// drift that has to be re-blessed and added here, not silently masked.
 const REPAIR_REFUSAL_RULES: &[RefusalRule] = &[
     rule("this finding has no gap ID"),
-    rule("ripr found no seam in this finding's file to bind it to"),
-    rule("several seams bind this finding"),
+    rule("ripr found no spot in this finding's file to bind it to"),
+    rule("several spots bind this finding"),
     rule("nothing to repair here"),
     rule("`ripr check` reads a gap or limit for this change"),
-    rule("the seam inventory behind `ripr repair`"),
-    rule("the seam budget left"),
+    rule("the spot inventory behind `ripr repair`"),
+    rule("the spot budget left"),
     rule("the root's config could not be read"),
-    rule("classifying the finding's seams failed"),
+    rule("classifying the finding's spots failed"),
     rule("ripr cannot build a repair packet for this finding yet because the static evidence"),
     RefusalRule {
         prefix: "ripr cannot build a repair packet for this finding yet because it is still missing: ",
@@ -1779,9 +1779,13 @@ fn normalize_seam_count(body: &str) -> Option<String> {
         return None;
     }
     let after = &rest[digits..];
+    // `seam` is the wording of goldens not yet re-blessed; `spot` is the
+    // current check screen (#11619). Both normalize to the same opening.
     let after = after
         .strip_prefix(" seams")
-        .or_else(|| after.strip_prefix(" seam"))?;
+        .or_else(|| after.strip_prefix(" seam"))
+        .or_else(|| after.strip_prefix(" spots"))
+        .or_else(|| after.strip_prefix(" spot"))?;
     after.strip_prefix(
         " in this finding's file, but could not tie one to this finding's changed line",
     )?;
@@ -3650,7 +3654,7 @@ mod tests {
             "a reworded refusal must not read as golden drift"
         );
         // Negative: a variant change is drift even though both are refusals.
-        let no_seam = wrap("ripr found no seam in this finding's file to bind it to, so new words");
+        let no_seam = wrap("ripr found no spot in this finding's file to bind it to, so new words");
         assert_ne!(
             mask_repair_refusal_reason(&canonical),
             mask_repair_refusal_reason(&no_seam)
@@ -3719,15 +3723,15 @@ mod tests {
         );
         assert_eq!(
             mask_repair_refusal_reason(
-                "  no repair start offered: several seams bind this finding, x\r\n"
+                "  no repair start offered: several spots bind this finding, x\r\n"
             ),
-            "  no repair start offered: several seams bind this finding<reason>\r\n"
+            "  no repair start offered: several spots bind this finding<reason>\r\n"
         );
         assert_eq!(
             mask_repair_refusal_reason(
-                "  no repair start offered: several seams bind this finding"
+                "  no repair start offered: several spots bind this finding"
             ),
-            "  no repair start offered: several seams bind this finding<reason>"
+            "  no repair start offered: several spots bind this finding<reason>"
         );
     }
 
@@ -3785,8 +3789,8 @@ mod tests {
         };
         let exposed_line =
             "nothing to repair here; the related tests already notice this change (exposed)";
-        let untied_line = "ripr found 4 seams in this finding's file, but could not tie one to this finding's changed line, so y";
-        let one_seam_line = "ripr found 1 seam in this finding's file, but could not tie one to this finding's changed line, so z";
+        let untied_line = "ripr found 4 spots in this finding's file, but could not tie one to this finding's changed line, so y";
+        let one_seam_line = "ripr found 1 spot in this finding's file, but could not tie one to this finding's changed line, so z";
         let old_no_seam = write_exposed(
             "old_no_seam.txt",
             "ripr found no seam in this finding's file to bind it to, so x",

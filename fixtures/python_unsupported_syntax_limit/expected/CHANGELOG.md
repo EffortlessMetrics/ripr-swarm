@@ -649,3 +649,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_unsupported_syntax_limit (26)
+
+Reason:
+RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+
+Command:
+`cargo xtask goldens bless python_unsupported_syntax_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

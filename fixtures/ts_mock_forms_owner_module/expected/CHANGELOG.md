@@ -325,3 +325,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_mock_forms_owner_module (28)
+
+Reason:
+RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+
+Command:
+`cargo xtask goldens bless ts_mock_forms_owner_module --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

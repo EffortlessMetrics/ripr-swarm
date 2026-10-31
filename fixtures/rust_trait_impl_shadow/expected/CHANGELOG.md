@@ -206,3 +206,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_trait_impl_shadow (17)
+
+Reason:
+RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+
+Command:
+`cargo xtask goldens bless rust_trait_impl_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

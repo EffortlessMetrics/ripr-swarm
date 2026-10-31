@@ -22,3 +22,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_trailing_whitespace_in_multiline_string (3)
+
+Reason:
+RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+
+Command:
+`cargo xtask goldens bless python_trailing_whitespace_in_multiline_string --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

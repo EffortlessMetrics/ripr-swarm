@@ -59,3 +59,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_route_verb_mismatch (6)
+
+Reason:
+RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+
+Command:
+`cargo xtask goldens bless python_route_verb_mismatch --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

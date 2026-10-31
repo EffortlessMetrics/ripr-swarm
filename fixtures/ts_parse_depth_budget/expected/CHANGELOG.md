@@ -468,3 +468,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_parse_depth_budget (39)
+
+Reason:
+RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+
+Command:
+`cargo xtask goldens bless ts_parse_depth_budget --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

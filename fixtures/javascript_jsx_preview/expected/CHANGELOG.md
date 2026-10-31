@@ -732,3 +732,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — javascript_jsx_preview (32)
+
+Reason:
+RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+
+Command:
+`cargo xtask goldens bless javascript_jsx_preview --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

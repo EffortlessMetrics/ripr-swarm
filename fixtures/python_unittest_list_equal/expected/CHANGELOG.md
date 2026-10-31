@@ -169,3 +169,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_unittest_list_equal (15)
+
+Reason:
+RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+
+Command:
+`cargo xtask goldens bless python_unittest_list_equal --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

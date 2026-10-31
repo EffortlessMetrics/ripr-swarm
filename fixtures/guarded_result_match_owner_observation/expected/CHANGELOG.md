@@ -372,3 +372,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — guarded_result_match_owner_observation (30)
+
+Reason:
+RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+
+Command:
+`cargo xtask goldens bless guarded_result_match_owner_observation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

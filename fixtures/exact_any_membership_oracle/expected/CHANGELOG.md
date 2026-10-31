@@ -145,3 +145,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — exact_any_membership_oracle (13)
+
+Reason:
+RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+
+Command:
+`cargo xtask goldens bless exact_any_membership_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

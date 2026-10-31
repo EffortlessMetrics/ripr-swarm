@@ -187,7 +187,7 @@ impl RepairRouteRefusal {
             ),
             Self::NoCanonicalGap => {
                 "no repair start offered: this finding has no gap ID, so there is \
-                 no seam to start a repair from; follow the Next step above"
+                 no spot to start a repair from; follow the Next step above"
                     .to_string()
             }
             Self::PreviewPacketNotComplete { language, reason } => format!(
@@ -197,24 +197,26 @@ impl RepairRouteRefusal {
             ),
             Self::NoSeamInventory { language, file } => format!(
                 "no repair start offered: {}",
-                super::task_first::no_seam_inventory_reason(language, file)
+                plain_inventory_reason(&super::task_first::no_seam_inventory_reason(
+                    language, file
+                ))
             ),
             Self::ConfigUnreadable => "no repair start offered: the root's config could not be \
                  read; fix the ripr.toml error at the root, then rerun `ripr check`"
                 .to_string(),
             Self::ClassificationFailed => format!(
-                "no repair start offered: classifying the finding's seams failed; \
+                "no repair start offered: classifying the finding's spots failed; \
                  `{full_gate_command}` may print the underlying error"
             ),
             Self::SeamLimit => {
                 format!(
-                    "no repair start offered: the seam budget left the repair candidate set unreadable or truncated; {}",
-                    super::task_first::WIDEN_SEAM_BUDGET
+                    "no repair start offered: the spot budget left the repair candidate set unreadable or truncated; {}",
+                    super::task_first::WIDEN_SEAM_BUDGET.replace("wider seam budget", "wider spot budget")
                 )
             }
             Self::NoBindingSeam { seams_in_file: 0 } => {
-                "no repair start offered: ripr found no seam in this \
-                 finding's file to bind it to, so there is no seam to start a repair from; \
+                "no repair start offered: ripr found no spot in this \
+                 finding's file to bind it to, so there is no spot to start a repair from; \
                  follow the Next step above"
                     .to_string()
             }
@@ -222,21 +224,21 @@ impl RepairRouteRefusal {
                 "no repair start offered: ripr found {seams_in_file} {} in this finding's \
                  file, but could not tie one to this finding's changed line, so it cannot pick one \
                  for you; `ripr pilot` lists them, or follow the Next step above",
-                if *seams_in_file == 1 { "seam" } else { "seams" }
+                if *seams_in_file == 1 { "spot" } else { "spots" }
             ),
             Self::FindingAlreadyExposed => "no repair start offered: nothing to repair here; \
                  the related tests already notice this change (exposed)"
                 .to_string(),
             Self::SeamGrippedFindingNot => "no repair start offered: `ripr check` reads a gap \
-                 or limit for this change, but `ripr repair` judges the whole seam and finds \
+                 or limit for this change, but `ripr repair` judges the surrounding code as a whole and finds \
                  its tests already notice changes there (exposed), so it has no gap to start \
-                 from. The two read different evidence (your changed lines versus the whole \
-                 seam) and ripr does not start a repair on conflicting evidence; follow the \
+                 from. The two read different evidence (your changed lines versus the surrounding \
+                 code) and ripr does not start a repair on conflicting evidence; follow the \
                  Next step above"
                 .to_string(),
             Self::SeveralBindingSeams => {
-                "no repair start offered: several seams bind this finding \
-                 and the check screen never picks one; `ripr repair` needs the ID of the seam \
+                "no repair start offered: several spots bind this finding \
+                 and the check screen never picks one; `ripr repair` needs the ID of the spot \
                  you choose"
                     .to_string()
             }
@@ -471,6 +473,22 @@ pub(crate) enum FindingDrillIn {
     /// Copy-pasteable `ripr explain` / `ripr context` commands that preserve
     /// this run's input identity (`--worktree` included).
     Commands(FindingNavigation),
+}
+
+/// The check screen's plain words for the non-Rust refusal (#11619). The
+/// shared reason keeps `seam`/`discriminator` for the repair refusal, JSON and
+/// agent surfaces; only the default human advisory swaps them.
+fn plain_inventory_reason(reason: &str) -> String {
+    reason
+        .replace("the seam inventory behind", "the spot inventory behind")
+        .replace(
+            "has no seam to start a repair from",
+            "has no spot to start a repair from",
+        )
+        .replace(
+            "add the missing discriminator to that test",
+            "add the missing assertion to that test",
+        )
 }
 
 /// Build sibling commands that preserve the input identity needed to replay a
@@ -945,7 +963,7 @@ mod tests {
         assert_eq!(
             no_gap,
             "no repair start offered: this finding has no gap ID, so there is no \
-             seam to start a repair from; follow the Next step above"
+             spot to start a repair from; follow the Next step above"
         );
         assert!(
             !no_gap.contains("ripr repair") && !no_gap.contains("full gate's answer"),
@@ -956,8 +974,8 @@ mod tests {
         let unbound = RepairRouteRefusal::NoBindingSeam { seams_in_file: 0 }.advisory(gate);
         assert_eq!(
             unbound,
-            "no repair start offered: ripr found no seam in this finding's file to bind it \
-             to, so there is no seam to start a repair from; follow the Next step above"
+            "no repair start offered: ripr found no spot in this finding's file to bind it \
+             to, so there is no spot to start a repair from; follow the Next step above"
         );
         assert!(
             !unbound.contains("ripr repair") && !unbound.contains("full gate's answer"),
@@ -966,15 +984,15 @@ mod tests {
         // #10702: seams exist in the file, so the advisory must not claim there are none.
         let counted = RepairRouteRefusal::NoBindingSeam { seams_in_file: 3 }.advisory(gate);
         assert!(
-            counted.contains("found 3 seams in this finding's file")
-                && !counted.contains("no seam in this finding's file")
-                && !counted.contains("found no seam"),
+            counted.contains("found 3 spots in this finding's file")
+                && !counted.contains("no spot in this finding's file")
+                && !counted.contains("found no spot"),
             "{counted}"
         );
         let one = RepairRouteRefusal::NoBindingSeam { seams_in_file: 1 }.advisory(gate);
         assert_eq!(
             one,
-            "no repair start offered: ripr found 1 seam in this finding's file, but could not \
+            "no repair start offered: ripr found 1 spot in this finding's file, but could not \
              tie one to this finding's changed line, so it cannot pick one for you; `ripr \
              pilot` lists them, or follow the Next step above"
         );
@@ -1002,15 +1020,15 @@ mod tests {
         );
         let classification = RepairRouteRefusal::ClassificationFailed.advisory(gate);
         assert!(
-            classification.contains("classifying the finding's seams failed")
+            classification.contains("classifying the finding's spots failed")
                 && classification.contains(&format!("`{gate}` may print the underlying error"))
                 && !classification.contains("full gate's answer"),
             "classification refusal must say what the gate yields: {classification}"
         );
         let several = RepairRouteRefusal::SeveralBindingSeams.advisory(gate);
         assert!(
-            several.contains("several seams bind")
-                && several.contains("needs the ID of the seam you choose")
+            several.contains("several spots bind")
+                && several.contains("needs the ID of the spot you choose")
                 && !several.contains("ripr pilot")
                 && !several.contains("full gate's answer"),
             "several-seams refusal must not promise a seam listing: {several}"
@@ -1033,12 +1051,57 @@ mod tests {
         );
         let budget = RepairRouteRefusal::SeamLimit.advisory(gate);
         assert!(
-            budget.contains("seam budget") && budget.contains("wider seam budget"),
+            budget.contains("spot budget") && budget.contains("wider spot budget"),
             "seam-budget refusal must name the budget recovery: {budget}"
         );
         assert!(
             !budget.contains("ripr repair"),
             "seam-budget refusal must not route to the same truncated gate: {budget}"
+        );
+    }
+
+    /// #11619: the default check screen prints no banned plain-language term
+    /// from any refusal arm, while the shared inventory reason keeps its
+    /// producer wording for the repair refusal and machine surfaces.
+    #[test]
+    fn check_advisory_arms_use_plain_words_and_the_shared_reason_keeps_its_own() {
+        let gate = "ripr repair probe:one";
+        let arms = [
+            RepairRouteRefusal::NoCanonicalGap,
+            RepairRouteRefusal::NoBindingSeam { seams_in_file: 0 },
+            RepairRouteRefusal::NoBindingSeam { seams_in_file: 1 },
+            RepairRouteRefusal::NoBindingSeam { seams_in_file: 3 },
+            RepairRouteRefusal::SeamGrippedFindingNot,
+            RepairRouteRefusal::SeveralBindingSeams,
+            RepairRouteRefusal::ClassificationFailed,
+            RepairRouteRefusal::SeamLimit,
+            RepairRouteRefusal::NoSeamInventory {
+                language: "Python".to_string(),
+                file: "pricing/core.py".to_string(),
+            },
+        ];
+        for arm in arms {
+            let text = arm.advisory(gate);
+            // The env var and flag spellings are identifiers, not prose.
+            let prose = text.replace("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "");
+            for banned in ["seam", "discriminator"] {
+                assert!(
+                    !prose.to_lowercase().contains(banned),
+                    "{banned:?} leaked into the check advisory: {text}"
+                );
+            }
+        }
+        let shared = super::super::task_first::no_seam_inventory_reason("Python", "a.py");
+        assert!(
+            shared.contains("the seam inventory behind")
+                && shared.contains("add the missing discriminator"),
+            "the repair refusal keeps its producer wording: {shared}"
+        );
+        assert_eq!(
+            plain_inventory_reason(&shared).matches("spot").count(),
+            2,
+            "exactly the two seam words become spot: {}",
+            plain_inventory_reason(&shared)
         );
     }
 

@@ -39,7 +39,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/helper_chain_multi_hop/input --diff <cwd>/fixtures/helper_chain_multi_hop/diff.patch --mode fast probe:src_lib.rs:static_unknown:ea96a27d
   ripr context --root <cwd>/fixtures/helper_chain_multi_hop/input --diff <cwd>/fixtures/helper_chain_multi_hop/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:ea96a27d
-  no repair start offered: ripr found 3 seams in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
+  no repair start offered: ripr found 3 spots in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

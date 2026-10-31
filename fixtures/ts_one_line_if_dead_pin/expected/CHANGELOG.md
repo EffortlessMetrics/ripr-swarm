@@ -95,3 +95,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_one_line_if_dead_pin (9)
+
+Reason:
+RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+
+Command:
+`cargo xtask goldens bless ts_one_line_if_dead_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

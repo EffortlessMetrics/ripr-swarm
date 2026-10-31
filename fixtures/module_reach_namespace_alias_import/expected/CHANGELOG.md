@@ -130,3 +130,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_namespace_alias_import (10)
+
+Reason:
+RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+
+Command:
+`cargo xtask goldens bless module_reach_namespace_alias_import --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -44,7 +44,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/assertion_shaped_control_production_caller/input --diff <cwd>/fixtures/assertion_shaped_control_production_caller/diff.patch --mode fast probe:src_lib.rs:predicate:a39d316d
   ripr context --root <cwd>/fixtures/assertion_shaped_control_production_caller/input --diff <cwd>/fixtures/assertion_shaped_control_production_caller/diff.patch --mode fast --at probe:src_lib.rs:predicate:a39d316d
-  no repair start offered: ripr found 4 seams in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
+  no repair start offered: ripr found 4 spots in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
 No test stub here: the owner returns no value to assert on
 Write this test by hand: call the function and assert what it changes (an argument it mutates, state it sets, or output it writes), or that it panics when the changed condition is hit, since it returns nothing to compare; then rerun `ripr check`.
 

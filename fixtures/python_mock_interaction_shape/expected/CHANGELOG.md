@@ -684,3 +684,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_mock_interaction_shape (28)
+
+Reason:
+RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+
+Command:
+`cargo xtask goldens bless python_mock_interaction_shape --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

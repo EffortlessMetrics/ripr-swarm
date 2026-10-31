@@ -257,3 +257,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_proptest_quickcheck_tests (22)
+
+Reason:
+RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+
+Command:
+`cargo xtask goldens bless rust_proptest_quickcheck_tests --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

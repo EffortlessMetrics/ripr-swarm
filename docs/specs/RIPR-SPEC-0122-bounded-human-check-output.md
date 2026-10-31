@@ -580,15 +580,15 @@ ineligible seam — the drill-down prints one advisory line of the shape
 still answer, the recovery is ``run `ripr repair <item> --root <root>` for the
 full gate's answer``. A refusal whose gate answer would only repeat it names
 its own recovery instead (#9244): a finding with no canonical gap says there
-is no seam to start a repair from and sends the reader to the Next step above
+is no spot to start a repair from and sends the reader to the Next step above
 (it makes no claim about missing discriminators, which other languages can
 name without a Rust canonical gap), except a TypeScript or JavaScript preview
 finding whose repair packet is blocked by an unresolved expected value or a
 moved assertion selection, which says ripr has no complete repair packet for the
 finding and names that cause in plain words (#10682, the section below); an unreadable config names `ripr.toml` and
-the `ripr check` rerun; a finding no seam binds to says ripr found no seam in
+the `ripr check` rerun; a finding no seam binds to says ripr found no spot in
 its file to bind it to and sends the reader to the Next step above; several binding seams say `ripr repair` needs the ID of
-the chosen seam without promising a listing; a repair route that is not ready
+the chosen spot without promising a listing; a repair route that is not ready
 says ripr cannot build a repair packet for the finding yet, lists the
 producer-owned missing evidence in plain words (an `incomplete evidence stage: <stage>` code reads as the test evidence that stage still needs, #11025; or says the static evidence is not complete
 enough to name a safe test target when the list is empty; when the

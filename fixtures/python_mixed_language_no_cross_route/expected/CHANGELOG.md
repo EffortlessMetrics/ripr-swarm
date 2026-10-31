@@ -625,3 +625,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_mixed_language_no_cross_route (26)
+
+Reason:
+RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+
+Command:
+`cargo xtask goldens bless python_mixed_language_no_cross_route --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

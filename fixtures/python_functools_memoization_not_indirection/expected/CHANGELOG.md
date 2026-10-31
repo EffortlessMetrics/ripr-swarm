@@ -325,3 +325,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_functools_memoization_not_indirection (27)
+
+Reason:
+RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+
+Command:
+`cargo xtask goldens bless python_functools_memoization_not_indirection --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

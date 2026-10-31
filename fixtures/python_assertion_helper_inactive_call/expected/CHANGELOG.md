@@ -63,3 +63,16 @@ reconciliation leaves fixture inputs, `expected/check.json` and the
 Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_assertion_helper_inactive_call (6)
+
+Reason:
+RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+
+Command:
+`cargo xtask goldens bless python_assertion_helper_inactive_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
