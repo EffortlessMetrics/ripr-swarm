@@ -346,3 +346,165 @@ fn a_ledger_with_a_repair_start_skips_the_cards_and_ends_in_a_top_gap() -> Resul
     assert_eq!(packet["selected"]["gap_id"], "gap:pr:demo:add", "{packet}");
     Ok(())
 }
+
+/// A preview-language repository (no `Cargo.toml`): `main` holds the base,
+/// `feature` holds one committed predicate change that a related test reaches.
+fn preview_repo(
+    label: &str,
+    manifest: (&str, &str),
+    source: &str,
+    test: &str,
+    base_src: &str,
+    changed_src: &str,
+) -> Result<PathBuf, String> {
+    static N: AtomicU64 = AtomicU64::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "ripr-11720-{label}-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::SeqCst)
+    ));
+    for rel in [source, test] {
+        let parent = root.join(rel);
+        fs::create_dir_all(parent.parent().ok_or("no parent")?).map_err(|err| err.to_string())?;
+    }
+    fs::write(root.join(manifest.0), manifest.1).map_err(|err| err.to_string())?;
+    fs::write(root.join(".gitignore"), "target\nnode_modules\n").map_err(|err| err.to_string())?;
+    fs::write(root.join(source), base_src).map_err(|err| err.to_string())?;
+    fs::write(
+        root.join(test),
+        if test.ends_with(".py") {
+            "from pkg.mod import add\n\ndef test_add():\n    assert add(1, 2) == 3\n"
+        } else {
+            "import { expect, test } from \"vitest\";\nimport { add } from \"./mod\";\n\ntest(\"adds\", () => {\n  expect(add(1, 2)).toBe(3);\n});\n"
+        },
+    )
+    .map_err(|err| err.to_string())?;
+    git(&root, &["init", "-q", "-b", "main"])?;
+    git(&root, &["add", "-A"])?;
+    git(&root, &["commit", "-q", "-m", "base"])?;
+    git(&root, &["checkout", "-q", "-b", "feature"])?;
+    fs::write(root.join(source), changed_src).map_err(|err| err.to_string())?;
+    git(&root, &["commit", "-q", "-am", "change"])?;
+    Ok(root)
+}
+
+fn python_repo(label: &str) -> Result<PathBuf, String> {
+    preview_repo(
+        label,
+        (
+            "pyproject.toml",
+            "[project]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+        ),
+        "pkg/mod.py",
+        "tests/test_mod.py",
+        "def add(a, b):\n    return a + b\n",
+        "def add(a, b):\n    if a > 10:\n        return a\n    return a + b\n",
+    )
+}
+
+fn typescript_repo(label: &str) -> Result<PathBuf, String> {
+    preview_repo(
+        label,
+        (
+            "package.json",
+            "{\"name\":\"demo\",\"version\":\"0.1.0\",\"devDependencies\":{\"vitest\":\"1.0.0\"}}\n",
+        ),
+        "src/mod.ts",
+        "src/mod.test.ts",
+        "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
+        "export function add(a: number, b: number): number {\n  if (a > 10) {\n    return a;\n  }\n  return a + b;\n}\n",
+    )
+}
+
+/// Pins the actual preview-language behavior: the chain runs the
+/// check-output route (one `ripr check` run, then the gap ledger), never the
+/// repo-exposure scan, says so in its disclosure, and ends in a preview-limited
+/// verdict instead of a missing artifact.
+fn assert_preview_chain(root: &Path, language: &str) -> Result<(), String> {
+    let output = ripr(root, &["first-pr", "--base", "main", "--run-chain"])?;
+    let stdout = stdout_of(&output);
+    assert!(
+        output.status.success(),
+        "stdout: {stdout}\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains("(check run, gap ledger, review cards)"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("(target/ripr/reports/check.json, "),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("repo-exposure"), "{stdout}");
+    assert!(
+        stdout.contains("run-chain step 1/3: check output: ripr check "),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("run-chain step 2/3: gap ledger: ripr reports gap-ledger --check-output "),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("run-chain step 3/3: review cards: not run;"),
+        "{stdout}"
+    );
+    for artifact in [
+        "target/ripr/reports/check.json",
+        "target/ripr/reports/gap-decision-ledger.json",
+        "target/ripr/reports/start-here.json",
+    ] {
+        assert!(root.join(artifact).is_file(), "missing {artifact}");
+    }
+    assert!(!root.join("target/ripr/reports/repo-exposure.json").exists());
+    assert!(!root.join("target/ripr/review/comments.json").exists());
+    assert!(stdout.contains("State: top gap"), "{stdout}");
+    assert!(
+        stdout.contains(&format!("static limit `{language}_preview`")),
+        "{stdout}"
+    );
+    let packet = packet(root)?;
+    assert_ne!(packet["selected"]["state"], "missing_artifact", "{packet}");
+    // A second run re-runs neither the check nor the ledger; only the
+    // skipped cards step is listed again, still not run.
+    let rerun = ripr(root, &["first-pr", "--base", "main", "--run-chain"])?;
+    assert!(rerun.status.success());
+    let rerun_stdout = stdout_of(&rerun);
+    assert!(
+        rerun_stdout.contains("run-chain step 1/1: review cards: not run;"),
+        "{rerun_stdout}"
+    );
+    assert!(
+        !rerun_stdout.contains("run-chain step 1/3"),
+        "{rerun_stdout}"
+    );
+    // A failing first step stops with the printed command as the next step.
+    fs::remove_dir_all(root.join("target")).map_err(|err| err.to_string())?;
+    fs::create_dir_all(root.join("target/ripr")).map_err(|err| err.to_string())?;
+    fs::write(root.join("target/ripr/reports"), "not a directory")
+        .map_err(|err| err.to_string())?;
+    let failed = ripr(root, &["first-pr", "--base", "main", "--run-chain"])?;
+    let stderr = String::from_utf8_lossy(&failed.stderr).to_string();
+    assert_eq!(failed.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("stopped at step 1/3 (check output)"),
+        "{stderr}"
+    );
+    assert!(
+        stderr
+            .contains("Fix the cause and rerun, or run the printed command yourself: ripr check "),
+        "{stderr}"
+    );
+    assert!(!root.join("target/ripr/reports/start-here.json").exists());
+    Ok(())
+}
+
+#[test]
+fn run_chain_in_a_python_repo_runs_the_check_output_route() -> Result<(), String> {
+    assert_preview_chain(&python_repo("py-chain")?, "python")
+}
+
+#[test]
+fn run_chain_in_a_typescript_repo_runs_the_check_output_route() -> Result<(), String> {
+    assert_preview_chain(&typescript_repo("ts-chain")?, "typescript")
+}
