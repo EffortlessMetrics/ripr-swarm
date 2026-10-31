@@ -6873,6 +6873,32 @@ mod source_currentness_tests {
         assert!(probes[0].after.is_none() && probes[0].before.is_some());
     }
 
+    /// RIPR-SPEC-0369: a changed line that also holds code outside the `verus!`
+    /// extent keeps ordinary seeding end to end.
+    #[test]
+    fn a_line_mixing_verus_region_and_outside_code_keeps_ordinary_probes() {
+        let source = "fn a(n: usize) -> bool { verus! { fn b() {} } n >= 4 }\n";
+        let path = PathBuf::from("src/lib.rs");
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![ChangedLine {
+                line: 1,
+                new_side_line: 1,
+                text: "fn a(n: usize) -> bool { verus! { fn b() {} } n >= 4 }".to_string(),
+            }],
+            removed_lines: vec![],
+        };
+        let index = macro_source_index(&path, source);
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        assert!(
+            probes
+                .iter()
+                .all(|probe| probe.family != ProbeFamily::StaticUnknown)
+                && !probes.is_empty(),
+            "{probes:?}"
+        );
+    }
+
     /// Removed-only macro definition text is also macro text.
     #[test]
     fn removed_macro_rules_lines_do_not_seed_expression_probes() {

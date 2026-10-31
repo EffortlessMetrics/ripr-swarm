@@ -73,7 +73,8 @@ removed-side probe resolves its region in the reconstructed old source at the
 deleted line's old-side number, never at its new-file coordinate. A
 line that also holds code outside the region keeps normal seeding. The
 `verus` token must begin an identifier, so `my_verus!` and prose do not
-match. Attribute-style Verus (`#[verus_spec(..)]`, `#[verus_verify]`) is plain
+match. A path-qualified invocation such as `vstd::prelude::verus! { .. }` is
+the same region. Attribute-style Verus (`#[verus_spec(..)]`, `#[verus_verify]`) is plain
 Rust syntax and is out of this rule.
 
 The finding for such a probe is non-actionable and uncredited:

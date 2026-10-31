@@ -374,6 +374,17 @@ mod tests {
     }
 
     #[test]
+    fn raw_strings_neither_open_nor_unbalance_a_verus_region() {
+        let source =
+            "verus! {\n    fn f() { let a = r\"}\"; let b = r#\"} \"x\" }\"#; }\n}\nfn after() {}\n";
+        let regions = verus_regions(source);
+        assert_eq!(regions.len(), 1);
+        assert_eq!((regions[0].start_line, regions[0].end_line), (1, 3));
+        let prose = "let s = r#\"verus! { fn f() {} }\"#;\nfn g() {}\n";
+        assert!(verus_regions(prose).is_empty());
+    }
+
+    #[test]
     fn an_unclosed_verus_region_runs_to_the_end_and_a_mixed_line_is_unowned() {
         let source = "verus! {\n    fn f() {\n";
         let regions = verus_regions(source);
