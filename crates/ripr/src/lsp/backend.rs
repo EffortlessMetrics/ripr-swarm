@@ -4328,10 +4328,10 @@ fn workspace_input_kind(root: &Path, path: &Path) -> Option<WorkspaceInputKind> 
     {
         return Some(WorkspaceInputKind::TypescriptProjectMarker);
     }
-    if path
-        .strip_prefix(root)
-        .is_ok_and(crate::config::is_detectable_package_test_path)
-    {
+    if root_relative_components(root, path).is_some_and(|components| {
+        let relative: PathBuf = components.iter().collect();
+        crate::config::is_detectable_package_test_path(&relative)
+    }) {
         return Some(WorkspaceInputKind::TypescriptSourcePresence);
     }
     if let Some(marker) = typescript_project_marker_name(name)
