@@ -3004,7 +3004,12 @@ impl RepoFileFactCache {
                 message,
             },
         )?;
-        self.prune_stale_schema_siblings_once();
+        // Load refuses an unusable/untrusted base, but production still
+        // parses and stores. Do not delete sibling schema directories there:
+        // a Git-tracked `repo-file-facts/1.31` is repository content (#7780).
+        if self.unusable_base_reason().is_none() {
+            self.prune_stale_schema_siblings_once();
+        }
         Ok(())
     }
 
@@ -11280,6 +11285,41 @@ mod file_fact_stale_schema_prune_tests {
             );
         }
         super::ignore_remove_dir_all(&parent);
+        Ok(())
+    }
+
+    #[test]
+    fn successful_store_does_not_prune_tracked_stale_schema_sibling() -> Result<(), String> {
+        // Production `CorruptIgnored` still parses and stores (#7780). Prune
+        // must not delete a Git-tracked schema sibling in that untrusted base.
+        let root = scratch("prune-tracked-schema")?;
+        crate::git::run_git(&root, &["init", "-q"])
+            .map_err(|error| format!("git init: {error}"))?;
+        let cache = RepoFileFactCache::at_base(&root);
+        let layer = root.join(CacheLayer::FileFacts.name());
+        plant_dir(&layer.join("1.31"), "old.json")?;
+        crate::git::run_git(&root, &["add", "-f", "--", "."])
+            .map_err(|error| format!("git add: {error}"))?;
+        match cache.load_file_facts(&RepoFileFactCacheKey::new(
+            Path::new("src/lib.rs"),
+            b"pub fn cached() {}\n",
+        )) {
+            CacheLoad::CorruptIgnored { reason } if reason.contains("tracked by Git") => {}
+            other => {
+                super::ignore_remove_dir_all(&root);
+                return Err(format!(
+                    "tracked cache base must be refused on load, got {other:?}"
+                ));
+            }
+        }
+        store_one(&cache)?;
+        if !layer.join("1.31").join("old.json").is_file() {
+            super::ignore_remove_dir_all(&root);
+            return Err(
+                "tracked stale 1.31 sibling must remain after a successful store".to_string(),
+            );
+        }
+        super::ignore_remove_dir_all(&root);
         Ok(())
     }
 }
