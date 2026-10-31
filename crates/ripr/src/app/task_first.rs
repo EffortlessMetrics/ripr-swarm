@@ -410,18 +410,6 @@ fn route_not_ready_reason(
     // route, so the bare label stays. The seam inventory this
     // gate reads is Rust-only, so the kind check is also the
     // language check.
-<<<<<<< HEAD
-    if let [missing] = missing_evidence
-        && missing.starts_with("producer-owned missing discriminator fact: boundary_value")
-        && entry.seam.kind() == crate::analysis::seams::SeamKind::PredicateBoundary
-    {
-        if let Some(why) = stub_refusal_reason(entry, root) {
-            label.push_str(&format!(
-                ": write the boundary test by hand; ripr cannot write a fill-in skeleton here because {why}"
-            ));
-            return label;
-        }
-=======
     // No missing fact left once the module blocker is routed means the seam
     // already has its boundary input (#11466): only the test home is absent,
     // and the stub adds it, so the predicate route applies there too.
@@ -433,7 +421,14 @@ fn route_not_ready_reason(
         _ => false,
     };
     if boundary_route && entry.seam.kind() == crate::analysis::seams::SeamKind::PredicateBoundary {
->>>>>>> origin/main
+        // The stub command refuses some owners: name the stub's own refusal
+        // instead of offering a command that would refuse (#11111 burn-down).
+        if let Some(why) = stub_refusal_reason(entry, root) {
+            label.push_str(&format!(
+                ": write the boundary test by hand; ripr cannot write a fill-in skeleton here because {why}"
+            ));
+            return label;
+        }
         let file = crate::analysis::stable_path_text(entry.seam.file());
         let at = shell_arg(&format!("{file}:{}", entry.seam.display_line()));
         let root_flag = root.command_root().map_or_else(String::new, |root| {
@@ -3668,7 +3663,7 @@ pub(crate) mod tests {
     fn module_only_blocker_names_the_predicate_stub_route() -> Result<(), String> {
         use crate::analysis::new_test_target::{NewTestProposalBlocker, NewTestTargetAdmission};
         use crate::analysis::seams::SeamGripClass;
-        let root = Some(Path::new("/repo"));
+        let root = RefusalRoot::named(Path::new("/repo"));
         let mut entry = gate_entry(SeamGripClass::Ungripped, Vec::new());
         entry.evidence.new_test_target = Some(NewTestTargetAdmission {
             blocker: Some(NewTestProposalBlocker::NoTestModule),
