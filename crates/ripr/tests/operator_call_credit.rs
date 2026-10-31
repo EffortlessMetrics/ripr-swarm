@@ -956,6 +956,107 @@ fn an_impl_the_index_cannot_see_may_define_the_method_so_no_sole_credit() -> Res
         ..base
     };
     assert_eq!(classes(&unrelated_macro)?, [ExposureClass::WeaklyExposed]);
+
+    // A blanket impl whose self type is a reference with a lifetime
+    // (`&'a T`, `&'a mut T`) is still a blanket impl.
+    for (label, header) in [
+        (
+            "sole_blanket_ref_lifetime",
+            "impl<'a, T: Copy + Into<i64>> Wide for &'a T",
+        ),
+        (
+            "sole_blanket_mut_lifetime",
+            "impl<'a, T: Copy + Into<i64>> Wide for &'a mut T",
+        ),
+    ] {
+        let by_reference = Case {
+            label,
+            extra_items: Box::leak(
+                format!(
+                    "pub trait Wide {{ fn add(self, other: i64) -> i64; }}\n{header} {{ fn add(self, other: i64) -> i64 {{ other }} }}\n{PATH_CALL}"
+                )
+                .into_boxed_str(),
+            ),
+            ..base
+        };
+        assert!(source(&by_reference).contains(header));
+        assert_eq!(classes(&by_reference)?, [ExposureClass::StaticUnknown]);
+    }
+
+    // An item-level macro invocation that names the type may expand to an impl.
+    let invoked = Case {
+        label: "sole_macro_invocation",
+        extra_items: concat!(
+            "add_for!(Money);\n",
+            "#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let sum = Money::add(Money(1), Money(1)); assert_eq!(sum.0, 2); } }"
+        ),
+        ..base
+    };
+    assert!(source(&invoked).contains("add_for!(Money);"));
+    assert_eq!(classes(&invoked)?, [ExposureClass::StaticUnknown]);
+
+    // `cfg_attr(.., derive(..))` hides the derive list behind a cfg.
+    let cfg_derived = Case {
+        label: "sole_cfg_attr_derive",
+        extra_items: concat!(
+            "#[cfg_attr(feature = \"extra\", derive(derive_more::Add))]\npub struct Money(pub i64);\n",
+            "#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let sum = Money::add(Money(1), Money(1)); assert_eq!(sum.0, 2); } }"
+        ),
+        ..base
+    };
+    assert!(source(&cfg_derived).contains("derive(derive_more::Add))]\npub struct Money"));
+    assert!(!source(&cfg_derived).contains("derive(Debug, Clone, Copy, PartialEq)"));
+    assert_eq!(classes(&cfg_derived)?, [ExposureClass::StaticUnknown]);
+    Ok(())
+}
+
+/// A std derive that defines the owner's own method name is an impl the index
+/// cannot list: `#[derive(PartialEq)]` writes `eq`.
+#[test]
+fn a_std_derive_that_defines_the_method_withholds_the_sole_credit() -> Result<(), String> {
+    let eq = Case {
+        label: "cmp_without_derive",
+        trait_name: "PartialOrd",
+        method: "partial_cmp",
+        signature: "fn partial_cmp(&self, other: &Money) -> Option<std::cmp::Ordering>",
+        old_line: "        self.0.partial_cmp(&other.0)",
+        new_line: "        other.0.partial_cmp(&self.0)",
+        test_body: "let less = Money(2) < Money(3);\n        assert_eq!(less, true);",
+        extra_items: concat!(
+            "#[derive(Debug, Clone, Copy)]\npub struct Money(pub i64);\n",
+            "#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let order = Money::partial_cmp(&Money(1), &Money(2)); assert!(order.is_some()); } }"
+        ),
+        ..ADD
+    };
+    assert!(source(&eq).contains("derive(Debug, Clone, Copy)]\npub struct Money"));
+    // Control: no derive defines `eq`, so the path call is credited.
+    let control = classes(&eq)?;
+    assert!(!control.is_empty());
+    assert!(
+        control
+            .iter()
+            .all(|class| *class == ExposureClass::WeaklyExposed)
+    );
+
+    let derived = Case {
+        label: "cmp_with_derive",
+        extra_items: concat!(
+            "#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]\npub struct Money(pub i64);\n",
+            "#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let order = Money::partial_cmp(&Money(1), &Money(2)); assert!(order.is_some()); } }"
+        ),
+        ..eq
+    };
+    assert!(
+        source(&derived)
+            .contains("derive(Debug, Clone, Copy, PartialEq, PartialOrd)]\npub struct Money")
+    );
+    let withheld = classes(&derived)?;
+    assert_eq!(withheld.len(), control.len());
+    assert!(
+        withheld
+            .iter()
+            .all(|class| *class == ExposureClass::StaticUnknown)
+    );
     Ok(())
 }
 
@@ -2025,7 +2126,7 @@ fn capped_method_call_must_bind_the_operator_owner() -> Result<(), String> {
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
-        let mut source = "use std::ops::*;\n#[derive(Debug, Clone, Copy, PartialEq)]\npub struct Money(pub i64);\nimpl Add for Money {\n    type Output = Money;\n    fn add(self, other: Money) -> Money {\n        Self(other.0 + self.0)\n    }\n}\n#[cfg(test)] mod tests {\n    use super::*;\n".to_string();
+        let mut source = "use std::ops::*;\n#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]\npub struct Money(pub i64);\nimpl Add for Money {\n    type Output = Money;\n    fn add(self, other: Money) -> Money {\n        Self(other.0 + self.0)\n    }\n}\n#[cfg(test)] mod tests {\n    use super::*;\n".to_string();
         for i in 0..operators {
             source.push_str(&format!("    #[test]\n    fn a{i:02}_operator() {{\n        let sum = Money(1) + Money(1);\n        assert_eq!(sum.0, 2);\n    }}\n"));
         }

@@ -133,6 +133,9 @@ pub(crate) struct CallIdentityMemos {
     /// further type names its renames and definitions mention, so each name is
     /// read from the corpus once per run instead of once per seam.
     type_word_facts: Mutex<BTreeMap<String, (bool, Vec<String>)>>,
+    /// #10625: derive, blanket-impl and macro sources the index cannot list,
+    /// read once per index for the sole-method credit.
+    hidden_impls: std::sync::OnceLock<super::implicit_call::HiddenImpls>,
     /// #10977: whole-index macro-rebound answers keyed by requested name
     /// set, so the fixed-set production callers share one parser-backed
     /// scan per set instead of rescanning the corpus per probe.
@@ -144,6 +147,11 @@ pub(crate) struct CallIdentityMemos {
 }
 
 impl CallIdentityMemos {
+    pub(super) fn hidden_impls(&self, index: &RustIndex) -> &super::implicit_call::HiddenImpls {
+        self.hidden_impls
+            .get_or_init(|| super::implicit_call::HiddenImpls::build(index))
+    }
+
     /// How many full-workspace macro scans the run-shared receiver syntax
     /// owner has paid.
     #[cfg(test)]
