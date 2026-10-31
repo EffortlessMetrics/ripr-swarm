@@ -75,16 +75,16 @@ const DYNAMIC_WRITERS: [&str; 21] = [
 /// `sys.modules`, ...). Filled for the module owner of a changed file.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct ForeignWrites {
-    attributes: Vec<String>,
-    dynamic_words: Vec<String>,
+    attributes: WrittenWords,
+    dynamic_words: WrittenWords,
     /// Dict-literal module constants some other file may mutate or alias.
-    table_unsafe: Vec<String>,
+    table_unsafe: WrittenWords,
     /// Every word of the files that can reach a module's objects reflectively.
-    reflective_words: Vec<String>,
+    reflective_words: WrittenWords,
     /// Module names (file stems and package directories) in the import
     /// component of some other reflective file: it may reach those modules
     /// through an alias or re-export no word of it names.
-    reflective_reach: Vec<String>,
+    reflective_reach: WrittenWords,
     /// Some other reflective file also loads modules dynamically, so the
     /// modules it reaches are unknown.
     reflective_opaque: bool,
@@ -108,6 +108,99 @@ pub(super) struct ForeignWrites {
     /// call to one of its readers (#9619). Filled per run, never cached.
     #[serde(skip)]
     forwarders: Vec<ForwarderModule>,
+}
+
+/// One write set of a [`ForeignWrites`]: the words some source other than
+/// the excluded ones holds, in order. The workspace's per-word source counts
+/// are shared by every changed file's view, which keeps only the words its
+/// exclusion hides, so a view, its clones and its drop cost one file's words
+/// instead of a copy of every workspace word (#10914). It serializes as the
+/// sorted word list.
+#[derive(Clone, Default)]
+pub(super) struct WrittenWords {
+    /// How many indexed sources hold each word.
+    counts: std::sync::Arc<std::collections::BTreeMap<String, usize>>,
+    /// Words of `counts` that only excluded sources hold.
+    hidden: std::collections::BTreeSet<String>,
+}
+
+impl WrittenWords {
+    /// The words of `counts` some source other than the excluded ones holds.
+    /// `excluded` counts how many excluded sources hold each word.
+    fn held_by_others(
+        counts: &std::sync::Arc<std::collections::BTreeMap<String, usize>>,
+        excluded: &std::collections::BTreeMap<&str, usize>,
+    ) -> Self {
+        Self {
+            counts: std::sync::Arc::clone(counts),
+            hidden: excluded
+                .iter()
+                .filter(|(word, held)| counts.get(**word).is_some_and(|count| count <= *held))
+                .map(|(word, _)| word.to_string())
+                .collect(),
+        }
+    }
+
+    fn of_words(words: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            counts: std::sync::Arc::new(words.into_iter().map(|word| (word, 1)).collect()),
+            hidden: std::collections::BTreeSet::new(),
+        }
+    }
+
+    pub(super) fn contains(&self, word: &str) -> bool {
+        self.counts.contains_key(word) && !self.hidden.contains(word)
+    }
+
+    pub(super) fn iter(&self) -> impl Iterator<Item = &str> {
+        self.counts
+            .keys()
+            .map(String::as_str)
+            .filter(|word| !self.hidden.contains(*word))
+    }
+
+    /// The held words that start with `prefix`, in order.
+    fn starting_with<'w>(&'w self, prefix: &'w str) -> impl Iterator<Item = &'w str> {
+        self.counts
+            .range::<str, _>((
+                std::ops::Bound::Included(prefix),
+                std::ops::Bound::Unbounded,
+            ))
+            .map(|(word, _)| word.as_str())
+            .take_while(move |word| word.starts_with(prefix))
+            .filter(|word| !self.hidden.contains(*word))
+    }
+
+    #[cfg(test)]
+    fn is_empty(&self) -> bool {
+        self.iter().next().is_none()
+    }
+}
+
+impl PartialEq for WrittenWords {
+    fn eq(&self, other: &Self) -> bool {
+        self.iter().eq(other.iter())
+    }
+}
+
+impl Eq for WrittenWords {}
+
+impl std::fmt::Debug for WrittenWords {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_list().entries(self.iter()).finish()
+    }
+}
+
+impl serde::Serialize for WrittenWords {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(self.iter())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for WrittenWords {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Vec::<String>::deserialize(deserializer).map(Self::of_words)
+    }
 }
 
 /// A sibling module of a changed module's regular package whose source names
@@ -285,10 +378,13 @@ pub(super) struct ForeignIndex<'a> {
     files: Vec<IndexedSource<'a>>,
     /// Each word's only source, or None when two sources mention it. A
     /// malformed file's own function/name is not an import.
-    references: std::collections::BTreeMap<&'a str, Option<&'a Path>>,
+    /// Hashed: the fold inserts every distinct word of every file and only
+    /// point lookups read it (#10914).
+    references: std::collections::HashMap<&'a str, Option<&'a Path>>,
     hidden_import: bool,
     /// For each reflective file, the module names in its import component.
-    reflective_reach: Vec<(&'a Path, std::collections::BTreeSet<String>)>,
+    /// Files of one import component share one reach.
+    reflective_reach: Vec<(&'a Path, Reach)>,
     /// The reference index passed its bound or a file went unread.
     unknown: bool,
     /// Per-write source counts over `files` and `reflective_reach`.
@@ -300,35 +396,104 @@ pub(super) struct ForeignIndex<'a> {
 /// for each changed file (#10857).
 #[derive(Default)]
 struct ForeignTotals {
-    attributes: std::collections::BTreeMap<String, usize>,
-    dynamic_words: std::collections::BTreeMap<String, usize>,
-    table_unsafe: std::collections::BTreeMap<String, usize>,
-    reflective_words: std::collections::BTreeMap<String, usize>,
-    reflective_reach: std::collections::BTreeMap<String, usize>,
+    attributes: WordCounts,
+    dynamic_words: WordCounts,
+    table_unsafe: WordCounts,
+    reflective_words: WordCounts,
+    reflective_reach: WordCounts,
 }
 
+/// Per-word source counts, shared with every [`WrittenWords`] built from them.
+type WordCounts = std::sync::Arc<std::collections::BTreeMap<String, usize>>;
+
 impl ForeignTotals {
-    fn build(
-        files: &[IndexedSource<'_>],
-        reflective_reach: &[(&Path, std::collections::BTreeSet<String>)],
-    ) -> Self {
-        // Each source's distinct writes are counted in parallel and the
-        // additive counts merged, so the totals match a sequential pass.
-        let mut counts = files
-            .par_iter()
-            .map(SourceCounts::of)
-            .reduce(SourceCounts::default, SourceCounts::merge);
-        for (_, reach) in reflective_reach {
-            count_distinct(
-                &mut counts.reflective_reach,
-                reach.iter().map(String::as_str),
-            );
+    fn build(files: &[IndexedSource<'_>], reflective_reach: &[(&Path, Reach)]) -> Self {
+        Self {
+            attributes: count_sources(files, |source| {
+                source
+                    .assigned
+                    .iter()
+                    .flatten()
+                    .map(String::as_str)
+                    .collect()
+            }),
+            dynamic_words: count_sources(files, |source| {
+                source.dynamic_words.iter().flatten().copied().collect()
+            }),
+            table_unsafe: count_sources(files, |source| {
+                source.table_unsafe.iter().map(String::as_str).collect()
+            }),
+            reflective_words: count_sources(files, |source| {
+                source.reflective_words.iter().flatten().copied().collect()
+            }),
+            reflective_reach: count_shared_reaches(reflective_reach),
         }
-        counts.into_totals()
     }
 }
 
-/// [`ForeignTotals`] keyed by borrowed words while the counts are built.
+/// The module names one reflective file may reach, shared by every
+/// reflective file of its import component.
+type Reach = std::sync::Arc<std::collections::BTreeSet<String>>;
+
+/// How many reflective files reach each module name. Files sharing a
+/// component's reach count once per name through that shared reach, so a
+/// reach is read once however many files hold it (#10914).
+fn count_shared_reaches(reflective_reach: &[(&Path, Reach)]) -> WordCounts {
+    // Keyed by the shared allocation: one entry per component's reach.
+    let mut holders: std::collections::BTreeMap<
+        *const std::collections::BTreeSet<String>,
+        (&Reach, usize),
+    > = std::collections::BTreeMap::new();
+    for (_, reach) in reflective_reach {
+        holders
+            .entry(std::sync::Arc::as_ptr(reach))
+            .or_insert((reach, 0))
+            .1 += 1;
+    }
+    let mut weighted: Vec<(&str, usize)> = holders
+        .values()
+        .flat_map(|(reach, files)| reach.iter().map(move |name| (name.as_str(), *files)))
+        .collect();
+    weighted.par_sort_unstable();
+    let mut counts: Vec<(String, usize)> = Vec::new();
+    for (name, files) in weighted {
+        match counts.last_mut() {
+            Some((last, count)) if last == name => *count += files,
+            _ => counts.push((name.to_string(), files)),
+        }
+    }
+    std::sync::Arc::new(counts.into_iter().collect())
+}
+
+/// How many of `sources` hold each word, a source counting once per word.
+/// Each source's distinct words are gathered and sorted in parallel and the
+/// counts read off the sorted runs, which costs a sort instead of merging
+/// per-source maps (#10914).
+fn count_sources<'s, S: Sync>(
+    sources: &'s [S],
+    words: impl Fn(&'s S) -> Vec<&'s str> + Sync,
+) -> WordCounts {
+    let mut held: Vec<&str> = sources
+        .par_iter()
+        .flat_map_iter(|source| {
+            let mut distinct = words(source);
+            distinct.sort_unstable();
+            distinct.dedup();
+            distinct
+        })
+        .collect();
+    held.par_sort_unstable();
+    let mut counts: Vec<(String, usize)> = Vec::new();
+    for word in held {
+        match counts.last_mut() {
+            Some((last, count)) if last == word => *count += 1,
+            _ => counts.push((word.to_string(), 1)),
+        }
+    }
+    std::sync::Arc::new(counts.into_iter().collect())
+}
+
+/// One or more sources' distinct writes per set, keyed by borrowed words.
 #[derive(Default)]
 struct SourceCounts<'w> {
     attributes: std::collections::BTreeMap<&'w str, usize>,
@@ -378,22 +543,6 @@ impl<'w> SourceCounts<'w> {
         add(&mut self.reflective_reach, other.reflective_reach);
         self
     }
-
-    fn into_totals(self) -> ForeignTotals {
-        let owned = |counts: std::collections::BTreeMap<&str, usize>| {
-            counts
-                .into_iter()
-                .map(|(word, count)| (word.to_string(), count))
-                .collect()
-        };
-        ForeignTotals {
-            attributes: owned(self.attributes),
-            dynamic_words: owned(self.dynamic_words),
-            table_unsafe: owned(self.table_unsafe),
-            reflective_words: owned(self.reflective_words),
-            reflective_reach: owned(self.reflective_reach),
-        }
-    }
 }
 
 /// Add one source's distinct `words` to borrowed-key `counts`.
@@ -405,19 +554,6 @@ fn count_distinct<'w>(
     for word in distinct {
         *counts.entry(word).or_default() += 1;
     }
-}
-
-/// The words of `counts` that some source other than the excluded ones holds,
-/// in order. `excluded` counts how many excluded sources hold each word.
-fn held_by_others(
-    counts: &std::collections::BTreeMap<String, usize>,
-    excluded: &std::collections::BTreeMap<&str, usize>,
-) -> Vec<String> {
-    counts
-        .iter()
-        .filter(|(word, count)| **count > excluded.get(word.as_str()).copied().unwrap_or_default())
-        .map(|(word, _)| word.clone())
-        .collect()
 }
 
 // Parses the foreign index has done on this thread, so a test can pin that
@@ -512,7 +648,7 @@ impl<'a> ForeignIndex<'a> {
         prior: &'a std::collections::BTreeMap<std::path::PathBuf, PriorFileFacts>,
     ) -> Self {
         let mut files = Vec::new();
-        let mut references = std::collections::BTreeMap::new();
+        let mut references = std::collections::HashMap::new();
         let mut hidden_import = false;
         // Parsing each source dominates the index on large workspaces, so each
         // batch is parsed in parallel and then folded sequentially in input
@@ -571,7 +707,7 @@ impl<'a> ForeignIndex<'a> {
                     if references.len() > MAX_WORKSPACE_WORDS {
                         return Self {
                             files: Vec::new(),
-                            references: std::collections::BTreeMap::new(),
+                            references: std::collections::HashMap::new(),
                             hidden_import,
                             unknown: true,
                             reflective_reach: Vec::new(),
@@ -653,11 +789,23 @@ impl<'a> ForeignIndex<'a> {
             });
         let totals = &self.totals;
         ForeignWrites {
-            attributes: held_by_others(&totals.attributes, &excluded.attributes),
-            dynamic_words: held_by_others(&totals.dynamic_words, &excluded.dynamic_words),
-            table_unsafe: held_by_others(&totals.table_unsafe, &excluded.table_unsafe),
-            reflective_words: held_by_others(&totals.reflective_words, &excluded.reflective_words),
-            reflective_reach: held_by_others(&totals.reflective_reach, &excluded.reflective_reach),
+            attributes: WrittenWords::held_by_others(&totals.attributes, &excluded.attributes),
+            dynamic_words: WrittenWords::held_by_others(
+                &totals.dynamic_words,
+                &excluded.dynamic_words,
+            ),
+            table_unsafe: WrittenWords::held_by_others(
+                &totals.table_unsafe,
+                &excluded.table_unsafe,
+            ),
+            reflective_words: WrittenWords::held_by_others(
+                &totals.reflective_words,
+                &excluded.reflective_words,
+            ),
+            reflective_reach: WrittenWords::held_by_others(
+                &totals.reflective_reach,
+                &excluded.reflective_reach,
+            ),
             reflective_opaque,
             reflection_elsewhere,
             shares_module_name,
@@ -688,18 +836,17 @@ impl<'a> ForeignIndex<'a> {
             }
         }
         ForeignWrites {
-            attributes: attributes.into_iter().collect(),
-            dynamic_words: words.into_iter().collect(),
-            table_unsafe: table_unsafe.into_iter().collect(),
-            reflective_words: reflective_words.into_iter().collect(),
-            reflective_reach: self
-                .reflective_reach
-                .iter()
-                .filter(|(file, _)| *file != own)
-                .flat_map(|(_, reach)| reach.iter().cloned())
-                .collect::<std::collections::BTreeSet<_>>()
-                .into_iter()
-                .collect(),
+            attributes: WrittenWords::of_words(attributes),
+            dynamic_words: WrittenWords::of_words(words),
+            table_unsafe: WrittenWords::of_words(table_unsafe),
+            reflective_words: WrittenWords::of_words(reflective_words),
+            reflective_reach: WrittenWords::of_words(
+                self.reflective_reach
+                    .iter()
+                    .filter(|(file, _)| *file != own)
+                    .flat_map(|(_, reach)| reach.iter().cloned())
+                    .collect::<std::collections::BTreeSet<_>>(),
+            ),
             ..self.excluding(own)
         }
     }
@@ -1266,6 +1413,21 @@ impl ForeignWrites {
         ]
     }
 
+    /// Whether every write set of `self` and `other` reads the same shared
+    /// per-word counts rather than a copy of them.
+    #[cfg(test)]
+    pub(super) fn shares_word_counts(&self, other: &Self) -> bool {
+        [
+            (&self.attributes, &other.attributes),
+            (&self.dynamic_words, &other.dynamic_words),
+            (&self.table_unsafe, &other.table_unsafe),
+            (&self.reflective_words, &other.reflective_words),
+            (&self.reflective_reach, &other.reflective_reach),
+        ]
+        .iter()
+        .all(|(left, right)| std::sync::Arc::ptr_eq(&left.counts, &right.counts))
+    }
+
     /// The writes in every source but `own`; one-shot form of
     /// [`ForeignIndex`] for callers that scan a single file.
     #[cfg(test)]
@@ -1288,12 +1450,10 @@ impl ForeignWrites {
             .and_then(|stem| stem.to_str())
             .unwrap_or_default();
         self.unknown
-            || self
-                .attributes
-                .iter()
-                .any(|attribute| attribute == name || attribute == "*")
-            || self.dynamic_words.iter().any(|word| word == name)
-            || (!stem.is_empty() && self.dynamic_words.iter().any(|word| word == stem))
+            || self.attributes.contains(name)
+            || self.attributes.contains("*")
+            || self.dynamic_words.contains(name)
+            || (!stem.is_empty() && self.dynamic_words.contains(stem))
     }
 }
 
@@ -1332,18 +1492,16 @@ impl ForeignWrites {
     /// `__getattribute__`, `__class__`, ...), which can change what any
     /// class builds or looks up without naming the method (#9226).
     pub(super) fn writes_dunder(&self) -> bool {
-        self.attributes.iter().any(|attribute| {
-            attribute.len() > 4 && attribute.starts_with("__") && attribute.ends_with("__")
-        })
+        self.attributes
+            .starting_with("__")
+            .any(|attribute| attribute.len() > 4 && attribute.ends_with("__"))
     }
 
     /// Whether some workspace file assigns a function's code slots, which can
     /// replace any reader without rebinding its name (#10626). Checked where a
     /// reader is evaluated, not for plain names such as `version_info`.
     pub(super) fn may_replace_reader_code(&self) -> bool {
-        self.attributes
-            .iter()
-            .any(|attribute| CODE_SLOTS.contains(&attribute.as_str()))
+        CODE_SLOTS.iter().any(|slot| self.attributes.contains(slot))
     }
 
     /// Whether another file may change the contents of the dict-literal
@@ -1355,15 +1513,10 @@ impl ForeignWrites {
             .unwrap_or_default();
         self.may_rebind(name, module_file)
             || self.reflective_opaque
-            || (!stem.is_empty() && self.reflective_reach.iter().any(|word| word == stem))
-            || self
-                .table_unsafe
-                .iter()
-                .any(|unsafe_use| unsafe_use == name)
-            || self
-                .reflective_words
-                .iter()
-                .any(|word| word == name || (!stem.is_empty() && word == stem))
+            || (!stem.is_empty() && self.reflective_reach.contains(stem))
+            || self.table_unsafe.contains(name)
+            || self.reflective_words.contains(name)
+            || (!stem.is_empty() && self.reflective_words.contains(stem))
     }
 }
 
@@ -1540,9 +1693,7 @@ fn import_words_lexed<'s>(source: &'s str, lexed: &LexedSource) -> Vec<&'s str> 
 /// component (a fixture hands a module to any test). A reflective file can
 /// only reach a module that is connected to it, even through a helper that
 /// receives the module as an argument.
-fn reflective_reaches<'a>(
-    files: &[IndexedSource<'a>],
-) -> Vec<(&'a Path, std::collections::BTreeSet<String>)> {
+fn reflective_reaches<'a>(files: &[IndexedSource<'a>]) -> Vec<(&'a Path, Reach)> {
     if files
         .iter()
         .all(|indexed| indexed.reflective_words.is_none())
@@ -1607,14 +1758,18 @@ fn reflective_reaches<'a>(
         .cloned()
         .collect();
     let mut reaches = Vec::new();
+    let mut by_root: std::collections::BTreeMap<usize, Reach> = std::collections::BTreeMap::new();
     for (index, indexed) in files.iter().enumerate() {
         if indexed.reflective_words.is_none() {
             continue;
         }
         let root = find(&mut parent, index);
-        let mut reach = members.get(&root).cloned().unwrap_or_default();
-        reach.extend(conftest.iter().cloned());
-        reaches.push((indexed.file, reach));
+        let reach = by_root.entry(root).or_insert_with(|| {
+            let mut reach = members.get(&root).cloned().unwrap_or_default();
+            reach.extend(conftest.iter().cloned());
+            std::sync::Arc::new(reach)
+        });
+        reaches.push((indexed.file, std::sync::Arc::clone(reach)));
     }
     reaches
 }

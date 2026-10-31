@@ -21,10 +21,17 @@ use serde_json::Value;
 /// printed so far with the error.
 pub(crate) fn render_workflow_annotations(document: &Value) -> Result<String, (String, String)> {
     let mut out = String::new();
+    let mut seen_notices = std::collections::BTreeSet::new();
     let comments = each_at(document, "comments").map_err(|Fail| type_error(&out))?;
     for comment in comments {
         match annotation(comment) {
             Ok(Some(line)) => {
+                // Two limitations on one line (a return value and an error
+                // path of the same statement) say the same thing; once is
+                // enough. Warnings stay one per card.
+                if line.starts_with("::notice ") && !seen_notices.insert(line.clone()) {
+                    continue;
+                }
                 out.push_str(&line);
                 out.push('\n');
             }
@@ -66,6 +73,13 @@ fn annotation(comment: &Value) -> Result<Option<String>, Fail> {
         Value::String(String::new())
     };
     let message = add(reason, suffix)?;
+    // A card that offers no test to add is a note about RIPR's reach, not a
+    // warning about the change: it must not turn the check yellow or sit
+    // among the findings a reviewer is asked to fix.
+    let level = match comment.get("gap_state").and_then(Value::as_str) {
+        Some(state) if state != "actionable" => "notice",
+        _ => "warning",
+    };
     let path_text = string(path)?;
     let line_text = interpolated(line);
     let message_text = string(&message)?;
@@ -74,7 +88,7 @@ fn annotation(comment: &Value) -> Result<Option<String>, Fail> {
         // placement and name the escaped location in the message (#6309).
         let prefix = unplaced_location_prefix(path_text, &line_text);
         return Ok(Some(format!(
-            "::warning title=RIPR targeted test guidance::{}",
+            "::{level} title=RIPR targeted test guidance::{}",
             escape_data(&format!("{prefix}{message_text}"))
         )));
     }
@@ -82,7 +96,7 @@ fn annotation(comment: &Value) -> Result<Option<String>, Fail> {
     let line = escape_property(&line_text);
     let message = escape_data(message_text);
     Ok(Some(format!(
-        "::warning file={path},line={line},title=RIPR targeted test guidance::{message}"
+        "::{level} file={path},line={line},title=RIPR targeted test guidance::{message}"
     )))
 }
 
@@ -124,6 +138,58 @@ mod tests {
                 "::warning file=src/ok%2Cfile.rs,line=3,",
                 "title=RIPR targeted test guidance::Pin the value\n"
             )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_card_with_no_test_to_add_is_a_notice_and_a_gap_stays_a_warning() -> Result<(), String> {
+        let card = |state: &str, line: u64| {
+            json!({
+                "gap_state": state,
+                "placement": { "path": "src/a.rs", "line": line },
+                "reason": "RIPR has no test to suggest here."
+            })
+        };
+        let document = json!({ "comments": [
+            card("static_limitation", 2),
+            card("actionable", 3),
+            // No gap_state: documents from before the field keep warning.
+            { "placement": { "path": "src/a.rs", "line": 4 }, "reason": "older" }
+        ] });
+        assert_eq!(
+            rendered(&document)?,
+            format!(
+                "::notice file=src/a.rs,line=2,{TITLE}::RIPR has no test to suggest here.\n\
+                 ::warning file=src/a.rs,line=3,{TITLE}::RIPR has no test to suggest here.\n\
+                 ::warning file=src/a.rs,line=4,{TITLE}::older\n"
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn identical_notices_on_one_line_print_once_but_warnings_do_not_collapse() -> Result<(), String>
+    {
+        let card = |state: &str| {
+            json!({
+                "gap_state": state,
+                "placement": { "path": "src/a.rs", "line": 2 },
+                "reason": "Same words."
+            })
+        };
+        let notices = json!({ "comments": [card("static_limitation"), card("static_limitation")] });
+        assert_eq!(notices["comments"].as_array().map(Vec::len), Some(2));
+        assert_eq!(
+            rendered(&notices)?,
+            format!("::notice file=src/a.rs,line=2,{TITLE}::Same words.\n")
+        );
+        // Control: the same duplication on warnings is the retired program's
+        // behavior and stays.
+        let warnings = json!({ "comments": [card("actionable"), card("actionable")] });
+        assert_eq!(
+            rendered(&warnings)?,
+            format!("::warning file=src/a.rs,line=2,{TITLE}::Same words.\n").repeat(2)
         );
         Ok(())
     }

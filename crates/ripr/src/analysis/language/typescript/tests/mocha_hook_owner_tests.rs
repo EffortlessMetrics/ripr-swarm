@@ -470,3 +470,92 @@ fn a_module_entry_reach_keeps_its_own_verdict() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// Hook-name writes must not hide a side-effect gap behind work that the
+/// runner never registered. This keeps the existing enabled-hook control.
+#[test]
+fn reassigned_mocha_setup_hook_does_not_abstain() -> Result<(), String> {
+    for hook in ["before", "beforeEach"] {
+        let active = suite(&format!(
+            "  {hook}(() => {{\n    register(\"  alpha \");\n  }});\n"
+        ));
+        assert_eq!(hook_bodies(&active).len(), 2, "{hook}: test setup");
+        assert!(hook_bodies(&active).iter().all(|hooks| hooks.len() == 1));
+        assert_abstained(&format!("hook-active-{hook}"), &active)?;
+
+        let rebound = suite(&format!(
+            "  {hook} = () => {{}};\n  {hook}(() => {{\n    register(\"  alpha \");\n  }});\n"
+        ));
+        let bodies = hook_bodies(&rebound);
+        assert_eq!(bodies.len(), 2, "{hook}: keep the enabled tests");
+        assert!(
+            bodies.iter().all(Vec::is_empty),
+            "{hook}: an inert function received the callback: {bodies:?}"
+        );
+        assert_gap_kept(&format!("hook-rebound-{hook}"), &rebound)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn hook_registration_identity_keeps_registered_mocha_bodies() -> Result<(), String> {
+    for hook in ["before", "beforeEach"] {
+        let active = format!("  {hook}(() => {{ register(\"  alpha \"); }});\n");
+        for (label, prefix, suffix, enabled) in [
+            ("later", "", format!("{hook} = () => {{}};"), true),
+            ("preceding", "", String::new(), false),
+            ("later-sibling-global", "", String::new(), true),
+            ("preceding-sibling-global", "", String::new(), false),
+            ("preceding-sibling-local", "", String::new(), true),
+            ("trailing-suite-argument", "", String::new(), false),
+            ("harmless-trailing-suite-argument", "", String::new(), true),
+            ("imported-preceding-global", "", String::new(), false),
+            ("imported-later-global", "", String::new(), true),
+            ("imported-argument-global", "", String::new(), false),
+        ] {
+            let source = match label {
+                "preceding" => suite(&format!("{hook} = () => {{}};\n{active}")),
+                "later-sibling-global" => format!(
+                    "{}\ndescribe('noise', () => {{ {hook} = () => {{}}; }});",
+                    suite(&active)
+                ),
+                "preceding-sibling-global" => format!(
+                    "{HEAD}\ndescribe('noise', () => {{ {hook} = () => {{}}; }});\ndescribe('registry', () => {{ {active} {TESTS} }});"
+                ),
+                "preceding-sibling-local" => format!(
+                    "{HEAD}\ndescribe('noise', () => {{ let {hook} = () => {{}}; {hook} = () => {{}}; }});\ndescribe('registry', () => {{ {active} {TESTS} }});"
+                ),
+                "trailing-suite-argument" => format!(
+                    "{HEAD}\ndescribe('registry', () => {{ {active} {TESTS} }}, ({hook} = () => {{}}));"
+                ),
+                "harmless-trailing-suite-argument" => {
+                    format!("{HEAD}\ndescribe('registry', () => {{ {active} {TESTS} }}, 1000);")
+                }
+                "imported-preceding-global" => format!(
+                    "import {{ {hook} }} from 'mocha';\n{HEAD}\nglobalThis.{hook} = () => {{}};\ndescribe('registry', () => {{ {active} {TESTS} }});"
+                ),
+                "imported-later-global" => format!(
+                    "import {{ {hook} }} from 'mocha';\n{HEAD}\ndescribe('registry', () => {{ {active} globalThis.{hook} = () => {{}}; {TESTS} }});"
+                ),
+                "imported-argument-global" => format!(
+                    "import {{ {hook} }} from 'mocha';\n{HEAD}\ndescribe('registry', () => {{ {hook}(globalThis.{hook} = () => {{}}, () => {{ register(\"  alpha \"); }}); {TESTS} }});"
+                ),
+                _ => suite(&format!("{prefix}{active}{suffix}")),
+            };
+            let bodies = hook_bodies(&source);
+            assert_eq!(bodies.len(), 2, "{hook}/{label}: preserve tests");
+            assert!(
+                bodies
+                    .iter()
+                    .all(|bodies| bodies.len() == usize::from(enabled)),
+                "{hook}/{label}: {bodies:?}"
+            );
+            if enabled {
+                assert_abstained(label, &source)?;
+            } else {
+                assert_gap_kept(label, &source)?;
+            }
+        }
+    }
+    Ok(())
+}

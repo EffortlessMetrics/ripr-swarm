@@ -13,7 +13,8 @@ use crate::no_panic::contains_word;
 use crate::run::{run_output_bytes, run_output_optional, run_output_owned_with_envs};
 use crate::{
     collect_pr_changes, forbidden_static_terms, has_markdown_heading, json_escape, markdown_cell,
-    normalize_path, read_text_lossy, ripr_debug_binary, write_json_string_array, write_report,
+    normalize_path, read_text_lossy, ripr_debug_binary, ripr_debug_binary_in,
+    write_json_string_array, write_report,
 };
 use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
@@ -1181,31 +1182,51 @@ pub(crate) fn ripr_fixture_binary() -> Result<String, String> {
 /// process owes the Perl verdict corpus. See [`ripr_perl_fixture_binary`].
 static RIPR_PERL_BINARY_BUILD: OnceLock<Result<(), String>> = OnceLock::new();
 
+/// Target directory for in-suite fixture variant builds (#11197): a
+/// `fixture-variants` sibling under the resolved shared target root, so
+/// building a variant never rewrites the shared `target/debug/ripr` the
+/// running suite executes. Honors `CARGO_TARGET_DIR` like
+/// [`ripr_debug_binary`], so routed CI jobs build and cache it in the same
+/// restored target and `cargo clean` clears it with the rest of the
+/// artifacts.
+fn fixture_variant_target_dir() -> Result<PathBuf, String> {
+    let mut root = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("target"));
+    root.push("fixture-variants");
+    std::path::absolute(&root)
+        .map_err(|err| format!("resolve variant target dir {}: {err}", root.display()))
+}
+
 /// The debug binary with the `lang-perl` preview adapter compiled in, for the
 /// Perl verdict corpus (RIPR-SPEC-0245): the default build refuses Perl
-/// packets. Cargo writes both feature sets to the same `target/debug/ripr`, so
-/// the Perl build is copied to its own `ripr-lang-perl` name and the default
-/// build is restored, so a Rust run in this process never gets the Perl
-/// feature set. A default build from another process can still land between
-/// the Perl build and its copy; the corpus run then refuses every packet case
-/// rather than scoring it (see `run_case`). No build lock is taken: the
-/// fixture-cache tests hold Cargo's own lock and need the child to wait there.
-/// Only the `ripr` crate recompiles.
+/// packets. The variant builds in a dedicated target directory
+/// ([`fixture_variant_target_dir`], #11197): it used to relink the shared
+/// `target/debug/ripr` to the Perl feature set mid-suite and restore it
+/// afterwards, so a cross-process consumer of the suite binary could observe
+/// a different analyzer identity between two execs. The built variant is
+/// still copied beside the shared binary under its own `ripr-lang-perl`
+/// name; the shared `target/debug/ripr` is never rewritten. No build lock is
+/// taken: the fixture-cache tests hold Cargo's own lock and need the child
+/// to wait there. Once the variant target is warm, only the `ripr` crate
+/// recompiles.
 pub(crate) fn ripr_perl_fixture_binary() -> Result<String, String> {
     let shared = ripr_debug_binary();
     let perl = shared.with_file_name(format!("ripr-lang-perl{}", std::env::consts::EXE_SUFFIX));
+    let variant_target = fixture_variant_target_dir()?;
+    let variant = ripr_debug_binary_in(Some(variant_target.clone()));
     ripr_fixture_binary_built_by(perl.clone(), &RIPR_PERL_BINARY_BUILD, &|| {
-        preparation::build(&["build", "-p", "ripr", "--features", "lang-perl"])?;
-        fs::copy(&shared, &perl).map_err(|err| {
+        preparation::build_in_target_dir(
+            &["build", "-p", "ripr", "--features", "lang-perl"],
+            &variant_target,
+        )?;
+        fs::copy(&variant, &perl).map(|_| ()).map_err(|err| {
             format!(
                 "copy {} to {} failed: {err}",
-                shared.display(),
+                variant.display(),
                 perl.display()
             )
-        })?;
-        // Restore the default binary. Cargo keeps both feature sets'
-        // artifacts, so this only relinks.
-        preparation::build(&["build", "-p", "ripr"])
+        })
     })
 }
 
@@ -1257,7 +1278,9 @@ pub(crate) fn run_fixture_check(
     ];
     match format {
         FixtureCheckFormat::Json => args.push("--json".to_string()),
-        FixtureCheckFormat::Human => {}
+        // Goldens are one deterministic projection: pin the Evidence legend
+        // that the CLI collapses after the first run in a build tree.
+        FixtureCheckFormat::Human => args.push("--legend".to_string()),
         FixtureCheckFormat::HumanFull => {
             args.push("--format".to_string());
             args.push("human-full".to_string());
