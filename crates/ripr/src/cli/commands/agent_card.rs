@@ -98,7 +98,7 @@ pub(super) fn agent_card_stdout(options: AgentCardOptions) -> Result<String, Com
         let mut lines = agent_card_prose_lines(&card, &packet_command, Some(&options.root));
         // #11397: the card's own readiness is evidence readiness; the start
         // gate `ripr repair` applies is a separate fact, so name it here.
-        if let Some(hold) = hold.as_ref().filter(|hold| hold.next.is_some()) {
+        if let Some(hold) = &hold {
             lines.insert(1, format!("  repair start: held ({})", hold.reason));
         }
         lines
@@ -473,13 +473,16 @@ pub(crate) fn agent_card_plain_lines(
     // One verdict: the shared start gate (`hold`) outranks the card's own
     // evidence readiness, so "ready" is only printed when `ripr repair`
     // would also start (#11397, #11381).
-    // Only the held-file cause (it carries its own next step) overrides the
-    // card: any other gate refusal keeps the card's own evidence wording and
-    // its canonical next action.
-    let hold = hold.filter(|hold| hold.next.is_some());
-    let started = card.attempt.is_some() && card.readiness.repair_ready;
-    let ready = card.readiness.repair_ready && hold.is_none();
-    if let Some(hold) = hold {
+    // Any gate refusal means `ripr repair` would not start, so it forces
+    // `ready` and `started` off (fail closed). Only the held-file cause,
+    // which carries its own next step, also replaces the card's wording and
+    // next action; other refusals keep the card's evidence wording and
+    // canonical next action, and the gate's reason is only the fallback.
+    let refused = hold.is_some();
+    let hold_with_next = hold.filter(|hold| hold.next.is_some());
+    let started = card.attempt.is_some() && card.readiness.repair_ready && !refused;
+    let ready = card.readiness.repair_ready && !refused;
+    if let Some(hold) = hold_with_next {
         lines.push(format!("  Not ready to repair yet: {}.", hold.reason));
     } else if started {
         lines.push(
@@ -497,11 +500,14 @@ pub(crate) fn agent_card_plain_lines(
             .join("; ");
         // Plain evidence words first; the producer's blocker string can carry
         // internal vocabulary, so it is only the fallback.
-        let reason = (!missing.is_empty()).then_some(missing).or_else(|| {
-            card.exact_blocker
-                .clone()
-                .filter(|blocker| !blocker.is_empty())
-        });
+        let reason = (!missing.is_empty())
+            .then_some(missing)
+            .or_else(|| {
+                card.exact_blocker
+                    .clone()
+                    .filter(|blocker| !blocker.is_empty())
+            })
+            .or_else(|| hold.map(|hold| hold.reason.clone()));
         lines.push(match reason {
             Some(reason) => format!("  Not ready to repair yet: {reason}"),
             None => "  Not ready to repair yet.".to_string(),
@@ -548,8 +554,8 @@ pub(crate) fn agent_card_plain_lines(
         )
     };
     match &card.canonical_next_action {
-        _ if hold.is_some() => {
-            if let Some(next) = hold.and_then(|hold| hold.next.as_ref()) {
+        _ if hold_with_next.is_some() => {
+            if let Some(next) = hold_with_next.and_then(|hold| hold.next.as_ref()) {
                 lines.push(format!("  Next: {next}"));
             }
         }
@@ -1237,8 +1243,31 @@ mod tests {
         {
             return Err(format!("gate refusal replaced the card's wording:\n{text}"));
         }
+        // Fail closed: a refusal without its own next step still withdraws
+        // "ready" and the repair-start command from a repair_ready card.
+        let refused = CardStartHold {
+            reason: "no test file ripr may edit".to_string(),
+            next: None,
+        };
+        let mut ready_card = prose_test_card();
+        ready_card.canonical_next_action = Some(prose_test_decision()?);
+        let lines = agent_card_plain_lines(
+            &ready_card,
+            "ripr agent packet --json",
+            None,
+            Some(&refused),
+        );
+        let text = lines.join("\n");
+        if text.contains("Ready to repair.") || text.contains("Next: ripr repair") {
+            return Err(format!("refused card still offers a start:\n{text}"));
+        }
+        if !text.contains("Next: ripr agent packet --seam-id seam:demo --json") {
+            return Err(format!("canonical next action lost:\n{text}"));
+        }
+        if !text.contains("Not ready to repair yet: no test file ripr may edit") {
+            return Err(format!("refusal reason lost:\n{text}"));
+        }
         let mut ready = prose_test_card();
-        ready.attempt = None;
         let held = CardStartHold {
             reason: "the inline test target `src/lib.rs` has uncommitted changes; commit or stash them first".to_string(),
             next: Some("commit or stash `src/lib.rs`, then run `ripr repair s`".to_string()),
