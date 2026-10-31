@@ -25,7 +25,7 @@ Start here:
   Suggested test file: tests/test_rules.py
   Suggested test: test_adult
   Test node: tests/test_rules.py::test_adult
-  Verify command: python -m pytest tests/test_rules.py::test_adult (high)
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_bool_owner_mock_comprehension/input && python -m pytest tests/test_rules.py::test_adult) (high)
   Next step — Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `age == threshold`
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
