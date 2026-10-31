@@ -64,7 +64,7 @@ Python repair card (preview/advisory)
   suggested file: tests/test_pricing.py
   suggested test: test_large_order
   pytest node: tests/test_pricing.py::test_large_order
-  verify: python -m pytest tests/test_pricing.py::test_large_order (high)
+  verify (Bash): (cd -P -- <cwd>/fixtures/python_return_comparison_boundary/input && python -m pytest tests/test_pricing.py::test_large_order) (high)
   receipt: unavailable_until_python_gap_ledger
   receipt guidance: Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.
   stop conditions:

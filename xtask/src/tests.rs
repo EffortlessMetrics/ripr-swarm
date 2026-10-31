@@ -12093,6 +12093,18 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             "tree to the live head merged onto the group base",
             "[ \"${merged%%$'\\n'*}\" = \"$(git rev-parse \"${GROUP_HEAD_SHA}^{tree}\")\" ]",
         ),
+        (
+            "same-head succession read as the last live eligibility check",
+            "            read_succession\n          }\n",
+        ),
+        (
+            "older run or a newer attempt of the same head",
+            ".id != $id and .run_number >= $number)] | length) == 0",
+        ),
+        (
+            "succession read to this run's own attempt",
+            ".id == $id and .run_attempt == $attempt and .head_sha == $head",
+        ),
     ] {
         let mutated = workflow.replace(snippet, "removed");
         assert_ne!(mutated, workflow, "fixture must remove {needle}");
@@ -13212,12 +13224,16 @@ fn first_line_difference_truncates_very_long_snapshot_lines() {
 
 #[test]
 fn fixture_output_normalization_keeps_json_escapes_readable() {
+    // Only a Windows host folds JSON `\\` path separators; elsewhere the
+    // backslash is source text and survives (#11119).
     let json =
         r#"{"file":"fixtures/example/input\\src/lib.rs","oracle":"assert!(value == \"x\")"}"#;
+    let folded =
+        r#"{"file":"fixtures/example/input/src/lib.rs","oracle":"assert!(value == \"x\")"}"#;
 
     assert_eq!(
         normalize_fixture_json_output(json),
-        r#"{"file":"fixtures/example/input/src/lib.rs","oracle":"assert!(value == \"x\")"}"#
+        if cfg!(windows) { folded } else { json }
     );
     assert_eq!(
         normalize_fixture_human_output("fixtures\\example\\input\\src/lib.rs"),

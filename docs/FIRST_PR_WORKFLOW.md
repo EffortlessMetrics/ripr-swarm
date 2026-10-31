@@ -213,7 +213,13 @@ not yet available. It reports `source_currentness_unavailable`, retains
 the input root separately from the selected root, and offers a fresh
 selected-workspace check to inspect. If that fresh check still has no repairable
 row, the limitation remains; a fresh check alone does not establish whole-corpus
-currentness. A known distinct producer root instead reports `wrong_root`. When
+currentness. A known distinct producer root instead reports `wrong_root`. A JavaScript-flavoured TypeScript root (`package.json` and `.ts` files, no
+`tsconfig.json`) is not a wrong root: first-pr needs a `tsconfig.json` or
+`jsconfig.json` at the root, or TypeScript files under `src/` or `tests/`; a
+`package.json` alone is not enough. It reports
+`typescript_project_marker_missing` and tells you to add `tsconfig.json`
+(`jsconfig.json` for a JavaScript-only root) (#10713). A root that also looks
+like a Python project keeps `wrong_root`. When
 the producer root is missing, relative, or cannot be resolved, its identity is
 unknown: first-pr must not offer a regeneration command that can overwrite the
 supplied check output. This applies even when the ledger projects zero records;
@@ -242,7 +248,11 @@ head it stops with the matching blocked state. Either way the next command is
 the seam-level
 `ripr review-comments --root . --base <base-ref> --head HEAD --out target/ripr/review/comments.json`.
 On a fresh checkout that makes three regeneration steps before the start:
-repo exposure, gap ledger, then review cards. Each run names the next one.
+repo exposure, gap ledger, then review cards. The first run lists the whole
+chain in dependency order (`Missing artifact`, then `Also missing` entries with
+their `Then run` commands); the review-cards entry is marked as needed only when
+the gap ledger names no repair start. first-pr reads artifact presence only and
+runs none of these commands itself.
 Only current cards that carry no repair start, or cards rendered from the gap
 ledger, end in no-action; the reason says which.
 

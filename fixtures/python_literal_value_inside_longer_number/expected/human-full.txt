@@ -52,7 +52,7 @@ Repair placement
   suggested file: tests/test_ports.py
   suggested test: test_hi_is_8080
   pytest node: tests/test_ports.py::test_hi_is_8080
-  verify: python -m pytest tests/test_ports.py::test_hi_is_8080 (high)
+  verify (Bash): (cd -P -- <cwd>/fixtures/python_literal_value_inside_longer_number/input && python -m pytest tests/test_ports.py::test_hi_is_8080) (high)
 Drill in:
   ripr explain --root <cwd>/fixtures/python_literal_value_inside_longer_number/input --diff <cwd>/fixtures/python_literal_value_inside_longer_number/diff.patch --mode fast probe:ports.py:python_preview:64ed4168
   ripr context --root <cwd>/fixtures/python_literal_value_inside_longer_number/input --diff <cwd>/fixtures/python_literal_value_inside_longer_number/diff.patch --mode fast --at probe:ports.py:python_preview:64ed4168

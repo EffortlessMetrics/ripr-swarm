@@ -53,7 +53,7 @@
         "225": "let value = module_limit_evidence(temp.path(), \"detail_unavailable\");",
         "340": "let missing = module_limit_evidence(dir, \"detail_unavailable\");",
         "343": "(\"\", \"\", 0),",
-        "344": "(\"benign/n\", \"\", 0),",
+        "344": "(\"benign\\n\", \"\", 0),",
         "345": "(\"note\", \"\", 1),",
         "346": "(\"\", \"note\", 1),",
         "347": "(\"note\", \"note\", 1),",
@@ -131,7 +131,7 @@
           },
           {
             "line": 344,
-            "value": "\"benign/n\"",
+            "value": "\"benign\\n\"",
             "context": "table_row"
           },
           {
@@ -296,7 +296,7 @@
         },
         {
           "line": 344,
-          "value": "\"benign/n\"",
+          "value": "\"benign\\n\"",
           "context": "table_row"
         },
         {
@@ -537,7 +537,7 @@
         "225": "let value = module_limit_evidence(temp.path(), \"detail_unavailable\");",
         "340": "let missing = module_limit_evidence(dir, \"detail_unavailable\");",
         "343": "(\"\", \"\", 0),",
-        "344": "(\"benign/n\", \"\", 0),",
+        "344": "(\"benign\\n\", \"\", 0),",
         "345": "(\"note\", \"\", 1),",
         "346": "(\"\", \"note\", 1),",
         "347": "(\"note\", \"note\", 1),",
@@ -615,7 +615,7 @@
           },
           {
             "line": 344,
-            "value": "\"benign/n\"",
+            "value": "\"benign\\n\"",
             "context": "table_row"
           },
           {
@@ -780,7 +780,7 @@
         },
         {
           "line": 344,
-          "value": "\"benign/n\"",
+          "value": "\"benign\\n\"",
           "context": "table_row"
         },
         {
