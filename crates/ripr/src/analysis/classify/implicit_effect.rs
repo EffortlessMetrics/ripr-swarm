@@ -1225,6 +1225,23 @@ fn implicit_observer() {
     }
 
     #[test]
+    fn into_iter_named_dispatch_stays_refused() -> Result<(), String> {
+        // The reach walk routes the `into_iter` name (IMPLICIT_DISPATCH_METHODS)
+        // and `dispatch_statement` admits the `for` spelling for it, but an
+        // admitted spelling is unreachable in compile-valid Rust: `fn into_iter`
+        // inside `impl Iterator` is E0407, and any `IntoIterator` impl excludes
+        // its receiver from the bounded expansion surface. The reachable
+        // behavior is refusal; this control pins that boundary.
+        let source = edit(
+            CELL_OBSERVER,
+            "impl Iterator for Counter {\n    type Item = ();\n    fn next(&mut self) -> Option<()> {\n        if self.finished { return None; }\n        self.finished = true;\n        self.sink.set(1);\n        Some(())\n    }\n}",
+            "impl IntoIterator for Counter {\n    type Item = ();\n    type IntoIter = CounterIter;\n    fn into_iter(self) -> CounterIter {\n        self.sink.set(1);\n        CounterIter {}\n    }\n}\nstruct CounterIter;\nimpl Iterator for CounterIter {\n    type Item = ();\n    fn next(&mut self) -> Option<()> {\n        None\n    }\n}",
+        )?;
+        assert!(!observes(&source, "into_iter", "into_iter", DIRECT)?);
+        Ok(())
+    }
+
+    #[test]
     fn hidden_destructor_or_expansion_vetoes_the_proof() -> Result<(), String> {
         for extra in [
             "impl Drop for Counter { fn drop(&mut self) {} }",
@@ -1444,7 +1461,7 @@ fn implicit_observer() {
             "for _ in &mut counter {}\n    for _ in counter {}",
             "let alias = state.clone();\n    for _ in counter {}",
             "for _ in counter {}\n    state.set(9);",
-            "touch(&counter);\n    for _ in counter {}",
+            "fn touch(_: &Counter) {}\n    touch(&counter);\n    for _ in counter {}",
             "while let Some(_) = counter.next() {}",
             "",
         ] {
