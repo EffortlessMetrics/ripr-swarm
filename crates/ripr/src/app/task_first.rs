@@ -280,6 +280,12 @@ fn route_not_ready_reason(
     } else {
         format!("{label} (missing evidence: {missing})")
     };
+    // A file with no test module blocks the producer's own new-test proposal,
+    // but `ripr agent stub` adds one, so the target facts do not keep the
+    // manual routes below from applying: only the discriminator fact does.
+    let routable = stub_routable_missing_evidence(entry, missing_evidence);
+    let missing_evidence = routable.as_deref().unwrap_or(missing_evidence);
+    let adds_module = routable.is_some();
     // #10622: a Rust predicate boundary whose only missing fact
     // is the boundary discriminator has a concrete manual route —
     // the predicate stub writes a fill-in skeleton for the changed
@@ -303,8 +309,13 @@ fn route_not_ready_reason(
                 shell_arg(&bound_root(&root.to_string_lossy()))
             )
         });
+        let module_note = if adds_module {
+            NO_TEST_MODULE_STUB_NOTE
+        } else {
+            ""
+        };
         label.push_str(&format!(
-            ": write the boundary test by hand — `ripr agent stub{root_flag} --at {at} --kind predicate` writes a fill-in skeleton for the changed comparison; the boundary input is prefilled when it derives, otherwise fill the todo!() values, then rerun `ripr repair`"
+            ": write the boundary test by hand — `ripr agent stub{root_flag} --at {at} --kind predicate` writes a fill-in skeleton for the changed comparison{module_note}; the boundary input is prefilled when it derives, otherwise fill the todo!() values, then rerun `ripr repair`"
         ));
     }
     // #10701: a changed return value or error with no test ripr can
@@ -327,11 +338,44 @@ fn route_not_ready_reason(
                 shell_arg(&bound_root(&root.to_string_lossy()))
             )
         });
+        let module_note = if adds_module {
+            NO_TEST_MODULE_STUB_NOTE
+        } else {
+            ""
+        };
         label.push_str(&format!(
-            ": write the test by hand, or run `ripr agent stub{root_flag} --at {at} --kind {kind}` for a fill-in skeleton, then rerun `ripr repair`"
+            ": write the test by hand, or run `ripr agent stub{root_flag} --at {at} --kind {kind}` for a fill-in skeleton{module_note}, then rerun `ripr repair`"
         ));
     }
     label
+}
+
+const NO_TEST_MODULE_STUB_NOTE: &str = " (the file has no test module yet; the stub adds one)";
+
+/// The missing evidence left once the only target blocker is "the owner file
+/// has no governed inline test module": `agent stub` places a new inline
+/// module there, so the safe-target items no longer stand between the reader
+/// and the stub route. `None` when that is not the blocker, so every other
+/// target refusal keeps the bare label.
+fn stub_routable_missing_evidence(
+    entry: &crate::analysis::ClassifiedSeam,
+    missing_evidence: &[String],
+) -> Option<Vec<String>> {
+    use crate::analysis::new_test_target::NewTestProposalBlocker;
+    let admission = entry.evidence.new_test_target.as_ref()?;
+    if admission.blocker != Some(NewTestProposalBlocker::NoTestModule) {
+        return None;
+    }
+    let blocked = admission.missing_reason()?;
+    let kept = missing_evidence
+        .iter()
+        .filter(|item| {
+            item.as_str() != crate::analysis::repair_route::SAFE_TEST_TARGET_EVIDENCE
+                && **item != blocked
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    (kept.len() < missing_evidence.len()).then_some(kept)
 }
 
 /// Whether a readiness missing-evidence item is the boundary-value
@@ -2889,6 +2933,47 @@ pub(crate) mod tests {
             "{}",
             refused.reason
         );
+        Ok(())
+    }
+
+    /// A seam whose only target blocker is "the owner file has no test
+    /// module" still names the stub route, because `agent stub` adds that
+    /// module; any other target blocker keeps the bare label.
+    #[test]
+    fn no_test_module_blocker_still_names_the_stub_route() -> Result<(), String> {
+        use crate::analysis::new_test_target::{NewTestProposalBlocker, NewTestTargetAdmission};
+        use crate::analysis::seams::SeamGripClass;
+        let config = crate::config::RiprConfig::default();
+        let policy = AgentBriefPolicy::from_config(&config);
+        let root = Path::new("/repo");
+        let admission = |blocker| NewTestTargetAdmission {
+            blocker: Some(blocker),
+            ..NewTestTargetAdmission::default()
+        };
+
+        let mut no_module = gate_entry(SeamGripClass::Ungripped, Vec::new());
+        no_module.evidence.new_test_target = Some(admission(NewTestProposalBlocker::NoTestModule));
+        let refusal = repair_start_refusal_for_entry(root, &no_module, policy)
+            .ok_or("a seam without a target must be refused")?;
+        assert!(
+            refusal
+                .reason
+                .contains("--at src/pricing.rs:88 --kind predicate")
+                && refusal.reason.contains("the stub adds one")
+                && refusal
+                    .reason
+                    .contains("new test proposal blocked: no governed inline cfg-test module"),
+            "{}",
+            refusal.reason
+        );
+
+        // Discriminating negative: a different target blocker names no route.
+        let mut private_owner = gate_entry(SeamGripClass::Ungripped, Vec::new());
+        private_owner.evidence.new_test_target =
+            Some(admission(NewTestProposalBlocker::GeneratedOrVendor));
+        let bare = repair_start_refusal_for_entry(root, &private_owner, policy)
+            .ok_or("a seam without a target must be refused")?;
+        assert!(!bare.reason.contains("--kind predicate"), "{}", bare.reason);
         Ok(())
     }
 
