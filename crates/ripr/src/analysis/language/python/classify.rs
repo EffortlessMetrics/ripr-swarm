@@ -837,14 +837,19 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     // message and rejects the other. When every strong related error
     // assertion pins the exception with a literal pattern that matches the old
     // and the new message alike, it pins only the exception class. Unreadable
-    // patterns, non-literal messages and other assertion shapes fail open.
+    // patterns, non-literal messages and other assertion shapes fail open. The
+    // two-step `msg = "..."` / `raise Exc(msg)` form is a plain assignment
+    // (predicate family) that the gate resolves through the owner's raise.
     let message_pin_gap = (static_limit.is_none()
-        && matches!(family, ProbeFamily::ErrorPath)
+        && matches!(family, ProbeFamily::ErrorPath | ProbeFamily::Predicate)
         && !no_behavior.multi_line_def_header_line)
         .then(|| {
             message_pin::python_message_pin_gap(
                 line_text,
                 old_line_text,
+                owner,
+                owner_source,
+                line,
                 &related_candidates,
                 &focus,
             )

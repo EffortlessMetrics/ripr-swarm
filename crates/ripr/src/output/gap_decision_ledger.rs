@@ -5605,7 +5605,11 @@ mod tests {
         // `start == 0` boundary and carries one direct-aligned card.
         // #10707: `python_boundary_module_constant_rebound_not_credited` keeps a
         // twice-bound test-module constant unresolved, one more direct card.
-        if (direct, no_strong, orthogonal, family_selection) != (22, 27, 30, 1) {
+        // #9185: `python_message_pin_local_no_exposed_credit` is the two-step
+        // `msg = "..."` / `raise Exc(msg)` form of the same downgrade, one more
+        // direct-aligned weak card; `python_message_pin_local_control` is
+        // exposed, no card.
+        if (direct, no_strong, orthogonal, family_selection) != (23, 27, 30, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));
