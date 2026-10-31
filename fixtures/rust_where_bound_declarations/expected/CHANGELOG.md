@@ -294,10 +294,10 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending - rust_where_bound_declarations (22)
+## Pending — rust_where_bound_declarations (22)
 
 Reason:
-#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to observed/safe checks
+#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to missing-check wording (safe, observed-advisory and exact-error-variant)
 
 Command:
 `cargo xtask goldens bless rust_where_bound_declarations --reason "..."`

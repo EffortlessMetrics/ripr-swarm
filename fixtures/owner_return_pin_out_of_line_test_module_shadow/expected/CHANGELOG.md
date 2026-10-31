@@ -299,10 +299,10 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending - owner_return_pin_out_of_line_test_module_shadow (24)
+## Pending — owner_return_pin_out_of_line_test_module_shadow (24)
 
 Reason:
-#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to observed/safe checks
+#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to missing-check wording (safe, observed-advisory and exact-error-variant)
 
 Command:
 `cargo xtask goldens bless owner_return_pin_out_of_line_test_module_shadow --reason "..."`

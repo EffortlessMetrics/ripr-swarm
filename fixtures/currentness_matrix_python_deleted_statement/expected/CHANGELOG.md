@@ -217,10 +217,10 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 
-## Pending - currentness_matrix_python_deleted_statement (18)
+## Pending — currentness_matrix_python_deleted_statement (18)
 
 Reason:
-#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to observed/safe checks
+#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to missing-check wording (safe, observed-advisory and exact-error-variant)
 
 Command:
 `cargo xtask goldens bless currentness_matrix_python_deleted_statement --reason "..."`

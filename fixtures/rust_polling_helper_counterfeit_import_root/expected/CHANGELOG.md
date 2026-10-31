@@ -55,10 +55,10 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending - rust_polling_helper_counterfeit_import_root (5)
+## Pending — rust_polling_helper_counterfeit_import_root (5)
 
 Reason:
-#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to observed/safe checks
+#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to missing-check wording (safe, observed-advisory and exact-error-variant)
 
 Command:
 `cargo xtask goldens bless rust_polling_helper_counterfeit_import_root --reason "..."`

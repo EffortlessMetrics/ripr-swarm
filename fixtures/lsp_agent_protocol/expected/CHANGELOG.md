@@ -396,10 +396,10 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 
-## Pending - lsp_agent_protocol (25)
+## Pending — lsp_agent_protocol (25)
 
 Reason:
-#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to observed/safe checks
+#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to missing-check wording (safe, observed-advisory and exact-error-variant)
 
 Command:
 `cargo xtask goldens bless lsp_agent_protocol --reason "..."`

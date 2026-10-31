@@ -506,10 +506,10 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 
-## Pending - source_role_harness_suppression (34)
+## Pending — source_role_harness_suppression (34)
 
 Reason:
-#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to observed/safe checks
+#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to missing-check wording (safe, observed-advisory and exact-error-variant)
 
 Command:
 `cargo xtask goldens bless source_role_harness_suppression --reason "..."`

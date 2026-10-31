@@ -86,10 +86,10 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 
-## Pending - proximity_unrelated_oracle_not_credited (8)
+## Pending — proximity_unrelated_oracle_not_credited (8)
 
 Reason:
-#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to observed/safe checks
+#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to missing-check wording (safe, observed-advisory and exact-error-variant)
 
 Command:
 `cargo xtask goldens bless proximity_unrelated_oracle_not_credited --reason "..."`

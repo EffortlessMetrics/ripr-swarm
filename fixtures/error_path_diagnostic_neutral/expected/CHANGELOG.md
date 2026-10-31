@@ -430,10 +430,10 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending - error_path_diagnostic_neutral (32)
+## Pending — error_path_diagnostic_neutral (32)
 
 Reason:
-#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to observed/safe checks
+#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to missing-check wording (safe, observed-advisory and exact-error-variant)
 
 Command:
 `cargo xtask goldens bless error_path_diagnostic_neutral --reason "..."`

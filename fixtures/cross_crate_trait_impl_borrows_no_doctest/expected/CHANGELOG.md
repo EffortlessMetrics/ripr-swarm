@@ -126,10 +126,10 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending - cross_crate_trait_impl_borrows_no_doctest (10)
+## Pending — cross_crate_trait_impl_borrows_no_doctest (10)
 
 Reason:
-#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to observed/safe checks
+#10697: plain wording for discriminator and seam in default human output; mirror the shared evidence/legend/no-seam rewording and reword TS preview discriminator labels to missing-check wording (safe, observed-advisory and exact-error-variant)
 
 Command:
 `cargo xtask goldens bless cross_crate_trait_impl_borrows_no_doctest --reason "..."`
