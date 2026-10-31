@@ -81,11 +81,12 @@ binary assets and manifest exist on the GitHub Release. See
 
 ## Secrets
 
-Repository secrets:
+Environment secrets, each scoped to the one publish environment that reads it
+(see [REPO_SETTINGS.md](REPO_SETTINGS.md#release-environments)):
 
 ```text
-VSCE_PAT
-OVSX_PAT
+VSCE_PAT   in environment vs-marketplace-publish
+OVSX_PAT   in environment open-vsx-publish
 ```
 
 The Open VSX namespace must exist before publish:
@@ -113,21 +114,16 @@ Use:
 .github/workflows/publish-extension.yml
 ```
 
-The workflow packages one VSIX, uploads it as an artifact, publishes that same
-VSIX to both registries, and attaches it to the GitHub Release when run from a
-tag.
+The workflow is `workflow_dispatch` only. Each dispatch publishes exactly one
+channel (`publish_vs_marketplace` or `publish_open_vsx`, not both, not neither),
+and the run must be dispatched at the receipted `source_sha` with the
+`v<version>` tag peeling to it. The first dispatch builds one VSIX and attaches
+it to the GitHub Release; the second reuses those bytes via `vsix_sha256`. Each
+publish job waits for approval on its protected environment.
 
-The workflow normalizes tag names like `v0.8.0` to the package version
-`0.8.0` for the VSIX filename and duplicate-version checks.
-
-To publish only Open VSX from a manual workflow run:
-
-```bash
-gh workflow run publish-extension.yml \
-  --field version=0.8.0 \
-  --field publish_vs_marketplace=false \
-  --field publish_open_vsx=true
-```
+The exact dispatch commands, inputs and receipts are in
+[RELEASE_TRANSACTION.md](RELEASE_TRANSACTION.md); do not dispatch by hand with
+only `version`.
 
 Publish the server binary assets before publishing the marketplace VSIX so the
 extension can download a matching `ripr` server on first activation. For
