@@ -546,6 +546,10 @@ pub(crate) fn acquire_test_cwd_read_guard() -> CwdReadGuard<'static> {
 }
 
 fn main() {
+    // #9564: first, so the relocated driver child the bootstrap spawns joins
+    // the job too. On Windows a force-terminated xtask then ends its whole tree
+    // (cargo test, drivers); best effort and a no-op elsewhere.
+    let _ = ripr::process_owner::bind_process_lifetime();
     driver::bootstrap();
     let command = XtaskCommand::parse(std::env::args().skip(1));
     let result = dispatch::execute(command);
