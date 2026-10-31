@@ -4020,8 +4020,7 @@ fn missing_field_value_discriminator(
     // write from a kept one, so it does not confirm the assignment.
     let assigned_field_observed = |test: &TestSummary, assertion: &OracleFact| {
         assigned.as_ref().is_some_and(|(owner, path)| {
-            !super::propagation_witness::assertion_expects_default_like(&assertion.text)
-                && pushed_collection_compared_whole(owner, path, test, assertion, index)
+            assertion_confirms_assigned_field(owner, path, test, assertion, index)
         })
     };
     // #6578: the variant-field pattern rule's workspace scan depends only on
@@ -4139,13 +4138,25 @@ pub(in crate::analysis) fn assigned_field_of(
     probe: &Probe,
     index: &crate::analysis::rust_index::RustIndex,
 ) -> Option<String> {
+    assigned_field_at(owner, probe.location.line, &probe.expression, index)
+}
+
+/// [`assigned_field_of`] for a changed field assignment `expression` on
+/// `line` of `owner`, shared by the diff probe and the repository seam
+/// (#11398) so both read one last-write rule.
+pub(in crate::analysis) fn assigned_field_at(
+    owner: &FunctionSummary,
+    line: usize,
+    expression: &str,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<String> {
     let impl_type = super::builder_override::OwnerCall::from_symbol(&owner.id.0)
         .and_then(|call| call.impl_type());
     super::propagation_witness::assigned_field_path(
         owner.body.as_str(),
         owner.start_line,
-        probe.location.line,
-        &probe.expression,
+        line,
+        expression,
         &|method| {
             impl_type.and_then(|impl_type| {
                 super::builder_override::inherent_method_body(index, impl_type, method)
@@ -4153,6 +4164,23 @@ pub(in crate::analysis) fn assigned_field_of(
             })
         },
     )
+}
+
+/// RIPR-SPEC-0228: whether `assertion` in `test` confirms the field `path`
+/// that `owner` assigns: an `assert_eq!` that reads that whole field from the
+/// binding the test called the owner on, after the call, under the pushed
+/// literal binding rules. A default-like expected value (`0`, `false`) cannot
+/// tell a deleted write from a kept one, so it does not confirm. The one rule
+/// for the diff probe and the repository seam (#11398).
+pub(in crate::analysis) fn assertion_confirms_assigned_field(
+    owner: &FunctionSummary,
+    path: &str,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> bool {
+    !super::propagation_witness::assertion_expects_default_like(&assertion.text)
+        && pushed_collection_compared_whole(owner, path, test, assertion, index)
 }
 
 /// #7131: the field collection path (`lines` for `self.lines.push(Line {

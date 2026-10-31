@@ -3794,14 +3794,6 @@ fn build_seam_from_shape(
     arm_ranges: &BTreeMap<usize, (usize, usize)>,
 ) -> Option<RepoSeam> {
     let kind = seam_kind_from_probe_shape(shape.kind)?;
-    // RIPR-SPEC-0228 field assignments are diff-scope probes only: repo-scope
-    // seam grading does not know their read rule, so it would grade a
-    // well-tested write as weakly gripped.
-    if kind == SeamKind::FieldConstruction
-        && crate::analysis::classify::field_assignment_target(&shape.text).is_some()
-    {
-        return None;
-    }
     // A call whose value feeds a consumer cannot be deleted without breaking
     // the build, so no mutant asks whether tests notice it is gone. The
     // consumer's predicate, return or error seam carries that behavior
@@ -3810,6 +3802,27 @@ fn build_seam_from_shape(
         return None;
     }
     let owner_fact = owners.owner(shape.start_line)?;
+    // RIPR-SPEC-0228 field assignments (#11398): a repository seam exists
+    // only for a write to one plain field (`self.count += 1`) that the diff
+    // rule reads as the owner's last word on that field. Grading then credits
+    // only the diff probe's exact field read
+    // (`assertion_confirms_assigned_field`). A later `self` method call is not
+    // resolved here, so it counts as a write and the seam is skipped, as is a
+    // nested path (`self.child.count`): a seam whose read rule is unknown
+    // would grade a well-tested write as weakly gripped.
+    if kind == SeamKind::FieldConstruction
+        && crate::analysis::classify::field_assignment_target(&shape.text).is_some()
+        && !crate::analysis::classify::assigned_field_path(
+            &owner_fact.body,
+            owner_fact.start_line,
+            shape.start_line,
+            &shape.text,
+            &|_| None,
+        )
+        .is_some_and(|field| !field.contains('.'))
+    {
+        return None;
+    }
     // Skip shapes whose owner is itself a test function (e.g.,
     // `#[test] fn ...` inside an in-file `#[cfg(test)] mod tests`).
     // the source-role model already excludes physical test files;

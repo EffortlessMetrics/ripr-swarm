@@ -3152,6 +3152,17 @@ fn discriminate_evidence(
             (false, OracleStrength::Strong | OracleStrength::Medium) => StageState::Weak,
         }
     };
+    // #11398: a field-write seam whose exact read rule did not confirm any
+    // assertion, while some related assertion still names the written field,
+    // is a read ripr cannot judge (a builder chain, a whole-value comparison,
+    // a weak read): unknown, never "no test checks the field".
+    let state = if best_matching == OracleStrength::None
+        && field_write_named_by_unconfirmed_assertion(seam, related)
+    {
+        StageState::Unknown
+    } else {
+        state
+    };
     let mut summary = format!(
         "Strongest oracle for seam kind `{}` is `{}` (kind-match {})",
         seam.kind().as_str(),
@@ -3163,6 +3174,32 @@ fn discriminate_evidence(
         summary.push_str(&contradictions.join("; "));
     }
     StageEvidence::new(state, Confidence::Medium, summary)
+}
+
+/// #11398: whether `seam` is a field write (`self.count += 1`) and some
+/// related assertion names the written field as a whole word outside strings
+/// and comments. Such a read was not confirmed by the exact read rule, so
+/// whether it checks the field is unknown.
+fn field_write_named_by_unconfirmed_assertion(seam: &RepoSeam, related: &[&TestSummary]) -> bool {
+    if seam.kind() != SeamKind::FieldConstruction {
+        return false;
+    }
+    let Some(field) = crate::analysis::classify::field_assignment_target(seam.expression()) else {
+        return false;
+    };
+    let is_ident = |ch: char| ch == '_' || ch.is_alphanumeric();
+    related.iter().any(|test| {
+        test.assertions.iter().any(|oracle| {
+            let code = strip_comments_and_strings(&oracle.text);
+            code.match_indices(field).any(|(start, _)| {
+                !code[..start].chars().next_back().is_some_and(is_ident)
+                    && !code[start + field.len()..]
+                        .chars()
+                        .next()
+                        .is_some_and(is_ident)
+            })
+        })
+    })
 }
 
 /// Owner-relative oracle strength and any static-contradiction disclosure.
@@ -3356,6 +3393,27 @@ fn oracle_discriminates_seam_in_test(
 ) -> bool {
     if !collection_assertion_admitted(seam, oracle, test, index, pin_syntax) {
         return false;
+    }
+    // #11398: a field-write seam (`self.count += 1`) is discriminated only by
+    // the diff probe's own read rule: an exact read of the written field from
+    // the binding the test called the owner on, after the call. A field-name
+    // token anywhere in the assertion is not that read.
+    if seam.kind() == SeamKind::FieldConstruction
+        && crate::analysis::classify::field_assignment_target(seam.expression()).is_some()
+    {
+        return owner.is_some_and(|owner| {
+            crate::analysis::classify::assigned_field_at(
+                owner,
+                seam.display_line(),
+                seam.expression(),
+                index,
+            )
+            .is_some_and(|path| {
+                crate::analysis::classify::assertion_confirms_assigned_field(
+                    owner, &path, test, oracle, index,
+                )
+            })
+        });
     }
     // #8121: a snapshot admitted by kind for a return-value seam must also
     // observe the owner's own result, not an unrelated value in the test.

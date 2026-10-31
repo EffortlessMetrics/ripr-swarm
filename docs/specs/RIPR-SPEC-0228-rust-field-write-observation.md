@@ -265,6 +265,35 @@ rejected alternative. Any can be reversed later without touching the rest.
    the receiver after the call, matching constructed fields. Rejected:
    keep them non-actionable until the read set is established another way.
 
+### Repository seam (#11398)
+
+`ripr repair` and the `ripr check` repair line read repository seams, so a
+field write with no seam gets "no code ripr can start a repair on" while the
+diff probe above already names it. A repository `field_construction` seam
+exists for a changed field assignment only when all of these hold:
+
+- the place is one plain field of `self` (`self.count`, not
+  `self.child.count`);
+- the diff rule above reads the write as the owner's last word on that field,
+  with any later `self` method call counted as a write, because the inventory
+  does not resolve methods. A bare `self` that alone forms the owner's tail
+  (`self.timeout = t * 2; self` in a builder) hands the value to the caller
+  and is not a write. Any other later bare `self` still is.
+
+The seam is graded only by the same exact read that confirms the probe (an
+`assert_eq!` reading the field from the binding the test called the owner
+on, after the call, with nothing in between, and an expected value that is
+not default-like). If no related assertion mentions the field, the seam stays
+open, and check and repair both name the missing field check. If an
+assertion mentions the field but the exact rule does not confirm it (a builder
+chain such as `Req::new(..).timeout(10).timeout`, a weak `assert!(c.count >
+0)`, a read after `c.reset()`, a read of another binding), the discriminating
+stage is unknown: the answer is "ripr could not judge the read", never "no
+test checks the field", and never already checked.
+
+As for constructed fields, no field-write seam starts a repair; this rule
+only replaces "no code" with the specific missing check.
+
 ## Required Evidence
 
 - The reproduction reads `exposed` with a `field_construction` finding and no

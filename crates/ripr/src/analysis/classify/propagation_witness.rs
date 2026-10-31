@@ -1796,7 +1796,29 @@ pub(in crate::analysis) fn assigned_field_path(
     }
     let end = at + masked[at..].find(';')? + 1;
     let mut visited = Vec::new();
-    (!may_write_field(&masked[end..], path, method_body, &mut visited)).then(|| path.to_string())
+    let after = without_tail_self(&masked[end..]);
+    (!may_write_field(after, path, method_body, &mut visited)).then(|| path.to_string())
+}
+
+/// #11398: the rest of an owner body (masked, ending at its closing `}`)
+/// without a bare `self` that is the body's tail expression. A builder's
+/// `self.timeout = t * 2; self` hands the value to the caller; returning it
+/// writes nothing. Only a `self` that alone forms the tail (after `;`, `{`
+/// or `}`, before the body's closing brace) is dropped; any other bare
+/// `self` stays a possible write.
+fn without_tail_self(rest: &str) -> &str {
+    let Some(body) = rest.trim_end().strip_suffix('}') else {
+        return rest;
+    };
+    let Some(before_self) = body.trim_end().strip_suffix("self") else {
+        return rest;
+    };
+    let lead = before_self.trim_end();
+    if lead.is_empty() || lead.ends_with([';', '{', '}']) {
+        lead
+    } else {
+        rest
+    }
 }
 
 /// RIPR-SPEC-0228: whether the right-hand side of a changed field assignment
@@ -4342,6 +4364,39 @@ mod tests {
             assigned_field_path(body, 1, 2, "self.count += 1", &none).as_deref(),
             Some("count")
         );
+    }
+
+    #[test]
+    fn assigned_field_path_reads_a_tail_self_as_a_hand_off_not_a_write() {
+        let none = |_: &str| None;
+        // #11398: a builder returns `self` after the write; that moves the
+        // value to the caller and writes nothing.
+        for body in [
+            "fn timeout(mut self, t: u32) -> Self {\nself.timeout = t * 2;\nself\n}",
+            "fn timeout(&mut self, t: u32) -> &mut Self {\nself.timeout = t * 2;\n    self }",
+            "fn timeout(mut self, t: u32) -> Self {\nself.timeout = t * 2;\nif t > 9 { log(t); }\nself\n}",
+        ] {
+            assert_eq!(
+                assigned_field_path(body, 1, 2, "self.timeout = t * 2", &none).as_deref(),
+                Some("timeout"),
+                "{body}"
+            );
+        }
+        // Any other bare `self` after the write may still write the field:
+        // passed on, returned early, or not the whole tail.
+        for body in [
+            "fn timeout(mut self, t: u32) -> Self {\nself.timeout = t * 2;\nreset(self)\n}",
+            "fn timeout(mut self, t: u32) -> Self {\nself.timeout = t * 2;\nreturn self\n}",
+            "fn timeout(mut self, t: u32) -> Self {\nself.timeout = t * 2;\nlet s = self;\ns\n}",
+            "fn timeout(mut self, t: u32) -> Self {\nself.timeout = t * 2;\nzero(&mut self);\nself\n}",
+            "fn timeout(mut self, t: u32) -> Self {\nself.timeout = t * 2;\nself.timeout = 0;\nself\n}",
+        ] {
+            assert_eq!(
+                assigned_field_path(body, 1, 2, "self.timeout = t * 2", &none),
+                None,
+                "{body}"
+            );
+        }
     }
 
     #[test]

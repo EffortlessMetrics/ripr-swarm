@@ -17301,6 +17301,17 @@ tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::field_collection_count_read_refuses_a_preexisting_key",
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::assertion_field_collection_reads_name_binding_and_getter",
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::collection_subject_must_end_after_root_index_or_value_read",
+  "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::assigned_field_path_reads_a_tail_self_as_a_hand_off_not_a_write",
+  "crates/ripr/tests/field_write_repair_answer.rs::sibling_field_read_names_the_missing_field_check_in_both_commands",
+  "crates/ripr/tests/field_write_repair_answer.rs::unread_field_write_names_the_missing_field_check_in_both_commands",
+  "crates/ripr/tests/field_write_repair_answer.rs::builder_returning_self_names_the_missing_field_check",
+  "crates/ripr/tests/field_write_repair_answer.rs::exact_field_read_is_already_checked_in_both_commands",
+  "crates/ripr/tests/field_write_repair_answer.rs::builder_chain_exact_read_stays_unjudged_not_missing",
+  "crates/ripr/tests/field_write_repair_answer.rs::weak_field_read_stays_unjudged",
+  "crates/ripr/tests/field_write_repair_answer.rs::read_after_a_later_reset_is_not_a_check_of_the_write",
+  "crates/ripr/tests/field_write_repair_answer.rs::read_of_the_same_field_on_another_binding_is_not_a_check",
+  "crates/ripr/tests/field_write_repair_answer.rs::write_followed_by_an_unresolved_self_call_has_no_field_seam",
+  "crates/ripr/tests/field_write_repair_answer.rs::nested_field_path_write_has_no_field_seam",
 ]
 fixtures = [
   "fixtures/rust_map_overwrite_count",
@@ -17315,6 +17326,8 @@ code = [
   "crates/ripr/src/analysis/classify/activation.rs",
   "crates/ripr/src/analysis/classify/propagation_witness.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
+  "crates/ripr/src/analysis/seam_inventory.rs",
+  "crates/ripr/src/analysis/test_grip_evidence.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0228-rust-field-write-observation.md",
