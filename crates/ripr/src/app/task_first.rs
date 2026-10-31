@@ -530,6 +530,27 @@ fn reaching_test_guidance(
 ) -> Option<String> {
     use crate::analysis::seams::SeamGripClass;
     use crate::domain::RelationReason;
+    // Activation unknown with a test that calls the owner directly: the test
+    // reaches the function but ripr cannot show its input reaches the changed
+    // branch (#11466 follow-up). Only a direct owner call counts there, since
+    // activation is exactly what a weaker relation fails to establish.
+    if entry.class == SeamGripClass::ActivationUnknown {
+        let test = entry
+            .evidence
+            .related_tests
+            .iter()
+            .find(|test| test.relation_reason == RelationReason::DirectOwnerCall)?;
+        let file = root
+            .source
+            .and_then(|root| test.file.strip_prefix(root).ok())
+            .unwrap_or(&test.file);
+        return Some(format!(
+            "`{}` ({}:{}) calls this code, but ripr cannot show that its input reaches the changed branch. Check by hand that it does and asserts on the result there, and add a test input only if it does not",
+            test.test_name,
+            crate::analysis::stable_path_text(file),
+            test.line
+        ));
+    }
     if !matches!(
         entry.class,
         SeamGripClass::PropagationUnknown
@@ -3996,6 +4017,34 @@ pub(crate) mod tests {
         assert!(!reason.contains("calls this code"), "{reason}");
         let weakly = gate_entry(SeamGripClass::WeaklyGripped, vec![weak_related_test()]);
         let reason = route_not_ready_reason(&weakly, "repair route not ready", &missing, root);
+        assert!(!reason.contains("calls this code"), "{reason}");
+    }
+
+    /// Activation-unknown seam that a test calls directly: the refusal names
+    /// that test and says its input may not reach the changed branch. A weaker
+    /// relation, or a seam with no related test, names nothing.
+    #[test]
+    fn activation_unknown_with_a_direct_call_names_the_calling_test() {
+        use crate::analysis::seams::SeamGripClass;
+        let root = RefusalRoot::named(Path::new("/repo"));
+        let missing = vec!["incomplete evidence stage: activation".to_string()];
+
+        let entry = gate_entry(SeamGripClass::ActivationUnknown, vec![weak_related_test()]);
+        let reason = route_not_ready_reason(&entry, "repair route not ready", &missing, root);
+        assert!(
+            reason.contains("`at_threshold_runs` (tests/pricing.rs:12) calls this code")
+                && reason.contains("its input reaches the changed branch"),
+            "{reason}"
+        );
+
+        // Negatives: a weaker relation and no related test.
+        let mut weak = weak_related_test();
+        weak.relation_reason = crate::domain::RelationReason::HelperOwnerCall;
+        let helper = gate_entry(SeamGripClass::ActivationUnknown, vec![weak]);
+        let reason = route_not_ready_reason(&helper, "repair route not ready", &missing, root);
+        assert!(!reason.contains("calls this code"), "{reason}");
+        let none = gate_entry(SeamGripClass::ActivationUnknown, Vec::new());
+        let reason = route_not_ready_reason(&none, "repair route not ready", &missing, root);
         assert!(!reason.contains("calls this code"), "{reason}");
     }
 
