@@ -818,7 +818,10 @@ fails closed at the relation stage. The test must also reach this impl directly
 to be judged this way. Related rows are capped for display, but this decision
 reads the admitted direct rows before that cap. A named call outside the display
 window, or in a test with more than eight assertion rows, can therefore lift the
-syntax-only withholding. A capped operator-only relation still stays withheld,
+syntax-only withholding. For capped findings, a `.name(` call lifts the
+withholding only when the bounded receiver and scope checks tie that call to the
+owner; a foreign or unresolved receiver does not. The existing uncapped method
+reading is unchanged. A capped operator-only relation still stays withheld,
 and an ignored named test does not lift that withholding. The call only lifts the withholding: the finding is then
 classified from its own stages, and an assertion-free path call leaves it an
 unconfirmed `weakly_exposed` rather than borrowing evidence.

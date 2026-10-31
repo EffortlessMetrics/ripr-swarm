@@ -3765,10 +3765,57 @@ mod tests {
 
     #[test]
     fn repo_operator_cap_uses_uncapped_direct_relations() -> Result<(), String> {
-        for (label, named, ignored) in [
-            ("hidden-named", true, false),
-            ("operator-only", false, false),
-            ("ignored-named", true, true),
+        for (label, named, ignored, call, lift) in [
+            (
+                "hidden-named",
+                true,
+                false,
+                "let result = Money::add(Money(1), Money(1));\n        assert_eq!(result.0, 2);",
+                true,
+            ),
+            ("operator-only", false, false, "", false),
+            (
+                "ignored-named",
+                true,
+                true,
+                "let result = Money::add(Money(1), Money(1));\n        assert_eq!(result.0, 2);",
+                false,
+            ),
+            (
+                "foreign",
+                true,
+                false,
+                "let n = 1i64.add(1);\n        assert_eq!(n, 2);",
+                false,
+            ),
+            (
+                "constructor",
+                true,
+                false,
+                "let result = Money(1).add(Money(1));\n        assert_eq!(result.0, 2);",
+                true,
+            ),
+            (
+                "binding",
+                true,
+                false,
+                "let money = Money(1);\n        let result = money.add(Money(1));\n        assert_eq!(result.0, 2);",
+                true,
+            ),
+            (
+                "mixed",
+                true,
+                false,
+                "let n = 1i64.add(1);\n        let result = Money(1).add(Money(1));\n        assert_eq!(n, 2);\n        assert_eq!(result.0, 2);",
+                true,
+            ),
+            (
+                "type-path",
+                true,
+                false,
+                "let result = Money::add(Money(1), Money(1));\n        assert_eq!(result.0, 2);",
+                true,
+            ),
         ] {
             let root = temp_root(label)?;
             fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
@@ -3782,11 +3829,11 @@ mod tests {
                 source.push_str(&format!("    #[test]\n    fn a{n:02}_operator() {{\n        let sum = Money(1) + Money(1);\n        assert_eq!(sum.0, 2);\n    }}\n"));
             }
             if named {
-                source.push_str(if ignored {
-                    "    #[test]\n    #[ignore]\n    fn zz_named() {\n        let sum = Money::add(Money(1), Money(1));\n        assert_eq!(sum.0, 2);\n    }\n"
-                } else {
-                    "    #[test]\n    fn zz_named() {\n        let sum = Money::add(Money(1), Money(1));\n        assert_eq!(sum.0, 2);\n    }\n"
-                });
+                source.push_str("    #[test]\n");
+                if ignored {
+                    source.push_str("    #[ignore]\n");
+                }
+                source.push_str(&format!("    fn zz_named() {{\n        let sum = Money(1) + Money(1);\n        {call}\n        assert_eq!(sum.0, 2);\n    }}\n"));
             }
             source.push_str("}\n");
             fs::write(root.join("src/lib.rs"), &source).map_err(|error| error.to_string())?;
@@ -3832,7 +3879,7 @@ mod tests {
                         .all(|test| test.name != "zz_named"),
                     "{label}"
                 );
-                if named && !ignored {
+                if lift {
                     assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
                     assert!(finding.static_limit_kind.is_none(), "{label}");
                     let mut fallback = finding.clone();

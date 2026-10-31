@@ -1897,3 +1897,99 @@ mod ignored {
     assert_eq!(named_findings[0].class, ExposureClass::WeaklyExposed);
     Ok(())
 }
+
+#[test]
+fn capped_method_call_must_bind_the_operator_owner() -> Result<(), String> {
+    fn check(label: &str, call: &str, operators: usize) -> Result<Vec<Finding>, String> {
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "ripr-cap-receiver-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+        let mut source = "use std::ops::*;\n#[derive(Debug, Clone, Copy, PartialEq)]\npub struct Money(pub i64);\nimpl Add for Money {\n    type Output = Money;\n    fn add(self, other: Money) -> Money {\n        Self(other.0 + self.0)\n    }\n}\n#[cfg(test)] mod tests {\n    use super::*;\n".to_string();
+        for i in 0..operators {
+            source.push_str(&format!("    #[test]\n    fn a{i:02}_operator() {{\n        let sum = Money(1) + Money(1);\n        assert_eq!(sum.0, 2);\n    }}\n"));
+        }
+        source.push_str(&format!("    #[test]\n    fn zz_test() {{\n        let sum = Money(1) + Money(1);\n        {call}\n        assert_eq!(sum.0, 2);\n    }}\n}}\n"));
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"cap-receiver\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n").map_err(|e| e.to_string())?;
+        std::fs::write(root.join("src/lib.rs"), source).map_err(|e| e.to_string())?;
+        std::fs::write(root.join("diff.patch"), "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -7,1 +7,1 @@\n-        Self(self.0 + other.0)\n+        Self(other.0 + self.0)\n").map_err(|e| e.to_string())?;
+        let output = check_workspace(CheckInput {
+            root: root.clone(),
+            base: None,
+            diff_file: Some(root.join("diff.patch")),
+            mode: Mode::Ready,
+            format: OutputFormat::Json,
+            include_unchanged_tests: false,
+            ..CheckInput::default()
+        })?;
+        let findings: Vec<_> = output
+            .findings
+            .into_iter()
+            .filter(|finding| finding.probe.location.line == 7)
+            .collect();
+        std::fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+        if findings.len() != 1 {
+            return Err(format!(
+                "{label}: expected one finding, got {}",
+                findings.len()
+            ));
+        }
+        Ok(findings)
+    }
+    let foreign = check(
+        "foreign",
+        "let n = 1i64.add(1);\n        assert_eq!(n, 2);",
+        8,
+    )?;
+    assert!(
+        foreign[0]
+            .related_tests_matched_total
+            .is_some_and(|total| total > 8)
+    );
+    assert_eq!(foreign[0].class, ExposureClass::StaticUnknown);
+    let foreign_binding = check(
+        "foreign-binding",
+        "let n: i64 = 1;\n        let value = n.add(1);\n        assert_eq!(value, 2);",
+        8,
+    )?;
+    assert_eq!(foreign_binding[0].class, ExposureClass::StaticUnknown);
+    let uncapped = check(
+        "uncapped-foreign",
+        "let n = 1i64.add(1);\n        assert_eq!(n, 2);",
+        1,
+    )?;
+    assert_eq!(uncapped[0].class, ExposureClass::WeaklyExposed);
+    let operator_only = check("operator-only", "", 8)?;
+    assert_eq!(operator_only[0].class, ExposureClass::StaticUnknown);
+    for (label, call) in [
+        (
+            "constructor",
+            "let result = Money(1).add(Money(1));\n        assert_eq!(result.0, 2);",
+        ),
+        (
+            "binding",
+            "let money = Money(1);\n        let result = money.add(Money(1));\n        assert_eq!(result.0, 2);",
+        ),
+        (
+            "mixed",
+            "let n = 1i64.add(1);\n        let result = Money(1).add(Money(1));\n        assert_eq!(n, 2);\n        assert_eq!(result.0, 2);",
+        ),
+        (
+            "type_path",
+            "let result = Money::add(Money(1), Money(1));\n        assert_eq!(result.0, 2);",
+        ),
+    ] {
+        let findings = check(label, call, 8)?;
+        assert!(
+            findings[0]
+                .related_tests_matched_total
+                .is_some_and(|total| total > 8),
+            "{label}"
+        );
+        assert_eq!(findings[0].class, ExposureClass::WeaklyExposed, "{label}");
+    }
+    Ok(())
+}

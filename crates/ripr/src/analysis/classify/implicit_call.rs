@@ -28,8 +28,8 @@
 
 use super::gap_admission::{is_ignored, withhold_gap};
 use super::related_tests::{
-    expr_ending_at_has_type, impl_self_type_name, let_binding_certain_type_head,
-    let_binding_mentions_type, owner_trait_name, stringified_ranges,
+    expr_ending_at_has_type, impl_self_type_name, inherent_receiver_call_resolves,
+    let_binding_certain_type_head, let_binding_mentions_type, owner_trait_name, stringified_ranges,
 };
 use super::reveal::contains_as_whole_word;
 use crate::analysis::facts::TestFact;
@@ -297,12 +297,11 @@ fn reached_only_through_syntax(
         return false;
     }
     let path_owner = type_path_owner(owner, index);
+    let capped = finding
+        .related_tests_matched_total
+        .is_some_and(|total| finding.related_tests.len() < total);
     // Fallback callers without pre-cap evidence must still fail closed.
-    if direct_rows.is_none()
-        && finding
-            .related_tests_matched_total
-            .is_some_and(|total| finding.related_tests.len() < total)
-    {
+    if direct_rows.is_none() && capped {
         return true;
     }
     direct.all(|related| {
@@ -319,10 +318,28 @@ fn reached_only_through_syntax(
                     return true;
                 }
                 let code = crate::analysis::extract::mask_comments_and_strings(&test.body);
-                !calls_method_named(&code, &owner.name)
+                let scope_is_clear =
+                    |path: &TypePathOwner| type_path_scope_is_clear(test, owner, index, path);
+                // Previously a capped finding was withheld outright. Do not
+                // lift that safety on a same-named call of another receiver.
+                // Preserve the existing uncapped reading.
+                let names_method = calls_method_named(&code, &owner.name)
+                    && (!capped
+                        || path_owner.as_ref().is_some_and(|path| {
+                            path.sole_method
+                                && path.trait_unique
+                                && scope_is_clear(path)
+                                && inherent_receiver_call_resolves(
+                                    test,
+                                    &owner.name,
+                                    &path.self_type,
+                                    Some(index),
+                                    Some(owner),
+                                )
+                        }));
+                !names_method
                     && !path_owner.as_ref().is_some_and(|path| {
-                        type_path_scope_is_clear(test, owner, index, path)
-                            && calls_by_type_path(&code, &owner.name, path)
+                        scope_is_clear(path) && calls_by_type_path(&code, &owner.name, path)
                     })
             })
     })
