@@ -145,8 +145,11 @@ contents of string literals (including raw strings) are kept byte for byte, so
 `"a  b"` and `"a b"` stay distinct. `ordinal` is the zero-based source-order rank
 among seams of the same file, owner, kind and expression in the classified
 set, assigned before severity filtering so another seam's class or `off`
-setting never renumbers it. Distinct seams therefore never share a
-fingerprint; textual duplicates are told apart by ordinal. The grip class
+setting never renumbers it. Seams that differ in file, owner, kind or
+expression get different hash inputs, and textual duplicates are told apart by
+ordinal, so distinct seams do not share a fingerprint by construction; the
+hash is not cryptographic, so an accidental 128-bit collision between
+different inputs is negligible rather than mathematically excluded. The grip class
 stays in `rule_id`, so a reclassified seam is a new alert. Reordering
 identical duplicate seams, or a seam-limit cap that changes which duplicates
 are analyzed, can swap ordinals because static evidence cannot tell them
