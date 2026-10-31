@@ -22883,7 +22883,7 @@ fn explain_from_fails_closed_on_tampered_identity() -> sample_output::TestResult
     // with this test's identity observations (#11197).
     let binary = stable_ripr_copy(&dir)?;
 
-    let result = (|| {
+    let result = (|| -> Result<(), String> {
         let check = run_ripr_copy(
             &binary,
             &[
