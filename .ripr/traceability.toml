@@ -17339,6 +17339,16 @@ tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::field_collection_count_read_refuses_a_preexisting_key",
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::assertion_field_collection_reads_name_binding_and_getter",
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::collection_subject_must_end_after_root_index_or_value_read",
+  "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::assigned_field_path_treats_a_builders_tail_self_as_the_handoff_not_a_write",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::field_write_seam_requires_the_written_field_only_for_the_last_plain_self_write",
+  "crates/ripr/tests/field_write_seam.rs::setter_with_no_read_of_the_field_names_the_field_check",
+  "crates/ripr/tests/field_write_seam.rs::sibling_field_read_does_not_check_the_written_field",
+  "crates/ripr/tests/field_write_seam.rs::read_on_another_binding_does_not_check_the_written_field",
+  "crates/ripr/tests/field_write_seam.rs::exact_read_of_the_written_field_is_checked_not_a_start",
+  "crates/ripr/tests/field_write_seam.rs::later_write_to_the_field_leaves_no_seam",
+  "crates/ripr/tests/field_write_seam.rs::builder_tail_self_is_not_a_later_write",
+  "crates/ripr/tests/field_write_seam.rs::should_panic_test_does_not_check_the_written_field",
+  "crates/ripr/tests/field_write_seam.rs::ignored_test_does_not_check_the_written_field",
 ]
 fixtures = [
   "fixtures/rust_map_overwrite_count",
@@ -17353,6 +17363,8 @@ code = [
   "crates/ripr/src/analysis/classify/activation.rs",
   "crates/ripr/src/analysis/classify/propagation_witness.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
+  "crates/ripr/src/analysis/seam_inventory.rs",
+  "crates/ripr/src/analysis/test_grip_evidence.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0228-rust-field-write-observation.md",
@@ -19462,6 +19474,7 @@ tests = [
   "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::condition_holds_still_excludes_simple_false_comparison",
   "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::eval_comparison_fails_open_on_rebound_parameter",
   "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::compare_literal_values_equates_bool_like_python",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::compare_literal_values_fails_open_on_undecoded_literals",
   "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::keyword_outside_quotes_respects_word_boundaries",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::guarded_arm_return_value_below_guard_is_weakly_exposed",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::guarded_arm_return_value_with_activating_input_stays_exposed",
