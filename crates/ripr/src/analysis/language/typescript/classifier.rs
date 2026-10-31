@@ -7194,7 +7194,23 @@ pub(crate) fn classify_resolved_owner(
                 },
             ));
 
-    let (class, reach_state, observe_state, discriminate_state, missing) = if related.is_empty() {
+    let (class, reach_state, observe_state, discriminate_state, missing) = if related.is_empty()
+        && is_private_member_owner(owner)
+    {
+        // #10440: a `#private` member cannot be named by a test, so an empty
+        // relation set says nothing about whether a public caller reaches it.
+        // Unknown, not the confident negative `no_static_path` would be.
+        (
+            ExposureClass::StaticUnknown,
+            StageState::Unknown,
+            StageState::Unknown,
+            StageState::Unknown,
+            vec![format!(
+                "`{}` is a `#private` class member, so no test can call it by name; whether a test reaches it through a public method of the class is not established either way.",
+                owner.name
+            )],
+        )
+    } else if related.is_empty() {
         (
             ExposureClass::NoStaticPath,
             StageState::No,
@@ -7392,8 +7408,10 @@ pub(crate) fn classify_resolved_owner(
         matches!(verdict.class, ExposureClass::StaticUnknown) && !ladder_entry_unknown;
     // Same unknown arm, different cause: the registration, not an assertion
     // callback, is what static analysis cannot resolve (#10438, #10501).
-    let conditional_registration_unknown =
-        ladder_unresolved_unknown && only_conditionally_registered_tests(related_candidates);
+    let private_member_unknown = ladder_unresolved_unknown && is_private_member_owner(owner);
+    let conditional_registration_unknown = ladder_unresolved_unknown
+        && !private_member_unknown
+        && only_conditionally_registered_tests(related_candidates);
     let post_ladder_context = TsPostLadderContext {
         all_tests,
         line,
@@ -7526,7 +7544,12 @@ pub(crate) fn classify_resolved_owner(
         && !ladder_entry_unknown
         && !hook_owner_unknown
         && !loop_count_unknown;
+    // #10440: a `#private` owner's unknown is unmodeled reach through a public
+    // caller, not an assertion in an unresolved callback.
+    let private_reach_unknown =
+        matches!(class, ExposureClass::StaticUnknown) && private_member_unknown;
     let unresolved_callback_unknown = matches!(class, ExposureClass::StaticUnknown)
+        && !private_member_unknown
         && (ladder_unresolved_unknown || hook_owner_unknown);
     let entry_reach_unknown = matches!(class, ExposureClass::StaticUnknown) && ladder_entry_unknown;
     // Collect named TS-specific limitations (RIPR-SPEC-0085 §PR4 taxonomy).
@@ -7601,6 +7624,7 @@ pub(crate) fn classify_resolved_owner(
         has_owner_call_evidence,
         &missing_discriminators,
         observed_evidence_label(&related),
+        private_member_unknown,
     );
     missing.push(actionability.missing_summary());
 
@@ -7668,6 +7692,8 @@ pub(crate) fn classify_resolved_owner(
         "TypeScript preview adapter: the related tests reach the changed owner only through a same-module caller; discriminate unknown (RIPR-SPEC-0027).".to_string()
     } else if hook_owner_unknown {
         "TypeScript preview adapter: a synchronous mocha setup hook calls the changed owner outside every test body; discriminate unknown (RIPR-SPEC-0246 rule 7).".to_string()
+    } else if private_member_unknown {
+        "TypeScript preview adapter: the changed owner is a `#private` class member no test can call by name; discriminate unknown (RIPR-SPEC-0243).".to_string()
     } else if conditional_registration_unknown {
         "TypeScript preview adapter: every related test is registered under a condition or loop static analysis cannot evaluate; discriminate unknown (RIPR-SPEC-0243).".to_string()
     } else if ladder_unresolved_unknown {
@@ -7753,6 +7779,9 @@ pub(crate) fn classify_resolved_owner(
         }
         ExposureClass::StaticUnknown if hook_owner_unknown => {
             "TypeScript preview advisory: a mocha setup hook calls the changed owner outside every test body, so a test may observe the state it set; no new assertion is needed on that evidence, and no repair packet is emitted.".to_string()
+        }
+        ExposureClass::StaticUnknown if private_member_unknown => {
+            "TypeScript preview advisory: the changed owner is a `#private` class member, so no test can reference it directly and reach through a public method is not established; no new assertion is needed on that evidence, and no repair packet is emitted.".to_string()
         }
         ExposureClass::StaticUnknown if conditional_registration_unknown => {
             "TypeScript preview advisory: every related test is registered under a condition or loop static analysis cannot evaluate, so whether it runs is not established; no new assertion is needed on that evidence, and no repair packet is emitted.".to_string()
@@ -7952,6 +7981,8 @@ pub(crate) fn classify_resolved_owner(
             vec![StopReason::InfectionEvidenceUnknown]
         } else if static_unknown_by_mock {
             vec![StopReason::StaticProbeUnknown]
+        } else if private_reach_unknown {
+            vec![StopReason::TransitiveReachUnresolved]
         } else if unresolved_callback_unknown || loop_count_unknown {
             vec![StopReason::GapEvidenceUnresolved]
         } else if entry_reach_unknown {

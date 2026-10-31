@@ -179,6 +179,16 @@ impl ClassifiedProbeEvidence {
             const_reader_reach(context)
         };
         let mut flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
+        // #10875: std's `Ord::min`/`clamp` pins the returned value to one
+        // literal, so the changed condition cannot reach it.
+        if let Some(sink) = crate::analysis::classify::absorbing_tail_sink(
+            context.probe,
+            context.owner_fn,
+            context.index,
+            context.workspace_complete,
+        ) {
+            flow_sinks = vec![sink];
+        }
         let returned_ledger = match (context.owner_fn, context.helper_chain.as_ref()) {
             (Some(owner), Some(chain)) if helper_only_reach(&context.related_tests) => {
                 context.index.files().get(&owner.file).and_then(|file| {
