@@ -3843,6 +3843,7 @@ id = "RIPR-SPEC-0028"
 name = "Python preview static facts"
 spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/loop_walk_tests.rs",
   "crates/ripr/src/analysis/language/python/truthiness_swap.rs::tests::parse_test_reads_only_one_single_operand_test_of_a_bare_name",
   "crates/ripr/src/analysis/language/python/truthiness_swap.rs::tests::read_input_reads_only_plain_scalar_literals",
   "crates/ripr/src/analysis/language/python/truthiness_swap.rs::tests::tests_disagree_only_where_the_swap_changes_the_branch",
@@ -4086,6 +4087,10 @@ tests = [
   "crates/ripr/src/analysis/language/python/test_local_literal_tests.rs::a_local_that_is_not_the_boundary_value_does_not_credit",
   "crates/ripr/src/analysis/language/python/test_local_literal_tests.rs::every_other_way_the_name_can_differ_keeps_the_weak_verdict",
   "crates/ripr/src/analysis/language/python/test_local_literal_tests.rs::a_parameter_of_the_test_is_not_a_local_literal",
+  "crates/ripr/src/analysis/language/python/test_module_constant_tests.rs::a_module_constant_places_the_boundary_input",
+  "crates/ripr/src/analysis/language/python/test_module_constant_tests.rs::a_constant_that_is_not_the_boundary_value_does_not_credit",
+  "crates/ripr/src/analysis/language/python/test_module_constant_tests.rs::every_other_way_the_constant_can_differ_never_reads_exposed",
+  "crates/ripr/src/analysis/language/python/test_module_constant_tests.rs::a_parameter_of_the_test_is_not_the_module_constant",
 ]
 fixtures = [
   "fixtures/python_truthiness_swap_no_exposed_credit",
@@ -4141,6 +4146,7 @@ fixtures = [
   "fixtures/python_mock_assert_called",
   "fixtures/python_broad_boolean_assertion",
   "fixtures/python_return_comparison_boundary",
+  "fixtures/python_while_counter_past_bound",
   "fixtures/python_return_value_shape",
   "fixtures/python_error_path_shape",
   "fixtures/python_field_assignment_shape",
@@ -4171,6 +4177,8 @@ fixtures = [
   "fixtures/python_trailing_whitespace_in_multiline_string",
   "fixtures/python_boundary_local_input_credited",
   "fixtures/python_boundary_local_rebound_not_credited",
+  "fixtures/python_boundary_module_constant_credited",
+  "fixtures/python_boundary_module_constant_rebound_not_credited",
   "fixtures/python_dynamic_dispatch_limit",
   "fixtures/python_decorator_indirection_limit",
   "fixtures/python_functools_memoization_not_indirection",
@@ -4197,6 +4205,7 @@ fixtures = [
   "fixtures/python-real-repo-evals",
 ]
 code = [
+  "crates/ripr/src/analysis/language/python/loop_walk.rs",
   "xtask/src/fixture_contracts/upstream_python.rs",
   "crates/ripr/src/analysis/language/python/truthiness_swap.rs",
   "crates/ripr/src/analysis/language/python.rs",
@@ -12293,6 +12302,20 @@ id = "RIPR-SPEC-0158"
 name = "Bounded value transfer from exact test inputs"
 spec = "docs/specs/RIPR-SPEC-0158-bounded-value-transfer.md"
 tests = [
+  "crates/ripr/tests/local_value_transfer_semantics.rs",
+  "crates/ripr/src/analysis/syntax/fn_signature.rs::tests::intrinsic_type_bindings_keep_generic_test_and_root_chain_controls",
+  "crates/ripr/src/analysis/syntax/fn_signature.rs::tests::intrinsic_generic_bindings_follow_the_selected_owner_scope",
+  "crates/ripr/tests/local_value_transfer_semantics.rs::unrelated_generic_parameters_preserve_intrinsic_boundaries",
+  "crates/ripr/tests/local_value_transfer_semantics.rs::owner_generic_parameters_still_refuse_intrinsic_identity",
+  "crates/ripr/tests/local_value_transfer_semantics.rs::descendant_generic_declarations_do_not_escape_into_the_owner",
+  "crates/ripr/tests/local_value_transfer_semantics.rs::comparison_parameter_constrains_unsuffixed_local_arithmetic",
+  "crates/ripr/tests/local_value_transfer_semantics.rs::mixed_checked_and_plain_local_arithmetic_keeps_the_checked_type_gate",
+  "crates/ripr/tests/local_value_transfer_semantics.rs::comparison_parameter_constrains_literal_arithmetic_in_both_operand_shapes",
+  "crates/ripr/tests/local_value_transfer_semantics.rs::counterpart_identity_and_annotation_refusals_remain_conservative",
+  "crates/ripr/tests/local_value_transfer_semantics.rs::live_comparison_local_cannot_hide_a_narrow_or_rebound_constraint",
+  "crates/ripr/tests/local_value_transfer_semantics.rs::non_plain_comparison_names_cannot_erase_integer_constraints",
+  "crates/ripr/tests/local_value_transfer_semantics.rs::suffixed_comparison_literals_retain_their_integer_limits",
+  "crates/ripr/src/analysis/test_stub/tests.rs::unrelated_generic_does_not_remove_a_concrete_stub_comparison",
   "crates/ripr/tests/empty_guard_table_infection.rs",
   "crates/ripr/tests/method_hop_relations.rs",
   "crates/ripr/tests/literal_length_boundary.rs",
@@ -12309,6 +12332,8 @@ fixtures = [
   "fixtures/binding_predicate_equality_boundary",
   "fixtures/binding_value_family_matrix",
   "fixtures/binding_value_fail_closed",
+  "fixtures/binding_value_semantics_fail_closed",
+  "fixtures/binding_value_counterpart_width",
 ]
 code = [
   "crates/ripr/src/analysis/classify/value_transfer.rs",
@@ -14334,6 +14359,17 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/tests/rust_macro_crate_scope.rs::unrelated_fuzz_binary_keeps_whole_value_and_field_assertion_credit",
+  "crates/ripr/tests/rust_macro_crate_scope.rs::field_assertion_rebindings_refuse_credit_and_disclose_the_site",
+  "crates/ripr/tests/rust_macro_crate_scope.rs::unrelated_fuzz_binary_keeps_bare_and_standard_assertion_credit",
+  "crates/ripr/tests/rust_macro_crate_scope.rs::visible_macro_rebindings_and_unknown_placement_still_refuse_credit",
+  "crates/ripr/src/analysis/facts/member_crates.rs::tests::binary_macro_boundaries_require_manifest_authority",
+  "crates/ripr/src/analysis/facts/member_crates.rs::tests::binary_macro_boundaries_refuse_sibling_library_targets",
+  "crates/ripr/src/analysis/facts/member_crates.rs::tests::binary_macro_boundaries_refuse_library_targets_in_build_output",
+  "crates/ripr/src/analysis/facts/member_crates.rs::tests::sibling_library_overlap_reads_the_selected_manifest_epoch",
+  "crates/ripr/src/analysis/language/rust/mod.rs::tests::binary_macro_boundaries_preserve_credit_with_withheld_binary",
+  "crates/ripr/src/analysis/facts/member_crates.rs::tests::binary_macro_boundaries_read_the_selected_manifest_epoch",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/shared_target_context.rs::binary_macro_boundaries_route_withheld_sources",
   "crates/ripr/tests/matches_eligibility.rs::matches_return_and_error_assertions_require_execution_context",
   "crates/ripr/tests/matches_eligibility.rs::equality_outcomes_are_the_current_source_baseline",
   "crates/ripr/tests/matches_eligibility.rs::inverse_panic_matches_does_not_require_equality_derives",
@@ -14950,6 +14986,9 @@ code = [
   "crates/ripr/src/analysis/facts/member_crates.rs",
 ]
 outputs = [
+  "fixtures/evidence-promotion-honesty-corpus/reports/rust_field_assertion_identity_whole_shadow.json",
+  "fixtures/evidence-promotion-honesty-corpus/reports/rust_field_assertion_identity_field_shadow.json",
+  "fixtures/evidence-promotion-honesty-corpus/reports/rust_field_assertion_identity_field_positive.json",
   "fixtures/owner_return_pin_pointer_scope_escape/expected/check.json",
   "fixtures/owner_return_pin_pointer_scope_escape/expected/human.txt",
   "fixtures/owner_return_pin_pointer_raw_shadow/expected/check.json",
@@ -17755,6 +17794,10 @@ tests = [
   "crates/ripr/src/analysis/language/python/python_tests.rs::classify_change_does_not_relate_typed_route_to_a_value_the_router_rejects",
 ]
 fixtures = [
+  "fixtures/python-verdict-corpus/subjects/authored-py-nested-call-9814",
+  "fixtures/python-verdict-corpus/cases/py-nested-independent-outer-owner.json",
+  "fixtures/python-verdict-corpus/cases/py-nested-repeated-inner-owner.json",
+  "fixtures/python-verdict-corpus/cases/py-nested-idempotent-owner.json",
   "fixtures/python_assertion_helper_code_replacement",
   "fixtures/python_assertion_helper_aliased_code_replacement",
   "fixtures/python_assertion_helper_globals_replacement",
@@ -18383,6 +18426,12 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/assertion_form_tests.rs::rejects_substring_regex_credits_a_forwarded_throw_replaced_by_another_error",
+  "crates/ripr/src/analysis/language/typescript/assertion_form_tests.rs::rejects_substring_regex_the_new_error_satisfies_stays_weak",
+  "crates/ripr/src/analysis/language/typescript/assertion_form_tests.rs::rejects_substring_regex_sole_throw_scans_nested_callback_calls",
+  "crates/ripr/src/analysis/language/typescript/assertion_form_tests.rs::rejects_substring_regex_sole_throw_scans_later_nested_throws",
+  "crates/ripr/src/analysis/language/typescript/assertion_form_tests.rs::rejects_substring_regex_sole_throw_refuses_uncaught_parameter_callbacks",
+  "crates/ripr/src/analysis/language/typescript/assertion_form_tests.rs::rejects_substring_regex_sole_throw_uses_only_the_changed_owner",
   "crates/ripr/src/analysis/language/typescript/tests/scope_receiver_tests.rs::hook_registration_identity_preserves_order_and_lexical_scope",
   "crates/ripr/src/analysis/language/typescript/tests/scope_receiver_tests.rs::reassigned_setup_hook_does_not_establish_a_method_receiver",
   "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::reassigned_hook_targets_withhold_setup_facts",
