@@ -234,7 +234,10 @@ fn release_cut_flag_parses_and_conflicts_with_batch_flags() -> Result<(), String
         let mut argv = vec!["--write", "--release-cut"];
         argv.extend(clash.iter().filter(|a| !a.is_empty()));
         let err = parse_args(&args(&argv)).err().ok_or("expected refusal")?;
-        assert!(err.contains("--release-cut") && err.contains("conflicts"), "{err}");
+        assert!(
+            err.contains("--release-cut") && err.contains("conflicts"),
+            "{err}"
+        );
     }
     Ok(())
 }
