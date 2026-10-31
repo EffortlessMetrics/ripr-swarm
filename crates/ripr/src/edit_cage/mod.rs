@@ -597,6 +597,16 @@ fn reevaluation_capture(baseline: &AttemptBaseline) -> Result<Rc<AttemptBaseline
 /// allowed surface, so an uncommitted production edit outside the module
 /// would otherwise become part of the "before" text and reach the receipt
 /// unseen (#6678 closed the same hole for test-surface targets).
+///
+/// The worktree hash here intentionally keeps Git's filters (no
+/// `--no-filters`): in the before phase it must agree with `git status` under
+/// `core.autocrlf` (a CRLF worktree file of an LF blob is clean), and it is
+/// never compared against validated bytes; any later staging is compared raw
+/// in [`observe_inline_target`]. Accepted residual (#6310): a normalizing
+/// clean filter can make a raw uncommitted worktree edit read as "at HEAD"
+/// here. That is accepted because the edit then lands in the captured before
+/// text, and the after-phase raw comparison still refuses any staged or
+/// committed copy that is not exactly the validated bytes.
 fn require_inline_target_at_head(baseline: &AttemptBaseline, path: &str) -> Result<(), String> {
     let root = &baseline.root;
     let committed = git_text(
@@ -636,6 +646,9 @@ fn inline_target_copies_at_head(
 /// because its worktree or index copy differs from HEAD. Uses the same
 /// predicate as the attempt's baseline capture ([`require_inline_target_at_head`])
 /// so `ripr check` can withhold a repair start the attempt would refuse.
+/// Like that predicate, the worktree hash intentionally keeps Git's filters so
+/// it agrees with `git status` under `core.autocrlf` (same accepted residual,
+/// #6310: a normalizing clean filter can hide a raw uncommitted edit here).
 /// Fails open (`false`, leaving the attempt's own refusal authoritative)
 /// whenever the answer is not positively established: `root` is not the exact
 /// Git top-level (the attempt refuses that root itself, and `<rev>:<path>`
@@ -717,10 +730,21 @@ fn observe_inline_target(
                 Err("the file changed while the after phase observed it".to_string())
             }
         });
-    let worktree_object = if worktree.is_ok() {
-        git_text(root, &["hash-object", "--", &region.path]).ok()
+    // The staged and committed copies are compared with the exact validated
+    // bytes, so the object id is taken without clean filters or EOL
+    // conversion (#6310). A `filter.*.clean` driver in `.git/config` or
+    // `.git/info/attributes` could otherwise make a different blob hash equal
+    // to the worktree. Under `core.autocrlf=true` a staged or committed copy
+    // is the LF-normalized form of the CRLF worktree bytes, so it no longer
+    // equals them and is refused (`index_copy_not_validated`): fail closed.
+    // The unstaged, uncommitted flow is unaffected.
+    let (worktree_object, object_unreadable) = if worktree.is_ok() {
+        match git_text(root, &["hash-object", "--no-filters", "--", &region.path]) {
+            Ok(object) => (Some(object), None),
+            Err(error) => (None, Some(error)),
+        }
     } else {
-        None
+        (None, None)
     };
     let index_object = |state: &AttemptBaseline| {
         state
@@ -756,6 +780,7 @@ fn observe_inline_target(
             worktree,
             index_matches,
             head_matches,
+            object_unreadable,
             baseline: region,
         },
     ))
@@ -3345,6 +3370,7 @@ mod tests {
                     worktree: Ok(after.to_string()),
                     index_matches: true,
                     head_matches: true,
+                    object_unreadable: None,
                     baseline: &baseline,
                 },
             );
