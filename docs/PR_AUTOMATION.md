@@ -287,7 +287,7 @@ cargo xtask fix-pr
 cargo xtask fixtures [name]
 cargo xtask gh-pr-status --pr <number>
 cargo xtask golden-drift
-cargo xtask goldens bless <name> --reason <reason>
+cargo xtask goldens bless <name> --reason "RIPR-SPEC-NNNN: <reviewed change>"
 cargo xtask goldens check
 cargo xtask impacted-evidence [--pr-evidence <path>] [--label <label>] [--labels <csv>] [--check]
 cargo xtask install-hooks
@@ -336,7 +336,7 @@ cargo xtask route-quality [--attempt-ledger <path>]
 cargo xtask rust-conversion-candidates
 cargo xtask rust-repair-trust-report
 cargo xtask sarif-policy --current <path> [--baseline <path>]
-cargo xtask schema-producer-sweep [--rev REV] [--artifact SCHEMA[#POINTER]=FILE[#POINTER]]...
+cargo xtask schema-producer-sweep [--rev REV] [--live-replay [--ripr BINARY]] [--artifact SCHEMA[#POINTER]=FILE[#POINTER]]...
 cargo xtask shape
 cargo xtask specs next
 cargo xtask suggested-fixes
@@ -706,8 +706,7 @@ fixture directories exist yet.
 outputs without mutating checked-in files. It also writes
 `target/ripr/reports/golden-drift.md` and
 `target/ripr/reports/golden-drift.json` so reviewers can inspect semantic drift
-before any blessing. `goldens bless <fixture> --reason <reason>` requires the
-reason to cite an existing `RIPR-SPEC-NNNN` under `docs/specs/`, then records
+before any blessing. `goldens bless <fixture> --reason "RIPR-SPEC-NNNN: <reviewed change>"` requires both placeholders filled with the fixture name, a governing spec id from `docs/specs/`, and a short reviewed change description; the reason must cite an existing `RIPR-SPEC-NNNN`, then records
 the explicit blessing reason, updates expected JSON and human outputs, and
 appends the fixture expected-output changelog. Bless from the Linux arbiter
 platform, never from a Windows host; the sanctioned route is documented in
@@ -921,8 +920,12 @@ Current:
 ```bash
 cargo xtask shape
 cargo xtask fix-pr
-cargo xtask goldens bless <fixture> --reason "..."
+cargo xtask goldens bless <fixture> --reason "RIPR-SPEC-NNNN: <reviewed change>"
 ```
+
+Replace `<fixture>`, `RIPR-SPEC-NNNN`, and `<reviewed change>` with the fixture
+you blessed, its governing spec under `docs/specs/`, and what you reviewed.
+Ellipsis or a description without a spec id is rejected before fixture execution.
 
 There are no `--write` variants of `metrics`, `docs-index`, or
 `capability-matrix`; earlier revisions of this section listed them as future
