@@ -18,6 +18,7 @@ mod flow;
 mod framework_oracle;
 mod gap_admission;
 mod helper_transfer;
+mod hop_polling;
 mod implicit_effect;
 pub(in crate::analysis) use implicit_effect::{
     ImplicitExpansionContext, ImplicitExpansionMemo, assertion_observes_scope_end,
@@ -105,6 +106,7 @@ pub(in crate::analysis) use helper_transfer::{
     hop_reach_keeps_weak_oracle_gap, resolve_chain, returned_ledger,
     returned_ledger_caller_is_observed, selected_inherent_calls,
 };
+pub(in crate::analysis) use hop_polling::{PolledHops, related_through_polled_hops};
 pub(in crate::analysis) use implicit_call::{
     withhold_destructor_credit, withhold_implicit_call_gap,
 };
