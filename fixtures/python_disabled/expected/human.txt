@@ -11,7 +11,7 @@ Analysis outcome: limitations below (analysis incomplete)
   Zero findings is not a clean result because the analyzed scope is incomplete.
   Not analyzed: 1 changed file(s) in a language ripr is not set up to analyze (see the note below).
 
-No findings: ripr checked no changed behavior.
+No findings reported: the analysis was incomplete, so this is not a clean result.
 
 Note: this diff contains 1 Python file. The Python adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.
 
