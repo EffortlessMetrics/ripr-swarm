@@ -3890,12 +3890,24 @@ fn run_pr_comments_requests(
     Ok((requests, stdout))
 }
 
-fn run_ripr_init(root: &std::path::Path) -> Result<std::process::Output, Box<dyn Error>> {
+/// One spawn site for running `ripr` with `args` from `cwd` (process-policy
+/// bound).
+fn run_ripr_in(
+    cwd: &std::path::Path,
+    args: &[&str],
+) -> Result<std::process::Output, Box<dyn Error>> {
     Ok(Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .args(["init", "--root"])
-        .arg(root)
-        .args(["--ci", "github"])
+        .current_dir(cwd)
+        .args(args)
         .output()?)
+}
+
+fn run_ripr_init(root: &std::path::Path) -> Result<std::process::Output, Box<dyn Error>> {
+    let root = root.to_string_lossy();
+    run_ripr_in(
+        std::path::Path::new("."),
+        &["init", "--root", root.as_ref(), "--ci", "github"],
+    )
 }
 
 /// One spawn site for executing extracted capture-step shell (process-policy
@@ -4025,5 +4037,57 @@ fn ci_summary_reads_the_workflow_settings_from_the_environment() -> Result<(), B
         "{unset}"
     );
     assert!(unset.contains("\n- Mode: `off`"), "{unset}");
+    Ok(())
+}
+
+/// A static-limitation card is a note, not a defect: the real
+/// `reports ci-packet` annotation step emits it as `::notice`, while the card
+/// that names a gap keeps `::warning` (#11142).
+#[test]
+fn ci_packet_annotations_emit_a_notice_for_a_static_limitation() -> Result<(), Box<dyn Error>> {
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-ci-packet-notice-{}-{nonce}",
+        std::process::id()
+    ));
+    fs::create_dir_all(root.join("target/ripr/review"))?;
+    fs::write(
+        root.join("target/ripr/review/comments.json"),
+        r#"{"comments":[
+            {"id":"limit","gap_state":"static_limitation","reason":"RIPR has no test to suggest here.","placement":{"path":"src/parse.rs","line":2}},
+            {"id":"gap","gap_state":"actionable","reason":"No test checks the boundary.","placement":{"path":"src/pricing.rs","line":4}}
+        ],"summary_only":[],"suppressed":[]}"#,
+    )?;
+
+    let output = run_ripr_in(
+        &root,
+        &[
+            "reports",
+            "ci-packet",
+            "--root",
+            ".",
+            "--step",
+            "Emit RIPR PR guidance annotations",
+        ],
+    )?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let _ = fs::remove_dir_all(&root);
+
+    let notices: Vec<&str> = stdout
+        .lines()
+        .filter(|line| line.starts_with("::notice "))
+        .collect();
+    let warnings: Vec<&str> = stdout
+        .lines()
+        .filter(|line| line.starts_with("::warning "))
+        .collect();
+    assert!(output.status.success(), "{stdout}");
+    assert_eq!(notices.len(), 1, "{stdout}");
+    assert!(notices[0].contains("file=src/parse.rs,line=2"), "{stdout}");
+    assert_eq!(warnings.len(), 1, "{stdout}");
+    assert!(
+        warnings[0].contains("file=src/pricing.rs,line=4"),
+        "{stdout}"
+    );
     Ok(())
 }
