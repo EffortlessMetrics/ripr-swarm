@@ -381,6 +381,11 @@ pub(crate) struct AnalysisOutcome {
     /// Run-local producer inputs, never reconstructed from a serialized outcome.
     #[serde(skip)]
     pub(crate) check_findings_inputs: Option<CheckFindingsInputs>,
+    /// Run-local mixed-language completeness view (#11272). Read only by the
+    /// check JSON renderer's `language_completeness` member; never part of the
+    /// serialized outcome or its identity.
+    #[serde(skip)]
+    pub(crate) language_view: Option<crate::analysis::language_outcome::LanguageCompletenessView>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -445,6 +450,7 @@ impl AnalysisOutcome {
             limitations,
             claim_boundary: ANALYSIS_OUTCOME_CLAIM_BOUNDARY.to_string(),
             check_findings_inputs: None,
+            language_view: None,
         })
     }
 
