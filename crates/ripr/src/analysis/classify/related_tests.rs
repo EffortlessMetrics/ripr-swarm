@@ -8,6 +8,7 @@
 //! path-dependency adjacency owned by `analysis/workspace`.
 
 mod fmt_dispatch;
+mod fmt_live;
 
 use super::super::rust_index::{
     FunctionSummary, RustIndex, TestSummary, extract_identifier_tokens,
