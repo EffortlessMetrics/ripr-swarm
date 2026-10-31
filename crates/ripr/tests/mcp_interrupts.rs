@@ -488,7 +488,10 @@ impl Session {
 }
 
 fn completed_document(reply: Value) -> Result<Value, String> {
-    if reply.pointer("/result/isError") != Some(&json!(false)) {
+    // A failed attempt (a cancelled analysis included) keeps its document but
+    // is `isError: true`; every other refresh is `isError: false` (#11571).
+    let failed = reply.pointer("/result/structuredContent/attempt/state") == Some(&json!("failed"));
+    if reply.pointer("/result/isError") != Some(&json!(failed)) {
         return Err(format!("refresh lost completed-document contract: {reply}"));
     }
     reply

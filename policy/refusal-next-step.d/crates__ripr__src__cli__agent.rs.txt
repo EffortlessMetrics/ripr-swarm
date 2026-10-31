@@ -1,0 +1,46 @@
+crates/ripr/src/cli/agent.rs|agent brief --files requires non-empty paths
+crates/ripr/src/cli/agent.rs|agent card --seam-id requires a non-empty ID
+crates/ripr/src/cli/agent.rs|agent card requires --seam-id
+crates/ripr/src/cli/agent.rs|agent packet --gap-id requires --gap-ledger
+crates/ripr/src/cli/agent.rs|agent packet --gap-id requires a non-empty ID
+crates/ripr/src/cli/agent.rs|agent packet --gap-ledger requires --gap-id
+crates/ripr/src/cli/agent.rs|agent packet --gap-ledger requires a non-empty path
+crates/ripr/src/cli/agent.rs|agent packet --seam-id requires a non-empty ID
+crates/ripr/src/cli/agent.rs|agent packet requires --seam-id or --gap-ledger with --gap-id
+crates/ripr/src/cli/agent.rs|agent receipt --attempt requires a non-empty ID
+crates/ripr/src/cli/agent.rs|agent receipt --command requires a non-empty value
+crates/ripr/src/cli/agent.rs|agent receipt --seam-id requires a non-empty ID
+crates/ripr/src/cli/agent.rs|agent receipt --test requires a non-empty value
+crates/ripr/src/cli/agent.rs|agent receipt requires --seam-id
+crates/ripr/src/cli/agent.rs|agent receipt requires --verify-json <path>
+crates/ripr/src/cli/agent.rs|agent repair --attempt requires a non-empty ID
+crates/ripr/src/cli/agent.rs|agent repair --base requires a non-empty ref
+crates/ripr/src/cli/agent.rs|agent repair --edit-authority requires --edit-authorized; the driver accepts only the explicit pair
+crates/ripr/src/cli/agent.rs|agent repair --edit-authority requires a non-empty operator or agent identity
+crates/ripr/src/cli/agent.rs|agent repair --edit-authorized requires --edit-authority <identity>; the driver never authorizes an edit autom
+crates/ripr/src/cli/agent.rs|agent repair --edit-authorized/--edit-authority require --python-repair-trust-manifest and --python-repair-tru
+crates/ripr/src/cli/agent.rs|agent repair --gap-id does not take the Python repair-trust flags; a gap-bound start carries no Python trust b
+crates/ripr/src/cli/agent.rs|agent repair --gap-id requires --base <ref>; the gap's findings are diff-scoped, so the base the check ran aga
+crates/ripr/src/cli/agent.rs|agent repair --gap-id requires a non-empty ID
+crates/ripr/src/cli/agent.rs|agent repair --phase after requires --attempt <id> or --seam-id <id>
+crates/ripr/src/cli/agent.rs|agent repair --phase verify requires --attempt <id>
+crates/ripr/src/cli/agent.rs|agent repair --python-repair-trust-attempt requires --python-repair-trust-manifest <path>
+crates/ripr/src/cli/agent.rs|agent repair --python-repair-trust-attempt requires a non-empty attempt identity
+crates/ripr/src/cli/agent.rs|agent repair --python-repair-trust-manifest requires --python-repair-trust-attempt <id>
+crates/ripr/src/cli/agent.rs|agent repair --python-repair-trust-manifest requires a non-empty path
+crates/ripr/src/cli/agent.rs|agent repair --seam-id requires a non-empty ID
+crates/ripr/src/cli/agent.rs|agent repair --store requires a non-empty path
+crates/ripr/src/cli/agent.rs|agent repair --verify-authority requires --verify-authorized; the driver accepts only the explicit pair
+crates/ripr/src/cli/agent.rs|agent repair --verify-authority requires a non-empty operator or agent identity
+crates/ripr/src/cli/agent.rs|agent repair --verify-authorized requires --verify-authority <identity>; the driver never authorizes a verific
+crates/ripr/src/cli/agent.rs|agent repair --verify-rollback requires --verify-authorized and --verify-authority <identity>
+crates/ripr/src/cli/agent.rs|agent start --out requires a non-empty path
+crates/ripr/src/cli/agent.rs|agent start --seam-id requires a non-empty ID
+crates/ripr/src/cli/agent.rs|agent start requires --seam-id target/ripr/workflow .
+crates/ripr/src/cli/agent.rs|agent status --attempt requires a non-empty repair attempt ID
+crates/ripr/src/cli/agent.rs|agent status --store requires a non-empty path
+crates/ripr/src/cli/agent.rs|agent stub {flag} requires a non-empty value
+crates/ripr/src/cli/agent.rs|agent verify --gap-id requires a non-empty ID
+crates/ripr/src/cli/agent.rs|agent verify-execute requires --packet <path> agent verify-execute requires --result-json <path> .
+crates/ripr/src/cli/agent.rs|agent verify-execute requires --result-json <path> .
+crates/ripr/src/cli/agent.rs|invalid --max-seams: maximum is {AGENT_BRIEF_HARD_MAX_SEAMS}
