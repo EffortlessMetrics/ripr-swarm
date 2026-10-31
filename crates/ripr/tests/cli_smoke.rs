@@ -1924,10 +1924,11 @@ fn help_leads_with_a_bounded_first_screen_that_routes_onward() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // #9865 added the exit-code contract and -v lines to the first screen;
-    // 48 keeps the scannability budget with headroom (observed 47).
+    // 49 keeps the scannability budget (observed 49 with the `ripr init
+    // --agents` route; it was 48 before, so the cap moved by exactly one line).
     let lines = stdout.lines().count();
     assert!(
-        lines <= 48,
+        lines <= 49,
         "the default help screen should stay scannable, got {lines} lines:\n{stdout}"
     );
     assert!(

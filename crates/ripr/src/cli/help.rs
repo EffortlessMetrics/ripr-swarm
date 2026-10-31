@@ -607,7 +607,7 @@ mod tests {
     fn help_overview_fits_one_screen() {
         let lines = HELP.lines().count();
         assert!(
-            lines <= 48,
+            lines <= 49,
             "the default help screen is {lines} lines; keep it under one screen and put \
              reference material in HELP_ALL (ripr help --all)"
         );

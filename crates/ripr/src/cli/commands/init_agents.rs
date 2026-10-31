@@ -170,11 +170,11 @@ pub(super) fn plan_agent_target(
     }
     if !path.is_file() {
         return Err(format!(
-            "existing {shown} is not a regular file; nothing was written"
+            "existing {shown} is not a regular file; remove it or pass another --root, nothing was written"
         ));
     }
     let text = std::fs::read_to_string(&path)
-        .map_err(|err| format!("cannot read existing {shown}: {err}"))?;
+        .map_err(|err| format!("cannot read existing {shown}: {err}; fix its permissions or encoding, or remove it, nothing was written"))?;
     match find_section(&text, &shown)? {
         Some((start, end)) => {
             if text[start..end] == section || !force {
