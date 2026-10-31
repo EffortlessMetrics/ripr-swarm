@@ -40,7 +40,9 @@ changed behavior, related test, Next step, base/head, doctor, pilot.
 
 `cargo xtask check-user-text` reads real output, not source strings:
 
-- every committed default-format golden, `fixtures/**/expected/human.txt`;
+- every committed default-format golden, `fixtures/**/expected/human.txt`
+  (each golden is judged on its own: the `golden-human` ceiling bounds the
+  worst single file, so landing a new golden never raises a shared total);
 - live output of the built `ripr` binary in a scratch Git repository:
   `check` (also outside Git), `pilot`, `doctor`, `status`, `continue`,
   `repair` refusals (missing `.gitignore` entry, uncommitted source change),
