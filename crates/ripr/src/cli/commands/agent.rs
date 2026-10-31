@@ -883,6 +883,8 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
             )
         })
         .transpose()?;
+    let before_produced_from_dirty = before_identity.historical_produced_from_dirty();
+    let after_produced_from_dirty = after_identity.historical_produced_from_dirty();
     let artifact_currentness = crate::agent::artifact::pair_currentness_label(
         &before_identity.currentness,
         &after_identity.currentness,
@@ -904,6 +906,8 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
     let binding = output::outcome::AgentVerifyArtifactBinding {
         before_content_sha256: before_identity.content_sha256,
         after_content_sha256: after_identity.content_sha256,
+        before_produced_from_dirty,
+        after_produced_from_dirty,
     };
     let bound_gap = bound_gap.map(|closure| output::outcome::AgentVerifyBoundGap {
         gap_id: closure.gap_id,
