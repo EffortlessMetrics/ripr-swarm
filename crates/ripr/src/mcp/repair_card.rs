@@ -24,8 +24,8 @@
 use super::gaps::GapItem;
 use super::workspace::{
     AttemptFailure, CODE_ANALYSIS_FAILED, CODE_ITEM_NOT_FOUND, CODE_NO_SNAPSHOT,
-    CODE_WORKSPACE_UNAVAILABLE, RECOVERY_REPAIR_TOO_LARGE, Snapshot, WorkspaceSession,
-    bounded_document,
+    CODE_STALE_SNAPSHOT, CODE_WORKSPACE_UNAVAILABLE, RECOVERY_REPAIR_TOO_LARGE, Snapshot,
+    WorkspaceSession, bounded_document,
 };
 use crate::agent::artifact::git_output;
 use crate::agent::command_specs::{AgentArtifactRoute, agent_inspection_command_spec};
@@ -99,6 +99,11 @@ pub(crate) struct SnapshotCardProducers {
     /// omits refuses here with the CLI's own typed `policy_omitted` instead
     /// of projecting a card the CLI would refuse.
     pub(crate) config: RiprConfig,
+    /// The raw Rust bytes the refresh's inventory captured (#7357). The card
+    /// request re-verifies the digests of only the files its evidence is bound
+    /// to, so an edit after the refresh refuses instead of serving a card over
+    /// bytes the snapshot never described.
+    pub(crate) consumed_sources: crate::analysis::consumed_source::ConsumedRustSources,
 }
 
 /// One seam bound to one snapshot canonical item at commit time.
@@ -256,7 +261,7 @@ pub(crate) fn bind_snapshot_card_producers(
         candidate_seams,
         completeness,
         config,
-        consumed_sources: _,
+        consumed_sources,
     } = inventory;
     let mut bindings = Vec::new();
     let mut all_candidate_seams = Vec::new();
@@ -303,6 +308,7 @@ pub(crate) fn bind_snapshot_card_producers(
         candidate_seams: all_candidate_seams,
         completeness,
         config,
+        consumed_sources,
     });
     Ok(())
 }
@@ -560,6 +566,29 @@ impl WorkspaceSession {
                 "restart the server with `ripr mcp --stdio --root <repository>` and retry",
             ));
         };
+        // The refresh-time probe and custody are not re-run per read, so a
+        // source edit after the refresh (the server does not watch the
+        // worktree) would otherwise ride a card labeled current. Re-verify the
+        // captured digests of only the files this card's evidence is bound to
+        // (the shared custody owner decides; this adapter reads bytes only).
+        let evidence_paths = crate::app::repair_card_handoff::evidence_probe_paths(entry);
+        if let Some(drift) = producers
+            .consumed_sources
+            .first_drift(evidence_paths.iter().map(PathBuf::as_path), |relative| {
+                std::fs::read(root.join(relative)).ok()
+            })
+        {
+            return Err(AttemptFailure::new(
+                CODE_STALE_SNAPSHOT,
+                format!(
+                    "repair card for canonical item {} is unavailable: {}; the snapshot no longer describes the files on disk",
+                    item.canonical_id,
+                    drift.describe()
+                ),
+                "run ripr_refresh again to analyze the current source, then retry",
+            )
+            .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
+        }
         let readiness = repair_packet_eligibility(entry).readiness;
         let seam_id = entry.seam.id().as_str().to_string();
         // The witness and finding id bind through the shared
@@ -865,6 +894,7 @@ mod tests {
             .unwrap_or_default();
         snapshot.card_producers = Some(SnapshotCardProducers {
             config: RiprConfig::default(),
+            consumed_sources: Default::default(),
             repository_head: "abc123".to_string(),
             bindings: binding.into_iter().collect(),
             candidate_seams,
@@ -893,6 +923,7 @@ mod tests {
         let candidate_seams = vec![binding.seam.clone()];
         snapshot.card_producers = Some(SnapshotCardProducers {
             config: RiprConfig::default(),
+            consumed_sources: Default::default(),
             repository_head: "abc123".to_string(),
             bindings: vec![binding],
             candidate_seams,
@@ -1334,6 +1365,7 @@ mod tests {
         // item with the bound seam's owner.
         snapshot.card_producers = Some(SnapshotCardProducers {
             config: RiprConfig::default(),
+            consumed_sources: Default::default(),
             repository_head: "abc123".to_string(),
             bindings: vec![binding_for(&entry, "gap:test:1")],
             candidate_seams: vec![entry.clone()],
@@ -1615,6 +1647,7 @@ mod tests {
         let mut session_snapshot = snapshot;
         session_snapshot.card_producers = Some(SnapshotCardProducers {
             config: RiprConfig::default(),
+            consumed_sources: Default::default(),
             repository_head: "abc123".to_string(),
             bindings: vec![binding_for(&inner, producer_id)],
             candidate_seams: candidates.to_vec(),
@@ -1640,6 +1673,7 @@ mod tests {
                 .map_err(|failure| failure.detail)?;
         outer_session_snapshot.card_producers = Some(SnapshotCardProducers {
             config: RiprConfig::default(),
+            consumed_sources: Default::default(),
             repository_head: "abc123".to_string(),
             bindings: vec![binding_for(&outer, producer_id)],
             candidate_seams: candidates.to_vec(),
