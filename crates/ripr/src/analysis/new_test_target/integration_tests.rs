@@ -889,3 +889,32 @@ fn production_tests_directory_is_not_a_whole_file_repair_target() -> Result<(), 
     assert!(!crate::output::agent_seam_packets::recommended_test_is_repair_edit_target(entry));
     Ok(())
 }
+
+#[test]
+fn shared_production_and_test_module_is_not_a_whole_file_repair_target() -> Result<(), String> {
+    let root = claim_root("shared-test-production")?;
+    write_file(
+        &root.0,
+        "Cargo.toml",
+        "[package]\nname = \"shared-test-production\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )?;
+    write_file(
+        &root.0,
+        "src/lib.rs",
+        &format!(
+            "{}\n#[cfg(test)] #[path = \"tests.rs\"] mod tests;\n#[path = \"tests.rs\"] mod production;\n",
+            public_library_source()
+        ),
+    )?;
+    write_file(
+        &root.0,
+        "src/tests.rs",
+        "use super::*;\npub fn production_value() -> i32 { 42 }\n#[test] fn reaches() { assert!(discounted_total(11, 10) > 0); }\n",
+    )?;
+    let classified = inventory_classified_seams_at(&root.0)?;
+    let entry = boundary_entry(&classified)?;
+    let selected = crate::output::agent_seam_packets::recommended_test_for(entry);
+    assert_eq!(selected.file, "src/tests.rs", "entry: {entry:?}");
+    assert!(!crate::output::agent_seam_packets::recommended_test_is_repair_edit_target(entry));
+    Ok(())
+}
