@@ -322,6 +322,10 @@ fn is_resolved_state(gap_state: GapState) -> bool {
     matches!(gap_state, GapState::Resolved | GapState::AlreadyObserved)
 }
 
+#[cfg(kani)]
+#[path = "causal_delta_kani.rs"]
+mod kani_proofs;
+
 #[cfg(test)]
 mod tests {
     use super::*;

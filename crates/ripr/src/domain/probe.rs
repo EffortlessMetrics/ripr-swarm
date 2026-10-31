@@ -959,6 +959,10 @@ impl Finding {
     }
 }
 
+#[cfg(kani)]
+#[path = "probe_kani.rs"]
+mod kani_proofs;
+
 #[cfg(test)]
 mod tests {
     use super::{Probe, ProbeFamily};

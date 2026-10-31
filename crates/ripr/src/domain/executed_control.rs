@@ -1072,6 +1072,10 @@ fn validate_sha256(field: &'static str, value: &str) -> Result<(), ExecutedContr
     Ok(())
 }
 
+#[cfg(kani)]
+#[path = "executed_control_kani.rs"]
+mod kani_proofs;
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
