@@ -226,6 +226,13 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
                 estimate.else_if_chain = estimate.else_if_chain.max(*chain);
             }
             previous_word_was_else = word == "else";
+            if is_recursive_prefix_keyword(word) {
+                // `return return ..`, `if if ..` and the like recurse once per
+                // keyword in the parser exactly like a prefix operator run, but
+                // never reach the bracket arms below (#11407).
+                unary_run = unary_run.saturating_add(1);
+                estimate.depth = estimate.depth.max(depth.saturating_add(unary_run));
+            }
             after_operand = !is_expression_keyword(word);
             if after_operand {
                 unary_run = 0;
@@ -296,7 +303,27 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
 fn is_expression_keyword(word: &str) -> bool {
     matches!(
         word,
-        "return" | "break" | "in" | "if" | "else" | "match" | "while" | "let" | "mut" | "move"
+        "return"
+            | "break"
+            | "yield"
+            | "become"
+            | "in"
+            | "if"
+            | "else"
+            | "match"
+            | "while"
+            | "let"
+            | "mut"
+            | "move"
+    )
+}
+
+/// Keywords whose operand is parsed by recursing into the expression parser,
+/// so a run of them nests one parser level per keyword like a prefix operator.
+fn is_recursive_prefix_keyword(word: &str) -> bool {
+    matches!(
+        word,
+        "return" | "break" | "yield" | "become" | "if" | "match" | "while"
     )
 }
 
@@ -573,6 +600,31 @@ mod tests {
     }
 
     use super::*;
+
+    /// #11407: a long run of recursive prefix keywords nests the parser once
+    /// per keyword; it must hit the same budget as a prefix-operator run.
+    #[test]
+    fn keyword_prefix_runs_are_refused_like_prefix_operator_runs() {
+        for keyword in ["return", "break", "yield", "become", "if", "match", "while"] {
+            let over = format!(
+                "fn f() {{ let _v = {}x; }}\n",
+                format!("{keyword} ").repeat(3_000)
+            );
+            assert!(
+                rust_nesting_refusal(&over)
+                    .is_some_and(|reason| reason.contains("rust_nesting_budget")),
+                "{keyword} x3000 must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_keyword_use_stays_within_the_nesting_budget() {
+        let source = "fn f(a: bool, b: Option<u8>) -> u8 {\n    if a { return 1; }\n    while a { break; }\n    match b { Some(x) if x > 1 => return x, _ => {} }\n    else_ok(if a { 1 } else if !a { 2 } else { 3 })\n}\n";
+        assert_eq!(rust_nesting_refusal(source), None);
+        let chained = format!("fn f() {{ {}1; }}\n", "return ".repeat(10));
+        assert_eq!(rust_nesting_refusal(&chained), None);
+    }
 
     #[test]
     fn block_comment_only_lines_lists_interior_lines_and_not_code_lines() {
