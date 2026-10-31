@@ -1806,8 +1806,11 @@ Permissions and job settings:
   scanning.
 - `labeled` and `unlabeled` re-run the gate when a waiver label such as
   `ripr-waive` is added or removed, since the gate reads labels from the event.
-  Any label change re-runs the job, and the concurrency group cancels the
-  superseded run.
+  The job runs for them only when `RIPR_GATE_MODE` is set to a mode other than
+  `visible-only`; in advisory (unset) and `visible-only` mode an unrelated label
+  does nothing. `labeled` and `unlabeled` each use their own concurrency group,
+  so a label never cancels an analysis in flight for a push or the other label
+  event.
 - Every run step is bash (`$'\t'` in the publish loop), so `defaults.run.shell`
   pins bash; the steps still parse if the job moves to `windows-latest`, whose
   default shell is PowerShell.

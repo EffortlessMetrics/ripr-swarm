@@ -95,6 +95,29 @@ pub(in crate::analysis) struct AssertionRefusalNote {
     pub(in crate::analysis) is_analyzer_limit: bool,
 }
 
+/// #9643: a test inside a `cfg` gate the changed owner carries too is compiled
+/// whenever the changed code is, so the gate cannot separate them. Which
+/// feature set a run enables is not known statically, so the refusal rests on
+/// what ripr cannot read, never on a test that provably does not run. A gate
+/// only the test carries, one that is provably off, or an owner outside the
+/// file keeps the refusal a real gap.
+fn test_shares_owner_cfg_gates(context: &ProbeContext<'_>, test: &TestSummary) -> bool {
+    let Some(owner) = context.owner_fn else {
+        return false;
+    };
+    let gates = |file: &Path, name: &str, line: usize| {
+        let facts = context.index.files().get(file)?;
+        crate::analysis::syntax::unestablished_cfg_gates_of_fn(&facts.source, name, line)
+    };
+    let (Some(test_gates), Some(owner_gates)) = (
+        gates(&test.file, &test.name, test.start_line),
+        gates(&owner.file, &owner.name, owner.start_line),
+    ) else {
+        return false;
+    };
+    !test_gates.is_empty() && test_gates.is_subset(&owner_gates)
+}
+
 /// #9871: reach for a changed constant whose same-file readers are called by
 /// tests. A call to a reader is not a call that executes the read, so the
 /// stage is `weak`, never `yes`, and the class stays `static_unknown`.
@@ -1525,8 +1548,9 @@ impl ClassifiedProbeEvidence {
         // `preferred_refusal_note` for which one.
         let owner_name = context.owner_fn.map_or("", |owner| owner.name.as_str());
         // A value guard is a limit only when the call it reads is the owner's.
-        let is_limit = |refusal: &AssertionRefusal| {
-            refusal.is_analyzer_limit()
+        let is_limit = |refusal: &AssertionRefusal, test: &TestSummary| {
+            (refusal.is_analyzer_limit()
+                || (refusal.is_gated_item() && test_shares_owner_cfg_gates(context, test)))
                 && refusal
                     .value_guard_subject()
                     .is_none_or(|subject| direct_call_name(subject) == Some(owner_name))
@@ -1576,7 +1600,7 @@ impl ClassifiedProbeEvidence {
                             macro_name,
                             reason: refusal.describe(),
                             calls_owner,
-                            is_analyzer_limit: is_limit(&refusal),
+                            is_analyzer_limit: is_limit(&refusal, test),
                         };
                         if note.calls_owner && credits(*reason) {
                             crediting_owner_refusals.push(note.is_analyzer_limit);
@@ -1615,17 +1639,21 @@ impl ClassifiedProbeEvidence {
                 .iter()
                 .filter(|(_, reason)| credits(*reason))
                 .flat_map(|(test, _)| {
-                    test.assertions.iter().filter_map(|assertion| {
-                        pin_syntax.equality_assertion_refusal(
-                            context.probe,
-                            test,
-                            assertion,
-                            context.index,
-                        )
+                    test.assertions.iter().filter_map(move |assertion| {
+                        pin_syntax
+                            .equality_assertion_refusal(
+                                context.probe,
+                                test,
+                                assertion,
+                                context.index,
+                            )
+                            .map(|refusal| (refusal, test))
                     })
                 });
-            refusals.next().is_some_and(|first| is_limit(&first))
-                && refusals.all(|refusal| is_limit(&refusal))
+            refusals
+                .next()
+                .is_some_and(|(first, test)| is_limit(&first, test))
+                && refusals.all(|(refusal, test)| is_limit(&refusal, test))
         };
 
         let implicit_dispatch_tests = match context.owner_fn {

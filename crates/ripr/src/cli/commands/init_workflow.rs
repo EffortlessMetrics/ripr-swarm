@@ -51,12 +51,13 @@ defaults:
     shell: bash
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.action || 'run' }}
   cancel-in-progress: true
 
 jobs:
   ripr:
     name: RIPR advisory reports
+    if: ${{ (github.event.action != 'labeled' && github.event.action != 'unlabeled') || (vars.RIPR_GATE_MODE != '' && vars.RIPR_GATE_MODE != 'visible-only') }}
     runs-on: ubuntu-latest
     # Advisory unless RIPR_GATE_MODE names a blocking mode.
     continue-on-error: ${{ vars.RIPR_GATE_MODE == '' || vars.RIPR_GATE_MODE == 'visible-only' }}
@@ -416,7 +417,7 @@ mod template_pin_tests {
     /// first line, and artifact paths, which the `generated_workflow_*` and
     /// `install_version_*` tests pin at the rendered level.
     const TEMPLATE_SHA256: &str =
-        "36a4b2cda24cc88274808d9e3ee39d2802e5e89c65044087ef7458e16acc95b4";
+        "7a0d77223bd5b961373996e55447d76b9a3448a21d1d07230a3af4e7bbf9f69c";
 
     #[test]
     fn template_matches_the_pinned_bytes() {
