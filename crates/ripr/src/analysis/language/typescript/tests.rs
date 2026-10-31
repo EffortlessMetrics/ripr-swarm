@@ -8682,17 +8682,18 @@ fn ava_reference_equality_array_literal_stays_dynamic() {
     }
 }
 
-/// Jest: `toEqual` / `toStrictEqual` accept an all-literal array (including
-/// `[]`); `toBe` / `toMatchObject` and arrays holding a non-literal such as
+/// Jest: `toEqual` / `toStrictEqual` / `toMatchObject` accept an all-literal
+/// array (including `[]`); `toBe` and arrays holding a non-literal such as
 /// `[-x]` stay dynamic.
 #[test]
-fn jest_array_expected_values_are_literal_only_for_deep_equality() {
+fn jest_array_expected_values_are_literal_for_equality_matchers() {
     for (call, dynamic) in [
         ("expect(f(1)).toEqual([1, 2])", false),
         ("expect(f(1)).toStrictEqual([1, 'a', [2]])", false),
         ("expect(f(1)).toEqual([])", false),
         ("expect(f(1)).toBe([1])", true),
-        ("expect(f(1)).toMatchObject([1])", true),
+        // #11255: `toMatchObject` takes an all-literal container too.
+        ("expect(f(1)).toMatchObject([1])", false),
         ("expect(f(1)).toEqual([-x])", true),
         ("expect(f(1)).toEqual([1, y])", true),
     ] {
@@ -19896,8 +19897,10 @@ mod guard_entry_tests;
 mod infection_tests;
 mod instance_class_tests;
 mod instance_factory_tests;
+mod issue10925_shadow_index_tests;
 mod issue10925_shadow_scan_tests;
 mod issue7507_shadow_tests;
+mod literal_container_tests;
 mod literal_matcher_tests;
 mod lookup_table_tests;
 mod loop_count_tests;

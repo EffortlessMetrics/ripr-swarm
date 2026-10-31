@@ -49,6 +49,15 @@ pub fn weak_class(label: &str) -> &'static str {
     }
 }
 
+pub fn trimmed_class(label: &str) -> &'static str {
+    let label = label.trim();
+    if label == "alpha" {
+        "word"
+    } else {
+        "blank"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,5 +90,10 @@ mod tests {
     #[test]
     fn the_weak_oracle_only_wants_something() {
         assert!(!weak_class("alpha").is_empty());
+    }
+
+    #[test]
+    fn a_padded_alpha_row_is_word() {
+        assert_eq!(trimmed_class(" alpha "), "word");
     }
 }

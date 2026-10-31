@@ -33,6 +33,7 @@ mod equality_dispatch;
 mod implicit_dispatch;
 mod iterator_dispatch;
 mod operator_dispatch;
+mod path_arg;
 mod std_receiver;
 pub(in crate::analysis::classify) use operator_dispatch::stringified_ranges;
 
@@ -899,6 +900,30 @@ fn find_related_tests_with_candidates<'a>(
         }
     }
     let owner_name_is_unique = workspace_complete && same_name_function_count == 1;
+    // #11199: an inherent `Type::method` path value a helper runs. Established
+    // once per probe; it needs the owner's same-named definitions to prove no
+    // other impl or type could be the target of the path.
+    let path_arg_owner = owner_fn.and_then(|owner| {
+        if owner_name.is_empty()
+            || !matches!(owner.item.container, FunctionContainer::Inherent { .. })
+        {
+            return None;
+        }
+        let same_name: Vec<&FunctionSummary> = match candidates {
+            RelatedTestCandidates::Indexed(candidate_index) => candidate_index
+                .function_indices(owner_name)
+                .iter()
+                .map(|&function_index| index.functions().at(function_index))
+                .collect(),
+            #[cfg(test)]
+            RelatedTestCandidates::FullScan => index
+                .functions()
+                .iter()
+                .filter(|function| function.name == owner_name)
+                .collect(),
+        };
+        path_arg::PathArgOwner::new(owner, &same_name)
+    });
     // #8999: a user `PartialEq::eq`/`ne` a comparison macro runs unnamed.
     let equality_owner = owner_fn.and_then(|owner| equality_dispatch::equality_owner(owner, index));
     // #9567: a user operator, `Iterator::next` or `Drop::drop` that syntax runs
@@ -1529,12 +1554,22 @@ fn find_related_tests_with_candidates<'a>(
             && helper_chain.is_some_and(|chain| {
                 super::helper_transfer::test_calls_method_entry(index, test, chain)
             });
+        // #11199: the test hands `Type::method` to a same-file helper that
+        // provably runs the argument. In-file by construction, so it rides no
+        // cross-package bypass; a property-only call never reaches here.
+        let hands_owner_path_to_helper = !calls_owner
+            && !calls_helper_entry
+            && !property_only_owner_call
+            && path_arg_owner
+                .as_ref()
+                .is_some_and(|owner| owner.test_hands_path_to_invoking_helper(test, index));
         let helper_chain_reaches = !calls_owner
             && !assertions_reference_owner
             && (calls_helper_entry
                 || calls_method_entry
                 || dispatches_to_helper_fmt_entry
-                || calls_helper_method_entry);
+                || calls_helper_method_entry
+                || hands_owner_path_to_helper);
 
         if !calls_owner
             && !equality_asserts_owner
