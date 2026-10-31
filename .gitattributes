@@ -95,3 +95,7 @@ fixtures/python-verdict-corpus/subjects/authored-py-pytest-hostile/tests/test_he
 
 # The trailing spaces are the subject of this no-op fixture (#10706).
 fixtures/python_noop_trailing_whitespace/input/src/pricing.py whitespace=-blank-at-eol
+fixtures/ts_noop_trailing_whitespace/input/src/pricing.ts whitespace=-blank-at-eol
+fixtures/ts_trailing_whitespace_in_template/input/src/pricing.ts whitespace=-blank-at-eol
+fixtures/ts_noop_trailing_whitespace/diff.patch whitespace=-blank-at-eol
+fixtures/ts_trailing_whitespace_in_template/diff.patch whitespace=-blank-at-eol
