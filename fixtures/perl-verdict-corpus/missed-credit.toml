@@ -78,11 +78,11 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 
 [[entry]]
 case = "perl-testexception-class-then-message"
-reason = "Tests discriminate the change but ripr abstains for two independent reasons: the pinned producer writes zero-based lines (the packet's coordinate is one line above the changed line, #3221, #6586), and the producer records the test file's `eval {` blocks as eval_or_string_code limitations, which ripr fails closed on, so the packet reads static_unknown even though it now carries direct_owner_call relations to Forms::prefix_only (perl-lsp-swarm#18483, #10525). Delete this entry only after the row actually credits; neither a line fix nor the relations alone is shown to be sufficient."
+reason = "Tests discriminate the change but ripr abstains for two independent reasons: the pinned producer writes zero-based lines (the packet's coordinate is one line above the changed line, #3221, #6586), and the test's `throws_ok` carries a class matcher the producer now grades strong_exact, which RIPR-SPEC-0235 rule 16 reads as static_unknown because a class pins that an error is raised, not which boundary raises it (test-file `eval {` blocks are no longer boundaries, perl-lsp-swarm#18498). Delete this entry only after the row actually credits; neither a line fix nor the relations alone is shown to be sufficient."
 
 [[entry]]
 case = "perl-testexception-eval-like-dollar-at"
-reason = "Tests discriminate the change but ripr abstains for two independent reasons: the pinned producer writes zero-based lines (the packet's coordinate is one line above the changed line, #3221, #6586), and the producer records the test file's `eval {` blocks as eval_or_string_code limitations, which ripr fails closed on, so the packet reads static_unknown even though it now carries direct_owner_call relations to Forms::prefix_only (perl-lsp-swarm#18483, #10525). Delete this entry only after the row actually credits; neither a line fix nor the relations alone is shown to be sufficient."
+reason = "Tests discriminate the change but ripr abstains: the producer now binds `like($@, qr/zero not allowed/)` to Forms::eval_like and grades it strong_exact, which RIPR-SPEC-0235 rule 16 reads as static_unknown because a message matcher pins that an error is raised, not which boundary raises it (test-file `eval {` blocks are no longer boundaries, perl-lsp-swarm#18498). Before the binding the row read a false reachable_unrevealed gap. Delete this entry only after the row actually credits."
 
 [[entry]]
 case = "perl-testexception-freeze-class"
