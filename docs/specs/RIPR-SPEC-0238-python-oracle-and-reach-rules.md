@@ -1071,7 +1071,18 @@ mutant calibrates the rule; ripr reports only the static shape.
     notices the edit.** With `--doctest-modules` in the `addopts` of the
     pytest configuration (`pyproject.toml`, `pytest.ini`, `tox.ini` or
     `setup.cfg`, first configuration wins), a `>>>` example in a changed
-    module's function docstring is read as the assertion it states.
+    module's function docstring is read as the assertion it states. When no
+    pytest configuration exists at all (no `pyproject.toml` pytest table of
+    either form), a `tox.ini` `[testenv]` `commands` line that is exactly one
+    bare `pytest`, `py.test` or `python -m pytest` run carrying
+    `--doctest-modules` is the same signal; the line must hold no shell
+    operator, factor condition or substitution other than an empty
+    `{posargs}`, and the same flag and target refusals apply (#4561). Only the
+    literal `[testenv]` section is read, one command per line (a trailing
+    backslash leaves a stray token and refuses the read); a factor or named
+    section such as `[testenv:docs]` overrides `commands` for that
+    environment alone, so it is not evidence that the default run collects
+    doctests, and is a deliberate non-claim.
     Collection is refused when the configuration holds any flag that
     reshapes it (`--ignore*`, `--deselect`, `-k`, `-m`, `-o`, `-c`, `-p`,
     `--doctest-glob`, `--import-mode`, cache selectors such as `--lf`, and

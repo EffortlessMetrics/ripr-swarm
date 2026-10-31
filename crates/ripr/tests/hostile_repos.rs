@@ -2229,3 +2229,59 @@ fn ripr_shell(dir: &Path, line: &str, path: &str) -> Result<String, String> {
         .map_err(|e| format!("spawn bash failed: {e}"))?;
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
+
+/// A FIFO named `package.json` or `tsconfig.json` blocks `open` forever. The
+/// TypeScript config readers and the implicit-root probe must treat it as an
+/// unreadable config (#11579), not wait on it.
+#[cfg(unix)]
+#[test]
+fn fifo_typescript_config_files_do_not_block_the_run() -> Result<(), String> {
+    let scratch = Scratch::new("ts-config-fifo")?;
+    for name in ["package.json", "tsconfig.json"] {
+        let root = scratch.path.join(name.replace('.', "-"));
+        fs::create_dir_all(root.join("src")).map_err(|e| format!("mkdir failed: {e}"))?;
+        fs::create_dir_all(root.join("test")).map_err(|e| format!("mkdir failed: {e}"))?;
+        let w = |rel: &str, body: &str| {
+            fs::write(root.join(rel), body).map_err(|e| format!("write {rel} failed: {e}"))
+        };
+        git(&root, &["init", "-q", "-b", "main"])?;
+        w("ripr.toml", "[languages]\nenabled = [\"typescript\"]\n")?;
+        w(
+            "package.json",
+            "{\"name\":\"fifo-fixture\",\"private\":true}\n",
+        )?;
+        w(
+            "src/pricing.ts",
+            "export function total(n: number): number {\n  if (n > 100) {\n    return n - 5;\n  }\n  return n;\n}\n",
+        )?;
+        w(
+            "test/pricing.test.ts",
+            "import { total } from \"../src/pricing\";\nimport { expect, test } from \"vitest\";\ntest(\"total\", () => {\n  expect(total(50)).toBe(50);\n});\n",
+        )?;
+        git(&root, &["add", "-A"])?;
+        git(&root, &["commit", "-q", "-m", "base"])?;
+        git(&root, &["checkout", "-q", "-b", "feat"])?;
+        w(
+            "src/pricing.ts",
+            "export function total(n: number): number {\n  if (n >= 100) {\n    return n - 5;\n  }\n  return n;\n}\n",
+        )?;
+        git(&root, &["add", "-A"])?;
+        git(&root, &["commit", "-q", "-m", "change"])?;
+        // The FIFO replaces the config after the commit, so only the working
+        // tree readers can see it.
+        let fifo = root.join(name);
+        if fifo.exists() {
+            fs::remove_file(&fifo).map_err(|e| format!("remove {name} failed: {e}"))?;
+        }
+        let made = Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .map_err(|e| format!("spawn mkfifo failed: {e}"))?;
+        if !made.success() {
+            return Err(format!("mkfifo {name} failed"));
+        }
+        let ran = ripr(&root, &["check", "--base", "main", "--committed"], &[])?;
+        assert_sane(&ran, &format!("FIFO {name}"))?;
+    }
+    Ok(())
+}
