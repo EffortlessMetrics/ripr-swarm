@@ -2378,6 +2378,28 @@ receiving call is itself resolved.
   `[lib]`/`[[bin]]`/`[[test]]` `path` that moves a target is not read, so a
   file at a default target path that some other target includes through
   `#[path]` is still judged by its default root.
+- A private file-level foreign glob (`use rayon::prelude::*;` with no
+  visibility, outside any inline module or block) is visible only in its own
+  module and the modules declared beneath it, so it reaches a test only when
+  the test's file is the glob's file or a file the glob's file declares,
+  directly or through further `mod` edges (`use super::*;` in a `mod tests;`
+  child still sees it). A glob in a sibling or unrelated file of the same
+  crate no longer refuses the test. The confinement needs established
+  composition on both ends: the glob's file has an execution context (so it
+  is no `include!` fragment and nothing above it is unresolved), the test's
+  file has one, and no `include!` or `#[path]` is unresolved anywhere in the
+  workspace. Otherwise the glob keeps its crate-local reach above. `pub`
+  globs, `#[macro_use]`, definitions, imports by name, globs in a macro body
+  and withheld files are unchanged
+  (`a_sibling_modules_private_glob_does_not_block_the_test`,
+  `a_glob_in_the_tests_own_file_or_an_ancestor_still_blocks_it`,
+  `a_glob_reaches_a_child_test_module_file_through_use_super`,
+  `a_path_attribute_mount_is_a_module_of_its_declarer`,
+  `an_include_fragment_glob_lands_in_its_includer_and_stays_workspace_wide`,
+  `an_unresolved_include_anywhere_leaves_the_glob_workspace_wide`,
+  `a_public_glob_is_not_confined`,
+  `a_withheld_file_keeps_its_glob_workspace_wide`,
+  `the_refusal_site_names_the_glob_only_for_tests_it_reaches`).
 - `use pretty_assertions::assert_eq;` (or `assert_ne`) under its own name
   counts as the standard assertion only when the importing file's nearest
   `Cargo.toml` inside the analysis root declares `pretty_assertions` as a

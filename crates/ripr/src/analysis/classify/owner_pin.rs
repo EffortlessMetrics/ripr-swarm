@@ -889,7 +889,7 @@ impl OwnerPinSyntax {
                 // early, instead of rescanning the workspace per
                 // (name, test root).
                 let workspace = self
-                    .workspace_macro_site_in(&name, test_roots.as_ref(), index)
+                    .workspace_macro_site_in(&name, test_roots.as_ref(), Some(&test.file), index)
                     .or_else(|| self.withheld.sites.get(&name).cloned())
                     .or_else(|| {
                         self.withheld
@@ -1127,6 +1127,10 @@ impl OwnerPinSyntax {
                 .crate_names_for(test, index)
                 .iter()
                 .any(|candidate| candidate == name)
+            && !self
+                .module_names_for(test, index)
+                .iter()
+                .any(|candidate| candidate == name)
     }
 
     fn trusted_macro_ambiguities(&self, index: &RustIndex) -> BTreeSet<String> {
@@ -1174,20 +1178,37 @@ impl OwnerPinSyntax {
         test_root: Option<&Path>,
         index: &RustIndex,
     ) -> Option<(PathBuf, MacroBindingSite)> {
+        self.workspace_macro_site_for(name, test_root, test_root, index)
+    }
+
+    /// [`Self::workspace_macro_site`] for a test whose file is not its root.
+    #[cfg(test)]
+    fn workspace_macro_site_for(
+        &self,
+        name: &str,
+        test_root: Option<&Path>,
+        test_file: Option<&Path>,
+        index: &RustIndex,
+    ) -> Option<(PathBuf, MacroBindingSite)> {
         let roots = test_root.map(|root| BTreeSet::from([root.to_path_buf()]));
-        self.workspace_macro_site_in(name, roots.as_ref(), index)
+        self.workspace_macro_site_in(name, roots.as_ref(), test_file, index)
     }
 
     fn workspace_macro_site_in(
         &self,
         name: &str,
         test_roots: Option<&BTreeSet<PathBuf>>,
+        test_file: Option<&Path>,
         index: &RustIndex,
     ) -> Option<(PathBuf, MacroBindingSite)> {
         if !assertion_context_macros().contains(&name) {
             return None;
         }
         self.complete_workspace_site_scan(index);
+        let ancestry = test_file.and_then(|file| {
+            let context = self.execution_context(&file.to_path_buf(), index);
+            module_ancestry(&context, file, self.target_roots(index))
+        });
         let scan = self.workspace_site_scan.borrow();
         let retained = scan.as_ref()?;
         let mut rebinding: Option<&OrderedMacroSite> = None;
@@ -1198,6 +1219,13 @@ impl OwnerPinSyntax {
         for (root, names) in &retained.by_root {
             if test_roots.is_none_or(|roots| roots.contains(root))
                 && let Some(rank) = names.get(name)
+            {
+                merge_macro_site_rank(&mut rebinding, &mut may_rebind, rank);
+            }
+        }
+        for (file, binding) in &retained.by_module {
+            if module_binding_reaches(file, binding, ancestry.as_ref(), test_roots)
+                && let Some(rank) = binding.sites.get(name)
             {
                 merge_macro_site_rank(&mut rebinding, &mut may_rebind, rank);
             }
@@ -1409,6 +1437,7 @@ impl OwnerPinSyntax {
         }
         ambiguous.extend(self.scoped_names_for(test, line));
         ambiguous.extend(self.crate_names_for(test, index));
+        ambiguous.extend(self.module_names_for(test, index));
         Ok(ambiguous)
     }
 
@@ -1802,12 +1831,99 @@ struct WorkspaceMacroSiteIndex {
     /// Per recognized root: the same retention over that root's
     /// crate-local sites; a test consults only its own root.
     by_root: BTreeMap<PathBuf, BTreeMap<String, MacroSiteRank>>,
+    /// Private file-level foreign globs, per declaring file, whose module
+    /// ancestry is established: they reach only that file's own tests and
+    /// the tests of modules declared beneath it.
+    by_module: BTreeMap<PathBuf, ModuleLocalBinding>,
     /// Whether every indexed file contributed. The ambiguity pass stops
     /// after the likely files once every trusted name is already ambiguous
     /// — later files cannot change an admission, but an earlier file's
     /// site can still be the one a refusal names — so the first site
     /// lookup completes the pass once, bounded by the index (#8255).
     complete: bool,
+}
+
+/// What one file's private file-level foreign globs bind (a `use` without
+/// visibility is visible in its module and the modules declared beneath it).
+#[derive(Clone, Debug, Default)]
+struct ModuleLocalBinding {
+    /// The crate roots the file routes to as a crate-local site, or `None`
+    /// for every test. Used only for a test whose own ancestry is unknown,
+    /// which then reads the site exactly as it did before confinement.
+    roots: Option<BTreeSet<PathBuf>>,
+    /// Trusted names the file's globs may rebind.
+    names: BTreeSet<String>,
+    /// The earliest sites per trusted name, for refusal disclosure.
+    sites: BTreeMap<String, MacroSiteRank>,
+}
+
+/// Whether a module-local binding in `file` reaches a test. With the test's
+/// module ancestry the rule is exact: the declaring file is the test's file
+/// or one of its ancestors. Without it the binding keeps its crate-local
+/// reach: every test of its crate roots, or every test when unrooted.
+fn module_binding_reaches(
+    file: &Path,
+    binding: &ModuleLocalBinding,
+    ancestry: Option<&BTreeSet<PathBuf>>,
+    test_roots: Option<&BTreeSet<PathBuf>>,
+) -> bool {
+    match ancestry {
+        Some(ancestors) => ancestors.contains(file),
+        None => match (test_roots, binding.roots.as_ref()) {
+            (Some(test), Some(site)) => !test.is_disjoint(site),
+            _ => true,
+        },
+    }
+}
+
+/// Whether a site can be confined to its file's module subtree: a private
+/// file-level glob in a file with established module composition (no
+/// `include!` fragment among its ancestors, nothing unresolved workspace-wide
+/// that could mount a module through an unrecorded edge) inside a recognized
+/// crate, whose out-of-line modules the producer saw resolve.
+fn module_confined(
+    site: &MacroBindingSite,
+    path: &Path,
+    roots: &TargetRoots,
+    index: &RustIndex,
+) -> bool {
+    site.module_local
+        && site.crate_local
+        && site.scope.is_none()
+        && !roots.disabled
+        && index.execution_context(path).is_some()
+        // An unplaced file may be compiled into any crate (see `roots`), so
+        // only a file inside a recognized crate is confined to its subtree.
+        && roots.roots(path, index).is_some()
+}
+
+/// The files whose module subtree holds `file`: itself and every ancestor
+/// along the approved `mod` edges. `None` when ancestry is not established
+/// (an unresolved composition anywhere, an `include!` fragment, a file with
+/// no execution context).
+fn module_ancestry(
+    context: &Option<ExecutionContext>,
+    file: &Path,
+    roots: &TargetRoots,
+) -> Option<BTreeSet<PathBuf>> {
+    if roots.disabled {
+        return None;
+    }
+    let context = context.as_ref()?;
+    if context
+        .edges
+        .iter()
+        .any(|edge| edge.kind != SourceRoleProvenanceEdgeKind::Module)
+    {
+        return None;
+    }
+    let mut ancestors: BTreeSet<PathBuf> = context.roots.clone();
+    ancestors.insert(file.to_path_buf());
+    for edge in &context.edges {
+        ancestors.insert(edge.parent.clone());
+        ancestors.insert(edge.child.clone());
+    }
+    Some(ancestors)
 }
 
 /// The earliest rebinding site, else the earliest site that only may
@@ -2068,6 +2184,32 @@ impl OwnerPinSyntax {
                 .collect(),
             None => by_root.values().flatten().cloned().collect(),
         }
+    }
+
+    /// Trusted names a private file-level foreign glob makes ambiguous for
+    /// `test`: those declared in the test's own file or a file whose module
+    /// tree holds it. A test whose ancestry is not established reads each
+    /// such glob as a crate-local site, as before the confinement.
+    fn module_names_for(&self, test: &TestSummary, index: &RustIndex) -> Vec<String> {
+        let scan = self.workspace_site_scan.borrow();
+        let Some(by_module) = scan
+            .as_ref()
+            .map(|scan| &scan.by_module)
+            .filter(|by_module| !by_module.is_empty())
+        else {
+            return Vec::new();
+        };
+        let context = self.execution_context(&test.file, index);
+        let roots = self.target_roots(index);
+        let ancestry = module_ancestry(&context, &test.file, roots);
+        let test_roots = roots.roots(&test.file, index);
+        by_module
+            .iter()
+            .filter(|(file, binding)| {
+                module_binding_reaches(file, binding, ancestry.as_ref(), test_roots.as_ref())
+            })
+            .flat_map(|(_, binding)| binding.names.iter().cloned())
+            .collect()
     }
 
     /// Trusted names that a scoped definition or import makes ambiguous for
@@ -2338,9 +2480,38 @@ fn workspace_macro_binding_site(
     roots: &TargetRoots,
     module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
 ) -> Option<(PathBuf, MacroBindingSite)> {
+    workspace_macro_binding_site_for(name, test_root, test_root, index, roots, module_resolved)
+}
+
+/// [`workspace_macro_binding_site`] for a test whose file is not its root.
+#[cfg(test)]
+fn workspace_macro_binding_site_for(
+    name: &str,
+    test_root: Option<&Path>,
+    test_file: Option<&Path>,
+    index: &RustIndex,
+    roots: &TargetRoots,
+    module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
+) -> Option<(PathBuf, MacroBindingSite)> {
     if !assertion_context_macros().contains(&name) {
         return None;
     }
+    // Independent of the production retention: a private file-level glob in
+    // a file with established composition reaches the test's own file and
+    // the files that file's module tree holds, nothing else.
+    let ancestry = test_file.and_then(|file| {
+        if roots.disabled {
+            return None;
+        }
+        let context = index.execution_context(file)?;
+        let mut ancestors: BTreeSet<PathBuf> = context.roots.iter().cloned().collect();
+        ancestors.insert(file.to_path_buf());
+        for edge in &context.edges {
+            ancestors.insert(edge.parent.clone());
+            ancestors.insert(edge.child.clone());
+        }
+        Some(ancestors)
+    });
     // Every file may be parsed for this one name, which was a quarter of a
     // warm `ripr check` on ripr-swarm when run serially. Each file's answer
     // is independent, so files are scanned on the rayon pool in path-ordered
@@ -2351,14 +2522,28 @@ fn workspace_macro_binding_site(
         .files()
         .iter()
         .map(|(path, facts)| {
-            let root = test_root.and_then(|_| roots.roots(path, index));
-            (path, facts, root)
+            let placed = roots.roots(path, index);
+            let root = test_root.and_then(|_| placed.clone());
+            (path, facts, root, placed.is_some())
         })
         .collect();
-    let scan = |(path, facts, root): &(&PathBuf, FileFactsView<'_>, Option<BTreeSet<PathBuf>>)| {
+    let scan = |(path, facts, root, placed): &(
+        &PathBuf,
+        FileFactsView<'_>,
+        Option<BTreeSet<PathBuf>>,
+        bool,
+    )| {
         // The same rule as the decision: a crate-local site in another
         // recognized root does not reach this test.
         let reaches = |site: &MacroBindingSite| {
+            if site.module_local
+                && !roots.disabled
+                && index.execution_context(path).is_some()
+                && *placed
+                && let Some(ancestors) = &ancestry
+            {
+                return ancestors.contains(path.as_path());
+            }
             !site.crate_local
                 || test_root.is_none()
                 || root.as_ref().is_none_or(|site_roots| {
@@ -2394,7 +2579,7 @@ fn workspace_macro_binding_site(
         } else {
             chunk.iter().map(scan).collect()
         };
-        for ((path, _, _), (rebinding, site)) in chunk.iter().zip(per_file) {
+        for ((path, _, _, _), (rebinding, site)) in chunk.iter().zip(per_file) {
             if let Some(site) = rebinding {
                 return Some(((*path).clone(), site));
             }
@@ -2659,6 +2844,16 @@ fn retain_macro_sites(
         if site.scope.is_some() {
             continue;
         }
+        if module_confined(&site, &path, roots, index) {
+            let binding = retained.by_module.entry(path.clone()).or_default();
+            binding.roots = roots.roots(&path, index);
+            binding
+                .sites
+                .entry(name)
+                .or_default()
+                .absorb(&path, position, &site);
+            continue;
+        }
         if let Some(contexts) = site
             .crate_local
             .then(|| roots.roots(&path, index))
@@ -2771,6 +2966,12 @@ fn absorb_macro_sites(
     for (path, name, site) in sites.ambiguities {
         if site.scope.is_some() {
             scoped.entry(path).or_default().push((name, site));
+            continue;
+        }
+        if module_confined(&site, &path, roots, index) {
+            let binding = retained.by_module.entry(path.clone()).or_default();
+            binding.roots = roots.roots(&path, index);
+            binding.names.insert(name);
             continue;
         }
         if let Some(contexts) = site

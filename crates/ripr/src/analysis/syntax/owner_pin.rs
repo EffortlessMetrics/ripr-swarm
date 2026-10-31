@@ -389,6 +389,11 @@ pub(crate) struct MacroBindingSite {
     /// or a non-exported definition. Exported definitions, `pub` imports,
     /// opaque macro arguments and unparsed files may reach other crates.
     pub(crate) crate_local: bool,
+    /// An unscoped private `use` glob: visible only in this file's module and
+    /// the modules declared beneath it, even though `scope` is `None`. A
+    /// consumer that can establish the file's module ancestry may confine the
+    /// site to those descendants; one that cannot treats it as workspace-wide.
+    pub(crate) module_local: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -734,6 +739,7 @@ fn macro_binding_ambiguity_sets(
             kind: MacroBindingKind::Unparsed,
             scope: None,
             crate_local: false,
+            module_local: false,
         };
         let union: NamedMacroSites = trusted
             .iter()
@@ -791,6 +797,7 @@ fn macro_binding_sites_in_tree(
                         kind: kind.clone(),
                         scope: None,
                         crate_local,
+                        module_local: false,
                     },
                 )
             })
@@ -881,6 +888,7 @@ fn macro_binding_sites_in_tree(
                     kind: MacroBindingKind::Import,
                     scope: None,
                     crate_local: false,
+                    module_local: false,
                 },
             ));
         }
@@ -902,6 +910,7 @@ fn macro_binding_sites_in_tree(
                         kind: MacroBindingKind::Definition,
                         scope,
                         crate_local: !is_exported_macro(node),
+                        module_local: false,
                     },
                 ));
             }
@@ -953,6 +962,7 @@ fn macro_binding_sites_in_tree(
                         kind: MacroBindingKind::MacroBody(macro_name.clone()),
                         scope: None,
                         crate_local,
+                        module_local: false,
                     },
                 ));
             }
@@ -1071,6 +1081,7 @@ fn macro_binding_sites_in_tree(
                             kind: MacroBindingKind::MacroArgument(path.syntax().text().to_string()),
                             scope: None,
                             crate_local: false,
+                            module_local: false,
                         },
                     ));
                 }
@@ -1192,7 +1203,39 @@ fn macro_binding_sites_in_tree(
                     let path = import.syntax().text().to_string();
                     let line = line_of(node);
                     let Some(scope) = scope_of(import_scope(&import)) else {
-                        ambiguous.extend(all(line, MacroBindingKind::ForeignGlob(path), private));
+                        // A private file-level glob is visible only in this
+                        // module and its descendants (`module_local`). Its
+                        // descendants are the modules this file declares, so
+                        // every out-of-line declaration must resolve to an
+                        // indexed file; one that does not may lead to a test
+                        // the module edges cannot place beneath this file.
+                        let confined = private
+                            && import
+                                .syntax()
+                                .ancestors()
+                                .last()
+                                .into_iter()
+                                .flat_map(|root| root.descendants())
+                                .filter_map(ast::Module::cast)
+                                .filter(|module| module.item_list().is_none())
+                                .all(|module| {
+                                    module.mod_token().zip(module.name()).is_some_and(
+                                        |(token, name)| {
+                                            let line = lines
+                                                .get_or_init(|| LineIndex::new(source))
+                                                .line(token.text_range().start());
+                                            module_resolved(line, &format!("mod {};", name.text()))
+                                        },
+                                    )
+                                });
+                        ambiguous.extend(
+                            all(line, MacroBindingKind::ForeignGlob(path), private)
+                                .into_iter()
+                                .map(|(name, mut site)| {
+                                    site.module_local = confined;
+                                    (name, site)
+                                }),
+                        );
                         continue;
                     };
                     ambiguous.extend(trusted.iter().map(|name| {
@@ -1203,6 +1246,7 @@ fn macro_binding_sites_in_tree(
                                 kind: MacroBindingKind::ForeignGlob(path.clone()),
                                 scope: Some(scope),
                                 crate_local: private,
+                                module_local: false,
                             },
                         )
                     }));
@@ -1240,6 +1284,7 @@ fn macro_binding_sites_in_tree(
                                 kind,
                                 scope: scope_of(import_scope(&import)),
                                 crate_local: private,
+                                module_local: false,
                             },
                         ));
                     }
@@ -1326,6 +1371,7 @@ fn macro_binding_sites_in_tree(
                             kind: MacroBindingKind::MacroArgument(path.clone()),
                             scope: None,
                             crate_local: false,
+                            module_local: false,
                         },
                     ));
                 }
