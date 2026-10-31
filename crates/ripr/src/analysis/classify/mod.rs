@@ -95,7 +95,8 @@ pub(in crate::analysis) use gap_admission::{
     CALL_BUDGET_SATURATED, DEBUG_ASSERT_EQ_PIN_PREFIX, MIXED_REFUSAL_IS_ANALYZER_LIMIT,
     REFUSALS_ARE_ANALYZER_LIMITS, is_ignored, should_panic_tests_deciding_changed_panic,
     withhold_call_budget_gap, withhold_debug_assertion_gap, withhold_log_capture_gap,
-    withhold_mixed_refusal_gap, withhold_should_panic_gap, withhold_unsupported_gap,
+    withhold_mixed_refusal_gap, withhold_should_panic_gap, withhold_truncated_discovery_gap,
+    withhold_unsupported_gap,
 };
 pub(in crate::analysis) use helper_transfer::{FieldProjectionReceipt, field_projection_receipt};
 pub(in crate::analysis) use helper_transfer::{
@@ -185,8 +186,10 @@ pub(in crate::analysis) use text::{
 // witnessing test (file:line) and the entry public-API symbol.
 pub(in crate::analysis) use transitive_reach::{
     InheritedGraphCounter, MAX_TRANSITIVE_DEPTH, MacroReachWitness, RUST_MACRO_REACH_MESSAGE,
-    RUST_TRANSITIVE_REACH_MESSAGE, TransitiveReachIndex, TransitiveWitness, calls_after_definition,
-    macro_reach_limit_kind, macro_reach_limitation_detail_lines, macro_reach_witness_pointer,
+    RUST_TRAIT_DISPATCH_AMBIGUITY_MESSAGE, RUST_TRANSITIVE_REACH_MESSAGE, TraitDispatchAmbiguity,
+    TransitiveReachIndex, TransitiveWitness, calls_after_definition, macro_reach_limit_kind,
+    macro_reach_limitation_detail_lines, macro_reach_witness_pointer,
+    trait_dispatch_ambiguity_detail_lines, trait_dispatch_ambiguity_pointer,
     transitive_reach_limit_kind, transitive_reach_limitation_detail_lines,
     transitive_reach_witness_pointer,
 };

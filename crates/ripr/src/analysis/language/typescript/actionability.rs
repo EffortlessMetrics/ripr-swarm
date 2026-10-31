@@ -82,7 +82,7 @@ pub(crate) fn typescript_actionability_for(
 
     if matches!(class, ExposureClass::NoStaticPath) {
         return TypeScriptActionability {
-            gap_state: "advisory",
+            gap_state: EvidenceState::Unknown.as_str(),
             category: "missing_context",
             why_not_actionable:
                 "no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route"
@@ -111,7 +111,7 @@ pub(crate) fn typescript_actionability_for(
     // it falls through to the packet-contract branches instead.
     if !has_owner_call_evidence {
         return TypeScriptActionability {
-            gap_state: "advisory",
+            gap_state: EvidenceState::Unknown.as_str(),
             category: "ambiguous_related_test",
             why_not_actionable:
                 "related-test link is heuristic-only and cannot safely borrow extracted assertions as proof"
@@ -134,7 +134,7 @@ pub(crate) fn typescript_actionability_for(
 
     if missing_discriminators.is_empty() {
         return TypeScriptActionability {
-            gap_state: "advisory",
+            gap_state: EvidenceState::Unknown.as_str(),
             category: "missing_target_shape",
             why_not_actionable:
                 "TypeScript preview found related test evidence but cannot name a safe target check or observer shape"
@@ -157,7 +157,7 @@ pub(crate) fn typescript_actionability_for(
     }
 
     TypeScriptActionability {
-        gap_state: "advisory",
+        gap_state: EvidenceState::Unknown.as_str(),
         category: "incomplete_repair_packet",
         why_not_actionable:
             "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"

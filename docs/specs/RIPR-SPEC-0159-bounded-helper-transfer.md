@@ -130,8 +130,17 @@ can only hint that a caller "may lead here" without changing anything.
   `let`, `const`, `static`, block-level `use` or nested `fn`, or a parameter
   (plain or pattern) of the caller; and no hop is a method call, a macro
   argument or a path-qualified call (`a::inner(x)`, `crate::inner(x)`). The
-  entry is called by the test as a bare name, with the same one-call,
-  whole-operand, exact-value assertion form the method pin requires. A hop
+  entry is called by the test as a bare name, or (#9638) through the
+  package's own library path with no `use` (`pkg::entry(..)`,
+  `pkg::module::entry(..)`) when the relation's own-crate authority
+  (`related_tests::own_crate_qualified_entry_path`) establishes that spelling: the
+  test is a `tests/` crate root of the root package, the entry is an item of
+  its library at that module path, and nothing in the test file or body can
+  rebind the crate name (a local module, import, rename, glob import, item
+  macro, `include!` or `let` of it refuses). The pin reads the established path as
+  the entry's operand and adds no resolver of its own. The assertion keeps the
+  same one-call,
+  whole-operand, exact-value form the method pin requires. A hop
   tail forwards the call unchanged, or shifts it by a decimal integer
   literal (`inner(x) + 1`, `1 + inner(x)`, `inner(x) - 1`) when the owner and
   every observed hop caller declare a builtin integer return type that no
@@ -144,8 +153,9 @@ can only hint that a caller "may lead here" without changing anything.
   method projections (`.min(..)`), a branch around the call, a swallowed
   result and a float, string or custom type (`impl Add<i64>`) keep the
   abstention (`propagation_unknown`). Cross-file and cross-crate owners,
-  re-exports, aliases and module-qualified calls are not admitted: the bare
-  name is only trusted where one scope declares it.
+  re-exports, aliases and module-qualified hop calls are not admitted: the
+  bare name is only trusted where one scope declares it. Only the test's call
+  of the entry may be crate-qualified.
 - Diverging unwrap tail (#9638): a hop caller whose tail is exactly
   `<hop call>.unwrap_or_else(<handler>)` forwards the owner's result when
   `<handler>` is a path to a workspace function that only diverges, so the
@@ -749,6 +759,18 @@ Reach on that rewritten finding is `unknown` and the stop reason is
     (`fn passed_in(x, shift: fn(i64) -> i64)`): none is credited
     (`free-call-clamped-tail`, `free-call-swallowed-owner`,
     `free-call-parameter-shadow`; `free_call_return_pin`).
+16. Accept: an entry `plus_one(x)` returning `plus_one_inner(x) + 1`, or an
+    entry `tiers::bumped(x)` returning `bumped_inner(x) + 2` in a child
+    module, called by an integration test that pins `crate_pin::plus_one(5)`
+    or `crate_pin::tiers::bumped(3)` with no `use` (`qualified-pin-root-entry`,
+    `qualified-pin-module-entry`). The verdict is `exposed`.
+17. Reject: the same qualified pin when the entry swallows the owner's result,
+    the test declares, imports, globs or macro-defines a module of the crate's
+    name, or two modules declare the entry's name
+    (`qualified-pin-swallowed-owner`, `qualified-pin-local-module-shadow`,
+    `qualified-pin-glob-shadow`, `qualified-pin-macro-shadow`,
+    `qualified-pin-twin-entry`; `crate_qualified_free_call_pin`): none is
+    credited.
 
 ## Test Mapping
 
@@ -778,6 +800,10 @@ shadowed, path-call, unwrap-tail (including shadowed-name, other-module, other-f
 `#[cfg(test)]`, no-self, macro-hop and other-package controls);
 `crates/ripr/tests/free_call_return_pin.rs` (the free-call entry pin and its
 offset, type, name-binding, scope, test-form and trait-entry controls);
+`crates/ripr/tests/crate_qualified_free_call_pin.rs` (the qualified free-call
+entry pin: crate-root and child-module positives, and the swallowed,
+reshaped, non-pinning-test, rebound-crate-name, duplicated-name, wrong-module,
+trait-entry and cfg-variant controls);
 `crates/ripr/tests/crate_qualified_entry_reach.rs` (own-crate qualified
 entry call, `[lib] name` and hyphen spellings, and each refusal above).
 `crates/ripr/tests/helper_wrapper_reach.rs` (qualified effect refusal and lower

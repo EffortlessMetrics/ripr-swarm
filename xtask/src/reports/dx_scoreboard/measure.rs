@@ -191,6 +191,7 @@ fn measure_corpus_entry(
         "speed.editor_refresh_ms",
         "speed.editor_refresh_unanswered_progress_ms",
         "speed.editor_refresh_peak_rss_mb",
+        "trust.editor_resilience_failures",
         "trust.self_contradictions",
     ];
     let checkout = match prepare_checkout(entry, options) {
@@ -442,6 +443,39 @@ fn measure_corpus_entry(
             });
         }
     }
+
+    samples.push(
+        match editor_refresh::measure_editor_resilience(
+            binary,
+            &checkout,
+            &editor_base,
+            &envs,
+            timeout,
+        ) {
+            Ok(Some(resilience)) => sample(
+                "trust.editor_resilience_failures",
+                SampleOutcome::Value(resilience.failures.len() as f64),
+                if resilience.failures.is_empty() {
+                    format!(
+                        "a burst of saves settled and a terminated server restarted cleanly on `{}`",
+                        resilience.file
+                    )
+                } else {
+                    resilience.failures.join("; ")
+                },
+            ),
+            Ok(None) => sample(
+                "trust.editor_resilience_failures",
+                SampleOutcome::NotMeasured,
+                format!("{editor_base}..HEAD changes no Rust file to open in the editor"),
+            ),
+            Err(err) => sample(
+                "trust.editor_resilience_failures",
+                SampleOutcome::Failed,
+                err,
+            ),
+        },
+    );
 
     let (outcome, detail) = contradiction_outcome(contradictions, &missing_sources);
     samples.push(sample("trust.self_contradictions", outcome, detail));
