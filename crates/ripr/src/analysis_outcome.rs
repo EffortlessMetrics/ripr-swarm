@@ -827,6 +827,17 @@ mod tests {
             assert_eq!(kind.as_str(), expected);
         }
 
+        // The single owner of advisory-disclosure membership: only the two
+        // change-shape disclosures leave an outcome complete.
+        for (kind, _) in limitation_kinds {
+            let advisory = matches!(
+                kind,
+                AnalysisLimitationKind::EolOnlyChurn
+                    | AnalysisLimitationKind::VerificationOnlyChange
+            );
+            assert_eq!(kind.is_advisory_disclosure(), advisory, "{kind:?}");
+        }
+
         let stages = [
             (AnalysisStage::DiffLoad, "diff_load"),
             (AnalysisStage::DiffParse, "diff_parse"),

@@ -70,24 +70,31 @@ Two failures were measured with ripr 0.11.0:
 
 A changed line is **verification-only** when it is one of:
 
-- a contract attribute: `requires`, `ensures`, `modifies`, `invariant`,
-  `variant`, `decreases` or `spec`, bare or through `kani::`,
-  `prusti_contracts::`, `creusot_contracts::`, `creusot_std::`, `contracts::`,
-  `flux_rs::` or `flux::`, with its multi-line span;
-- a Creusot `#[logic]` item (bare or `creusot_contracts::logic`/
-  `creusot_std::logic`, any arguments), from the attribute through the item's
-  closing `}` or `;`;
+- a contract attribute: `requires`, `ensures`, `modifies` or `decreases`
+  (bare, or through `kani::`, `prusti_contracts::`, `creusot_contracts::`,
+  `creusot_std::` or `flux_rs::`), or `invariant`, `variant` or `spec`, which
+  user code often defines itself and so count when spelled through one of those
+  paths or bare in a file that names a verifier crate (`creusot_contracts`,
+  `creusot_std`, `prusti_contracts`, `kani`, `flux_rs`) in code, with its
+  multi-line span. A file that names the runtime `contracts` crate (its
+  attributes expand to `debug_assert!`, which a test can observe) never
+  matches bare, and `contracts::` is not a recognised path;
+- a Creusot `#[logic]` item (through `creusot_contracts::`/`creusot_std::`, or
+  bare in a file that names one of them), any arguments, from the attribute
+  through the item's closing `}` or `;`;
 - a statement-position invocation of `proof_assert!`, `pearlite!`,
   `prusti_assert!`, `prusti_assert_eq!`, `prusti_assert_ne!`,
   `prusti_assume!` or `body_invariant!`, and of `snapshot!` or `ghost!` in a
-  file that names `creusot`.
+  file that names `creusot_contracts` or `creusot_std` in code (comments and
+  strings do not count).
 
 Verification-only lines, on either side of the diff:
 
 1. seed no probe, so they can never become a finding, an actionable gap or a
    repair start;
 2. are counted into one aggregate typed limitation,
-   `verification_only_change`, produced at `probe_generation`, naming the line
+   `verification_only_change`, produced at `probe_generation` (the wire stage
+   token; human output renders that stage as "change point detection"), naming the line
    count, the file count and the files (bounded), with the recovery "re-run the
    verifier (for example cargo kani, cargo creusot or cargo prusti) on the
    affected items; ripr does not evaluate contracts, proofs or ghost code";
@@ -165,3 +172,8 @@ See `.ripr/traceability.d/verification-erased-edits-0368.toml`.
 ## Metrics
 
 - `unit_test_pass_rate`.
+
+Known limit: the disclosure is produced where changed files are probed, so a
+changed file that is absent from the working tree (it already carries
+`changed_file_absent_from_worktree`) or that is not a probe-seeding source role
+is not scanned for verification-only lines.

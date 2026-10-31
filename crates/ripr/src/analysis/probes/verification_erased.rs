@@ -20,32 +20,62 @@ use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::rust_index::{RustIndex, find_file_facts};
 use std::collections::BTreeSet;
 
-/// Specification attributes; the claim is checked by a verifier, not a test.
-const CONTRACT_ATTRIBUTES: &[&str] = &[
-    "requires",
-    "ensures",
-    "modifies",
-    "invariant",
-    "variant",
-    "decreases",
-    "spec",
-];
+/// Specification attributes distinctive enough to trust bare. The runtime
+/// `contracts` crate shares these names, so a file that names it is excluded.
+const CONTRACT_ATTRIBUTES: &[&str] = &["requires", "ensures", "modifies", "decreases"];
 
-/// Items a Creusot build erases outside verification.
+/// Generic words that user code routinely defines as its own attributes; bare,
+/// they count only when the file names a verifier crate.
+const GATED_CONTRACT_ATTRIBUTES: &[&str] = &["invariant", "variant", "spec"];
+
+/// Items a Creusot build erases outside verification (needs a Creusot path).
 const GHOST_ITEM_ATTRIBUTES: &[&str] = &["logic"];
 
-/// Crate paths an attribute may be spelled through. Any other prefix names a
-/// different macro that happens to share a word, and is left alone.
+/// Verifier crates an attribute may be spelled through explicitly. Any other
+/// prefix (including the runtime `contracts` crate, whose attributes expand to
+/// `debug_assert!` a test can observe) names a different macro and is left
+/// alone.
 const ATTRIBUTE_PREFIXES: &[&str] = &[
-    "",
     "kani",
     "prusti_contracts",
     "creusot_contracts",
     "creusot_std",
-    "contracts",
     "flux_rs",
-    "flux",
 ];
+
+/// Which verifier crates a file actually names in code (comments and strings
+/// are masked), and whether it names the runtime `contracts` crate.
+struct Verifiers {
+    creusot: bool,
+    any: bool,
+    runtime_contracts: bool,
+}
+
+impl Verifiers {
+    fn of(masked: &str) -> Self {
+        let creusot =
+            names_crate(masked, "creusot_contracts") || names_crate(masked, "creusot_std");
+        let any = creusot
+            || names_crate(masked, "prusti_contracts")
+            || names_crate(masked, "kani")
+            || names_crate(masked, "flux_rs");
+        Self {
+            creusot,
+            any,
+            runtime_contracts: names_crate(masked, "contracts"),
+        }
+    }
+}
+
+/// True when `name` appears as a whole identifier in `masked`.
+fn names_crate(masked: &str, name: &str) -> bool {
+    let ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    masked.match_indices(name).any(|(at, _)| {
+        let before = at.checked_sub(1).map(|i| masked.as_bytes()[i]);
+        let after = masked.as_bytes().get(at + name.len()).copied();
+        !before.is_some_and(ident) && !after.is_some_and(ident)
+    })
+}
 
 /// Statement macros whose expansion is empty or dead in an ordinary build.
 const GHOST_MACROS: &[&str] = &[
@@ -76,6 +106,7 @@ pub(super) fn verification_only_lines(source: &str) -> BTreeSet<usize> {
     let line_of = |at: usize| line_starts.partition_point(|&start| start <= at);
     let line_end = |at: usize| masked[at..].find('\n').map_or(masked.len(), |n| at + n);
     let mut lines = BTreeSet::new();
+    let verifiers = Verifiers::of(&masked);
 
     for &start in &line_starts {
         let Some(offset) = masked[start..]
@@ -94,19 +125,19 @@ pub(super) fn verification_only_lines(source: &str) -> BTreeSet<usize> {
         let Some(name) = attribute_name(&masked[at + 2..close]) else {
             continue;
         };
-        if is_attribute(&name, CONTRACT_ATTRIBUTES) {
+        if is_contract(&name, &verifiers) {
             // A runtime token after the `]` keeps the whole line ordinary.
             if masked[close + 1..line_end(close)].trim().is_empty() {
                 lines.extend(line_of(at)..=line_of(close));
             }
-        } else if is_attribute(&name, GHOST_ITEM_ATTRIBUTES)
+        } else if is_ghost_item(&name, &verifiers)
             && let Some(end) = item_end(bytes, close + 1)
         {
             lines.extend(line_of(at)..=line_of(end));
         }
     }
 
-    let creusot_file = source.contains("creusot");
+    let creusot_file = verifiers.creusot;
     let names = GHOST_MACROS
         .iter()
         .chain(CREUSOT_GATED_MACROS.iter().filter(|_| creusot_file))
@@ -177,9 +208,31 @@ fn attribute_name(body: &str) -> Option<String> {
     (!path.is_empty()).then_some(path)
 }
 
-fn is_attribute(path: &str, names: &[&str]) -> bool {
+/// Split `path` into its crate prefix (empty when bare) and attribute name.
+/// `None` when the prefix is not a recognised verifier crate.
+fn split_path(path: &str) -> Option<(&str, &str)> {
     let (prefix, name) = path.rsplit_once("::").unwrap_or(("", path));
-    names.contains(&name) && ATTRIBUTE_PREFIXES.contains(&prefix)
+    (prefix.is_empty() || ATTRIBUTE_PREFIXES.contains(&prefix)).then_some((prefix, name))
+}
+
+fn is_contract(path: &str, verifiers: &Verifiers) -> bool {
+    let Some((prefix, name)) = split_path(path) else {
+        return false;
+    };
+    if !prefix.is_empty() {
+        return CONTRACT_ATTRIBUTES.contains(&name) || GATED_CONTRACT_ATTRIBUTES.contains(&name);
+    }
+    (CONTRACT_ATTRIBUTES.contains(&name) && !verifiers.runtime_contracts)
+        || (GATED_CONTRACT_ATTRIBUTES.contains(&name)
+            && verifiers.any
+            && !verifiers.runtime_contracts)
+}
+
+fn is_ghost_item(path: &str, verifiers: &Verifiers) -> bool {
+    let Some((prefix, name)) = split_path(path) else {
+        return false;
+    };
+    GHOST_ITEM_ATTRIBUTES.contains(&name) && (!prefix.is_empty() || verifiers.creusot)
 }
 
 /// Byte offset of the last byte of the item that starts at `from`: the `;` of
@@ -230,7 +283,10 @@ mod tests {
             [1, 2, 3]
         );
         assert_eq!(lines("#[kani::requires(x > 0)]\nfn f(x: i32) {}\n"), [1]);
-        assert_eq!(lines("#[variant(n - i)]\nfn f() {}\n"), [1]);
+        assert_eq!(
+            lines("use creusot_std::prelude::*;\n#[variant(n - i)]\nfn f() {}\n"),
+            [2]
+        );
     }
 
     #[test]
@@ -241,6 +297,13 @@ mod tests {
             "#[pure]\nfn f() -> i32 { 1 }\n",
             "#[requires(x)] fn f() { g(); }\n",
             "#[other::requires(x)]\nfn f() {}\n",
+            "#[contracts::requires(x)]\nfn f() {}\n",
+            "use contracts::*;\n#[requires(x > 0)]\nfn f() {}\n",
+            "#[logic]\nfn f() -> i32 { 1 }\n",
+            "#[invariant(x)]\nfn f() {}\n",
+            "#[spec]\nfn f() {}\n",
+            "// use creusot_std::prelude::*;\n#[logic]\nfn f() -> i32 { 1 }\n",
+            "#[variant(n)]\nfn f() {}\n",
             "#[test]\nfn t() { assert!(true); }\n",
         ] {
             assert!(lines(source).is_empty(), "{source}");
@@ -249,13 +312,16 @@ mod tests {
 
     #[test]
     fn logic_items_are_erased_through_their_closing_brace() {
-        let source = "fn run() {}\n#[logic]\npub fn spec(x: i32) -> i32 {\n    if x > 3 { x } else { 0 }\n}\nfn after() {}\n";
-        assert_eq!(lines(source), [2, 3, 4, 5]);
+        let source = "use creusot_std::prelude::*;\nfn run() {}\n#[logic]\npub fn spec(x: i32) -> i32 {\n    if x > 3 { x } else { 0 }\n}\nfn after() {}\n";
+        assert_eq!(lines(source), [3, 4, 5, 6]);
         assert_eq!(
             lines("#[creusot_contracts::logic(open)]\nfn p() -> bool { true }\n"),
             [1, 2]
         );
-        assert_eq!(lines("#[logic]\nfn decl() -> i32;\nfn run() {}\n"), [1, 2]);
+        assert_eq!(
+            lines("use creusot_std::prelude::*;\n#[logic]\nfn decl() -> i32;\nfn run() {}\n"),
+            [2, 3]
+        );
     }
 
     #[test]

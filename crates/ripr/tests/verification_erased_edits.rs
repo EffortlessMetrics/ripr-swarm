@@ -135,11 +135,17 @@ fn every_recognised_contract_spelling_is_disclosed() -> Result<(), String> {
     for (before, after) in [
         ("#[ensures(result > 0)]", "#[ensures(result > 1)]"),
         ("#[kani::requires(x > 0)]", "#[kani::requires(x > 1)]"),
-        ("#[variant(n - i)]", "#[variant(n - i - 1)]"),
-        ("#[invariant(x >= 0)]", "#[invariant(x >= 1)]"),
         (
-            "#[spec(fn(i32) -> i32)]",
-            "#[spec(fn(i32{v: v > 0}) -> i32)]",
+            "use creusot_std::prelude::*;\n#[variant(n - i)]",
+            "use creusot_std::prelude::*;\n#[variant(n - i - 1)]",
+        ),
+        (
+            "use prusti_contracts::*;\n#[invariant(x >= 0)]",
+            "use prusti_contracts::*;\n#[invariant(x >= 1)]",
+        ),
+        (
+            "use flux_rs::attrs::*;\n#[spec(fn(i32) -> i32)]",
+            "use flux_rs::attrs::*;\n#[spec(fn(i32{v: v > 0}) -> i32)]",
         ),
     ] {
         let old = format!("{before}\npub fn f(x: i32) -> i32 {{\n    x + 1\n}}\n");
@@ -191,7 +197,18 @@ fn a_mixed_diff_keeps_the_runtime_finding_and_adds_the_disclosure() -> Result<()
 
 #[test]
 fn runtime_items_carrying_verifier_words_stay_ordinary() -> Result<(), String> {
-    for attr in ["#[check(ghost)]", "#[trusted]", "#[pure]"] {
+    for attr in [
+        "#[check(ghost)]",
+        "#[trusted]",
+        "#[pure]",
+        // A user-defined attribute that shares a verifier word, no verifier import.
+        "#[logic]",
+        "#[invariant(x)]",
+        "#[variant(x)]",
+        "#[spec]",
+        // The runtime `contracts` crate expands to debug_assert!.
+        "#[contracts::requires(x > 0)]",
+    ] {
         let old = format!("{attr}\npub fn f(x: i32) -> i32 {{\n    x + 1\n}}\n");
         let new = format!("{attr}\npub fn f(x: i32) -> i32 {{\n    x + 2\n}}\n");
         let run = check(&old, &new, TEST)?;
@@ -214,5 +231,15 @@ fn snapshot_and_ghost_names_without_creusot_stay_ordinary() -> Result<(), String
         "{:?}",
         run.json
     );
+    Ok(())
+}
+
+#[test]
+fn a_wholly_replaced_logic_file_is_still_disclosed() -> Result<(), String> {
+    let old = "// a\n// b\n// c\n// d\n// e\n";
+    let new = "use creusot_std::prelude::*;\n#[logic]\npub fn spec(x: i32) -> i32 {\n    x\n}\n";
+    let run = check(old, new, TEST)?;
+    assert!(run.finding_lines().is_empty(), "{:?}", run.json["findings"]);
+    assert_eq!(run.limitation_kinds(), ["verification_only_change"]);
     Ok(())
 }
