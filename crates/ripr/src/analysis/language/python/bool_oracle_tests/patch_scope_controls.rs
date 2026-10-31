@@ -276,3 +276,33 @@ fn canonical_mock_constructors_and_fixture_types_keep_both_exact_pins() {
         );
     }
 }
+
+#[test]
+fn fstring_messages_and_plain_context_names_without_a_patcher_stay_credited() {
+    let owner = "def is_adult(age):\n    return age >= 18\n";
+    for tests in [
+        "from src.rules import is_adult\n\n\ndef test_adult():\n    age = 18\n    assert is_adult(age), f\"age {age} should be adult\"\n    assert not is_adult(17)\n",
+        "from src.rules import is_adult\n\n\ndef test_adult():\n    context = 18\n    assert is_adult(context)\n    assert not is_adult(17)\n",
+    ] {
+        assert_eq!(
+            credited_strengths(owner, tests).last(),
+            Some(&OracleStrength::Strong),
+            "{tests}"
+        );
+    }
+}
+
+#[test]
+fn fstring_and_context_names_with_a_patcher_still_disqualify() {
+    let owner = "def is_adult(age):\n    return age >= 18\n";
+    for tests in [
+        "from src.rules import is_adult\n\n\ndef test_adult(monkeypatch):\n    with monkeypatch.context() as ctx:\n        ctx.setattr('src.rules.is_adult', lambda a: True)\n    assert is_adult(18)\n",
+        "from src.rules import is_adult\n\n\ndef test_adult(monkeypatch):\n    monkeypatch.setattr('src.rules.is_adult', lambda a: True)\n    assert is_adult(18), f\"{18}\"\n",
+    ] {
+        assert_ne!(
+            credited_strengths(owner, tests).last(),
+            Some(&OracleStrength::Strong),
+            "{tests}"
+        );
+    }
+}
