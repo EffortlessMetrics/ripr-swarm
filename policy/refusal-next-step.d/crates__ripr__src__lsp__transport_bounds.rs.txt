@@ -1,0 +1,2 @@
+crates/ripr/src/lsp/transport_bounds.rs|ripr lsp ingress bound: declared Content-Length exceeds the message cap
+crates/ripr/src/lsp/transport_bounds.rs|ripr lsp ingress bound: framing header block exceeds the byte cap

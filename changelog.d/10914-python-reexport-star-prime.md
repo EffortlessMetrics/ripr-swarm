@@ -1,2 +1,0 @@
-<!-- section: Changed -->
-- Python: the package re-export pass now parses each owner file once, on the rayon workers. It used to parse each file twice on the caller (once for `__all__`, once for its top-level bindings) and rescanned the file for dynamic namespace writes once per owner. Measured on 5cf6641's code, warm, 4 cores, with byte-identical output: pandas ecdb4258 went from 11.6–12.0 s to 9.7–9.9 s (peak RSS 549 → 520 MiB), and Django 5c13b5a from 6.7–7.2 s to 5.6–5.7 s (#10914).
