@@ -109,10 +109,12 @@ pub(super) fn build_perl_variant(target_dir: &Path) -> Result<(), String> {
     })
 }
 
+type VariantRunner = dyn Fn(&str, &[&str], &[(&str, &str)]) -> Result<(), String>;
+
 fn build_perl_variant_with(
     target_dir: &Path,
     environment: &[(&str, String)],
-    run: &dyn Fn(&str, &[&str], &[(&str, &str)]) -> Result<(), String>,
+    run: &VariantRunner,
 ) -> Result<(), String> {
     let dir = target_dir.to_str().ok_or_else(|| {
         format!(
