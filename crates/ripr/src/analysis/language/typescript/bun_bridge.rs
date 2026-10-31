@@ -1,6 +1,7 @@
 //! Bun bridge facts and cross-language analysis for the TypeScript preview adapter.
 
 use super::*;
+use crate::domain::EvidenceState;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct TypeScriptBunArrayBufferFact {
@@ -1382,7 +1383,7 @@ pub(crate) fn typescript_bun_cross_language_actionability(
 ) -> TypeScriptActionability {
     match hint.verdict {
         TypeScriptBunBridgeVerdict::TsDiscriminated => TypeScriptActionability {
-            gap_state: "already_observed",
+            gap_state: EvidenceState::AlreadyObserved.as_str(),
             category: "bun_ub_ts_discriminated",
             why_not_actionable: format!(
                 "configured {} TypeScript preview evidence discriminates the profiled boundary; no repair packet should be emitted",
@@ -1396,7 +1397,7 @@ pub(crate) fn typescript_bun_cross_language_actionability(
         TypeScriptBunBridgeVerdict::TsMissingResizable
         | TypeScriptBunBridgeVerdict::TsMissingShared
         | TypeScriptBunBridgeVerdict::TsMissingSharedAndResizable => TypeScriptActionability {
-            gap_state: "static_limitation",
+            gap_state: EvidenceState::StaticLimitation.as_str(),
             category: "cross_language_oracle_visibility_unresolved",
             why_not_actionable: format!(
                 "configured {} TypeScript preview evidence is missing external discriminator(s): {}; placement can name the configured TypeScript test file, but RIPR cannot emit a public repair packet without verification, receipt, and edit-surface evidence",
@@ -1414,7 +1415,7 @@ pub(crate) fn typescript_bun_cross_language_actionability(
                 "the missing TypeScript discriminator in the configured test file plus verify command, receipt command, and edit constraints before repair-packet projection",
         },
         TypeScriptBunBridgeVerdict::TsMissingExternalOracle => TypeScriptActionability {
-            gap_state: "static_limitation",
+            gap_state: EvidenceState::StaticLimitation.as_str(),
             category: "cross_language_oracle_visibility_unresolved",
             why_not_actionable: format!(
                 "configured {} TypeScript preview facts include a partial external observer path, but the callsite or oracle edge is incomplete, so RIPR cannot safely credit the Rust seam or suggest a repair packet",
@@ -1432,7 +1433,7 @@ pub(crate) fn typescript_bun_cross_language_actionability(
                 "external callsite, external oracle, binding or FFI route, verify command, receipt command, raw evidence refs, and edit constraints",
         },
         TypeScriptBunBridgeVerdict::TsMentionNotObserver => TypeScriptActionability {
-            gap_state: "static_limitation",
+            gap_state: EvidenceState::StaticLimitation.as_str(),
             category: "cross_language_oracle_visibility_unresolved",
             why_not_actionable:
                 "maxByteLength or byte-token evidence appears without a Blob input and stable-byte observer, so it cannot be credited to the Rust seam"
@@ -1447,7 +1448,7 @@ pub(crate) fn typescript_bun_cross_language_actionability(
                 "Blob input, stable-byte observer, binding or FFI route, verify command, and raw evidence refs",
         },
         TypeScriptBunBridgeVerdict::BridgeUnknown => TypeScriptActionability {
-            gap_state: "static_limitation",
+            gap_state: EvidenceState::StaticLimitation.as_str(),
             category: "cross_language_oracle_visibility_unresolved",
             why_not_actionable:
                 "TypeScript discriminators are present, but the Rust bridge is unknown and must not be reported as no_static_path"

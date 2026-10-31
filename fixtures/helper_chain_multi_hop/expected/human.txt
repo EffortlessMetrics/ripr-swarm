@@ -15,7 +15,7 @@ Start here:
   Why unknown: the analysis could not determine a static exposure state
   Gap ID (for scripts): gap:rust:src/lib.rs:first_char:static_unknown:static_unknown:let_head=input.chars_.next_.map_or_lit3f_c_c
   Changed behavior: let head = input.chars().next().map_or('?', |c| c);
-  Analyzer limit: No strong discriminator was detected
+  Analyzer limit: No strong assertion was detected
   Related test: tests/classify.rs:4 leading_space_classifies_other
   Next step: Inspect the changed behavior and its existing tests; ripr has not established a test
     gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and
@@ -39,7 +39,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/helper_chain_multi_hop/input --diff <cwd>/fixtures/helper_chain_multi_hop/diff.patch --mode fast probe:src_lib.rs:static_unknown:ea96a27d
   ripr context --root <cwd>/fixtures/helper_chain_multi_hop/input --diff <cwd>/fixtures/helper_chain_multi_hop/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:ea96a27d
-  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: ripr found 3 seams in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full
