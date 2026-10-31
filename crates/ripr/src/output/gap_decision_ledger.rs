@@ -5599,7 +5599,11 @@ mod tests {
         // #10707: `python_boundary_local_rebound_not_credited` keeps a rebound
         // test local unresolved at the boundary, so its weak finding adds one
         // direct-aligned card; `python_boundary_local_input_credited` is exposed.
-        if (direct, no_strong, orthogonal, family_selection) != (20, 27, 30, 1) {
+        // #9185: `python_message_pin_local_no_exposed_credit` is the two-step
+        // `msg = "..."` / `raise Exc(msg)` form of the same downgrade, one more
+        // direct-aligned weak card; `python_message_pin_local_control` is
+        // exposed, no card.
+        if (direct, no_strong, orthogonal, family_selection) != (21, 27, 30, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));
