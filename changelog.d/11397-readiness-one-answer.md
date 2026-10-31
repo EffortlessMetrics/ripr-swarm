@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A weak-test gap with an uncommitted test module now gets one repair-readiness answer. `ripr agent card` no longer prints "Ready to repair." beside "no ready command" when `ripr repair` would refuse; it says why (commit or stash the file) and names the same next command. Its verbose log counts the finding the card was built from instead of "0 findings", a started repair's brief points to `ripr continue` instead of "no bounded repair route", and the MCP gap list gives the same cause as `ripr repair` (#11397, #11381).

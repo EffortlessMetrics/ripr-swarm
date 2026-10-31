@@ -25,7 +25,7 @@ max_lines = 1
 [[ceiling]]
 surface = "check"
 term = "discriminator"
-max_lines = 4
+max_lines = 1
 
 [[ceiling]]
 surface = "golden-human"
@@ -40,7 +40,7 @@ max_lines = 1
 [[ceiling]]
 surface = "golden-human"
 term = "discriminator"
-max_lines = 10
+max_lines = 5
 
 [[ceiling]]
 surface = "golden-human"
@@ -55,7 +55,7 @@ max_lines = 3
 [[ceiling]]
 surface = "golden-human"
 term = "state token"
-max_lines = 5
+max_lines = 1
 
 [[ceiling]]
 surface = "help-agent"
@@ -114,16 +114,6 @@ max_lines = 1
 
 [[ceiling]]
 surface = "pilot"
-term = "seam"
-max_lines = 1
-
-[[ceiling]]
-surface = "repair-commit-first"
-term = "seam"
-max_lines = 1
-
-[[ceiling]]
-surface = "repair-refusal"
 term = "seam"
 max_lines = 1
 

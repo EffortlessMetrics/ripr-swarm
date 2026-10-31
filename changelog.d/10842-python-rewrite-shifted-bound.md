@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- Python: a rewrite that keeps a relational predicate true on the same integers (`amount >= 100` -> `amount > 99`) no longer reads `exposed` from a single test row on the equality point. Python's mutation tool also shifts the bound up by one (`amount > 100`), and for `>` and `<=` that version first differs one step past the equality, so `exposed` now needs a row there as well; otherwise the finding is `weakly_exposed` and names `amount == 100` as the missing discriminator. Behavior changes keep the equality rule (#10842).
