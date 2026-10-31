@@ -3426,7 +3426,9 @@ pub(crate) fn unestablished_cfg_gates_of_fn(
         .descendants()
         .filter_map(ast::Fn::cast)
         .filter(|function| {
-            function.name().is_some_and(|fn_name| fn_name.text() == name)
+            function
+                .name()
+                .is_some_and(|fn_name| fn_name.text() == name)
                 && function
                     .fn_token()
                     .is_some_and(|token| lines.line(token.text_range().start()) == line)

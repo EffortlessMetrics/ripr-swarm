@@ -172,16 +172,15 @@ fn a_gate_the_owner_does_not_share_keeps_the_gap() -> Result<(), String> {
     let feature = "#[cfg(feature = \"v4\")]";
     let test_gate = format!("{feature}\n    #[cfg(test)]");
     let found = finding("", &test_gate, "")?;
-    assert_gap(&found, "owner ungated: the default run never compiles the test");
+    assert_gap(
+        &found,
+        "owner ungated: the default run never compiles the test",
+    );
 
     let found = finding("#[cfg(feature = \"v7\")]", &test_gate, "")?;
     assert_gap(&found, "owner gated by another feature");
 
-    let found = finding(
-        "#[cfg(any())]",
-        "#[cfg(any())]\n    #[cfg(test)]",
-        "",
-    )?;
+    let found = finding("#[cfg(any())]", "#[cfg(any())]\n    #[cfg(test)]", "")?;
     assert_gap(&found, "a shared gate that is provably off");
 
     let found = finding(feature, &test_gate, "#[ignore]")?;
