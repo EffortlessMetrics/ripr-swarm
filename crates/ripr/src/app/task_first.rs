@@ -427,9 +427,10 @@ fn route_not_ready_reason(
     // route, so the bare label stays. The seam inventory this
     // gate reads is Rust-only, so the kind check is also the
     // language check.
-    // No missing fact left once the module blocker is routed means the seam
-    // already has its boundary input (#11466): only the test home is absent,
-    // and the stub adds it, so the predicate route applies there too.
+    // No missing fact left once the module blocker or the owner-call gap is
+    // routed means the seam already has its boundary input (#11466, #11895):
+    // only the test home or the call is absent, and the stub supplies it, so
+    // the predicate route applies there too.
     let boundary_route = match missing_evidence {
         [missing] => {
             missing.starts_with("producer-owned missing discriminator fact: boundary_value")
@@ -3979,11 +3980,15 @@ pub(crate) mod tests {
         // it), and another missing fact means the stub alone is not enough.
         let direct = gate_entry(SeamGripClass::ActivationUnknown, vec![weak_related_test()]);
         let reason = route_not_ready_reason(&direct, "repair route not ready", &activation, root);
-        assert!(!reason.contains("--kind predicate"), "{reason}");
+        assert!(!reason.contains("ripr agent stub"), "{reason}");
         let mut more = activation.clone();
         more.push("incomplete evidence stage: propagation".to_string());
         let reason = route_not_ready_reason(&none, "repair route not ready", &more, root);
-        assert!(!reason.contains("--kind predicate"), "{reason}");
+        assert!(!reason.contains("ripr agent stub"), "{reason}");
+        let mut target = activation.clone();
+        target.push(crate::analysis::repair_route::SAFE_TEST_TARGET_EVIDENCE.to_string());
+        let reason = route_not_ready_reason(&none, "repair route not ready", &target, root);
+        assert!(!reason.contains("ripr agent stub"), "{reason}");
     }
 
     /// #11466: a propagation/observation-unknown seam that a test already runs
