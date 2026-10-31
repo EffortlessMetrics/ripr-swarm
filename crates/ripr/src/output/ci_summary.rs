@@ -49,6 +49,8 @@ type ObjectTest<'a> = dyn Fn(&serde_json::Map<String, Value>) -> Result<bool, Fa
 
 const REPORTS: &str = "target/ripr/reports";
 const START_HERE_JSON: &str = "target/ripr/reports/start-here.json";
+/// Folded policy sections that each read one JSON report.
+const POLICY_REPORTS: usize = 7;
 const START_HERE_MD: &str = "target/ripr/reports/start-here.md";
 const INDEX_JSON: &str = "target/ripr/reports/index.json";
 const INDEX_MD: &str = "target/ripr/reports/index.md";
@@ -101,7 +103,7 @@ pub(crate) fn render_ci_summary(input: &CiSummaryInput) -> Vec<u8> {
         relative: repo_relative_for(&input.root),
         out: Vec::new(),
         attention: false,
-        policy_read: false,
+        policy_reports_read: 0,
     };
     summary.headline();
     summary.start_here();
@@ -188,8 +190,8 @@ struct Summary {
     out: Vec<u8>,
     /// A folded governance section carried a count that is not exactly `0`.
     attention: bool,
-    /// A folded section read a policy JSON report.
-    policy_read: bool,
+    /// How many folded sections read a policy JSON report.
+    policy_reports_read: usize,
 }
 
 impl Summary {
@@ -247,10 +249,12 @@ impl Summary {
         // as clean; anything else stays open or says nothing was read.
         if self.attention {
             self.line("<details open><summary>Policy and governance (advisory; no gate configured; needs attention)</summary>");
-        } else if self.policy_read {
+        } else if self.policy_reports_read == POLICY_REPORTS {
             self.line(
                 "<details><summary>Policy and governance (advisory; no gate configured; no warnings or unknowns)</summary>",
             );
+        } else if self.policy_reports_read > 0 {
+            self.line("<details open><summary>Policy and governance (advisory; no gate configured; some policy reports not found)</summary>");
         } else {
             self.line(
                 "<details><summary>Policy and governance (advisory; no gate configured; no policy reports found)</summary>",
@@ -266,7 +270,7 @@ impl Summary {
     /// parsed with every listed count present and exactly `0` is clean;
     /// unreadable, wrong-shape and missing-count reports need attention.
     fn note_attention(&mut self, doc: &Doc, count_paths: &[&str]) {
-        self.policy_read = true;
+        self.policy_reports_read += 1;
         if count_paths
             .iter()
             .any(|path| doc.strict_count(path) != Some(0))

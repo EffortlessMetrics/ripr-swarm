@@ -1338,6 +1338,24 @@ fn unreadable_wrong_shape_and_missing_counts_are_not_clean() -> TestResult {
 }
 
 #[test]
+fn a_missing_policy_report_keeps_the_fold_open_beside_clean_ones() -> TestResult {
+    let fixture = Fixture::complete("fold-partial")?;
+    write_quiet(&fixture)?;
+    fs::remove_file(
+        fixture
+            .root
+            .join("target/ripr/reports/policy-readiness.json"),
+    )?;
+    let summary = render_gate(&fixture, false)?;
+    assert!(
+        summary.contains("<details open><summary>Policy and governance (advisory; no gate configured; some policy reports not found)"),
+        "{summary}"
+    );
+    assert!(!summary.contains(CLEAN), "{summary}");
+    Ok(())
+}
+
+#[test]
 fn no_policy_reports_is_neither_clean_nor_open() -> TestResult {
     let fixture = Fixture::new("fold-none")?;
     let summary = render_gate(&fixture, false)?;

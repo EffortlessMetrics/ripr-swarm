@@ -1532,8 +1532,9 @@ The fold stays open ("needs attention") when a folded report is unreadable,
 has an unexpected shape, omits an expected count, or states a warning,
 unknown, blocker, config-error, stale or ownerless-suppression count that is
 not `0`. It folds with the "no warnings or unknowns" label only when every
-report parsed with all expected counts at `0`, and says "no policy reports
-found" when none was read. First-run status rows
+one of the seven reports parsed with all expected counts at `0`; it stays
+open ("some policy reports not found") when only some were read, and says
+"no policy reports found" when none was read. First-run status rows
 whose value is only the `not_available` placeholder are omitted, and the
 start-here packet is named as a file in the `ripr-reports` artifact rather than
 a `target/` path. The summary then continues with
