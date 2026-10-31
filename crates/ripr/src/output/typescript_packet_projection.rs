@@ -275,11 +275,10 @@ impl TargetAssertionShape {
                 operand,
                 ..
             } => Some(format!(
-                "boundary operand `{operand}` in the missing discriminator \
-                 `{discriminator}` is not bound to a concrete value by the observed \
-                 call input `{observed_call}`, so that input is not shown to hit it; \
-                 derive an input where `{discriminator}` holds before the packet is \
-                 delegatable"
+                "derive an input where `{discriminator}` holds before the packet is \
+                 delegatable: boundary operand `{operand}` is not bound to a concrete \
+                 value by the observed call input `{observed_call}`, so that input is \
+                 not shown to hit it"
             )),
         }
     }

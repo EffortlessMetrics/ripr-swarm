@@ -26,9 +26,10 @@ The TypeScript preview adapter:
 - Emits no `typescript_boundary_parameters` evidence
 - Fails the packet closed through the shared validator:
   `repair_packet_ready: false` and no `typescript_repair_packet`
-- The default human Start-here line says the packet is not ready because
-  boundary operand `threshold` is not bound to a concrete value by the
-  observed call input `discount(50, 100)`
+- The default human Start-here line says the packet is not ready and leads
+  with the remedy, `derive an input where `amount == threshold` holds`, before
+  the cause (boundary operand `threshold` is not bound by the observed call
+  input `discount(50, 100)`), so the line budget never cuts the remedy
 
 ## Must Not
 
