@@ -283,6 +283,13 @@ fn verdict_changers(finding: &Finding, owner_signature: Option<&str>) -> Vec<Str
             ProbeFamily::SideEffect | ProbeFamily::CallDeletion => {
                 format!("use an input that enters `{}`", fact.value)
             }
+            // #11147: a returned error variant under an unentered guard.
+            _ if fact
+                .reason
+                .starts_with(crate::domain::GUARD_UNENTERED_REASON_PREFIX) =>
+            {
+                format!("use an input that enters `{}`", fact.value)
+            }
             _ => format!("use an input that reaches `{}`", fact.value),
         });
     }
