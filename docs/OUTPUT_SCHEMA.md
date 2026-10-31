@@ -1091,7 +1091,7 @@ keep their existing documents byte for byte; they are not members of this
 vocabulary.
 
 An `analysis_timeout` refusal of `ripr check` renders at refusal generation
-`"0.3"` and adds one optional key, `input_context` (RIPR-SPEC-0241 amendment
+`"0.3"` and adds one required key, `input_context` (RIPR-SPEC-0241 amendment
 #10796); every other identity keeps generation `"0.2"` and the exact key set
 above, and a timeout refusal with no stashed projection (a library caller that
 never registered the capture) also keeps `"0.2"`. `input_context` has three
@@ -1112,8 +1112,8 @@ producing stage, so an interrupted intake keeps
 `recovery` carries at most one bounded action. For a replayable input it is
 `retry_with_larger_budget`: a shell-safe literal command preserving the
 meaningful root/source/base/scope/output choices and the effective analysis
-settings that change the finding set (`--mode` when the mode is not the CLI
-default, `--no-unchanged-tests` when unchanged tests were excluded, and the
+settings that change the finding set (the effective `--mode`, including draft,
+`--no-unchanged-tests` when unchanged tests were excluded, and the
 explicit `--perl-facts`/`--suppression-policy` paths) so the retry
 reproduces the requested analysis; the command carries the raw root path
 (the check-JSON `root` echo is the `display_path` spelling and escapes `%`),

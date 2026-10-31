@@ -345,8 +345,8 @@ enters the document") are amended, not silently violated, for one identity:
   `display_path` echo, which escapes `%` and would name another directory),
   an explicit base, an explicit `--worktree` / `--committed` / `--diff` /
   candidate selection, the scope patterns, the effective analysis settings
-  that change the finding set (`--mode` when the mode is not the CLI
-  default, `--no-unchanged-tests` when unchanged tests were excluded, and
+  that change the finding set (the effective `--mode`, including draft,
+  `--no-unchanged-tests` when unchanged tests were excluded, and
   the explicit `--perl-facts` / `--suppression-policy` paths) so the retry
   reproduces the requested analysis, the output selection (the explicit
   `--format VALUE` spelling when one was given, otherwise `--json` when the
@@ -379,7 +379,7 @@ enters the document") are amended, not silently violated, for one identity:
   input metadata.
 - Strict readers: generation `0.2` documents keep the closed key set of the
   pre-amendment contract; generation `0.3` documents keep that key set plus
-  the optional `input_context` key. The published machine schemas split the
+  the required `input_context` key. The published machine schemas split the
   same way: `schemas/ripr/check.schema.json` keeps pinning generation `0.2`
   and `schemas/ripr/check-timeout-refusal.schema.json` pins `0.3` with
   `input_context` required, so every emitted refusal has a published schema
@@ -390,38 +390,8 @@ enters the document") are amended, not silently violated, for one identity:
 
 ## Test Mapping (Amendment #10796)
 
-- `crates/ripr/src/analysis/input_facts.rs::captured_facts_round_trip_and_merge_across_producers`
-- `crates/ripr/src/analysis/input_facts.rs::early_deadline_leaves_the_slot_empty`
-- `crates/ripr/src/analysis/input_facts.rs::facts_published_at_or_after_the_deadline_stamp_are_masked`
-- `crates/ripr/src/analysis/input_facts.rs::publish_without_capture_is_a_no_op`
-- `crates/ripr/src/analysis/input_facts.rs::source_labels_stay_distinct_from_analysis_mode`
-- `crates/ripr/src/cli/commands/check_budget.rs::budget_timeout_before_discovery_retains_no_input_facts`
-- `crates/ripr/src/cli/commands/check_budget.rs::budget_timeout_after_published_input_facts_retains_them`
-- `crates/ripr/src/cli/commands/check_budget.rs::budget_timeout_facts_cover_committed_and_supplied_diff_modes`
-- `crates/ripr/src/app/timeout_refusal.rs::late_timeout_marks_published_facts_available`
-- `crates/ripr/src/app/timeout_refusal.rs::early_timeout_marks_every_fact_unpublished`
-- `crates/ripr/src/app/timeout_refusal.rs::requested_echo_distinguishes_source_from_analysis_mode`
-- `crates/ripr/src/app/timeout_refusal.rs::quoted_roots_and_refs_stay_shell_safe`
-- `crates/ripr/src/app/timeout_refusal.rs::supplied_diff_retry_repeats_the_diff_and_never_broadens`
-- `crates/ripr/src/app/timeout_refusal.rs::explicit_source_flags_and_scope_are_preserved`
-- `crates/ripr/src/app/timeout_refusal.rs::auto_selected_worktree_states_rereads_instead_of_fake_flags`
-- `crates/ripr/src/app/timeout_refusal.rs::human_text_covers_late_and_early_timeouts`
-- `crates/ripr/src/app/timeout_refusal.rs::stash_take_and_clear_are_scoped_to_one_projection`
-- `crates/ripr/src/app/timeout_refusal.rs::post_deadline_facts_read_unavailable_and_are_named_in_human_text`
-- `crates/ripr/src/app/timeout_refusal.rs::explicit_format_is_preserved_and_occupied_output_dir_is_disclosed`
-- `crates/ripr/src/app/timeout_refusal.rs::stdin_diff_gets_no_literal_retry_command`
-- `crates/ripr/src/app/timeout_refusal.rs::retry_repeats_analysis_settings_that_change_the_finding_set`
-- `crates/ripr/src/app/timeout_refusal.rs::percent_root_retry_names_the_raw_path`
-- `crates/ripr/src/app/timeout_refusal.rs::interrupted_intake_keeps_the_deadline_reason_in_json`
-- `crates/ripr/src/analysis/input_facts.rs::interrupted_intake_keeps_its_deadline_reason_distinct`
-- `crates/ripr/src/cli/commands/check_budget.rs::budget_timeout_loader_published_but_intake_interrupted_keeps_the_deadline_reason`
-- `crates/ripr/src/app/timeout_refusal.rs::auto_selected_format_and_output_stay_absent`
-- `crates/ripr/src/app/timeout_refusal.rs::committed_and_worktree_rereads_name_every_live_ref`
-- `crates/ripr/src/output/limited_check.rs::timeout_refusal_with_stashed_context_renders_input_context_at_generation_0_3`
-- `crates/ripr/src/output/limited_check.rs::timeout_refusal_without_context_keeps_the_pre_amendment_bytes`
-- `crates/ripr/src/output/limited_check.rs::early_timeout_marks_every_resolved_fact_unavailable`
-- `crates/ripr/src/output/limited_check.rs::non_timeout_refusals_ignore_a_stale_stash`
-- `crates/ripr/tests/cli_smoke.rs::check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery`
+The [traceability slice](../../.ripr/traceability.d/10796-timeout-refusal-input-context.toml)
+lists the input-facts, budget, refusal, output and CLI controls for this amendment.
 
 ## Implementation Mapping (Amendment #10796)
 

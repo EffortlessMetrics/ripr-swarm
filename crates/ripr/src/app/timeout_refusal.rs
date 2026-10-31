@@ -108,48 +108,24 @@ fn is_stdin_diff(diff_file: Option<&std::path::Path>) -> bool {
 /// `published_after_deadline` — never `available`. Only the fact's own
 /// producer stage may upgrade a missing fact to `not_computed_for_source`
 /// (#10796 review): an interrupted intake must keep the deadline reason.
-fn fact_string(value: Option<&str>, producer_published: bool, post_deadline: bool) -> Value {
-    if post_deadline {
-        return json!({
-            "available": false,
-            "reason": "published_after_deadline",
-        });
-    }
-    match value {
-        Some(value) => json!({"available": true, "value": value}),
-        None if producer_published => json!({
-            "available": false,
-            "reason": "not_computed_for_source",
-        }),
-        None => json!({
-            "available": false,
-            "reason": "not_published_before_deadline",
-        }),
-    }
-}
-
-fn fact_count(
-    value: Option<usize>,
+fn fact<T: serde::Serialize>(
+    value: Option<T>,
     producer_published: bool,
     post_deadline: bool,
-    producer: &str,
+    producer: Option<&str>,
 ) -> Value {
     if post_deadline {
-        return json!({
-            "available": false,
-            "reason": "published_after_deadline",
-        });
+        return json!({"available": false, "reason": "published_after_deadline"});
     }
     match value {
-        Some(value) => json!({"available": true, "value": value, "producer": producer}),
-        None if producer_published => json!({
-            "available": false,
-            "reason": "not_computed_for_source",
-        }),
-        None => json!({
-            "available": false,
-            "reason": "not_published_before_deadline",
-        }),
+        Some(value) => match producer {
+            Some(producer) => json!({"available": true, "value": value, "producer": producer}),
+            None => json!({"available": true, "value": value}),
+        },
+        None if producer_published => {
+            json!({"available": false, "reason": "not_computed_for_source"})
+        }
+        None => json!({"available": false, "reason": "not_published_before_deadline"}),
     }
 }
 
@@ -364,32 +340,35 @@ impl TimeoutRefusalProjection {
             },
         });
         let resolved = json!({
-            "effective_base": fact_string(
+            "effective_base": fact(
                 facts.and_then(|facts| facts.effective_base.as_deref()),
                 loader_published,
                 mask.is_some_and(|mask| mask.effective_base.is_some()),
+                None,
             ),
-            "base_commit": fact_string(
+            "base_commit": fact(
                 facts.and_then(|facts| facts.resolved_base_commit.as_deref()),
                 loader_published,
                 mask.is_some_and(|mask| mask.resolved_base_commit.is_some()),
+                None,
             ),
-            "merge_base": fact_string(
+            "merge_base": fact(
                 facts.and_then(|facts| facts.merge_base_origin.as_deref()),
                 loader_published,
                 mask.is_some_and(|mask| mask.merge_base_origin.is_some()),
+                None,
             ),
-            "scoped_changed_files": fact_count(
+            "scoped_changed_files": fact(
                 facts.and_then(|facts| facts.scoped_changed_file_count),
                 intake_published,
                 mask.is_some_and(|mask| mask.scoped_changed_file_count.is_some()),
-                "scoped-diff-intake",
+                Some("scoped-diff-intake"),
             ),
-            "out_of_scope_files": fact_count(
+            "out_of_scope_files": fact(
                 facts.and_then(|facts| facts.out_of_scope_file_count),
                 intake_published,
                 mask.is_some_and(|mask| mask.out_of_scope_file_count.is_some()),
-                "scoped-diff-intake",
+                Some("scoped-diff-intake"),
             ),
         });
         let recovery = if is_stdin_diff(self.diff_file.as_deref()) {
@@ -1010,41 +989,32 @@ mod tests {
     fn retry_preserves_explicit_draft_over_configured_deep() -> Result<(), String> {
         let config = crate::config::parse_config_diagnostic("[analysis]\nmode = \"deep\"\n")
             .map_err(|error| error.message.clone())?;
-        let mut original = input("repo", None, None);
-        crate::config::apply_to_check_input(
-            &mut original,
-            &config,
-            crate::config::CheckInputExplicit {
-                mode: true,
-                ..Default::default()
-            },
-        );
-        assert_eq!(original.mode, Mode::Draft);
-        let command = bare(
-            &original,
-            requested(InputSource::Committed),
-            Duration::from_secs(45),
-            false,
-        )
-        .recovery_command();
-        assert!(
-            command.contains("--mode draft"),
-            "retry must preserve explicit draft: {command}"
-        );
-        let mut configured = input("repo", None, None);
-        crate::config::apply_to_check_input(&mut configured, &config, Default::default());
-        assert_eq!(configured.mode, Mode::Deep);
-        let command = bare(
-            &configured,
-            requested(InputSource::Committed),
-            Duration::from_secs(45),
-            false,
-        )
-        .recovery_command();
-        assert!(
-            command.contains("--mode deep"),
-            "configured deep must also survive: {command}"
-        );
+        for (explicit, expected_mode, expected_flag) in [
+            (true, Mode::Draft, "--mode draft"),
+            (false, Mode::Deep, "--mode deep"),
+        ] {
+            let mut input = input("repo", None, None);
+            crate::config::apply_to_check_input(
+                &mut input,
+                &config,
+                crate::config::CheckInputExplicit {
+                    mode: explicit,
+                    ..Default::default()
+                },
+            );
+            assert_eq!(input.mode, expected_mode);
+            let command = bare(
+                &input,
+                requested(InputSource::Committed),
+                Duration::from_secs(45),
+                false,
+            )
+            .recovery_command();
+            assert!(
+                command.contains(expected_flag),
+                "effective mode must survive: {command}"
+            );
+        }
         Ok(())
     }
 
@@ -1203,35 +1173,33 @@ mod tests {
         // #10796 review (NIT 3): a committed diff is the <base>...HEAD range,
         // so both endpoint refs are live; a working-tree retry re-resolves
         // the merge base, which reads the base ref and HEAD as well.
-        let committed = bare(
-            &input("repo", Some("origin/main"), None),
-            requested(InputSource::Committed),
-            Duration::from_mins(1),
-            false,
-        );
-        assert_eq!(
-            committed.input_context_value()["recovery"]["rereads"],
-            json!(["base-ref", "head-ref"])
-        );
-        let committed_default = bare(
-            &input("repo", None, None),
-            requested(InputSource::Committed),
-            Duration::from_mins(1),
-            false,
-        );
-        assert_eq!(
-            committed_default.input_context_value()["recovery"]["rereads"],
-            json!(["base-ref", "head-ref", "default-base-resolution"])
-        );
-        let worktree = bare(
-            &input("repo", Some("origin/main"), None),
-            requested(InputSource::WorkingTree),
-            Duration::from_mins(1),
-            false,
-        );
-        assert_eq!(
-            worktree.input_context_value()["recovery"]["rereads"],
-            json!(["worktree-bytes", "base-ref", "head-ref"])
-        );
+        for (base, source, expected) in [
+            (
+                Some("origin/main"),
+                InputSource::Committed,
+                json!(["base-ref", "head-ref"]),
+            ),
+            (
+                None,
+                InputSource::Committed,
+                json!(["base-ref", "head-ref", "default-base-resolution"]),
+            ),
+            (
+                Some("origin/main"),
+                InputSource::WorkingTree,
+                json!(["worktree-bytes", "base-ref", "head-ref"]),
+            ),
+        ] {
+            let projection = bare(
+                &input("repo", base, None),
+                requested(source),
+                Duration::from_mins(1),
+                false,
+            );
+            assert_eq!(
+                projection.input_context_value()["recovery"]["rereads"],
+                expected
+            );
+        }
     }
 }

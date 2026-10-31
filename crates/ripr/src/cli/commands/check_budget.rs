@@ -350,38 +350,41 @@ mod tests {
         );
     }
 
-    #[test]
-    fn budget_timeout_before_discovery_retains_no_input_facts() -> Result<(), String> {
-        // #10796 decisive control, early timeout: the worker is stuck before
-        // any producer publishes. The deadline is injected (50 ms), never
-        // derived from wall-clock observation, and the refusal must read as
-        // "no input facts" — an empty capture slot, not fabricated zeroes.
-        let slot: crate::analysis::InputFactsSlot =
-            std::sync::Arc::new(std::sync::Mutex::new(None));
+    // Exercise the real budget worker and preserve each test's published facts.
+    fn timed_capture(
+        budget: Duration,
+        publish: impl FnOnce() + Send + 'static,
+    ) -> Result<crate::analysis::InputFactsSlot, String> {
+        let slot = std::sync::Arc::new(std::sync::Mutex::new(None));
         let result: Result<u32, _> = run_with_budget(
-            Some(Duration::from_millis(50)),
+            Some(budget),
             Some(&slot),
             || {},
-            || {
-                // Stuck between checkpoints: no loader, no intake, only a
-                // would-be progress heartbeat — which cannot establish
-                // discovery by contract.
-                loop {
-                    if crate::analysis::cancellation::checkpoint_typed().is_err() {
-                        break;
-                    }
+            move || {
+                publish();
+                while crate::analysis::cancellation::checkpoint_typed().is_ok() {
                     std::thread::sleep(Duration::from_millis(5));
                 }
                 Ok(1)
             },
         );
         let Err(error) = result else {
-            return Err("a stuck pre-discovery worker must hit the budget".to_string());
+            return Err("the stalled worker must hit the budget".to_string());
         };
         assert_eq!(
             error.check_failure_kind(),
             Some(CheckFailureKind::AnalysisTimeout)
         );
+        Ok(slot)
+    }
+
+    #[test]
+    fn budget_timeout_before_discovery_retains_no_input_facts() -> Result<(), String> {
+        // #10796 decisive control, early timeout: the worker is stuck before
+        // any producer publishes. The deadline is injected (50 ms), never
+        // derived from wall-clock observation, and the refusal must read as
+        // "no input facts" — an empty capture slot, not fabricated zeroes.
+        let slot = timed_capture(Duration::from_millis(50), || {})?;
         if crate::analysis::published_input_facts(&slot).is_some() {
             return Err("no fact may be retained before its producer completed".to_string());
         }
@@ -390,49 +393,21 @@ mod tests {
 
     #[test]
     fn budget_timeout_after_published_input_facts_retains_them() -> Result<(), String> {
-        // #10796 decisive control, late timeout: the loader and intake facts
-        // were published before the worker stalled, so the refusal may retain
-        // exactly those facts — and only those, unmasked, because they
-        // published before the stamped deadline. The budget is 500ms, not
-        // 50ms (#10796 review): the deadline is stamped before the worker
-        // spawns, so a slow thread start on a loaded host would record the
-        // pre-deadline publishes post-deadline and fail the unmasked
-        // assertion below for scheduling reasons, not behavior. The worker
-        // exits within milliseconds of cancellation, so the wider budget
-        // adds little test time.
-        let slot: crate::analysis::InputFactsSlot =
-            std::sync::Arc::new(std::sync::Mutex::new(None));
-        let result: Result<u32, _> = run_with_budget(
-            Some(Duration::from_millis(500)),
-            Some(&slot),
-            || {},
-            || {
-                crate::analysis::publish_loaded_input_facts(
-                    crate::analysis::InputSource::WorkingTree,
-                    &crate::analysis::LoadedDiff {
-                        text: String::new(),
-                        effective_base: Some("origin/main".to_string()),
-                        resolved_base_commit: Some("06e6aea".to_string()),
-                        merge_base_origin: Some("4d3c2b1".to_string()),
-                    },
-                );
-                crate::analysis::publish_scoped_intake_facts(6, 2);
-                loop {
-                    if crate::analysis::cancellation::checkpoint_typed().is_err() {
-                        break;
-                    }
-                    std::thread::sleep(Duration::from_millis(5));
-                }
-                Ok(1)
-            },
-        );
-        let Err(error) = result else {
-            return Err("a stalled post-discovery worker must hit the budget".to_string());
-        };
-        assert_eq!(
-            error.check_failure_kind(),
-            Some(CheckFailureKind::AnalysisTimeout)
-        );
+        // Retain both producers' facts without a post-deadline mask. The 500ms
+        // budget allows for a slow worker start after the deadline is stamped;
+        // the worker exits shortly after cancellation (#10796).
+        let slot = timed_capture(Duration::from_millis(500), || {
+            crate::analysis::publish_loaded_input_facts(
+                crate::analysis::InputSource::WorkingTree,
+                &crate::analysis::LoadedDiff {
+                    text: String::new(),
+                    effective_base: Some("origin/main".to_string()),
+                    resolved_base_commit: Some("06e6aea".to_string()),
+                    merge_base_origin: Some("4d3c2b1".to_string()),
+                },
+            );
+            crate::analysis::publish_scoped_intake_facts(6, 2);
+        })?;
         let captured = crate::analysis::published_input_facts(&slot)
             .ok_or("published facts must be retained for the refusal")?;
         let facts = &captured.facts;
@@ -464,39 +439,18 @@ mod tests {
         // When only the load stage published, the renderer must keep
         // `not_published_before_deadline` for the counts instead of the false
         // `not_computed_for_source`.
-        let slot: crate::analysis::InputFactsSlot =
-            std::sync::Arc::new(std::sync::Mutex::new(None));
-        let result: Result<u32, _> = run_with_budget(
-            Some(Duration::from_millis(500)),
-            Some(&slot),
-            || {},
-            || {
-                crate::analysis::publish_loaded_input_facts(
-                    crate::analysis::InputSource::WorkingTree,
-                    &crate::analysis::LoadedDiff {
-                        text: String::new(),
-                        effective_base: Some("origin/main".to_string()),
-                        resolved_base_commit: Some("06e6aea".to_string()),
-                        merge_base_origin: None,
-                    },
-                );
-                // The intake never runs: the budget fires inside it.
-                loop {
-                    if crate::analysis::cancellation::checkpoint_typed().is_err() {
-                        break;
-                    }
-                    std::thread::sleep(Duration::from_millis(5));
-                }
-                Ok(1)
-            },
-        );
-        let Err(error) = result else {
-            return Err("a stalled worker must hit the budget".to_string());
-        };
-        assert_eq!(
-            error.check_failure_kind(),
-            Some(CheckFailureKind::AnalysisTimeout)
-        );
+        let slot = timed_capture(Duration::from_millis(500), || {
+            crate::analysis::publish_loaded_input_facts(
+                crate::analysis::InputSource::WorkingTree,
+                &crate::analysis::LoadedDiff {
+                    text: String::new(),
+                    effective_base: Some("origin/main".to_string()),
+                    resolved_base_commit: Some("06e6aea".to_string()),
+                    merge_base_origin: None,
+                },
+            );
+            // The intake never runs: the budget fires inside it.
+        })?;
         let captured = crate::analysis::published_input_facts(&slot)
             .ok_or("loader facts must be retained for the refusal")?;
         assert!(

@@ -5307,6 +5307,7 @@ fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery() -> 
         "base_commit",
         "merge_base",
         "scoped_changed_files",
+        "out_of_scope_files",
     ] {
         let fact = &value["input_context"]["resolved"][fact];
         if fact["available"] != false || fact["reason"] != "not_published_before_deadline" {

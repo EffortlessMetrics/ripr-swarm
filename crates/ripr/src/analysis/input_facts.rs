@@ -70,6 +70,24 @@ pub(crate) struct PublishedInputFacts {
     pub(crate) out_of_scope_file_count: Option<usize>,
 }
 
+impl PublishedInputFacts {
+    /// Prefer each newly published value while retaining fields not republished.
+    fn over(self, previous: Self) -> Self {
+        Self {
+            source: self.source.or(previous.source),
+            effective_base: self.effective_base.or(previous.effective_base),
+            resolved_base_commit: self.resolved_base_commit.or(previous.resolved_base_commit),
+            merge_base_origin: self.merge_base_origin.or(previous.merge_base_origin),
+            scoped_changed_file_count: self
+                .scoped_changed_file_count
+                .or(previous.scoped_changed_file_count),
+            out_of_scope_file_count: self
+                .out_of_scope_file_count
+                .or(previous.out_of_scope_file_count),
+        }
+    }
+}
+
 /// Facts captured for a deadline refusal, with the post-deadline mask. The
 /// budget owner stamps the deadline when the run starts; a producer that
 /// publishes at or after that stamp (a worker finishing inside the cancel
@@ -147,64 +165,17 @@ fn publish(facts: PublishedInputFacts, stage: InputFactsStage) {
             return;
         };
         let merged = published.take().unwrap_or_default();
-        // First writer wins on the value; a later publish cannot overwrite a
-        // before-deadline fact, and a before-deadline publish cannot un-mark
-        // a field an earlier grace-window publish masked. The stage flags are
-        // monotone and record before-deadline completions only.
-        let mask_source = if post_deadline { facts.source } else { None };
-        let mask_effective_base = if post_deadline {
-            facts.effective_base.clone()
+        // New values take precedence; stage flags and the deadline mask are
+        // monotone across publications. Keep the value and mask merge identical.
+        let mask = if post_deadline {
+            facts.clone()
         } else {
-            None
-        };
-        let mask_resolved_base_commit = if post_deadline {
-            facts.resolved_base_commit.clone()
-        } else {
-            None
-        };
-        let mask_merge_base_origin = if post_deadline {
-            facts.merge_base_origin.clone()
-        } else {
-            None
-        };
-        let mask_scoped_changed_file_count = if post_deadline {
-            facts.scoped_changed_file_count
-        } else {
-            None
-        };
-        let mask_out_of_scope_file_count = if post_deadline {
-            facts.out_of_scope_file_count
-        } else {
-            None
+            PublishedInputFacts::default()
         };
         let published_before_deadline = !post_deadline;
         *published = Some(CapturedInputFacts {
-            facts: PublishedInputFacts {
-                source: facts.source.or(merged.facts.source),
-                effective_base: facts.effective_base.or(merged.facts.effective_base),
-                resolved_base_commit: facts
-                    .resolved_base_commit
-                    .or(merged.facts.resolved_base_commit),
-                merge_base_origin: facts.merge_base_origin.or(merged.facts.merge_base_origin),
-                scoped_changed_file_count: facts
-                    .scoped_changed_file_count
-                    .or(merged.facts.scoped_changed_file_count),
-                out_of_scope_file_count: facts
-                    .out_of_scope_file_count
-                    .or(merged.facts.out_of_scope_file_count),
-            },
-            post_deadline: PublishedInputFacts {
-                source: mask_source.or(merged.post_deadline.source),
-                effective_base: mask_effective_base.or(merged.post_deadline.effective_base),
-                resolved_base_commit: mask_resolved_base_commit
-                    .or(merged.post_deadline.resolved_base_commit),
-                merge_base_origin: mask_merge_base_origin
-                    .or(merged.post_deadline.merge_base_origin),
-                scoped_changed_file_count: mask_scoped_changed_file_count
-                    .or(merged.post_deadline.scoped_changed_file_count),
-                out_of_scope_file_count: mask_out_of_scope_file_count
-                    .or(merged.post_deadline.out_of_scope_file_count),
-            },
+            facts: facts.over(merged.facts),
+            post_deadline: mask.over(merged.post_deadline),
             loader_published: merged.loader_published
                 || (published_before_deadline && matches!(stage, InputFactsStage::DiffLoad)),
             intake_published: merged.intake_published
@@ -298,7 +269,8 @@ mod tests {
                 InputSource::WorkingTree,
                 &loaded(Some("main"), Some("abc123"), Some("def456")),
             );
-            publish_scoped_intake(6, 2);
+            publish_scoped_intake(5, 2);
+            publish_scoped_intake(6, 2); // The later publication wins.
         });
         let captured = published(&slot).ok_or("published facts must be retained")?;
         let facts = &captured.facts;

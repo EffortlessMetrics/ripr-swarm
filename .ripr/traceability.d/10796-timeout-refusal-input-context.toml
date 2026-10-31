@@ -33,7 +33,6 @@ tests = [
   "crates/ripr/src/app/timeout_refusal.rs::committed_and_worktree_rereads_name_every_live_ref",
   "crates/ripr/src/output/limited_check.rs::timeout_refusal_with_stashed_context_renders_input_context_at_generation_0_3",
   "crates/ripr/src/output/limited_check.rs::timeout_refusal_without_context_keeps_the_pre_amendment_bytes",
-  "crates/ripr/src/output/limited_check.rs::early_timeout_marks_every_resolved_fact_unavailable",
   "crates/ripr/src/output/limited_check.rs::non_timeout_refusals_ignore_a_stale_stash",
   "crates/ripr/tests/cli_smoke.rs::check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery",
 ]
