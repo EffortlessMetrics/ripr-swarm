@@ -18,8 +18,8 @@ use crate::output::pilot::commands::{
     repair_start_command,
 };
 use crate::output::pilot::ranking::{
-    actionable_in_change, actionable_in_owner, actionable_total, top_actionable_seams,
-    withheld_static_limitations,
+    actionable_in_change, actionable_in_owner, actionable_total, routable_total,
+    top_actionable_seams, withheld_static_limitations,
 };
 use crate::output::pilot::types::PilotPythonFirstUseStatus;
 use crate::output::pilot::{
@@ -750,9 +750,10 @@ fn render_pilot_terminal_with_target(
         // can still be ineligible, and offering a repair transaction there
         // would promise a target `agent repair` refuses. The closing block
         // uses the same builder, so the two lines cannot disagree (#3906).
-        if let Some(command) = repair_start_command(context.root, entry) {
+        let repair_command = repair_start_command(context.root, entry);
+        if let Some(command) = repair_command.as_deref() {
             out.push_str(&format!("  repair this gap: {command}\n"));
-            if let Some(form) = crate::output::markdown::powershell_text_variant(&command) {
+            if let Some(form) = crate::output::markdown::powershell_text_variant(command) {
                 out.push_str(&format!("  (PowerShell) {form}\n"));
             }
         } else if !outline.is_not_applicable() {
@@ -763,6 +764,12 @@ fn render_pilot_terminal_with_target(
             out.push_str(&format!(
                 "  repair this gap: {TERMINAL_NO_REPAIR_START_LINE}\n"
             ));
+        }
+        // #11292: the top gap has no repair route. When no gap in the whole
+        // list has one either, say so, so one gap's "no test file" line is not
+        // read as bad luck with the pick, and name the real remedy.
+        if repair_command.is_none() && routable_total(classified) == 0 {
+            out.push_str(&format!("  repair route: {NO_ROUTABLE_GAP_NOTE}\n"));
         }
         out.push('\n');
         outline.is_not_applicable()
@@ -1685,6 +1692,13 @@ fn terminal_why_line(entry: &ClassifiedSeam) -> String {
     }
     terminal_grip_phrase(entry.class).to_string()
 }
+
+/// Shown when no actionable gap has a repair route (#11292). The remedy is the
+/// real one: the tests such a crate has (out-of-line `mod tests;` files such as
+/// `src/tests.rs`, doctests, tests that only reach private code through the
+/// public API) are not places the repair attempt may edit, so the loop
+/// cannot start; the work is by hand.
+const NO_ROUTABLE_GAP_NOTE: &str = "none of the gaps pilot found has a route to a repair attempt, so ripr will not start one (for example, the tests live in `src/tests.rs`-style `mod tests;` files or doctests, which are not repair targets); add the tests by hand, for example in the crate's existing test module or under `tests/`, then compare with `ripr check` and `ripr outcome`";
 
 const TERMINAL_NO_REPAIR_TARGET_TEST: &str = "none: `ripr agent repair` has no test file to use for this gap (for example, the only tests are inline `#[cfg(test)]` in a file outside the test paths, or live in another crate), so it will not start a repair here";
 

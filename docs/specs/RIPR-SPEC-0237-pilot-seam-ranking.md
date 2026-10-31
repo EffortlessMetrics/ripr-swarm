@@ -24,6 +24,8 @@ Linked issues:
 - #5411 (pilot ranked unresolved reach as the top gap; closed)
 - #5497 (rank canonical actionability, withhold unresolved-reach
   limitations; open)
+- #11292 (pilot headlines a gap the repair loop cannot start from on
+  `src/tests.rs`-layout crates)
 
 Linked PRs:
 
@@ -228,6 +230,25 @@ walk follows the rank key, and the second sort is stable. Paths are
 compared after `/` normalization, so the order is the same on Windows and
 Unix.
 
+### Repair-route preference
+
+Within a current-change bucket, a seam that has a repair route leads a seam
+that does not, ahead of the class order (#11292). The route is
+`repair_start_command_for(entry, ".").is_some()`: the repair-packet flip
+plus an edit target the cage can route. The ranking reads that shared
+owner and never re-derives it, so the preference only reorders; it cannot
+make a seam repairable. The bucket key becomes
+(in change, no route), then class rank, then round.
+
+The reason is a user-facing one: on crates whose tests live in `mod tests;`
+files (`src/tests.rs`) or doctests, the top-ranked gap had no route while a
+routable gap ranked lower, so the headline promised a loop that could not
+start. When no actionable seam has a route and the top seam has no repair start,
+the terminal's Top recommendation block adds one line, `  repair route: none
+of the gaps pilot found has a route to a repair attempt, ...`, that names
+the by-hand remedy. The Markdown ranked list already says "None of these
+seams can start a repair attempt". JSON gains no field.
+
 ### Composition with other rankings
 
 A later ranking bucket that must lead the class (for example #5480's
@@ -378,7 +399,10 @@ unless stated. Output lists `file:line` in final order. "today" is main
    `src/b.rs:5` (unchanged).
 7. Evidence precedence. `W src/a.rs f 1 [a]`, `W src/b.rs g 1 [r]`,
    `W src/c.rs h 1 [m]`, `W src/d.rs k 1 [r,a]`; N = 4: `c`, `d`, `b`, `a`
-   (unchanged).
+   (unchanged by class and evidence alone; since #11292 a seam with a
+   repair route, such as `a` with its producer-owned target, leads the
+   seams without one, so the buildable variant in the test ranks `a` ahead
+   of `b`).
 8. Path and line order. `W src/z.rs f 1`, `W src/ab.rs g 1`,
    `W src/a/b.rs h 1`, `W src/a.rs p 10`, `W src/a.rs q 9`; N = 5:
    `src/a.rs:9`, `src/a.rs:10`, `src/a/b.rs:1`, `src/ab.rs:1`,
@@ -449,6 +473,13 @@ unless stated. Output lists `file:line` in final order. "today" is main
     owner-count field.
 26. Input order does not matter. Every permutation of example 13's input
     gives example 13's output.
+27. Route beats class. `W src/a.rs f 10 [m,r]` with no repair route,
+    `W src/pricing.rs g 88` with a repair route (a `tests/` target); N = 2:
+    `src/pricing.rs:88`, `src/a.rs:10` (today `a:10`, `pricing:88`).
+28. No route anywhere. `W src/a.rs f 10 [m,r]`, `U src/b.rs g 20 [m]`,
+    neither routable: the terminal's Top recommendation block ends with
+    `  repair route: none of the gaps pilot found has a route to a repair
+    attempt, ...`; the order is unchanged.
 
 ## Test Mapping
 
@@ -478,6 +509,9 @@ unless stated. Output lists `file:line` in final order. "today" is main
   for example 24).
 - Existing: `crates/ripr/src/cli/commands/pilot.rs`
   `pilot_rejects_non_positive_max_seams`.
+- Added by #11292, `crates/ripr/src/output/pilot/tests.rs`:
+  `pilot_headline_prefers_a_gap_that_has_a_repair_route` (example 27) and
+  `pilot_says_plainly_when_no_gap_has_a_repair_route` (example 28).
 - Planned: one unit test per remaining example (4 to 9, 13 to 16, 18, 21
   to 26). Example 13 fails under per-class rounds.
 

@@ -2198,6 +2198,75 @@ fn pilot_offers_agent_repair_only_past_the_repair_packet_flip() -> Result<(), St
     Ok(())
 }
 
+/// #11292: a gap with a repair route outranks one without, because a headline
+/// the repair loop cannot start from reads as a broken loop. The unroutable seam
+/// sorts first by file name alone, so only the route preference can put the
+/// routable one on top; the preference reads the shared repair-start owner.
+#[test]
+fn pilot_headline_prefers_a_gap_that_has_a_repair_route() -> Result<(), String> {
+    use crate::output::evidence_record::repair_start_command_for;
+
+    let unroutable = classified_with(
+        SeamGripClass::WeaklyGripped,
+        "src/a.rs",
+        10,
+        vec![missing()],
+        vec![related_test()],
+    );
+    let routable = route_ready_entry(&["tests/pricing.rs"]);
+    if repair_start_command_for(&unroutable, ".").is_some() {
+        return Err("fixture: the a.rs seam must have no repair route".to_string());
+    }
+    if repair_start_command_for(&routable, ".").is_none() {
+        return Err("fixture: the pricing seam must have a repair route".to_string());
+    }
+    let entries = [unroutable, routable];
+    let ranked = top_actionable_seams(&entries, 2, None);
+    assert_eq!(
+        ranked_places(&ranked),
+        ranked_places(&[&entries[1], &entries[0]])
+    );
+
+    let artifacts = pilot_artifacts();
+    let terminal = render_pilot_terminal(&entries, pilot_context(&artifacts));
+    assert!(terminal.contains("src/pricing.rs:88"), "{terminal}");
+    assert!(!terminal.contains("repair route:"), "{terminal}");
+    Ok(())
+}
+
+/// #11292: when no actionable gap has a repair route, the terminal says so
+/// plainly with the by-hand remedy, instead of leaving the lone "no test file"
+/// line on the top seam to speak for the whole list. (The Markdown ranked list
+/// already carries "None of these seams can start a repair attempt".)
+#[test]
+fn pilot_says_plainly_when_no_gap_has_a_repair_route() {
+    let first = classified_with(
+        SeamGripClass::WeaklyGripped,
+        "src/a.rs",
+        10,
+        vec![missing()],
+        vec![related_test()],
+    );
+    let second = classified_with(
+        SeamGripClass::Ungripped,
+        "src/b.rs",
+        20,
+        vec![missing()],
+        Vec::new(),
+    );
+    let entries = [first, second];
+    let artifacts = pilot_artifacts();
+    let terminal = render_pilot_terminal(&entries, pilot_context(&artifacts));
+    assert!(
+        terminal.contains(
+            "  repair route: none of the gaps pilot found has a route to a repair attempt, so ripr will not start one"
+        ),
+        "{terminal}"
+    );
+    assert!(terminal.contains("add the tests by hand"), "{terminal}");
+    assert_eq!(terminal.matches("repair route:").count(), 1, "{terminal}");
+}
+
 /// The repair-start line family follows the canonical pilot decision (#6986):
 /// an eligible top seam yields a pilot-delegated stop whose route is the
 /// printed command, and the negative control (a seam past the flip) yields a

@@ -1,6 +1,7 @@
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::seams::SeamGripClass;
 use crate::output::agent_seam_packets::suggested_assertion_for_classified_seam;
+use crate::output::evidence_record::repair_start_command_for;
 use crate::output::path::display_path;
 use crate::output::pilot::PilotCurrentChange;
 use std::collections::BTreeMap;
@@ -16,10 +17,24 @@ pub(crate) fn top_actionable_seams<'a>(
 ) -> Vec<&'a ClassifiedSeam> {
     let in_change =
         |entry: &ClassifiedSeam| current_change.is_some_and(|change| change.touches(entry));
+    // #11292: inside each current-change bucket a seam with a repair route
+    // leads one without. The headline otherwise promised a gap on crates (the
+    // regex-family `src/tests.rs` layout) where the ranked top seam could never
+    // start `ripr agent repair`, while a routable seam sat lower in the list.
+    // The route is decided by the shared repair-start owner, never re-derived
+    // here, so this only reorders and cannot widen what is offered.
     let mut actionable = classified
         .iter()
         .filter(|entry| class_rank(entry.class).is_some())
-        .map(|entry| (bool_rank(in_change(entry)), entry))
+        .map(|entry| {
+            (
+                (
+                    bool_rank(in_change(entry)),
+                    bool_rank(has_repair_route(entry)),
+                ),
+                entry,
+            )
+        })
         .collect::<Vec<_>>();
     // The rank key holds `suggested_assertion_for_classified_seam`, which
     // derives repair-route readiness from the seam's evidence; computing it
@@ -134,6 +149,22 @@ pub(super) fn withheld_static_limitations(classified: &[ClassifiedSeam]) -> usiz
     classified
         .iter()
         .filter(|entry| entry.class.is_static_limitation())
+        .count()
+}
+
+/// Whether `ripr agent repair` can start from this seam: the same fail-closed
+/// owner every repair-start surface asks (`repair_start_command_for`: the
+/// repair-packet flip plus an edit target the cage can route).
+fn has_repair_route(entry: &ClassifiedSeam) -> bool {
+    repair_start_command_for(entry, ".").is_some()
+}
+
+/// Actionable seams that have a repair route. Zero with a nonzero
+/// [`actionable_total`] means the headline gap can only be closed by hand.
+pub(super) fn routable_total(classified: &[ClassifiedSeam]) -> usize {
+    classified
+        .iter()
+        .filter(|entry| class_rank(entry.class).is_some() && has_repair_route(entry))
         .count()
 }
 

@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr pilot` no longer headlines a gap the repair loop cannot start from when a routable gap exists: inside each current-change group, a gap with a repair route (the shared `repair_start_command_for` decision) now ranks ahead of one without. When no gap at all has a route, as on crates whose tests live in `src/tests.rs` `mod tests;` files or doctests, the terminal and `pilot-summary.md` say so plainly with the by-hand remedy instead of leaving one "no test file" line on the top gap to speak for the list (#11292).
