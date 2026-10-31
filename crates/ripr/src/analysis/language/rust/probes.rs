@@ -15,6 +15,81 @@ use crate::analysis::probes::{
 };
 use crate::domain::{ExposureClass, Finding, Probe, StaticLimitKind, StopReason};
 
+/// RIPR-SPEC-0369: a changed line inside a `verus! { .. }` token tree is Verus
+/// syntax, not Rust. The probe seeder already emits one `static_unknown` probe
+/// per region; this names the limitation. It never changes the class, so the
+/// finding stays non-actionable and no test is credited.
+pub(super) fn apply_verus_macro_region_limit(
+    finding: &mut Finding,
+    probe: &Probe,
+    index: &RustIndex,
+    changed: &crate::analysis::diff::ChangedFile,
+) {
+    if probe.family != crate::domain::ProbeFamily::StaticUnknown
+        || finding.class != ExposureClass::StaticUnknown
+        || finding.static_limit_kind.is_some()
+    {
+        return;
+    }
+    let Some(facts) = crate::analysis::rust_index::find_file_facts(index, &changed.path) else {
+        return;
+    };
+    // A removed-side probe carries the new-file coordinate of the deleted
+    // line, so its region lives in the reconstructed old source at the line's
+    // old-side number; an added-side probe is looked up in the new source.
+    let removed_side = probe.after.is_none() && probe.before.is_some();
+    let (region, side) = if removed_side {
+        let before = probe.before.as_deref().unwrap_or_default().trim();
+        let Some(old_line) = changed
+            .removed_lines
+            .iter()
+            .find(|line| line.new_side_line == probe.location.line && line.text.trim() == before)
+            .map(|line| line.line)
+        else {
+            return;
+        };
+        let Some(old_source) =
+            crate::analysis::diff::reconstruct_old_source(&facts.source, changed)
+        else {
+            return;
+        };
+        (
+            crate::analysis::probes::verus_region_lines(&old_source, old_line),
+            " of the old file",
+        )
+    } else {
+        (
+            crate::analysis::probes::verus_region_lines(&facts.source, probe.location.line),
+            "",
+        )
+    };
+    let Some((start, end)) = region else {
+        return;
+    };
+    finding.static_limit_kind = Some(StaticLimitKind::UnsupportedSyntax);
+    finding.stop_reasons.push(StopReason::ProcMacroOpaque);
+    finding.evidence.push(
+        "limitation: verus_macro_region_unsupported; the changed line is inside a `verus! { .. }` token tree, which ripr does not parse as Rust".to_string(),
+    );
+    finding.evidence.push(format!(
+        "limitation_last_established_edge: `verus!` invocation spanning lines {start}-{end}{side}"
+    ));
+    finding.evidence.push(
+        "limitation_first_unresolved_edge: Verus syntax inside the macro (enclosing function, spec/proof/exec mode and test reach)".to_string(),
+    );
+    finding
+        .evidence
+        .push("limitation_analyzer_route: analysis/verus-macro-region".to_string());
+    finding.evidence.push(
+        "limitation_non_claim: named analyzer limitation only; no test reach, assertion discrimination or specification adequacy is established or denied, and ripr does not run the verifier"
+            .to_string(),
+    );
+    finding.recommended_next_step = Some(
+        "This change is inside `verus!`; ripr cannot judge it. Run the Verus verifier for spec and proof edits; no test is requested by this finding."
+            .to_string(),
+    );
+}
+
 /// #8479: disclose the field-selector boundary without altering any proof leg.
 pub(super) fn apply_rust_field_match_selector_limit(
     finding: &mut Finding,
@@ -793,6 +868,145 @@ mod tests {
             alignment_reason: None,
             source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
         }
+    }
+
+    fn verus_index(source: &str) -> RustIndex {
+        RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files: std::collections::BTreeMap::from([(
+                PathBuf::from("src/lib.rs"),
+                crate::analysis::FileFacts {
+                    path: PathBuf::from("src/lib.rs"),
+                    source: source.into(),
+                    ..crate::analysis::FileFacts::default()
+                },
+            )]),
+            ..Default::default()
+        })
+    }
+
+    /// RIPR-SPEC-0369: a static-unknown probe inside `verus! { .. }` is named,
+    /// keeps its class, credits nothing and requests no test; the same probe
+    /// outside the block, or of another family, is untouched.
+    #[test]
+    fn verus_region_limit_names_the_region_and_changes_nothing_else() {
+        let source = "fn plain(x: u32) -> u32 { x }\nverus! {\nfn inc(x: u32) -> (r: u32)\n    requires x < 10,\n    ensures r == x + 1,\n{\n    x + 1\n}\n}\n";
+        let index = verus_index(source);
+        let mut inside = static_unknown_finding("ensures r == x + 1,", "src/lib.rs::inc");
+        inside.probe.family = ProbeFamily::StaticUnknown;
+        inside.probe.location.line = 5;
+        let probe = inside.probe.clone();
+        let related = inside.related_tests.clone();
+        super::apply_verus_macro_region_limit(&mut inside, &probe, &index, &verus_changed(&[]));
+        assert_eq!(inside.class, ExposureClass::StaticUnknown);
+        assert_eq!(
+            inside.static_limit_kind,
+            Some(StaticLimitKind::UnsupportedSyntax)
+        );
+        assert_eq!(inside.stop_reasons, vec![StopReason::ProcMacroOpaque]);
+        assert_eq!(
+            inside.related_tests, related,
+            "no related test is rewritten"
+        );
+        assert!(
+            inside
+                .evidence
+                .iter()
+                .any(|line| line.contains("verus_macro_region_unsupported")),
+            "{:?}",
+            inside.evidence
+        );
+        assert!(
+            inside
+                .evidence
+                .iter()
+                .any(|line| line.contains("spanning lines 2-9")),
+            "{:?}",
+            inside.evidence
+        );
+        let step = inside.recommended_next_step.as_deref().unwrap_or_default();
+        assert!(step.contains("Verus verifier") && step.contains("no test is requested"));
+
+        let untouched = |family: ProbeFamily, line: usize| {
+            let mut finding = static_unknown_finding("x", "src/lib.rs::plain");
+            finding.probe.family = family;
+            finding.probe.location.line = line;
+            let probe = finding.probe.clone();
+            let before = serde_json::to_value(&finding).ok();
+            super::apply_verus_macro_region_limit(
+                &mut finding,
+                &probe,
+                &index,
+                &verus_changed(&[]),
+            );
+            serde_json::to_value(&finding).ok() == before
+        };
+        assert!(
+            untouched(ProbeFamily::StaticUnknown, 1),
+            "outside the block"
+        );
+        assert!(
+            untouched(ProbeFamily::Predicate, 5),
+            "not a static-unknown probe"
+        );
+    }
+
+    fn verus_changed(removed: &[(usize, usize, &str)]) -> crate::analysis::diff::ChangedFile {
+        crate::analysis::diff::ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: Vec::new(),
+            removed_lines: removed
+                .iter()
+                .map(
+                    |(line, new_side_line, text)| crate::analysis::diff::ChangedLine {
+                        line: *line,
+                        new_side_line: *new_side_line,
+                        text: (*text).to_string(),
+                    },
+                )
+                .collect(),
+        }
+    }
+
+    /// RIPR-SPEC-0369: a removed-only edit is looked up in the old source at
+    /// the old-side line, not at the new-side coordinate the probe carries.
+    #[test]
+    fn verus_region_limit_resolves_a_removed_line_in_the_old_source() {
+        // New file: the `ensures` line is gone, so the deleted line's
+        // new-side coordinate (5) now holds the function's `{`.
+        let new_source = "fn plain(x: u32) -> u32 { x }\nverus! {\nfn inc(x: u32) -> (r: u32)\n    requires x < 10,\n{\n    x + 1\n}\n}\nfn tail() {}\n";
+        let index = verus_index(new_source);
+        let changed = verus_changed(&[(5, 5, "ensures r == x + 1,")]);
+        let mut finding = static_unknown_finding("ensures r == x + 1,", "src/lib.rs::inc");
+        finding.probe.family = ProbeFamily::StaticUnknown;
+        finding.probe.location.line = 5;
+        finding.probe.before = Some("ensures r == x + 1,".to_string());
+        finding.probe.after = None;
+        let probe = finding.probe.clone();
+        super::apply_verus_macro_region_limit(&mut finding, &probe, &index, &changed);
+        assert_eq!(
+            finding.static_limit_kind,
+            Some(StaticLimitKind::UnsupportedSyntax)
+        );
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|line| line.contains("spanning lines 2-9 of the old file")),
+            "{:?}",
+            finding.evidence
+        );
+
+        // A removed line outside any old-side region stays untouched even when
+        // its new-side coordinate falls inside the new file's region.
+        let changed = verus_changed(&[(1, 5, "let gone = 1;")]);
+        let mut outside = static_unknown_finding("let gone = 1;", "src/lib.rs::plain");
+        outside.probe.family = ProbeFamily::StaticUnknown;
+        outside.probe.location.line = 5;
+        outside.probe.before = Some("let gone = 1;".to_string());
+        outside.probe.after = None;
+        let probe = outside.probe.clone();
+        super::apply_verus_macro_region_limit(&mut outside, &probe, &index, &changed);
+        assert_eq!(outside.static_limit_kind, None);
     }
 
     fn owner_function(id: &str, name: &str, body: &str) -> FunctionSummary {

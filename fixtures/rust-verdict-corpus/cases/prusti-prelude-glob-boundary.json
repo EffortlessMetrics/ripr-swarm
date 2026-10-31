@@ -1,0 +1,43 @@
+{
+  "case_id": "prusti-prelude-glob-boundary",
+  "subject_id": "authored-verification-prelude",
+  "diff": "cases/prusti-prelude-glob-boundary.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 7
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "exact_assert_eq",
+  "hard_case": "The file imports `use prusti_contracts::*;`, the recommended glob of a verification framework. A glob from outside the workspace may bring in a different assert_eq!, but prusti-contracts 0.3.3 exports no assertion macro, so the exact assertion beside a plain registry dependency still discriminates the changed addend.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "amount + 6",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests::the_fee_is_added",
+        "equivalence_review": "the edit itself: with_fee(10) returns 16 and the test requires 15"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "the_fee_is_added requires with_fee(10) == 15, so the edit of the flat fee from 5 to 6 fails it. The file globs prusti_contracts, whose published export list holds no assert_eq or assert_ne macro, and the dependency is the plain registry package, so ripr credits the exact assertion (RIPR-SPEC-0369).",
+  "labeling_observation": {
+    "ripr_commit": "d9aad4a25 + RIPR-SPEC-0369 prelude glob",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [],
+    "excerpt_parity": "matched"
+  }
+}
