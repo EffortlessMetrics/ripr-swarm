@@ -184,6 +184,14 @@ pub(crate) fn workspace_has_inspectable_source(root: &Path) -> bool {
     workspace::has_inspectable_source_file(root)
 }
 
+/// Whether the root is not a workspace ripr can inspect: no `Cargo.toml` and
+/// no source file in any language ripr reads. The single owner of this verdict
+/// (#11395): `ripr pilot` refuses on it and `ripr status` withholds the pilot
+/// command on it, so the two cannot disagree.
+pub(crate) fn root_has_no_inspectable_workspace(root: &Path) -> bool {
+    !(root.join("Cargo.toml").is_file() || workspace_has_inspectable_source(root))
+}
+
 /// Re-export workspace Rust file discovery for the output layer so it can
 /// check whether a workspace has any Rust source.
 pub(crate) fn workspace_rust_files(root: &Path) -> Vec<PathBuf> {
