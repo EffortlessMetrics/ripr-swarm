@@ -1,0 +1,2 @@
+crates/ripr/src/atomic_file.rs|refusing to write ripr output: cannot enumerate {}: {error}
+crates/ripr/src/atomic_file.rs|refusing to write ripr output: {} {problem} (workspace {}). \              A repository can check in a link to

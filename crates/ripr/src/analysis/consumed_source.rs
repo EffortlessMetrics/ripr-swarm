@@ -193,15 +193,15 @@ impl CustodyRefusal {
             }
             Self::FindingsUnobserved(path) => format!(
                 "the findings producer has no captured observation of `{}`",
-                path.display()
+                shown(path)
             ),
             Self::InventoryUnobserved(path) => format!(
                 "the seam inventory has no captured observation of `{}`",
-                path.display()
+                shown(path)
             ),
             Self::Moved(path) => format!(
                 "`{}` changed between the findings pass and the seam inventory pass",
-                path.display()
+                shown(path)
             ),
             Self::Drifted(path) => format!(
                 "`{}` changed on disk after the snapshot captured it",
@@ -209,6 +209,12 @@ impl CustodyRefusal {
             ),
         }
     }
+}
+
+/// Repo-relative paths read with `/` separators in every user-facing reason,
+/// on Windows too, matching how the rest of the output names files.
+fn shown(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 fn is_normal_relative_path(path: &Path) -> bool {
@@ -221,6 +227,22 @@ fn is_normal_relative_path(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #11444: a refusal names the changed file with `/` separators on every
+    /// host (a Windows path arrives with `\`).
+    #[test]
+    fn refusal_reasons_name_paths_with_forward_slashes() {
+        let path = || PathBuf::from("src\\lib.rs");
+        for refusal in [
+            CustodyRefusal::FindingsUnobserved(path()),
+            CustodyRefusal::InventoryUnobserved(path()),
+            CustodyRefusal::Moved(path()),
+        ] {
+            let text = refusal.describe();
+            assert!(text.contains("`src/lib.rs`"), "{text}");
+            assert!(!text.contains('\\'), "{text}");
+        }
+    }
 
     #[test]
     fn raw_encoding_and_conflicting_observations_remain_distinct() -> Result<(), String> {
