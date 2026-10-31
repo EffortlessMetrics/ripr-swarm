@@ -1385,6 +1385,9 @@ pub(crate) fn held_inline_reason(file: &str) -> String {
 pub(crate) struct CardStartHold {
     pub(crate) reason: String,
     pub(crate) next: Option<String>,
+    /// The bash command `next` names, so a plain-text surface can print its
+    /// PowerShell pair beside it.
+    pub(crate) command: Option<String>,
 }
 
 pub(crate) fn card_start_hold(
@@ -1394,16 +1397,25 @@ pub(crate) fn card_start_hold(
 ) -> Option<CardStartHold> {
     let refusal = repair_start_refusal_for_entry(root, entry, policy)?;
     let seam_id = entry.seam.id().as_str();
-    let next = held_inline_target(root, &repair_packet_eligibility(entry).readiness).map(|file| {
-        format!(
-            "commit or stash `{file}`, then run `ripr repair {} --root {}`",
+    let held = held_inline_target(root, &repair_packet_eligibility(entry).readiness).map(|file| {
+        let command = format!(
+            "ripr repair {} --root {}",
             shell_arg(seam_id),
             shell_arg(&bound_root(&root.to_string_lossy()))
+        );
+        (
+            format!("commit or stash `{file}`, then run `{command}`"),
+            command,
         )
     });
+    let (next, command) = match held {
+        Some((next, command)) => (Some(next), Some(command)),
+        None => (None, None),
+    };
     Some(CardStartHold {
         reason: refusal.reason,
         next,
+        command,
     })
 }
 

@@ -557,13 +557,18 @@ pub(crate) fn agent_card_plain_lines(
         _ if hold_with_next.is_some() => {
             if let Some(next) = hold_with_next.and_then(|hold| hold.next.as_ref()) {
                 lines.push(format!("  Next: {next}"));
+                if let Some(command) = hold_with_next.and_then(|hold| hold.command.as_deref()) {
+                    lines.extend(powershell_pair(command));
+                }
             }
         }
         // No runnable command of the card's own, a repair not yet started,
         // and the start gate holds nothing: the one next step is the repair
         // start itself (#11397), the command the pilot printed.
         _ if ready && !started && !own_route => {
-            lines.push(format!("  Next: {}", start_command()));
+            let command = start_command();
+            lines.push(format!("  Next: {command}"));
+            lines.extend(powershell_pair(&command));
         }
         // A started attempt with no stop of its own: the next step is the
         // attempt's, not "no ready command" (#11381).
@@ -575,11 +580,13 @@ pub(crate) fn agent_card_plain_lines(
                 }) =>
         {
             if let Some(attempt) = &card.attempt {
-                lines.push(format!(
-                    "  Next: write the test, then run `ripr continue --root {} --attempt {}`",
+                let command = format!(
+                    "ripr continue --root {} --attempt {}",
                     root_arg(),
                     crate::agent::loop_commands::shell_arg(&attempt.attempt_id)
-                ));
+                );
+                lines.push(format!("  Next: write the test, then run `{command}`"));
+                lines.extend(powershell_pair(&command));
             }
         }
         Some(action) => {
@@ -647,6 +654,14 @@ pub(crate) fn agent_card_plain_lines(
     }
     lines.push("  More fields: add --verbose.".to_string());
     lines
+}
+
+/// The `(PowerShell)` pair line for a printed bash command, from the shared
+/// translator every plain-text command surface uses; `None` when PowerShell
+/// runs the bash spelling unchanged.
+fn powershell_pair(command: &str) -> Option<String> {
+    crate::output::markdown::powershell_text_variant(command)
+        .map(|form| format!("  (PowerShell) {form}"))
 }
 
 /// Plain spelling of what a missing suggestion means; exhaustive so a new
@@ -1248,6 +1263,7 @@ mod tests {
         let refused = CardStartHold {
             reason: "no test file ripr may edit".to_string(),
             next: None,
+            command: None,
         };
         let mut ready_card = prose_test_card();
         ready_card.canonical_next_action = Some(prose_test_decision()?);
@@ -1271,6 +1287,7 @@ mod tests {
         let held = CardStartHold {
             reason: "the inline test target `src/lib.rs` has uncommitted changes; commit or stash them first".to_string(),
             next: Some("commit or stash `src/lib.rs`, then run `ripr repair s`".to_string()),
+            command: Some("ripr repair s".to_string()),
         };
         let text = agent_card_plain_lines(&ready, "ripr agent packet --json", None, Some(&held))
             .join("\n");
@@ -1279,6 +1296,49 @@ mod tests {
             || text.contains("Ready to repair.")
         {
             return Err(format!("held-file cause not shown:\n{text}"));
+        }
+        Ok(())
+    }
+
+    /// #11397: the commands the brief now prints (repair start, continue) are
+    /// bash spellings, so a root with an apostrophe gets the shared
+    /// `(PowerShell)` pair line directly after each, like every other
+    /// plain-text command surface.
+    #[test]
+    fn plain_brief_pairs_new_commands_with_a_powershell_form() -> Result<(), String> {
+        let root = std::path::Path::new("/tmp/it's here");
+        let mut card = prose_test_card();
+        card.instruction.state = FixInstructionState::Unavailable;
+        let lines = agent_card_plain_lines(&card, "ripr agent packet --json", Some(root), None);
+        let at = lines
+            .iter()
+            .position(|line| line.starts_with("  Next: ripr repair "))
+            .ok_or_else(|| format!("no repair-start next step:\n{}", lines.join("\n")))?;
+        if !lines[at + 1].starts_with("  (PowerShell) ") {
+            return Err(format!(
+                "repair start has no PowerShell pair:\n{}",
+                lines.join("\n")
+            ));
+        }
+        let held = CardStartHold {
+            reason: "held".to_string(),
+            next: Some(
+                "commit or stash `src/lib.rs`, then run `ripr repair s --root 'it'\\''s'`"
+                    .to_string(),
+            ),
+            command: Some("ripr repair s --root 'it'\\''s'".to_string()),
+        };
+        let lines =
+            agent_card_plain_lines(&card, "ripr agent packet --json", Some(root), Some(&held));
+        let at = lines
+            .iter()
+            .position(|line| line.starts_with("  Next: commit or stash"))
+            .ok_or_else(|| format!("no held next step:\n{}", lines.join("\n")))?;
+        if !lines[at + 1].starts_with("  (PowerShell) ") {
+            return Err(format!(
+                "held step has no PowerShell pair:\n{}",
+                lines.join("\n")
+            ));
         }
         Ok(())
     }
