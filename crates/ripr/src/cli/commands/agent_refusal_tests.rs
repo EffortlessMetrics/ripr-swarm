@@ -262,6 +262,32 @@ fn before_phase_dirty_premise_refusal_names_paths_and_commit_first_recovery() {
     }
 }
 
+/// A committed git fixture with one dirty tracked production file:
+/// `src/lib.rs` differs from HEAD with a plain production change.
+fn dirty_production_fixture(label: &str) -> Result<PathBuf, String> {
+    let root = unique_command_test_dir(label);
+    std::fs::create_dir_all(root.join("src")).map_err(|error| format!("create src: {error}"))?;
+    std::fs::write(root.join("src/lib.rs"), "pub fn f() -> i32 {\n    1\n}\n")
+        .map_err(|error| format!("write source: {error}"))?;
+    crate::testing::fixture_git::fixture_git_ok(&root, &["init"])?;
+    crate::testing::fixture_git::fixture_git_ok(
+        &root,
+        &["config", "user.email", "ripr-test@example.invalid"],
+    )?;
+    crate::testing::fixture_git::fixture_git_ok(&root, &["config", "user.name", "RIPR Test"])?;
+    crate::testing::fixture_git::fixture_git_ok(&root, &["add", "."])?;
+    crate::testing::fixture_git::fixture_git_ok(
+        &root,
+        &["commit", "--no-gpg-sign", "-m", "initial"],
+    )?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn f() -> i32 {\n    1\n}\n\npub fn g() -> i32 {\n    2\n}\n",
+    )
+    .map_err(|error| format!("dirty source: {error}"))?;
+    Ok(root)
+}
+
 /// #11458 red control: a dirty tracked production file must refuse the
 /// before phase with the dirty-premise text before the seam inventory
 /// loads. On the pre-fix driver the inventory/packet path answers first
@@ -269,28 +295,8 @@ fn before_phase_dirty_premise_refusal_names_paths_and_commit_first_recovery() {
 /// fails until the pre-inventory preflight lands.
 #[test]
 fn before_phase_refuses_dirty_production_premise_before_the_seam_inventory() -> Result<(), String> {
-    let root = unique_command_test_dir("before-preflight-dirty-premise");
+    let root = dirty_production_fixture("before-preflight-dirty-premise")?;
     let result = (|| -> Result<(), String> {
-        std::fs::create_dir_all(root.join("src"))
-            .map_err(|error| format!("create src: {error}"))?;
-        std::fs::write(root.join("src/lib.rs"), "pub fn f() -> i32 {\n    1\n}\n")
-            .map_err(|error| format!("write source: {error}"))?;
-        crate::testing::fixture_git::fixture_git_ok(&root, &["init"])?;
-        crate::testing::fixture_git::fixture_git_ok(
-            &root,
-            &["config", "user.email", "ripr-test@example.invalid"],
-        )?;
-        crate::testing::fixture_git::fixture_git_ok(&root, &["config", "user.name", "RIPR Test"])?;
-        crate::testing::fixture_git::fixture_git_ok(&root, &["add", "."])?;
-        crate::testing::fixture_git::fixture_git_ok(
-            &root,
-            &["commit", "--no-gpg-sign", "-m", "initial"],
-        )?;
-        std::fs::write(
-            root.join("src/lib.rs"),
-            "pub fn f() -> i32 {\n    1\n}\n\npub fn g() -> i32 {\n    2\n}\n",
-        )
-        .map_err(|error| format!("dirty source: {error}"))?;
         let seam_id = "0123456789abcdef";
         let identity =
             crate::app::repair_attempt::BeforeRepairAttemptIdentity::prepare(&root, seam_id)?;
@@ -325,6 +331,31 @@ fn before_phase_refuses_dirty_production_premise_before_the_seam_inventory() -> 
                 ],
             ),
             Ok(()) => Err("a dirty production premise must refuse the before phase".to_string()),
+        }
+    })();
+    let _ = std::fs::remove_dir_all(&root);
+    result
+}
+
+/// #11458: the gap-bound before phase refuses the same dirty premise
+/// before resolving the base or snapshotting the gap. On the pre-fix
+/// driver the snapshot/lookup path answers first (a stale-gap error here,
+/// never the premise text), so this fails there.
+#[test]
+fn gap_before_phase_refuses_dirty_production_premise_before_the_snapshot() -> Result<(), String> {
+    let root = dirty_production_fixture("gap-before-preflight-dirty-premise")?;
+    let result = (|| -> Result<(), String> {
+        let mut refusal = AfterPhaseRefusalContext::default();
+        match run_gap_bound_before_phase(&root, "gap:0123456789abcdef", "HEAD", None, &mut refusal)
+        {
+            Err(error) => require_contains(
+                &error,
+                &[
+                    "differ from HEAD: src/lib.rs",
+                    "No workflow was prepared and no repair attempt was started.",
+                ],
+            ),
+            Ok(()) => Err("a dirty production premise must refuse the gap start".to_string()),
         }
     })();
     let _ = std::fs::remove_dir_all(&root);
