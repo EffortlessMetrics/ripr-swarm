@@ -18,6 +18,8 @@ pub(super) struct MacroDefinition {
     /// Byte offset of `macro_rules` and one past the closing delimiter.
     pub start_byte: usize,
     pub end_byte: usize,
+    /// A `verus! { .. }` token tree, not a `macro_rules!` definition.
+    pub verus_region: bool,
 }
 
 fn is_ident_byte(byte: u8) -> bool {
@@ -72,21 +74,7 @@ pub(super) fn macro_definitions(source: &str) -> Vec<MacroDefinition> {
         if !matches!(bytes.get(open), Some(b'(' | b'[' | b'{')) {
             continue;
         }
-        let mut depth = 0usize;
-        let mut end = None;
-        for (offset, byte) in bytes[open..].iter().enumerate() {
-            match byte {
-                b'(' | b'[' | b'{' => depth += 1,
-                b')' | b']' | b'}' => {
-                    depth = depth.saturating_sub(1);
-                    if depth == 0 {
-                        end = Some(open + offset);
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
+        let end = matching_close(bytes, open);
         let name = masked[name_start..name_end].to_string();
         let Some(end) = end else {
             // Unclosed: runs to the end of the file; nothing left to scan.
@@ -96,6 +84,7 @@ pub(super) fn macro_definitions(source: &str) -> Vec<MacroDefinition> {
                 end_line: line_of(bytes.len()),
                 start_byte: at,
                 end_byte: bytes.len(),
+                verus_region: false,
             });
             break;
         };
@@ -105,10 +94,84 @@ pub(super) fn macro_definitions(source: &str) -> Vec<MacroDefinition> {
             end_line: line_of(end),
             start_byte: at,
             end_byte: end + 1,
+            verus_region: false,
         });
         cursor = end + 1;
     }
     found
+}
+
+/// Every `verus! { .. }` token tree in `source` (RIPR-SPEC-0369). The tree is
+/// Verus syntax (`requires`, `ensures`, `spec fn`, `proof { .. }`), not Rust,
+/// so ripr resolves no function, call or oracle inside it. Read from the
+/// comment/string-masked text; an unclosed tree runs to the end of the file.
+/// The `verus` token must start an identifier and be followed by `!` and an
+/// opening delimiter, so `my_verus!`, `verus_other!` and prose do not count.
+pub(super) fn verus_regions(source: &str) -> Vec<MacroDefinition> {
+    if !source.contains("verus") {
+        return Vec::new();
+    }
+    let masked = mask_comments_and_strings(source);
+    let bytes = masked.as_bytes();
+    let line_of = |at: usize| bytes[..at].iter().filter(|b| **b == b'\n').count() + 1;
+    let mut found = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(relative) = masked[cursor..].find("verus") {
+        let at = cursor + relative;
+        let after = at + "verus".len();
+        cursor = after;
+        if at > 0 && is_ident_byte(bytes[at - 1]) {
+            continue;
+        }
+        let bang = skip_ws(bytes, after);
+        if bytes.get(bang) != Some(&b'!') {
+            continue;
+        }
+        let open = skip_ws(bytes, bang + 1);
+        if !matches!(bytes.get(open), Some(b'(' | b'[' | b'{')) {
+            continue;
+        }
+        let end = matching_close(bytes, open);
+        found.push(MacroDefinition {
+            name: "verus".to_string(),
+            start_line: line_of(at),
+            end_line: line_of(end.unwrap_or(bytes.len())),
+            start_byte: at,
+            end_byte: end.map_or(bytes.len(), |end| end + 1),
+            verus_region: true,
+        });
+        let Some(end) = end else {
+            break;
+        };
+        cursor = end + 1;
+    }
+    found
+}
+
+/// The 1-based inclusive line extent of the `verus! { .. }` region that wholly
+/// owns `line` of `source`, if any (RIPR-SPEC-0369).
+pub(crate) fn verus_region_lines(source: &str, line: usize) -> Option<(usize, usize)> {
+    MacroMap::new(source)
+        .verus_region_of_line(line)
+        .map(|region| (region.start_line, region.end_line))
+}
+
+/// Byte offset of the delimiter closing the one at `open`, by depth count.
+fn matching_close(bytes: &[u8], open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (offset, byte) in bytes[open..].iter().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(open + offset);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// The macro definitions of one source file plus its line offsets, so a
@@ -124,7 +187,10 @@ impl MacroMap {
         let mut line_starts = vec![0usize];
         line_starts.extend(source.match_indices('\n').map(|(at, _)| at + 1));
         Self {
-            definitions: macro_definitions(source),
+            definitions: macro_definitions(source)
+                .into_iter()
+                .chain(verus_regions(source))
+                .collect(),
             line_starts,
             source: source.to_string(),
         }
@@ -135,6 +201,12 @@ impl MacroMap {
     /// (`fn f() { macro_rules! m { () => { 1 } } let n = 3; }`) is mixed and
     /// owned by nobody, so normal seeding still sees its other code. A
     /// trailing `;` after the closing delimiter belongs to the definition.
+    /// Whether the definition owning `line` is a `verus! { .. }` region.
+    pub(super) fn verus_region_of_line(&self, line: usize) -> Option<&MacroDefinition> {
+        self.owner_of_line(line)
+            .filter(|definition| definition.verus_region)
+    }
+
     pub(super) fn owner_of_line(&self, line: usize) -> Option<&MacroDefinition> {
         let start = *self.line_starts.get(line.checked_sub(1)?)?;
         let end = self
@@ -254,5 +326,75 @@ mod tests {
         assert!(map.owner_of_line(1).is_none(), "code outside the extent");
         assert_eq!(map.owner_of_line(2).map(|d| d.name.as_str()), Some("solo"));
         assert_eq!(map.owner_of_line(3).map(|d| d.name.as_str()), Some("tail"));
+    }
+
+    /// RIPR-SPEC-0369.
+    #[test]
+    fn verus_regions_cover_the_token_tree_and_ignore_lookalikes() {
+        let source = "use vstd::prelude::*;\nverus! {\nfn f(x: u32) -> (r: u32)\n    ensures r == x,\n{ x }\n}\nfn after() {}\n";
+        let regions = verus_regions(source);
+        assert_eq!(regions.len(), 1);
+        assert!(regions[0].verus_region);
+        assert_eq!((regions[0].start_line, regions[0].end_line), (2, 6));
+        let map = MacroMap::new(source);
+        assert!(map.verus_region_of_line(1).is_none());
+        assert!(map.verus_region_of_line(4).is_some());
+        assert!(map.verus_region_of_line(7).is_none());
+        assert_eq!(verus_region_lines(source, 4), Some((2, 6)));
+        assert_eq!(verus_region_lines(source, 7), None);
+        // A path-qualified call, other delimiters and spacing still match.
+        for source in [
+            "vstd::prelude::verus! {\n    spec fn s() -> bool { true }\n}\n",
+            "verus !(\n    proof fn p() {}\n);\n",
+            "verus![\n    proof fn p() {}\n]\n",
+        ] {
+            assert_eq!(verus_regions(source).len(), 1, "{source}");
+        }
+        // Look-alikes, prose and a bare identifier are not regions.
+        for source in [
+            "my_verus! {\n    fn f() {}\n}\n",
+            "verus_other! {\n    fn f() {}\n}\n",
+            "// verus! { fn f() {} }\nlet s = \"verus! { }\";\n",
+            "fn verus() {}\nlet verus = 1;\n",
+            "/// Example:\n/// verus! {\n///     fn f() {}\n/// }\nfn g() {}\n",
+            "//! verus! { fn f() {} }\nfn g() {}\n",
+            "verus {\n}\n",
+        ] {
+            assert!(verus_regions(source).is_empty(), "{source}");
+        }
+    }
+
+    #[test]
+    fn a_verus_region_braces_in_comments_strings_and_chars_do_not_unbalance_it() {
+        let source =
+            "verus! {\n    // }\n    fn f() { let c = '}'; let s = \"}\"; }\n}\nfn after() {}\n";
+        let regions = verus_regions(source);
+        assert_eq!(regions.len(), 1);
+        assert_eq!((regions[0].start_line, regions[0].end_line), (1, 4));
+    }
+
+    #[test]
+    fn raw_strings_neither_open_nor_unbalance_a_verus_region() {
+        let source = "verus! {\n    fn f() { let a = r\"}\"; let b = r#\"} \"x\" }\"#; }\n}\nfn after() {}\n";
+        let regions = verus_regions(source);
+        assert_eq!(regions.len(), 1);
+        assert_eq!((regions[0].start_line, regions[0].end_line), (1, 3));
+        let prose = "let s = r#\"verus! { fn f() {} }\"#;\nfn g() {}\n";
+        assert!(verus_regions(prose).is_empty());
+    }
+
+    #[test]
+    fn an_unclosed_verus_region_runs_to_the_end_and_a_mixed_line_is_unowned() {
+        let source = "verus! {\n    fn f() {\n";
+        let regions = verus_regions(source);
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].end_line, 3);
+        let mixed = "fn a() { verus! { fn b() {} } let n = 3; }\nverus! { fn c() {} }\n";
+        let map = MacroMap::new(mixed);
+        assert!(
+            map.verus_region_of_line(1).is_none(),
+            "code outside the extent"
+        );
+        assert!(map.verus_region_of_line(2).is_some());
     }
 }
