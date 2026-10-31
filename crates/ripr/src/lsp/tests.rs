@@ -30523,9 +30523,7 @@ fn python_preview_edit_discloses_withheld_marker_only_under_actionable_profile()
         .flat_map(|batch| batch.diagnostics.iter())
         .collect::<Vec<_>>();
     if full_diagnostics.is_empty()
-        || full_diagnostics
-            .iter()
-            .any(|diagnostic| is_marker(diagnostic))
+        || full_diagnostics.iter().copied().any(is_marker)
         || !full_diagnostics
             .iter()
             .any(|diagnostic| diagnostic.severity == Some(DiagnosticSeverity::INFORMATION))
@@ -30544,7 +30542,7 @@ fn python_preview_edit_discloses_withheld_marker_only_under_actionable_profile()
         .batches
         .iter()
         .flat_map(|batch| batch.diagnostics.iter())
-        .any(|diagnostic| is_marker(diagnostic))
+        .any(is_marker)
     {
         return Err("reverted edit: the marker must disappear with its finding".to_string());
     }
