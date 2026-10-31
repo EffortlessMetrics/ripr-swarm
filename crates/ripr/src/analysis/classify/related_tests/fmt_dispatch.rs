@@ -297,12 +297,7 @@ pub(super) fn test_dispatches_to_fmt(
 
 /// `value.to_string()` where `value` is typed as `self_type` by the strict
 /// rule below (constructor literal or typed `let`).
-fn to_string_dispatch(
-    scan: &str,
-    masked: &str,
-    self_type: &str,
-    constructors: &[String],
-) -> bool {
+fn to_string_dispatch(scan: &str, masked: &str, self_type: &str, constructors: &[String]) -> bool {
     let mut search = 0usize;
     while let Some(at) = scan[search..].find(".to_string").map(|at| search + at) {
         search = at + 1;
