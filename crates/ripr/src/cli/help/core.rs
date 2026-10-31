@@ -282,7 +282,7 @@ Options:
                                human, human-full, json, github, sarif,
                                check-findings-json (identified snapshot
                                for `agent verify`)
-                             Badge (diff-scoped, for README status):
+                             Badge (diff-scoped, for PR/CI status):
                                badge-json, badge-shields,
                                badge-plus-json, badge-plus-shields
                              Repo-scope (full-repo analysis):
