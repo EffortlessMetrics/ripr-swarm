@@ -2103,6 +2103,10 @@ pub(super) fn literals_equal(left: &str, right: &str) -> Option<bool> {
     }
     match (canonical_decimal(left), canonical_decimal(right)) {
         (Some(left), Some(right)) => return Some(left == right),
+        // `None` equals only `None`: against a readable number it is
+        // definitely unequal, while any other mixed pair stays unreadable.
+        (Some(_), None) if right == "None" => return Some(false),
+        (None, Some(_)) if left == "None" => return Some(false),
         (Some(_), None) | (None, Some(_)) => return None,
         (None, None) => {}
     }
