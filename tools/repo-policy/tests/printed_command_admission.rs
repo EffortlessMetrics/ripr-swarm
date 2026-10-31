@@ -120,7 +120,8 @@ fn exact_checkout_and_full_platform_shell_payload_are_preserved() {
     }
     let checkout = WORKFLOW.find("actions/checkout@v6");
     let guard = WORKFLOW.find("Verify exact source before product execution");
-    let toolchain = WORKFLOW.find("dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591");
+    let toolchain =
+        WORKFLOW.find("dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591");
     assert!(checkout.is_some() && guard.is_some() && toolchain.is_some());
     assert!(checkout < guard && guard < toolchain);
 }
