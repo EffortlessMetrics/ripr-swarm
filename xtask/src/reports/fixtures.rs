@@ -3070,14 +3070,14 @@ mod tests {
     #[test]
     fn isolated_default_target_sits_beside_the_shared_debug_dir_not_inside_it() {
         let shared = std::path::Path::new("/w/target/debug/ripr");
-        let isolated = super::isolated_default_target_dir(shared).expect("resolves");
         assert_eq!(
-            isolated,
-            std::path::Path::new("/w/target/fixture-variants/default")
+            super::isolated_default_target_dir(shared),
+            Ok(std::path::PathBuf::from(
+                "/w/target/fixture-variants/default"
+            ))
         );
-        // Never the shared binary's own target, or the isolation would be a no-op.
-        assert!(!isolated.starts_with("/w/target/debug"));
-        assert!(super::isolated_default_target_dir(std::path::Path::new("ripr")).is_err());
+        let missing = super::isolated_default_target_dir(std::path::Path::new("ripr"));
+        assert_eq!(missing, Err("missing shared target root".to_string()));
     }
 
     #[test]
