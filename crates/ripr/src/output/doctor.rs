@@ -1695,7 +1695,7 @@ enum CargoTomlFound {
 }
 
 fn manifest_declares_workspace(manifest: &Path) -> bool {
-    std::fs::read_to_string(manifest)
+    crate::bounded_input::read_metadata_toml(manifest)
         .ok()
         .and_then(|contents| toml::from_str::<toml::Value>(&contents).ok())
         .is_some_and(|document| document.get("workspace").is_some_and(toml::Value::is_table))

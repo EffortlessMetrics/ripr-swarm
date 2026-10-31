@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A method-hop receiver constructor argument that is a name bound by exactly one immutable `let NAME = <decimal>;` in the calling test (`let count = 1; check("1 big", Size::kib(count), true)`) now reads as that literal, so the changed boundary is credited instead of staying `infection_unknown`. A `mut`, reassigned, shadowed, non-literal or parameter-bound name still withdraws every row (#9619).
