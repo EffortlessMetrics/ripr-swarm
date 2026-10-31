@@ -794,6 +794,15 @@ mod tests {
     }
 
     #[test]
+    fn ast_shape_minified_line_with_disjoint_owners_is_none() {
+        // Several exports share one line: no single AST shape describes a
+        // change on that line, so the classifier must keep its line-text
+        // fallback instead of crediting a sibling owner's shape.
+        let source = "export const total=(n:number):number=>n*2;export const flag=(n:number):boolean=>n>10;\n";
+        assert_eq!(ast_shape_at(source, 1), None);
+    }
+
+    #[test]
     fn edited_source_misses_and_reextracts() {
         let root = Path::new(".");
         let edited = format!(

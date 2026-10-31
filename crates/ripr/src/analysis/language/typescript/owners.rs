@@ -2001,13 +2001,19 @@ fn collect_probe_shapes(
 ) -> Vec<ProbeShapeFact> {
     struct Collector<'s> {
         source: &'s SourceText<'s>,
-        candidates: Vec<(u8, usize, usize, TypeScriptProbeShape)>,
+        candidates: Vec<(u8, usize, usize, usize, TypeScriptProbeShape)>,
         concise_arrow_depth: usize,
+        top_start: usize,
     }
     impl Collector<'_> {
         fn push(&mut self, span: oxc_span::Span, shape: TypeScriptProbeShape) {
-            self.candidates
-                .push((1, span.start as usize, span.end as usize, shape));
+            self.candidates.push((
+                1,
+                span.start as usize,
+                span.end as usize,
+                self.top_start,
+                shape,
+            ));
         }
         /// A guard test (`if`/`while`/conditional) outranks a statement
         /// sharing its line (`if (s >= 404) { return 1; }` is the guard's
@@ -2018,6 +2024,7 @@ fn collect_probe_shapes(
                 1,
                 span.start as usize,
                 span.end as usize,
+                self.top_start,
                 TypeScriptProbeShape::new(ProbeFamily::Predicate, DeltaKind::Control),
             ));
         }
@@ -2026,6 +2033,7 @@ fn collect_probe_shapes(
                 2,
                 span.start as usize,
                 span.end as usize,
+                self.top_start,
                 TypeScriptProbeShape::new(ProbeFamily::Predicate, DeltaKind::Control),
             ));
         }
@@ -2066,6 +2074,12 @@ fn collect_probe_shapes(
         }
     }
     impl<'a> oxc_ast_visit::Visit<'a> for Collector<'_> {
+        fn visit_program(&mut self, it: &oxc_ast::ast::Program<'a>) {
+            for statement in &it.body {
+                self.top_start = oxc_span::GetSpan::span(statement).start as usize;
+                oxc_ast_visit::walk::walk_statement(self, statement);
+            }
+        }
         fn visit_return_statement(&mut self, it: &oxc_ast::ast::ReturnStatement<'a>) {
             let shape = it.argument.as_ref().map_or_else(
                 || TypeScriptProbeShape::new(ProbeFamily::ReturnValue, DeltaKind::Value),
@@ -2220,23 +2234,40 @@ fn collect_probe_shapes(
         source,
         candidates: Vec::new(),
         concise_arrow_depth: 0,
+        top_start: 0,
     };
     oxc_ast_visit::Visit::visit_program(&mut collector, program);
     collector
         .candidates
-        .sort_by_key(|(tier, start, end, _)| (*tier, *start, std::cmp::Reverse(*end)));
-    let mut by_line: std::collections::BTreeMap<usize, TypeScriptProbeShape> =
-        std::collections::BTreeMap::new();
-    for (_, start, end, shape) in &collector.candidates {
+        .sort_by_key(|(tier, start, end, _, _)| (*tier, *start, std::cmp::Reverse(*end)));
+    let mut by_line: std::collections::BTreeMap<
+        usize,
+        (usize, usize, usize, TypeScriptProbeShape),
+    > = std::collections::BTreeMap::new();
+    // A line covered by disjoint candidate spans from different top-level
+    // statements belongs to more than one owner (a minified one-line file):
+    // no single AST shape describes the change, so the line keeps the
+    // classifier's line-text fallback rather than crediting a sibling
+    // owner's shape. Disjoint spans inside one statement (a switch case
+    // test and its consequent) still resolve by source order.
+    let mut ambiguous: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+    for (_, start, end, top, shape) in &collector.candidates {
         let first = collector.source.line_for_offset(*start);
         let last = collector.source.line_for_offset(*end);
         for line in first..=last {
-            by_line.insert(line, shape.clone());
+            if let Some((prev_start, prev_end, prev_top, _)) = by_line.get(&line)
+                && *top != *prev_top
+                && (*end <= *prev_start || *start >= *prev_end)
+            {
+                ambiguous.insert(line);
+            }
+            by_line.insert(line, (*start, *end, *top, shape.clone()));
         }
     }
     by_line
         .into_iter()
-        .map(|(line, shape)| ProbeShapeFact { line, shape })
+        .filter(|(line, _)| !ambiguous.contains(line))
+        .map(|(line, (_, _, _, shape))| ProbeShapeFact { line, shape })
         .collect()
 }
 
