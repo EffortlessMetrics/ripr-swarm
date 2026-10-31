@@ -1184,12 +1184,33 @@ fn arm_scrutinee_argument(seam: &RepoSeam, owner: &FunctionSummary) -> Option<(u
         if !pattern.split('|').all(is_plain_literal_pattern)
             || pattern
                 .split('|')
-                .any(|alternative| alternative.trim() == target)
+                .any(|alternative| same_literal_value(alternative, target))
         {
             return None;
         }
     }
     None
+}
+
+/// Whether two plain literal patterns can match the same input: equal text,
+/// or two integers of equal value however written (`01`, `-0`, `0`). An
+/// integer too large to read counts as equal, so the caller refuses.
+fn same_literal_value(left: &str, right: &str) -> bool {
+    let (left, right) = (left.trim(), right.trim());
+    let integer = |text: &str| {
+        let digits = text.strip_prefix('-').unwrap_or(text);
+        !digits.is_empty() && digits.chars().all(|ch| ch.is_ascii_digit())
+    };
+    if left == right {
+        return true;
+    }
+    if !(integer(left) && integer(right)) {
+        return false;
+    }
+    match (left.parse::<i128>(), right.parse::<i128>()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => true,
+    }
 }
 
 /// Whether `test` runs the changed arm through its one call of `owner`: the
@@ -1209,12 +1230,8 @@ fn test_runs_arm_in_its_one_owner_call(
 
 /// The argument text at `parameter` of the ONE call of `owner` in `test`, so
 /// the result an assertion reads can only be the result of that call. `None`
-/// (refuse) when the owner's name is written anywhere else in the test body
-/// or a credited helper also calls it; when the call is inside a block,
-/// closure, conditional or short-circuit (it may never run); or when the
-/// call form does not line its arguments up with the owner's parameters (a
-/// `self` method reached by `Type::method(receiver, ..)`, or a non-`self`
-/// owner reached as `value.method(..)`).
+/// (refuse) when a credited helper also calls the owner, or when the test
+/// body is not one of the shapes [`arm_call_argument_in_body`] admits.
 fn arm_owner_call_argument(
     test: &TestSummary,
     owner: &FunctionSummary,
@@ -1224,39 +1241,7 @@ fn arm_owner_call_argument(
     if name.is_empty() || test.calls.iter().filter(|call| call.name == name).count() > 1 {
         return None;
     }
-    let body: &str = &test.body;
-    let masked = crate::analysis::extract::mask_comments_and_strings(body);
-    let part = |ch: Option<char>| ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
-    let mut mentions = masked.match_indices(name).filter(|(at, _)| {
-        !part(masked[..*at].chars().next_back()) && !part(masked[at + name.len()..].chars().next())
-    });
-    let (at, _) = mentions.next()?;
-    if mentions.next().is_some() {
-        return None;
-    }
-    let method_form = masked[..at].trim_end().ends_with('.');
-    if method_form != owner_takes_self(owner)? {
-        return None;
-    }
-    let after = at + name.len();
-    let open = after + (masked[after..].len() - masked[after..].trim_start().len());
-    if !masked[open..].starts_with('(') || !call_runs_unconditionally(&masked, at) {
-        return None;
-    }
-    let close = matching_close(&masked, open)?;
-    let mut arguments = Vec::new();
-    let mut from = open + 1;
-    while let Some(comma) = find_top_level(&masked, from, close, ",") {
-        arguments.push(body.get(from..comma)?.trim());
-        from = comma + 1;
-    }
-    let last = body.get(from..close)?.trim();
-    if !last.is_empty() {
-        arguments.push(last);
-    }
-    arguments
-        .get(parameter)
-        .map(|argument| argument.to_string())
+    arm_call_argument_in_body(&test.body, name, owner_takes_self(owner)?, parameter)
 }
 
 /// Whether the owner's signature (its first line) takes a `self` receiver;
@@ -1282,59 +1267,234 @@ fn owner_takes_self(owner: &FunctionSummary) -> Option<bool> {
     Some(receiver == "self")
 }
 
-/// Whether the code at `at` in a masked test body runs whenever the test
-/// does: no block (`if`/`match`/loop/closure body/nested item) encloses it,
-/// and its statement before it holds no closure bar, short-circuit, `?`, or
-/// branching, looping, returning or deferring keyword.
-fn call_runs_unconditionally(masked: &str, at: usize) -> bool {
-    // A body that starts with its `fn` header has its own `{` around every
-    // statement; that one brace is the body, not a block.
+/// The assertion macros whose condition operands an arm call may sit in, and
+/// how many leading arguments are operands (the rest is the failure message,
+/// which runs only when the assertion fails).
+const ARM_CALL_ASSERTIONS: [(&str, usize); 6] = [
+    ("assert", 1),
+    ("debug_assert", 1),
+    ("assert_eq", 2),
+    ("assert_ne", 2),
+    ("debug_assert_eq", 2),
+    ("debug_assert_ne", 2),
+];
+
+/// Words that let a statement end the test early or skip code.
+const ARM_EARLY_EXIT_WORDS: [&str; 10] = [
+    "return",
+    "break",
+    "continue",
+    "else",
+    "loop",
+    "panic",
+    "unreachable",
+    "todo",
+    "unimplemented",
+    "exit",
+];
+
+/// The pure core of [`arm_owner_call_argument`] over one test body. An
+/// allowlist: the owner's name is written exactly once in the body, as a call
+/// whose arguments line up with the owner's parameters (a `self` method only
+/// as `value.method(..)`, any other owner never so) and are all simple tokens
+/// (a literal, a name, a field or path, optionally borrowed). That call is
+/// the whole right side of a top-level `let name = ..;`, or sits in the
+/// condition operands of a top-level `assert!`-family statement, with only
+/// plain operand text around it (no closure, block, branch, short-circuit,
+/// `?` or extra argument). No attribute appears in the body, and no other
+/// top-level statement can end the test early. Anything else is `None`.
+fn arm_call_argument_in_body(
+    body: &str,
+    name: &str,
+    takes_self: bool,
+    parameter: usize,
+) -> Option<String> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let part = |ch: Option<char>| ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
+    let mut mentions = masked.match_indices(name).filter(|(at, _)| {
+        !part(masked[..*at].chars().next_back()) && !part(masked[at + name.len()..].chars().next())
+    });
+    let (at, _) = mentions.next()?;
+    if mentions.next().is_some() || masked[..at].trim_end().ends_with('.') != takes_self {
+        return None;
+    }
+    let after = at + name.len();
+    let open = after + (masked[after..].len() - masked[after..].trim_start().len());
+    if !masked[open..].starts_with('(') {
+        return None;
+    }
+    let close = matching_close(&masked, open)?;
+    let (statements, body_open) = top_level_statements(&masked)?;
+    // An outer `#[cfg(..)]` or inner `#![cfg(..)]` (or any attribute) inside
+    // the body may compile the call, an assertion or the whole test out.
+    if masked[body_open..].contains('#') {
+        return None;
+    }
+    let (start, end) = *statements
+        .iter()
+        .find(|(start, end)| *start <= at && close < *end)?;
+    let others_may_exit = statements
+        .iter()
+        .filter(|span| span.0 != start)
+        .any(|(from, to)| {
+            let text = &masked[*from..*to];
+            text.contains('?')
+                || ARM_EARLY_EXIT_WORDS
+                    .iter()
+                    .any(|word| mentions_identifier(text, word))
+        });
+    if others_may_exit || !call_statement_admits(&masked, start, end, at, close) {
+        return None;
+    }
+    let mut arguments = Vec::new();
+    let mut from = open + 1;
+    while let Some(comma) = find_top_level(&masked, from, close, ",") {
+        arguments.push(body.get(from..comma)?.trim());
+        from = comma + 1;
+    }
+    let last = body.get(from..close)?.trim();
+    if !last.is_empty() {
+        arguments.push(last);
+    }
+    if !arguments
+        .iter()
+        .all(|argument| is_simple_call_argument(argument))
+    {
+        return None;
+    }
+    arguments
+        .get(parameter)
+        .map(|argument| argument.to_string())
+}
+
+/// The top-level statement spans (split at `;` only) of a masked test body,
+/// inside its own braces when it starts with a `fn` header, and the offset
+/// the statements start at. `None` when the brackets do not balance.
+fn top_level_statements(masked: &str) -> Option<(Vec<(usize, usize)>, usize)> {
     let header = masked.find('{').map_or("", |brace| &masked[..brace]);
     let base = usize::from(mentions_identifier(header, "fn"));
+    let body_open = if base == 1 { masked.find('{')? + 1 } else { 0 };
+    let mut statements = Vec::new();
     let mut stack: Vec<char> = Vec::new();
-    let mut statement = 0usize;
-    let mut cursor = 0usize;
-    while cursor < at {
+    let mut start = body_open;
+    let mut cursor = body_open;
+    while cursor < masked.len() {
         cursor = skip_literal(masked, cursor);
-        if cursor >= at {
-            break;
-        }
         let Some(ch) = masked[cursor..].chars().next() else {
-            return false;
+            break;
         };
         match ch {
-            '(' | '[' | '{' => {
-                stack.push(ch);
-                if ch == '{' && stack.len() == base {
-                    statement = cursor + 1;
-                }
-            }
+            '(' | '[' | '{' => stack.push(ch),
             ')' | ']' | '}' => {
-                if stack.pop().is_none() {
-                    return false;
-                }
-                if ch == '}' && stack.len() == base {
-                    statement = cursor + 1;
-                }
+                let Some(_) = stack.pop() else {
+                    // The body's own closing brace.
+                    statements.push((start, cursor));
+                    return (base == 1).then_some((statements, body_open));
+                };
             }
-            ';' if stack.len() == base => statement = cursor + 1,
+            ';' if stack.is_empty() => {
+                statements.push((start, cursor));
+                start = cursor + 1;
+            }
             _ => {}
         }
         cursor += ch.len_utf8();
     }
-    let braces = stack.iter().filter(|ch| **ch == '{').count();
-    if braces != base || (base == 1 && stack.first() != Some(&'{')) {
-        return false;
-    }
-    let prefix = &masked[statement.min(at)..at];
-    !prefix.contains(['|', '?'])
-        && !prefix.contains("&&")
-        && ![
-            "if", "else", "match", "while", "for", "loop", "return", "break", "continue", "async",
-            "move", "fn",
-        ]
-        .iter()
-        .any(|keyword| mentions_identifier(prefix, keyword))
+    (base == 0 && stack.is_empty()).then(|| {
+        statements.push((start, masked.len()));
+        (statements, body_open)
+    })
+}
+
+/// Whether the statement `start..end` holding the owner call `at..=close` is
+/// one admitted shape: `let <name>[: <type>] = <operand>` or an assertion
+/// macro from [`ARM_CALL_ASSERTIONS`] whose condition operand holds the call,
+/// with the operand around the call plain (see [`is_plain_operand_text`]).
+fn call_statement_admits(masked: &str, start: usize, end: usize, at: usize, close: usize) -> bool {
+    let statement = &masked[start..end];
+    let lead = statement.len() - statement.trim_start().len();
+    let text = statement.trim();
+    let text_start = start + lead;
+    let text_end = text_start + text.len();
+    let operand = if let Some(rest) = text.strip_prefix("let ") {
+        let Some(eq) = rest.find('=') else {
+            return false;
+        };
+        let pattern = &rest[..eq];
+        if rest[eq + 1..].starts_with('=')
+            || !pattern.chars().all(|ch| {
+                ch.is_alphanumeric() || ch == '_' || ch == ':' || ch == '&' || ch.is_whitespace()
+            })
+        {
+            return false;
+        }
+        (text_start + 4 + eq + 1, text_end)
+    } else {
+        let Some((_, operands)) = ARM_CALL_ASSERTIONS.iter().find(|(name, _)| {
+            text.strip_prefix(name)
+                .and_then(|rest| rest.strip_prefix('!'))
+                .is_some_and(|rest| rest.trim_start().starts_with('('))
+        }) else {
+            return false;
+        };
+        let Some(open_rel) = text.find('(') else {
+            return false;
+        };
+        let open = text_start + open_rel;
+        if matching_close(masked, open) != Some(text_end - 1) {
+            return false;
+        }
+        // The operand that holds the call must be one of the leading
+        // condition operands, never a message argument.
+        let mut from = open + 1;
+        let mut index = 0usize;
+        loop {
+            let to = find_top_level(masked, from, text_end - 1, ",").unwrap_or(text_end - 1);
+            if from <= at && close < to {
+                if index >= *operands {
+                    return false;
+                }
+                break (from, to);
+            }
+            if to >= text_end - 1 {
+                return false;
+            }
+            from = to + 1;
+            index += 1;
+        }
+    };
+    let (from, to) = operand;
+    from <= at
+        && close < to
+        && is_plain_operand_text(&masked[from..at])
+        && is_plain_operand_text(&masked[close + 1..to])
+}
+
+/// Operand text around the owner call that always evaluates the call: names,
+/// literals, paths, field and method access, arithmetic and comparison, but
+/// no closure bar, short-circuit `&&`, `?`, block, index, extra argument or
+/// early-exit word.
+fn is_plain_operand_text(text: &str) -> bool {
+    text.chars()
+        .all(|ch| ch.is_alphanumeric() || ch.is_whitespace() || "_.<>=!+-*/%()&:\"'".contains(ch))
+        && !text.contains("&&")
+        && !["return", "break", "continue", "async", "move", "await"]
+            .iter()
+            .any(|word| mentions_identifier(text, word))
+}
+
+/// A call argument that is one simple token: a plain literal, or a name,
+/// field or path (`a`, `a.b`, `a::B`), optionally borrowed (`&`, `&mut`).
+/// A closure, generic, block, call or operator is not simple, and its commas
+/// could shift the argument count.
+fn is_simple_call_argument(argument: &str) -> bool {
+    let token = argument.trim().trim_start_matches('&').trim_start();
+    let token = token.strip_prefix("mut ").unwrap_or(token).trim();
+    is_plain_literal_pattern(token)
+        || (token.starts_with(|ch: char| ch.is_alphabetic() || ch == '_')
+            && token
+                .chars()
+                .all(|ch| ch.is_alphanumeric() || ch == '_' || ch == '.' || ch == ':'))
 }
 
 /// The scrutinee and top-level arms (pattern text, 1-based file line) of an

@@ -879,17 +879,30 @@ unchanged, and the lines claim no runtime outcome.
   related test must satisfy every gate at once: it calls the owner directly,
   passes the arm's literal verbatim as that parameter's own argument, and its
   assertion observes the owner's result. The literal and the observed result
-  must come from the same call: the owner's name appears exactly once in the
-  test body (and no credited helper also calls it), outside any block,
-  closure, branch or short-circuit, and a `self` method is reached only as
-  `value.method(..)` so its arguments line up with its parameters. A literal
-  and an assertion split across two tests or two calls, a call inside a dead
-  branch or a closure, a same-named call on another receiver, a path-qualified
-  `Type::method(receiver, ..)` call, a local bound to the literal (rebound,
-  reassigned or not), a literal in another argument or only in a builder that
-  never reaches the owner, a derived scrutinee, a nested arm, an arm after a
-  guard arm, and an arm whose literal an earlier arm already names (alone or
-  in a `|` alternation) all stay refused. A test on a sibling arm, a discarded result,
+  must come from the same call, read by an allowlist of test shapes: the
+  owner's name appears exactly once in the test body (and no credited helper
+  also calls it); that call is the whole right side of a top-level
+  `let name = ..;` or sits in the condition operands of a top-level
+  `assert!`-family statement (never its failure-message arguments), with only
+  plain operand text around it (no closure, block, branch, short-circuit or
+  `?`); every argument is one simple token (a literal, a name, a field or a
+  path, optionally borrowed); a `self` method is reached only as
+  `value.method(..)` so its arguments line up with its parameters; the body
+  holds no attribute; and no other top-level statement holds `?` or an
+  early-exit word (`return`, `break`, `continue`, `else`, `loop`, `panic`,
+  `unreachable`, `todo`, `unimplemented`, `exit`). A literal and an assertion
+  split across two tests or two calls, a call inside a branch, `match` or
+  closure, a same-named call on another receiver, a path-qualified
+  `Type::method(receiver, ..)` call, a closure or generic argument, a
+  `#[cfg]`-gated assertion, a call only in an assertion message, an earlier
+  `return`, a local bound to the literal (rebound, reassigned or not), a
+  literal in another argument or only in a builder that never reaches the
+  owner, a derived scrutinee, a nested arm, an arm after a guard arm, and an
+  arm whose literal an earlier arm already names (alone, in a `|`
+  alternation, or as the same integer spelled differently) all stay refused.
+  A later reassignment of the bound result, a user macro around the call,
+  and sharing this reading with the check-side arm selection are not yet
+  covered (tracked separately). A test on a sibling arm, a discarded result,
   an exact arm assertion, and a receiver bound to a test-module shadow type or
   a type declared twice stay refused; a weak assertion on a sibling struct
   field is still not a struct-field start

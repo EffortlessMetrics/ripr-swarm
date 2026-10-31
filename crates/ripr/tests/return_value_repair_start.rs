@@ -1249,7 +1249,7 @@ fn literal_and_asserted_result_from_different_calls_are_not_a_start() -> Result<
         ),
         (
             "arm-dead-branch",
-            "    if false {\n        rate(\"silver\");\n    }\n    let r = rate(\"gold\");\n    assert!(r < 100);\n",
+            "    let r = match false {\n        true => rate(\"silver\"),\n        false => 0,\n    };\n    assert!(r < 100);\n",
         ),
         (
             "arm-branch-only",
@@ -1269,7 +1269,7 @@ const TWO_ARG_METHOD_OLD: &str = "pub struct Window {\n    pub tier: u32,\n}\n\n
 
 fn method_test(body: &str) -> String {
     format!(
-        "use ar::Window;\n\nstruct Other;\nimpl Other {{\n    fn rate(&self, _k: &str) -> u32 {{\n        1\n    }}\n}}\n\n#[test]\nfn runs() {{\n    let window = Window {{ tier: 1 }};\n{body}}}\n"
+        "use ar::Window;\n\nstruct Other;\nimpl Other {{\n    fn rate(&self, _a: &str, _k: &str) -> u32 {{\n        1\n    }}\n}}\n\n#[test]\nfn runs() {{\n    let window = Window {{ tier: 1 }};\n{body}}}\n"
     )
 }
 
@@ -1293,7 +1293,7 @@ fn path_qualified_method_call_or_other_receiver_is_not_a_start() -> Result<(), S
         ),
         (
             "other-receiver",
-            "    let _o = Other.rate(\"silver\");\n    assert!(window.rate(\"silver\", \"gold\") < 100);\n",
+            "    let _o = Other.rate(\"x\", \"silver\");\n    assert!(window.rate(\"gold\", \"gold\") < 100);\n",
         ),
     ] {
         assert_no_start_at(
@@ -1303,6 +1303,74 @@ fn path_qualified_method_call_or_other_receiver_is_not_a_start() -> Result<(), S
             &method_test(body),
             "src/lib.rs:9",
         )?;
+    }
+    Ok(())
+}
+
+const FN_ARG_OLD: &str = "pub fn rate(scale: u32, tier: &str, kind: &str) -> u32 {\n    match kind {\n        \"gold\" => 10,\n        \"silver\" => 5,\n        _ => scale + tier.len() as u32,\n    }\n}\n";
+
+/// A closure argument's own commas (`|a, b|`) would shift the argument count,
+/// so `"silver"` would be read as `kind` while the call passes it as `tier`:
+/// only simple-token arguments count. The twin passing a plain value in the
+/// same place, with `"silver"` really as `kind`, starts. (Only the argument
+/// text is read, so the closure need not fit the parameter type.)
+#[test]
+fn closure_argument_with_commas_is_not_a_match_arm_start() -> Result<(), String> {
+    let new = FN_ARG_OLD.replace("\"silver\" => 5", "\"silver\" => 7");
+    let test = |call: &str| {
+        format!(
+            "use ar::rate;\n\nfn add(a: u32, b: u32) -> u32 {{\n    a + b\n}}\n\n#[test]\nfn runs() {{\n    assert!({call} < 100);\n}}\n"
+        )
+    };
+    assert_repair_ready(
+        "arm-plain-argument",
+        FN_ARG_OLD,
+        &new,
+        &test("rate(9, \"gold\", \"silver\")"),
+    )?;
+    assert_no_start_at(
+        "arm-closure-argument",
+        FN_ARG_OLD,
+        &new,
+        &test("rate(|a, b| a + b, \"silver\", \"gold\")"),
+        "src/lib.rs:4",
+    )
+}
+
+/// The call must run whenever the test does and its result must be the
+/// assertion's condition: a `#[cfg]`-gated assertion or a test gated by an
+/// inner `#![cfg]`, a call only in the
+/// assertion's failure message, and an earlier statement that can end the
+/// test first all refuse; the plain twin starts.
+#[test]
+fn compiled_out_message_only_or_skippable_call_is_not_a_match_arm_start() -> Result<(), String> {
+    assert_repair_ready(
+        "arm-plain-assert",
+        ARM_OLD,
+        ARM_NEW,
+        &rate_test(
+            "    let ok = true;\n    assert!(rate(\"silver\") < 100, \"rate\");\n    assert!(ok);\n",
+        ),
+    )?;
+    for (case, body) in [
+        (
+            "arm-cfg-gated",
+            "    let ok = true;\n    #[cfg(any())]\n    assert!(rate(\"silver\") < 100, \"rate\");\n    assert!(ok);\n",
+        ),
+        (
+            "arm-inner-cfg",
+            "    #![cfg(any())]\n    let ok = true;\n    assert!(rate(\"silver\") < 100, \"rate\");\n    assert!(ok);\n",
+        ),
+        (
+            "arm-message-only",
+            "    let ok = true;\n    assert!(ok, \"rate {}\", rate(\"silver\"));\n",
+        ),
+        (
+            "arm-early-return",
+            "    let ok = true;\n    let Some(_x) = ok.then_some(1) else {\n        return;\n    };\n    assert!(rate(\"silver\") < 100, \"rate\");\n",
+        ),
+    ] {
+        assert_no_start_at(case, ARM_OLD, ARM_NEW, &rate_test(body), "src/lib.rs:4")?;
     }
     Ok(())
 }

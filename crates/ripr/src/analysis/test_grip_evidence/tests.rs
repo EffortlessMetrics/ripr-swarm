@@ -21012,16 +21012,108 @@ fn whole_body_match_reads_only_a_bare_identifier_scrutinee() -> Result<(), Strin
     Ok(())
 }
 
-/// A call runs unconditionally only outside blocks, closures, branches and
-/// short-circuits.
+/// The one-call reader admits only a top-level `let` or an assertion's
+/// condition operand around one call with simple arguments; each refused
+/// body differs from an admitted one by the shape named.
 #[test]
-fn arm_call_runs_unconditionally_only_outside_blocks_and_branches() {
-    let body = "fn t() {\n    let a = rate(1);\n    let b = if c { rate(1) } else { 0 };\n    let f = || rate(1);\n    let g = c && rate(1) > 0;\n    assert!(rate(1) > 0);\n}\n";
-    let at = |needle: &str| body.find(needle).map_or(0, |at| at + needle.len());
-    assert!(call_runs_unconditionally(body, at("let a = ")));
-    assert!(call_runs_unconditionally(body, at("assert!(")));
-    for needle in ["if c { ", "|| ", "c && "] {
-        assert!(!call_runs_unconditionally(body, at(needle)), "{needle}");
+fn arm_call_reader_admits_only_plain_top_level_call_shapes() {
+    let read = |statements: &str| {
+        arm_call_argument_in_body(&format!("fn t() {{\n{statements}\n}}\n"), "rate", false, 1)
+    };
+    for admitted in [
+        "    let r = rate(9, \"silver\");\n    assert!(r < 100);",
+        "    assert!(rate(9, \"silver\") < 100);",
+        "    assert!(ar::rate(9, \"silver\") < 100, \"message\");",
+        "    assert_ne!(rate(&k, \"silver\"), 100);",
+        "    let w = W { a: 1 };\n    let r: u32 = rate(w.a, \"silver\");\n    assert!(r < 100);",
+    ] {
+        assert_eq!(read(admitted).as_deref(), Some("\"silver\""), "{admitted}");
+    }
+    for (shape, refused) in [
+        (
+            "branch",
+            "    let r = if c { rate(9, \"silver\") } else { 0 };",
+        ),
+        (
+            "match",
+            "    let r = match c { true => rate(9, \"silver\"), false => 0 };",
+        ),
+        ("closure", "    let f = || rate(9, \"silver\");"),
+        ("short-circuit", "    let g = c && rate(9, \"silver\") > 0;"),
+        (
+            "question mark",
+            "    let r = make()?.max(rate(9, \"silver\"));",
+        ),
+        (
+            "loop",
+            "    loop {\n        let r = rate(9, \"silver\");\n    }",
+        ),
+        (
+            "for",
+            "    for _ in 0..1 {\n        assert!(rate(9, \"silver\") < 100);\n    }",
+        ),
+        (
+            "return",
+            "    return;\n    assert!(rate(9, \"silver\") < 100);",
+        ),
+        (
+            "early exit",
+            "    if skip() {\n        return;\n    }\n    assert!(rate(9, \"silver\") < 100);",
+        ),
+        (
+            "let else",
+            "    let Some(x) = y else { panic!() };\n    assert!(rate(9, \"silver\") < 100);",
+        ),
+        (
+            "nested fn",
+            "    fn inner() -> u32 {\n        rate(9, \"silver\")\n    }\n    assert!(inner() < 100);",
+        ),
+        (
+            "async block",
+            "    let f = async { rate(9, \"silver\") };\n    assert!(true);",
+        ),
+        (
+            "cfg attribute",
+            "    #[cfg(feature = \"slow\")]\n    assert!(rate(9, \"silver\") < 100);",
+        ),
+        (
+            "inner cfg attribute",
+            "    #![cfg(any())]\n    let ok = true;\n    assert!(rate(9, \"silver\") < 100);",
+        ),
+        (
+            "message argument",
+            "    assert!(ok, \"rate {}\", rate(9, \"silver\"));",
+        ),
+        (
+            "eq message argument",
+            "    assert_eq!(a, 1, \"{}\", rate(9, \"silver\"));",
+        ),
+        (
+            "closure argument",
+            "    assert!(rate(|a, b| a + b, \"silver\", \"gold\") < 100);",
+        ),
+        (
+            "generic argument",
+            "    assert!(rate(HashMap::<u32, u32>::new(), \"silver\", \"gold\") < 100);",
+        ),
+        (
+            "second call",
+            "    let _a = rate(9, \"gold\");\n    let r = rate(9, \"silver\");",
+        ),
+        ("method form", "    assert!(x.rate(9, \"silver\") < 100);"),
+    ] {
+        assert_eq!(read(refused), None, "{shape}");
+    }
+}
+
+/// Earlier-arm duplicates compare integer values, not spellings.
+#[test]
+fn same_literal_value_compares_integers_by_value() {
+    for (left, right) in [("1", "01"), ("0", "-0"), ("\"a\"", "\"a\"")] {
+        assert!(same_literal_value(left, right), "{left} {right}");
+    }
+    for (left, right) in [("1", "2"), ("\"1\"", "1"), ("'a'", "\"a\"")] {
+        assert!(!same_literal_value(left, right), "{left} {right}");
     }
 }
 
