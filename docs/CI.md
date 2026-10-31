@@ -93,6 +93,11 @@ number, whatever the newer run's own outcome; the read uses the existing
 non-atomic read, not proof that the hosted race is closed or of which check
 GitHub selects for protection.
 
+The admission job also refuses a `merge-ready` pull-request request whose PR has
+unresolved review threads, naming each thread, so the author learns in seconds
+instead of after the roughly hour-long run. It is an early courtesy only: a read
+failure is a warning, and the late recheck above remains the authority.
+
 This is a late eligibility check, not queue-cutover acceptance. The tree match
 binds the queued commit to the head GitHub reports live at admission; it does not
 establish that this is the head a reviewer judged ready, and its premise (GitHub's
@@ -1570,8 +1575,8 @@ collapsed block; when any `RIPR_GATE_MODE` value is set they are not folded.
 The fold stays open ("needs attention") when a folded report is unreadable,
 has an unexpected shape, omits an expected count, or states a warning,
 unknown, blocker, config-error, stale or ownerless-suppression count that is
-not `0`. It folds with the "no warnings or unknowns" label only when every
-the readiness, operations, history, promotion and suppression-health report
+not `0`. It folds with the "no warnings or unknowns" label only when the
+readiness, operations, history, promotion and suppression-health report
 categories each parsed with all expected counts at `0` (preview-promotion and
 waiver-aging reports are conditional and keep it open only when present and not
 clean); it stays open ("some policy reports not found") when a required
@@ -1601,6 +1606,29 @@ contract and review workflow. See
 first-screen summary that composes PR guidance, first useful action, assistant
 proof, assistant-loop health, ledger, baseline, gate, calibration,
 coverage/grip, and receipt artifacts.
+
+### Composite Action (`ripr-check`)
+
+For a one-step advisory check without the generated workflow, use the
+composite Action in `.github/actions/ripr-check`:
+
+```yaml
+- uses: actions/checkout@v6
+  with:
+    fetch-depth: 0
+- uses: <owner>/<repo>/.github/actions/ripr-check@<ref>
+```
+
+Inputs: `version` (default: the latest published release; installs that
+release's prebuilt archive after checking its published SHA-256, and falls
+back to `cargo install ripr --version <version> --locked` where no archive
+exists), `mode` (`draft`, `deep`, `ready`), `format` (`human`, `json`, `sarif`)
+and `base`. An empty `base` uses the pull request base branch on
+`pull_request` events (fetching just that branch when the checkout lacks it)
+and ripr's own default-branch detection elsewhere. A checkout without
+`fetch-depth: 0` can still lack history; `ripr check` then names the repair.
+The Action prints the report to the job log. For the summary comment, inline
+comments, SARIF upload and artifacts, use the generated workflow above.
 
 ### PR Test Guidance Annotations
 

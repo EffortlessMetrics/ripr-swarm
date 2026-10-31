@@ -60,6 +60,8 @@ pub use diff_scope_filter::DiffScopeFilter;
 /// owner for packet diff presentation, consumed by the product route and the
 /// xtask route alike. Neither route may rebuild its argv inline.
 pub use diff::load_pr_evidence_diff_range;
+#[cfg(test)]
+pub(crate) use diff::not_a_work_tree_message;
 /// Shared NUL-delimited Git path-record authority (#4006), consumed by the
 /// product and xtask routes alike.
 pub use diff::records::{

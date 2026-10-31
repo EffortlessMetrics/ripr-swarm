@@ -21027,6 +21027,72 @@ fn a_test_local_shadow_of_the_impl_type_is_not_a_direct_owner_call() -> Result<(
     Ok(())
 }
 
+/// #11469: the seam-side relation refuses a test-local trait that shadows a
+/// trait-declaration default-method owner, as the finding-level relation does
+/// (#7123). The owner has no impl self type, so the impl-type refusal never
+/// applies; the shared trait-declaration predicate does. The unshadowed control
+/// keeps the credit, so the shadow is the only difference.
+#[test]
+fn a_test_local_shadow_of_the_default_method_trait_is_not_a_direct_owner_call() -> Result<(), String>
+{
+    let shadowed =
+        include_str!("../../../../../fixtures/rust_trait_default_shadow/input/src/lib.rs");
+    let control = shadowed
+        .replace("    use super::Unit;\n", "    use super::{Counter, Unit};\n")
+        .replace(
+            "    trait Counter {\n        fn step(&self) -> u32;\n        fn advance(&self) -> u32 {\n            8\n        }\n    }\n\n    impl Counter for Unit {\n        fn step(&self) -> u32 {\n            2\n        }\n    }\n\n",
+            "",
+        )
+        .replace("self::Counter::advance(&Unit)", "Counter::advance(&Unit)");
+    assert_eq!(
+        shadowed.matches("trait Counter").count(),
+        2,
+        "the shadowed source declares the production and the test-local trait"
+    );
+    assert_eq!(
+        control.matches("trait Counter").count(),
+        1,
+        "the control drops the test-local trait"
+    );
+    assert!(
+        control.contains("use super::{Counter, Unit};")
+            && control.contains("Counter::advance(&Unit)")
+            && !control.contains("self::Counter::advance"),
+        "the control must bind the production trait"
+    );
+    let mut direct_by_source = Vec::new();
+    for source in [shadowed, control.as_str()] {
+        let path = PathBuf::from("src/lib.rs");
+        let index = index_from_files(&[(path.clone(), source)])?;
+        assert_eq!(index.tests().len(), 1, "one real subject");
+        let seams: Vec<_> = inventory_seams_from_index(&[path], &index)
+            .into_iter()
+            .filter(|seam| seam.owner().ends_with("::advance"))
+            .collect();
+        assert!(!seams.is_empty(), "the advance owner has seams");
+        let context = CompactGripContext::new(&index);
+        let mut direct = 0usize;
+        for seam in &seams {
+            direct += find_related_tests_with_context(seam, &context)
+                .iter()
+                .filter(|(test, reason)| {
+                    test.test.name == "advances" && *reason == RelationReason::DirectOwnerCall
+                })
+                .count();
+        }
+        direct_by_source.push(direct);
+    }
+    assert_eq!(
+        direct_by_source[0], 0,
+        "a shadowed trait must not be a direct call"
+    );
+    assert!(
+        direct_by_source[1] > 0,
+        "the unshadowed control keeps direct credit: {direct_by_source:?}"
+    );
+    Ok(())
+}
+
 fn return_seam_containing(source: &str, needle: &str) -> Result<RepoSeam, String> {
     let prod = PathBuf::from("src/lib.rs");
     let index = index_from_files(&[(prod.clone(), source)])?;

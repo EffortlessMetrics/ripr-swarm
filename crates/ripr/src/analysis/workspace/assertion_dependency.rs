@@ -8,7 +8,7 @@ use registry::eligible_json_manifest_bytes;
 use registry::json_manifest_digests;
 pub(crate) use registry::{
     LiteralJsonIdentity, eligible_json_root, eligible_proptest_root, verified_json_identity,
-    verified_proptest_identity,
+    verified_proptest_identity, verified_proptest_identity_result,
 };
 
 /// One previously parsed manifest, scoped to a drop-in authority. Every query
@@ -437,7 +437,9 @@ fn resolved_library(metadata: &serde_json::Value, root: &Path) -> Option<(PathBu
 /// In particular, exit 101 does not identify a missing package or toolchain.
 /// No raw stderr, environment value or filesystem path is retained here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum MetadataProbeFailure {
+pub(crate) enum MetadataProbeFailure {
+    /// Cargo succeeded, but its capture was not a JSON document.
+    InvalidJson,
     ToolchainPathPin,
     CaptureCreate(std::io::ErrorKind),
     Launch(std::io::ErrorKind),
@@ -452,6 +454,9 @@ enum MetadataProbeFailure {
 impl std::fmt::Display for MetadataProbeFailure {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::InvalidJson => formatter.write_str(
+                "Offline Cargo metadata succeeded but did not return valid JSON",
+            ),
             Self::ToolchainPathPin => formatter.write_str(
                 "Offline Cargo metadata was not started: a repository-local toolchain path was refused",
             ),
