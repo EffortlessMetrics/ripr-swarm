@@ -6,5 +6,10 @@ tests = [
   "crates/ripr/src/lsp/tests.rs::client_without_show_document_or_open_location_gets_no_navigation_action",
   "crates/ripr/src/lsp/tests.rs::open_location_client_keeps_its_client_command_without_a_duplicate",
   "crates/ripr/src/lsp/tests.rs::show_related_test_params_are_fail_closed",
+  "crates/ripr/src/lsp/tests.rs::show_related_test_params_refuse_a_symlink_that_escapes_the_root",
+  "crates/ripr/src/lsp/tests.rs::snapshot_without_input_identity_offers_no_server_navigation",
+  "crates/ripr/src/lsp/tests.rs::show_related_test_sends_show_document_and_reports_shown_over_the_wire",
+  "crates/ripr/src/lsp/tests.rs::show_related_test_does_not_park_on_a_client_that_never_answers",
+  "crates/ripr/src/lsp/tests.rs::show_related_test_refusal_maps_to_invalid_params_over_the_wire",
 ]
 code = ["crates/ripr/src/lsp/actions.rs", "crates/ripr/src/lsp/backend.rs"]

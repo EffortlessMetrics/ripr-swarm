@@ -29849,14 +29849,26 @@ fn show_related_test_params_are_fail_closed() -> Result<(), String> {
     let (_, snapshot) = retained_seam_action_request_at(root.path())?;
     let uri = file_uri_for_path(&root.path().join("tests/pricing.rs"))?;
     let identity = snapshot.input_identity_id();
+    assert!(
+        identity.is_some(),
+        "fixture snapshot must carry an identity"
+    );
     let target = |uri: &str, line: u64, identity: &Option<String>| {
-        vec![serde_json::json!({"uri": uri, "line": line, "input_identity": identity})]
+        let mut object = serde_json::json!({"uri": uri, "line": line});
+        if let Some(identity) = identity {
+            object["input_identity"] = serde_json::json!(identity);
+        }
+        vec![object]
     };
     let capable = show_document_client_features(true)?;
-    let refused = |result: Result<_, String>| -> Result<(), String> {
+    // Each refusal must fail for its own reason, not just fail.
+    let refused = |result: Result<_, String>, reason: &str| -> Result<(), String> {
         match result {
-            Ok(_) => Err("expected the request to be refused".to_string()),
-            Err(_) => Ok(()),
+            Ok(_) => Err(format!("expected a refusal mentioning {reason:?}")),
+            Err(error) if error.contains(reason) => Ok(()),
+            Err(error) => Err(format!(
+                "refused for the wrong reason ({reason:?}): {error}"
+            )),
         }
     };
 
@@ -29868,44 +29880,341 @@ fn show_related_test_params_are_fail_closed() -> Result<(), String> {
     assert_eq!(params.uri, uri);
     assert_eq!(params.selection.map(|range| range.start.line), Some(1));
     assert_eq!(params.external, Some(false));
+    assert_eq!(params.take_focus, Some(true));
 
-    // Client did not advertise showDocument.
-    refused(show_related_test_params(
-        &target(uri.as_str(), 2, &identity),
-        Some(&snapshot),
-        &show_document_client_features(false)?,
-    ))?;
-    // No current snapshot.
-    refused(show_related_test_params(
-        &target(uri.as_str(), 2, &identity),
-        None,
-        &capable,
-    ))?;
-    // Stale action: the analysis input moved on, so the old line is refused.
+    refused(
+        show_related_test_params(
+            &target(uri.as_str(), 2, &identity),
+            Some(&snapshot),
+            &show_document_client_features(false)?,
+        ),
+        "window/showDocument",
+    )?;
+    refused(
+        show_related_test_params(&target(uri.as_str(), 2, &identity), None, &capable),
+        "current analysis snapshot",
+    )?;
     let stale = Some("input:fnv1a64:stale".to_string());
-    let error =
-        show_related_test_params(&target(uri.as_str(), 2, &stale), Some(&snapshot), &capable)
-            .err()
-            .ok_or("a stale input identity must be refused")?;
-    assert!(error.contains("stale"), "{error}");
-    // Outside the workspace root, and a missing file inside it.
+    refused(
+        show_related_test_params(&target(uri.as_str(), 2, &stale), Some(&snapshot), &capable),
+        "stale",
+    )?;
+    // A request that omits the identity must not pass (fail-open guard).
+    refused(
+        show_related_test_params(&target(uri.as_str(), 2, &None), Some(&snapshot), &capable),
+        "no `input_identity`",
+    )?;
+    // A snapshot with no identity cannot bind the request either.
+    let mut unbound = snapshot.clone();
+    unbound.input_identity = None;
+    refused(
+        show_related_test_params(&target(uri.as_str(), 2, &None), Some(&unbound), &capable),
+        "no `input_identity`",
+    )?;
+    refused(
+        show_related_test_params(
+            &target(uri.as_str(), 2, &identity),
+            Some(&unbound),
+            &capable,
+        ),
+        "no `input_identity`",
+    )?;
     let outside = file_uri_for_path(&std::env::temp_dir().join("elsewhere.rs"))?;
-    refused(show_related_test_params(
-        &target(outside.as_str(), 2, &identity),
-        Some(&snapshot),
-        &capable,
-    ))?;
+    refused(
+        show_related_test_params(
+            &target(outside.as_str(), 2, &identity),
+            Some(&snapshot),
+            &capable,
+        ),
+        "inside the workspace",
+    )?;
     let missing = file_uri_for_path(&root.path().join("tests/gone.rs"))?;
-    refused(show_related_test_params(
-        &target(missing.as_str(), 2, &identity),
-        Some(&snapshot),
-        &capable,
-    ))?;
-    // Line 0 is not a 1-based line.
-    refused(show_related_test_params(
-        &target(uri.as_str(), 0, &identity),
-        Some(&snapshot),
-        &capable,
-    ))?;
+    refused(
+        show_related_test_params(
+            &target(missing.as_str(), 2, &identity),
+            Some(&snapshot),
+            &capable,
+        ),
+        "existing file",
+    )?;
+    refused(
+        show_related_test_params(
+            &target(uri.as_str(), 0, &identity),
+            Some(&snapshot),
+            &capable,
+        ),
+        "1-based `line`",
+    )?;
     Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn show_related_test_params_refuse_a_symlink_that_escapes_the_root() -> Result<(), String> {
+    use super::actions::show_related_test_params;
+    let root = unique_lsp_test_root("show-related-symlink")?;
+    let outside = unique_lsp_test_root("show-related-symlink-outside")?;
+    fs::write(outside.path().join("secret.rs"), "fn secret() {}\n")
+        .map_err(|err| err.to_string())?;
+    fs::create_dir_all(root.path().join("tests")).map_err(|err| err.to_string())?;
+    std::os::unix::fs::symlink(
+        outside.path().join("secret.rs"),
+        root.path().join("tests/link.rs"),
+    )
+    .map_err(|err| err.to_string())?;
+    let (_, snapshot) = retained_seam_action_request_at(root.path())?;
+    let link = file_uri_for_path(&root.path().join("tests/link.rs"))?;
+    let result = show_related_test_params(
+        &[serde_json::json!({
+            "uri": link.as_str(),
+            "line": 1,
+            "input_identity": snapshot.input_identity_id(),
+        })],
+        Some(&snapshot),
+        &show_document_client_features(true)?,
+    );
+    match result {
+        Ok(_) => Err("a symlink escaping the workspace root must be refused".to_string()),
+        Err(error) if error.contains("inside the workspace") => Ok(()),
+        Err(error) => Err(format!("refused for the wrong reason: {error}")),
+    }
+}
+
+#[test]
+fn snapshot_without_input_identity_offers_no_server_navigation() -> Result<(), String> {
+    let (params, mut snapshot) = seam_code_action_request()?;
+    snapshot.input_identity = None;
+    let actions = code_action_response(
+        &params,
+        Some(&snapshot),
+        &show_document_client_features(true)?,
+    );
+    assert!(
+        code_action_commands(&actions)?
+            .iter()
+            .all(|(_, command, _)| command != SHOW_RELATED_TEST_COMMAND),
+        "an unbindable snapshot must not offer ripr.showRelatedTest"
+    );
+    Ok(())
+}
+
+/// Thin `LanguageServer` over a shared `Backend`, so a wire test can reach the
+/// backend (to commit a snapshot after `initialize`) while a real framed
+/// session drives `initialize` and `workspace/executeCommand`.
+struct SharedBackend(std::sync::Arc<Backend>);
+
+impl LanguageServer for SharedBackend {
+    async fn initialize(
+        &self,
+        params: InitializeParams,
+    ) -> tower_lsp_server::jsonrpc::Result<tower_lsp_server::ls_types::InitializeResult> {
+        self.0.initialize(params).await
+    }
+
+    async fn shutdown(&self) -> tower_lsp_server::jsonrpc::Result<()> {
+        self.0.shutdown().await
+    }
+
+    async fn execute_command(
+        &self,
+        params: ExecuteCommandParams,
+    ) -> tower_lsp_server::jsonrpc::Result<Option<serde_json::Value>> {
+        self.0.execute_command(params).await
+    }
+}
+
+/// Drives `workspace/executeCommand ripr.showRelatedTest` over a real framed
+/// session with a committed snapshot. `answer` is how the fake client replies
+/// to `window/showDocument` (`None` never answers).
+async fn run_show_related_test_over_the_wire(
+    answer: Option<serde_json::Value>,
+    arguments: impl FnOnce(&Path, Option<String>) -> Result<Vec<serde_json::Value>, String>,
+) -> Result<(serde_json::Value, Option<serde_json::Value>), String> {
+    let root = unique_lsp_test_root("show-related-wire")?;
+    fs::create_dir_all(root.path().join("tests")).map_err(|err| err.to_string())?;
+    fs::write(root.path().join("tests/pricing.rs"), "#[test]\nfn t() {}\n")
+        .map_err(|err| err.to_string())?;
+    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+    let (mut client_read, mut client_write) = tokio::io::split(client_io);
+    let (server_read, server_write) = tokio::io::split(server_io);
+    let backend_root = root.path().to_path_buf();
+    let cell = std::sync::Arc::new(std::sync::Mutex::new(None::<std::sync::Arc<Backend>>));
+    let closure_cell = cell.clone();
+    let (service, socket) = LspService::new(move |client| {
+        let backend = std::sync::Arc::new(
+            Backend::new(client, backend_root.clone())
+                .with_client_request_timeout(Duration::from_millis(500)),
+        );
+        if let Ok(mut slot) = closure_cell.lock() {
+            *slot = Some(backend.clone());
+        }
+        SharedBackend(backend)
+    });
+    let server_task = tokio::spawn(async move {
+        Server::new(server_read, server_write, socket)
+            .serve(service)
+            .await;
+    });
+    let root_uri = file_uri_for_path(root.path())?;
+    write_lsp_message(
+        &mut client_write,
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {
+                "processId": null,
+                "rootUri": root_uri.as_str(),
+                "capabilities": {"window": {"showDocument": {"support": true}}}
+            }
+        }),
+    )
+    .await?;
+    read_lsp_response(&mut client_read, 1).await?;
+    let backend = cell
+        .lock()
+        .map_err(|err| err.to_string())?
+        .clone()
+        .ok_or("backend was never constructed")?;
+    let (params, snapshot) = retained_seam_action_request_at(root.path())?;
+    let uri = params.text_document.uri.clone();
+    let diagnostics = snapshot
+        .diagnostics_by_uri
+        .get(&uri)
+        .cloned()
+        .unwrap_or_default();
+    backend
+        .refresh_plan(WorkspaceDiagnostics {
+            batches: vec![DiagnosticBatch { uri, diagnostics }],
+            snapshot,
+        })
+        .ok_or("snapshot commit failed")?;
+    backend.set_analysis_attempt_state_for_test(AnalysisAttemptState::Succeeded);
+    let identity = backend
+        .latest_analysis_snapshot()
+        .and_then(|snapshot| snapshot.input_identity_id());
+    write_lsp_message(
+        &mut client_write,
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 2, "method": "workspace/executeCommand",
+            "params": {
+                "command": SHOW_RELATED_TEST_COMMAND,
+                "arguments": arguments(root.path(), identity)?
+            }
+        }),
+    )
+    .await?;
+    let mut show_request = None;
+    let response = tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let message = read_lsp_message(&mut client_read).await?;
+            if message.get("method").and_then(serde_json::Value::as_str)
+                == Some("window/showDocument")
+            {
+                if let (Some(answer), Some(id)) = (&answer, message.get("id").cloned()) {
+                    write_lsp_message(
+                        &mut client_write,
+                        serde_json::json!({"jsonrpc": "2.0", "id": id, "result": answer}),
+                    )
+                    .await?;
+                }
+                show_request = Some(message);
+                continue;
+            }
+            if message.get("method").is_none()
+                && message.get("id").and_then(serde_json::Value::as_u64) == Some(2)
+            {
+                return Ok::<_, String>(message);
+            }
+        }
+    })
+    .await
+    .map_err(|_elapsed| "executeCommand never answered".to_string())??;
+    server_task.abort();
+    Ok((response, show_request))
+}
+
+fn show_related_arguments(
+    root: &Path,
+    identity: Option<String>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let uri = file_uri_for_path(&root.join("tests/pricing.rs"))?;
+    Ok(vec![
+        serde_json::json!({"uri": uri.as_str(), "line": 2, "input_identity": identity}),
+    ])
+}
+
+#[test]
+#[serial]
+fn show_related_test_sends_show_document_and_reports_shown_over_the_wire() -> Result<(), String> {
+    work_done_progress_runtime()?.block_on(async {
+        let (response, request) = run_show_related_test_over_the_wire(
+            Some(serde_json::json!({"success": true})),
+            show_related_arguments,
+        )
+        .await?;
+        let request = request.ok_or("no window/showDocument request was sent")?;
+        let params = &request["params"];
+        assert!(
+            params["uri"]
+                .as_str()
+                .is_some_and(|uri| uri.ends_with("/tests/pricing.rs")),
+            "{params}"
+        );
+        assert_eq!(params["selection"]["start"]["line"], 1, "0-based line");
+        assert_eq!(params["selection"]["start"]["character"], 0);
+        assert_eq!(params["takeFocus"], true);
+        assert_eq!(response["result"], serde_json::json!({"shown": true}));
+
+        let (declined, _) = run_show_related_test_over_the_wire(
+            Some(serde_json::json!({"success": false})),
+            show_related_arguments,
+        )
+        .await?;
+        assert_eq!(declined["result"], serde_json::json!({"shown": false}));
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn show_related_test_does_not_park_on_a_client_that_never_answers() -> Result<(), String> {
+    work_done_progress_runtime()?.block_on(async {
+        let (response, request) =
+            run_show_related_test_over_the_wire(None, show_related_arguments).await?;
+        assert!(request.is_some(), "the request must still be sent");
+        assert_eq!(response["result"], serde_json::json!({"shown": false}));
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn show_related_test_refusal_maps_to_invalid_params_over_the_wire() -> Result<(), String> {
+    work_done_progress_runtime()?.block_on(async {
+        for (label, reason, build) in [
+            (
+                "missing identity",
+                "no `input_identity`",
+                (|root: &Path, _: Option<String>| show_related_arguments(root, None))
+                    as fn(&Path, Option<String>) -> Result<Vec<serde_json::Value>, String>,
+            ),
+            (
+                "stale identity",
+                "stale",
+                |root: &Path, _: Option<String>| {
+                    show_related_arguments(root, Some("input:fnv1a64:stale".to_string()))
+                },
+            ),
+        ] {
+            let (response, request) = run_show_related_test_over_the_wire(None, build).await?;
+            assert!(request.is_none(), "{label}: no showDocument may be sent");
+            assert_eq!(response["error"]["code"], -32602, "{label}: {response}");
+            assert!(
+                response["error"]["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains(reason)),
+                "{label}: {response}"
+            );
+        }
+        Ok(())
+    })
 }

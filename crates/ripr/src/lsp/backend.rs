@@ -7177,7 +7177,13 @@ impl Backend {
                 &client_features,
             )
             .map_err(LspError::invalid_params)?;
-            let shown = self.client.show_document(show).await;
+            // Bounded by the shared client-request liveness bound (#5278): a
+            // client that advertises showDocument but never answers must not
+            // park the command handler. Any failure or timeout reports
+            // `shown: false`.
+            let shown = self
+                .bounded_client_request(self.client.show_document(show))
+                .await;
             return Ok(Some(
                 serde_json::json!({ "shown": matches!(shown, Ok(true)) }),
             ));

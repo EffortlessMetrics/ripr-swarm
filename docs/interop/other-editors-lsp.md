@@ -57,9 +57,11 @@ client advertises pull diagnostics (`textDocument.diagnostic`).
 `ripr.collectContext`, `ripr.collectEvidenceContext`,
 `ripr.collectWorkspaceStatus`, `ripr.collectRepairPacket`,
 `ripr.collectTopLimitation`, `ripr.collectReceiptStatus`, and
-`ripr.showRelatedTest`. The server runs all of them. Clipboard and navigation actions (`ripr.copy*`,
-`ripr.openRelatedTest`) are offered only to clients that advertise them in the
-`experimental.riprEditor` capability, which only the VS Code extension does.
+`ripr.showRelatedTest`. The server runs all of them. Clipboard actions
+(`ripr.copy*`) and the client-side `ripr.openRelatedTest` command are offered
+only to clients that advertise them in the `experimental.riprEditor`
+capability, which only the VS Code extension does. Other clients navigate
+through `ripr.showRelatedTest` instead.
 
 **Jump to a related test.** A finding that names related tests offers the code
 action "Write targeted test: open best related test" to a client that
@@ -67,7 +69,8 @@ advertises `window.showDocument`. It runs `ripr.showRelatedTest`, and the
 server answers with a `window/showDocument` request for the test file and
 line. A client without `showDocument` is not offered the action. The action
 only navigates: it never edits source and never runs the test. If the
-analysis input changed since the action was listed, the server refuses with an
+analysis input changed since the action was listed (or the request carries no
+analysis identity), the server refuses with an
 `InvalidParams` error that names `ripr.refresh`.
 
 **Custom notification.** The server sends `ripr/analysisStatus` after startup

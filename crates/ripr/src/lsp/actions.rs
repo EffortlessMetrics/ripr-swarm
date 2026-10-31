@@ -843,7 +843,7 @@ fn push_seam_actions(
     if let Some(related) = related_test
         && let Some(target) = related_test_target(context.snapshot, related)
     {
-        actions.push(open_related_test_action(
+        actions.extend(open_related_test_action(
             target,
             context.diagnostic,
             Some(context.snapshot),
@@ -931,7 +931,7 @@ fn push_gap_actions(
             ));
         }
         if let Some(target) = gap_related_test_target(context.snapshot, context.data) {
-            actions.push(open_related_test_action(
+            actions.extend(open_related_test_action(
                 target,
                 context.diagnostic,
                 Some(context.snapshot),
@@ -2261,7 +2261,7 @@ fn open_related_test_action(
     diagnostic: &Diagnostic,
     snapshot: Option<&AnalysisSnapshot>,
     client_features: &ClientFeatureProfile,
-) -> CodeActionOrCommand {
+) -> Option<CodeActionOrCommand> {
     // Generic-client navigation (RIPR-SPEC-0129): a client that did not
     // advertise the client-side `ripr.openRelatedTest` command but does
     // advertise `window/showDocument` gets the same navigation through the
@@ -2271,18 +2271,18 @@ fn open_related_test_action(
         .supports_client_command(OPEN_RELATED_TEST_COMMAND)
         && client_features.show_document
     {
+        // The server command is bound to the snapshot input identity; a
+        // snapshot without one cannot bind it, so no action is offered.
+        let identity = snapshot.and_then(AnalysisSnapshot::input_identity_id)?;
         let mut target = target;
-        if let (Some(object), Some(identity)) = (
-            target.as_object_mut(),
-            snapshot.and_then(AnalysisSnapshot::input_identity_id),
-        ) {
-            object.insert("input_identity".to_string(), Value::String(identity));
-        }
+        target
+            .as_object_mut()?
+            .insert("input_identity".to_string(), Value::String(identity));
         (SHOW_RELATED_TEST_COMMAND, "show_related_test", target)
     } else {
         (OPEN_RELATED_TEST_COMMAND, "open_related_test", target)
     };
-    CodeActionOrCommand::CodeAction(CodeAction {
+    Some(CodeActionOrCommand::CodeAction(CodeAction {
         title: OPEN_RELATED_TEST_TITLE.to_string(),
         kind: Some(CodeActionKind::new("quickfix.ripr.navigate")),
         diagnostics: Some(vec![diagnostic.clone()]),
@@ -2299,7 +2299,7 @@ fn open_related_test_action(
             snapshot,
         )),
         ..CodeAction::default()
-    })
+    }))
 }
 
 /// Validates a `ripr.showRelatedTest` request and builds the
@@ -2342,12 +2342,23 @@ pub(super) fn show_related_test_params(
         .filter(|line| *line >= 1)
         .and_then(|line| u32::try_from(line - 1).ok())
         .ok_or_else(|| format!("`{SHOW_RELATED_TEST_COMMAND}` needs a 1-based `line`"))?;
-    if target.get("input_identity").and_then(Value::as_str)
-        != snapshot.input_identity_id().as_deref()
-    {
-        return Err(format!(
-            "stale `{SHOW_RELATED_TEST_COMMAND}` target: the analysis input changed; run `{REFRESH_COMMAND}`"
-        ));
+    // Both sides must carry an identity: an absent identity is a refusal,
+    // never a match (`None == None` would fail open).
+    match (
+        target.get("input_identity").and_then(Value::as_str),
+        snapshot.input_identity_id(),
+    ) {
+        (Some(supplied), Some(current)) if supplied == current => {}
+        (Some(_), Some(_)) => {
+            return Err(format!(
+                "stale `{SHOW_RELATED_TEST_COMMAND}` target: the analysis input changed; run `{REFRESH_COMMAND}`"
+            ));
+        }
+        _ => {
+            return Err(format!(
+                "`{SHOW_RELATED_TEST_COMMAND}` target carries no `input_identity` bound to the current snapshot; run `{REFRESH_COMMAND}`"
+            ));
+        }
     }
     let inside_root = super::uri::path_from_file_uri(&uri).is_some_and(|path| {
         super::uri::path_is_within_root(snapshot.root.as_path(), &path) && path.is_file()
