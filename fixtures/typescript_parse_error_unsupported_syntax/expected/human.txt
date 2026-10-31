@@ -18,7 +18,7 @@ Start here:
   Language: typescript
   Language status: preview
   Static exposure: unknown (severity: note, confidence 0.20)
-  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether a discriminator exists is not established. Preview score, not on the same scale as Rust confidence.
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: const next = ;
   Analyzer limit: Static limit `unsupported_syntax`: malformed TypeScript/JavaScript prevented

@@ -18,9 +18,9 @@
       "confidence_basis": [
         {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
         {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
-        {"code": "discriminator_not_established", "summary": "whether a discriminator exists is not established"}
+        {"code": "discriminator_not_established", "summary": "whether a test checks this behavior is not established"}
       ],
-      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether a discriminator exists is not established. Preview score, not on the same scale as Rust confidence.",
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_broken.ts:typescript_preview_unsupported_syntax:7027d4b0",
         "family": "static_unknown",

@@ -137,7 +137,7 @@ pub(crate) fn typescript_actionability_for(
             gap_state: "advisory",
             category: "missing_target_shape",
             why_not_actionable:
-                "TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape"
+                "TypeScript preview found related test evidence but cannot name a safe target check or observer shape"
                     .to_string(),
             repair_route:
                 "add probe-specific discriminator extraction for this expression before repair packet projection"
