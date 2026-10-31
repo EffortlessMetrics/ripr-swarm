@@ -14,7 +14,7 @@
     "state": "not_discriminated",
     "method": "runtime_mutant_kill",
     "test_command": "python -m pytest -q -p no:cacheprovider",
-    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "toolchain": "Python 3.13.18, pytest 9.2.0, x86_64-linux",
     "mutants": [
       {
         "replacement": "return x * 3",
