@@ -404,14 +404,17 @@ delimiter nested in a field (3.12), a single-line f-string with a field of its
 own inside a field (3.12 same-quote nesting), a field or nested literal that is
 not closed, and nesting deeper than four levels. A colon that may or may not be
 the spec colon hides. The triple-quoted scanning here gives up and hides
-rather than inventing a call for the cases above. Known limits: inside
+rather than inventing a call for the cases above. A top-level single-line
+f-string (any `f`/`rf`/`fr` prefix, either quote) whose quote pairing cannot be
+followed also hides the rest of the text: its own quote nested inside a
+replacement field (Python 3.12: `f"{ "helper(1)" }"`, `f"{y["helper(1)"]}"`) or
+a newline inside a field (`f"{\n y\n}  helper(1)"`). Pairing that does follow
+(`f"{x}"`, `f"{d['k']}"`, `f"{{"`, a nested spec field) keeps a real call after
+it visible (#9230). Known limits: inside
 triple-quoted f-strings a replacement field on the same line as the opening
-quote is hidden by the line-prefix quote check, and a real call after a field the
-scanner gave up on is hidden too (misses). Separately, and not changed by this
-change, top-level single-line f-strings that use Python 3.12 same-quote nesting
-(`f"{ "helper(1)" }"`, `f"{y["helper(1)"]}"`) or a newline inside a
-replacement field (`f"{\n y\n}  helper(1)"`) can expose text that is not a
-call (#9230).
+quote is hidden by the line-prefix quote check, a real call after a field the
+scanner gave up on is hidden too, and a real call after a single-line f-string
+the pairing cannot follow is hidden (misses).
 
 A pytest test that names a module-level `@pytest.fixture` function (in its own
 module or a `conftest.py` up its directory chain, nearest wins) as a parameter
