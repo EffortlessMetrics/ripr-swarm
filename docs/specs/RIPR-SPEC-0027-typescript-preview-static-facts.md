@@ -500,7 +500,7 @@ condition tokens are unchanged.
 
 Clause-level selection on `&&` / `||` / `??` conditions is decided by the parse
 tree, not by token order, so `a && b > 1 || c` and `a || b > 1 && c` each name
-`b == 1` when only that comparison's tokens changed (#11196). A reordered,
+`b == 1` when only that comparison's tokens changed (#11196). A reordered or
 removed clause, a moved parenthesis, a swapped
 logical operator, an edit to a non-comparison clause, a clause quoted in a
 string or template literal, and a clause with a call, computed or nullish
