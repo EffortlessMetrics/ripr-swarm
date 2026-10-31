@@ -465,7 +465,7 @@ export function fetchManifestBytesOverHttps(url: string, maxBytes = MANIFEST_MAX
           if (contentLengthHeader !== undefined) {
             const declaredLength = Number(contentLengthHeader);
             if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
-              response.resume();
+              request.destroy();
               finish({
                 kind: 'transport_failure',
                 url: target,
