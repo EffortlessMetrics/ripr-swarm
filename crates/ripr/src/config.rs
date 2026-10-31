@@ -59,8 +59,9 @@ pub(crate) use typescript::{
     TYPESCRIPT_SOURCE_DIR_MARKERS, declared_typescript_handwritten_under,
     detect_javascript_led_root, detect_typescript_project, is_detectable_package_source_name,
     is_detectable_typescript_source_name, is_typescript_dir_pruned_from_discovery,
-    javascript_led_manifest_name, source_dir_contains_detectable_typescript,
-    typescript_project_marker_name, typescript_source_dir_marker_name,
+    javascript_led_manifest_name, javascript_led_source_dir_marker_name,
+    source_dir_contains_detectable_typescript, typescript_project_marker_name,
+    typescript_source_dir_marker_name,
 };
 // Admission/exclusion predicates for the diff-scope guard and the adapters:
 // real in every lane, like the Python authorities above, so an adapter's
@@ -95,6 +96,10 @@ mod typescript_absent {
         None
     }
 
+    pub(crate) fn javascript_led_source_dir_marker_name(_name: &str) -> Option<&'static str> {
+        None
+    }
+
     pub(crate) fn is_detectable_package_source_name(_name: &str) -> bool {
         false
     }
@@ -120,8 +125,9 @@ pub(crate) use typescript_absent::{
     JAVASCRIPT_LED_MANIFESTS, JAVASCRIPT_LED_SOURCE_DIRS, TYPESCRIPT_PROJECT_MARKERS,
     TYPESCRIPT_SOURCE_DIR_MARKERS, detect_javascript_led_root, detect_typescript_project,
     is_detectable_package_source_name, is_detectable_typescript_source_name,
-    javascript_led_manifest_name, source_dir_contains_detectable_typescript,
-    typescript_project_marker_name, typescript_source_dir_marker_name,
+    javascript_led_manifest_name, javascript_led_source_dir_marker_name,
+    source_dir_contains_detectable_typescript, typescript_project_marker_name,
+    typescript_source_dir_marker_name,
 };
 
 pub(crate) const CONFIG_FILE_NAME: &str = "ripr.toml";
@@ -292,7 +298,7 @@ fn is_repository_boundary(directory: &Path) -> bool {
     }
 
     let manifest = directory.join("Cargo.toml");
-    let Ok(contents) = std::fs::read_to_string(manifest) else {
+    let Ok(contents) = crate::bounded_input::read_to_string(manifest) else {
         return false;
     };
     if !contents.contains("workspace") {

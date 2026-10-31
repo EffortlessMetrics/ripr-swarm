@@ -591,7 +591,7 @@ pub(crate) fn render_human_triage(
                 "    - {}:{} ({}{}); kind: {}; reason: {}\n",
                 crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
                 finding.probe.location.line,
-                finding.class.plain_label(),
+                finding.class.plain_label_with_stage(),
                 currentness,
                 finding.probe.family.as_str(),
                 hidden_finding_reason(finding)
@@ -618,6 +618,30 @@ pub(crate) fn render_human_triage(
                     }
                     _ => {}
                 }
+            }
+        }
+        // #9373: gloss each class named by a listed row, once, in the plain
+        // vocabulary, so a run with several classes needs no `human-full`
+        // rerun to read them.
+        let mut listed_classes: Vec<&ExposureClass> = Vec::new();
+        for class in ExposureClass::ALL.iter() {
+            if triage
+                .omitted
+                .iter()
+                .take(listed)
+                .any(|finding| finding.class == *class)
+            {
+                listed_classes.push(class);
+            }
+        }
+        if !listed_classes.is_empty() {
+            out.push_str("  Hidden classes:\n");
+            for class in listed_classes {
+                out.push_str(&format!(
+                    "    {} = {}\n",
+                    class.plain_label_with_stage(),
+                    class.plain_gloss()
+                ));
             }
         }
         let remaining = triage.omitted.len() - listed;
@@ -1410,6 +1434,17 @@ fn python_preview_safe_action(finding: &Finding, recommend_repair_start: bool) -
                 format!(
                     "static evidence cannot bind `{operand}` to a test input, so the boundary equality cannot become a repair target"
                 ),
+                "add or strengthen a test by hand",
+            )
+        } else if finding
+            .missing
+            .iter()
+            .any(|line| line.contains("Some strong related calls have unresolved inputs"))
+        {
+            // #10990: a strong call with unresolved inputs keeps the boundary
+            // finding weak and withholds the card; say so in plain words.
+            (
+                "static evidence cannot place every strong related test input, so the boundary equality cannot become a repair target".to_string(),
                 "add or strengthen a test by hand",
             )
         } else {
@@ -3290,6 +3325,23 @@ mod tests {
         assert!(
             !action.contains("names no concrete missing discriminator"),
             "{action}"
+        );
+        // #10990: the unresolved-call boundary decline gets its own plain
+        // wording instead of the generic line.
+        let mut unresolved_call = test_finding("finding:unresolved-call-decline");
+        unresolved_call.class = ExposureClass::WeaklyExposed;
+        unresolved_call.language = Some(LanguageId::Python);
+        unresolved_call.language_status = Some(LanguageStatus::Preview);
+        unresolved_call.missing = vec!["A strong Python oracle reaches `f`, but static evidence does not place a related test input at the changed predicate boundary. Some strong related calls have unresolved inputs, so static evidence cannot determine whether they reach the changed boundary of `x >= y`".to_string()];
+        let unresolved_action = python_preview_safe_action(&unresolved_call, false);
+        assert!(
+            unresolved_action
+                .contains("static evidence cannot place every strong related test input"),
+            "{unresolved_action}"
+        );
+        assert!(
+            !unresolved_action.contains("names no concrete missing discriminator"),
+            "{unresolved_action}"
         );
         // A weak finding without the unresolved-operand shape keeps the
         // generic line.

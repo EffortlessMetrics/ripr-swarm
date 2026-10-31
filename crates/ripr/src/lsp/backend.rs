@@ -20,7 +20,9 @@ use super::diagnostics::{
     delivered_diagnostics_for_uri, delivery_omission_diagnostic, diagnostic_refresh_plan,
     take_all_uris, withdrawn_quarantine_diagnostics,
 };
-use super::hover::NoEvidenceState;
+use super::hover::{
+    NoEvidenceState, UnanalyzedFileCause, classify_unanalyzed_file, unanalyzed_file_hover_route,
+};
 use super::hover::{
     classified_seam_hover_response, diagnostic_at_position, diagnostic_covers_position,
     diagnostic_hover_response, finding_hover_response, hover_response_without_evidence,
@@ -62,8 +64,9 @@ use crate::config::{
     TYPESCRIPT_SOURCE_DIR_MARKERS, is_detectable_package_source_name,
     is_detectable_python_source_name, is_detectable_typescript_source_name,
     is_python_excluded_dir_everywhere, is_typescript_excluded_dir_everywhere,
-    javascript_led_manifest_name, python_project_marker_name, python_source_dir_marker_name,
-    typescript_project_marker_name, typescript_source_dir_marker_name,
+    javascript_led_manifest_name, javascript_led_source_dir_marker_name,
+    python_project_marker_name, python_source_dir_marker_name, typescript_project_marker_name,
+    typescript_source_dir_marker_name,
 };
 use crate::domain::{StageEvidence, StageState};
 use crate::lsp::diagnostic_budget::DiagnosticDeliveryOutcome;
@@ -254,7 +257,7 @@ pub(super) struct Backend {
     /// omission locally instead of dropping it silently. Reflects the most
     /// recent disclosure attempt.
     initialize_failure_disclosure_omitted: AtomicBool,
-    refresh_scheduler: RefreshScheduler,
+    refresh_scheduler: Arc<RefreshScheduler>,
     workspace_revision: Mutex<u64>,
     /// One in-flight interactive debounce window (#8528). A trigger that
     /// finds this set returns immediately; the owner sleeps, then drops the
@@ -398,7 +401,7 @@ impl Backend {
             last_analysis_failure_shown: Mutex::new(None),
             unavailable_language_notices_shown: Mutex::new(BTreeSet::new()),
             initialize_failure_disclosure_omitted: AtomicBool::new(false),
-            refresh_scheduler: RefreshScheduler::default(),
+            refresh_scheduler: Arc::new(RefreshScheduler::default()),
             workspace_revision: Mutex::new(0),
             interactive_debounce_window_open: AtomicBool::new(false),
             refresh_idle: Notify::new(),
@@ -1570,6 +1573,14 @@ impl Backend {
         sink
     }
 
+    /// Cancels every active and pending refresh when the session ends
+    /// (`exit` or end of input), without the terminal diagnostics clear that
+    /// `shutdown` performs (#11439).
+    pub(super) fn session_end_hook(&self) -> super::session_end::SessionEndHook {
+        let scheduler = Arc::clone(&self.refresh_scheduler);
+        Arc::new(move || scheduler.stop())
+    }
+
     #[cfg(test)]
     pub(super) fn refresh_scheduler_for_test(&self) -> &RefreshScheduler {
         &self.refresh_scheduler
@@ -1919,6 +1930,18 @@ impl Backend {
     pub(super) fn set_snapshot_run_status_for_test(&self, run_status: &str) {
         if let Ok(mut health) = self.analysis_health.lock() {
             health.snapshot_run_status = Some(run_status.to_string());
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn analysis_attempt_state_for_test(&self) -> AnalysisAttemptState {
+        self.analysis_health_snapshot().state
+    }
+
+    #[cfg(test)]
+    pub(super) fn clear_latest_analysis_for_test(&self) {
+        if let Ok(mut latest) = self.latest_analysis.lock() {
+            *latest = None;
         }
     }
 
@@ -2302,7 +2325,7 @@ impl Backend {
         self.client
             .send_notification::<ShowMessage>(ShowMessageParams {
                 typ: MessageType::WARNING,
-                message: bounded_failure_message(&format!("ripr analysis failed: {message}")),
+                message: analysis_failure_shown_message(message),
             })
             .await;
     }
@@ -2556,7 +2579,7 @@ impl Backend {
                         })
                         .collect::<Vec<_>>(),
                     value.analysis_outcome.clone(),
-                    withheld_unknown_summary(value),
+                    withheld_findings_summary(value),
                     value.partial_scope.clone(),
                 )
             })
@@ -3698,7 +3721,7 @@ impl Backend {
                     "ripr could not apply one incremental edit and stopped trusting the retained text; saving cannot fix this. Undo the edit or revert the file so ripr receives the full document again."
                 }
                 DocumentStalenessReason::NoAnalyzedSavedContent => {
-                    "ripr has not analyzed this file's saved content yet; its evidence appears after the next refresh (`ripr.refresh`) completes. A new file must be saved first."
+                    unanalyzed_file_hover_route(self.unanalyzed_file_cause(uri))
                 }
             };
             return markdown_hover(format!(
@@ -3713,6 +3736,25 @@ impl Backend {
         hover_response_without_evidence(
             self.no_evidence_state(),
             &self.configured_language_labels(),
+        )
+    }
+
+    /// The observed cause behind a `no_analyzed_saved_content` quarantine
+    /// (#11452), read from the file, the committed snapshot and the latest
+    /// attempt state.
+    fn unanalyzed_file_cause(&self, uri: &Uri) -> UnanalyzedFileCause {
+        let file_on_disk = self
+            .document_path_for_uri(uri)
+            .is_some_and(|path| path.is_file());
+        let snapshot_committed = self
+            .latest_analysis
+            .lock()
+            .ok()
+            .is_some_and(|value| value.is_some());
+        classify_unanalyzed_file(
+            file_on_disk,
+            self.analysis_health_snapshot().state,
+            snapshot_committed,
         )
     }
 
@@ -3781,10 +3823,7 @@ impl Backend {
         let Some(text) = self.document_text(uri) else {
             return false;
         };
-        if std::fs::metadata(&path).map(|meta| meta.len()).ok() != u64::try_from(text.len()).ok() {
-            return false;
-        }
-        std::fs::read(&path).is_ok_and(|disk| disk == text.as_bytes())
+        disk_bytes_equal_text(&path, &text)
     }
 
     /// The quarantine state of an open document, as `(path, reason)`.
@@ -4375,7 +4414,7 @@ fn path_is_detectable_package_source(root: &Path, path: &Path) -> bool {
     let Some((marker, below)) = directories.split_first() else {
         return true;
     };
-    JAVASCRIPT_LED_SOURCE_DIRS.contains(&marker.as_str())
+    javascript_led_source_dir_marker_name(marker).is_some()
         && below
             .iter()
             .all(|dir| !dir.starts_with('.') && !is_typescript_excluded_dir_everywhere(dir))
@@ -4780,6 +4819,20 @@ mod workspace_input_tests {
         }
         assert!(WorkspaceInputKind::JavascriptPackagePresence.reloads_repository_config());
         assert!(!WorkspaceInputKind::JavascriptPackagePresence.invalidates_workspace_graph());
+
+        // #11419: source-directory markers resolve through the host
+        // filesystem, so on a case-insensitive host (Windows, macOS) the
+        // differently-cased spellings classify like the canonical ones —
+        // exactly what the detector sees through `root.join(dir)`.
+        if crate::output::path::host_paths_case_insensitive() {
+            for source in ["Src/app.js", "Test/a.js", "TESTS/a.js", "Src/deep/view.jsx"] {
+                assert_eq!(
+                    workspace_input_kind(&root, &root.join(source)),
+                    Some(WorkspaceInputKind::JavascriptPackagePresence),
+                    "{source}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -5148,6 +5201,7 @@ pub(super) struct RefreshLogSummary {
     gap_artifact_rejections: usize,
     gap_artifact_rejection_kinds: Vec<&'static str>,
     withheld_unknown: usize,
+    withheld_preview: usize,
     enabled_languages: usize,
     enabled_language_names: Vec<&'static str>,
 }
@@ -5210,6 +5264,7 @@ impl RefreshLogSummary {
                 .into_iter()
                 .collect(),
             withheld_unknown: withheld_unknown_summary(snapshot).map_or(0, |(count, _)| count),
+            withheld_preview: withheld_preview_summary(snapshot).0,
             enabled_languages: 1,
             enabled_language_names: vec!["rust"],
         }
@@ -5370,7 +5425,7 @@ fn refresh_completed_log_message_with_telemetry(
 ) -> String {
     let duration = format_duration(summary.duration);
     format!(
-        "ripr analysis refresh completed in {duration}: generation={}, diagnostics={}, files={}, findings={}, preview_findings={}, static_limits={}, seam_diagnostics={}, gap_artifacts={}, actionable_gap_artifacts={}, preview_gap_artifacts={}, no_action_gap_artifacts={}, gap_static_limits={}, gap_artifact_rejections={}, gap_artifact_rejection_kinds={}, withheld_unknown={}, enabled_languages={}, enabled_language_names={}, computed_files={}, published_files={}, unchanged_files={}, cleared_files={}, published_payload_bytes={}, suppressed_payload_bytes={}",
+        "ripr analysis refresh completed in {duration}: generation={}, diagnostics={}, files={}, findings={}, preview_findings={}, static_limits={}, seam_diagnostics={}, gap_artifacts={}, actionable_gap_artifacts={}, preview_gap_artifacts={}, no_action_gap_artifacts={}, gap_static_limits={}, gap_artifact_rejections={}, gap_artifact_rejection_kinds={}, withheld_unknown={}, withheld_preview={}, enabled_languages={}, enabled_language_names={}, computed_files={}, published_files={}, unchanged_files={}, cleared_files={}, published_payload_bytes={}, suppressed_payload_bytes={}",
         summary.generation,
         summary.diagnostics,
         summary.files,
@@ -5386,6 +5441,7 @@ fn refresh_completed_log_message_with_telemetry(
         summary.gap_artifact_rejections,
         summary.gap_artifact_rejection_kinds.join("|"),
         summary.withheld_unknown,
+        summary.withheld_preview,
         summary.enabled_languages,
         summary.enabled_language_names.join("|"),
         summary.files,
@@ -5448,12 +5504,93 @@ fn bounded_failure_message(message: &str) -> String {
     super::component_outcome::bounded_message(message)
 }
 
+/// The `window/showMessage` text for a failed analysis (#8583), bounded and
+/// path-redacted like every client-visible failure message.
+fn analysis_failure_shown_message(message: &str) -> String {
+    bounded_failure_message(&format!("ripr analysis failed: {message}"))
+}
+
 #[cfg(test)]
 mod interactive_debounce_fold_tests;
 
 #[cfg(test)]
 mod bounded_failure_message_tests {
-    use super::bounded_failure_message;
+    use super::{analysis_failure_shown_message, bounded_failure_message};
+
+    /// A workspace that is not a Git work tree: the shown warning must keep
+    /// the remedy (where to run, `--root`, the no-history pilot command)
+    /// within the 240-character bound, shortening only the cause. The long
+    /// root has spaces so the path redaction cannot absorb it.
+    #[test]
+    fn non_git_workspace_warning_keeps_the_remedy_inside_the_bound() -> Result<(), String> {
+        let root = crate::lsp::tests::unique_lsp_test_root("non-git-remedy")?;
+        let deep = root
+            .path()
+            .join("a long folder name with spaces ".repeat(6))
+            .join("another long folder name");
+        std::fs::create_dir_all(&deep).map_err(|error| format!("create root failed: {error}"))?;
+        // The production builder of the non-Git refusal; a non-Git temp root
+        // is not constructible here because unit-test temp roots sit inside
+        // the checkout's own work tree.
+        let error = crate::core_error::CoreError::repository_root_unusable(
+            crate::analysis::not_a_work_tree_message(&deep),
+        );
+        let shown = analysis_failure_shown_message(
+            &error.with_context("workspace analysis failed").to_string(),
+        );
+        assert!(shown.contains("is not inside a Git work tree"), "{shown}");
+        for remedy in [
+            "pass `--root <path>` to one",
+            "`ripr pilot --root .` works without Git history",
+        ] {
+            assert!(shown.contains(remedy), "remedy {remedy:?} cut: {shown}");
+        }
+        assert!(
+            shown.chars().count()
+                <= super::super::component_outcome::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND,
+            "{shown}"
+        );
+        assert!(
+            shown.ends_with('…'),
+            "the long root cause must be the part shortened: {shown}"
+        );
+        Ok(())
+    }
+
+    /// The shortest root and a multibyte root go through the same
+    /// composition: the remedy survives and the bound counts scalars.
+    #[test]
+    fn non_git_workspace_warning_keeps_the_remedy_for_short_and_multibyte_roots() {
+        let long_multibyte = format!("/{}", "é ".repeat(200));
+        for root in ["/", long_multibyte.as_str()] {
+            let error = crate::core_error::CoreError::repository_root_unusable(
+                crate::analysis::not_a_work_tree_message(std::path::Path::new(root)),
+            );
+            let shown = analysis_failure_shown_message(
+                &error.with_context("workspace analysis failed").to_string(),
+            );
+            for remedy in [
+                "pass `--root <path>` to one",
+                "`ripr pilot --root .` works without Git history",
+            ] {
+                assert!(shown.contains(remedy), "remedy {remedy:?} cut: {shown}");
+            }
+            assert!(
+                shown.chars().count()
+                    <= super::super::component_outcome::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND,
+                "{shown}"
+            );
+        }
+    }
+
+    /// Negative control: a short failure is shown whole and unchanged.
+    #[test]
+    fn short_analysis_failure_warning_is_unchanged() {
+        assert_eq!(
+            analysis_failure_shown_message("workspace analysis failed: Cargo.toml not found"),
+            "ripr analysis failed: workspace analysis failed: Cargo.toml not found"
+        );
+    }
 
     /// #8584: `ripr/analysisStatus` copies `AnalysisFailure.message`, which
     /// is bounded here. The wrapper must keep the truncation marker inside
@@ -8019,17 +8156,47 @@ fn withheld_unknown_summary(snapshot: &AnalysisSnapshot) -> Option<(usize, Vec<&
     Some((count, classes.into_iter().collect()))
 }
 
+/// Count/class summary of the preview-language gap-class findings the
+/// actionable profile withholds (#11296). Counted per canonical group, like
+/// `withheld_unknown_summary`. A non-actionable profile withholds nothing.
+fn withheld_preview_summary(snapshot: &AnalysisSnapshot) -> (usize, Vec<&'static str>) {
+    let withheld = super::diagnostics::withheld_preview_gap_findings(
+        snapshot.diagnostic_profile,
+        &snapshot.findings,
+    );
+    let classes = withheld
+        .iter()
+        .map(|finding| finding.class.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    (withheld.len(), classes.into_iter().collect())
+}
+
+/// Combined disclosure summary (#5276, #11296): `*_unknown` plus preview gap
+/// findings withheld by the actionable profile, with the preview share kept
+/// separate so a client can say "preview" without re-deriving it.
+fn withheld_findings_summary(
+    snapshot: &AnalysisSnapshot,
+) -> Option<(usize, Vec<&'static str>, usize)> {
+    let (unknown, mut classes) = withheld_unknown_summary(snapshot)?;
+    let (preview, preview_classes) = withheld_preview_summary(snapshot);
+    classes.extend(preview_classes);
+    classes.sort_unstable();
+    classes.dedup();
+    Some((unknown + preview, classes, preview))
+}
+
 /// The status-surface payload for profile withholding (#5276): present with
 /// a zero count when nothing is withheld, and `null` only when no snapshot
-/// exists.
-fn withheld_findings_status_payload(summary: Option<(usize, Vec<&'static str>)>) -> LSPAny {
+/// exists. `preview_count` (#11296) is the preview-language share of `count`.
+fn withheld_findings_status_payload(summary: Option<(usize, Vec<&'static str>, usize)>) -> LSPAny {
     match summary {
         None => serde_json::Value::Null,
-        Some((0, _)) => {
-            serde_json::json!({ "count": 0, "classes": [], "recovery_route": serde_json::Value::Null })
+        Some((0, _, _)) => {
+            serde_json::json!({ "count": 0, "preview_count": 0, "classes": [], "recovery_route": serde_json::Value::Null })
         }
-        Some((count, classes)) => serde_json::json!({
+        Some((count, classes, preview_count)) => serde_json::json!({
             "count": count,
+            "preview_count": preview_count,
             "classes": classes,
             "recovery_route": diagnostic_profile_full_recovery_route(),
         }),
@@ -8041,10 +8208,19 @@ fn withheld_findings_status_payload(summary: Option<(usize, Vec<&'static str>)>)
 /// the same one-line disclosure the status and listing surfaces carry names
 /// the withholding and the `full` escape hatch here too.
 fn profile_withholding_pull_disclosure(snapshot: &AnalysisSnapshot) -> Option<String> {
-    let (count, _) = withheld_unknown_summary(snapshot)?;
+    let (count, _, preview) = withheld_findings_summary(snapshot)?;
     (count > 0).then(|| {
+        // The `*_unknown` wording is unchanged when no preview finding is
+        // withheld; the preview share is named only when it exists.
+        let subject = match (count - preview, preview) {
+            (_, 0) => format!("{count} finding(s) of the *_unknown classes"),
+            (0, _) => format!("{count} preview-language finding(s)"),
+            (unknown, preview) => format!(
+                "{count} finding(s) ({unknown} of the *_unknown classes, {preview} preview-language)"
+            ),
+        };
         format!(
-            "ripr withheld {count} finding(s) of the *_unknown classes from diagnostics (actionable profile, RIPR-SPEC-0069); {}",
+            "ripr withheld {subject} from diagnostics (actionable profile, RIPR-SPEC-0069); {}",
             diagnostic_profile_full_recovery_route()
         )
     })
@@ -8432,9 +8608,11 @@ fn quarantine_withdrawal_log_message(path: &Path, reason: DocumentStalenessReaso
         DocumentStalenessReason::InvalidIncrementalChange => {
             "revert the file or close and reopen it so ripr receives the full document again"
         }
-        DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent
-        | DocumentStalenessReason::NoAnalyzedSavedContent => {
+        DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent => {
             "save the file to analyze the new saved state"
+        }
+        DocumentStalenessReason::NoAnalyzedSavedContent => {
+            "save the file if it is new, then refresh (`ripr.refresh`)"
         }
     };
     format!(
@@ -8817,7 +8995,10 @@ fn workspace_status_top_actionable_packet(snapshot: &AnalysisSnapshot) -> serde_
         .first()
         .map(String::as_str)
         .unwrap_or("");
-    let repair_kind = artifact.gap_state.as_deref().unwrap_or("actionable");
+    let repair_kind = artifact
+        .gap_state
+        .as_deref()
+        .unwrap_or(crate::domain::EvidenceState::Actionable.as_str());
     serde_json::json!({
         "canonical_gap_id": canonical_gap_id,
         "file": file,
@@ -10144,19 +10325,20 @@ fn receipt_status_from_ledger(
 
     // missing_receipt_reason: only meaningful when the gap is actionable
     // but has no receipt. Otherwise not_available.
-    let missing_receipt_reason_val = if record.gap_state == "actionable"
-        && record
-            .receipt
-            .as_ref()
-            .and_then(|r| r.movement.as_deref())
-            .is_none()
-        && record.receipt_command.is_some()
-    {
-        // Receipt command exists but no movement yet — emit honest "no_attempt_recorded".
-        serde_json::Value::String("no_attempt_recorded".to_string())
-    } else {
-        serde_json::Value::String(not_available)
-    };
+    let missing_receipt_reason_val =
+        if crate::domain::EvidenceState::is_actionable_word(&record.gap_state)
+            && record
+                .receipt
+                .as_ref()
+                .and_then(|r| r.movement.as_deref())
+                .is_none()
+            && record.receipt_command.is_some()
+        {
+            // Receipt command exists but no movement yet — emit honest "no_attempt_recorded".
+            serde_json::Value::String("no_attempt_recorded".to_string())
+        } else {
+            serde_json::Value::String(not_available)
+        };
 
     (movement_val, missing_receipt_reason_val)
 }
@@ -10326,7 +10508,7 @@ fn collect_repair_packet_from_actionable_gaps(
             .find(|p| {
                 p.get("gap_state")
                     .and_then(|v| v.as_str())
-                    .is_some_and(|s| s == "actionable")
+                    .is_some_and(crate::domain::EvidenceState::is_actionable_word)
             })
             .or_else(|| packets.first())?
     };
@@ -10343,11 +10525,10 @@ fn collect_repair_packet_from_actionable_gaps(
     }
 
     // Require the packet to be actionable to emit a complete repair packet.
-    if packet
+    if !packet
         .get("gap_state")
         .and_then(|v| v.as_str())
-        .unwrap_or("")
-        != "actionable"
+        .is_some_and(crate::domain::EvidenceState::is_actionable_word)
     {
         return Some(repair_packet_sentinel(
             "gap is not actionable in actionable-gaps.json",
@@ -10514,7 +10695,9 @@ fn collect_repair_packet_from_ledger(
             .iter()
             .find(|r| r.gap_id == id || r.canonical_gap_id == id)?
     } else {
-        records.iter().find(|r| r.gap_state == "actionable")?
+        records
+            .iter()
+            .find(|r| crate::domain::EvidenceState::is_actionable_word(&r.gap_state))?
     };
     if let Some(sentinel) = ledger_source_subject_sentinel(root, repo_config, &contents) {
         return Some(sentinel);
@@ -13738,6 +13921,75 @@ mod list_actionable_items_tests {
         Ok(())
     }
 
+    fn preview_finding(language: crate::domain::LanguageId, file: &str) -> crate::domain::Finding {
+        let mut finding = crate::lsp::tests::sample_finding();
+        finding.probe.location.file = PathBuf::from(file);
+        finding.language = Some(language);
+        finding.language_status = Some(crate::domain::LanguageStatus::Preview);
+        finding
+    }
+
+    /// #11296: Python and TypeScript preview findings withheld by the
+    /// actionable profile (no producer-backed fix route) must be disclosed
+    /// on the pull channel, never silently reading as a clean file. The
+    /// actionable eligibility predicate stays unchanged: nothing is
+    /// promoted to a diagnostic here.
+    #[test]
+    fn actionable_profile_discloses_withheld_python_and_typescript_preview_findings()
+    -> Result<(), String> {
+        for (language, file) in [
+            (crate::domain::LanguageId::Python, "src/click/core.py"),
+            (crate::domain::LanguageId::TypeScript, "src/v4/core/util.ts"),
+        ] {
+            let mut snapshot = snapshot_with_selection(Some(applied_selection()?));
+            snapshot.findings = vec![preview_finding(language, file)];
+            snapshot.diagnostic_profile = LspDiagnosticProfile::Actionable;
+
+            // Fail-closed: the finding is still not an eligible diagnostic.
+            assert_eq!(snapshot.actionable_diagnostic_count(), 0, "{file}");
+            let disclosure = super::profile_withholding_pull_disclosure(&snapshot)
+                .ok_or_else(|| format!("{file}: withheld preview finding must disclose"))?;
+            assert!(
+                disclosure.contains("1 preview-language finding(s)")
+                    && disclosure.contains("diagnosticProfile"),
+                "{file}: {disclosure}"
+            );
+            let (count, classes, preview) =
+                super::withheld_findings_summary(&snapshot).ok_or("a snapshot yields a summary")?;
+            assert_eq!((count, preview), (1, 1), "{file}");
+            assert_eq!(classes, vec!["weakly_exposed"], "{file}");
+            let status = super::withheld_findings_status_payload(Some((count, classes, preview)));
+            assert_eq!(status["count"], 1, "{status}");
+            assert_eq!(status["preview_count"], 1, "{status}");
+            assert!(status["recovery_route"].is_string(), "{status}");
+
+            // Negative control: the full profile publishes it instead, so
+            // there is nothing withheld to disclose.
+            snapshot.diagnostic_profile = LspDiagnosticProfile::Full;
+            assert_eq!(super::profile_withholding_pull_disclosure(&snapshot), None);
+        }
+        Ok(())
+    }
+
+    /// #11296 negative control: a withheld non-preview (Rust) gap-class
+    /// finding is already named by `hidden_gaps`; it must not be counted as
+    /// a preview withholding, and a preview finding that is not candidate
+    /// current stays silent.
+    #[test]
+    fn preview_withholding_disclosure_ignores_non_preview_and_non_current_findings()
+    -> Result<(), String> {
+        let mut snapshot = snapshot_with_selection(Some(applied_selection()?));
+        snapshot.diagnostic_profile = LspDiagnosticProfile::Actionable;
+        snapshot.findings = vec![crate::lsp::tests::sample_finding()];
+        assert_eq!(
+            super::profile_withholding_pull_disclosure(&snapshot),
+            None,
+            "a non-preview hidden gap is not a preview withholding"
+        );
+        assert_eq!(super::withheld_preview_summary(&snapshot).0, 0);
+        Ok(())
+    }
+
     /// Sort a JSON object's keys for a closed-shape comparison.
     fn sorted_keys(value: &serde_json::Value) -> Vec<String> {
         let mut keys: Vec<String> = value
@@ -14129,5 +14381,51 @@ mod pull_disclosure_dedup_tests {
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
         })
+    }
+}
+
+/// Whether the regular file at the client-named `path` holds exactly `text`.
+/// A cheap length check precedes the read. The path may be a device or FIFO
+/// (`/dev/zero` reports length 0), so the read goes through the bounded
+/// regular-file reader, never an unbounded `fs::read`.
+fn disk_bytes_equal_text(path: &Path, text: &str) -> bool {
+    if std::fs::metadata(path).map(|meta| meta.len()).ok() != u64::try_from(text.len()).ok() {
+        return false;
+    }
+    super::state::read_saved_bytes(path).is_some_and(|disk| disk == text.as_bytes())
+}
+
+#[cfg(test)]
+mod disk_bytes_equal_text_tests {
+    use super::disk_bytes_equal_text;
+    use std::path::Path;
+
+    #[test]
+    fn device_and_directory_paths_never_equal_empty_text() {
+        // `/dev/zero` stats as length 0, so an empty buffer passes the length
+        // check; the unbounded read that followed grew RSS past 5 GB.
+        #[cfg(target_os = "linux")]
+        assert!(!disk_bytes_equal_text(Path::new("/dev/zero"), ""));
+        assert!(!disk_bytes_equal_text(&std::env::temp_dir(), ""));
+    }
+
+    #[test]
+    fn regular_file_equality_is_exact() -> Result<(), String> {
+        let path = std::env::temp_dir().join(format!(
+            "ripr-disk-equal-{}-{:?}.txt",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::write(&path, "abc").map_err(|err| format!("write failed: {err}"))?;
+        let equal = disk_bytes_equal_text(&path, "abc");
+        let same_len_different = disk_bytes_equal_text(&path, "abd");
+        let shorter = disk_bytes_equal_text(&path, "ab");
+        let _ = std::fs::remove_file(&path);
+        if !equal || same_len_different || shorter {
+            return Err(format!(
+                "equal={equal} same_len_different={same_len_different} shorter={shorter}"
+            ));
+        }
+        Ok(())
     }
 }

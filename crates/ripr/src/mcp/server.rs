@@ -153,6 +153,11 @@ impl McpServer {
             session.desired_source = source;
         }
         let mut attempt = workspace::InFlightAttempt::new(session.clone());
+        #[cfg(test)]
+        super::panic_containment::injected_tool_panic::fire(
+            self.analysis_root.as_deref(),
+            protocol::REFRESH_TOOL_NAME,
+        );
         let worker = tokio::task::spawn_blocking(move || {
             workspace::run_check(&root, root_identity.as_deref(), base.as_deref(), source)
         });
@@ -164,7 +169,7 @@ impl McpServer {
                 "retry with ripr_refresh",
             )),
         };
-        let document = {
+        let (document, attempt_failed) = {
             let mut session = session.lock().await;
             session.in_flight = false;
             attempt.disarm();
@@ -179,14 +184,20 @@ impl McpServer {
                     session.last_failure = Some(failure);
                 }
             }
-            workspace::refresh_document(&session)
+            (
+                workspace::refresh_document(&session),
+                session.last_failure.is_some(),
+            )
         };
-        self.bounded_tool_result(
+        // A failed attempt is not a success: `isError` says so while the
+        // document keeps the typed failure and the last-known-good pointer.
+        self.bounded_tool_result_flagged(
             document,
             workspace::REFRESH_SCHEMA_VERSION,
             "serialize refresh result",
             workspace::RECOVERY_REFRESH_TOO_LARGE,
             max_envelope_bytes,
+            attempt_failed,
         )
     }
 
@@ -343,13 +354,20 @@ impl McpServer {
             requested.as_deref(),
             self.root_identity.as_deref(),
         ) {
-            Ok(document) => self.bounded_tool_result(
-                document,
-                repair::REPAIR_PACKET_SCHEMA_VERSION,
-                "serialize repair packet",
-                workspace::RECOVERY_REPAIR_TOO_LARGE,
-                max_envelope_bytes,
-            ),
+            Ok(document) => {
+                // A refused item created no transaction: say so with
+                // `isError`, the same convention `ripr_get_repair_card`
+                // already uses for the same condition.
+                let refused = document.get("repair_packet_ready") == Some(&Value::Bool(false));
+                self.bounded_tool_result_flagged(
+                    document,
+                    repair::REPAIR_PACKET_SCHEMA_VERSION,
+                    "serialize repair packet",
+                    workspace::RECOVERY_REPAIR_TOO_LARGE,
+                    max_envelope_bytes,
+                    refused,
+                )
+            }
             Err(failure) => self.typed_failure(failure, repair::REPAIR_PACKET_SCHEMA_VERSION),
         }
     }
@@ -513,10 +531,11 @@ impl McpServer {
     /// Runs one tool call with panic containment (#11116). A panic in a
     /// non-refresh handler becomes a typed `analysis_failed` tool failure that
     /// names the tool and the next step; the session keeps serving.
-    /// `ripr_refresh` is excluded because worker and adapter panics are
-    /// already contained at the analysis boundary (#11132); glue panics in
-    /// `ripr_refresh` itself, `read_resource`, `list_tools` and `initialize`
-    /// are not covered. An unknown tool never reaches a handler.
+    /// `ripr_refresh` is included for glue panics: worker and adapter panics
+    /// are already typed at the analysis boundary (#11132), and its
+    /// `InFlightAttempt` guard clears `in_flight` on unwind. Non-tool requests
+    /// (`tools/list`, `resources/read`) are contained by
+    /// `contain_request`. An unknown tool never reaches a handler.
     async fn call_tool_contained(
         &self,
         request: CallToolRequestParams,
@@ -647,18 +666,44 @@ impl McpServer {
         recovery: &str,
         max_envelope_bytes: usize,
     ) -> Result<CallToolResponse, ErrorData> {
-        let envelope =
-            match protocol::tool_result_with(document, max_envelope_bytes, self.text_mode) {
-                Ok(envelope) => envelope,
-                Err(detail) => {
-                    let failure = workspace::AttemptFailure::new(
-                        workspace::CODE_RESULT_TOO_LARGE,
-                        format!("{serialize_context}: {detail}"),
-                        recovery,
-                    );
-                    return self.typed_failure(failure, failure_version);
-                }
-            };
+        self.bounded_tool_result_flagged(
+            document,
+            failure_version,
+            serialize_context,
+            recovery,
+            max_envelope_bytes,
+            false,
+        )
+    }
+
+    /// [`Self::bounded_tool_result`] with an explicit `isError`: a refused
+    /// repair or a failed refresh keeps its typed document but is not a
+    /// success on the wire.
+    fn bounded_tool_result_flagged(
+        &self,
+        document: Value,
+        failure_version: &'static str,
+        serialize_context: &'static str,
+        recovery: &str,
+        max_envelope_bytes: usize,
+        is_error: bool,
+    ) -> Result<CallToolResponse, ErrorData> {
+        let envelope = match protocol::tool_result_flagged(
+            document,
+            max_envelope_bytes,
+            self.text_mode,
+            is_error,
+        ) {
+            Ok(envelope) => envelope,
+            Err(detail) => {
+                let failure = workspace::AttemptFailure::new(
+                    workspace::CODE_RESULT_TOO_LARGE,
+                    format!("{serialize_context}: {detail}"),
+                    recovery,
+                );
+                return self.typed_failure(failure, failure_version);
+            }
+        };
         self.bounded_tool_envelope(
             envelope,
             failure_version,
@@ -1047,11 +1092,12 @@ fn required_string_argument(
 }
 
 /// Failure schema version of each tool whose handler panics are contained at
-/// the call boundary. `ripr_refresh` is absent by design (see
-/// `call_tool_contained`).
+/// the call boundary, `ripr_refresh` included: its `InFlightAttempt` guard
+/// clears `in_flight` on unwind, so a glue panic leaves the session usable.
 fn contained_tool_schema_version(name: &str) -> Option<&'static str> {
     match name {
         protocol::STATUS_TOOL_NAME => Some(workspace::SESSION_SCHEMA_VERSION),
+        protocol::REFRESH_TOOL_NAME => Some(workspace::REFRESH_SCHEMA_VERSION),
         protocol::LIST_GAPS_TOOL_NAME => Some(gaps::GAP_LIST_SCHEMA_VERSION),
         protocol::GET_GAP_TOOL_NAME => Some(gaps::GAP_SCHEMA_VERSION),
         protocol::PREPARE_REPAIR_TOOL_NAME => Some(repair::REPAIR_PACKET_SCHEMA_VERSION),
@@ -1169,6 +1215,11 @@ impl ServerHandler for McpServer {
         params: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
+        #[cfg(test)]
+        super::panic_containment::injected_tool_panic::fire(
+            self.analysis_root.as_deref(),
+            "tools/list",
+        );
         reject_pagination_cursor(params, "tools/list")?;
         Ok(self.tools.clone())
     }
@@ -1218,6 +1269,11 @@ impl ServerHandler for McpServer {
         // The same id-aware budget the tool path uses (#7768): a resource
         // read answers one request whose echoed id rides the same wire cap.
         let max_envelope_bytes = super::outer_envelope_budget(&context.id);
+        #[cfg(test)]
+        super::panic_containment::injected_tool_panic::fire(
+            self.analysis_root.as_deref(),
+            "resources/read",
+        );
         // The well-known status resource gets the same one-trailing-slash
         // tolerance the id routes normalize (#9895); the id parsers trim
         // their own captures, so `uri` is used only for this exact match.
@@ -1490,8 +1546,12 @@ impl rmcp::Service<RoleServer> for InitializeSessionService {
                 None,
             ));
         }
-        <McpServer as rmcp::Service<RoleServer>>::handle_request(&self.inner, request, context)
-            .await
+        contain_request(<McpServer as rmcp::Service<RoleServer>>::handle_request(
+            &self.inner,
+            request,
+            context,
+        ))
+        .await
     }
 
     async fn handle_notification(
@@ -1513,6 +1573,26 @@ impl rmcp::Service<RoleServer> for InitializeSessionService {
 
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
         <McpServer as rmcp::Service<RoleServer>>::supported_protocol_versions(&self.inner)
+    }
+}
+
+/// Contains a panic in the glue of a post-handshake request (`tools/list`,
+/// `resources/read`; tool calls are also contained per tool) as a typed
+/// `analysis_failed` JSON-RPC error instead of ending the stdio session
+/// (#11116). The payload is not echoed.
+async fn contain_request(
+    request: impl std::future::Future<Output = Result<ServerResult, ErrorData>>,
+) -> Result<ServerResult, ErrorData> {
+    match super::panic_containment::ContainPanic::new(request).await {
+        Ok(result) => result,
+        Err(super::panic_containment::Panicked) => {
+            let failure = workspace::AttemptFailure::new(
+                workspace::CODE_ANALYSIS_FAILED,
+                "ripr hit an internal error while serving the request and contained it; the server is still running",
+                "retry the request; if it repeats, restart `ripr mcp` and report the stderr panic message as a bug",
+            );
+            Err(resource_failure("request", &failure, None))
+        }
     }
 }
 

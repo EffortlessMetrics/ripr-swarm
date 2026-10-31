@@ -920,6 +920,175 @@ fn preview_promotion_packets_follow_the_shell_glob() -> TestResult {
     Ok(())
 }
 
+/// #11161: when `target/ripr/pr/check.json` discloses a producer refusal,
+/// the summary opens First-run status with `#### PR analysis did not run`
+/// naming the typed status, the producer's own message, that nothing was
+/// analyzed, and the next step. A complete, absent, or malformed check
+/// document adds nothing; a non-refusal envelope adds nothing either.
+#[test]
+fn producer_refusal_check_document_is_named_while_others_add_nothing() -> TestResult {
+    let refusal = || {
+        json!({
+            "analysis_scope": {
+                "scope": "diff",
+                "run_status": "diff_scope_oversized",
+                "downstream_consumable": false,
+                "repair_route": "analysis/diff-scope-budget"
+            },
+            "run_limitations": [{
+                "category": "diff_scope_oversized",
+                "run_status": "diff_scope_oversized",
+                "downstream_consumable": false,
+                "message": "diff_scope_oversized: 2878 changed Rust lines exceed the limit (2000); analysis was not run.",
+                "repair_route": "analysis/diff-scope-budget"
+            }]
+        })
+    };
+    let fixture = Fixture::new("refusal-named")?;
+    fixture.json("target/ripr/pr/check.json", &refusal())?;
+    let summary = fixture.render(&[])?;
+    let first_run = block(&summary, "#### First-run status");
+    for line in [
+        "#### PR analysis did not run",
+        "- Producer run status: `diff_scope_oversized`",
+        "2878 changed Rust lines",
+        "nothing was analyzed",
+        "analysis/diff-scope-budget",
+    ] {
+        assert!(summary.contains(line), "missing {line:?}:\n{summary}");
+    }
+    assert!(
+        first_run.contains("#### PR analysis did not run"),
+        "the refusal block must open First-run status:\n{first_run}"
+    );
+    // A complete document (no refusal disclosure) adds nothing.
+    let fixture = Fixture::new("refusal-complete")?;
+    fixture.json("target/ripr/pr/check.json", &json!({"findings": []}))?;
+    assert!(
+        !fixture
+            .render(&[])?
+            .contains("#### PR analysis did not run"),
+        "a complete check document must add no refusal block"
+    );
+    // An absent check document adds nothing.
+    let fixture = Fixture::new("refusal-absent")?;
+    assert!(
+        !fixture
+            .render(&[])?
+            .contains("#### PR analysis did not run"),
+        "an absent check document must add no refusal block"
+    );
+    // A malformed check document adds nothing.
+    let fixture = Fixture::new("refusal-malformed")?;
+    fixture.write("target/ripr/pr/check.json", "{not json")?;
+    assert!(
+        !fixture
+            .render(&[])?
+            .contains("#### PR analysis did not run"),
+        "a malformed check document must add no refusal block"
+    );
+    // A non-refusal envelope (consumable, no outcome) adds nothing either.
+    let fixture = Fixture::new("refusal-non-refusal")?;
+    fixture.json(
+        "target/ripr/pr/check.json",
+        &json!({"schema_version": "0.2", "findings": []}),
+    )?;
+    assert!(
+        !fixture
+            .render(&[])?
+            .contains("#### PR analysis did not run"),
+        "a non-refusal envelope must add no refusal block"
+    );
+    // An unknown-status refusal still names the refusal with a fallback.
+    // Built as a literal (no mutation helpers) so the test stays off the
+    // panic-family allowlist.
+    let fixture = Fixture::new("refusal-unknown-status")?;
+    fixture.json(
+        "target/ripr/pr/check.json",
+        &json!({
+            "analysis_scope": {
+                "scope": "diff",
+                "downstream_consumable": false,
+                "repair_route": "analysis/diff-scope-budget"
+            },
+            "run_limitations": [{
+                "downstream_consumable": false,
+                "message": "diff_scope_oversized: 2878 changed Rust lines exceed the limit (2000); analysis was not run.",
+                "repair_route": "analysis/diff-scope-budget"
+            }]
+        }),
+    )?;
+    let summary = fixture.render(&[])?;
+    assert!(
+        summary.contains("#### PR analysis did not run"),
+        "an untyped refusal must still be named:\n{summary}"
+    );
+    assert!(
+        summary.contains("producer refusal"),
+        "fallback status:\n{summary}"
+    );
+    // A mixed bounded-plus-refusal document keeps the bounded handling: the
+    // bounded guard runs before the refusal reader, so no refusal block
+    // renders. The legacy limitations-only shape trips only the bounded
+    // guard (no `analysis_outcome`, so the incomplete guard stays quiet):
+    // removing the bounded guard would name the refusal here — the document
+    // carries an explicit non-consumable record — and fail this assertion.
+    // (The producer never emits this mix; it pins guard order.)
+    let fixture = Fixture::new("refusal-mixed-bounded")?;
+    let mut mixed = refusal();
+    mixed["run_limitations"] = json!([
+        {
+            "category": "limited_findings_bound",
+            "run_status": "limited_findings_bound",
+            "downstream_consumable": false,
+            "message": "findings array was cut by the byte budget",
+            "repair_route": "analysis/findings-budget"
+        },
+        {
+            "category": "diff_scope_oversized",
+            "run_status": "diff_scope_oversized",
+            "downstream_consumable": false,
+            "message": "diff_scope_oversized: 2878 changed Rust lines exceed the limit (2000); analysis was not run.",
+            "repair_route": "analysis/diff-scope-budget"
+        }
+    ]);
+    fixture.json("target/ripr/pr/check.json", &mixed)?;
+    assert!(
+        !fixture
+            .render(&[])?
+            .contains("#### PR analysis did not run"),
+        "a bounded document that also discloses a refusal must keep the bounded handling"
+    );
+    // A mixed partial-plus-refusal document keeps the partial handling: the
+    // partial guard runs before the refusal reader. Removing that guard
+    // would name the refusal here and fail this assertion.
+    let fixture = Fixture::new("refusal-mixed-partial")?;
+    let mut mixed = refusal();
+    mixed["language_runs"] = json!([{ "status": "partial" }]);
+    fixture.json("target/ripr/pr/check.json", &mixed)?;
+    assert!(
+        !fixture
+            .render(&[])?
+            .contains("#### PR analysis did not run"),
+        "a partial document that also discloses a refusal must keep the partial handling"
+    );
+    // A mixed incomplete-plus-refusal document keeps the incomplete
+    // handling: the incomplete guard runs before the refusal reader.
+    // Removing that guard would name the refusal here and fail this
+    // assertion.
+    let fixture = Fixture::new("refusal-mixed-incomplete")?;
+    let mut mixed = refusal();
+    mixed["analysis_outcome"] = json!({ "analysis_complete": false });
+    fixture.json("target/ripr/pr/check.json", &mixed)?;
+    assert!(
+        !fixture
+            .render(&[])?
+            .contains("#### PR analysis did not run"),
+        "an incomplete document that also discloses a refusal must keep the incomplete handling"
+    );
+    Ok(())
+}
+
 const HEADLINE: &str = "### What RIPR found in this pull request";
 
 fn card() -> Value {
@@ -1309,6 +1478,56 @@ fn every_count_source_keeps_the_governance_fold_open_when_nonzero() -> TestResul
 }
 
 #[test]
+fn removing_any_required_policy_category_keeps_the_fold_open_and_not_clean() -> TestResult {
+    let control = Fixture::complete("fold-required-control")?;
+    write_quiet(&control)?;
+    let summary = render_gate(&control, false)?;
+    assert!(
+        summary.contains(CLEAN) && !summary.contains(OPEN),
+        "{summary}"
+    );
+
+    // Each required category: the file names removed together. The promotion
+    // category is satisfied by any `policy-promotion-*.json`, so a second one
+    // is added and all of them are removed.
+    let categories: [(&str, &[&str]); 5] = [
+        ("readiness", &["policy-readiness.json"]),
+        ("operations", &["policy-operations.json"]),
+        ("history", &["policy-history.json"]),
+        ("suppression-health", &["suppression-health.json"]),
+        (
+            "promotion",
+            &[
+                "policy-promotion-acknowledgeable.json",
+                "policy-promotion-visible-only.json",
+            ],
+        ),
+    ];
+    for (category, files) in categories {
+        let fixture = Fixture::complete(&format!("fold-required-{category}"))?;
+        write_quiet(&fixture)?;
+        fixture.json(
+            &format!("{R}/policy-promotion-visible-only.json"),
+            &json!({"target_mode": "visible-only", "warnings": [], "unknowns": []}),
+        )?;
+        let clean = render_gate(&fixture, false)?;
+        assert!(
+            clean.contains(CLEAN) && !clean.contains(OPEN),
+            "{category} control: {clean}"
+        );
+        for file in files {
+            let path = fixture.root.join(R).join(file);
+            assert!(path.is_file(), "{category}: {file} was not written");
+            fs::remove_file(path)?;
+        }
+        let summary = render_gate(&fixture, false)?;
+        assert!(summary.contains(OPEN), "{category}: {summary}");
+        assert!(!summary.contains(CLEAN), "{category}: {summary}");
+    }
+    Ok(())
+}
+
+#[test]
 fn unreadable_wrong_shape_and_missing_counts_are_not_clean() -> TestResult {
     let shapes: [(&str, Option<serde_json::Value>); 6] = [
         ("array", Some(json!([]))),
@@ -1360,15 +1579,22 @@ fn extra_promotion_files_cannot_stand_in_for_a_missing_category() -> TestResult 
     let fixture = Fixture::complete("fold-promotion-stand-in")?;
     write_quiet(&fixture)?;
     let reports = "target/ripr/reports";
-    fs::remove_file(fixture.root.join(reports).join("policy-readiness.json"))?;
-    fixture.json(
-        &format!("{reports}/policy-promotion-visible-only.json"),
-        &json!({"target_mode": "visible-only", "warnings": [], "unknowns": []}),
+    // Remove the only policy-promotion report. The non-promotion preview
+    // promotion and waiver reports stay clean and present, and must not
+    // stand in for the missing required category.
+    fs::remove_file(
+        fixture
+            .root
+            .join(reports)
+            .join("policy-promotion-acknowledgeable.json"),
     )?;
-    fixture.json(
-        &format!("{reports}/policy-promotion-blocking.json"),
-        &json!({"target_mode": "blocking", "warnings": [], "unknowns": []}),
-    )?;
+    assert!(
+        fixture
+            .root
+            .join(reports)
+            .join("preview-promotion-typescript-boundary-gap.json")
+            .is_file()
+    );
     let summary = render_gate(&fixture, false)?;
     assert!(summary.contains(OPEN), "{summary}");
     assert!(!summary.contains(CLEAN), "{summary}");

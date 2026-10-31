@@ -66,6 +66,16 @@ pub(in crate::analysis) fn build_finding_with_origins(
         reaching_summaries
     };
     let mut stop_reasons = stop_reasons(context.probe, context.owner_fn, &test_summaries);
+    if context.probe.family == ProbeFamily::ReturnValue
+        && context
+            .owner_fn
+            .and_then(|owner| crate::analysis::classify::concat_literal_tail(owner, context.index))
+            .is_some_and(|(line, expression, _)| {
+                line == context.probe.location.line && expression == context.probe.expression
+            })
+    {
+        stop_reasons.retain(|reason| *reason != StopReason::ProcMacroOpaque);
+    }
     // RIPR-SPEC-0048: a constant decided by evaluation has a reader and tests
     // the evaluation read, so "no changed Rust line" no longer describes it.
     if context.const_flow.is_some() {
@@ -1205,6 +1215,8 @@ mod tests {
             propagation_witness: None,
             activation: ActivationEvidence::default(),
             related_tests_matched_total: related_tests.len(),
+            complete_proximity_oracles_only: false,
+            direct_rows: Vec::new(),
             related_tests,
             reach: yes.clone(),
             infect: yes.clone(),

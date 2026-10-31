@@ -481,7 +481,7 @@ comments, strings, and docstrings:
   loop/with header targets too; #9531), loop, `with`, walrus or augmented target
   (`(r) += ...` and `(r): list = ...` included), or not the whole bound value,
   is not credited, as is an augmented assignment after a header or `;`
-  (`if c: r += 1`), an `import r` or `nonlocal r`, and any `case` pattern line that
+  (`if c: r += 1`), an `import r`, `nonlocal r`, `global r`, `del r` or `type r = ...`, and any `case` pattern line that
   mentions the name other than as a dotted value or class pattern (`case (r):`,
   `case {"k": r}:`, `case Foo(x=r):`; a guard read such as `case x if r:` is
   demoted too, a deliberate miss). Within one
@@ -820,7 +820,8 @@ it with the source. Timestamp and checked-hash pycs are trusted the way
 CPython trusts them; the residual risk is a stale timestamp pyc after a
 same-size edit whose mtime lands in the compile second or is restored
 (`rsync -t`, `tar`, CI caches), which CPython itself would load. A pytest or
-tox configuration beside any workspace source, or above one, whose
+tox configuration (including `pytest.toml` and `.pytest.toml`) beside any
+workspace source, or above one, whose
 `pythonpath`, `python_paths` or `PYTHONPATH` setting names anything but its
 own directory refuses the credit: any other entry (an archive, a directory
 the workspace walk excludes, a root holding only compiled extensions, a path
@@ -990,13 +991,16 @@ so a test must notice a wrong version of the new line. Python's mutation
 tool shifts a number literal up by one (mutmut `n` -> `n + 1`), and for
 `v > C` and `v <= C` (and their mirrors) that shifted bound first differs
 at `v == C + 1`. There `exposed` also needs a strong call that places the
-name at `C + 1`; otherwise the finding is `weakly_exposed` and names
-`v == C + 1` as the missing discriminator (#10842). `v >= C` and `v < C`
+name at `C + 1`; otherwise the finding is `weakly_exposed`, and names
+`v == C + 1` only when all relevant calls can be placed (#10842). `v >= C` and `v < C`
 shift onto the equality point and need no further row. A behavior change
 keeps the equality rule, because the equality row notices the edit itself
-(RIPR-SPEC-0238 example 39). When every non-literal operand is bound by some call, the boundary is
-named as the missing discriminator (`amount == threshold`, with the observed
-operand values in its reason). An operand ripr cannot bind (an attribute such
+(RIPR-SPEC-0238 example 39). When every relevant strong call can be placed and
+none witnesses the boundary, the boundary is named as the missing discriminator
+(`amount == threshold`, with the observed
+operand values in its reason). A resolved boundary witness remains valid even
+if another call cannot be placed. If no witness is resolved, an unreadable
+call or an operand ripr cannot bind (an attribute such
 as `item.on_hand`, a computed `len(name)`, a comprehension local, or a line
 with several comparisons) never counts as observed, and such a boundary is not
 named as a typed repair target: the test input may already sit on it at runtime
@@ -1059,6 +1063,22 @@ argument (test locals, `*args`, a construct-call passing a dict), static
 evidence cannot see the activating input either way: the oracle verdict stands
 and an `exposed` finding carries a `boundary_activation_unresolved` evidence
 line naming that limitation.
+
+For an adjacent `>`/`>=` or `<`/`<=` while-bound edit with an unchanged
+integer bound, a closed generator walk can resolve a rebound parameter. It
+accepts only an owner consisting of the loop, whose body is `yield name`
+followed by one unconditional `name -= 1` (descending) or `name += 1`
+(ascending). Every strong call must bind a readable integer and occur in a
+direct whole-list or whole-tuple equality against an integer-literal sequence.
+The builtin constructor and imported free-function owner must retain their
+identity. A near-side or equal input reaches the bound; a past-bound input
+does not (#9733). Partial/lossy consumers such as `next` and `sum`, slices,
+unobserved calls, assertion-message calls, nested calls, shadowed constructors,
+and unsupported assertion shapes retain the unresolved limitation: potential
+iteration alone does not establish observation of the changed final element.
+Step-two, conditional, early-exit, pre-loop rebinding, other statements and
+unreadable calls retain the existing unresolved boundary limitation. This is
+not general loop evaluation.
 
 Static-limit findings must fail closed. They keep any observed reachability and
 oracle facts, but their infection and propagation stages remain `unknown`, the

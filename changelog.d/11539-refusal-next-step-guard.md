@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- `ripr agent brief|packet|verify|verify-execute|receipt` without `--json` now says to add `--json`, and `ripr agent verify` without `--before` or `--after` says which snapshot to pass. A test (`refusal_next_step`) now fails when a new error message describes a failure without naming a next step; the existing messages that still lack one are listed per source file under `policy/refusal-next-step.d/` and shrink as they are fixed (#11539).

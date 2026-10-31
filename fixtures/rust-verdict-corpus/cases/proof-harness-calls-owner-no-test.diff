@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -2,7 +2,7 @@
+ //! Kani proof harness, which `cargo test` does not compile (`cfg(kani)`).
+ 
+ pub fn limit(x: u32) -> u32 {
+-    if x > 100 { 100 } else { x }
++    if 100 < x { 100 } else { x }
+ }
+ 
+ #[cfg(kani)]
