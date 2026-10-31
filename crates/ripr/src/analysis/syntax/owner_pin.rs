@@ -1517,6 +1517,11 @@ const INERT_ATTRIBUTES: &[&str] = &[
 /// Collected once per parse; walking them per untrusted macro is quadratic.
 struct BindingFreeFileIndex {
     uses: Vec<ast::UseTree>,
+    /// The names `uses` can bring into scope: each tree's rename and its
+    /// path's last segment, `r#` stripped. A wrapper check asks this once per
+    /// macro call, so it is collected once per file instead of walking every
+    /// use tree for every call.
+    use_names: BTreeSet<String>,
     rules: Vec<ast::MacroRules>,
     modules: Vec<SyntaxNode>,
     calls: Vec<ast::MacroCall>,
@@ -1584,8 +1589,24 @@ impl BindingFreeFileIndex {
                 calls.push(call);
             }
         }
+        let use_names = uses
+            .iter()
+            .flat_map(|tree| {
+                let renamed = tree
+                    .rename()
+                    .and_then(|rename| rename.name())
+                    .map(|name| name.text().trim_start_matches("r#").to_string());
+                let segment = tree
+                    .path()
+                    .and_then(|path| path.segment())
+                    .and_then(|segment| segment.name_ref())
+                    .map(|segment| segment.text().trim_start_matches("r#").to_string());
+                renamed.into_iter().chain(segment)
+            })
+            .collect();
         Self {
             uses,
+            use_names,
             rules,
             modules,
             calls,
@@ -1624,15 +1645,7 @@ fn binding_free_local_wrapper(
     let named = |candidate: Option<ast::Name>| {
         candidate.is_some_and(|candidate| candidate.text().trim_start_matches("r#") == name)
     };
-    let imported = facts.uses.iter().any(|tree| {
-        tree.rename().is_some_and(|rename| named(rename.name()))
-            || tree
-                .path()
-                .and_then(|path| path.segment())
-                .and_then(|segment| segment.name_ref())
-                .is_some_and(|segment| segment.text().trim_start_matches("r#") == name)
-    });
-    if imported {
+    if facts.use_names.contains(&name) {
         return false;
     }
     let mut definitions = facts.rules.iter().filter(|rules| named(rules.name()));

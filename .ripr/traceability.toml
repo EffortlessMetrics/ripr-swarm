@@ -4047,6 +4047,8 @@ tests = [
   "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_degenerate_single_line_f_string_text_then_the_ambiguity_scan_never_panics",
   "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_an_ambiguous_single_line_f_string_in_the_line_prefix_then_the_prefix_check_hides_it",
   "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_receiver_rebound_by_a_spelling_the_scan_missed_is_not_credited",
+  "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_receiver_unbound_or_redeclared_by_global_del_or_type_is_not_credited",
+  "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_receiver_reads_that_resemble_global_del_or_type_stay_credited",
   "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_receiver_reads_that_resemble_a_rebind_stay_credited",
   "crates/ripr/src/analysis/language/python/tests.rs::match_case_capture_of_the_receiver_counts_as_a_binding_target",
   "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::a_command_passed_to_a_local_runner_is_reached_without_an_oracle",
@@ -9941,6 +9943,12 @@ tests = [
   "crates/ripr/src/agent/artifact.rs::tests::content_commitment_rejects_duplicate_fields",
   "crates/ripr/src/agent/artifact.rs::tests::content_commitment_rejects_non_hex_digest",
   "crates/ripr/src/agent/artifact.rs::tests::pair_currentness_label_covers_the_closed_vocabulary",
+  "crates/ripr/src/agent/artifact.rs::tests::historical_classification_preserves_production_time_dirty_fact",
+  "crates/ripr/src/output/outcome/mod.rs::tests::agent_verify_json_discloses_produced_from_dirty_only_when_set",
+  "crates/ripr/src/output/outcome/mod.rs::tests::agent_verify_json_discloses_after_produced_from_dirty_independently",
+  "crates/ripr/src/app/repair_attempt/mod.rs::tests::terminal_pair_minted_without_produced_from_dirty_stays_admitted",
+  "crates/ripr/tests/cli_smoke.rs::agent_verify_historical_before_token_ignores_declared_dirty_production",
+  "crates/ripr/tests/cli_smoke.rs::agent_verify_and_receipt_disclose_historical_before_current_after_pair",
   "crates/ripr/src/agent/artifact.rs::tests::repo_exposure_input_identity_is_portable_across_checkout_roots",
   "crates/ripr/src/agent/artifact.rs::tests::repo_exposure_artifact_from_one_root_is_rejected_at_an_equivalent_clone",
   "crates/ripr/src/agent/artifact.rs::tests::repo_exposure_literal_unix_root_is_admitted_only_at_its_producer",
@@ -10404,6 +10412,12 @@ id = "RIPR-SPEC-0120"
 name = "rust macro-wrapped assertion limitation"
 spec = "docs/specs/RIPR-SPEC-0120-rust-macro-wrapped-assertion-limitation.md"
 tests = [
+  "crates/ripr/tests/local_snapshot_helper_limit.rs::nested_expected_macro_keeps_the_local_helper_limit",
+  "crates/ripr/tests/local_snapshot_helper_limit.rs::helper_and_expected_names_cannot_supply_exposed_credit",
+  "crates/ripr/tests/local_snapshot_helper_limit.rs::only_owner_calls_outside_nested_macro_inputs_supply_the_limit",
+  "crates/ripr/tests/local_snapshot_helper_limit.rs::a_literal_expected_operand_retains_its_existing_limit",
+  "crates/ripr/tests/local_snapshot_helper_limit.rs::complete_proximity_evidence_survives_the_display_cap",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::complete_proximity_scope_rejects_a_hidden_direct_or_refused_oracle",
   "crates/ripr/src/analysis/language/rust/oracles.rs::tests::macro_wrapped_assertion_limit_names_reachable_unobserved_assertion_macro",
   "crates/ripr/tests/local_macro_assertion_limit.rs::a_local_wrapper_beside_a_proximity_oracle_reads_as_the_macro_limit",
   "crates/ripr/tests/local_macro_assertion_limit.rs::a_wrapper_with_no_local_definition_is_not_credited_or_limited",
@@ -12352,6 +12366,7 @@ id = "RIPR-SPEC-0159"
 name = "Bounded helper-call transfer"
 spec = "docs/specs/RIPR-SPEC-0159-bounded-helper-transfer.md"
 tests = [
+  "crates/ripr/tests/concat_literal_return.rs",
   "crates/ripr/tests/pub_api_method_entry_reach.rs",
   "crates/ripr/tests/helper_wrapper_reach.rs::qualified_helper_effect_keeps_reach_without_propagation",
   "crates/ripr/tests/helper_wrapper_reach.rs::qualified_hop_above_a_tested_method_keeps_the_lower_forwarder",
@@ -16201,6 +16216,11 @@ tests = [
   "crates/ripr/src/app/task_first.rs::tests::wrapper_match_is_exact_and_never_looser",
   "crates/ripr/tests/check_repair_agree.rs::bare_repair_does_not_list_an_unchanged_seams_missing_evidence_for_the_change",
   "crates/ripr/tests/check_repair_agree.rs::whole_repository_refusals_name_the_seam_each_reason_is_about",
+  "crates/ripr/tests/check_repair_agree.rs::exposed_change_refusal_says_nothing_to_do",
+  "crates/ripr/tests/check_repair_agree.rs::change_with_no_repairable_code_says_so_first",
+  "crates/ripr/tests/check_repair_agree.rs::async_route_refusal_does_not_offer_a_stub_that_refuses",
+  "crates/ripr/tests/mcp_cli_repair_parity.rs::async_owner_refusal_names_the_stub_refusal_on_both_surfaces",
+  "crates/ripr/src/app/task_first.rs::tests::opaque_refusal_names_what_could_not_be_established",
   "crates/ripr/src/app/agent_status.rs::tests::agent_attempt_status_types_a_missing_attempt_instead_of_erroring",
   "crates/ripr/src/app/agent_status.rs::tests::agent_attempt_status_uses_only_the_selected_store",
   "crates/ripr/src/app/agent_status.rs::tests::agent_attempt_status_never_claims_resumable_past_a_moved_head",

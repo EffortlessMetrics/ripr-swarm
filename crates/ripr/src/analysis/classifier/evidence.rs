@@ -43,6 +43,7 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     pub(in crate::analysis) activation: ActivationEvidence,
     pub(in crate::analysis) related_tests: Vec<RelatedTest>,
     pub(in crate::analysis) related_tests_matched_total: usize,
+    pub(in crate::analysis) complete_proximity_oracles_only: bool,
     pub(in crate::analysis) direct_rows: Vec<RelatedTest>,
     pub(in crate::analysis) reach: StageEvidence,
     pub(in crate::analysis) infect: StageEvidence,
@@ -231,6 +232,16 @@ impl ClassifiedProbeEvidence {
         .or_else(|| {
             context.owner_fn.and_then(|owner| {
                 crate::analysis::classify::constant_tail_witness(context.probe, owner, &flow_sinks)
+            })
+        })
+        .or_else(|| {
+            context.owner_fn.and_then(|owner| {
+                crate::analysis::classify::concat_tail_witness(
+                    context.probe,
+                    owner,
+                    context.index,
+                    &flow_sinks,
+                )
             })
         })
         .or_else(|| {
@@ -1195,6 +1206,7 @@ impl ClassifiedProbeEvidence {
             arm_selector.as_ref(),
             context.diff_touched,
         );
+        let complete_proximity_oracles_only = reveal.complete_proximity_oracles_only;
         let (observe, discriminate, related_tests, matched_total) = (
             reveal.observe,
             reveal.discriminate,
@@ -1730,6 +1742,7 @@ impl ClassifiedProbeEvidence {
             activation,
             related_tests,
             related_tests_matched_total: matched_total,
+            complete_proximity_oracles_only,
             direct_rows,
             reach,
             infect,

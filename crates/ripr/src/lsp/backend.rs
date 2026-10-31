@@ -20,7 +20,9 @@ use super::diagnostics::{
     delivered_diagnostics_for_uri, delivery_omission_diagnostic, diagnostic_refresh_plan,
     take_all_uris, withdrawn_quarantine_diagnostics,
 };
-use super::hover::NoEvidenceState;
+use super::hover::{
+    NoEvidenceState, UnanalyzedFileCause, classify_unanalyzed_file, unanalyzed_file_hover_route,
+};
 use super::hover::{
     classified_seam_hover_response, diagnostic_at_position, diagnostic_covers_position,
     diagnostic_hover_response, finding_hover_response, hover_response_without_evidence,
@@ -1932,6 +1934,18 @@ impl Backend {
     }
 
     #[cfg(test)]
+    pub(super) fn analysis_attempt_state_for_test(&self) -> AnalysisAttemptState {
+        self.analysis_health_snapshot().state
+    }
+
+    #[cfg(test)]
+    pub(super) fn clear_latest_analysis_for_test(&self) {
+        if let Ok(mut latest) = self.latest_analysis.lock() {
+            *latest = None;
+        }
+    }
+
+    #[cfg(test)]
     pub(super) fn set_analysis_attempt_state_for_test(&self, state: AnalysisAttemptState) {
         if let Ok(mut health) = self.analysis_health.lock() {
             health.attempt_id = Some(2);
@@ -3707,7 +3721,7 @@ impl Backend {
                     "ripr could not apply one incremental edit and stopped trusting the retained text; saving cannot fix this. Undo the edit or revert the file so ripr receives the full document again."
                 }
                 DocumentStalenessReason::NoAnalyzedSavedContent => {
-                    "ripr has not analyzed this file's saved content yet; its evidence appears after the next refresh (`ripr.refresh`) completes. A new file must be saved first."
+                    unanalyzed_file_hover_route(self.unanalyzed_file_cause(uri))
                 }
             };
             return markdown_hover(format!(
@@ -3722,6 +3736,25 @@ impl Backend {
         hover_response_without_evidence(
             self.no_evidence_state(),
             &self.configured_language_labels(),
+        )
+    }
+
+    /// The observed cause behind a `no_analyzed_saved_content` quarantine
+    /// (#11452), read from the file, the committed snapshot and the latest
+    /// attempt state.
+    fn unanalyzed_file_cause(&self, uri: &Uri) -> UnanalyzedFileCause {
+        let file_on_disk = self
+            .document_path_for_uri(uri)
+            .is_some_and(|path| path.is_file());
+        let snapshot_committed = self
+            .latest_analysis
+            .lock()
+            .ok()
+            .is_some_and(|value| value.is_some());
+        classify_unanalyzed_file(
+            file_on_disk,
+            self.analysis_health_snapshot().state,
+            snapshot_committed,
         )
     }
 
@@ -8575,9 +8608,11 @@ fn quarantine_withdrawal_log_message(path: &Path, reason: DocumentStalenessReaso
         DocumentStalenessReason::InvalidIncrementalChange => {
             "revert the file or close and reopen it so ripr receives the full document again"
         }
-        DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent
-        | DocumentStalenessReason::NoAnalyzedSavedContent => {
+        DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent => {
             "save the file to analyze the new saved state"
+        }
+        DocumentStalenessReason::NoAnalyzedSavedContent => {
+            "save the file if it is new, then refresh (`ripr.refresh`)"
         }
     };
     format!(
@@ -8960,7 +8995,10 @@ fn workspace_status_top_actionable_packet(snapshot: &AnalysisSnapshot) -> serde_
         .first()
         .map(String::as_str)
         .unwrap_or("");
-    let repair_kind = artifact.gap_state.as_deref().unwrap_or("actionable");
+    let repair_kind = artifact
+        .gap_state
+        .as_deref()
+        .unwrap_or(crate::domain::EvidenceState::Actionable.as_str());
     serde_json::json!({
         "canonical_gap_id": canonical_gap_id,
         "file": file,
@@ -10287,19 +10325,20 @@ fn receipt_status_from_ledger(
 
     // missing_receipt_reason: only meaningful when the gap is actionable
     // but has no receipt. Otherwise not_available.
-    let missing_receipt_reason_val = if record.gap_state == "actionable"
-        && record
-            .receipt
-            .as_ref()
-            .and_then(|r| r.movement.as_deref())
-            .is_none()
-        && record.receipt_command.is_some()
-    {
-        // Receipt command exists but no movement yet — emit honest "no_attempt_recorded".
-        serde_json::Value::String("no_attempt_recorded".to_string())
-    } else {
-        serde_json::Value::String(not_available)
-    };
+    let missing_receipt_reason_val =
+        if crate::domain::EvidenceState::is_actionable_word(&record.gap_state)
+            && record
+                .receipt
+                .as_ref()
+                .and_then(|r| r.movement.as_deref())
+                .is_none()
+            && record.receipt_command.is_some()
+        {
+            // Receipt command exists but no movement yet — emit honest "no_attempt_recorded".
+            serde_json::Value::String("no_attempt_recorded".to_string())
+        } else {
+            serde_json::Value::String(not_available)
+        };
 
     (movement_val, missing_receipt_reason_val)
 }
@@ -10469,7 +10508,7 @@ fn collect_repair_packet_from_actionable_gaps(
             .find(|p| {
                 p.get("gap_state")
                     .and_then(|v| v.as_str())
-                    .is_some_and(|s| s == "actionable")
+                    .is_some_and(crate::domain::EvidenceState::is_actionable_word)
             })
             .or_else(|| packets.first())?
     };
@@ -10486,11 +10525,10 @@ fn collect_repair_packet_from_actionable_gaps(
     }
 
     // Require the packet to be actionable to emit a complete repair packet.
-    if packet
+    if !packet
         .get("gap_state")
         .and_then(|v| v.as_str())
-        .unwrap_or("")
-        != "actionable"
+        .is_some_and(crate::domain::EvidenceState::is_actionable_word)
     {
         return Some(repair_packet_sentinel(
             "gap is not actionable in actionable-gaps.json",
@@ -10657,7 +10695,9 @@ fn collect_repair_packet_from_ledger(
             .iter()
             .find(|r| r.gap_id == id || r.canonical_gap_id == id)?
     } else {
-        records.iter().find(|r| r.gap_state == "actionable")?
+        records
+            .iter()
+            .find(|r| crate::domain::EvidenceState::is_actionable_word(&r.gap_state))?
     };
     if let Some(sentinel) = ledger_source_subject_sentinel(root, repo_config, &contents) {
         return Some(sentinel);
