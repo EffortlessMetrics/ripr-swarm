@@ -41,9 +41,14 @@ fn run_receipt_write(args: &[String]) -> Result<(), String> {
     }
 
     let opts = parse_receipt_write_options(args)?;
-    if let Some(root) = &opts.root {
-        crate::atomic_file::ensure_default_output_contained(root)?;
-    }
+    // Receipts land under `target/ripr/receipts`, never the cache, so an
+    // explicit `RIPR_CACHE_DIR` must not waive the link check, and the default
+    // path is cwd-relative when `--root` is omitted (#11477).
+    crate::atomic_file::ensure_report_output_contained(
+        opts.root
+            .as_deref()
+            .unwrap_or_else(|| std::path::Path::new(".")),
+    )?;
     let rendered = write_receipt(&opts)?;
 
     if opts.json || opts.out.is_none() {
@@ -353,7 +358,8 @@ Usage: ripr receipt check [--path <receipt_path>] [--gap <canonical_gap_id>]
        ripr receipt check <receipt_path>
 
 Options:
-  --path PATH       Path to the receipt JSON file to validate.
+  --path PATH       Path to the receipt JSON file to validate. Give --path or --gap
+                    (or a positional path); with neither, check exits 2.
   --gap ID          Resolve path from canonical location
                     target/ripr/receipts/<canonical_gap_id>.json with
                     filename-unsafe characters (`:`, etc.) percent-encoded. The

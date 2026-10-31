@@ -312,3 +312,44 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_rebound_constant_boundary_limit (27)
+
+Reason:
+RIPR-SPEC-0028 / #10990: mixed resolved and unresolved strong calls keep the finding weak but no longer state a concrete aggregate boundary claim - the infection summary now says static evidence does not place a strong related test input at the changed boundary, and the missing text names unresolved inputs instead of asserting no strong related test call places amount; the #11124 operand-naming refusal no longer matches the withheld phrasing, so the composed no-card safe action uses the generic no-concrete-missing-discriminator wording; classifications, stages and discriminators unchanged
+
+Operation:
+Manual edit: replaced the infection clause in infect.summary/evidence_path/human evidence lines and the missing-discriminator reason (human text rewrapped) with the wording the changed code emits.
+
+Execution:
+Strings authored from source (crates/ripr/src/analysis/language/python/{classify.rs,boundary.rs}); no native goldens-bless command executed on this Windows host per lane protocol; verified by re-running `cargo xtask goldens check` locally on the composed tree; hosted Linux CI goldens check remains the merge authority.
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_rebound_constant_boundary_limit (28)
+
+Reason:
+RIPR-SPEC-0028: merge with main #11103 - rebound module constant is not an unplaced call, missing text names observed amount values and unresolved DISCOUNT_THRESHOLD, no-card safe action names the unbindable operand; classes and discriminators unchanged
+
+Command:
+`cargo xtask goldens bless python_rebound_constant_boundary_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_rebound_constant_boundary_limit (29)
+
+Reason:
+RIPR-SPEC-0028 / #10990: restore the selected-root Bash verify line merged from main (#11050) that the hand-reconciled #10990 golden had kept in the pre-merge Suggested-command form; hosted Linux goldens check (run 41133957273) flagged this single formatting-only line, classes and discriminators unchanged
+
+Operation:
+Manual edit: replaced only the Suggested-command line in `expected/human.txt` with the Verify command (Bash) line the merged producer emits (identical to origin/main for this fixture).
+
+Execution:
+Strings taken from the hosted drift report and origin/main; no native goldens-bless command executed on this Windows host, whose local producer emits the platform Suggested-command form and unrelated backslash-path drift (52 entries) — hosted Linux CI goldens check remains the merge authority.
+
+Updated:
+- `expected/human.txt`

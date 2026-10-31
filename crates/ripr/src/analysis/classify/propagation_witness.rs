@@ -384,6 +384,89 @@ pub(in crate::analysis) fn constant_tail_witness(
     direct_tail_witness(probe, owner, sinks, tail_line, limitation)
 }
 
+/// Evaluate only an unshadowed bare `concat!` whose whole owner body is a
+/// single parenthesized call with one or more string-literal operands totaling
+/// at most 512 decoded bytes. Other forms and nested macros remain opaque.
+/// The parser validates both the call and all operands.
+pub(in crate::analysis) fn concat_literal_tail(
+    owner: &crate::analysis::facts::FunctionSummary,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<(usize, String, String)> {
+    use ra_ap_syntax::{AstNode, ast};
+    if !owner.body.contains("concat") {
+        return None;
+    }
+    if super::activation::macro_names_rebound(index, &["concat"]) {
+        return None;
+    }
+    let parsed = crate::analysis::syntax::parse_clean_source_file(&owner.body)?;
+    let function = parsed.tree().syntax().children().find_map(ast::Fn::cast)?;
+    let list = function.body()?.stmt_list()?;
+    if list.statements().next().is_some() {
+        return None;
+    }
+    let ast::Expr::MacroExpr(tail) = list.tail_expr()? else {
+        return None;
+    };
+    let call = tail.macro_call()?;
+    if call.path()?.syntax().text() != "concat" {
+        return None;
+    }
+    let tree = call.token_tree()?;
+    tree.l_paren_token()?;
+    let args = crate::analysis::syntax::parse_clean_source_file(&format!(
+        "fn ripr_concat() {{ let _ = {}; }}",
+        tree.syntax().text()
+    ))?;
+    let fields: Vec<ast::Expr> = match args
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::LetStmt::cast)?
+        .initializer()?
+    {
+        ast::Expr::TupleExpr(tuple) => tuple.fields().collect(),
+        ast::Expr::ParenExpr(one) => vec![one.expr()?],
+        _ => return None,
+    };
+    if fields.is_empty() {
+        return None;
+    }
+    let mut value = String::new();
+    for field in fields {
+        let ast::Expr::Literal(literal) = field else {
+            return None;
+        };
+        let ast::LiteralKind::String(text) = literal.kind() else {
+            return None;
+        };
+        value.push_str(&text.value().ok()?);
+        if value.len() > 512 {
+            return None;
+        }
+    }
+    let expression = tail.syntax().text().to_string();
+    let offset = usize::from(tail.syntax().text_range().start());
+    let line = owner.start_line + owner.body.get(..offset)?.matches('\n').count();
+    Some((line, expression, value))
+}
+
+pub(in crate::analysis) fn concat_tail_witness(
+    probe: &Probe,
+    owner: &crate::analysis::facts::FunctionSummary,
+    index: &crate::analysis::rust_index::RustIndex,
+    sinks: &[FlowSinkFact],
+) -> Option<PropagationWitnessV1> {
+    if probe.family != ProbeFamily::ReturnValue || probe.owner.as_ref() != Some(&owner.id) {
+        return None;
+    }
+    let (line, expression, _) = concat_literal_tail(owner, index)?;
+    if normalize_semantic_text(&expression) != normalize_semantic_text(&probe.expression) {
+        return None;
+    }
+    direct_tail_witness(probe, owner, sinks, line, "literal_concat_owner_tail")
+}
+
 /// #9870: the exact Result.map rewrite forwards its callback's payload.
 /// Observation remains the existing per-test Ok owner-return pin's decision.
 pub(in crate::analysis) fn result_map_witness(

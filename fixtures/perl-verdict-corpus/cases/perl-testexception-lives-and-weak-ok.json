@@ -43,7 +43,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testexception-lives-and-weak-ok.json",
-    "sha256": "b68bf13342db36972d7cd350c71a89c2f6864d681ad92248ddabc98b33c48567",
+    "sha256": "df8dbed50e8e96c25934c66c30decc873ba8096adb9da35a0fb378b99253db6d",
     "provenance": "producer"
   }
 }

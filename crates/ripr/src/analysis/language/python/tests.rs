@@ -2045,6 +2045,42 @@ fn locally_rebound_owner_call_does_not_credit_exposed_exact_value() -> Result<()
 }
 
 #[test]
+fn independent_nested_call_credits_only_the_owner_the_test_calls_by_name() -> Result<(), String> {
+    // #9814: `fee(tax(10)) == tax(10)` pins the outer `fee`. The resolved
+    // assertion reaches the finding's row, alignment and class together.
+    let credited = classify_shop_fee(
+        "from src.shop import fee\nfrom src.other import tax\n\n\ndef test_fee():\n    assert fee(tax(10)) == tax(10)\n",
+    )?;
+    assert_shop_fee_exposed(&credited);
+
+    // Same spelling, different function: `fee` comes from another module.
+    let foreign = classify_shop_fee(
+        "from src.other import fee\nfrom src.other import tax\n\n\ndef test_fee():\n    assert fee(tax(10)) == tax(10)\n",
+    )?;
+    assert_shop_fee_withholds_stand_in_credit(&foreign, "fee imported from another module");
+
+    // Local and module-level rebinding of the outer callee.
+    let rebound = classify_shop_fee(
+        "from src.shop import fee\nfrom src.other import tax\n\n\ndef test_fee():\n    fee = lambda amount: amount\n    assert fee(tax(10)) == tax(10)\n",
+    )?;
+    assert_shop_fee_withholds_stand_in_credit(&rebound, "local rebinding");
+
+    // An import alias spells the callee differently, so the exact reading
+    // (keyed on the bare spelling) is not applied: the demotion stays.
+    let aliased = classify_shop_fee(
+        "from src.shop import fee as charge\nfrom src.other import tax\n\n\ndef test_fee():\n    assert charge(tax(10)) == tax(10)\n",
+    )?;
+    assert_ne!(aliased.class, ExposureClass::Exposed);
+
+    // A method named like the owner is a different owner.
+    let method = classify_shop_fee(
+        "from src.shop import fee\nfrom src.other import tax\n\n\ndef test_fee(shop):\n    assert shop.fee(tax(10)) == tax(10)\n",
+    )?;
+    assert_ne!(method.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
 fn nested_helper_local_shadow_keeps_outer_owner_credit() -> Result<(), String> {
     // Binding `fee` only inside an uncalled helper does not shadow the
     // test's own assertion, which still calls the imported owner.
@@ -11093,6 +11129,71 @@ fn protocol_entry_receiver_reads_that_resemble_a_rebind_stay_credited() -> Resul
         // A header whose condition holds a string with a bracket is a read.
         "    if z == \"(\": pass\n",
         "    if z == '''it's''': pass\n",
+    ] {
+        let src = reversed_receiver_src(middle);
+        let (finding, relations) = classify_reversed_guard(&src)?;
+        assert_eq!(
+            relations,
+            vec![("test_x".to_string(), "protocol_entry_call")],
+            "{middle:?}"
+        );
+        assert_eq!(finding.class, ExposureClass::Exposed, "{middle:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn protocol_entry_receiver_unbound_or_redeclared_by_global_del_or_type_is_not_credited()
+-> Result<(), String> {
+    for middle in [
+        // `global` names the receiver as a module binding, `del` unbinds it, and
+        // a `type` statement (3.12) rebinds it as an alias (#9992).
+        "    global r\n",
+        "    global  r\n",
+        "    global\tr\n",
+        "    global \\\n        r\n",
+        "    del r\n",
+        "    del  r\n",
+        "    del\tr\n",
+        "    del r, items\n",
+        "    z = 1; del r\n",
+        "    if z: del r\n",
+        "    type r = int\n",
+    ] {
+        let src = reversed_receiver_src(middle);
+        let (finding, relations) = classify_reversed_guard(&src)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{middle:?}");
+        assert!(
+            relations
+                .iter()
+                .all(|(_, kind)| *kind != "protocol_entry_call"),
+            "{middle:?}: {relations:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn protocol_entry_receiver_reads_that_resemble_global_del_or_type_stay_credited()
+-> Result<(), String> {
+    for middle in [
+        // A comment or string that spells the keyword is text.
+        "    # global r\n",
+        "    # del r\n",
+        "    assert 'del r' or 'global r' or 'type r'\n",
+        // Longer names and attributes that merely contain the keyword.
+        "    delete = 1\n    assert delete\n",
+        "    del_r = 1\n",
+        "    global_r = 1\n",
+        "    type_r = 1\n",
+        "    q = items.del_r\n",
+        // Another name after the keyword is not the receiver.
+        "    global rr\n",
+        "    del rr\n",
+        "    del items\n",
+        "    type rr = int\n",
+        // `type(r)` is a call that reads the receiver.
+        "    assert type(r) is not None\n",
     ] {
         let src = reversed_receiver_src(middle);
         let (finding, relations) = classify_reversed_guard(&src)?;

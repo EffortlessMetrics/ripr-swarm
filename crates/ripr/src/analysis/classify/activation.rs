@@ -1951,7 +1951,7 @@ fn contains_word(text: &str, word: &str) -> bool {
 /// one of the binding's direct uses, so the initializer provably feeds
 /// the compared operand. At most one declaration generation can hold
 /// the predicate in its live span; the first that does wins.
-fn live_local_initializer(
+pub(in crate::analysis) fn live_local_initializer(
     owner: &FunctionSummary,
     operand: &str,
     predicate_line: usize,
@@ -7326,14 +7326,41 @@ fn looks_like_table_row(line: &str) -> bool {
     (line.starts_with('(') || line.starts_with('[') || line.contains("[(")) && line.contains(',')
 }
 
+/// The spelled shape of a builder-style setter line, recognised before
+/// any value on it is read as an input the test passes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BuilderPattern {
+    /// A call chain that names a `builder` (`Request::builder()`).
+    BuilderCall,
+    /// A `with_*` setter (`.with_limit(5)`).
+    WithSetter,
+    /// A known value-setter method such as `.amount(` / `.token(` / `.threshold(`.
+    NamedSetter,
+}
+
+impl BuilderPattern {
+    /// Classify a line; `None` when it is not a method-call line at all.
+    fn of(line: &str) -> Option<Self> {
+        if !(line.contains('.') && line.contains('(')) {
+            return None;
+        }
+        if line.contains("builder") {
+            Some(Self::BuilderCall)
+        } else if line.contains("with_") {
+            Some(Self::WithSetter)
+        } else if [".amount(", ".token(", ".threshold("]
+            .iter()
+            .any(|setter| line.contains(setter))
+        {
+            Some(Self::NamedSetter)
+        } else {
+            None
+        }
+    }
+}
+
 fn looks_like_builder_method(line: &str) -> bool {
-    line.contains('.')
-        && line.contains('(')
-        && (line.contains("builder")
-            || line.contains("with_")
-            || line.contains(".amount(")
-            || line.contains(".token(")
-            || line.contains(".threshold("))
+    BuilderPattern::of(line).is_some()
 }
 
 #[cfg(test)]
@@ -7341,6 +7368,53 @@ mod method_hop_rows;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn builder_pattern_matches_exactly_the_former_string_predicate() {
+        fn legacy(line: &str) -> bool {
+            line.contains('.')
+                && line.contains('(')
+                && (line.contains("builder")
+                    || line.contains("with_")
+                    || line.contains(".amount(")
+                    || line.contains(".token(")
+                    || line.contains(".threshold("))
+        }
+        let lines = [
+            "Request::builder().build()",
+            ".with_limit(5)",
+            ".amount(100)",
+            ".token(\"abc\")",
+            ".threshold(3)",
+            ".build()",
+            "amount(100)",
+            "with_limit",
+            "let x = builder;",
+            "(1, 2),",
+            "",
+        ];
+        for line in lines {
+            assert_eq!(
+                super::looks_like_builder_method(line),
+                legacy(line),
+                "{line}"
+            );
+        }
+        assert_eq!(
+            super::BuilderPattern::of("Request::builder().build()"),
+            Some(super::BuilderPattern::BuilderCall)
+        );
+        assert_eq!(
+            super::BuilderPattern::of(".with_limit(5)"),
+            Some(super::BuilderPattern::WithSetter)
+        );
+        assert_eq!(
+            super::BuilderPattern::of(".amount(100)"),
+            Some(super::BuilderPattern::NamedSetter)
+        );
+        assert_eq!(super::BuilderPattern::of(".build()"), None);
+        assert_eq!(super::BuilderPattern::of("amount(100)"), None);
+    }
+
     #[test]
     fn a_constant_the_file_imports_is_not_read_from_a_same_named_declaration() {
         let source = "mod a { pub const KB: u64 = 1000; }\nmod b {\n    use external::KB;\n}\n";

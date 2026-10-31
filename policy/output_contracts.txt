@@ -99,6 +99,7 @@ related_test_role|examined_only|Related test row is retained only to show an exa
 repair_card_budget_version|repair-card-budget-v1|Current repair card detail/budget version.
 repair_card_schema_version|repair_card.v1|Current repair card schema version.
 schema_version|0.2|Current check JSON schema version.
+schema_version|0.3|Current check refusal envelope schema version for analysis_timeout refusals with input context (RIPR-SPEC-0241 amendment #10796).
 severity|info|Output and LSP severity value.
 severity|note|Output and LSP severity value.
 severity|warning|Output and LSP severity value.
@@ -131,6 +132,8 @@ static_limit_kind|rust_pinned_shape_unresolved|Typed static limitation value.
 static_limit_kind|rust_implicit_call_unresolved|Typed static limitation value.
 static_limit_kind|rust_indirect_owner_call_unresolved|Typed static limitation value.
 static_limit_kind|rust_caller_loop_selector_unresolved|Typed static limitation value.
+static_limit_kind|proof_harness_not_evaluated|Typed static limitation value.
+static_limit_kind|typescript_workspace_discovery_truncated|Typed static limitation value.
 static_limit_kind|rust_integration_public_api_path_unresolved|Typed static limitation value.
 static_limit_kind|rust_macro_reach_unresolved|Typed static limitation value.
 static_limit_kind|rust_macro_wrapped_assertion_unresolved|Typed static limitation value.
