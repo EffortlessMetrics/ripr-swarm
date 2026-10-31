@@ -1096,3 +1096,142 @@ fn zero_indented_line_inside_a_bracket_does_not_decide_nesting() -> Result<(), S
     assert!(base_side_texts(&findings).is_empty(), "{findings:?}");
     Ok(())
 }
+
+// #11889: a deleted guard block that no observed input enters ran under no
+// test, so a strong oracle cannot notice its removal.
+const DISCOUNT_NEW: &str =
+    "def apply_discount(total, vip=False):\n    result = total\n    return result\n";
+const DISCOUNT_TESTS: &str = "from src.cart import apply_discount\n\n\ndef test_small():\n    assert apply_discount(100) == 100\n\n\ndef test_mid():\n    assert apply_discount(500) == 500\n";
+
+// Only the body line is judged: the header reads the boundary rule too.
+fn deleted_guard_classes(
+    label: &str,
+    new_source: &str,
+    tests: &str,
+    removed: Vec<ChangedLine>,
+) -> Result<Vec<(String, ExposureClass)>, String> {
+    deleted_guard_classes_with(label, new_source, tests, &[], removed)
+}
+
+fn deleted_guard_classes_with(
+    label: &str,
+    new_source: &str,
+    tests: &str,
+    added: &[usize],
+    removed: Vec<ChangedLine>,
+) -> Result<Vec<(String, ExposureClass)>, String> {
+    let findings = analyze_with_test(label, new_source, tests, added, removed)?;
+    Ok(findings
+        .iter()
+        .filter(|finding| {
+            finding.source_currentness != SourceCurrentness::CandidateCurrent
+                && finding.probe.expression.trim().starts_with("result =")
+        })
+        .map(|finding| {
+            (
+                finding.probe.expression.trim().to_string(),
+                finding.class.clone(),
+            )
+        })
+        .collect())
+}
+
+fn discount_block() -> Vec<ChangedLine> {
+    vec![
+        line(3, 3, "    if total > 1000:"),
+        line(4, 3, "        result = total - 50"),
+    ]
+}
+
+#[test]
+fn deleted_guard_block_no_observed_input_enters_is_weakly_exposed() -> Result<(), String> {
+    let classes = deleted_guard_classes(
+        "guard-unentered",
+        DISCOUNT_NEW,
+        DISCOUNT_TESTS,
+        discount_block(),
+    )?;
+    assert_eq!(classes.len(), 1, "{classes:?}");
+    for (expression, class) in &classes {
+        assert_eq!(*class, ExposureClass::WeaklyExposed, "{expression}");
+    }
+    Ok(())
+}
+
+// Positive control for the negatives below: with a test input that enters the
+// block, the same deletion keeps its `exposed` credit.
+#[test]
+fn deleted_guard_block_an_observed_input_enters_stays_exposed() -> Result<(), String> {
+    let tests =
+        format!("{DISCOUNT_TESTS}\n\ndef test_big():\n    assert apply_discount(2000) == 1950\n");
+    let classes = deleted_guard_classes("guard-entered", DISCOUNT_NEW, &tests, discount_block())?;
+    assert_eq!(classes.len(), 1, "{classes:?}");
+    for (expression, class) in &classes {
+        assert_ne!(
+            *class,
+            ExposureClass::WeaklyExposed,
+            "{expression} {classes:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn deleted_guard_block_fails_open_on_unreadable_or_changed_structure() -> Result<(), String> {
+    // A condition that is not a comparison cannot be evaluated.
+    let flag_block = vec![
+        line(3, 3, "    if vip:"),
+        line(4, 3, "        result = total - 50"),
+    ];
+    // An `or` condition is not read.
+    let or_block = vec![
+        line(3, 3, "    if total > 1000 or vip:"),
+        line(4, 3, "        result = total - 50"),
+    ];
+    // The owner header differs between the old and the new file.
+    let rewritten = "def apply_discount(total, vip=True):\n    result = total\n    return result\n";
+    let mut header_block = discount_block();
+    header_block.insert(0, line(1, 1, "def apply_discount(total, vip=False):"));
+    for (label, source, added, removed) in [
+        ("flag", DISCOUNT_NEW, &[][..], flag_block),
+        ("or", DISCOUNT_NEW, &[][..], or_block),
+        ("header", rewritten, &[1][..], header_block),
+    ] {
+        let classes = deleted_guard_classes_with(label, source, DISCOUNT_TESTS, added, removed)?;
+        assert!(!classes.is_empty(), "{label}");
+        for (expression, class) in &classes {
+            assert_ne!(
+                *class,
+                ExposureClass::WeaklyExposed,
+                "{label}: {expression}"
+            );
+        }
+    }
+    Ok(())
+}
+
+// An input that makes one conjunct false excludes the row even when another
+// conjunct is not a comparison; a call that binds no literal keeps the verdict.
+#[test]
+fn deleted_guard_block_reads_a_conjunction_past_an_unreadable_conjunct() -> Result<(), String> {
+    let removed = vec![
+        line(3, 3, "    if vip and total > 1000:"),
+        line(4, 3, "        result = total - 50"),
+    ];
+    let classes =
+        deleted_guard_classes("conjunction", DISCOUNT_NEW, DISCOUNT_TESTS, removed.clone())?;
+    assert_eq!(classes.len(), 1, "{classes:?}");
+    for (expression, class) in &classes {
+        assert_eq!(*class, ExposureClass::WeaklyExposed, "{expression}");
+    }
+    let computed = "from src.cart import apply_discount\n\n\ndef test_small():\n    amount = 100\n    assert apply_discount(amount * 30) == 3000\n";
+    let classes = deleted_guard_classes("conjunction-computed", DISCOUNT_NEW, computed, removed)?;
+    for (expression, class) in &classes {
+        assert_ne!(
+            *class,
+            ExposureClass::WeaklyExposed,
+            "{expression} {classes:?}"
+        );
+    }
+    Ok(())
+}

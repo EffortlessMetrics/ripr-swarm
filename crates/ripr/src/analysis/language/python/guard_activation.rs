@@ -831,6 +831,7 @@ pub(super) fn condition_holds(
     if has_boolean_operator(condition) {
         return None;
     }
+    let mut unreadable = false;
     for conjunct in condition.split(" and ") {
         let conjunct = conjunct.trim();
         match eval_comparison(
@@ -843,10 +844,12 @@ pub(super) fn condition_holds(
         ) {
             Some(true) => {}
             Some(false) => return Some(false),
-            None => return None,
+            // A conjunction with one false conjunct is false whatever the
+            // unreadable one says (#11889), so keep reading.
+            None => unreadable = true,
         }
     }
-    Some(true)
+    (!unreadable).then_some(true)
 }
 
 /// True when `text` applies `or`, `not` or a conditional expression

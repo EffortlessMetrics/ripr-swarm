@@ -9,7 +9,8 @@
 //! counted, gated, annotated and diagnostic surface skips it (#3281).
 
 use super::classify::{
-    ChangeSite, classify_change_for_owner_with_value_origins, is_python_declaration_line,
+    ChangeSite, OldGuardView, classify_change_for_owner_with_value_origins,
+    is_python_declaration_line,
 };
 use super::related_tests::RelatedCandidateMemo;
 use super::{
@@ -119,10 +120,12 @@ pub(super) fn deleted_line_findings_with_value_origins<'a>(
         };
         // Evidence names the projected new-side coordinate, as the Rust
         // adapter records it; only the owner comes from a live neighbour.
+        let old_guard = old_guard_view(changed, removed, owner, new_source, old_side.source);
         let site = ChangeSite {
             file: &changed.path,
             line: removed.new_side_line,
             owner,
+            old_guard,
         };
         let mut finding_origins = crate::value_origins::ValueOrigins::default();
         let Some(mut finding) = classify_change_for_owner_with_value_origins(
@@ -196,6 +199,104 @@ pub(super) fn deleted_line_findings_with_value_origins<'a>(
         out.push(finding);
     }
     out
+}
+
+/// The old-side view of a removed line inside a function owner (#11889).
+///
+/// A deleted line in a guarded arm ran only when the guard accepted a call's
+/// input. The guarded-arm reader walks the guards around a line in a source
+/// text, so it is handed the old file with the owner re-spanned there. A
+/// closed allow-list: the owner must be a single-line `def` whose header reads
+/// the same in the new and the old file, and the nearest enclosing scope above
+/// the line in the old file must be that header. Anything else answers `None`
+/// and the existing verdict stands.
+///
+/// A removed `if`/`elif`/`while`/`else` header is read at its first removed
+/// body line, so its own condition is among the guards walked.
+fn old_guard_view<'a>(
+    changed: &ChangedFile,
+    removed: &ChangedLine,
+    owner: &PythonOwner,
+    new_source: NewSource<'_>,
+    old_source: Option<&'a str>,
+) -> Option<OldGuardView<'a>> {
+    let new_source = new_source?;
+    let old_source = old_source?;
+    let new_header = new_source
+        .lines()
+        .nth(owner.start_line.checked_sub(1)?)?
+        .trim_end();
+    let new_trimmed = new_header.trim_start();
+    if !(new_trimmed.starts_with("def ") || new_trimmed.starts_with("async def "))
+        || !new_trimmed.ends_with(':')
+    {
+        return None;
+    }
+    let old_lines: Vec<&str> = old_source.lines().collect();
+    let removed_index = removed.line.checked_sub(1)?;
+    let removed_text = old_lines.get(removed_index)?;
+    if removed_text.trim() != removed.text.trim() {
+        return None;
+    }
+    let mut threshold = indent_width(removed_text);
+    let mut header_index = None;
+    for index in (0..removed_index).rev() {
+        let raw = old_lines[index];
+        let trimmed = raw.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let indent = indent_width(raw);
+        if indent >= threshold {
+            continue;
+        }
+        if trimmed.starts_with("def ")
+            || trimmed.starts_with("async def ")
+            || trimmed.starts_with("class ")
+        {
+            header_index = Some(index);
+            break;
+        }
+        if indent == 0 {
+            return None;
+        }
+        threshold = indent;
+    }
+    let header_index = header_index?;
+    if old_lines[header_index].trim_end() != new_header {
+        return None;
+    }
+    let header_indent = indent_width(old_lines[header_index]);
+    let end_index = old_lines
+        .iter()
+        .enumerate()
+        .skip(header_index + 1)
+        .find(|(_, raw)| !raw.trim().is_empty() && indent_width(raw) <= header_indent)
+        .map_or(old_lines.len(), |(index, _)| index);
+    // A header opens a block whose first removed line carries the walk.
+    let opens_block = ["if ", "elif ", "else", "while "]
+        .iter()
+        .any(|keyword| removed_text.trim().starts_with(keyword))
+        && removed_text.trim_end().ends_with(':');
+    let mut line = removed.line;
+    if opens_block {
+        let next = changed
+            .removed_lines
+            .iter()
+            .find(|candidate| candidate.line == removed.line + 1)?;
+        if indent_width(&next.text) <= indent_width(removed_text) {
+            return None;
+        }
+        line += 1;
+    }
+    let mut old_owner = owner.clone();
+    old_owner.start_line = header_index + 1;
+    old_owner.end_line = end_index;
+    Some(OldGuardView {
+        owner: old_owner,
+        source: old_source,
+        line,
+    })
 }
 
 /// A removed line that ran behavior: not a comment, blank line, docstring,
