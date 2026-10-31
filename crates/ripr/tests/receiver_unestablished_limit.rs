@@ -618,3 +618,203 @@ fn another_crates_glob_reexport_is_part_of_the_unplaced_doubt() -> Result<(), St
     );
     Ok(())
 }
+
+const BARE: &str = "assert_eq!(Widget::new().read(), 4);";
+const NOOP_MACRO: &str = "macro_rules! assert_eq { ($($t:tt)*) => {}; }\n";
+
+/// A call outside the assertion already resolves with the macro gate on, so
+/// nothing is blocked by the macro and the rule must not claim it.
+#[test]
+fn a_call_outside_the_assertion_is_not_blocked_by_the_macro() -> Result<(), String> {
+    let statement = "let read = Widget::new().read(); std::assert_eq!(read, 4);";
+    let finding = Workspace::create(Placement::Generated, statement)?.finding()?;
+    assert_keeps_gap("call outside the assertion", &finding)?;
+    assert_eq!(
+        relations(&finding),
+        ["direct_owner_call"],
+        "premise: the call is credited without the macro: {finding}"
+    );
+    Ok(())
+}
+
+/// An `#[ignore]` test never runs in the default suite, so it cannot be what
+/// stands between the finding and a gap.
+#[test]
+fn an_ignored_test_does_not_trigger_the_withhold() -> Result<(), String> {
+    let shape = Shape {
+        attrs: "#[ignore]\n    ",
+        ..Shape::default()
+    };
+    keeps_gap("ignored test", shape, CONTROL)
+}
+
+/// A same-named type in another crate is not the owner: its test is never one
+/// of the finding's related tests, and the withhold must not look at it.
+#[test]
+fn a_same_named_type_in_another_crate_does_not_trigger_the_withhold() -> Result<(), String> {
+    let workspace = Workspace::create(
+        Placement::Generated,
+        "std::assert_eq!(Other::new().read(), 4);",
+    )?;
+    workspace.write_file(
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"a\", \"b\", \"fakestd\", \"c\"]\nresolver = \"2\"\n",
+    )?;
+    workspace.write_file(
+        "c/Cargo.toml",
+        "[package]\nname = \"c\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+    )?;
+    workspace.write_file(
+        "c/src/lib.rs",
+        "pub struct Widget;\nimpl Widget {\n    pub fn new() -> Self { Widget }\n    pub fn read(&self) -> u32 { 4 }\n}\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn reads_c() { std::assert_eq!(Widget::new().read(), 4); }\n}\n",
+    )?;
+    assert_keeps_gap("same-named type in another crate", &workspace.finding()?)
+}
+
+/// A bare `assert_eq!` is decided by name. A macro site that reaches the test's
+/// own file through a resolved mount, a `#[macro_use]` module or a stray file is
+/// the test package's doubt whatever the placement, so the gap stays.
+#[test]
+fn a_macro_site_in_the_test_packages_own_files_keeps_the_bare_assertion_gap() -> Result<(), String>
+{
+    let rows: [(&str, &str, &str, &str); 6] = [
+        (
+            "own-crate macro in another module",
+            "#[macro_use]\nmod noop;\nmod shared;\n",
+            "a/src/noop.rs",
+            NOOP_MACRO,
+        ),
+        (
+            "literal #[path] mount into another package",
+            "#[macro_use]\n#[path = \"../../b/src/noop.rs\"]\nmod noop;\nmod shared;\n",
+            "b/src/noop.rs",
+            NOOP_MACRO,
+        ),
+        (
+            "mount under a nested src directory",
+            "#[macro_use]\n#[path = \"x/src/noop.rs\"]\nmod noop;\nmod shared;\n",
+            "a/src/x/src/noop.rs",
+            NOOP_MACRO,
+        ),
+        (
+            "root-level file with no package",
+            "mod shared;\n",
+            "loose.rs",
+            "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {}; }\n",
+        ),
+        (
+            "file under the package but outside src",
+            "mod shared;\n",
+            "a/loose.rs",
+            "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {}; }\n",
+        ),
+        (
+            "file with no nameable package",
+            "mod shared;\n",
+            "stray/macros.rs",
+            "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {}; }\n",
+        ),
+    ];
+    for (label, lib, path, source) in rows {
+        let workspace = Workspace::create(Placement::Generated, BARE)?;
+        workspace.write_file("a/src/lib.rs", lib)?;
+        workspace.write_file(path, source)?;
+        assert_keeps_gap(label, &workspace.finding()?)?;
+    }
+    Ok(())
+}
+
+/// A dependency the test package imports, names or renames is its own doubt.
+/// `a` depends on `dependency` and starts with `lib_head`; `mac` exports a
+/// no-op `assert_eq!` only where the dependency really points at it.
+#[test]
+fn a_dependency_macro_in_the_test_packages_import_scope_keeps_the_gap() -> Result<(), String> {
+    const MAC: &str = "mac = { path = \"../mac\" }";
+    const RENAMED: &str = "mac = { package = \"other\", path = \"../other\" }";
+    let rows: [(&str, &str, &str, &str, &str); 8] = [
+        ("glob import", "mac", "other", MAC, "use mac::*;"),
+        (
+            "macro_use extern crate",
+            "mac",
+            "other",
+            MAC,
+            "#[macro_use]\nextern crate mac;",
+        ),
+        (
+            "plain extern crate",
+            "mac",
+            "other",
+            MAC,
+            "extern crate mac;",
+        ),
+        (
+            "explicit import",
+            "mac",
+            "other",
+            MAC,
+            "use mac::assert_eq;",
+        ),
+        (
+            "rename behind a decoy directory",
+            "benign",
+            "other",
+            RENAMED,
+            "use mac::*;",
+        ),
+        (
+            "rename onto a matching directory",
+            "mac",
+            "other",
+            RENAMED,
+            "use mac::*;",
+        ),
+        (
+            "crate named differently from its directory",
+            "benign",
+            "macx",
+            "macx = { path = \"../other\" }",
+            "use macx::*;",
+        ),
+        (
+            "directory holds another crate",
+            "benign",
+            "mac",
+            "mac = { path = \"../other\" }",
+            "use mac::*;",
+        ),
+    ];
+    for (label, mac_package, other_package, dependency, lib_head) in rows {
+        let workspace = Workspace::create(Placement::Generated, BARE)?;
+        workspace.write_file(
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"a\", \"b\", \"fakestd\", \"mac\", \"other\"]\nresolver = \"2\"\n",
+        )?;
+        workspace.write_file(
+            "a/Cargo.toml",
+            &format!(
+                "[package]\nname = \"a\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[lib]\ntest = false\ndoctest = false\n\n[dependencies]\n{dependency}\n"
+            ),
+        )?;
+        let exports = "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {}; }\n";
+        let mac_source = if dependency.contains("../mac") {
+            exports
+        } else {
+            "pub fn benign() {}\n"
+        };
+        for (directory, package, source) in [
+            ("mac", mac_package, mac_source),
+            ("other", other_package, exports),
+        ] {
+            workspace.write_file(
+                &format!("{directory}/Cargo.toml"),
+                &format!(
+                    "[package]\nname = \"{package}\"\nversion = \"0.0.0\"\nedition = \"2021\"\n"
+                ),
+            )?;
+            workspace.write_file(&format!("{directory}/src/lib.rs"), source)?;
+        }
+        workspace.write_file("a/src/lib.rs", &format!("{lib_head}\nmod shared;\n"))?;
+        assert_keeps_gap(label, &workspace.finding()?)?;
+    }
+    Ok(())
+}
