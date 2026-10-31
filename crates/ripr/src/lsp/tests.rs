@@ -20750,6 +20750,48 @@ fn execute_command_collect_repair_packet_stale_snapshot_returns_sentinel() -> Re
 }
 
 #[test]
+fn execute_command_collect_repair_packet_distinguishes_in_flight_from_terminal()
+-> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        for (state, refresh_state, attempt_state) in [
+            (AnalysisAttemptState::Queued, "in_flight", "queued"),
+            (AnalysisAttemptState::Running, "in_flight", "running"),
+            (AnalysisAttemptState::Failed, "terminal", "failed"),
+            (AnalysisAttemptState::Cancelled, "terminal", "cancelled"),
+            (AnalysisAttemptState::Superseded, "terminal", "superseded"),
+            (AnalysisAttemptState::Stopped, "terminal", "stopped"),
+        ] {
+            backend.set_analysis_attempt_state_for_test(state);
+            let result = backend
+                .execute_command(ExecuteCommandParams {
+                    command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
+                    arguments: vec![],
+                    work_done_progress_params: Default::default(),
+                })
+                .await
+                .map_err(|err| format!("execute_command failed: {err}"))?
+                .ok_or_else(|| "expected sentinel".to_string())?;
+            // Both still fail closed with the original reason.
+            assert_eq!(result["status"], "not_actionable_or_incomplete");
+            assert_eq!(result["reason"], "analysis_snapshot_stale");
+            assert_eq!(result["refresh_state"], refresh_state, "{attempt_state}");
+            assert_eq!(result["attempt_state"], attempt_state);
+            let recovery = result["recovery"].as_str().unwrap_or_default();
+            assert!(!recovery.is_empty(), "{attempt_state} needs guidance");
+            assert_eq!(recovery.contains("retry"), refresh_state == "in_flight");
+        }
+        Ok(())
+    })
+}
+
+#[test]
 fn execute_command_collect_repair_packet_registered_in_capabilities() -> Result<(), String> {
     let Some(provider) = initialize_result().capabilities.execute_command_provider else {
         return Err("expected execute command provider".to_string());

@@ -2443,7 +2443,11 @@ export class RiprClientController {
     const status = typeof packet['status'] === 'string' ? packet['status'] : undefined;
     if (status === 'not_actionable_or_incomplete' || packet['kind'] !== 'repair_packet') {
       const reason = typeof packet['reason'] === 'string' ? packet['reason'] : undefined;
-      this.runtime.showInformationMessage(reason ?? 'No complete repair packet available.');
+      // #4427: the server says whether a refresh is in flight (retry shortly)
+      // or ended without a result (recover); surface its guidance verbatim.
+      const recovery = typeof packet['recovery'] === 'string' ? packet['recovery'] : undefined;
+      const message = reason ?? 'No complete repair packet available.';
+      this.runtime.showInformationMessage(recovery ? `${message}: ${recovery}` : message);
       return;
     }
     try {

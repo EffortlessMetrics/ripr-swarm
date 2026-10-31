@@ -10042,7 +10042,15 @@ impl Backend {
     fn collect_repair_packet(&self, gap_id: Option<&str>) -> Option<LSPAny> {
         let health = self.analysis_health_snapshot();
         if !health.allows_current_repairs() {
-            return Some(repair_packet_sentinel("analysis_snapshot_stale"));
+            // The reason stays `analysis_snapshot_stale` and the packet stays
+            // withheld; the added fields only tell a client whether to retry
+            // or recover (#4427).
+            let (refresh_state, recovery) = health.repair_block_guidance();
+            let mut sentinel = repair_packet_sentinel("analysis_snapshot_stale");
+            sentinel["refresh_state"] = serde_json::json!(refresh_state);
+            sentinel["attempt_state"] = serde_json::json!(health.state.as_str());
+            sentinel["recovery"] = serde_json::json!(recovery);
+            return Some(sentinel);
         }
         let authority = self.workspace_root_authority();
         if !authority.allows_analysis() {

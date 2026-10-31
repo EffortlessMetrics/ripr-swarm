@@ -584,6 +584,32 @@ impl AnalysisHealth {
     pub(super) fn pending(&self) -> bool {
         self.pending_attempt_id.is_some()
     }
+
+    /// Why `allows_current_repairs` is false, as `(refresh_state, recovery)`
+    /// (#4427). `in_flight` means a refresh is queued or running and a retry
+    /// shortly should succeed; `terminal` means the latest attempt ended
+    /// without a result and the client must check status or refresh again;
+    /// `stale_snapshot` means the attempt succeeded but the retained
+    /// snapshot is absent or marked stale. Every case still fails closed.
+    pub(super) fn repair_block_guidance(&self) -> (&'static str, &'static str) {
+        match self.state {
+            AnalysisAttemptState::Queued | AnalysisAttemptState::Running => (
+                "in_flight",
+                "A refresh is in progress; retry the repair packet shortly.",
+            ),
+            AnalysisAttemptState::Failed
+            | AnalysisAttemptState::Cancelled
+            | AnalysisAttemptState::Superseded
+            | AnalysisAttemptState::Stopped => (
+                "terminal",
+                "The latest refresh did not produce a result; check ripr status and run a refresh to recover.",
+            ),
+            AnalysisAttemptState::Succeeded => (
+                "stale_snapshot",
+                "The retained snapshot is not current; run a refresh, then retry the repair packet.",
+            ),
+        }
+    }
 }
 
 impl RefreshMetadata {

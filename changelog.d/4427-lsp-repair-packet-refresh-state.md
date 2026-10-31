@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- The LSP repair packet sentinel `analysis_snapshot_stale` now also carries `refresh_state` (`in_flight`, `terminal` or `stale_snapshot`), `attempt_state` and a `recovery` hint, so a client can tell a refresh in progress (retry shortly) from a failed, cancelled, superseded or stopped one (recover); the packet is still withheld in every case, and the VS Code copy command shows the hint (#4427).
