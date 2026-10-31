@@ -883,6 +883,8 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
             )
         })
         .transpose()?;
+    let before_produced_from_dirty = before_identity.historical_produced_from_dirty();
+    let after_produced_from_dirty = after_identity.historical_produced_from_dirty();
     let artifact_currentness = crate::agent::artifact::pair_currentness_label(
         &before_identity.currentness,
         &after_identity.currentness,
@@ -904,6 +906,8 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
     let binding = output::outcome::AgentVerifyArtifactBinding {
         before_content_sha256: before_identity.content_sha256,
         after_content_sha256: after_identity.content_sha256,
+        before_produced_from_dirty,
+        after_produced_from_dirty,
     };
     let bound_gap = bound_gap.map(|closure| output::outcome::AgentVerifyBoundGap {
         gap_id: closure.gap_id,
@@ -1998,6 +2002,10 @@ impl SharedWorkflowArtifacts {
         for (_, backup, _, _, _) in &plans {
             if let Some(backup) = backup {
                 #[cfg(windows)]
+                #[allow(
+                    clippy::permissions_set_readonly_false,
+                    reason = "Windows-only: clearing the readonly flag is the platform way to make a backup removable; the Unix world-writable concern does not apply"
+                )]
                 {
                     let mut permissions = std::fs::metadata(backup)
                         .map_err(|error| {
@@ -3539,7 +3547,7 @@ fn repair_after_no_movement_lines(
         ));
     }
     lines.extend([
-        format!("to recover: {edit}, then rerun this after-phase command."),
+        format!("to recover: {edit}, then rerun the after phase."),
         format!(
             "inspect the selected attempt with `ripr agent status --root {root_arg}{store_flag} --attempt {attempt_arg}`."
         ),
