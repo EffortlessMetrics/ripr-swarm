@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A test that calls an operator impl through its type (`Money::add(a, b)` or `<Money as Add>::add(a, b)`) is now judged by its own evidence instead of being treated as a syntax-only credit; another type's or trait's `add`, an inherent `add`, a longer type or method name, `stringify!` text, module-qualified paths (including across blanks or comments) and a `Money` the test imports or declares itself stay syntax-only; a finding whose related rows were capped for display stays withheld (RIPR-SPEC-0240, #10551).

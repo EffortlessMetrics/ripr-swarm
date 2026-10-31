@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- `ripr reports gap-ledger --check-output` no longer admits a saved producer refusal envelope (`diff_scope_oversized` / `repo_scope_oversized`, exit 2, `downstream_consumable: false`) as a benign `no_records` ledger: the ledger lands on `blocked` with a warning naming the typed refusal, and `ripr gate evaluate` refuses refusal envelopes and generic `downstream_consumable: false` records at the pr-guidance, gap-ledger, and baseline inputs with a `config_error`, so an empty refusal can no longer flow through a saved ledger into a gate pass (#10733).
