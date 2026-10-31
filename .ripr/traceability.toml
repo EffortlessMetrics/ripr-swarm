@@ -3843,6 +3843,7 @@ id = "RIPR-SPEC-0028"
 name = "Python preview static facts"
 spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/loop_walk_tests.rs",
   "crates/ripr/src/analysis/language/python/truthiness_swap.rs::tests::parse_test_reads_only_one_single_operand_test_of_a_bare_name",
   "crates/ripr/src/analysis/language/python/truthiness_swap.rs::tests::read_input_reads_only_plain_scalar_literals",
   "crates/ripr/src/analysis/language/python/truthiness_swap.rs::tests::tests_disagree_only_where_the_swap_changes_the_branch",
@@ -4145,6 +4146,7 @@ fixtures = [
   "fixtures/python_mock_assert_called",
   "fixtures/python_broad_boolean_assertion",
   "fixtures/python_return_comparison_boundary",
+  "fixtures/python_while_counter_past_bound",
   "fixtures/python_return_value_shape",
   "fixtures/python_error_path_shape",
   "fixtures/python_field_assignment_shape",
@@ -4203,6 +4205,7 @@ fixtures = [
   "fixtures/python-real-repo-evals",
 ]
 code = [
+  "crates/ripr/src/analysis/language/python/loop_walk.rs",
   "xtask/src/fixture_contracts/upstream_python.rs",
   "crates/ripr/src/analysis/language/python/truthiness_swap.rs",
   "crates/ripr/src/analysis/language/python.rs",

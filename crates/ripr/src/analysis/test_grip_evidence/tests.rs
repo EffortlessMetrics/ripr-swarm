@@ -21037,6 +21037,70 @@ fn item_declarations_are_counted_as_whole_words() {
     );
 }
 
+/// #11382: the seam-side relation applies the finding-level refusal for a
+/// receiver whose type the test's own module shadows. The shadowed test's
+/// `window.clone()` calls the test-local `Window`, so it is never a direct
+/// call of the production `Window::clone`. The unshadowed control keeps the
+/// credit, so the refusal is the only difference.
+#[test]
+fn a_test_local_shadow_of_the_impl_type_is_not_a_direct_owner_call() -> Result<(), String> {
+    let shadowed = include_str!(
+        "../../../../../fixtures/owner_return_pin_test_module_shadow/input/src/lib.rs"
+    );
+    let control = shadowed
+        .replace(
+            "    #[derive(Debug, Clone, PartialEq, Eq)]\n    struct Window {\n        start: u32,\n        end: u32,\n    }\n\n",
+            "",
+        )
+        .replace(
+            "let window = Window { start: 3, end: 9 };",
+            "let window = Window::new(3, 9);",
+        );
+    assert!(
+        !control.contains(
+            "struct Window {\n        start: u32,\n        end: u32,\n    }\n\n    #[test]"
+        ),
+        "control must drop the test-local type"
+    );
+    assert!(
+        control.contains("let window = Window::new(3, 9);")
+            && !control.contains("let window = Window { start: 3, end: 9 };"),
+        "control must replace the struct-literal construction"
+    );
+    let mut direct_by_source = Vec::new();
+    for source in [shadowed, control.as_str()] {
+        let path = PathBuf::from("src/lib.rs");
+        let index = index_from_files(&[(path.clone(), source)])?;
+        assert_eq!(index.tests().len(), 1, "one real subject");
+        let seams: Vec<_> = inventory_seams_from_index(&[path], &index)
+            .into_iter()
+            .filter(|seam| seam.owner().ends_with("::clone"))
+            .collect();
+        assert!(!seams.is_empty(), "the clone owner has seams");
+        let context = CompactGripContext::new(&index);
+        let mut direct = 0usize;
+        for seam in &seams {
+            direct += find_related_tests_with_context(seam, &context)
+                .iter()
+                .filter(|(test, reason)| {
+                    test.test.name == "a_clone_equals_its_original"
+                        && *reason == RelationReason::DirectOwnerCall
+                })
+                .count();
+        }
+        direct_by_source.push(direct);
+    }
+    assert_eq!(
+        direct_by_source[0], 0,
+        "shadowed receiver must not be direct"
+    );
+    assert!(
+        direct_by_source[1] > 0,
+        "the unshadowed control keeps direct credit: {direct_by_source:?}"
+    );
+    Ok(())
+}
+
 fn return_seam_containing(source: &str, needle: &str) -> Result<RepoSeam, String> {
     let prod = PathBuf::from("src/lib.rs");
     let index = index_from_files(&[(prod.clone(), source)])?;

@@ -6050,6 +6050,26 @@ fn impl_identity_is_shadowed(
     false
 }
 
+/// Whether the test's own scope rebinds the owner's impl type or trait, so a
+/// receiver of that name is not the production type (#11382). The seam-side
+/// relation applies the same refusal the finding-level relation applies to a
+/// direct owner call. Fails open: a free function, or an owner without an
+/// established impl type, is never reported as shadowed.
+pub(in crate::analysis) fn owner_impl_identity_shadowed(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    let Some(impl_type) = impl_self_type_name(&owner.id.0) else {
+        return false;
+    };
+    let test_source = index
+        .files()
+        .get(&test.file)
+        .map(|facts| facts.data().source.as_ref());
+    impl_identity_is_shadowed(test, owner, &impl_type, test_source, index)
+}
+
 fn owner_call_relation_reason(
     test: &TestSummary,
     owner_fn: Option<&FunctionSummary>,

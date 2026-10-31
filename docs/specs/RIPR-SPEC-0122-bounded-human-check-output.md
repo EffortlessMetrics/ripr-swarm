@@ -37,7 +37,10 @@ Linked issues:
   verdict.
 - [#9373](https://github.com/EffortlessMetrics/ripr-swarm/issues/9373) -
   item 1 explains the bounded Evidence stages and conservative state words
-  beside the selected finding.
+  beside the selected finding; items 2 and 3 name the unknown stage on each
+  `Hidden:` row (`unknown: infection unclear`, `unknown: propagation unclear`,
+  `unknown: static analysis limited`) and gloss each listed class once under
+  `Hidden classes:`. The shared `ExposureClass::plain_label` is unchanged.
 
 - [#10716](https://github.com/EffortlessMetrics/ripr-swarm/issues/10716) -
   non-Rust stub paths receive a typed capability refusal and a manual-test
