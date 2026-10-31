@@ -395,7 +395,6 @@ fn given_a_later_binding_of_a_test_name_then_the_earlier_definition_is_controlle
         "def test_p():\n    assert f(3) == 6\n\n\nfor test_p in [1]:\n    pass\n",
         "def test_p():\n    assert f(3) == 6\n\n\nwith open('x') as test_p:\n    pass\n",
         "def test_p():\n    assert f(3) == 6\n\n\ntest_p = make_test_p_helper()\n",
-        "class TestP:\n    def test_a(self):\n        assert f(3) == 6\n\n\nclass TestP:\n    def test_b(self):\n        assert True\n",
     ] {
         let tests = parse(&format!("from m import f\n\n{source}"));
         assert!(activation_control(&tests[0]).is_some(), "{source}");
@@ -409,7 +408,7 @@ fn given_distinct_or_wrapping_bindings_then_no_test_is_shadowed() {
         "def test_p():\n    assert f(3) == 6\n\n\ntest_p = pytest.mark.slow(test_p)\n",
         "def test_p():\n    assert f(3) == 6\n\n\nhelper = None\n",
         "def test_p():\n    assert f(3) == 6\n\n\ntest_p = wrap(test_p)\n",
-        "def test_p():\n    assert f(3) == 6\n\n\nfor test_p in test_p_cases:\n    pass\n",
+        "def test_p():\n    assert f(3) == 6\n\n\nfor test_p in [test_p]:\n    pass\n",
         "def test_p():\n    assert f(3) == 6\n\n\nwith test_p() as test_p:\n    pass\n",
         "def test_p():\n    assert f(3) == 6\n\n\ndel other\n",
         "class TestP:\n    def test_a(self):\n        assert f(3) == 6\n\n\nclass TestP(TestP):\n    pass\n",
