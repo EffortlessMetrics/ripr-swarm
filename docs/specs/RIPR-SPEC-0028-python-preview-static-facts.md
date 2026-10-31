@@ -645,10 +645,12 @@ test must not bind the name in any scope (parameter, store, loop or
 comprehension target, lambda or nested parameter, import, `match`); the body
 must not mention `monkeypatch`, `patch`, `setattr`, `globals`, `vars`, `exec`
 or `eval`; the module must hold no code that runs outside the tests (autouse
-fixture, `pytestmark`, setup or teardown hook); and a test file that the diff
-also changes gets no credit. Anything else keeps the input unresolved. A write
-to the constant from another file (a `conftest.py` assigning
-`module.THRESHOLD`) is not seen.
+fixture, `pytestmark`, setup or teardown hook, module-level call, or a
+`conftest.py` on the directory chain that declares a fixture or hook); and a
+test file that the diff also changes gets no credit. Anything else keeps the
+input unresolved. A plain write to the constant from another file that runs
+before the test (a sibling test module assigning `module.THRESHOLD` at
+import) is not seen; no extra fact is read for it.
 
 A changed line whose old and new text differ only in a trailing `#` comment or
 in whitespace between tokens emits no probe (#10706). Both lines are lexed and
