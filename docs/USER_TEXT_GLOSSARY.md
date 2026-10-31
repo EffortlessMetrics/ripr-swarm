@@ -70,21 +70,69 @@ and its baseline scans the goldens only (`precommit`). Hosted CI (`ci-policy`,
 
 ## Baseline ceilings
 
-`main` still contains some banned terms in default output. They are held by
+`main` still contains some banned terms in default output. They are recorded by
 `policy/user-text-baseline.toml`, one ceiling per surface and term: the number
-of output lines containing the term today (for `golden-human`, the most lines any
-single golden may hold; total growth across goldens is deliberately not bounded,
-each golden is).
+of output lines containing the term when last lowered (for `golden-human`, the
+most lines any single golden may hold).
 
-- A count above its ceiling fails the check.
-- A term with no row has a ceiling of 0.
+- Golden rows (`golden-human`) gate each PR on its own delta (#11374), per
+  file. The check scans the `expected/human.txt` goldens at the merge-base with
+  `origin/main` through Git objects (no base build) and fails when any
+  `(file, term)` has more banned lines than at the merge-base. A file that is
+  new at the head counts all its banned lines as an increase, and removals in
+  one file never offset a rise in another. A rename or move that keeps old
+  jargon therefore reads as a new file and fails: a deliberate false red, the
+  safe direction; reword the lines in the same change. A PR never edits the
+  baseline to pass, and a parallel merge cannot turn another PR red.
+- What the golden gate prevents and allows, precisely. Prevented: a new banned
+  line in a golden file that is new at the head, and any per-file, per-term
+  increase in an existing golden. Allowed: pure removals, edits that keep a
+  file's count equal or lower, and renames or moves of goldens that carry no
+  banned lines. It is therefore not a plain net no-growth rule: removals never
+  offset increases elsewhere, and a rename of a golden that still carries banned
+  lines is rejected as a new path.
+- Inputs are recorded. The report names the merge-base commit, the base source
+  and sha, and HEAD, and says when the head side is the working tree.
+- CI binds both sides to commits. For `pull_request` the checkout must be the
+  integration commit (`GITHUB_SHA` must match HEAD) whose second parent is the
+  event's PR head and whose first parent is the compared base; the event's base
+  sha, which can be older when the base branch moved after the event, must be
+  that parent or one of its ancestors; for
+  `merge_group` HEAD must be the event head and the event base its ancestor.
+  Mismatched or missing identities fail the check, as do uncommitted or ignored
+  golden files; the head side is read from HEAD's committed blobs. Selected
+  goldens must be regular files: symlinks and other nonregular entries fail
+  rather than being treated as output text. Other CI
+  events (for example `push`) use the `origin/main` ref. Locally the base is the
+  `origin/main` ref and the head is the working tree, so a local comparison is
+  advisory when that ref is stale; the report records where each side came from.
+- Unreadable base: locally the check falls back to absolute ceilings and labels
+  the run "base unavailable: absolute-ceiling check only, no PR-relative
+  no-growth established" (a loose ceiling can pass growth). Under CI (`CI=true`
+  or `GITHUB_ACTIONS` set) it fails closed instead.
+- A golden total above its absolute ceiling is reported as a WARNING (main
+  health) and does not fail a PR that did not add lines.
+- Limits to know when reviewing: the banned-term list, the matcher and the
+  baseline file are applied with the head's code on both sides, so a PR that
+  edits the gate logic, `BANNED` or the baseline is visible only in the diff and
+  needs explicit reviewer attention (tracked in #11385). A renamed or copied
+  golden that keeps banned lines counts as a new path; the reviewer's remedy is
+  to reword those lines.
+- To restore the delta gate after an unreadable base, run
+  `git fetch --deepen=200 origin main` (or `git fetch origin main`).
+- Live-surface rows are small and keep absolute ceilings: a live count above
+  its ceiling fails, and a PR that raises a live-surface ceiling needs an
+  explicit, reviewed reason. A term with no row has a ceiling of 0.
+- Known gaps, tracked as follow-ups: the gate logic itself is reviewed by hand
+  (a PR that edits it is not qualified by the gate it changes), and until a
+  main-side backstop exists, golden ceilings are warnings on `main`, not
+  failures.
 - Ceilings only go down. After fixing wording, run
   `cargo xtask check-user-text --ratchet` to lower them; it never raises or
-  adds a row. A ceiling that is higher than the current count does not fail
-  (so concurrent PRs do not conflict); the report prints these rows at the top
-  as a NOTE and the command prints a reminder to run `--ratchet`. After a
-  rebase, rerun `--ratchet` instead of hand-resolving baseline numbers. Raising a ceiling needs a stated reason in the PR and is a
-  review blocker by default.
+  adds a row, and it does not rewrite while any count is above its ceiling. A
+  ceiling that is higher than the current count does not fail; the report prints
+  these rows as a NOTE. Raising a ceiling needs a stated reason in the PR and is
+  a review blocker by default.
 - Surface issues remove their terms: #10691 (check), #10692 (repair and agent
   refusals), #10693 (agent card), #10694 (pilot), #10695 (editor).
 
