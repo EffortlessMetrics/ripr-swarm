@@ -81,7 +81,7 @@ use super::{
     GENERATED_CI_FRONT_PANEL_REPAIR, GENERATED_CI_PACKET_INDEX_REPAIR, GhPrStatusPullRequest,
     GhPrStatusReview, Lane1EvidenceAuditRepoExposureGeneration,
     Lane1EvidenceAuditRepoExposureOutcome, LocalContextAllow, LocalMarkdownTarget,
-    LspCockpitFixture, LspCockpitReport, MarkdownLink, PYTHON_REAL_REPO_EVAL_REQUIRED_CASES,
+    LspCockpitFixture, MarkdownLink, PYTHON_REAL_REPO_EVAL_REQUIRED_CASES,
     PYTHON_REAL_REPO_EVAL_REQUIRED_NO_ACTION_CASES,
     PYTHON_REAL_REPO_EVAL_REQUIRED_STATIC_LIMIT_CASES, PrTriageCheck, PrTriageFinding,
     PrTriagePullRequest, REAL_REPAIR_ATTEMPTS_CORPUS, REAL_REPAIR_ATTEMPTS_REQUIRED_CASES,
@@ -32021,6 +32021,73 @@ fn xtask_run_helpers_report_success_failure_and_optional_output() -> Result<(), 
 
 #[test]
 fn policy_checker_facade_runs_current_repo_checks() -> Result<(), String> {
+    #[cfg(all(unix, not(target_os = "linux")))]
+    {
+        // Preserve the original owner on Unix platforms without the qualified
+        // session capture. Do not introduce a partial containment boundary.
+        policy_checker_facade_checks_in_repo_cwd()
+    }
+    #[cfg(not(all(unix, not(target_os = "linux"))))]
+    policy_checker_facade_in_subprocess()
+}
+
+#[cfg(not(all(unix, not(target_os = "linux"))))]
+fn policy_checker_facade_in_subprocess() -> Result<(), String> {
+    const CHILD_ENV: &str = "RIPR_XTASK_POLICY_FACADE_CHILD";
+    const COMPLETED: &str = "policy facade child checks completed";
+    const TEST: &str = "tests::policy_checker_facade_runs_current_repo_checks";
+    match std::env::var_os(CHILD_ENV) {
+        Some(value) if value == "1" => {
+            #[cfg(target_os = "linux")]
+            crate::run::enter_test_session()?;
+            policy_checker_facade_checks_in_repo_cwd()?;
+            eprintln!("{COMPLETED}");
+            return Ok(());
+        }
+        Some(value) => return Err(format!("invalid policy facade child marker: {value:?}")),
+        None => {}
+    }
+    // Keep the real checks in a fresh process: its CWD writer cannot convoy
+    // aggregate peers while file policy performs its real Cargo inventories.
+    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    #[cfg(target_os = "linux")]
+    let capture = crate::run::capture_isolated_test;
+    #[cfg(not(target_os = "linux"))]
+    let capture = crate::run::capture_output_measured;
+    let output = capture(
+        &exe.to_string_lossy(),
+        &[
+            TEST.to_string(),
+            "--exact".to_string(),
+            "--nocapture".to_string(),
+        ],
+        Some(&repo_root()?),
+        &[(CHILD_ENV, "1")],
+        crate::run::tool_build_timeout()?,
+        "isolated policy facade checks",
+    )?
+    .output;
+    let diagnostic = format!(
+        "policy facade child status={:?}, timed_out={}, stdout={}, stderr={}",
+        output.status, output.timed_out, output.stdout, output.stderr
+    );
+    if output.timed_out
+        || !output.status.is_some_and(|status| status.success())
+        || !output.stdout.lines().any(|line| line == "running 1 test")
+        || !output
+            .stdout
+            .lines()
+            .any(|line| line.starts_with("test result: ok. 1 passed; 0 failed; 0 ignored;"))
+        || !output.stdout.contains(&format!("test {TEST} ... "))
+        || !output.stderr.lines().any(|line| line == COMPLETED)
+    {
+        return Err(diagnostic);
+    }
+    eprintln!("{diagnostic}");
+    Ok(())
+}
+
+fn policy_checker_facade_checks_in_repo_cwd() -> Result<(), String> {
     with_repo_cwd(|| {
         check_static_language()?;
         check_no_panic_family()?;
@@ -52000,9 +52067,81 @@ fn editor_lsp_workflow_fixture_pins_saved_workspace_loop() -> Result<(), String>
 }
 
 #[test]
+fn preview_editor_workflow_fixtures_do_not_wait_for_cwd() -> Result<(), String> {
+    const CHILD_ENV: &str = "RIPR_XTASK_PREVIEW_CWD_CHILD";
+    const COMPLETED: &str = "preview CWD child assertions completed";
+    match std::env::var_os(CHILD_ENV) {
+        Some(value) if value == "1" => {
+            preview_fixture_assertions_with_cwd_writer()?;
+            eprintln!("{COMPLETED}");
+            return Ok(());
+        }
+        Some(value) => return Err(format!("invalid preview CWD child marker: {value:?}")),
+        None => {}
+    }
+    // Only the isolated child acquires the CWD writer: aggregate peers may
+    // already hold it across their own Cargo work before our timers can start.
+    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    let output = crate::run::capture_output_measured(
+        &exe.to_string_lossy(),
+        &[
+            "tests::preview_editor_workflow_fixtures_do_not_wait_for_cwd".to_string(),
+            "--exact".to_string(),
+            "--nocapture".to_string(),
+        ],
+        Some(&repo_root()?),
+        &[(CHILD_ENV, "1")],
+        Duration::from_secs(20),
+        "isolated preview CWD regression",
+    )?
+    .output;
+    let diagnostic = format!(
+        "preview CWD child status={:?}, timed_out={}, stdout={}, stderr={}",
+        output.status, output.timed_out, output.stdout, output.stderr
+    );
+    if output.timed_out
+        || !output.status.is_some_and(|status| status.success())
+        || !output.stdout.contains("running 1 test")
+        || !output.stdout.contains("1 passed; 0 failed; 0 ignored;")
+        || !output.stderr.lines().any(|line| line == COMPLETED)
+    {
+        return Err(diagnostic);
+    }
+    eprintln!("{diagnostic}");
+    Ok(())
+}
+
+fn preview_fixture_assertions_with_cwd_writer() -> Result<(), String> {
+    let (started, completed, worker) = with_temp_cwd("preview-independent-cwd", |_root| {
+        let (start_tx, start_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let _ = start_tx.send(());
+            let _ = done_tx.send(preview_editor_workflow_fixtures_pin_preview_boundaries());
+        });
+        let started = start_rx.recv_timeout(Duration::from_secs(2));
+        let completed = done_rx.recv_timeout(Duration::from_secs(2));
+        (started, completed, worker)
+    });
+    // Restore the cwd and release its writer before joining, including timeout
+    // and panic paths: the old guarded implementation must fail without hanging.
+    worker.join().map_err(|panic_payload| {
+        let message = panic_payload
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| panic_payload.downcast_ref::<String>().map(String::as_str))
+            .unwrap_or("non-string panic payload");
+        format!("preview fixture assertion thread panicked: {message}")
+    })?;
+    started.map_err(|error| format!("preview fixture assertion thread did not start: {error}"))?;
+    completed.map_err(|error| {
+        format!("preview fixture assertions waited for the process-wide CWD guard: {error}")
+    })?
+}
+
+#[test]
 fn preview_editor_workflow_fixtures_pin_preview_boundaries() -> Result<(), String> {
-    let report = with_repo_cwd(build_lsp_cockpit_report)?;
-    let python = lsp_fixture(&report, "python_missing_import_graph_limit")?;
+    let python = preview_lsp_fixture("python_missing_import_graph_limit")?;
     assert_eq!(python.diagnostic_count, 1);
     assert_eq!(python.finding_diagnostic_count, 1);
     assert_eq!(python.seam_diagnostic_count, 0);
@@ -52019,7 +52158,7 @@ fn preview_editor_workflow_fixtures_pin_preview_boundaries() -> Result<(), Strin
         "missing_import_graph",
     )?;
 
-    let typescript = lsp_fixture(&report, "typescript_mocked_module_limit")?;
+    let typescript = preview_lsp_fixture("typescript_mocked_module_limit")?;
     assert_eq!(typescript.diagnostic_count, 1);
     assert_eq!(typescript.finding_diagnostic_count, 1);
     assert_eq!(typescript.seam_diagnostic_count, 0);
@@ -52036,7 +52175,7 @@ fn preview_editor_workflow_fixtures_pin_preview_boundaries() -> Result<(), Strin
         "mocked_module",
     )?;
 
-    let disabled = lsp_fixture(&report, "python_disabled")?;
+    let disabled = preview_lsp_fixture("python_disabled")?;
     assert_eq!(disabled.diagnostic_count, 0);
     assert_eq!(disabled.finding_diagnostic_count, 0);
     assert_eq!(disabled.seam_diagnostic_count, 0);
@@ -52069,15 +52208,14 @@ fn lsp_cockpit_report_json_and_markdown_are_structured() -> Result<(), String> {
     Ok(())
 }
 
-fn lsp_fixture<'a>(
-    report: &'a LspCockpitReport,
-    name: &str,
-) -> Result<&'a LspCockpitFixture, String> {
-    report
-        .fixtures
-        .iter()
-        .find(|fixture| fixture.fixture == name)
-        .ok_or_else(|| format!("expected `{name}` LSP cockpit fixture"))
+fn preview_lsp_fixture(name: &str) -> Result<LspCockpitFixture, String> {
+    let fixture = repo_root()?.join("fixtures").join(name);
+    crate::lsp_cockpit_fixture_report(name, &fixture)?.ok_or_else(|| {
+        format!(
+            "expected LSP cockpit fixture `{name}` at {}",
+            fixture.display()
+        )
+    })
 }
 
 fn assert_preview_lsp_fixture(
