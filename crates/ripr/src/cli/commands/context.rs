@@ -507,7 +507,7 @@ mod tests {
         );
         assert_eq!(
             context(&args(&["--root"])),
-            Err("missing value for --root".to_string())
+            Err("missing value for --root; pass a value right after it".to_string())
         );
         assert_eq!(
             context(&args(&["--perl-facts"])),

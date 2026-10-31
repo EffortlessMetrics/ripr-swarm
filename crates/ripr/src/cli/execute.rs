@@ -96,7 +96,7 @@ mod tests {
         assert_eq!(
             execute(CliCommand::Rerun(Vec::new())),
             Err(CommandError::Failure(
-                "rerun requires --changed-test <path> or --gap <canonical-gap-id> --gap-ledger <path>"
+                "rerun requires --changed-test <path> or --gap <canonical-gap-id> --gap-ledger <path>; pass one selector, for example `--changed-test tests/a.rs`"
                     .to_string()
             ))
         );
@@ -114,7 +114,7 @@ mod tests {
         assert_eq!(
             execute(CliCommand::Doctor(args(&["--root"]))),
             Err(CommandError::Failure(
-                "missing value for --root".to_string()
+                "missing value for --root; pass a value right after it".to_string()
             ))
         );
         assert_eq!(
@@ -126,13 +126,13 @@ mod tests {
         assert_eq!(
             execute(CliCommand::Init(args(&["--root"]))),
             Err(CommandError::Failure(
-                "missing value for --root".to_string()
+                "missing value for --root; pass a value right after it".to_string()
             ))
         );
         assert_eq!(
             execute(CliCommand::Config(args(&["validate", "--root"]))),
             Err(CommandError::Failure(
-                "missing value for --root".to_string()
+                "missing value for --root; pass a value right after it".to_string()
             ))
         );
         assert_eq!(
@@ -145,7 +145,7 @@ mod tests {
         assert_eq!(
             execute(CliCommand::Pilot(args(&["--max-seams", "0"]))),
             Err(CommandError::Failure(
-                "--max-seams requires a positive integer; got \"0\"".to_string()
+                "--max-seams requires a positive integer; pass a whole number of 1 or more, got \"0\"".to_string()
             ))
         );
         assert_eq!(
@@ -157,7 +157,7 @@ mod tests {
         assert_eq!(
             execute(CliCommand::EvidenceHealth(args(&["--root"]))),
             Err(CommandError::Failure(
-                "missing value for --root".to_string()
+                "missing value for --root; pass a value right after it".to_string()
             ))
         );
         assert_eq!(
@@ -259,7 +259,7 @@ mod tests {
         assert_eq!(
             execute(CliCommand::Swarm(args(&["queue", "--top", "0"]))),
             Err(CommandError::Failure(
-                "swarm queue --top requires a positive integer; got \"0\"".to_string()
+                "swarm queue --top requires a positive integer; pass a whole number of 1 or more, got \"0\"".to_string()
             ))
         );
         assert_eq!(

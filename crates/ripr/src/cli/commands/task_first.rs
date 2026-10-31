@@ -181,7 +181,10 @@ pub(super) fn parse_repair_args(args: &[String]) -> Result<RepairFacadeCommand, 
                 index += 1;
                 let value = expect_value(args, index, "--base")?;
                 if value.trim().is_empty() {
-                    return Err("repair requires a non-empty --base".to_string());
+                    return Err(
+                        "repair requires a non-empty --base; pass a git ref right after --base"
+                            .to_string(),
+                    );
                 }
                 base = Some(value.to_string());
             }
@@ -190,7 +193,10 @@ pub(super) fn parse_repair_args(args: &[String]) -> Result<RepairFacadeCommand, 
             }
             other => {
                 if other.trim().is_empty() {
-                    return Err("repair requires a non-empty item".to_string());
+                    return Err(
+                        "repair requires a non-empty item; pass the finding or seam ID to repair"
+                            .to_string(),
+                    );
                 }
                 if item.is_some() {
                     return Err(format!(
@@ -236,7 +242,7 @@ pub(super) fn parse_continue_args(args: &[String]) -> Result<ContinueFacadeComma
                 index += 1;
                 let value = expect_value(args, index, "--attempt")?;
                 if value.trim().is_empty() {
-                    return Err("continue --attempt requires a non-empty ID".to_string());
+                    return Err("continue --attempt requires a non-empty ID; pass a value right after --attempt".to_string());
                 }
                 attempt_id = Some(value.to_string());
             }
@@ -271,7 +277,7 @@ pub(super) fn parse_status_args(args: &[String]) -> Result<StatusFacadeCommand, 
                 index += 1;
                 let value = expect_value(args, index, "--attempt")?;
                 if value.trim().is_empty() {
-                    return Err("status --attempt requires a non-empty ID".to_string());
+                    return Err("status --attempt requires a non-empty ID; pass a value right after --attempt".to_string());
                 }
                 attempt_id = Some(value.to_string());
             }

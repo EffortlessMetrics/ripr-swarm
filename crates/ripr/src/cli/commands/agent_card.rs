@@ -134,7 +134,7 @@ fn render_agent_card_refusal(
     });
     serde_json::to_string_pretty(&document)
         .map(|rendered| format!("{rendered}\n"))
-        .map_err(|error| format!("serialize agent card refusal document failed: {error}"))
+        .map_err(|error| format!("serialize agent card refusal document failed: {error}; report this as a ripr bug with the command you ran"))
 }
 
 /// The typed remedy route of one refusal kind: the opposite-remedy pairs the

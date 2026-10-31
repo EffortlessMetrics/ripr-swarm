@@ -1,3 +1,0 @@
-crates/ripr/src/cli/commands/swarm/queue.rs|swarm queue --gap-ledger requires a non-empty path
-crates/ripr/src/cli/commands/swarm/queue.rs|swarm queue --language requires a non-empty language
-crates/ripr/src/cli/commands/swarm/queue.rs|swarm queue --root requires a non-empty path

@@ -5,5 +5,5 @@ pub(crate) fn expect_value<'a>(
 ) -> Result<&'a str, String> {
     args.get(idx)
         .map(|s| s.as_str())
-        .ok_or_else(|| format!("missing value for {flag}"))
+        .ok_or_else(|| format!("missing value for {flag}; pass a value right after it"))
 }

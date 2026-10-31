@@ -1,2 +1,0 @@
-crates/ripr/src/cli/commands/feedback.rs|feedback identity is --snapshot and optional --item, not file/line; a current file/line cannot attach an old j
-crates/ripr/src/cli/commands/feedback.rs|feedback record requires --reason

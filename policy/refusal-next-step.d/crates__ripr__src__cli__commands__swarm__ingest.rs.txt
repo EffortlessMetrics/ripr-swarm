@@ -1,4 +1,0 @@
-crates/ripr/src/cli/commands/swarm/ingest.rs|swarm ingest --result requires a non-empty path
-crates/ripr/src/cli/commands/swarm/ingest.rs|swarm ingest --result {} must stay under root {}
-crates/ripr/src/cli/commands/swarm/ingest.rs|swarm ingest --root requires a non-empty path
-crates/ripr/src/cli/commands/swarm/ingest.rs|swarm ingest requires --result <path> swarm ingest
