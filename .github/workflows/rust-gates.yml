@@ -216,6 +216,10 @@ jobs:
         id: precommit
         env:
           RIPR_POLICY_PREFLIGHT_RECEIPT: target/ripr/reports/policy-preflight.json
+          # With sharded tests, shard 1 runs the full check-file-policy after its
+          # nextest build (#11566); enumerating the xtask test targets here
+          # compiled them a second time on the critical path.
+          RIPR_FILE_POLICY_DEFER_TEST_COVERAGE: ${{ inputs.test-shards != 1 && '1' || '' }}
         run: cargo xtask ci-policy
 
       - name: Evidence promotion honesty

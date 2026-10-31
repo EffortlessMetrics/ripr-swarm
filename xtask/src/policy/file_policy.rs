@@ -11,6 +11,12 @@ use crate::{
     read_file_policy_allowlist, read_file_policy_test_commands,
 };
 
+/// Set to `1` by the hosted gates job when the nextest shards run
+/// `cargo xtask check-file-policy` themselves after their build (#11566). The
+/// enumeration then compiles nothing new there; in the gates job it compiled
+/// the xtask test targets a second time, on the critical path.
+pub(crate) const DEFER_TEST_COVERAGE_ENV: &str = "RIPR_FILE_POLICY_DEFER_TEST_COVERAGE";
+
 const TEST_COVERED_BY_LIST_TIMEOUT: Duration = Duration::from_mins(5);
 /// Compile budget, separate from listing. A cold `cargo test --list` spends
 /// almost all of its wall clock building; that must not be charged against
@@ -109,19 +115,35 @@ pub(crate) fn check_file_policy() -> Result<(), String> {
     let policy_path = "policy/non-rust-allowlist.toml";
     let allowlist = read_file_policy_allowlist(policy_path)?;
     let mut diagnostics = Vec::new();
-    let coverage = match validate_test_covered_by_recorded(
-        policy_path,
-        &read_file_policy_test_commands(policy_path)?,
-        &mut diagnostics,
-    ) {
-        Ok(coverage) => coverage,
-        Err(error) => {
-            return file_policy_failure_report(
-                "coverage enumeration",
-                &error,
-                &diagnostics,
-                |body| crate::write_report("file-policy.md", body),
-            );
+    let deferred = test_coverage_deferred(
+        std::env::var(DEFER_TEST_COVERAGE_ENV).ok().as_deref(),
+        std::env::var("GITHUB_ACTIONS").ok().as_deref(),
+    );
+    if deferred {
+        eprintln!(
+            "xtask: check-file-policy is deferring test-valued covered_by enumeration ({DEFER_TEST_COVERAGE_ENV}=1); the hosted test shards run the full check"
+        );
+    }
+    let coverage = if deferred {
+        // Parse the selectors so a malformed ledger still fails here, but
+        // enumerate nothing: the report below says so instead of implying a pass.
+        read_file_policy_test_commands(policy_path)?;
+        Vec::new()
+    } else {
+        match validate_test_covered_by_recorded(
+            policy_path,
+            &read_file_policy_test_commands(policy_path)?,
+            &mut diagnostics,
+        ) {
+            Ok(coverage) => coverage,
+            Err(error) => {
+                return file_policy_failure_report(
+                    "coverage enumeration",
+                    &error,
+                    &diagnostics,
+                    |body| crate::write_report("file-policy.md", body),
+                );
+            }
         }
     };
     let mut violations = Vec::new();
@@ -176,13 +198,26 @@ pub(crate) fn check_file_policy() -> Result<(), String> {
         &[PolicyDisclosure {
             heading: "Test-valued coverage applicability".to_string(),
             intro: "Applicable selectors must enumerate nonzero tests. Enumeration is not test execution. Host-inapplicable selectors are not enumerated and confer no coverage on this host.".to_string(),
-            items: coverage.iter().map(TestCoverageObservation::render).collect(),
+            items: if deferred {
+                vec![format!(
+                    "deferred: test-valued `covered_by` enumeration did not run in this invocation ({DEFER_TEST_COVERAGE_ENV}=1); the hosted test shards run the full check after their build, and this report confers no test coverage"
+                )]
+            } else {
+                coverage.iter().map(TestCoverageObservation::render).collect()
+            },
         }, PolicyDisclosure {
             heading: "Cargo child command diagnostics".to_string(),
             intro: format!("{COMMAND_DIAGNOSTIC_DISCLOSURE} Capture scope: actual covered-by warmup/list calls only. Reused listings, skipped warmups and host-inapplicable selectors add no executed rows."),
             items: diagnostics.iter().map(CommandDiagnostic::render).collect(),
         }],
     )
+}
+
+/// Only the exact value `1` defers, and only inside GitHub Actions, where the
+/// shard-1 backstop exists; anything else enumerates, so a typo or a stray
+/// local export fails closed.
+fn test_coverage_deferred(value: Option<&str>, github_actions: Option<&str>) -> bool {
+    value == Some("1") && github_actions == Some("true")
 }
 
 fn file_policy_failure_report(
@@ -667,10 +702,36 @@ mod tests {
     use super::enumeration_result;
     use super::enumeration_spawns;
     use super::is_covered_by_instrument_failure;
+    use super::test_coverage_deferred;
     use super::validate_test_covered_by;
     use super::validate_test_covered_by_with;
     use crate::run::{CommandDiagnostic, TimedOutput};
     use crate::{FilePolicyHost, FilePolicyTestCommand, is_cargo_test_command};
+
+    #[test]
+    fn only_the_exact_value_one_defers_test_coverage_enumeration() {
+        assert!(test_coverage_deferred(Some("1"), Some("true")));
+        for value in [
+            None,
+            Some(""),
+            Some("0"),
+            Some("true"),
+            Some("1 "),
+            Some("yes"),
+        ] {
+            assert!(
+                !test_coverage_deferred(value, Some("true")),
+                "{value:?} must enumerate"
+            );
+        }
+    }
+
+    #[test]
+    fn a_local_export_cannot_defer_test_coverage_enumeration() {
+        // No shard-1 backstop exists outside GitHub Actions.
+        assert!(!test_coverage_deferred(Some("1"), None));
+        assert!(!test_coverage_deferred(Some("1"), Some("false")));
+    }
 
     fn argv(command: &str) -> Vec<String> {
         command.split_whitespace().map(str::to_string).collect()
