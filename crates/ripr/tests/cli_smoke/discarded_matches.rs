@@ -30,9 +30,9 @@ fn strip_check_json_canonical_next_action(bytes: &[u8]) -> Vec<u8> {
 const BOUNDED_EVIDENCE_LEGEND: &str = concat!(
     "    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;\n",
     "      propagation = changed effect reaches output; observation = related test/assertion evidence;\n",
-    "      discriminator = assertion distinguishes intended from wrong behavior\n",
+    "      missing check = a test that asserts the result for this input\n",
     "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
-    "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused\n",
+    "      missing = no test asserts the result for this input; not established = missing check unconfirmed; not applicable = stage unused\n",
     "    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;\n",
     "      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;\n",
     "      no test path = no test path found; unclear = analysis limited, not a verdict;\n",
@@ -74,7 +74,7 @@ fn strip_bounded_evidence_legend(bytes: &[u8]) -> Result<Vec<u8>, String> {
 fn bounded_legend_capture_projection_is_exact_and_preserves_evidence() -> Result<(), String> {
     let before = concat!(
         "  Static exposure: unrevealed (severity: warning, confidence: 0.79)\n",
-        "  Evidence: reach yes · infection weak · propagation no · observation no · discriminator missing\n",
+        "  Evidence: reach yes · infection weak · propagation no · observation no · missing check missing\n",
     );
     let after = "    - reach detail\n    - infection detail\n    - 3 more detail line(s) in --format human-full\n";
     let retained = format!("{before}{after}");
@@ -88,7 +88,7 @@ fn bounded_legend_capture_projection_is_exact_and_preserves_evidence() -> Result
     // fail the unchanged byte comparison against the canonical report.
     for (old, wrong) in [
         ("observation no", "observation yes"),
-        ("discriminator missing", "discriminator yes"),
+        ("missing check missing", "missing check yes"),
         ("Static exposure: unrevealed", "Static exposure: exposed"),
     ] {
         let changed = current.replace(old, wrong);
@@ -103,7 +103,7 @@ fn bounded_legend_capture_projection_is_exact_and_preserves_evidence() -> Result
     for malformed in [
         retained.clone(),
         current.replace(
-            "      discriminator = assertion distinguishes intended from wrong behavior\n",
+            "      missing check = a test that asserts the result for this input\n",
             "",
         ),
         current.replace("weak = partial evidence", "weak = proof"),

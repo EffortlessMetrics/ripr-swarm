@@ -58,9 +58,9 @@ pub(super) fn trim_field_period(value: &str) -> &str {
 pub(crate) const HUMAN_EVIDENCE_LEGEND: &str = concat!(
     "    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;\n",
     "      propagation = changed effect reaches output; observation = related test/assertion evidence;\n",
-    "      discriminator = assertion distinguishes intended from wrong behavior\n",
+    "      missing check = a test that asserts the result for this input\n",
     "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
-    "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused\n",
+    "      missing = no test asserts the result for this input; not established = missing check unconfirmed; not applicable = stage unused\n",
     "    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;\n",
     "      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;\n",
     "      no test path = no test path found; unclear = analysis limited, not a verdict;\n",
@@ -204,7 +204,7 @@ pub(crate) fn render_finding_digest_with_config(
         // A typed static limitation is the analyzer naming what it could not
         // bind, never an assertion a test could add.
         let label = if finding.class == ExposureClass::Exposed {
-            "Discriminator (observed, advisory)"
+            "Missing check (observed, advisory)"
         } else if missing.starts_with(TYPED_STATIC_LIMITATION_PREFIX)
             || ((matches!(
                 finding.class,
@@ -332,7 +332,7 @@ pub(crate) fn render_finding_digest_with_config(
         // every finding — and keep only the per-stage prose detail inside
         // the window.
         out.push_str(&format!(
-            "  Evidence: reach {} · infection {} · propagation {} · observation {} · discriminator {}\n",
+            "  Evidence: reach {} · infection {} · propagation {} · observation {} · missing check {}\n",
             finding.ripr.reach.state.as_str(),
             finding.ripr.infect.state.as_str(),
             finding.ripr.propagate.state.as_str(),
