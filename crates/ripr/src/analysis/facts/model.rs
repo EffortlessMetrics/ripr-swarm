@@ -978,6 +978,10 @@ impl FileFacts {
 ///   runs libtest collection, so an attribute alone never makes a member
 ///   an executable test. Executable subjects come only from the harness
 ///   registry's adapter.
+/// - `ProofHarness` is a function carrying an exact Kani proof-harness
+///   attribute (RIPR-SPEC-0367): neither an executable test nor a
+///   production seam, so it adds no `TestFact`, no assertion credit and no
+///   production probe.
 /// - `Production` is ordinary non-evidence source and remains a
 ///   production-subject candidate. Production-subject *eligibility* is
 ///   still the consumer-side composition of this role with the file-level
@@ -1022,6 +1026,13 @@ pub enum FunctionSourceRole {
     /// executable `TestFact` is registered for this variant alone.
     /// Executable subjects are the adapter-established harness subjects.
     HarnessHelper,
+    /// Carries an exact proof-harness attribute (`#[kani::proof]`,
+    /// `#[kani::proof_for_contract(..)]`, or the same path under
+    /// `cfg_attr`; RIPR-SPEC-0367). Verification source, not a test and not a
+    /// production seam: it registers no `TestFact`, earns no assertion
+    /// credit and seeds no production probe. A changed harness is disclosed
+    /// as `proof_harness_not_evaluated`; ripr does not evaluate proofs.
+    ProofHarness,
 }
 
 impl FunctionSourceRole {
