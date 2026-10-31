@@ -17,6 +17,7 @@ Start here:
   Language: typescript
   Language status: preview
   Static exposure: unknown (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether the changed value alters behavior is not established. Preview score, not on the same scale as Rust confidence.
   Why unknown: ripr could not tell which inputs would trigger the change, and could not follow it to something a test can check
   Changed behavior: return "ready";
   Missing check: The change to `load` is a `literal_return` edit: the edit changes a literal return

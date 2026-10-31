@@ -18,6 +18,7 @@ Start here:
   Language: typescript
   Language status: preview
   Static exposure: no path (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.
   Why no path: no related test was found that reaches this change
   Changed behavior: return age >= 18;
   Missing check: No statically linked test call to `isAdult(` was established; inspect existing test calls and their import/export paths

@@ -3,6 +3,7 @@ use super::admission::PythonAssertionAdmission;
 use super::approx_band::{PythonBandReading, parse_expression, python_band_reading};
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::caplog_text::{PythonLogEvidence, substitute_caplog_aliases};
+use super::cli_subcommand::CliSubcommand;
 use super::effect_alignment::ChangedEffect;
 use super::fixtures::{inert_tool_fixture, literal_owner_instance_fixture};
 use super::forwarding_decorator::is_forwarding_decorator;
@@ -160,9 +161,22 @@ pub(super) fn static_limit_for_focused_change(
             ),
         });
     }
+    // A group subcommand's registration decorator builds a command that runs
+    // the body; it stops being an indirection once a test is shown to invoke
+    // the group with its name (`cli_subcommand.rs`, #9226).
+    let reached_subcommand_decorator = owner
+        .cli_subcommand
+        .as_ref()
+        .filter(|_| {
+            related_candidates
+                .iter()
+                .any(|candidate| candidate.relation == PythonRelationKind::CliRunnerInvoke)
+        })
+        .map(CliSubcommand::decorator);
     if let Some(decorator) = owner.decorators.iter().find(|decorator| {
         !is_transparent_owner_decorator_for_owner(decorator, owner)
             && !is_forwarding_decorator(decorator, owner, owner_source)
+            && reached_subcommand_decorator.as_ref() != Some(*decorator)
     }) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::DecoratorIndirection,
@@ -351,7 +365,7 @@ pub(super) const LAMBDA_LIMIT_EVIDENCE: &str =
 /// is a plain one-line string literal return (`return "lambda x"`): no braces
 /// (an f-string expression or a dict could hold code), no triple quotes (the
 /// line may close a string opened above) and no other quote state to track.
-fn contains_lambda_keyword(text: &str) -> bool {
+pub(super) fn contains_lambda_keyword(text: &str) -> bool {
     let plain_line =
         !text.contains(['{', '\\']) && !text.contains("\"\"\"") && !text.contains("'''");
     text.match_indices("lambda").any(|(idx, _)| {
@@ -1395,6 +1409,37 @@ fn owner_called_inside_lambda(body_text: &str, owner: &PythonOwner) -> bool {
     })
 }
 
+/// #9226: the edit changes only the value of integer literals. Every other
+/// token is identical, so no callee, keyword, operator or operand moved and the
+/// imported symbol the line calls is the same before and after. The line is
+/// `classify` lifts the import abstention for it only when a strong exact
+/// oracle observes the owner (it then reads `weakly_exposed`); otherwise the
+/// limit stands.
+pub(super) fn integer_literal_swap(old: &str, new: &str) -> bool {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    let indent = |text: &str| text.len() - text.trim_start().len();
+    // Re-indenting moves the statement under or out of a block, which changes
+    // which inputs reach it.
+    if old.get(..indent(old)) != new.get(..indent(new)) {
+        return false;
+    }
+    let (old, new) = (old.trim(), new.trim());
+    let tokens = |text: &str| -> Option<Vec<Tok>> {
+        lex(text, Mode::Module)
+            .map(|result| result.ok().map(|(token, _)| token))
+            .collect()
+    };
+    let (Some(old), Some(new)) = (tokens(old), tokens(new)) else {
+        return false;
+    };
+    old.len() == new.len()
+        && old != new
+        && old
+            .iter()
+            .zip(&new)
+            .all(|(a, b)| a == b || matches!((a, b), (Tok::Int { .. }, Tok::Int { .. })))
+}
+
 pub(super) fn line_uses_imported_symbol(text: &str, imports: &[PythonImport]) -> bool {
     imports.iter().any(|import| {
         !is_known_mock_constructor_import(import)
@@ -1803,6 +1848,7 @@ pub(super) mod tests {
             class_facts: Default::default(),
             foreign_writes: Default::default(),
             version_conditional: false,
+            cli_subcommand: None,
         }
     }
 

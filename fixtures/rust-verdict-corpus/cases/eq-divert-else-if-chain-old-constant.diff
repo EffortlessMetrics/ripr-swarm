@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index ed7e681..969e020 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -5,7 +5,7 @@
+ pub fn chain_old(n: u32) -> u32 {
+     if n >= 3 {
+         7
+-    } else if n == 5 {
++    } else if n == 6 {
+         1
+     } else {
+         0

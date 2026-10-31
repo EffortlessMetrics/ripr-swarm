@@ -566,7 +566,7 @@ Updated:
 ## Pending — rust_long_expression_display_bound (33)
 
 Reason:
-RIPR-SPEC-0122: clarify test reach inspection before changing tests (#8387)
+RIPR-SPEC-0122: clarify test reach inspection before changing tests (#8387); check now prints one hand-written-test step when a gap has neither a repair start nor a stub, and only stub commands that produce a stub (#10710)
 
 Command:
 `cargo xtask goldens bless rust_long_expression_display_bound --reason "..."`

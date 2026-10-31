@@ -27,7 +27,7 @@ Start here:
   Suggested test file: tests/test_status.py
   Suggested test: test_len
   Test node: tests/test_status.py::test_len
-  Verify command: python -m pytest tests/test_status.py::test_len (high)
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_adversarial_fstring_length_invariant_aggregate/input && python -m pytest tests/test_status.py::test_len) (high)
   Next step — Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `return value == <expected value>`
   Evidence: reach yes · infection yes · propagation yes · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

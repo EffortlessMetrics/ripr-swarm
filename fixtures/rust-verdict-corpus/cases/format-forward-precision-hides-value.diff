@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -3,7 +3,7 @@
+ //! so an exact assertion on the formatted text pins nothing about the callee.
+ 
+ pub fn rate() -> f64 {
+-    0.14
++    0.12
+ }
+ 
+ pub fn rate_label() -> String {

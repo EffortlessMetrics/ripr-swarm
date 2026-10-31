@@ -172,7 +172,7 @@ Three unit tests in `crates/ripr/src/output/gate.rs` (RIPR-SPEC-0111 block):
 ### config error (fail-closed)
 
 ```json
-"new_unsuppressed": { "basis": null, "count": 0, "reason": "analysis did not run: baseline-check mode requires an explicit --baseline artifact" }
+"new_unsuppressed": { "basis": null, "count": 0, "reason": "analysis did not run: baseline-check mode requires an explicit --baseline artifact (RIPR_GATE_BASELINE in the generated workflow). To start without blocking, use --mode visible-only (RIPR_GATE_MODE=visible-only). To adopt baseline-check, create a baseline from a gate decision with `ripr baseline create --from target/ripr/reports/gate-decision.json`, commit it, and pass it with --baseline (see docs/BASELINE_LEDGER_WORKFLOW.md)" }
 ```
 
 `basis=null` and `reason` prevent `count=0` from reading as "clean/pass".

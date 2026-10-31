@@ -41,6 +41,8 @@ fn check(root: &Path, format: &str) -> TestResult<String> {
             "fast",
             "--format",
             format,
+            // Repeated runs compare byte for byte; pin the first-run legend.
+            "--legend",
         ],
     )?;
     assert!(
@@ -165,7 +167,7 @@ fn changed_python_symlink_source_is_incomplete_across_root_routes() -> TestResul
             let mut outputs = Vec::new();
             for format in ["json", "human", "badge-json"] {
                 let mut args = vec![
-                    "check", "--diff", diff_arg, "--mode", "fast", "--format", format,
+                    "check", "--diff", diff_arg, "--mode", "fast", "--format", format, "--legend",
                 ];
                 if let Some(selected) = selected {
                     args.extend(["--root", selected]);

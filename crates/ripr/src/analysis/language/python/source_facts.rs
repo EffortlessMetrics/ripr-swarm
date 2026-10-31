@@ -754,6 +754,12 @@ fn extract_source_facts_with(file: &Path, source: &str, workspace: bool) -> Pyth
         owner.class_facts.module_objects = module_objects.clone();
     }
     mark_rebound_decorators(source, &mut snapshot.owners);
+    super::cli_subcommand::mark_cli_subcommands(
+        source,
+        &module.body,
+        &imports,
+        &mut snapshot.owners,
+    );
     snapshot
         .owners
         .push(module_owner(file, source, module_range, &imports));
@@ -816,6 +822,11 @@ fn extract_source_facts_with(file: &Path, source: &str, workspace: bool) -> Pyth
         &mut snapshot.facts,
     );
     collect_docstring_line_ranges(source, &module.body, &mut snapshot.docstring_line_ranges);
+    collect_attribute_docstring_line_ranges(
+        source,
+        &module.body,
+        &mut snapshot.docstring_line_ranges,
+    );
     collect_import_line_ranges(source, &module.body, &mut snapshot.import_line_ranges);
     // The workspace keeps a test file's tests and every other file's owners,
     // so each file answers only the pass that reads what it keeps: star
@@ -925,6 +936,27 @@ fn collect_docstring_line_ranges(
     collect_nested_docstring_scopes(source, scope_body, out);
 }
 
+/// Collects attribute docstrings (PEP 257): in a module or class body, a plain
+/// string statement right after an assignment documents it and, like any bare
+/// string statement, has no runtime effect. A function body's second string is
+/// deliberately not one.
+fn collect_attribute_docstring_line_ranges(
+    source: &SourceText<'_>,
+    scope_body: &[Stmt],
+    out: &mut Vec<RangeInclusive<usize>>,
+) {
+    for pair in scope_body.windows(2) {
+        if let [Stmt::Assign(_) | Stmt::AnnAssign(_), Stmt::Expr(expr_stmt)] = pair
+            && matches!(
+                expr_stmt.value.as_ref(),
+                Expr::Constant(constant) if matches!(&constant.value, ast::Constant::Str(_))
+            )
+        {
+            push_docstring_only_line_ranges(source, expr_stmt.value.range(), out);
+        }
+    }
+}
+
 /// Adds only physical lines whose non-whitespace content is wholly inside the
 /// docstring token. A docstring may share a line with behavioral code through a
 /// semicolon; such boundary lines must remain analyzable.
@@ -983,6 +1015,7 @@ fn collect_nested_docstring_scopes(
             }
             Stmt::ClassDef(class) => {
                 collect_docstring_line_ranges(source, &class.body, out);
+                collect_attribute_docstring_line_ranges(source, &class.body, out);
             }
             Stmt::If(statement) => {
                 collect_nested_docstring_scopes(source, &statement.body, out);
