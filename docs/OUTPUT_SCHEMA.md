@@ -16552,8 +16552,9 @@ Field contract:
   scorable route is to resolve the workspace condition that made the
   baseline ambiguous and rerun the same `--phase before` command from a
   clean state. `test_runner_cache_guidance`, when present, explains that a
-  TypeScript gap attempt can refuse or become stale when a test runner writes
-  ignored caches; it recommends recording native test results separately
+  TypeScript gap attempt is refused when a test runner writes ignored caches
+  before the after phase, while Vitest caches written after `continue` do not
+  stale the receipt; it recommends recording native test results separately
   after successful continuation and does not claim a test was recorded in the receipt.
   Without `--json`, stdout is a short prose summary whose
   final line names the same next command — or, for such an ambiguous

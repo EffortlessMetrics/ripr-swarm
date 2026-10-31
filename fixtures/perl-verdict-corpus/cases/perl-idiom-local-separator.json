@@ -51,7 +51,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-idiom-local-separator.json",
-    "sha256": "f0b94b5789ac34de302bf694d5c6e2b0af5a2864a24453528d5778815f97bd0a",
+    "sha256": "2896371bd97b7e22736f53a6f966b62e3d3a1a60d69c30662b8f70ec42c243b3",
     "provenance": "producer"
   }
 }

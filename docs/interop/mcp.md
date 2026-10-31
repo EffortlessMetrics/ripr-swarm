@@ -459,7 +459,7 @@ phase), the shared non-claims, and the resource links. An ineligible item
 returns `repair_packet_ready: false` with the typed ineligibility reason and
 `attempt: null` — no attempt is created and no field is guessed. The reasons
 the shared seam-level repair gate behind `ripr repair` contributes are
-`seam_already_gripped` (the seam's existing tests already grip it),
+`seam_already_gripped` (the seam's existing tests already check it),
 `seam_gate_refused` (route not ready, cross-language limits, policy
 omission or an uncommitted inline test target), `seam_ambiguous` (several seams name the item), `seam_not_found`
 (no classified seam names it) and `seam_inventory_truncated` (the repo-wide
