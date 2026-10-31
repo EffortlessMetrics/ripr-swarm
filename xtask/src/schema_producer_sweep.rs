@@ -223,6 +223,15 @@ const BINDINGS: &[Binding] = &[
         excluded: &[],
     },
     Binding {
+        schema_path: "schemas/ripr/check-timeout-refusal.schema.json",
+        pointer: None,
+        corpus: Corpus::Exempt(
+            "narrower authority: timeout_refusal_with_stashed_context_renders_input_context_at_generation_0_3 in crates/ripr/src/output/limited_check.rs plus the unix forced-deadline e2e in crates/ripr/tests/cli_smoke.rs; the refusal is produced only by a forced-deadline run, so no producer-byte corpus is committed",
+        ),
+        edge_fixtures: &[],
+        excluded: &[],
+    },
+    Binding {
         schema_path: "schemas/ripr/ripr-agent-capability.schema.json",
         pointer: None,
         corpus: Corpus::Exempt(

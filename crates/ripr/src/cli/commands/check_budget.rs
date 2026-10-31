@@ -345,6 +345,7 @@ mod tests {
         // refusal must be typed and carry no result.
         let result: Result<u32, _> = run_with_budget(
             Some(Duration::from_secs(30)),
+            None,
             || {},
             || -> Result<u32, CoreError> {
                 std::panic::resume_unwind(Box::new("injected check worker fault (#11116)"))

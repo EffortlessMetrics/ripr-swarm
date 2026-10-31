@@ -127,7 +127,7 @@ pub(crate) const CHECK_OUTPUT_SCHEMA_VERSION: &str = "0.2";
 
 /// Refusal-envelope schema generation for the `analysis_timeout`
 /// input-context amendment (#10796, RIPR-SPEC-0241): generation `0.3` adds
-/// the optional `input_context` key, present only on `analysis_timeout`
+/// the `input_context` key, required (and present only) on `analysis_timeout`
 /// refusals of `ripr check`. Every other refusal identity and every sibling
 /// command keeps its existing generation.
 pub(crate) const CHECK_REFUSAL_SCHEMA_VERSION: &str = "0.3";
