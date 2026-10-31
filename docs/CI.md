@@ -1768,6 +1768,9 @@ deadline as the cause of the missing artifacts, the effect, and this next
 step (#11205). Per-file facts computed before the deadline are written to
 `target/ripr/cache`, so restoring that directory between runs lets the retry
 resume.
+The workflow only forwards the variable; it takes effect with a ripr release
+that reads it, and a workflow pinned to an older release ignores it without
+error.
 
 Permissions and job settings:
 
