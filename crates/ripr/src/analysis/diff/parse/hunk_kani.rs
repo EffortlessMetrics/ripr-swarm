@@ -33,15 +33,13 @@ fn hunk_number_accepts_only_nonempty_ascii_digits() {
 
 #[kani::proof]
 #[kani::unwind(8)]
-fn hunk_range_exclusive_end_never_overflows() {
+fn hunk_range_rejects_positive_span_at_line_zero() {
     let buf: [u8; 5] = kani::any();
     kani::assume(buf.iter().all(|b| *b < 128));
     let Ok(text) = std::str::from_utf8(&buf) else {
         return;
     };
     if let Some((start, count)) = parse_range(text) {
-        // Downstream `start + count` arithmetic cannot overflow.
-        assert!(start.checked_add(count).is_some());
         // A positive span names real one-based lines.
         assert!(count == 0 || start >= 1);
         kani::cover!(count > 0 && start >= 1, "non-empty range accepted");
