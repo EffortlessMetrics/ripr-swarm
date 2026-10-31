@@ -809,6 +809,7 @@ pub(crate) fn named_limitations_for_oracle_candidates(
     let mut saw_oracle_helper_gated = false;
     let mut saw_snapshot = false;
     let mut saw_custom_matcher = false;
+    let mut saw_match_object_scalar = false;
     let mut saw_table_case = false;
     let mut saw_dynamic_assertion = false;
 
@@ -874,8 +875,28 @@ pub(crate) fn named_limitations_for_oracle_candidates(
             // `oracle.rs::oracle_for_matcher` returns `OracleKind::Unknown` for any matcher
             // not in the recognised set. The matcher field is the real AST identifier from the
             // `expect(x).<matcher>(...)` call expression — it is genuine AST evidence, not invented.
+            // RIPR-SPEC-0250 rule 4: `toMatchObject(<scalar literal>)` is a
+            // recognised matcher whose meaning depends on the runner, so it
+            // names its own limitation instead of "unrecognised matcher".
             if matches!(assertion.oracle_kind, OracleKind::Unknown)
+                && match_object_scalar_expected(assertion)
+                && !saw_match_object_scalar
+            {
+                let sample = format!(
+                    "{}:{}",
+                    normalized_path(&candidate.test.file),
+                    candidate.test.evidence_line(assertion)
+                );
+                limitations.push(TypeScriptNamedLimitation {
+                    name: "typescript_match_object_scalar_unresolved",
+                    sample_source: sample,
+                    why_not_actionable: "the test calls `.toMatchObject(...)` with a scalar literal, which Vitest compares for plain equality and Jest rejects with a matcher error, so the adapter cannot tell what it pins".to_string(),
+                    repair_route: "analysis/typescript-match-object-scalar-runner",
+                });
+                saw_match_object_scalar = true;
+            } else if matches!(assertion.oracle_kind, OracleKind::Unknown)
                 && !assertion.matcher.is_empty()
+                && !match_object_scalar_expected(assertion)
                 && !saw_custom_matcher
             {
                 let sample = format!(
@@ -951,6 +972,22 @@ pub(crate) fn named_limitations_for_oracle_candidates(
         }
     }
     limitations
+}
+
+/// A `toMatchObject` assertion whose resolved expected value is written as a
+/// scalar literal (string, number, boolean or `null`), not an object or array.
+fn match_object_scalar_expected(assertion: &TypeScriptAssertion) -> bool {
+    assertion.matcher == "toMatchObject"
+        && !assertion.has_dynamic_matcher_arg
+        && assertion
+            .expected_value_or_variant
+            .as_deref()
+            .map(str::trim_start)
+            .is_some_and(|text| {
+                text.starts_with(['"', '\'', '-', '+'])
+                    || text.starts_with(|ch: char| ch.is_ascii_digit())
+                    || matches!(text, "true" | "false" | "null")
+            })
 }
 
 fn table_case_test(test: &TypeScriptTest) -> bool {

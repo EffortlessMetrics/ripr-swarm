@@ -607,6 +607,18 @@ boundary without changing the guards (#4104 E):
   stays unwitnessed. The repair packet's assertion shape asks for a value of
   the kind in place of the argument and never reuses the observed input, and
   the "inputs on one side of the boundary" wording is not used for this shape.
+- **Faithful boundary discriminator** (#11256): a predicate's missing
+  discriminator names the one comparison in the condition, read in code
+  spans only. A quoted operand is one operand whatever it holds, so
+  `arg !== "--"` and `mode === "a b"` are not cut at the `-` or the space
+  (`arg == "`) and, holding characters the discriminator vocabulary does not
+  carry, name no discriminator. A condition with two comparisons
+  (`type !== "boolean" && typeof value === "string"`) does not say which one the
+  diff changed, so it names no discriminator rather than possibly the
+  unchanged one; a comparison operator inside a string literal is no
+  comparison. Where no discriminator is named the finding offers no repair
+  start. `if (arg === "stop")` and `total >= 100 && ready` still name
+  `arg == "stop"` and `total == 100`.
 - **Open gap reason in the after phase** (#11196): when `agent verify` refuses
   a gap that still reads open, the refusal appends the missing discriminator
   the before and after check-findings artifacts already state (unchanged, or

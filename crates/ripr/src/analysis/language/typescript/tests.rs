@@ -6751,6 +6751,59 @@ fn classify_probe_shape_reads_a_returned_ternary_as_its_condition_boundary() {
     }
 }
 
+/// #11256: a quoted operand is one operand, and a condition with two
+/// comparisons does not say which one changed.
+#[test]
+fn boundary_discriminator_is_faithful_or_withheld() {
+    // A plain quoted literal is named whole.
+    assert_eq!(
+        typescript_boundary_discriminator("  if (arg === \"stop\") {").as_deref(),
+        Some("arg == \"stop\"")
+    );
+    assert_eq!(
+        typescript_boundary_discriminator("  if (\"stop\" === arg) {").as_deref(),
+        Some("\"stop\" == arg")
+    );
+    // A literal holding `-` or a space was cut at that character (`arg == "`).
+    for line in [
+        "  if (arg !== \"--\") {",
+        "  if (\"--\" === arg) {",
+        "  if (mode === \"a b\") {",
+        "  if (mode === 'a-b') {",
+        "  if (mode === \"unterminated) {",
+    ] {
+        assert_eq!(typescript_boundary_discriminator(line), None, "{line}");
+    }
+    // Two comparisons: operator priority named the unchanged `typeof` test.
+    for line in [
+        "  if (type !== \"boolean\" && typeof value === \"string\") {",
+        "  if (a > 1 || b < 2) {",
+        "  if (x >= 0 && x <= 10) {",
+    ] {
+        assert_eq!(typescript_boundary_discriminator(line), None, "{line}");
+    }
+    // A comparison-looking operator inside a string, or an arrow, is not a
+    // second comparison.
+    assert_eq!(
+        typescript_boundary_discriminator("  if (total >= 100 && label !== \"a\") {"),
+        None,
+        "two real comparisons"
+    );
+    assert_eq!(
+        typescript_boundary_discriminator("  if (total >= 100 && ready) {").as_deref(),
+        Some("total == 100")
+    );
+    assert_eq!(
+        typescript_boundary_discriminator("  if (kind === \"a>=b\") {").as_deref(),
+        None,
+        "an unsimple literal is withheld"
+    );
+    assert_eq!(
+        typescript_boundary_discriminator("  if (kind === \"ab\" && ok) {").as_deref(),
+        Some("kind == \"ab\"")
+    );
+}
+
 #[test]
 fn boundary_discriminator_reads_the_condition_of_a_one_line_guard_statement() {
     // `if (cond) return x;` is the same boundary as the braced form; the
