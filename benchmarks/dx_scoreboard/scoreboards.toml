@@ -319,6 +319,19 @@ runner_dependent = true
 source = "measured"
 per_repo = true
 
+[[metric]]
+id = "speed.editor_refresh_peak_rss_mb"
+board = "speed"
+title = "Editor server peak memory after an edited save, from `ripr lsp --stdio`"
+unit = "MB"
+direction = "lower_is_better"
+target = 1024
+regression_pct = 15
+regression_floor = 64
+runner_dependent = true
+source = "measured"
+per_repo = true
+
 # ------------------------------------------------------------ ci adoption --
 
 [[metric]]
