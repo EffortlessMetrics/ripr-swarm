@@ -498,13 +498,13 @@ suite('Extension Smoke', () => {
       diagnostic.range.start.character + 1
     );
     const hoverText = await waitForHoverText(uri, hoverPosition, (text) =>
-      text.includes('**ripr** behavioral seam') &&
-      text.includes('`weakly_gripped`') &&
-      text.includes('## Missing discriminator')
+      text.includes('**ripr** changed behavior') &&
+      text.includes('Tests only loosely check this') &&
+      text.includes('Weak / missing evidence:')
     );
-    assert.ok(hoverText.includes('**ripr** behavioral seam'), hoverText);
-    assert.ok(hoverText.includes('`weakly_gripped`'), hoverText);
-    assert.ok(hoverText.includes('## Missing discriminator'), hoverText);
+    assert.ok(hoverText.includes('**ripr** changed behavior'), hoverText);
+    assert.ok(hoverText.includes('Tests only loosely check this'), hoverText);
+    assert.ok(hoverText.includes('Weak / missing evidence:'), hoverText);
 
     const actions = await vscode.commands.executeCommand<Array<vscode.CodeAction | vscode.Command>>(
       'vscode.executeCodeActionProvider',
@@ -941,7 +941,7 @@ suite('Extension Smoke', () => {
         diagnostic.range.start.character + 1
       );
       const hoverText = await waitForHoverText(uri, hoverPosition, (text) =>
-        text.includes('**ripr** gap decision') &&
+        text.includes('**ripr** test gap') &&
         text.includes('- Language: `typescript`') &&
         text.includes('- Status: `preview`') &&
         text.includes('Static limit: missing_import_graph') &&
