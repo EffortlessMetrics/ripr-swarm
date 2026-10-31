@@ -549,8 +549,16 @@ fn skip_char_or_lifetime(text: &str, index: usize) -> usize {
 /// past its closing `'`, or where the lexer gives up on an unterminated one.
 fn skip_single_quoted(text: &str, mut index: usize) -> usize {
     let bytes = text.as_bytes();
-    if bytes.get(index) == Some(&b'\'') && bytes.get(index + 1) == Some(&b'\'') {
-        index += 1;
+    // `rustc_lexer` consumes any single symbol followed by `'` as a terminated
+    // char (`'/'`, `'''`) before the `/` and newline rules below apply.
+    if bytes.get(index) != Some(&b'\\') {
+        let width = text
+            .get(index..)
+            .and_then(|tail| tail.chars().next())
+            .map_or(0, char::len_utf8);
+        if width > 0 && bytes.get(index + width) == Some(&b'\'') {
+            return index + width + 1;
+        }
     }
     while let Some(&byte) = bytes.get(index) {
         match byte {
@@ -920,5 +928,20 @@ mod tests {
         assert_eq!(skip_char_or_lifetime("'a x", 0), 1);
         assert_eq!(skip_char_or_lifetime("'\\'' x", 0), 4);
         assert_eq!(skip_char_or_lifetime("', got\n\"y", 0), 6);
+        assert_eq!(skip_char_or_lifetime("'/' x", 0), 3);
+        assert_eq!(skip_char_or_lifetime("''' x", 0), 3);
+        // A lone quote outside any string is the case that used to flip parity.
+        let source = format!(
+            "fn g() {{ let c = 'git version ...', got: x\"; }}\nfn h(x: i32) -> i32 {{ {}x {{ 1 }} }}\n",
+            "(".repeat(4_000)
+        );
+        assert!(rust_nesting_refusal(&source).is_some());
+        // `'/'` closes as a char, so the brackets after it still balance.
+        let source = "fn f(s: &str) { s.split('/'); s.split('/'); }\n".repeat(300);
+        assert!(rust_nesting_refusal(&source).is_none());
+        assert_eq!(
+            block_comment_only_lines("x = '/'; /* c */\n/* d */\n").len(),
+            1
+        );
     }
 }
