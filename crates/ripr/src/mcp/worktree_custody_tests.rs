@@ -887,7 +887,8 @@ fn card_request_refuses_after_an_unrefreshed_edit_to_a_bound_file() -> Result<()
             .err()
             .ok_or_else(|| format!("{tag}: a card was served over an unrefreshed edit"))?;
         if refusal.code != CODE_STALE_SNAPSHOT
-            || !refusal.detail.contains(relative)
+            // The detail prints the native path spelling (`tests\pricing.rs` on Windows).
+            || !refusal.detail.replace('\\', "/").contains(relative)
             || !refusal.recovery.contains("ripr_refresh")
         {
             return Err(format!(
