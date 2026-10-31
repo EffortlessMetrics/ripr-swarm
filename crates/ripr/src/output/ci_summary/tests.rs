@@ -1478,6 +1478,56 @@ fn every_count_source_keeps_the_governance_fold_open_when_nonzero() -> TestResul
 }
 
 #[test]
+fn removing_any_required_policy_category_keeps_the_fold_open_and_not_clean() -> TestResult {
+    let control = Fixture::complete("fold-required-control")?;
+    write_quiet(&control)?;
+    let summary = render_gate(&control, false)?;
+    assert!(
+        summary.contains(CLEAN) && !summary.contains(OPEN),
+        "{summary}"
+    );
+
+    // Each required category: the file names removed together. The promotion
+    // category is satisfied by any `policy-promotion-*.json`, so a second one
+    // is added and all of them are removed.
+    let categories: [(&str, &[&str]); 5] = [
+        ("readiness", &["policy-readiness.json"]),
+        ("operations", &["policy-operations.json"]),
+        ("history", &["policy-history.json"]),
+        ("suppression-health", &["suppression-health.json"]),
+        (
+            "promotion",
+            &[
+                "policy-promotion-acknowledgeable.json",
+                "policy-promotion-visible-only.json",
+            ],
+        ),
+    ];
+    for (category, files) in categories {
+        let fixture = Fixture::complete(&format!("fold-required-{category}"))?;
+        write_quiet(&fixture)?;
+        fixture.json(
+            &format!("{R}/policy-promotion-visible-only.json"),
+            &json!({"target_mode": "visible-only", "warnings": [], "unknowns": []}),
+        )?;
+        let clean = render_gate(&fixture, false)?;
+        assert!(
+            clean.contains(CLEAN) && !clean.contains(OPEN),
+            "{category} control: {clean}"
+        );
+        for file in files {
+            let path = fixture.root.join(R).join(file);
+            assert!(path.is_file(), "{category}: {file} was not written");
+            fs::remove_file(path)?;
+        }
+        let summary = render_gate(&fixture, false)?;
+        assert!(summary.contains(OPEN), "{category}: {summary}");
+        assert!(!summary.contains(CLEAN), "{category}: {summary}");
+    }
+    Ok(())
+}
+
+#[test]
 fn unreadable_wrong_shape_and_missing_counts_are_not_clean() -> TestResult {
     let shapes: [(&str, Option<serde_json::Value>); 6] = [
         ("array", Some(json!([]))),
@@ -1529,15 +1579,22 @@ fn extra_promotion_files_cannot_stand_in_for_a_missing_category() -> TestResult 
     let fixture = Fixture::complete("fold-promotion-stand-in")?;
     write_quiet(&fixture)?;
     let reports = "target/ripr/reports";
-    fs::remove_file(fixture.root.join(reports).join("policy-readiness.json"))?;
-    fixture.json(
-        &format!("{reports}/policy-promotion-visible-only.json"),
-        &json!({"target_mode": "visible-only", "warnings": [], "unknowns": []}),
+    // Remove the only policy-promotion report. The non-promotion preview
+    // promotion and waiver reports stay clean and present, and must not
+    // stand in for the missing required category.
+    fs::remove_file(
+        fixture
+            .root
+            .join(reports)
+            .join("policy-promotion-acknowledgeable.json"),
     )?;
-    fixture.json(
-        &format!("{reports}/policy-promotion-blocking.json"),
-        &json!({"target_mode": "blocking", "warnings": [], "unknowns": []}),
-    )?;
+    assert!(
+        fixture
+            .root
+            .join(reports)
+            .join("preview-promotion-typescript-boundary-gap.json")
+            .is_file()
+    );
     let summary = render_gate(&fixture, false)?;
     assert!(summary.contains(OPEN), "{summary}");
     assert!(!summary.contains(CLEAN), "{summary}");

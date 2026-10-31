@@ -97,6 +97,30 @@ separately named ordinary witness retains its complete facts. Raw cached
 parsing and its wire round-trip retain the unresolved macro and never store
 promoted property authority.
 
+## Offline metadata diagnosis (#10864)
+
+In fresh Rust finding analysis (with diff/fast CLI acceptance), a supported
+property invocation whose provider verification cannot obtain offline locked
+Cargo metadata retains its existing
+unknown stages and zero generated-test/value credit. Its existing macro
+limitation names the observed operational failure and recommends a manual
+same-root, same-environment metadata command. No package is inferred from an
+exit code. Capture failures point to temporary storage; a refused toolchain
+path must not be recommended for execution.
+
+The public child regression pairs JSON and human-full guidance, repeats the
+unavailable state without purging the diff cache, refuses to attach this advice
+to unsupported syntax, preserves an independent ordinary assertion, and
+restores the initial finding when the original Cargo environment is restored.
+That environment-transition control is not the separate installed same-Cargo-home
+missing-archive restoration acceptance, which still requires execution.
+
+Diagnostic context is analysis-local and bound to invocation source bytes; it
+is not serialized in raw parser facts or classified-seam caches. This slice
+does not add operational guidance to full/compact repository-seam output and
+does not claim its cache-freshness acceptance. Existing classified-cache keys
+and provider admission remain unchanged.
+
 ## Must Not
 
 - Treat package/macro spelling, zero-test success or compilation failure as

@@ -76,6 +76,7 @@ mod classifier;
 mod committed_snapshot;
 mod comparison_edit_guard;
 mod custom_matcher_guard;
+mod declaration_bindings;
 mod decorated_entries;
 mod deleted_lines;
 #[cfg(test)]

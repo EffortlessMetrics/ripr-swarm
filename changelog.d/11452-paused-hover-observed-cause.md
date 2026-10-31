@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- The LSP hover, withdrawal diagnostic and log for a file paused as `no_analyzed_saved_content` no longer assert "has not been analyzed in this session" or promise that a refresh will simply complete. The hover now states only the cause the server observed (file not on disk, an attempt already queued or running, the latest attempt failed with nothing committed, a committed snapshot that did not record the file, or no committed analysis) with the recovery that cause honors; anything else falls to the honest "no analysis has committed" wording (#11452).
