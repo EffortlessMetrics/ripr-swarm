@@ -720,7 +720,7 @@ fn repair_explicit_ineligible_seam_refuses_without_attempt_or_lock() -> Result<(
         "refusal must name the seam:\n{stderr}"
     );
     assert!(
-        stderr.contains("existing tests already grip it"),
+        stderr.contains("existing tests already check it"),
         "refusal must name the ineligibility reason:\n{stderr}"
     );
     assert_no_repair_attempt_side_effects(root);
@@ -2441,10 +2441,19 @@ fn repair_two_items_requires_explicit_selection() -> Result<(), String> {
     let remote = run_ripr(&elsewhere.root, &["repair", "--root", &root_arg])?;
     let remote_stderr = stderr_text(&remote);
     for seam in [FIXTURE_SEAM, SECOND_SEAM] {
+        // Printed commands render the root with host separators (`/` on
+        // Windows) and quote it when it needs quoting.
+        let printed_root = if cfg!(windows) {
+            root_arg.replace('\\', "/")
+        } else {
+            root_arg.clone()
+        };
         assert!(
             remote_stderr.lines().any(|line| {
                 line.contains(&format!("ripr repair {seam} --root "))
-                    && line.contains(root_arg.as_str())
+                    && line
+                        .replace(['"', '\''], "")
+                        .contains(printed_root.as_str())
             }),
             "candidate {seam} must carry the bound root:\n{remote_stderr}"
         );
@@ -4140,7 +4149,7 @@ fn status_and_continue_do_not_offer_a_start_the_repair_gate_refuses() -> Result<
     let refused = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
     assert_exit(&refused, 3, "ripr repair on the now-gripped seam");
     assert!(
-        stderr_text(&refused).contains("already grip it"),
+        stderr_text(&refused).contains("already check it"),
         "precondition: the gate refuses the start and says why:\n{}",
         stderr_text(&refused)
     );
@@ -4156,7 +4165,7 @@ fn status_and_continue_do_not_offer_a_start_the_repair_gate_refuses() -> Result<
             "{label} printed a start the same build refuses:\n{text}"
         );
         assert!(
-            text.contains("already grip it")
+            text.contains("already check it")
                 && text.contains("not a runtime-verified result")
                 && !text.contains("by hand"),
             "{label} must say the seam is already gripped on static evidence:\n{text}"
@@ -4327,7 +4336,7 @@ fn status_drops_the_pilot_recorded_start_once_the_seam_is_gripped() -> Result<()
     assert!(
         !after_text.contains("--phase before")
             && after_text.contains("repair_start_withheld")
-            && after_text.contains("already grip it"),
+            && after_text.contains("already check it"),
         "status advertised a pilot start the same build refuses:\n{after_text}"
     );
     Ok(())

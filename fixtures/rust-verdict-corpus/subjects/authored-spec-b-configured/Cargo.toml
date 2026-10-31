@@ -1,0 +1,25 @@
+[package]
+name = "specb_configured"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dev-dependencies]
+libtest-mimic = "=0.8.2"
+
+[[test]]
+name = "registered"
+path = "src/custom_runner.rs"
+harness = false
+
+[[test]]
+name = "enabled"
+path = "src/enabled_runner.rs"
+harness = true
+
+[[bench]]
+name = "exposure"
+test = true
+
+[workspace]

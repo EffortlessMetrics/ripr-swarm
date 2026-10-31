@@ -1,0 +1,53 @@
+{
+  "case_id": "spec-b-0153-bench-common-helper",
+  "subject_id": "authored-spec-b-configured",
+  "diff": "cases/spec-b-0153-bench-common-helper.diff",
+  "anchor": {
+    "file": "benches/common/mod.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "0153_bench_common_helper",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test --locked",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "19",
+        "mutated_line": "19",
+        "outcome": "tests_failed",
+        "failing_test": "shared_bench_helper_is_twenty",
+        "equivalence_review": "not equivalent: shared_bench_helper_is_twenty expects 20, not 19"
+      },
+      {
+        "replacement": "21",
+        "mutated_line": "21",
+        "outcome": "tests_failed",
+        "failing_test": "shared_bench_helper_is_twenty",
+        "equivalence_review": "not equivalent: shared_bench_helper_is_twenty expects 20, not 21"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The executable bench explicitly imports its common module, so the helper is exercised by a named assertion under cargo test. It remains non-production evidence despite runtime discrimination. Build-disabled and unowned build-script exclusions retain their separate direct source-role/Cargo-target tests; this case measures the benches/common/mod.rs clause rather than claiming every clause is a runtime benchmark.",
+  "spec_examples": [
+    "RIPR-SPEC-0153#3"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "5abb7591b0510f2fe563c086b42c381d8b4a2164",
+    "full_checkout_verdict": "silent",
+    "full_checkout_classifications": [],
+    "excerpt_parity": "matched"
+  }
+}

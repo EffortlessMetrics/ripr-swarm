@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-mined-features",
+  "origin": "authored",
+  "version_label": "authored 2026-10-22 from test shapes mined in real crates (uuid, toml_writer, httparse)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "3c398211d75372f854a3393530e4a02872feeae62aa84cc8e794f2dee140c097"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "22001b73d4f87d094f1bde9958dcd7bf6bbf72d0816321f13a7aa92147f2a036"
+    }
+  ]
+}

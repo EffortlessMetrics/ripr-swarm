@@ -185,10 +185,17 @@ fn gap_start_tokens(text: &str) -> Option<(String, String)> {
     Some((value_after("--gap-id")?, value_after("--base")?))
 }
 
-/// The quoting `shell_arg` applies to a plain path argument: bare when every
-/// character is unambiguous, otherwise single-quoted (double-quoted on
-/// Windows consoles).
+/// The rendering `ripr` prints for a plain path argument: `/` separators on
+/// Windows, then bare when every character is unambiguous, otherwise
+/// single-quoted (double-quoted on Windows consoles).
 fn printed_shell_arg(value: &str) -> String {
+    let rendered;
+    let value = if cfg!(windows) {
+        rendered = value.replace('\\', "/");
+        rendered.as_str()
+    } else {
+        value
+    };
     if !value.is_empty()
         && value
             .chars()
@@ -866,13 +873,40 @@ fn typescript_incomplete_analysis_withholds_the_gap_bound_start() -> Result<(), 
     // Control first: the unmodified fixture is complete and offers the start.
     let (ok, control) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
     expect_exit(ok, true, "check of the complete fixture")?;
-    if gap_start_tokens(&control).is_none() {
-        return Err(format!(
-            "control: a complete analysis lost its start:\n{control}"
-        ));
-    }
+    let (gap, _) = gap_start_tokens(&control)
+        .ok_or_else(|| format!("control: a complete analysis lost its start:\n{control}"))?;
     if control.contains("analysis incomplete") {
         return Err(format!("control: the fixture is not complete:\n{control}"));
+    }
+
+    // Exercise admission as well as the printed route in a separate root.
+    let (_positive_guard, positive_root, positive_decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "tsi-positive",
+        Some(toml),
+    )?;
+    let positive_root_arg = positive_root.to_string_lossy().into_owned();
+    let (ok, start) = ripr(
+        &positive_decoy,
+        &[
+            "agent",
+            "repair",
+            "--gap-id",
+            &gap,
+            "--base",
+            "HEAD~1",
+            "--root",
+            &positive_root_arg,
+            "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(ok, true, "manual start of complete analysis")?;
+    if attempt_manifests(&positive_root)? != 1 {
+        return Err(format!(
+            "complete control did not publish an attempt:\n{start}"
+        ));
     }
 
     // Scule-shaped: the finding's own tests stay evaluable (its packet is
@@ -932,6 +966,38 @@ fn typescript_incomplete_analysis_withholds_the_gap_bound_start() -> Result<(), 
         ],
     )?;
     expect_exit(findings.status.success(), true, "check-findings-json")?;
+    let parsed: serde_json::Value = serde_json::from_slice(&findings.stdout)
+        .map_err(|error| format!("parse findings: {error}"))?;
+    if parsed["analysis_outcome"]["analysis_complete"] != false
+        || parsed["findings"].as_array().is_none_or(Vec::is_empty)
+    {
+        return Err(format!(
+            "fixture did not produce mixed incomplete findings: {parsed}"
+        ));
+    }
+    let (started, manual) = ripr(
+        &decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", "HEAD~2", "--root", &root_arg,
+            "--phase", "before",
+        ],
+    )?;
+    expect_exit(started, false, "manual start of incomplete analysis")?;
+    need(&manual, "incomplete", "manual refusal names incompleteness")?;
+    need(
+        &manual,
+        &format!(
+            "ripr check --root {} --base {}",
+            printed_shell_arg(&root_arg),
+            printed_shell_arg("HEAD~2")
+        ),
+        "manual refusal preserves selected root and base from the decoy directory",
+    )?;
+    if attempt_manifests(&root)? != 0 || root.join("target/ripr/workflow").exists() {
+        return Err(format!(
+            "incomplete start left an attempt or workflow artifact:\n{manual}"
+        ));
+    }
     let artifact = root.join("incomplete-findings.json");
     std::fs::write(&artifact, &findings.stdout).map_err(|error| format!("write: {error}"))?;
     let artifact_arg = artifact.to_string_lossy().into_owned();
@@ -966,6 +1032,91 @@ fn typescript_incomplete_analysis_withholds_the_gap_bound_start() -> Result<(), 
         return Err(format!("verify still says regenerate:\n{refusal}"));
     }
     decoy_untouched(&decoy)
+}
+
+/// A ready finding must not admit a manual start when a different changed
+/// file's context is unavailable to analysis.
+#[cfg(all(feature = "lang-typescript", unix))]
+#[test]
+fn typescript_manual_gap_start_refuses_unavailable_changed_file() -> Result<(), String> {
+    let (_guard, root, decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "tsi-missing",
+        Some("[languages]\nenabled = [\"typescript\"]\n"),
+    )?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let (ok, control) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+    expect_exit(ok, true, "complete control")?;
+    let (gap, _) =
+        gap_start_tokens(&control).ok_or_else(|| format!("missing control gap: {control}"))?;
+
+    let source = root.join("src/unavailable.ts");
+    std::fs::write(
+        &source,
+        "export function unavailable(x: number) { return x + 1; }\n",
+    )
+    .map_err(|error| format!("write changed source: {error}"))?;
+    fixture_git_ok(&root, &["add", "src/unavailable.ts"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "add unrelated source"])?;
+    let held = root.join("target/held-unavailable.ts");
+    std::fs::create_dir_all(root.join("target")).map_err(|error| error.to_string())?;
+    std::fs::rename(&source, &held).map_err(|error| error.to_string())?;
+    std::os::unix::fs::symlink(&held, &source).map_err(|error| error.to_string())?;
+
+    let report = ripr_output(
+        &decoy,
+        &[
+            "check",
+            "--root",
+            &root_arg,
+            "--base",
+            "HEAD~2",
+            "--mode",
+            "draft",
+            "--format",
+            "check-findings-json",
+        ],
+    )?;
+    expect_exit(report.status.success(), true, "mixed check")?;
+    let json: serde_json::Value =
+        serde_json::from_slice(&report.stdout).map_err(|error| error.to_string())?;
+    if json["analysis_outcome"]["analysis_complete"] != false
+        || !json["findings"].as_array().is_some_and(|findings| {
+            findings
+                .iter()
+                .any(|finding| finding["canonical_gap_id"] == gap)
+        })
+        || !json["analysis_outcome"]["outcome"]["limitations"]
+            .as_array()
+            .is_some_and(|items| {
+                items.iter().any(|item| {
+                    item["kind"] == "language_scope_unsupported"
+                        && item["bounded_detail"].as_str().is_some_and(|detail| {
+                            detail.contains("typescript_workspace_links_skipped")
+                        })
+                })
+            })
+    {
+        return Err(format!(
+            "fixture did not produce a finding and unavailable context: {json}"
+        ));
+    }
+    let (started, result) = ripr(
+        &decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", "HEAD~2", "--root", &root_arg,
+            "--phase", "before",
+        ],
+    )?;
+    expect_exit(started, false, "manual start with unavailable context")?;
+    need(&result, "incomplete", "manual refusal names incompleteness")?;
+    if attempt_manifests(&root)? != 0 || root.join("target/ripr/workflow").exists() {
+        return Err(format!(
+            "refusal left an attempt or workflow artifact: {result}"
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(feature = "lang-typescript")]
@@ -1327,7 +1478,7 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
     )?;
     need(
         &repair,
-        "may make that receipt stale",
+        "do not make the receipt stale",
         "currentness limitation",
     )?;
     if repair.contains("--seam-id") {
@@ -2212,7 +2363,7 @@ fn gap_before_stdout_discloses_test_runner_cache_limit_in_both_modes() -> Result
         )?;
         need(
             &guidance,
-            "may make that receipt stale",
+            "do not make the receipt stale",
             "stdout currentness limitation",
         )?;
     }
@@ -3710,38 +3861,57 @@ fn gap_bound_after_phase_still_refuses_ignored_vitest_module_cache() -> Result<(
     Ok(())
 }
 
-/// The alternative ordering avoids a terminal refusal but does not keep the
-/// receipt current after a test runner changes the observed cache.
+/// The documented ordering (run the focused test after `continue`) keeps the
+/// receipt current: Vitest cache files written after the verdict cannot change
+/// the static evidence it describes (#11534). Any other ignored path under
+/// `node_modules` still stales the attempt.
 #[cfg(feature = "lang-typescript")]
 #[test]
-fn gap_bound_status_reports_cache_drift_after_receipt() -> Result<(), String> {
+fn gap_bound_status_stays_current_after_vitest_cache_written_post_receipt() -> Result<(), String> {
     let attempt = GapAttempt::start("ts-status-vitest-cache")?;
     std::fs::write(attempt.root.join(".git/info/exclude"), "node_modules/\n")
         .map_err(|error| format!("exclude cache: {error}"))?;
     attempt.commit_closing_test()?;
     let after = attempt.after(false)?;
     expect_exit(after.status.success(), true, "after before cache write")?;
-    let cache = attempt.root.join("node_modules/.vitest-cache");
-    std::fs::create_dir_all(&cache).map_err(|error| format!("cache directory: {error}"))?;
-    std::fs::write(cache.join("transformed"), "transformed test code")
-        .map_err(|error| format!("cache file: {error}"))?;
-    let output = ripr_output(
-        &attempt.decoy,
-        &["agent", "status", "--root", &attempt.root_arg, "--json"],
-    )?;
-    expect_exit(output.status.success(), true, "status after cache write")?;
-    let (stdout, _) = text_of(&output);
-    let status: serde_json::Value =
-        serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
-    let attempts = status["repair_attempts"]
-        .as_array()
-        .ok_or("missing attempts")?;
-    let recorded = attempts
-        .iter()
-        .find(|entry| entry["attempt_id"] == attempt.attempt_id)
-        .ok_or("missing recorded attempt")?;
-    if recorded["head_current"] != false {
-        return Err(format!("cache drift did not stale the attempt: {stdout}"));
+    let status_current = || -> Result<Option<bool>, String> {
+        let output = ripr_output(
+            &attempt.decoy,
+            &["agent", "status", "--root", &attempt.root_arg, "--json"],
+        )?;
+        expect_exit(output.status.success(), true, "status")?;
+        let (stdout, _) = text_of(&output);
+        let status: serde_json::Value =
+            serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
+        status["repair_attempts"]
+            .as_array()
+            .ok_or("missing attempts")?
+            .iter()
+            .find(|entry| entry["attempt_id"] == attempt.attempt_id)
+            .ok_or("missing recorded attempt")?["head_current"]
+            .as_bool()
+            .map_or(Ok(None), |value| Ok(Some(value)))
+    };
+    for (dir, file) in [
+        ("node_modules/.vitest-cache", "transformed"),
+        ("node_modules/.vite/vitest/abc", "results.json"),
+        ("packages/app/node_modules/.vitest-cache", "transformed"),
+    ] {
+        let cache = attempt.root.join(dir);
+        std::fs::create_dir_all(&cache).map_err(|error| format!("cache directory: {error}"))?;
+        std::fs::write(cache.join(file), "cache")
+            .map_err(|error| format!("cache file: {error}"))?;
+    }
+    if status_current()? != Some(true) {
+        return Err("Vitest cache written after the receipt staled the attempt".to_string());
+    }
+    // Control: a non-cache ignored path still moves the bound delta.
+    let other = attempt.root.join("node_modules/pkg");
+    std::fs::create_dir_all(&other).map_err(|error| format!("control directory: {error}"))?;
+    std::fs::write(other.join("index.js"), "module.exports = 1")
+        .map_err(|error| format!("control file: {error}"))?;
+    if status_current()? != Some(false) {
+        return Err("a non-cache node_modules write did not stale the attempt".to_string());
     }
     Ok(())
 }

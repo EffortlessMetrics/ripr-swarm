@@ -101,6 +101,7 @@ map is:
 | Output | Field | Current value |
 | --- | --- | --- |
 | `ripr check --format json` | `schema_version` | `0.2` |
+| `ripr check --format json` refusal envelope, `analysis_timeout` with input context (RIPR-SPEC-0241 amendment #10796) | `schema_version` | `0.3` |
 | `ripr check --output-dir DIR` manifest | `schema_version` | `ripr-native-diff-output-set-v1` |
 | `ripr check --format sarif` | `version` | `2.1.0` (standard SARIF envelope) |
 | `ripr gate evaluate` | `schema_version` | `0.1` |
@@ -152,6 +153,7 @@ records that distinction.
 | Published schema | Current version | Version owner and rationale |
 | --- | --- | --- |
 | `schemas/ripr/check.schema.json` | `0.2` | `crates/ripr/src/app.rs`; check envelope |
+| `schemas/ripr/check-timeout-refusal.schema.json` | `0.3` | `crates/ripr/src/app.rs`; analysis-timeout refusal envelope with input context (RIPR-SPEC-0241 amendment #10796) |
 | `schemas/ripr/doctor.schema.json` | `0.4` | `crates/ripr/src/output/doctor.rs`; doctor environment report (#5214) |
 | `schemas/ripr/executed-control.schema.json` | `1` | `crates/ripr/src/domain/executed_control.rs` and `crates/ripr/src/output/executed_control.rs`; executed-control obligation/result/packet vocabulary (#4641) |
 | `schemas/ripr/gate-decision.schema.json` | `0.1` | `crates/ripr/src/output/gate.rs`; gate decision envelope |
@@ -888,8 +890,13 @@ identity agree and the analysis-outcome validator accepts the artifact.
       "schema_version": "0.1",
       "kind": "complete_with_findings",
       "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": "fnv1a64:0123456789abcdef",
         "base_revision": "origin/main",
-        "input_identity": "sha256:<diff-bytes>"
+        "input_identity": "sha256:<diff-bytes>",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
       },
       "counts": {
         "changed_file_count": 1,
@@ -1082,11 +1089,40 @@ zeroed `summary`, same empty `findings`, same
 | `diff_input_unsupported` | `analysis/diff-input` | The shared diff parser refused a region, admission, or truncated textual section of an `agent brief --diff` or `--base` input; no brief selection ran. |
 | `git_invocation_timeout` | `analysis/git-timeout` | A git invocation exceeded its cooperative deadline and was terminated. |
 | `analysis_timeout` | `analysis/timeout` | The `ripr check` wall-clock budget (`--timeout SECS`, `RIPR_CHECK_TIMEOUT`) ran out before analysis finished; no findings were produced (#5369). |
+| `analysis_worker_stopped` | `analysis/worker-stopped` | The `ripr check` analysis worker thread stopped without producing a result, almost always a panic whose message the panic hook printed on stderr; no findings were produced and the result is never a clean pass (#11116). Re-run, report with the panic output, and narrow the diff or base range. |
 | `analysis_failed` | `analysis/failure` | Honest fallback for any other failure: the run produced no findings, with no claim about which stage stopped. |
 
 The scope-guard identities (`diff_scope_oversized`, `repo_scope_oversized`)
 keep their existing documents byte for byte; they are not members of this
 vocabulary.
+
+An `analysis_timeout` refusal of `ripr check` renders at refusal generation
+`"0.3"` and adds one required key, `input_context` (RIPR-SPEC-0241 amendment
+#10796); every other identity keeps generation `"0.2"` and the exact key set
+above, and a timeout refusal with no stashed projection (a library caller that
+never registered the capture) also keeps `"0.2"`. `input_context` has three
+fixed keys: `requested` echoes the invocation-established root, input source
+(`committed`, `working-tree`, `supplied-diff`, `git-candidate`), base, diff
+file, `--path`/`--exclude` scope, and the analysis effort mode under
+`analysis_mode` (never confused with the input source); `resolved` carries the
+base/commit/merge-base revisions and the scoped intake file counts, each as
+`{available, value}` or `{available: false, reason}`, with a per-fact `reason` (`not_published_before_deadline`, `not_computed_for_source`, or
+`published_after_deadline`).
+`recovery` carries at most one bounded action. For a replayable input it is
+`retry_with_larger_budget`: a shell-safe literal command preserving the
+meaningful root/source/base/scope/output choices and the effective analysis
+settings that change the finding set (the effective `--mode`, including draft,
+`--no-unchanged-tests` when unchanged tests were excluded, and the
+explicit `--perl-facts`/`--suppression-policy` paths) so the retry
+reproduces the requested analysis; the command carries the raw root path
+(the check-JSON `root` echo is the `display_path` spelling and escapes `%`),
+an explicit `--format VALUE` spelling when one was given, and a finite
+doubled `--timeout`. An explicit `--output-dir` is never repeated (the refused set occupies it). For a stdin diff (`--diff -`) no literal command is
+offered: the consumed bytes cannot be replayed, so `recovery.kind` is
+`save_stdin_diff_to_named_file` with `command: null` and the note names the
+honest continuation. `rereads` names what a retry re-reads; such a retry is not pinned to the timed-out snapshot. Input metadata never implies an
+exposure, clean, or repair-ready verdict: exit stays `2`, findings stay
+empty, the summary stays zeroed, and `downstream_consumable` stays `false`.
 
 The same envelope covers the other `--json` commands (#7331): `ripr diff
 --json`, `ripr rerun --json`, `ripr context` (which emits JSON only), `ripr
@@ -1574,7 +1610,8 @@ A finding contains:
   "oracle_strength": "strong",
   "recommended_next_step": "Add boundary tests with exact assertions.",
   "suggested_next_action": "Add boundary tests with exact assertions.",
-  "language": "rust"
+  "language": "rust",
+  "source_currentness": "candidate_current"
 }
 ```
 
@@ -1995,6 +2032,14 @@ The evidence-first fields are additive in schema `0.2`:
       related test assertion has `OracleKind::Unknown` AND a non-empty matcher
       name that is not in the recognised matcher set (real oxc-parsed AST
       evidence).
+    - `typescript_match_object_scalar_unresolved` — fired (RIPR-SPEC-0250 rule
+      4) when an oracle-eligible related test calls `toMatchObject` with a
+      scalar literal; Vitest reads it as plain equality and Jest rejects it, so
+      the row reads `unknown` and no repair start is offered.
+    - `typescript_boundary_operand_derived_unresolved` — fired (RIPR-SPEC-0027)
+      when a changed predicate compares a literal with a local the owner binds
+      only from a call that names no owner parameter, so no test call can set
+      it; no repair start is offered.
     - `typescript_dynamic_assertion_unresolved` — fired (RIPR-SPEC-0085 §PR5)
       when an oracle-eligible related test assertion in the changed seam's
       oracle family (RIPR-SPEC-0104) has a non-literal dynamic matcher argument
@@ -2248,7 +2293,10 @@ JSON fields:
   `oracle_strength`, optional `bun_cross_language_grip`, optional
   `missing_discriminator`, `suggested_assertion_shape`, `static_limits`,
   nullable `verify.command`, `why_not_actionable`, `repair_route`,
-  `repair_packet_ready`, and `limits`. The optional
+  `repair_packet_ready`, and `limits`. When `repair_packet_ready` is `true`
+  the final `limits` entry reads that the card is an advisory summary and the
+  complete repair packet is projected separately (#10709); only a card whose
+  packet is not ready says it "is not a repair packet". The optional
   `bun_cross_language_grip` object carries one coherent configured Bun bridge
   profile selected from the related evidence (including Blob,
   `copy_to_unshared`, and Markdown resizable profiles). It carries `state`,
@@ -3687,7 +3735,7 @@ The JSON report is repo automation output with schema version `"0.1"`:
     {
       "rule_id": "ripr.seam.weakly_gripped",
       "level": "warning",
-      "fingerprint": "ripr.seam.weakly_gripped|abc123|src/lib.rs|42",
+      "fingerprint": "ripr.seam.weakly_gripped|src/lib.rs|0123456789abcdef0123456789abcdef|0",
       "uri": "src/lib.rs",
       "line": 42,
       "message": "weakly_gripped seam grip for predicate_boundary"
@@ -3796,8 +3844,8 @@ retained-count fallback and floor as check findings: older findings without
 matched-total metadata supply their known retained row count, which cannot
 establish how many rows an older producer discarded. `related_tests` remains
 the selected bounded window. Identical eight-row windows with totals 12 and
-13 therefore remain distinguishable. `witness` is additive and is omitted
-when an exposed finding has no unresolved discriminator. It contains only
+13 therefore remain distinguishable. `witness` is additive and is always present;
+its value is `null` when an exposed finding has no unresolved discriminator. It contains only
 producer-owned facts: `fix_site` and `oracle_location` are absent when the
 producer cannot identify them, and `suggested_assertion` is omitted until
 the producer supplies a symbol-resolved assertion template. The typed witness
@@ -14343,7 +14391,31 @@ Field contract:
   a gap-ledger record. The card is used only when the review-comments report
   is `tool = "ripr"`, `status = "advisory"`, and names the same root, base,
   and head as the first-pr invocation. Ledger-selected top gaps never carry
-  `repair_command`. `commands` does not repeat the repair start, so editor
+  `repair_command`. Instead a Python or TypeScript preview ledger gap
+  carries `selected.recommended_repair_command` (#10709), and only when all of
+  these hold: the record is `gap_state = "actionable"` with a
+  `canonical_gap_id` that no other record shares; it passes the shared
+  `validate_agent_gap_record_packet` validator; and the ledger's recorded
+  `analysis_outcome` is complete with no `run_limitations`, judged by the
+  predicate `ripr check` applies. The validator's candidate-current
+  requirement reads the record's `source_currentness`, which the ledger
+  producer (`ripr reports gap-ledger --check-output`, and `first-pr
+  --check-output`) copies from the check finding for Python and TypeScript
+  alike, and `analysis_outcome` is copied from the same check document. A
+  record whose `source_currentness` is missing, `unknown` or stale (a finding
+  that is `base_deleted` or `moved_or_renamed` forms no record), or a ledger
+  whose `analysis_outcome` is missing or incomplete, recommends nothing. The
+  checked-in TypeScript `first_successful_pr` ledger carries both fields so
+  its start-here packet recommends the same route as the Python case. The command is
+  `ripr agent repair --gap-id <id> --base <base> --root <root> --phase before`.
+  `ripr check` may print the resolved dirty origin as `--base` where first-pr
+  prints its own `--base`, and first-pr cannot see the working tree, so the
+  start itself still refuses a dirty production tree; the rendered text says
+  to commit first. When present, the CLI and markdown `Safe next action` name
+  it as the recommended route and the by-hand verify/receipt path as the one
+  alternative; when absent (validator refusal, missing or incomplete analysis
+  outcome, other language) the by-hand route stands alone and nothing is
+  recommended. `commands` does not repeat the repair start, so editor
   projections that allowlist `commands` values are unaffected.
 - `selected.verify_command`, `selected.receipt_command`,
   `selected.receipt_path`, `selected.receipt_command_source`, and
@@ -14380,7 +14452,8 @@ Field contract:
 - A root without `Cargo.toml` that `ripr doctor` detects as TypeScript or
   JavaScript (for example a `package.json` plus `.ts` files), not also as
   Python, and that has no `tsconfig.json` or `jsconfig.json` at the root and
-  no TypeScript under `src/` or `tests/` (`package.json` alone is not enough)
+  no `package.json` with JavaScript or TypeScript source at the root or under
+  `src/`, `test/` or `tests/` (`package.json` alone is not enough)
   reports `blocked_artifact` with
   `selected.reason_code = "typescript_project_marker_missing"` and no next
   command, not `wrong_root`. Its message says to add `tsconfig.json`
@@ -15600,7 +15673,9 @@ vocabulary and `final_tree_effect` is a separate closed field backed by an
 same `source`, `range` and `merged_prs` shapes plus `alive_paths_at_cut`,
 `blamed_paths` and one `commits` entry per reachable commit (`paths`,
 `final_tree_effect`, `effect_basis`, `pr_refs` from the trailing `(#N)` of a
-first-parent subject, `issue_refs` for other `#N` mentions).
+first-parent subject, `issue_refs` for other `#N` mentions). `capture` and
+`finalize` need a full clone and refuse a shallow repository; run
+`git fetch --unshallow` first.
 
 `release-ledger derive` writes the `release_ledger` DTO that `release-ledger
 --input` validates: `rule_version` `v1`, `adjudication_basis` `rule_derived`,
@@ -16477,8 +16552,9 @@ Field contract:
   scorable route is to resolve the workspace condition that made the
   baseline ambiguous and rerun the same `--phase before` command from a
   clean state. `test_runner_cache_guidance`, when present, explains that a
-  TypeScript gap attempt can refuse or become stale when a test runner writes
-  ignored caches; it recommends recording native test results separately
+  TypeScript gap attempt is refused when a test runner writes ignored caches
+  before the after phase, while Vitest caches written after `continue` do not
+  stale the receipt; it recommends recording native test results separately
   after successful continuation and does not claim a test was recorded in the receipt.
   Without `--json`, stdout is a short prose summary whose
   final line names the same next command — or, for such an ambiguous
@@ -17424,7 +17500,11 @@ Field contract:
   the closing line names raising `RIPR_PILOT_SEAM_BUDGET` and
   `RIPR_REPO_EXPOSURE_SEAM_LIMIT` instead of "No gap to test", because the
   cut seams were never classified. `null` for partial summaries.
-- `top_actionable_seams[]` — ranked seams using class order
+- `top_actionable_seams[]` — ranked seams. Seams on lines of the current
+  change come first; inside each of those groups a seam with a repair route
+  (one `ripr agent repair` can start from) comes before one without, even
+  when the routable seam has a weaker class (#11292), so `next.repair_command`
+  can name a different seam than before. Then class order
   `weakly_gripped`, `ungripped`, `reachable_unrevealed` (static limitations are
   withheld, see above), with evidence tie-breakers for missing discriminator, related
   test, suggested assertion, and stable location. Within each class, each
@@ -18949,9 +19029,13 @@ For `--check-output`, the top-level optional `input_root` retains the source
 report's root spelling separately from the ledger's selected `root`. A missing
 or relative producer root is not an absolute checkout identity. This additive
 field does not authenticate the input or imply complete corpus provenance.
-`check_output_provenance` retains that root and the original source-subject
-limitation across subsequent `--records` ledger projections; changing the
-immediate input kind cannot make a check-derived no-action conclusion current.
+`check_output_provenance` retains that root, the original root value as
+`source_root_raw` when present, the original source-subject limitation, and the
+producer's `source_subject`, `base`, `base_commit`, `head`,
+and `mode` values when present across subsequent `--records` ledger
+projections. These copied values are unvalidated provenance, including malformed
+values; they do not establish currentness or completeness. Changing the immediate
+input kind cannot make a check-derived no-action conclusion current.
 
 ### Gap artifact source subject
 
@@ -18963,7 +19047,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.123",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.124",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -19748,7 +19832,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.123",
+      "schema_version": "1.124",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
