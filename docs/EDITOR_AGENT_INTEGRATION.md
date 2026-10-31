@@ -12,7 +12,9 @@ This is an integration contract, not a new analyzer lane. The campaign connects
 surfaces that already exist and then pins the loop with fixtures, cockpit joins,
 CI artifacts, docs, and install proof. It does not add automatic edits,
 generated tests, CodeLens, inlay hints, semantic tokens, unsaved-buffer
-overlays, public crates, or a runtime execution engine.
+overlays, public crates, or a runtime execution engine. That list is the
+campaign's scope when it was written; CodeLens has since shipped, and the
+language server now advertises a `codeLensProvider`.
 
 ## Release-Surface Gate
 

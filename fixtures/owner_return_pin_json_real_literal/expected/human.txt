@@ -33,11 +33,14 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/owner_return_pin_json_real_literal/input --diff <cwd>/fixtures/owner_return_pin_json_real_literal/diff.patch --mode fast probe:src_lib.rs:return_value:9659b9fa
   ripr context --root <cwd>/fixtures/owner_return_pin_json_real_literal/input --diff <cwd>/fixtures/owner_return_pin_json_real_literal/diff.patch --mode fast --at probe:src_lib.rs:return_value:9659b9fa
-  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: nothing to repair here; the related tests already notice this change (exposed)
 
 Hidden:
   All 2 omitted finding(s) are base-side evidence, not candidate edit targets.
     - ./src/lib.rs:5 (unrevealed); kind: error_path; reason: No detected assertion observes the changed value, error, field, or effect
-    - ./src/lib.rs:5 (weak); kind: return_value; reason: No strong discriminator was detected
+    - ./src/lib.rs:5 (weak); kind: return_value; reason: No strong assertion was detected
+  Hidden classes:
+    weak = tests reach it but check it only loosely
+    unrevealed = tests reach it but nothing appears to notice a change
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

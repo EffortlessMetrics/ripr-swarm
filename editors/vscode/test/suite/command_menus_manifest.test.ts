@@ -106,10 +106,10 @@ suite('Command Menus Manifest', () => {
     const manifest = await readManifest();
     const commands = manifest.contributes?.commands ?? [];
     const expectedTitles = [
-      { command: 'ripr.copyReceiptCommand', title: 'ripr: Copy Receipt Command (Receipt Status)' },
-      { command: 'ripr.copyTopReceiptCommand', title: 'ripr: Copy Receipt Command (Top Repair Packet)' },
-      { command: 'ripr.copyFirstPrReceiptCommand', title: 'ripr: First PR - Copy Receipt Command' },
-      { command: 'ripr.copyAgentReceiptCommand', title: 'ripr: Review Result - Copy Receipt Command' }
+      { command: 'ripr.copyReceiptCommand', title: 'ripr: Copy Result Record Command (Result Record Status)' },
+      { command: 'ripr.copyTopReceiptCommand', title: 'ripr: Copy Result Record Command (Top Repair Packet)' },
+      { command: 'ripr.copyFirstPrReceiptCommand', title: 'ripr: First PR - Copy Result Record Command' },
+      { command: 'ripr.copyAgentReceiptCommand', title: 'ripr: Review Result - Copy Result Record Command' }
     ];
     const readme = await fs.readFile(path.resolve(__dirname, '../../../README.md'), 'utf8');
     const actualTitles = [];

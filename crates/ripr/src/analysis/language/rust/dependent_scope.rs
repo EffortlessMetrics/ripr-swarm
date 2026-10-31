@@ -563,6 +563,10 @@ pub(super) struct NarrowedScope {
     /// which its only caller holds borrowed for the scope's run; the file
     /// count is a cheap guard, not an identity.
     main_tokens: Option<MainTokens>,
+    /// Call-name (bang trimmed) → caller-names map for the main index,
+    /// built once on the first caller-level walk (#9212). Same one-scope,
+    /// one-main-index assumption as [`Self::main_tokens`].
+    main_callers: Option<CallersByCallee>,
 }
 
 /// [`WithheldTokens`] over the main index's files, with the file count it
@@ -695,7 +699,17 @@ pub(super) fn admit_dependents(
     // main index then counts twice, which a union absorbs.
     let mut withheld_macro_bindings = classify::WithheldMacroBindings::default();
     let mut bindings_saturated = false;
+    // File names spelled by `#[path]`/`include!` compositions, `"*"` for one
+    // with no readable literal: a composed withheld binary's macros reach
+    // the composing crate (#10191).
+    let mut composed_names = BTreeSet::new();
+    for file in &admitted {
+        if let Some(bytes) = read_source(root, file)? {
+            note_composed_names(&bytes, &mut composed_names);
+        }
+    }
     let drop_ins = crate::analysis::facts::drop_in::DropInManifests::new(root);
+    let members = crate::analysis::facts::member_crates::MemberCrates::new(root);
     // A package nested under a changed one relates like the owner's own, so
     // it is read first: its local empty macros join the query.
     let mut query = query.clone();
@@ -715,6 +729,7 @@ pub(super) fn admit_dependents(
                     .extend(crate::analysis::syntax::local_empty_macro_names(&source));
             }
             query.note_trait_receivers(&source);
+            note_composed_names(&bytes, &mut composed_names);
             admitted.push(file.clone());
         }
     }
@@ -741,6 +756,7 @@ pub(super) fn admit_dependents(
             consumed.record(file, bytes.as_deref());
             // No content to index: the full selection skips it too.
             if let Some(bytes) = bytes {
+                note_composed_names(&bytes, &mut composed_names);
                 batch_bytes = batch_bytes.saturating_add(bytes.len());
                 loaded.push((file, bytes));
             }
@@ -774,11 +790,12 @@ pub(super) fn admit_dependents(
                     tokens.insert_scanned(id, file_tokens);
                     withheld.push((*file).clone());
                     if !bindings_saturated {
-                        bindings_saturated = withheld_macro_bindings.absorb(
+                        bindings_saturated = withheld_macro_bindings.absorb_with_members(
                             file,
                             &String::from_utf8_lossy(bytes),
                             &query.package_names,
                             &drop_ins,
+                            &members,
                         );
                     }
                 }
@@ -800,6 +817,7 @@ pub(super) fn admit_dependents(
             }
         }
     }
+    withheld_macro_bindings.widen_composed(&composed_names);
     admitted.sort();
     admitted.dedup();
     let main_files = crate::analysis::workspace::with_module_context_files(all_files, admitted);
@@ -842,6 +860,7 @@ pub(super) fn admit_dependents(
             consumed: ConsumedRustSources::default(),
             widen: !core_only,
             main_tokens: None,
+            main_callers: None,
         }),
         withheld_macro_bindings,
     })
@@ -850,6 +869,27 @@ pub(super) fn admit_dependents(
 /// One caller level's admitted files, parsed (`None` when no withheld file
 /// spells a name), and the `macro_rules!` names they define.
 type LevelAdmission = (Option<RustIndex>, Vec<String>);
+
+/// Call-name (bang trimmed) → names of functions and tests that call it.
+type CallersByCallee = std::collections::HashMap<String, BTreeSet<String>>;
+
+/// One admitted index plus the inverted caller map built as it is
+/// admitted, so later levels look up instead of scanning it again (#9212).
+struct IndexedCallers {
+    index: RustIndex,
+    callers: CallersByCallee,
+}
+
+impl IndexedCallers {
+    fn from_index(index: RustIndex) -> Self {
+        #[cfg(test)]
+        CALLER_MAP_BUILDS.with(|builds| builds.set(builds.get() + 1));
+        Self {
+            callers: callers_by_callee(&index),
+            index,
+        }
+    }
+}
 
 /// One owner's caller closure.
 enum Closure {
@@ -1045,7 +1085,7 @@ impl NarrowedScope {
             return Ok(self.over(&admitted_now));
         };
         seed_macros.extend(macros);
-        admitted.extend(index);
+        admitted.extend(index.map(IndexedCallers::from_index));
         seed_macros.retain(|name| !names.contains(name));
         let mut frontier = BTreeSet::new();
         if !seed_macros.is_empty() {
@@ -1054,21 +1094,33 @@ impl NarrowedScope {
             else {
                 return Ok(self.over(&admitted_now));
             };
-            admitted.extend(index);
+            admitted.extend(index.map(IndexedCallers::from_index));
             // Every invoker spells a seed macro, so it sits in the main
             // index or a file admitted just now: the first caller level.
             let seed_macro_bytes = byte_names(&seed_macros);
             frontier = std::iter::once(main_index)
-                .chain(admitted.iter())
+                .chain(admitted.iter().map(|admitted| &admitted.index))
                 .flat_map(|index| macro_body_callers(index, &seed_macro_bytes))
                 .filter(|name| !names.contains(name))
                 .collect::<BTreeSet<_>>();
         }
+        if self.main_callers.is_none() {
+            #[cfg(test)]
+            CALLER_MAP_BUILDS.with(|builds| builds.set(builds.get() + 1));
+            self.main_callers = Some(callers_by_callee(main_index));
+        }
         for level in 0..classify::MAX_TRANSITIVE_DEPTH {
             cancellation::checkpoint()?;
-            let callers = std::iter::once(main_index)
-                .chain(admitted.iter())
-                .flat_map(|index| caller_names(index, &names))
+            let main_callers = self.main_callers.as_ref().ok_or_else(|| {
+                "dependent scope: main caller map missing after insert".to_string()
+            })?;
+            let callers = caller_names(main_callers, &names)
+                .into_iter()
+                .chain(
+                    admitted
+                        .iter()
+                        .flat_map(|index| caller_names(&index.callers, &names)),
+                )
                 .filter(|name| !names.contains(name))
                 .chain(if level == 0 {
                     std::mem::take(&mut frontier)
@@ -1083,7 +1135,7 @@ impl NarrowedScope {
             let Some((index, _)) = self.admit_spelling(&callers, &mut admitted_now, limit)? else {
                 return Ok(self.over(&admitted_now));
             };
-            admitted.extend(index);
+            admitted.extend(index.map(IndexedCallers::from_index));
         }
         Ok(Closure::Files(admitted_now))
     }
@@ -1198,8 +1250,40 @@ impl NarrowedScope {
     }
 }
 
-/// Names of functions and tests in `index` that call one of `names`.
-fn caller_names(index: &RustIndex, names: &HashSet<String>) -> Vec<String> {
+/// Inverted call-name (bang trimmed) → caller-names map for one index.
+fn callers_by_callee(index: &RustIndex) -> CallersByCallee {
+    let mut callers = CallersByCallee::new();
+    let mut record = |name: &str, calls: &[crate::analysis::facts::CallFact]| {
+        for call in calls {
+            callers
+                .entry(call.name.trim_end_matches('!').to_string())
+                .or_default()
+                .insert(name.to_string());
+        }
+    };
+    for function in index.functions() {
+        record(&function.name, &function.calls);
+    }
+    for test in index.tests() {
+        record(&test.name, &test.calls);
+    }
+    callers
+}
+
+/// Union of the caller-name sets for each name in `names`.
+fn caller_names(callers: &CallersByCallee, names: &HashSet<String>) -> BTreeSet<String> {
+    names
+        .iter()
+        .filter_map(|name| callers.get(name))
+        .flatten()
+        .cloned()
+        .collect()
+}
+
+/// Scan-based caller names: the pre-#9212 `caller_names` body, kept as the
+/// closure-equality oracle.
+#[cfg(test)]
+fn caller_names_by_scan(index: &RustIndex, names: &HashSet<String>) -> BTreeSet<String> {
     let calls_any = |calls: &[crate::analysis::facts::CallFact]| {
         calls
             .iter()
@@ -1452,6 +1536,30 @@ fn composes_modules(bytes: &[u8]) -> bool {
     })
 }
 
+/// The `.rs` file names a composing file spells, or `"*"` when it composes
+/// modules without spelling one.
+fn note_composed_names(bytes: &[u8], names: &mut BTreeSet<String>) {
+    if !composes_modules(bytes) {
+        return;
+    }
+    let text = String::from_utf8_lossy(bytes);
+    let mut spelled = false;
+    // Every quote-delimited segment is read, not only the odd ones: an
+    // earlier unpaired quote (an escaped quote in a string or comment) flips
+    // parity, and a skipped real literal would leave a composed binary
+    // confined. A code segment that happens to end in `.rs` only widens.
+    for literal in text.split('"') {
+        if let Some(name) = literal.strip_suffix(".rs") {
+            let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
+            names.insert(format!("{base}.rs"));
+            spelled = true;
+        }
+    }
+    if !spelled {
+        names.insert("*".to_string());
+    }
+}
+
 fn identifier_tokens(text: &str) -> impl Iterator<Item = String> + '_ {
     identifier_runs(text.as_bytes()).map(|run| String::from_utf8_lossy(run).into_owned())
 }
@@ -1473,11 +1581,22 @@ fn macro_rules_names(bytes: &[u8]) -> Vec<String> {
 #[cfg(test)]
 thread_local! {
     static MAIN_TOKEN_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static CALLER_MAP_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An earlier unpaired quote must not hide a real `#[path]` literal.
+    #[test]
+    fn composed_names_survive_an_unpaired_quote_before_the_path_literal() {
+        let source = b"// it\"s\n#[path = \"../fuzz/parse.rs\"]\nmod shadow;\nconst X: &str = \"other.rs\";\n";
+        let mut names = BTreeSet::new();
+        note_composed_names(source, &mut names);
+        assert!(names.contains("parse.rs"), "{names:?}");
+        assert!(!names.contains("*"), "{names:?}");
+    }
 
     /// The seed scan reads the main index once per scope, and for every
     /// owner (ASCII, Unicode, absent) it finds the macros the old per-owner
@@ -1528,6 +1647,7 @@ mod tests {
             consumed: ConsumedRustSources::default(),
             widen: true,
             main_tokens: None,
+            main_callers: None,
         };
         let before = MAIN_TOKEN_BUILDS.with(std::cell::Cell::get);
         for owner in ["owner", "größe", "owner_x", "missing", "sized"] {
@@ -1553,6 +1673,224 @@ mod tests {
             BTreeSet::from(["call_owner".to_string(), "late".to_string()])
         );
         assert_eq!(MAIN_TOKEN_BUILDS.with(std::cell::Cell::get) - before, 1);
+        Ok(())
+    }
+
+    fn function_with_calls(name: &str, calls: &[&str]) -> FunctionSummary {
+        use crate::analysis::facts::{CallFact, FunctionSourceRole};
+        use crate::domain::SymbolId;
+        FunctionSummary {
+            id: SymbolId(format!("src/lib.rs::{name}")),
+            name: name.to_string(),
+            file: PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            end_line: 1,
+            body: String::new().into(),
+            calls: calls
+                .iter()
+                .map(|call| CallFact {
+                    line: 1,
+                    name: (*call).to_string(),
+                    text: (*call).into(),
+                })
+                .collect(),
+            returns: Vec::new(),
+            literals: Vec::new(),
+            source_role: FunctionSourceRole::Production,
+            attrs: Vec::new(),
+            impl_attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
+        }
+    }
+
+    /// Lookup unions match the pre-#9212 scan, including `!` call names.
+    #[test]
+    fn inverted_caller_map_matches_scan_including_macro_bangs() {
+        use crate::analysis::facts::{CallFact, FileFacts, OwnedRustIndex, TestFact};
+        let index = RustIndex::from_owned(OwnedRustIndex {
+            files: [(
+                PathBuf::from("src/lib.rs"),
+                FileFacts {
+                    path: PathBuf::from("src/lib.rs"),
+                    source: String::new().into(),
+                    ..FileFacts::default()
+                },
+            )]
+            .into_iter()
+            .collect(),
+            functions: vec![
+                function_with_calls("owner", &[]),
+                function_with_calls("relay", &["owner"]),
+                function_with_calls("bang", &["owner!"]),
+                function_with_calls("unrelated", &["other"]),
+            ],
+            tests: vec![TestFact {
+                name: "relay_holds".to_string(),
+                file: PathBuf::from("src/lib.rs"),
+                start_line: 1,
+                end_line: 1,
+                body: String::new().into(),
+                calls: vec![CallFact {
+                    line: 1,
+                    name: "relay".to_string(),
+                    text: "relay".into(),
+                }],
+                assertions: Vec::new(),
+                literals: Vec::new(),
+                attrs: Vec::new(),
+                nested_fn_names: Vec::new(),
+                let_bindings: Vec::new(),
+            }],
+            ..Default::default()
+        });
+        let map = callers_by_callee(&index);
+        for names in [
+            HashSet::from(["owner".to_string()]),
+            HashSet::from(["relay".to_string()]),
+            HashSet::from(["owner".to_string(), "relay".to_string()]),
+            HashSet::from(["missing".to_string()]),
+            HashSet::from(["other".to_string()]),
+            HashSet::new(),
+        ] {
+            assert_eq!(
+                caller_names(&map, &names),
+                caller_names_by_scan(&index, &names),
+                "{names:?}"
+            );
+        }
+        assert_eq!(
+            caller_names(&map, &HashSet::from(["owner".to_string()])),
+            BTreeSet::from(["bang".to_string(), "relay".to_string()])
+        );
+    }
+
+    fn write_rel(root: &Path, rel: &str, source: &str) -> Result<PathBuf, String> {
+        let path = root.join(rel);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|err| format!("create parent: {err}"))?;
+        }
+        std::fs::write(&path, source).map_err(|err| format!("write {rel}: {err}"))?;
+        Ok(PathBuf::from(rel))
+    }
+
+    /// Same sources as `dependent_scope_admits_callers_and_keeps_the_full_witness`:
+    /// the inverted map must admit the same withheld caller files.
+    #[test]
+    fn inverted_caller_map_keeps_the_existing_reach_closure() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let root = std::env::temp_dir().join(format!("ripr-9212-reach-closure-{stamp}"));
+        std::fs::create_dir_all(&root).map_err(|err| format!("create temp root: {err}"))?;
+        write_rel(
+            &root,
+            "a/src/lib.rs",
+            "pub fn quarble_gauge(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
+        )?;
+        write_rel(
+            &root,
+            "b/src/lib.rs",
+            "pub fn relay(flag: bool) -> bool {\n    scope_a::quarble_gauge(flag)\n}\n",
+        )?;
+        write_rel(
+            &root,
+            "b/tests/relay_tests.rs",
+            "#[test]\nfn relay_holds() {\n    assert!(scope_b::relay(true));\n}\n",
+        )?;
+        write_rel(
+            &root,
+            "c/src/lib.rs",
+            "pub fn forward(flag: bool) -> bool {\n    scope_b::relay(flag)\n}\n",
+        )?;
+        write_rel(
+            &root,
+            "c/tests/forward_tests.rs",
+            "#[test]\nfn forward_holds() {\n    assert!(scope_c::forward(true));\n}\n",
+        )?;
+        write_rel(&root, "d/src/lib.rs", "pub fn island() -> u8 {\n    2\n}\n")?;
+        write_rel(
+            &root,
+            "e/src/lib.rs",
+            "pub fn unrelated() -> u8 {\n    1\n}\n",
+        )?;
+        let main_files = vec![PathBuf::from("a/src/lib.rs"), PathBuf::from("b/src/lib.rs")];
+        let withheld = vec![
+            PathBuf::from("b/tests/relay_tests.rs"),
+            PathBuf::from("c/src/lib.rs"),
+            PathBuf::from("c/tests/forward_tests.rs"),
+            PathBuf::from("d/src/lib.rs"),
+            PathBuf::from("e/src/lib.rs"),
+        ];
+        let mut tokens = WithheldTokens::default();
+        for (id, file) in withheld.iter().enumerate() {
+            let bytes = std::fs::read(root.join(file))
+                .map_err(|err| format!("read {}: {err}", file.display()))?;
+            let id = u32::try_from(id).map_err(|err| format!("withheld id: {err}"))?;
+            tokens.insert(id, &bytes);
+        }
+        let all_files = main_files
+            .iter()
+            .cloned()
+            .chain(withheld.iter().cloned())
+            .collect::<Vec<_>>();
+        let mut consumed = ConsumedRustSources::default();
+        let main_index = parse_index(&root, &main_files, &mut consumed)?;
+        let map = callers_by_callee(&main_index);
+        let owner = HashSet::from(["quarble_gauge".to_string()]);
+        assert_eq!(
+            caller_names(&map, &owner),
+            caller_names_by_scan(&main_index, &owner)
+        );
+        let mut scope = NarrowedScope {
+            root: root.clone(),
+            all_files,
+            main_files,
+            withheld,
+            tokens,
+            closures: std::collections::BTreeMap::new(),
+            reach_index: Vec::new(),
+            widened_builds: 0,
+            full_declined: false,
+            full_reach: None,
+            test_harnesses: Vec::new(),
+            consumed,
+            widen: true,
+            main_tokens: None,
+            main_callers: None,
+        };
+        let before = CALLER_MAP_BUILDS.with(std::cell::Cell::get);
+        let closure = scope.extend_reach("quarble_gauge", &main_index, 1_000)?;
+        let Closure::Files(reached) = closure else {
+            return Err("expected a file closure, got over-limit".to_string());
+        };
+        let reached = reached
+            .iter()
+            .map(|path| path.to_string_lossy().replace('\\', "/"))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            reached,
+            BTreeSet::from([
+                "b/tests/relay_tests.rs".to_string(),
+                "c/src/lib.rs".to_string(),
+                "c/tests/forward_tests.rs".to_string(),
+            ])
+        );
+        let after_first = CALLER_MAP_BUILDS.with(std::cell::Cell::get);
+        let _ = scope.extend_reach("island", &main_index, 1_000)?;
+        assert_eq!(
+            CALLER_MAP_BUILDS.with(std::cell::Cell::get) - after_first,
+            1,
+            "the main-index map is reused; only the newly admitted island index builds one"
+        );
+        assert!(
+            after_first > before,
+            "the first closure must build the main map and each admitted index once"
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove fixture: {err}"))?;
         Ok(())
     }
 

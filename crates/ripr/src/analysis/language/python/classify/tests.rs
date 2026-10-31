@@ -1011,7 +1011,7 @@ fn predicate_boundary_off_boundary_exact_oracle_is_weakly_exposed() -> Result<()
     );
     assert!(
         finding.missing.iter().any(|line| line.contains(
-            "No strong related test call places qty equal to item.on_hand; observed qty values: 3; observed item.on_hand values: unresolved"
+            "Some strong related calls have unresolved inputs, so static evidence cannot determine whether they reach the changed boundary"
         )),
         "{:?}",
         finding.missing
@@ -1213,7 +1213,7 @@ fn predicate_boundary_scope_computed_and_non_relational_predicates() -> Result<(
 #[test]
 fn predicate_boundary_without_literal_inputs_names_the_limitation() -> Result<(), String> {
     for tests in [
-        "from src.subject import bulk_discount\n\ndef test_bulk_discount_local():\n    quantity = 150\n    assert bulk_discount(quantity) == 0.15\n",
+        "from src.subject import bulk_discount\n\ndef test_bulk_discount_local():\n    quantity = 150\n    quantity += 1\n    assert bulk_discount(quantity) == 0.15\n",
         "from src.subject import bulk_discount\n\ndef test_bulk_discount_list():\n    assert bulk_discount(*[100]) == 0.15\n",
     ] {
         let finding = classify_case(
@@ -3225,6 +3225,120 @@ fn message_only_change_stays_exposed_when_a_bound_comparison_rejects_the_old_mes
         "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"negative value\") as exc:\n        check(-1)\n    assert str(exc.value) == \"negative value: must be at most zero\"\n",
     )?;
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+// #9185 two-step form: `msg = "..."` then `raise Exc(msg)` (the attrs
+// `default_if_none` shape). The changed line is a plain assignment.
+const LOCAL_OLD_LINE: &str = "        msg = \"negative value: must be at least zero\"";
+const LOCAL_NEW_LINE: &str = "        msg = \"negative value: must be at most zero\"";
+const LOCAL_SOURCE: &str = "def check(x):\n    if x < 0:\n        msg = \"negative value: must be at most zero\"\n        raise ValueError(msg)\n    return x\n";
+const MATCH_NEGATIVE_TEST: &str = "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"negative value\"):\n        check(-1)\n";
+
+fn classify_local_message_change(source: &str, tests: &str) -> Result<Finding, String> {
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(Path::new("tests/test_subject.py"), tests);
+    classify_change_with_source(
+        file,
+        3,
+        LOCAL_NEW_LINE,
+        Some(LOCAL_OLD_LINE),
+        &owners,
+        &tests,
+        Some(source),
+    )
+    .ok_or_else(|| "message change must produce a finding".to_string())
+}
+
+#[test]
+fn local_message_change_under_a_pattern_that_fits_both_messages_is_weakly_exposed()
+-> Result<(), String> {
+    for tests in [
+        MATCH_NEGATIVE_TEST,
+        "import unittest\nfrom src.subject import check\n\nclass T(unittest.TestCase):\n    def test_negative(self):\n        with self.assertRaisesRegex(ValueError, \"negative value\"):\n            check(-1)\n",
+    ] {
+        let finding = classify_local_message_change(LOCAL_SOURCE, tests)?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+        let reason = missing_boundary(&finding, "message \"negative value: must be at most zero\"")
+            .ok_or_else(|| format!("missing discriminator absent: {finding:?}"))?;
+        assert!(
+            reason.contains("matches the old message \"negative value: must be at least zero\""),
+            "{reason}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn local_message_change_stays_exposed_when_a_pattern_rejects_the_old_message() -> Result<(), String>
+{
+    for tests in [
+        "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"at most zero\"):\n        check(-1)\n",
+        "import pytest\nfrom src.subject import check\n\ndef test_a():\n    with pytest.raises(ValueError, match=\"negative value\"):\n        check(-1)\n\ndef test_b():\n    with pytest.raises(ValueError, match=\"at most\"):\n        check(-2)\n",
+    ] {
+        let finding = classify_local_message_change(LOCAL_SOURCE, tests)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{tests}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn local_message_change_fails_open_on_unreadable_patterns() -> Result<(), String> {
+    for tests in [
+        "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"negative.*value\"):\n        check(-1)\n",
+        "import pytest\nfrom src.subject import check\n\nPATTERN = build()\n\ndef test_negative():\n    with pytest.raises(ValueError, match=PATTERN):\n        check(-1)\n",
+        "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(ValueError) as exc:\n        check(-1)\n    assert str(exc.value) == \"negative value: must be at most zero\"\n",
+    ] {
+        let finding = classify_local_message_change(LOCAL_SOURCE, tests)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{tests}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn local_message_change_stays_unresolved_unless_the_raise_is_the_only_use() -> Result<(), String> {
+    // Each owner mentions `msg` somewhere besides the assignment and one
+    // `raise Exc(msg)`, or reaches it dynamically, so the message the pattern
+    // reads is not provably the edited literal: the existing verdict stands.
+    for source in [
+        // A second use of the message.
+        "def check(x):\n    if x < 0:\n        msg = \"negative value: must be at most zero\"\n        log(msg)\n        raise ValueError(msg)\n    return x\n",
+        // A rebind before the raise.
+        "def check(x):\n    if x < 0:\n        msg = \"negative value: must be at most zero\"\n        msg = msg2(x)\n        raise ValueError(msg)\n    return x\n",
+        // The raise transforms the message.
+        "def check(x):\n    if x < 0:\n        msg = \"negative value: must be at most zero\"\n        raise ValueError(msg.upper())\n    return x\n",
+        // The raise chains a cause.
+        "def check(x):\n    if x < 0:\n        msg = \"negative value: must be at most zero\"\n        raise ValueError(msg) from None\n    return x\n",
+        // The name is a parameter the caller can bind.
+        "def check(x, msg=None):\n    if x < 0:\n        msg = \"negative value: must be at most zero\"\n        raise ValueError(msg)\n    return x\n",
+        // Dynamic scope access can rebind the name.
+        "def check(x):\n    if x < 0:\n        msg = \"negative value: must be at most zero\"\n        locals().update(msg=other())\n        raise ValueError(msg)\n    return x\n",
+        // No raise reads the message.
+        "def check(x):\n    if x < 0:\n        msg = \"negative value: must be at most zero\"\n        return msg\n    raise ValueError(\"negative value\")\n",
+        // The raise comes before the assignment.
+        "def check(x):\n    if x < 0:\n        raise ValueError(msg)\n        msg = \"negative value: must be at most zero\"\n    return x\n",
+    ] {
+        let finding = classify_local_message_change(source, MATCH_NEGATIVE_TEST)?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::WeaklyExposed,
+            "{source}: {finding:?}"
+        );
+        assert!(
+            missing_boundary(&finding, "message \"negative value: must be at most zero\"")
+                .is_none(),
+            "{source}: {finding:?}"
+        );
+    }
     Ok(())
 }
 
