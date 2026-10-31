@@ -332,6 +332,43 @@ pub(super) fn print_gate_help() {
     println!("{}", render_command_help(GATE_HELP, &["gate evaluate"]));
 }
 
+/// Help for a group command (`policy`, `reports`, `baseline`, `pr-comments`).
+///
+/// The group shares one body across its leaves. When the first argument names
+/// a registered leaf (`policy readiness`), the body's lead sentence is replaced
+/// by that leaf's one-line catalog summary, the same sentence `ripr help --all`
+/// shows; otherwise the group help prints unchanged.
+pub(super) fn print_group_help(group: &str, args: &[String]) {
+    let prefix = format!("{group} ");
+    let Some(group_body) = registered_command_paths()
+        .iter()
+        .find(|path| path.starts_with(&prefix))
+        .and_then(|path| help_text_for(path))
+    else {
+        return;
+    };
+    let rendered = render_command_help(group_body, &[]);
+    let leaf_summary = args.first().and_then(|leaf| {
+        let path = format!("{group} {leaf}");
+        if !registered_command_paths().contains(&path.as_str()) {
+            return None;
+        }
+        catalog_summary(&path)
+    });
+    match (leaf_summary, rendered.split_once('\n')) {
+        (Some(summary), Some((_, rest))) => println!("{summary}\n{rest}"),
+        _ => println!("{rendered}"),
+    }
+}
+
+/// The catalog `summary` field for one command path.
+fn catalog_summary(path: &str) -> Option<&'static str> {
+    let entry = crate::cli::command_catalog::catalog()
+        .iter()
+        .find(|entry| entry.path == path)?;
+    crate::cli::command_metadata::metadata_for(entry).map(|metadata| metadata.summary)
+}
+
 pub(super) fn print_baseline_help() {
     println!("{}", render_command_help(BASELINE_HELP, &[]));
 }
@@ -348,6 +385,7 @@ pub(super) fn print_pr_ledger_help() {
     println!("{}", render_command_help(PR_LEDGER_HELP, &[]));
 }
 
+#[cfg(test)]
 pub(super) fn print_pr_comments_help() {
     println!("{}", render_command_help(PR_COMMENTS_HELP, &[]));
 }
@@ -607,7 +645,7 @@ mod tests {
     fn help_overview_fits_one_screen() {
         let lines = HELP.lines().count();
         assert!(
-            lines <= 48,
+            lines <= 49,
             "the default help screen is {lines} lines; keep it under one screen and put \
              reference material in HELP_ALL (ripr help --all)"
         );
@@ -958,7 +996,8 @@ mod tests {
         assert!(GATE_HELP.contains("`config_error` reports stay quiet"));
         assert!(GATE_HELP.contains("Must be an existing directory"));
         assert!(GATE_HELP.contains("message naming the root"));
-        assert!(BASELINE_HELP.contains("ripr baseline create --from PATH"));
+        assert!(BASELINE_HELP.contains("ripr baseline create (--from PATH | --from-check PATH)"));
+        assert!(BASELINE_HELP.contains("--from-check PATH"));
         assert!(BASELINE_HELP.contains("--dry-run"));
         assert!(BASELINE_HELP.contains("it prints the candidate JSON"));
         assert!(BASELINE_HELP.contains("to stdout without"));
@@ -979,7 +1018,7 @@ mod tests {
         // --force resets ripr.toml only for plain `ripr init`; with --ci/--mcp
         // the plan keeps it. The option line must not claim otherwise.
         assert!(
-            INIT_HELP.contains("With --ci or --mcp, ripr.toml is"),
+            INIT_HELP.contains("With --ci, --mcp or --agents, ripr.toml is"),
             "init --force help must state it never resets ripr.toml alongside --ci/--mcp"
         );
         assert!(!INIT_HELP.contains("Overwrite an existing ripr.toml, generated workflow"));

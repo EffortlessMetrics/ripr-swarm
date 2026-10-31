@@ -320,7 +320,86 @@ fn pytest_section(root: &Path) -> Option<PytestSection> {
             return section_of(&text, header, false);
         }
     }
+    tox_command_section(root)
+}
+
+/// The pytest options of a `tox.ini` `[testenv]` `commands` line (#4561), for a
+/// project whose only doctest signal is the command it runs
+/// (`pytest --doctest-modules`).
+///
+/// Read only when no pytest configuration of any kind exists: a
+/// `pyproject.toml` pytest table, whichever form, may reshape what a bare
+/// `pytest` collects (the `humanize` negative twin), so it leaves collection
+/// unknown. A line is read only when it is exactly one pytest invocation
+/// (`pytest`, `py.test` or `python -m pytest`) with no shell operator, factor
+/// condition or `tox` substitution other than an empty `{posargs}`.
+fn tox_command_section(root: &Path) -> Option<PytestSection> {
+    if read_bounded(&root.join("pyproject.toml")).is_some_and(|text| {
+        text.lines()
+            .any(|line| line.trim().starts_with("[tool.pytest"))
+    }) {
+        return None;
+    }
+    let text = read_bounded(&root.join("tox.ini"))?;
+    let mut in_testenv = false;
+    let mut in_commands = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && !line.starts_with(char::is_whitespace) {
+            in_testenv = trimmed == "[testenv]";
+            in_commands = false;
+            continue;
+        }
+        if !in_testenv || trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';')
+        {
+            continue;
+        }
+        let command = if line.starts_with(char::is_whitespace) {
+            if !in_commands {
+                continue;
+            }
+            trimmed
+        } else if let Some((key, value)) = trimmed.split_once('=') {
+            in_commands = key.trim() == "commands";
+            if !in_commands {
+                continue;
+            }
+            value.trim()
+        } else {
+            in_commands = false;
+            continue;
+        };
+        if let Some(section) = pytest_command_section(command) {
+            return Some(section);
+        }
+    }
     None
+}
+
+/// The options of one command line when it is a single bare pytest run.
+fn pytest_command_section(command: &str) -> Option<PytestSection> {
+    let command = command.replace("{posargs}", "");
+    if command.contains([
+        '&', '|', ';', '$', '`', '{', '}', '<', '>', ':', '#', '(', ')',
+    ]) {
+        return None;
+    }
+    let words: Vec<&str> = command.split_whitespace().collect();
+    let rest = match words.as_slice() {
+        ["pytest" | "py.test", rest @ ..] | ["python" | "python3", "-m", "pytest", rest @ ..] => {
+            rest
+        }
+        _ => return None,
+    };
+    let addopts: Vec<String> = rest.iter().map(|word| (*word).to_string()).collect();
+    addopts
+        .iter()
+        .any(|word| word == "--doctest-modules")
+        .then_some(PytestSection {
+            addopts,
+            testpaths: None,
+            reshapes: false,
+        })
 }
 
 /// The options of one section. Values may continue on later lines (INI

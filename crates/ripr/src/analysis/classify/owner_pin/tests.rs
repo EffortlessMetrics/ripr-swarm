@@ -1,6 +1,30 @@
 mod json_construction;
 mod module_local_glob;
 mod retention_parity;
+/// A `lib.rs`/`main.rs` that a `mod lib;` declaration reaches nests its
+/// children under `lib/`, so only an actual crate root (or `mod.rs`) may
+/// resolve a `cfg_if!` module beside itself.
+#[test]
+fn cfg_if_layout_file_rejects_non_root_lib_and_main() {
+    for accepted in [
+        "src/lib.rs",
+        "crates/a/src/main.rs",
+        "src/bin/tool/main.rs",
+        "src/util/mod.rs",
+    ] {
+        assert!(cfg_if_layout_file(Path::new(accepted)), "{accepted}");
+    }
+    for refused in [
+        "src/util/lib.rs",
+        "src/util/main.rs",
+        "src/bin/tool/lib.rs",
+        "lib.rs",
+        "src/util.rs",
+    ] {
+        assert!(!cfg_if_layout_file(Path::new(refused)), "{refused}");
+    }
+}
+
 #[test]
 fn module_shadow_exempts_only_the_owners_nearest_module() -> Result<(), String> {
     // The owner's nearest enclosing module is the production declaration's
@@ -42,6 +66,7 @@ fn module_shadow_exempts_only_the_owners_nearest_module() -> Result<(), String> 
     Ok(())
 }
 
+mod shared_macro_scan;
 mod shared_target_context;
 #[test]
 fn module_shadow_snapshot_shares_facts_and_complete_answers() -> Result<(), String> {
@@ -5548,6 +5573,126 @@ fn any_mention_in_another_macros_arguments_stays_ambiguous() {
     );
 }
 
+/// #5993: `#[macro_use] mod NAME;` written directly in the branches of a
+/// verified registry `cfg_if::cfg_if!` is that item written directly; any
+/// other `macro_use`, any `no_implicit_prelude`, and an unverified or
+/// shadowed `cfg_if` keep the attribute ambiguous for every trusted name.
+#[test]
+fn cfg_if_macro_use_module_is_admitted_only_as_the_plain_item() {
+    let argument_attribute = |source: &str, resolves: bool, verified: bool, packages: &[&str]| {
+        let packages: BTreeSet<String> = packages.iter().map(|name| name.to_string()).collect();
+        trusted_macro_binding_sites(
+            source,
+            &packages,
+            &["assert_eq"],
+            &|_, declaration| resolves && cfg_if_module_name(declaration).is_some(),
+            &|krate| verified && krate == "cfg_if",
+        )
+        .into_iter()
+        .any(|(_, site)| matches!(site.kind, MacroBindingKind::ArgumentAttribute { .. }))
+    };
+    let admitted = |source: &str| !argument_attribute(source, true, true, &[]);
+    for source in [
+        "cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        "::cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        "cfg_if::cfg_if! {\n    if #[cfg(unix)] {\n        #[macro_use]\n        mod macros;\n    } else if #[cfg(windows)] {\n        #[macro_use]\n        mod win;\n        fn f() {}\n    } else {\n        #[macro_use]\n        mod other;\n    }\n}",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { mod a; #[macro_use] mod macros; mod b; } }",
+        // A glob scoped to an inline module cannot bind the top-level name.
+        "cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }\nmod tests { use super::*; }",
+        // Another plain block never names `cfg_if` itself.
+        "cfg_if::cfg_if! { if #[cfg(unix)] { fn f() {} } }\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        // No `macro_use` at all was never an argument attribute.
+        "cfg_if::cfg_if! { if #[cfg(unix)] { mod macros; } }",
+    ] {
+        assert!(admitted(source), "{source}");
+    }
+    // Each discriminator alone flips the admission.
+    let source = "cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }";
+    assert!(
+        argument_attribute(source, false, true, &[]),
+        "unresolved module"
+    );
+    assert!(
+        argument_attribute(source, true, false, &[]),
+        "unverified crate"
+    );
+    assert!(
+        argument_attribute(source, true, true, &["cfg-if"]),
+        "workspace package named cfg-if"
+    );
+    for refused in [
+        "mod cfg_if {}\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        "use other::thing as cfg_if;\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        "extern crate other as cfg_if;\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        // A bare name could be any macro in scope.
+        "cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        "other::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] extern crate other; } }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros { macro_rules! m { () => {}; } } } }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] #[path = \"x.rs\"] mod macros; } }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { #[path = \"x.rs\"] #[macro_use] mod macros; } }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { #[cfg(a)] #[macro_use] mod macros; } }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] pub mod macros; } }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use(m)] mod macros; } }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; #[no_implicit_prelude] mod quiet; } }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { mod macros; } else { #![no_implicit_prelude] } }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { inner! { #[macro_use] mod macros; } } }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { mod m { #[macro_use] mod macros; } } }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { fn f() { #[macro_use] mod macros; } } }",
+        // Inside an inline module the file is `inner/macros.rs`, not the
+        // `macros.rs` beside the declaring file.
+        "mod inner { cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } } }",
+        "#[path = \"x\"] mod inner { cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } } }",
+        // Another binding of the name `cfg_if` in this file.
+        "use crate::compat::cfg_if;\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        "use crate::compat::*;\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        "use crate::compat::{self, *};\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        "use crate::{compat::cfg_if};\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        "include!(\"shadow.rs\");\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        // A user macro invoked at item position may expand to a `cfg_if`
+        // import or module that exists only as tokens here.
+        "macro_rules! rebind { () => { use crate::compat::cfg_if; }; }\nrebind!();\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        "macro_rules! rebind { () => { mod cfg_if {} }; }\nrebind!();\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        "mod inner { other!(); }\nother!();\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        // A second block that itself names `cfg_if` may rebind it.
+        "cfg_if::cfg_if! { if #[cfg(unix)] { use crate::compat::cfg_if; } }\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        // Not the `if #[cfg(..)] { .. } else { .. }` shape.
+        "cfg_if::cfg_if! { #[macro_use] mod macros; }",
+        "cfg_if::cfg_if! { if cfg!(unix) { #[macro_use] mod macros; } }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } else }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } else { } extra }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] ( #[macro_use] mod macros; ) }",
+    ] {
+        assert!(!admitted(refused), "{refused}");
+    }
+    // The module name and the item boundary are read from the tokens.
+    let sites = |source: &str| {
+        trusted_macro_binding_sites(
+            source,
+            &BTreeSet::new(),
+            &["assert_eq"],
+            &|_, declaration| cfg_if_module_name(declaration) == Some("macros"),
+            &|krate| krate == "cfg_if",
+        )
+    };
+    assert!(
+        sites("cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }").is_empty(),
+        "premise: the named module resolves"
+    );
+    assert!(
+        !sites("cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod elsewhere; } }").is_empty(),
+        "a module the resolver does not know stays refused"
+    );
+    // Admission removes only the attribute refusal: a mention of the
+    // assertion in the arguments still binds it.
+    assert!(
+        !sites(
+            "cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; macro_rules! assert_eq { () => {}; } } }"
+        )
+        .is_empty()
+    );
+}
+
 #[test]
 fn a_bound_trusted_call_hides_attributes_and_nested_calls_from_the_pin() {
     // #8446: the second pass over a bound trusted name's calls must read an
@@ -5688,6 +5833,10 @@ fn a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted() {
         format!("{definition}{definition}{call}"),
         format!("use other::case;\n{definition}{call}"),
         format!("use other::wrap as case;\n{definition}{call}"),
+        // Raw-identifier spellings and nested lists bind the same name.
+        format!("use other::r#case;\n{definition}{call}"),
+        format!("use other::wrap as r#case;\n{definition}{call}"),
+        format!("use other::{{inner::{{case}}}};\n{definition}{call}"),
         // Reached by path, so not the textual definition.
         format!("{definition}crate::case!(one, |v| {{ assert_eq!(v, 1); }});\n"),
         // The definition invokes a macro or holds a binding word.
@@ -11216,6 +11365,8 @@ fn test_crate_bindings_of_the_root_are_read_from_that_crate_only() {
 mod claims_direction;
 mod expect_test_pins;
 mod helper_pins;
+#[cfg(test)]
+mod projected_workspace_memo;
 
 /// One `#[test]` over `weight`, with `body` as its statements.
 fn weight_test(signature: &str, body: &str) -> String {
@@ -12893,11 +13044,14 @@ fn priming_fans_the_workspace_macro_scan_out_once_and_lookups_only_read_it() -> 
         .num_threads(2)
         .build()
         .map_err(|e| e.to_string())?;
+    // The scan is shared per index (#11509), so the control and the primed
+    // run each get their own index to pay their own scan.
     let index = convergence_index();
-    let lookup_all = |syntax: &OwnerPinSyntax| {
+    let primed_index = convergence_index();
+    let lookup_all = |syntax: &OwnerPinSyntax, index: &RustIndex| {
         for name in assertion_context_macros() {
             for test_root in [None, Some(Path::new(TESTS))] {
-                let _ = syntax.workspace_macro_site(name, test_root, &index);
+                let _ = syntax.workspace_macro_site(name, test_root, index);
             }
         }
     };
@@ -12906,7 +13060,7 @@ fn priming_fans_the_workspace_macro_scan_out_once_and_lookups_only_read_it() -> 
     let unprimed = OwnerPinSyntax::default();
     let in_line = pool.install(|| {
         LAST_SCAN_FAN_OUT.with(|last| last.set(None));
-        lookup_all(&unprimed);
+        lookup_all(&unprimed, &index);
         LAST_SCAN_FAN_OUT.with(std::cell::Cell::get)
     });
     assert_eq!(in_line, Some(false), "an unprimed worker scans in line");
@@ -12914,7 +13068,7 @@ fn priming_fans_the_workspace_macro_scan_out_once_and_lookups_only_read_it() -> 
     let primed = OwnerPinSyntax::default();
     let fanned_out = pool.install(|| {
         LAST_SCAN_FAN_OUT.with(|last| last.set(None));
-        primed.prime_workspace_macro_scan(&index);
+        primed.prime_workspace_macro_scan(&primed_index);
         LAST_SCAN_FAN_OUT.with(std::cell::Cell::get)
     });
     assert_eq!(fanned_out, Some(true), "priming fans out over its pool");
@@ -12932,7 +13086,7 @@ fn priming_fans_the_workspace_macro_scan_out_once_and_lookups_only_read_it() -> 
     // After priming no worker scans again, and the guard did not leak.
     let after = pool.install(|| {
         LAST_SCAN_FAN_OUT.with(|last| last.set(None));
-        lookup_all(&primed);
+        lookup_all(&primed, &primed_index);
         LAST_SCAN_FAN_OUT.with(std::cell::Cell::get)
     });
     assert_eq!(after, None, "lookups after priming must not scan");
@@ -12944,8 +13098,8 @@ fn priming_fans_the_workspace_macro_scan_out_once_and_lookups_only_read_it() -> 
     for name in assertion_context_macros() {
         for test_root in [None, Some(Path::new(TESTS))] {
             assert_eq!(
-                primed.workspace_macro_site(name, test_root, &index),
-                unprimed.workspace_macro_site(name, test_root, &index),
+                primed.workspace_macro_site(name, test_root, &primed_index),
+                unprimed.workspace_macro_site(name, test_root, &primed_index),
                 "{name} {test_root:?}"
             );
         }
@@ -13115,5 +13269,33 @@ fn memoized_file_renames_to_matches_the_direct_scan() {
                 "{source:?} / {name:?}"
             );
         }
+    }
+}
+
+/// Two long files of equal length that differ only at a byte the memo key does
+/// not sample must still get their own rename answers: the key may collide,
+/// the stored text decides.
+#[test]
+fn rename_memo_keys_that_collide_still_answer_per_file() {
+    let pad = "x".repeat(2400);
+    // Length 2400+ puts the sampling stride above 1, so odd offsets are
+    // skipped; "Fxo" and "Foo" differ at offset 13 ("use a::B as " is 12
+    // bytes), which is odd. Both names appear in the trailing comment of both
+    // texts so `file_renames_to` passes its `contains` shortcut and reaches
+    // the memo; the comment is masked, so only the real `as` item answers.
+    let renames = format!("use a::B as Foo; // Foo Fxo {pad}\n");
+    let other = renames.replacen("as Foo", "as Fxo", 1);
+    assert_eq!(renames.len(), other.len());
+    assert_ne!(renames, other);
+    assert_eq!(
+        source_sample_key(&renames),
+        source_sample_key(&other),
+        "precondition: the two texts must share a memo key"
+    );
+    for _ in 0..2 {
+        assert!(file_renames_to(&renames, "Foo"));
+        assert!(!file_renames_to(&other, "Foo"));
+        assert!(file_renames_to(&other, "Fxo"));
+        assert!(!file_renames_to(&renames, "Fxo"));
     }
 }

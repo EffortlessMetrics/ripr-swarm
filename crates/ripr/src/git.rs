@@ -322,9 +322,17 @@ fn git_command(root: &Path, args: &[&str]) -> Command {
     // no merge base, a damaged repository). A translated Git would word those
     // differently and silently lose the match, so messages stay in English.
     command.env("LC_ALL", "C");
+    // `git status` opportunistically refreshes and rewrites a stale index, and
+    // an index write fires the repository's `post-index-change` hook. ripr's
+    // analysis is read-only, so no optional lock (and no index write) is taken.
+    command.env("GIT_OPTIONAL_LOCKS", "0");
+    let null_device = if cfg!(windows) { "NUL" } else { "/dev/null" };
     command
         .current_dir(root)
         .args(UNTRUSTED_REPOSITORY_CONFIG)
+        // Defense in depth for the same planted-config threat: a repository's
+        // `core.hooksPath` (or `.git/hooks`) names programs git may run.
+        .args(["-c", &format!("core.hooksPath={null_device}")])
         // #6837: even status and path-only diff inventories can read the
         // user's orderfile. A stale path must not abort repair/currentness;
         // an empty value still tries to open a file, so use Git's null device.
@@ -1506,22 +1514,31 @@ fn terminate_then_classify(
     }
 }
 
+type PipeReader = (
+    std::thread::JoinHandle<()>,
+    mpsc::Receiver<Result<Vec<u8>, String>>,
+);
+
 /// Read one piped child stream to EOF on a helper thread so the poll loop
 /// never deadlocks against a full OS pipe buffer.
-fn spawn_pipe_reader(
-    mut pipe: impl std::io::Read + Send + 'static,
-) -> (std::thread::JoinHandle<()>, mpsc::Receiver<Vec<u8>>) {
+fn spawn_pipe_reader(mut pipe: impl std::io::Read + Send + 'static) -> PipeReader {
     let (sender, receiver) = mpsc::channel();
     let handle = std::thread::spawn(move || {
         let mut buffer = Vec::new();
-        let _ = pipe.read_to_end(&mut buffer);
-        let _ = sender.send(buffer);
+        // A read error after a valid prefix is not EOF (the bounded reader
+        // at spawn_bounded_pipe_reader keeps the same contract): forward it
+        // so the drain cannot present truncated output as complete.
+        let result = pipe
+            .read_to_end(&mut buffer)
+            .map(|_| buffer)
+            .map_err(|error| error.to_string());
+        let _ = sender.send(result);
     });
     (handle, receiver)
 }
 
 fn drain_pipe_reader(
-    reader: Option<(std::thread::JoinHandle<()>, mpsc::Receiver<Vec<u8>>)>,
+    reader: Option<PipeReader>,
     timed_out: bool,
     deadline: Option<Instant>,
     stream_name: &str,
@@ -1537,11 +1554,13 @@ fn drain_pipe_reader(
             .map_err(|_receive_error| mpsc::RecvTimeoutError::Disconnected),
     };
     match received {
-        Ok(buffer) => {
+        Ok(result) => {
             handle.join().map_err(|_panic_payload| {
                 format!("{stream_name} pipe reader panicked while collecting {describe}")
             })?;
-            Ok(buffer)
+            result.map_err(|error| {
+                format!("failed while reading {stream_name} from {describe}: {error}")
+            })
         }
         Err(mpsc::RecvTimeoutError::Timeout) if timed_out => {
             // The process was already terminated and reaped. Dropping the
@@ -1788,6 +1807,61 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
         let _ = std::fs::remove_dir_all(&root);
         if result? {
             return Err("git ran the repository's core.fsmonitor program".to_string());
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repository_post_index_change_hook_does_not_run() -> Result<(), String> {
+        use std::os::unix::fs::PermissionsExt;
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0);
+        let root =
+            std::env::temp_dir().join(format!("ripr-git-hookpath-{}-{stamp}", std::process::id()));
+        let marker = root.join("hook-ran");
+        let result: Result<bool, String> = (|| {
+            let hooks = root.join("hooks");
+            std::fs::create_dir_all(&hooks).map_err(|err| format!("create hooks: {err}"))?;
+            let hook = hooks.join("post-index-change");
+            std::fs::write(&hook, format!("#!/bin/sh\ntouch '{}'\n", marker.display()))
+                .map_err(|err| format!("write hook: {err}"))?;
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755))
+                .map_err(|err| format!("chmod hook: {err}"))?;
+            let hooks_path = hooks.display().to_string();
+            let plain = |args: &[&str]| -> Result<(), String> {
+                let output = Command::new("git")
+                    .args(args)
+                    .current_dir(&root)
+                    .env_remove("GIT_DIR")
+                    .env_remove("GIT_WORK_TREE")
+                    .output()
+                    .map_err(|err| format!("git {args:?}: {err}"))?;
+                if !output.status.success() {
+                    return Err(format!("git {args:?} failed: {output:?}"));
+                }
+                Ok(())
+            };
+            plain(&["init", "-q"])?;
+            plain(&["config", "user.email", "t@example.invalid"])?;
+            plain(&["config", "user.name", "t"])?;
+            std::fs::write(root.join("lib.rs"), "fn a() {}\n")
+                .map_err(|err| format!("write: {err}"))?;
+            plain(&["add", "lib.rs"])?;
+            plain(&["commit", "-q", "-m", "seed", "--no-verify"])?;
+            plain(&["config", "core.hooksPath", hooks_path.as_str()])?;
+            // A different size makes the cached stat data stale, so a plain
+            // `git status` would refresh and rewrite the index.
+            std::fs::write(root.join("lib.rs"), "fn a() { 1; }\n")
+                .map_err(|err| format!("rewrite: {err}"))?;
+            run_git(&root, &["status", "--porcelain", "-z"])?;
+            Ok(marker.exists())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        if result? {
+            return Err("git ran the repository's post-index-change hook".to_string());
         }
         Ok(())
     }
@@ -2696,6 +2770,34 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
 
         let reader = spawn_bounded_pipe_reader(PrefixThenError { emitted: false }, 1_024);
         let error = drain_bounded_pipe_reader(Some(reader), false, None, "stdout", "error-test")
+            .err()
+            .ok_or_else(|| "pipe read error was accepted as EOF".to_string())?;
+        if !error.contains("injected pipe failure") {
+            return Err(format!("unexpected pipe read error: {error}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unbounded_pipe_reader_propagates_error_after_valid_prefix() -> Result<(), String> {
+        struct PrefixThenError {
+            emitted: bool,
+        }
+
+        impl std::io::Read for PrefixThenError {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if self.emitted {
+                    return Err(std::io::Error::other("injected pipe failure"));
+                }
+                self.emitted = true;
+                let prefix = b"complete\0";
+                buffer[..prefix.len()].copy_from_slice(prefix);
+                Ok(prefix.len())
+            }
+        }
+
+        let reader = spawn_pipe_reader(PrefixThenError { emitted: false });
+        let error = drain_pipe_reader(Some(reader), false, None, "stdout", "error-test")
             .err()
             .ok_or_else(|| "pipe read error was accepted as EOF".to_string())?;
         if !error.contains("injected pipe failure") {

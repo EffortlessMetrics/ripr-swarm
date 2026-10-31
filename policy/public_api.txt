@@ -63,6 +63,10 @@ pub const ripr::output::start_here_state::START_HERE_WRONG_ROOT
 pub enum ripr::analysis::AnalysisMode
 pub enum ripr::analysis::LanguageRunStatus
 pub enum ripr::app::Mode
+pub enum ripr::domain::language_availability::AutoDetectionPolicy
+pub enum ripr::domain::language_availability::AvailabilityState
+pub enum ripr::domain::language_availability::ConfiguredIntent
+pub enum ripr::domain::language_availability::SupportTier
 pub enum ripr::lsp::diagnostic_budget::DiagnosticBudgetEligibility
 pub enum ripr::lsp::diagnostic_budget::DiagnosticBudgetError
 pub enum ripr::lsp::diagnostic_budget::DiagnosticOverflowReason
@@ -89,6 +93,9 @@ pub fn ripr::cli::run_with_interrupt_handling
 # re-exported at the cli boundary; covered_by: cargo test -p ripr --lib cli,
 # cargo test -p ripr --bin ripr, cargo xtask check-public-api.
 pub use ripr::cli::extract_global_verbose
+pub fn ripr::domain::language_availability::resolve_language_availability
+pub fn ripr::domain::language_availability::resolve_language_availability_all
+pub fn ripr::domain::language_availability::unavailable_recovery
 pub fn ripr::lsp::diagnostic_budget::build_budget_items_from_diagnostics
 pub fn ripr::lsp::diagnostic_budget::evaluate_diagnostic_budget
 pub fn ripr::lsp::serve
@@ -123,6 +130,7 @@ pub use ripr::output::join_cargo_mutants_location
 pub use ripr::output::parse_cargo_mutants_outcomes_json
 pub fn ripr::output::start_here_state::normalize_start_here_output_state
 pub fn ripr::output::start_here_state::start_here_output_state_is_known
+pub fn ripr::process_owner::bind_process_lifetime
 pub fn ripr::set_verbose
 pub mod ripr::analysis
 pub mod ripr::app
@@ -133,6 +141,7 @@ pub mod ripr::cli
 pub mod ripr::config
 pub mod ripr::domain
 pub mod ripr::domain::context_packet
+pub mod ripr::domain::language_availability
 pub mod ripr::lsp
 pub mod ripr::lsp::diagnostic_budget
 pub mod ripr::mcp
@@ -159,6 +168,8 @@ pub struct ripr::app::CheckOutput
 pub struct ripr::domain::context_packet::ContextPacket
 pub struct ripr::domain::context_packet::ContextPacketProbe
 pub struct ripr::domain::context_packet::ContextPacketRipr
+pub struct ripr::domain::language_availability::LanguageAvailabilityInput
+pub struct ripr::domain::language_availability::LanguageAvailabilityReport
 pub struct ripr::lsp::diagnostic_budget::DiagnosticBudget
 pub struct ripr::lsp::diagnostic_budget::DiagnosticBudgetItem
 pub struct ripr::lsp::diagnostic_budget::DiagnosticBudgetResult

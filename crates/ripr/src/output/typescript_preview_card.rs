@@ -186,7 +186,7 @@ pub(crate) fn typescript_preview_card(finding: &Finding) -> Option<TypeScriptPre
         why_not_actionable: actionability.why_not_actionable,
         repair_route: actionability.repair_route,
         repair_packet_ready: actionability.repair_packet_ready,
-        limits: limits(),
+        limits: limits(actionability.repair_packet_ready),
     })
 }
 
@@ -269,6 +269,11 @@ fn suggested_assertion_shape(
     missing_discriminator: Option<&str>,
     static_limits: &[String],
 ) -> String {
+    if evidence_value(finding, "actionability_category: ") == Some("private_member_reach_unknown") {
+        return evidence_value(finding, "repair_route: ")
+            .unwrap_or("Establish private-member reach before choosing an assertion shape.")
+            .to_string();
+    }
     if !static_limits.is_empty() {
         return "Resolve the named static limitation before selecting an assertion shape."
             .to_string();
@@ -331,10 +336,7 @@ fn suggested_assertion_shape(
 }
 
 fn strongest_related_test(finding: &Finding) -> Option<&RelatedTest> {
-    finding
-        .related_tests
-        .iter()
-        .max_by_key(|test| test.oracle_strength.rank())
+    crate::output::related_test_miss::strongest_related_test(&finding.related_tests)
 }
 
 fn evidence_value<'a>(finding: &'a Finding, prefix: &str) -> Option<&'a str> {
@@ -812,11 +814,20 @@ fn static_limit_label(kind: StaticLimitKind) -> String {
     kind.as_str().to_string()
 }
 
-fn limits() -> Vec<String> {
+fn limits(repair_packet_ready: bool) -> Vec<String> {
+    // #10709: a card whose shared validator reports `repair_packet_ready:
+    // true` must not also say it is not a repair packet. The card is still
+    // only a summary; the complete packet is a separate, equally advisory
+    // projection.
+    let card_boundary = if repair_packet_ready {
+        "This card is an advisory summary; the complete repair packet is projected separately and is also advisory."
+    } else {
+        "This card is advisory and is not a repair packet."
+    };
     vec![
         "Syntax-first TypeScript/JavaScript preview evidence only.".to_string(),
         "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.".to_string(),
-        "This card is advisory and is not a repair packet.".to_string(),
+        card_boundary.to_string(),
     ]
 }
 
@@ -884,6 +895,29 @@ mod tests {
         assert_eq!(json["repair_packet_ready"], false);
         assert_eq!(json["related_test"]["name"], "discount smoke");
         assert_eq!(json["missing_discriminator"], "amount == threshold");
+        Ok(())
+    }
+
+    /// #11228: with two equally strong tests the card names the same row the
+    /// check headline names (the first), not the last.
+    #[test]
+    fn typescript_preview_card_names_the_headline_test_when_oracles_tie() -> Result<(), String> {
+        let mut finding = sample_finding(OracleKind::ExactValue, OracleStrength::Strong);
+        let mut second = finding.related_tests[0].clone();
+        second.name = "discount small".to_string();
+        second.line = 8;
+        finding.related_tests[0].name = "discount big".to_string();
+        finding.related_tests.push(second);
+        let card = typescript_preview_card(&finding)
+            .ok_or_else(|| "expected TypeScript preview card".to_string())?;
+        let json = typescript_preview_card_json_value(&card);
+        assert_eq!(json["related_test"]["name"], "discount big");
+        // Negative: a strictly stronger later row still wins.
+        finding.related_tests[0].oracle_strength = OracleStrength::Smoke;
+        let card = typescript_preview_card(&finding)
+            .ok_or_else(|| "expected TypeScript preview card".to_string())?;
+        let json = typescript_preview_card_json_value(&card);
+        assert_eq!(json["related_test"]["name"], "discount small");
         Ok(())
     }
 
@@ -1796,7 +1830,7 @@ mod tests {
             confidence: 0.4,
             evidence: vec![
                 "owner: discountedTotal".to_string(),
-                "gap_state: advisory".to_string(),
+                "gap_state: unknown".to_string(),
                 "actionability_category: incomplete_repair_packet".to_string(),
                 "why_not_actionable: TypeScript preview lacks a complete repair packet contract"
                     .to_string(),

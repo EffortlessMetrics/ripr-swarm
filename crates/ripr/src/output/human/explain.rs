@@ -283,6 +283,13 @@ fn verdict_changers(finding: &Finding, owner_signature: Option<&str>) -> Vec<Str
             ProbeFamily::SideEffect | ProbeFamily::CallDeletion => {
                 format!("use an input that enters `{}`", fact.value)
             }
+            // #11147: a returned error variant under an unentered guard.
+            _ if fact
+                .reason
+                .starts_with(crate::domain::GUARD_UNENTERED_REASON_PREFIX) =>
+            {
+                format!("use an input that enters `{}`", fact.value)
+            }
             _ => format!("use an input that reaches `{}`", fact.value),
         });
     }
@@ -328,9 +335,7 @@ fn stop_reason_meaning(reason: &StopReason) -> &'static str {
             "ripr could not trace the changed value to anything a test observes"
         }
         StopReason::StaticProbeUnknown => "ripr has no probe shape for this kind of change",
-        StopReason::TransitiveReachUnresolved => {
-            "a test may reach this through a chain of internal calls ripr could not finish walking"
-        }
+        StopReason::TransitiveReachUnresolved => reason.describe(),
         StopReason::MacroReachUnresolved => {
             "a test may reach this through a macro ripr does not expand"
         }

@@ -12,7 +12,7 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: this TypeScript preview finding's repair packet is not ready (observed call input `shipping(6000)` does not reach the missing discriminator `amount == 5000`; derive an input that hits the boundary before the packet is delegatable); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
+  Safe next action: this TypeScript preview finding's repair packet is not ready (derive an input that hits the boundary before this repair can be handed to an agent: observed call input `shipping(6000)` does not reach the missing discriminator `amount == 5000`); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
   File: src/shipping.ts:3
   Language: typescript
   Language status: preview
@@ -23,7 +23,7 @@ Start here:
   Missing check (1 of 2): Related tests reach `shipping` with a strong oracle, but no strong
     assertion observes a `shipping(...)` call at the changed predicate boundary `amount == 5000`;
     inputs on one side of the boundary do not discriminate the changed comparison
-  Related test: tests/shipping.test.ts:3 large order ships at the reduced rate (ripr could not confirm that this assertion observes the changed behavior)
+  Related test: tests/shipping.test.ts:3 large order ships at the reduced rate (the preview adapter could not confirm that this assertion observes the changed behavior)
   Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `amount == 5000`; no actionable repair packet is emitted until verify, receipt,
     and edit-boundary fields are available

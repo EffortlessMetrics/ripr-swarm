@@ -41,8 +41,8 @@
       "evidence_path": ["reach yes: 1 related test(s) found for owner `recordHit`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but the preview adapter does not recognise the shape of the changed line; discriminate unknown.", "related test tests/stats.test.ts:5 one hit uses strong exact value oracle: assert.equal(...)"],
       "flow_sinks": [
       ],
-      "evidence": ["owner: recordHit", "probe_fact: ambiguous_fallback", "typescript_oracle_observed: stats.hits", "typescript_oracle_expected: 1", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/stats.test.ts:8", "gap_state: advisory", "actionability_category: missing_target_shape", "why_not_actionable: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape", "repair_route: add probe-specific discriminator extraction for this expression before repair packet projection", "missing_actionability_fields: repair_kind, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/stats.ts;line=10;kind=typescript_preview_probe;source_id=probe:src_stats.ts:typescript_preview:d2fea2a2;owner=recordHit", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["Related tests reach `recordHit` with a strong oracle, but the TypeScript preview adapter does not recognise the shape of the changed line, so static evidence cannot tie an assertion to it.", "TypeScript preview actionability `advisory` / `missing_target_shape`: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape. Repair route: add probe-specific discriminator extraction for this expression before repair packet projection"],
+      "evidence": ["owner: recordHit", "probe_fact: ambiguous_fallback", "typescript_oracle_observed: stats.hits", "typescript_oracle_expected: 1", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/stats.test.ts:8", "gap_state: unknown", "actionability_category: missing_target_shape", "why_not_actionable: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape", "repair_route: add probe-specific discriminator extraction for this expression before repair packet projection", "missing_actionability_fields: repair_kind, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/stats.ts;line=10;kind=typescript_preview_probe;source_id=probe:src_stats.ts:typescript_preview:d2fea2a2;owner=recordHit", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Related tests reach `recordHit` with a strong oracle, but the TypeScript preview adapter does not recognise the shape of the changed line, so static evidence cannot tie an assertion to it.", "TypeScript preview actionability `unknown` / `missing_target_shape`: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape. Repair route: add probe-specific discriminator extraction for this expression before repair packet projection"],
       "assertion_texts": {
       },
       "activation": {
@@ -67,7 +67,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "why": "the preview adapter could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {
@@ -107,7 +107,7 @@
         "actionability_category": "missing_target_shape",
         "authority_boundary": "preview_advisory_only",
         "evidence_needed_to_promote": "safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries",
-        "gap_state": "advisory",
+        "gap_state": "unknown",
         "missing_actionability_fields": [
           "repair_kind",
           "target_test_shape",

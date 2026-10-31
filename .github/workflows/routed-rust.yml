@@ -303,6 +303,43 @@ jobs:
           docs-only: ${{ needs.detect-docs-only.outputs.docs_only || 'false' }}
           max-changed-files: '160'
           max-changed-lines: '3000'
+      # Unresolved review threads fail the end-of-run eligibility recheck about an
+      # hour later, after every test shard went green. Refuse at request time
+      # instead, naming the threads. A read failure is only a warning: the final
+      # recheck remains the authority and fails closed on its own.
+      - name: Refuse unresolved review threads at request time
+        if: github.event_name == 'pull_request' && steps.candidate.outputs.status == 'admitted'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.entry.outputs.pr }}
+        run: |
+          set -uo pipefail
+          warn() { echo "::warning::review-thread pre-check $1; leaving it to the final eligibility recheck"; exit 0; }
+          q='query($number:Int!,$cursor:String){repository(owner:"EffortlessMetrics",name:"ripr-swarm"){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{isResolved comments(first:1){nodes{url}}}pageInfo{hasNextPage endCursor}}}}}'
+          threads=""
+          cursor=""
+          page=0
+          while :; do
+            page=$((page + 1))
+            [ "$page" -le 20 ] || warn "read more than 20 pages"
+            if [ -n "$cursor" ]; then
+              frame=$(gh api graphql -f query="$q" -F number="$PR_NUMBER" -F cursor="$cursor") || warn "could not read threads"
+            else
+              frame=$(gh api graphql -f query="$q" -F number="$PR_NUMBER") || warn "could not read threads"
+            fi
+            jq -e '.errors == null and (.data.repository.pullRequest.reviewThreads.nodes | type == "array")' <<<"$frame" >/dev/null || warn "got an unexpected response"
+            threads+=$(jq -r '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | "- " + (.comments.nodes[0].url // "unknown thread")' <<<"$frame")$'\n'
+            [ "$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$frame")" = true ] || break
+            cursor=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor' <<<"$frame")
+          done
+          threads=$(printf '%s' "$threads" | sed '/^$/d')
+          if [ -n "$threads" ]; then
+            count=$(printf '%s\n' "$threads" | wc -l)
+            echo "::error::PR #$PR_NUMBER has $count unresolved review thread(s); the final eligibility recheck would fail this run after the tests finish. Reply to and resolve every thread (bot threads included), then remove and re-add the merge-ready label."
+            printf '%s\n' "$threads"
+            exit 1
+          fi
 
   rust-cx43:
     name: Ripr Rust Small on CX43

@@ -64,7 +64,7 @@ TypeScript preview card (advisory)
   owner: discountedTotal
   owner kind: function
   changed behavior: predicate changed at src/pricing.ts:4: `if (DISCOUNT_THRESHOLD <= amount) {`
-  related test: tests/pricing.test.ts:7 discounts far above threshold
+  related test: tests/pricing.test.ts:3 no discount below threshold
   oracle: exact_value (strong)
   missing discriminator: DISCOUNT_THRESHOLD == amount
   suggested assertion shape: Exact-value evidence is present; verify it targets the changed discriminator.
@@ -75,12 +75,12 @@ TypeScript preview card (advisory)
   limits:
     - Syntax-first TypeScript/JavaScript preview evidence only.
     - No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.
-    - This card is advisory and is not a repair packet.
+    - This card is an advisory summary; the complete repair packet is projected separately and is also advisory.
 
 TypeScript repair packet (advisory)
   canonical gap: gap:typescript:typescript_preview:f12d3569
   source: discountedTotal at src/pricing.ts:4
-  related test: tests/pricing.test.ts::discounts far above threshold
+  related test: tests/pricing.test.ts::no discount below threshold
   oracle: expect(discountedTotal(10000)).toBe(expected)
   edit surface: tests/pricing.test.ts
   verify: npx --no-install jest tests/pricing.test.ts

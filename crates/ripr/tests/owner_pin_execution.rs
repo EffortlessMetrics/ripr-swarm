@@ -12,6 +12,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[path = "owner_pin_execution/cfg_if_macro_use.rs"]
+mod cfg_if_macro_use;
+
 #[path = "owner_pin_execution/field_projected_collection.rs"]
 mod field_projected_collection;
 

@@ -1,0 +1,52 @@
+{
+  "case_id": "mined-token-table-pinned-range",
+  "subject_id": "authored-mined-features",
+  "diff": "cases/mined-token-table-pinned-range.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 106
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "table_membership",
+  "test_shape": "production_static_lookup_table_row_pinned",
+  "hard_case": "Mirrors httparse, whose token and URI byte tables are static [bool; 256] values built by a macro; a table edit is caught only when a test reads that row.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "| b'A'..=b'Z' | b'a'..=b'z' | b'1'..=b'9'",
+        "mutated_line": "| b'A'..=b'Z' | b'a'..=b'z' | b'1'..=b'9'",
+        "outcome": "tests_failed",
+        "failing_test": "tests::token_table_pins_alphanumerics_and_bang",
+        "equivalence_review": "not equivalent: b'0' leaves the table"
+      },
+      {
+        "replacement": "| b'A'..=b'Y' | b'a'..=b'z' | b'0'..=b'9'",
+        "mutated_line": "| b'A'..=b'Y' | b'a'..=b'z' | b'0'..=b'9'",
+        "outcome": "tests_failed",
+        "failing_test": "tests::token_table_pins_alphanumerics_and_bang",
+        "equivalence_review": "not equivalent: b'Z' leaves the table"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "token_table_pins_alphanumerics_and_bang reads b'0', b'9', b'a', b'Z' and b'!' through is_token, so both range edits fail it.",
+  "labeling_observation": {
+    "ripr_commit": "f0397266",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

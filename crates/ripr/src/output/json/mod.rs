@@ -1551,6 +1551,54 @@ mod tests {
         assert!(out.contains("\"oracle_kind\": \"exact_value\""));
     }
 
+    /// #11228: on an oracle-strength tie the JSON oracle summary describes the
+    /// same row the shared selector (card, packet, headline) names: the first.
+    #[test]
+    fn finding_json_oracle_summary_and_shared_selector_agree_on_a_tie() {
+        let row = |name: &str, line: usize, kind: OracleKind| RelatedTest {
+            name: name.to_string(),
+            file: PathBuf::from("tests/pricing.test.ts"),
+            line,
+            oracle: Some("expect(discount(200)).toBe(180)".to_string()),
+            oracle_kind: kind,
+            oracle_strength: OracleStrength::Strong,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
+        };
+        let mut finding = unknown_finding();
+        finding.language = Some(crate::domain::LanguageId::TypeScript);
+        finding.related_tests = vec![
+            row("big", 5, OracleKind::ExactValue),
+            row("small", 6, OracleKind::ExactErrorVariant),
+        ];
+        let picked =
+            crate::output::related_test_miss::strongest_related_test(&finding.related_tests)
+                .map(|t| t.name.clone());
+        assert_eq!(picked.as_deref(), Some("big"));
+
+        let mut out = String::new();
+        finding_json(&mut out, &finding, 0);
+        // The finding emits one `oracle_kind` per related-test row and then
+        // the summary. Two rows (exact_value, exact_error_variant) plus a
+        // summary naming the first tied row gives two exact_value and one
+        // exact_error_variant; a summary naming the last tied row flips the
+        // counts.
+        assert_eq!(
+            out.matches("\"oracle_kind\": \"exact_value\"").count(),
+            2,
+            "{out}"
+        );
+        assert_eq!(
+            out.matches("\"oracle_kind\": \"exact_error_variant\"")
+                .count(),
+            1,
+            "{out}"
+        );
+    }
+
     #[test]
     fn finding_json_formats_observed_value_context_labels() {
         let mut finding = unknown_finding();
@@ -2056,7 +2104,7 @@ mod tests {
         let actionability = &value["preview_actionability"];
         assert_eq!(actionability["authority_boundary"], "preview_advisory_only");
         assert_eq!(actionability["repair_packet_ready"], false);
-        assert_eq!(actionability["gap_state"], "advisory");
+        assert_eq!(actionability["gap_state"], "unknown");
         assert_eq!(
             actionability["actionability_category"],
             "incomplete_repair_packet"
@@ -2164,7 +2212,7 @@ mod tests {
         finding.owner_kind = Some(OwnerKind::Function);
         finding.evidence = vec![
             "owner: discountedTotal".to_string(),
-            "gap_state: advisory".to_string(),
+            "gap_state: unknown".to_string(),
             "actionability_category: incomplete_repair_packet".to_string(),
             "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract".to_string(),
             "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available".to_string(),

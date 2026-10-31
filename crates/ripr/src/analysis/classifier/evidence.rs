@@ -43,6 +43,8 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     pub(in crate::analysis) activation: ActivationEvidence,
     pub(in crate::analysis) related_tests: Vec<RelatedTest>,
     pub(in crate::analysis) related_tests_matched_total: usize,
+    pub(in crate::analysis) complete_proximity_oracles_only: bool,
+    pub(in crate::analysis) direct_rows: Vec<RelatedTest>,
     pub(in crate::analysis) reach: StageEvidence,
     pub(in crate::analysis) infect: StageEvidence,
     pub(in crate::analysis) propagate: StageEvidence,
@@ -177,6 +179,16 @@ impl ClassifiedProbeEvidence {
             const_reader_reach(context)
         };
         let mut flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
+        // #10875: std's `Ord::min`/`clamp` pins the returned value to one
+        // literal, so the changed condition cannot reach it.
+        if let Some(sink) = crate::analysis::classify::absorbing_tail_sink(
+            context.probe,
+            context.owner_fn,
+            context.index,
+            context.workspace_complete,
+        ) {
+            flow_sinks = vec![sink];
+        }
         let returned_ledger = match (context.owner_fn, context.helper_chain.as_ref()) {
             (Some(owner), Some(chain)) if helper_only_reach(&context.related_tests) => {
                 context.index.files().get(&owner.file).and_then(|file| {
@@ -207,6 +219,16 @@ impl ClassifiedProbeEvidence {
         .or_else(|| {
             context.owner_fn.and_then(|owner| {
                 crate::analysis::classify::constant_tail_witness(context.probe, owner, &flow_sinks)
+            })
+        })
+        .or_else(|| {
+            context.owner_fn.and_then(|owner| {
+                crate::analysis::classify::concat_tail_witness(
+                    context.probe,
+                    owner,
+                    context.index,
+                    &flow_sinks,
+                )
             })
         })
         .or_else(|| {
@@ -1171,12 +1193,14 @@ impl ClassifiedProbeEvidence {
             arm_selector.as_ref(),
             context.diff_touched,
         );
+        let complete_proximity_oracles_only = reveal.complete_proximity_oracles_only;
         let (observe, discriminate, related_tests, matched_total) = (
             reveal.observe,
             reveal.discriminate,
             reveal.related,
             reveal.related_total,
         );
+        let direct_rows = reveal.direct_rows;
         // #6692: a clone-field pin (`assert_eq!(recv.clone(), recv)` through
         // a derived `PartialEq`) observes the constructed field, so the
         // missing-field fact below no longer stands for this probe. Only an
@@ -1700,6 +1724,8 @@ impl ClassifiedProbeEvidence {
             activation,
             related_tests,
             related_tests_matched_total: matched_total,
+            complete_proximity_oracles_only,
+            direct_rows,
             reach,
             infect,
             propagate,
@@ -3043,6 +3069,31 @@ mod tests {
             "Stack::len, Self::len and self.len() in Stack reach the owner, chains \
              and cycles close transitively; values.len(), core::...::len and \
              self.len() inside another impl do not"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn caller_walk_follows_cross_module_qualified_calls_to_a_free_owner() -> Result<(), String> {
+        // #6296: `crate::m1::f1(x)` and `super::m1::f1(x)` reach the changed
+        // owner exactly like an imported bare `f1(x)`.
+        let source = "mod m1 { pub fn f1(x: i32) -> i32 { x + 1 } }\n\
+            mod m0 {\n\
+                use crate::m1::f1;\n\
+                pub fn imported(x: i32) -> i32 { f1(x) }\n\
+                pub fn via_crate(x: i32) -> i32 { crate::m1::f1(x) }\n\
+                pub fn via_super(x: i32) -> i32 { super::m1::f1(x) }\n\
+                pub fn foreign_root(x: i32) -> i32 { std::m1::f1(x) }\n\
+                pub fn type_qualified(x: i32) -> i32 { Other::f1(x) }\n\
+                pub fn unrelated(x: i32) -> i32 { x }\n\
+            }\n\
+            pub fn api(x: i32) -> i32 { m0::via_crate(x) }\n";
+        assert_eq!(
+            caller_names_for(source, "f1")?,
+            ["api", "imported", "via_crate", "via_super"],
+            "module-qualified calls reach the owner like the imported form, and \
+             chain on to the public API; a std-rooted path, a type-qualified \
+             `Other::f1` and a non-caller do not"
         );
         Ok(())
     }

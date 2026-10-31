@@ -54,7 +54,13 @@ claude mcp add --scope project ripr -- ripr mcp --stdio
 
 # Codex: adds an entry to its user config
 codex mcp add ripr -- ripr mcp --stdio
+
+# Cursor: writes .cursor/mcp.json (same mcpServers shape), keeping your other servers
+ripr init --agents cursor --mcp
 ```
+
+Cursor reads the same `mcpServers` entry from `.cursor/mcp.json`; see the
+[agent quickstart](../AGENT_QUICKSTART.md) for the matching Cursor rule file.
 
 Equivalent Codex `config.toml` entry:
 
@@ -70,16 +76,34 @@ registration; the repository has not yet retained cold-session proof that
 either client completes the flow (tracked in #3092), so treat them as
 configuration, not a support claim.
 
+Every `ripr_refresh` result carries a top-level `fresh_for_working_tree`
+(`true` for a saved-worktree snapshot or a committed one with no uncommitted
+edits outside the analysis; `false` after a failed attempt or with edits the
+analysis cannot see; `null` with no snapshot) and a `verify` block naming
+`ripr_refresh {"source": "worktree"}` as the re-check after editing tests. ripr
+runs no tests; run them yourself. A refresh whose attempt failed returns
+`isError: true`; the document keeps the typed `attempt.failure` and the
+`last_known_good` snapshot. `ripr_get_gap` bounds
+`discriminator_availability.observed_values` to 12 entries (those at or just
+after a related test's line first) and reports `observed_values_total` and
+`observed_values_omitted`.
+
 An agent edits the worktree, but by default `ripr_refresh` analyzes only the
 committed default-branch diff. To analyze saved staged and unstaged tracked
 edits without committing them, call `ripr_refresh` with `{"source":
 "worktree"}`; omitting `source` (or `"committed"`) keeps the committed
-default. A worktree snapshot is tagged `source: "worktree"`, discloses that
-unsaved editor buffers are outside and that it carries no consumed-source
-commitment, and withholds repair cards and repair readiness
-(`repair_packet_ready: false`, `worktree_source_not_committed`;
-`ripr_get_repair_card` refuses with `incomplete_inventory`): commit the
-change and refresh without `source` for those. Untracked files stay excluded
+default. A worktree snapshot is tagged `source: "worktree"` and discloses that
+unsaved editor buffers are outside. The findings producer and the seam
+inventory each record the raw Rust bytes they read; when they agree
+(`scope.consumed_source_commitment: "established"`, `repair_cards:
+"available"`) the same repair readiness, `ripr_get_repair_card` and
+`ripr_prepare_repair` the committed refresh offers are available, behind their
+usual per-item gates, and the producer commitment is part of the snapshot
+identity. When a saved file or `HEAD` moved between the two producers, or any
+input was not observed (`not_established`, `withheld`), every item is
+`repair_packet_ready: false` with `worktree_source_not_committed` naming the
+cause and `ripr_get_repair_card` refuses with `incomplete_inventory`: refresh
+again once the edit settles. Untracked files stay excluded
 until `git add -N <paths>`. The server does not watch the worktree, so
 refresh again after edits. Requested and captured source are separate facts:
 a failed worktree request keeps the last committed snapshot tagged
@@ -126,6 +150,7 @@ ripr_workspace_status   → root, authority, session facts (no evidence)
 ripr_refresh            → one bounded static analysis, commits the snapshot
 ripr_list_gaps          → deterministic bounded working set (summaries only)
 ripr_get_gap            → one item's complete bounded evidence
+ripr_get_top_limitation → the earliest producer limitation for one item
 ripr_prepare_repair     → readiness-gated in-memory repair transaction
 ripr_get_repair_attempt → one session or durable attempt, read-only
 ripr_get_receipt_status → one attempt's receipt state, read-only
@@ -135,6 +160,35 @@ ripr_list_repair_attempts → durable attempt discovery, before or after refresh
 
 Status and list calls never return the full evidence graph; read one item at
 a time through the tool or the resource.
+
+## Top limitation
+
+`ripr_get_top_limitation` (and the equivalent resource
+`ripr://gap/{canonical_id}/limitation`) returns the earliest producer fact that
+prevents a safe repair route for one canonical item of the current completed
+snapshot, as a `ripr-mcp-gap-limitation-v1` document. The `limitation` block
+carries `kind`, `stage`, `reason`, `recovery`, `retryable`, `prohibited_claim`
+and a `restart` identity (`snapshot_id`, `canonical_id`, `route`). It re-uses
+the existing vocabulary and never invents a limitation:
+
+| `stage` | `kind` | Source |
+| --- | --- | --- |
+| `producer_static_limit` | the finding's `static_limit_kind` token | `describe()` / `next_step()` of the shared static-limit vocabulary |
+| `seam_admission` | a shared seam-validator code (for example `seam_already_gripped`) | the validator behind `ripr repair` |
+| `repair_readiness` | the first failing readiness gate (for example `fix_site_not_established`) | the commit-time readiness block of `ripr_get_gap` |
+| `none` | `no_limitation_established` | no limiting producer fact; not a runtime or sufficiency result |
+
+Order is upstream first: a producer static limit outranks every readiness
+gate, and the seam validator outranks the finding-level gates, so a
+renderer-convenient limitation never replaces the fact that owns the stop. An
+item with no limitation answers with the explicit `no_limitation_established`
+kind, never `null`. Only a saved-worktree withhold is `retryable` without a
+source change. The read uses committed facts, so repeated reads are identical
+and analysis is never rerun. Failures are the gap read's: `stale_snapshot`,
+`item_not_found`, `no_snapshot`, `workspace_unavailable`, `result_too_large`.
+The resource route reads the whole canonical id before the `/limitation`
+suffix; an existing item whose id itself ends in `/limitation` keeps the plain
+gap route.
 
 ## Durable attempt discovery
 
@@ -177,6 +231,7 @@ runs no tests or verification and grants no execution or edit authority.
 | Tool (`base?`, `source?`) | `ripr_refresh` |
 | Tool (`snapshot_id?`, `offset?`, `omitted_offset?`, `limit?`, `file?`, `class?`, `language?`, `repair_ready?`) | `ripr_list_gaps` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_get_gap` |
+| Tool (`canonical_id`, `snapshot_id?`) | `ripr_get_top_limitation` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_prepare_repair` |
 | Tool (`attempt_id`) | `ripr_get_repair_attempt` |
 | Tool (`receipt_id`) | `ripr_get_receipt_status` |
@@ -185,6 +240,7 @@ runs no tests or verification and grants no execution or edit authority.
 | Resource (`application/json`) | `ripr://workspace/status` |
 | Resource template | `ripr://snapshot/{snapshot_id}` |
 | Resource template | `ripr://gap/{canonical_id}` |
+| Resource template | `ripr://gap/{canonical_id}/limitation` |
 | Resource template | `ripr://repair-attempt/{attempt_id}` |
 | Resource template | `ripr://receipt/{receipt_id}` |
 | Resource template | `ripr://repair-card/{canonical_id}` |
@@ -229,10 +285,21 @@ when staged or unstaged tracked edits exist; sharing the authority does not
 mean identical input. `ripr check --committed` selects committed input;
 `ripr check --worktree --format json` analyzes staged and unstaged tracked
 edits outside MCP, or inside MCP with the opt-in `source: "worktree"`
-(RIPR-SPEC-0211, #7357: findings only; repair cards and readiness
-withheld). The existing response `scope` note discloses detected
-excluded edits. The call blocks until the
-attempt reaches a terminal state and reports it: `completed` with the new
+(RIPR-SPEC-0211, #7357: repair cards and readiness only with an
+established producer-custody agreement, withheld with the cause
+otherwise). `ripr_get_repair_card` re-verifies, on every read, the captured
+digests of the files the card's evidence is bound to: an edit or commit after
+`ripr_refresh` (the server does not watch the worktree) refuses with
+`stale_snapshot`, names the path and says to run `ripr_refresh` again. A committed refresh whose findings and checkout Rust files were not
+shown to agree (a consumed file edited, staged, deleted or changed during the
+refresh, or any uncommitted or untracked Rust source or test file, including
+one outside the diff) likewise withholds repair cards (`incomplete_inventory`)
+and turns repair-ready items not ready (`worktree_source_not_committed`; an
+item already not ready keeps its own reason) and says why, because its
+findings read committed content while the cards would read the checkout;
+commit the uncommitted Rust source or test files (untracked ones included) and
+refresh again. A dirty non-Rust file does not withhold, and gitignored Rust files are not claimed. The
+existing response `scope` note discloses detected excluded edits. The call blocks until the attempt reaches a terminal state and reports it: `completed` with the new
 snapshot identity (a `snapshot:sha256:` digest over the typed outcome, the
 canonical item identities, and each item's evidence digest — equivalent
 roots at equivalent inputs share one portable identity, while the concrete
@@ -272,6 +339,7 @@ validate every document the server emits:
 | Refresh-time attempt document | `ripr-mcp-refresh-v1` | `ripr_refresh` tool result |
 | Gap list | `ripr-mcp-gap-list-v4` | `ripr_list_gaps` result |
 | Single gap | `ripr-mcp-gap-v1` | `ripr_get_gap` result |
+| Gap limitation | `ripr-mcp-gap-limitation-v1` | `ripr_get_top_limitation` result |
 | Repair attempt list | `ripr-mcp-repair-attempt-list-v1` | durable attempt discovery |
 | Repair packet | `ripr-mcp-repair-packet-v1` | `ripr_prepare_repair` result |
 | Repair attempt | `ripr-mcp-repair-attempt-v1` | attempt documents |
@@ -442,12 +510,17 @@ edit-cage `must_not_change` statements, stop conditions, the before-evidence
 identity, an empty `command_routes` list with the typed limitation (concrete
 typed `CommandSpec` routes are published only by the durable CLI before
 phase), the shared non-claims, and the resource links. An ineligible item
-returns `repair_packet_ready: false` with the typed ineligibility reason and
-`attempt: null` — no attempt is created and no field is guessed. The reasons
+returns `isError: true` with `repair_packet_ready: false`, the typed
+ineligibility reason, `attempt: null` and a machine-readable `next` object
+(`kind` one of `nothing_to_do`, `write_test_by_hand`, `change_policy`,
+`commit_then_refresh`, `await_producer_fact`; the `reason`; an `mcp` route or
+`null`; and, only for `write_test_by_hand`, `after_editing_tests`) — no attempt
+is created and no field is guessed, and `next` adds no verdict the shared gate
+did not produce. `isError` is true exactly when no transaction exists. The reasons
 the shared seam-level repair gate behind `ripr repair` contributes are
-`seam_already_gripped` (the seam's existing tests already grip it),
-`seam_gate_refused` (route not ready, cross-language limits or policy
-omission), `seam_ambiguous` (several seams name the item), `seam_not_found`
+`seam_already_gripped` (the seam's existing tests already check it),
+`seam_gate_refused` (route not ready, cross-language limits, policy
+omission or an uncommitted inline test target), `seam_ambiguous` (several seams name the item), `seam_not_found`
 (no classified seam names it) and `seam_inventory_truncated` (the repo-wide
 seam inventory is truncated by the seam limit, or its completeness could not
 be established, so `ripr repair` refuses every item; widen the budget with
@@ -642,7 +715,7 @@ only it is the mapping, not an observed `resources/read` response.
 | `item_not_found` | `-32002` | identity miss (`-32602` for 2026-07-28 peers) | the id is not in the current snapshot; re-list with `ripr_list_gaps` |
 | `attempt_not_found` | `-32002` | identity miss (`-32602` for 2026-07-28 peers) | the attempt/receipt id does not exist; list attempts |
 | `no_snapshot` | `-32603` | retryable after refresh | call `ripr_refresh`, then retry |
-| `stale_snapshot` | `-32603` | retryable after refresh | re-read with the `current_snapshot_id` in `error.data` or refresh |
+| `stale_snapshot` | `-32603` | retryable after refresh | re-read with the `current_snapshot_id` in `error.data` or refresh; a card refused because a bound source file changed since refresh needs `ripr_refresh` (the id alone still refuses) |
 | `analysis_in_flight` | `-32603` | retryable after wait | another attempt is running; wait and retry |
 | `superseded` | `-32603` | retryable after refresh | the transaction's snapshot is no longer current; refresh and re-prepare |
 | `result_too_large` | `-32603` | bound; narrow the request where a narrower read exists | pageable lists: page or filter. Single-item resources and status/repair documents can have no narrower MCP read; follow `error.data.recovery`, which is authoritative. Retrying unchanged cannot succeed |
@@ -663,6 +736,14 @@ only it is the mapping, not an observed `resources/read` response.
 | `static_limitation` | `-32603` | reserved | reserved for a later slice |
 | `cancelled` | `-32603` | reserved | reserved for a later slice |
 
+`analysis_failed` is also the code for a contained internal handler panic in
+any tool, including a glue panic in `ripr_refresh` (#11116). It names the tool and is retryable:
+retry the tool, then `ripr_refresh`; if it repeats, restart `ripr mcp` and
+report the stderr panic message. A glue panic in `resources/read` or
+`tools/list` answers a `-32603` JSON-RPC error with `error.data.code`
+`analysis_failed` and the session keeps serving. The `initialize` handshake
+runs inside the SDK before the service loop and is not covered.
+
 Genuine invariant failures are different: the server could not build or
 serialize a result it should always be able to build (`serialize workspace
 status`, `serialize resource`, `serialize typed failure`, `invalid status
@@ -682,8 +763,9 @@ attempt creation stays CLI-owned; the adapter's session transactions are
 in-memory and its durable-store reads are read-only). A prepared transaction
 never authorizes an edit, a command, or a merge by itself — the external
 client's approval and sandbox policy remains authoritative. It does not
-load project-local configuration or providers, embed a model, or offer a
-remote transport. It does not watch the worktree: the snapshot is current as
+load project-local provider configuration, embed a model, or offer a
+remote transport (the workspace's own `ripr.toml` is honored by
+`ripr_refresh`, as described above). It does not watch the worktree: the snapshot is current as
 of its completed `ripr_refresh`, so refresh again after edits. The session
 is in-memory; restarting the server drops the snapshot and every session
 transaction unless a new refresh commits one.
@@ -692,7 +774,7 @@ An invalid root does not stop the server. Status reports
 `workspace_state: "unavailable"` with a `root.error_code`, and the tool result
 adds a second text content item that names the cause and the recovery
 (restart with `--root <repository>`). An unknown resource URI is
-rejected with the valid static URI and all five resource templates in the
+rejected with the valid static URI and all six resource templates in the
 human-readable message. The same routes remain available separately in
 `error.data.available` and `error.data.resource_templates`. Templates require
 valid resource identities; listing a template does not promise its resource

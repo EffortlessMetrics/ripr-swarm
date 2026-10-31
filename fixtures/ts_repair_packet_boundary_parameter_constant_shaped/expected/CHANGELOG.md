@@ -289,3 +289,51 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_parameter_constant_shaped (25)
+
+Reason:
+RIPR-SPEC-0122: #11229 script-file ObservationUnconfirmed wording names the preview adapter (wording only; verdict and credit unchanged)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_parameter_constant_shaped --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_parameter_constant_shaped (26)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording names the changed behavior, not a branch
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_parameter_constant_shaped --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_parameter_constant_shaped (27)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording says the adapter cannot confirm observation, not reach
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_parameter_constant_shaped --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_parameter_constant_shaped (28)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording states the adapter could not confirm observation without a causal claim
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_parameter_constant_shaped --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -14,6 +14,7 @@ result means.
 | Try RIPR on one pull request | [First successful PR workflow](FIRST_PR_WORKFLOW.md) | Run one bounded adoption loop and retain reviewer-facing evidence. |
 | Work in VS Code | [Editor extension](EDITOR_EXTENSION.md) · [First run to first receipt](EDITOR_FIRST_RUN_TO_FIRST_RECEIPT.md) | Install the extension, inspect saved-workspace diagnostics, and complete one repair receipt. |
 | Add advisory CI or review a PR | [CI strategy](CI.md) · [PR review guidance](PR_REVIEW_GUIDANCE.md) | Generate advisory GitHub Actions, read summaries and artifacts, and keep gate authority explicit. |
+| Wire ripr into your coding agent | [Agent quickstart](AGENT_QUICKSTART.md) | One command writes the find-gap, write-test, verify loop with a done and stop rule for Claude Code, Codex, or Cursor, plus optional MCP registration. |
 | Hand work to a coding agent | [LLM operator guide](LLM_OPERATOR_GUIDE.md) · [Agent workflows](AGENT_WORKFLOWS.md) | Give an agent a bounded packet with evidence, edit limits, verification, and stop conditions. |
 | Configure RIPR or consume its output | [Configuration](CONFIGURATION.md) · [Output schema](OUTPUT_SCHEMA.md) · [Stability policy](SEMVER.md) | Repository policy, CLI and editor settings, JSON contracts, machine-readable states, and compatibility promises. |
 | Decide whether to adopt RIPR | [Proof and limits](PUBLIC_PROOF.md) | Scoreboard numbers with trends, mutation agreement, verdict-corpus rates, and where RIPR falls short. |
@@ -46,7 +47,7 @@ result means.
 - [Contributing](../CONTRIBUTING.md) — development setup and validation.
 - [Scoped PR contract](SCOPED_PR_CONTRACT.md) — keep one coherent change and evidence denominator.
 - [PR automation](PR_AUTOMATION.md) — repository review and integration mechanics.
-- Agent context: [repository map](agent-context/repo-map.md), [review invariants](agent-context/review-invariants.md), and [validation](agent-context/validation.md).
+- Agent context: [repository map](agent-context/repo-map.md), [review invariants](agent-context/review-invariants.md), [validation](agent-context/validation.md), and the [PR convergence runbook](agent-context/convergence-runbook.md).
 - [Source-of-truth doctrine](source-of-truth/README.md) — proposals, specs, ADRs, plans, policy, proof, and closeout.
 - [Spec/proposal system](SPEC_PROPOSAL_SYSTEM.md) — how proposals become reviewed specifications and implementation work.
 - [Documentation system](DOCUMENTATION.md) — document roles and maintenance rules.

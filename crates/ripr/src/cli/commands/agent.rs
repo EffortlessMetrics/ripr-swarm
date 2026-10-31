@@ -711,9 +711,12 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
                 "agent repair seam_id `{seam_id}` names seam `{resolved}`, which is not repair-eligible: {reason}; no repair attempt was started. Run `ripr pilot --root {root_arg}` to list current seam IDs"
             )))
         }
-        Ok(RepairSubjectOutcome::Ambiguous(seam_ids)) => {
+        Ok(RepairSubjectOutcome::Ambiguous {
+            seam_ids,
+            descriptions,
+        }) => {
             const MAX_LISTED: usize = 8;
-            let mut listed: Vec<&str> = seam_ids
+            let mut listed: Vec<&str> = descriptions
                 .iter()
                 .map(String::as_str)
                 .take(MAX_LISTED)
@@ -883,6 +886,8 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
             )
         })
         .transpose()?;
+    let before_produced_from_dirty = before_identity.historical_produced_from_dirty();
+    let after_produced_from_dirty = after_identity.historical_produced_from_dirty();
     let artifact_currentness = crate::agent::artifact::pair_currentness_label(
         &before_identity.currentness,
         &after_identity.currentness,
@@ -904,6 +909,8 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
     let binding = output::outcome::AgentVerifyArtifactBinding {
         before_content_sha256: before_identity.content_sha256,
         after_content_sha256: after_identity.content_sha256,
+        before_produced_from_dirty,
+        after_produced_from_dirty,
     };
     let bound_gap = bound_gap.map(|closure| output::outcome::AgentVerifyBoundGap {
         gap_id: closure.gap_id,
@@ -1998,6 +2005,10 @@ impl SharedWorkflowArtifacts {
         for (_, backup, _, _, _) in &plans {
             if let Some(backup) = backup {
                 #[cfg(windows)]
+                #[allow(
+                    clippy::permissions_set_readonly_false,
+                    reason = "Windows-only: clearing the readonly flag is the platform way to make a backup removable; the Unix world-writable concern does not apply"
+                )]
                 {
                     let mut permissions = std::fs::metadata(backup)
                         .map_err(|error| {
@@ -2165,6 +2176,26 @@ fn run_agent_repair_phase(
                 "agent repair --phase before lost its parsed seam identity".to_string()
             })?;
             ensure_command_root(&root, "agent repair --phase before")?;
+            // #11458: policy-free dirty-premise preflight. An obviously
+            // production dirty file refuses here in git time, before the
+            // seam inventory below; any doubt falls through to the exact
+            // policy check, which refuses late with the same text.
+            if let Ok(preflight_head) = crate::agent::artifact::current_git_head(&root)
+                && let Ok(preflight_violations) =
+                    crate::app::repair_attempt::conservative_dirty_premise_violations(
+                        &root,
+                        &preflight_head,
+                        store_ref,
+                    )
+                && !preflight_violations.is_empty()
+            {
+                return Err(before_phase_dirty_premise_refusal(
+                    &seam_id,
+                    &root,
+                    store_ref,
+                    &preflight_violations,
+                ));
+            }
             let identity = identity.ok_or_else(|| {
                 "repair before requires its identity from the locked CLI publication driver"
                     .to_string()
@@ -3519,7 +3550,7 @@ fn repair_after_no_movement_lines(
         ));
     }
     lines.extend([
-        format!("to recover: {edit}, then rerun this after-phase command."),
+        format!("to recover: {edit}, then rerun the after phase."),
         format!(
             "inspect the selected attempt with `ripr agent status --root {root_arg}{store_flag} --attempt {attempt_arg}`."
         ),
@@ -3755,6 +3786,23 @@ fn run_gap_bound_before_phase(
     let root_display = bound_root(&root.to_string_lossy());
     let store_flag = crate::app::repair_attempt::quoted_store_flag(store_ref);
     let restart = gap_bound_start_command(&root_display, &store_flag, gap_id, base);
+    // #11458: policy-free dirty-premise preflight, mirroring the seam arm:
+    // refuse an obviously production dirty file before the gap snapshot;
+    // any doubt falls through to the exact policy check below.
+    if let Ok(preflight_head) = crate::agent::artifact::current_git_head(root)
+        && let Ok(preflight_violations) =
+            crate::app::repair_attempt::conservative_dirty_premise_violations(
+                root,
+                &preflight_head,
+                store_ref,
+            )
+        && !preflight_violations.is_empty()
+    {
+        return Err(before_phase_dirty_premise_refusal_with_restart(
+            &restart,
+            &preflight_violations,
+        ));
+    }
     // The snapshot is produced against the commit the base resolves to, and
     // the after phase uses the same commit: the two artifacts record the same
     // base revision, and a relative spelling cannot drift between them.
@@ -3792,6 +3840,22 @@ fn run_gap_bound_before_phase(
             ));
         }
     };
+    // An unknown or not-ready gap keeps its own, more specific refusal; a
+    // ready gap is still refused while the run that produced it is incomplete.
+    let analysis_complete = snapshot
+        .output
+        .analysis_outcome
+        .as_ref()
+        .map(|outcome| outcome.kind.is_complete());
+    if !crate::agent::artifact::check_findings_outcome_is_complete(analysis_complete, None) {
+        refusal.start_refused = true;
+        let limitation = crate::app::task_first::incomplete_limitation_summary(&snapshot.output);
+        return Err(format!(
+            "agent repair --gap-id `{gap_id}`: analysis is incomplete ({limitation}). Resolve the limitation and rerun `ripr check --root {} --base {}`; no repair attempt was started.",
+            shell_arg(&root_display),
+            shell_arg(base)
+        ));
+    }
     let before_snapshot_display = format!("target/ripr/workflow/{GAP_BOUND_BEFORE_SNAPSHOT_FILE}");
     let packet = output::agent_seam_packets::render_gap_bound_repair_packet(
         &before_snapshot_display,

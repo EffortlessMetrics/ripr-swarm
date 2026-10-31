@@ -90,9 +90,9 @@ pub enum StopReason {
     InfectionEvidenceUnknown,
     PropagationEvidenceUnknown,
     StaticProbeUnknown,
-    /// A bounded transitive-reach walk found a candidate path (test -> ... ->
-    /// owner) that ripr cannot fully resolve (lexical-only, name-match only).
-    /// Classification stays `no_static_path`. See RIPR-SPEC-0114.
+    /// Reach through internal calls is unresolved. A bounded walk may retain
+    /// a candidate path (RIPR-SPEC-0114), but an unmodeled private-member
+    /// boundary establishes no path either way (RIPR-SPEC-0243).
     TransitiveReachUnresolved,
     /// A Rust reach walk found a candidate test entry path that stops at a
     /// same-repo macro invocation whose definition lexically names the changed
@@ -176,8 +176,7 @@ impl StopReason {
                 "ripr could not model this change well enough to classify it"
             }
             StopReason::TransitiveReachUnresolved => {
-                "a candidate test path exists but passes through calls ripr only matched by \
-                 name"
+                "ripr could not establish whether a test reaches this change through internal calls"
             }
             StopReason::MacroReachUnresolved => {
                 "a candidate test path stops at a same-repo macro ripr does not expand"
@@ -377,8 +376,8 @@ pub struct MissingDiscriminatorFact {
 /// that writes it and the miss renderer that reads it agree.
 pub(crate) const ARM_UNSELECTED_REASON_PREFIX: &str = "No related test call selects arm";
 
-/// Opens the reason of a side-effect or call-deletion missing discriminator
-/// that names an enclosing `if` no related test's input enters
+/// Opens the reason of a side-effect, call-deletion, error-path or
+/// error-variant return-value missing discriminator that names an enclosing `if` no related test's input enters
 /// (RIPR-SPEC-0263). Shared like [`ARM_UNSELECTED_REASON_PREFIX`].
 pub(crate) const GUARD_UNENTERED_REASON_PREFIX: &str = "No related test call enters guard";
 
@@ -393,8 +392,9 @@ pub(crate) fn is_unselected_input_reason(reason: &str) -> bool {
 /// The missing discriminator that names an input no test supplies: for a
 /// predicate probe the boundary `left == right` it never reaches
 /// (`classify::activation::missing_boundary_discriminator`), for a match-arm
-/// probe the arm no test input selects, and for a side-effect or
-/// call-deletion probe the enclosing `if` no test input enters. Error-variant and field facts name
+/// probe the arm no test input selects, and for a side-effect,
+/// call-deletion, error-path or error-variant return-value probe the
+/// enclosing `if` no test input enters. Error-variant and field facts name
 /// an assertion that is missing instead.
 pub(crate) fn input_boundary_fact<'a>(
     facts: &'a [MissingDiscriminatorFact],
@@ -403,13 +403,21 @@ pub(crate) fn input_boundary_fact<'a>(
     match family {
         // A returned bare comparison reads the same boundary (#9094); no
         // other return-value fact is spelled `left == right`.
-        ProbeFamily::Predicate | ProbeFamily::ReturnValue => {
-            facts.iter().find(|fact| fact.value.contains(" == "))
-        }
+        ProbeFamily::Predicate => facts.iter().find(|fact| fact.value.contains(" == ")),
+        // A returned error variant under an unentered `if` reads the guard
+        // (#11147), after the bare-comparison reading above.
+        ProbeFamily::ReturnValue => facts
+            .iter()
+            .find(|fact| fact.value.contains(" == "))
+            .or_else(|| {
+                facts
+                    .iter()
+                    .find(|fact| fact.reason.starts_with(GUARD_UNENTERED_REASON_PREFIX))
+            }),
         ProbeFamily::MatchArm => facts
             .iter()
             .find(|fact| fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX)),
-        ProbeFamily::SideEffect | ProbeFamily::CallDeletion => facts
+        ProbeFamily::SideEffect | ProbeFamily::CallDeletion | ProbeFamily::ErrorPath => facts
             .iter()
             .find(|fact| fact.reason.starts_with(GUARD_UNENTERED_REASON_PREFIX)),
         _ => None,
@@ -479,8 +487,9 @@ pub struct RelatedTest {
     /// Why this test does not catch the changed behavior, when ripr can say.
     /// `None` for a test whose oracle supports the finding's class, and for
     /// findings from producers that do not record it. Explanation only: no
-    /// decision helper reads this field; row eligibility is [`Self::role`]
-    /// (#5563).
+    /// decision helper reads this field except the refused-assertion exception
+    /// of the opaque assertion-macro limit (`AssertionNotCredited`, RIPR-SPEC-0120,
+    /// #9644); row eligibility is [`Self::role`] (#5563).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub miss: Option<RelatedTestMiss>,
     /// Whether this row belonged to the legacy decision set or was retained

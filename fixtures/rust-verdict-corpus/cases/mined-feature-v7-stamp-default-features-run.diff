@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -26,7 +26,7 @@
+ pub mod v7 {
+     /// Stamps version 7 into the top nibble of the 16-bit field.
+     pub fn stamp(raw: u16) -> u16 {
+-        (raw & 0x0fff) | 0x7000
++        0x7000 | (raw & 0x0fff)
+     }
+ 
+     #[cfg(test)]

@@ -28,11 +28,18 @@ const GATE_DECISION_RECOVERY: &str = "Run `ripr gate evaluate --gap-ledger <gap-
 /// writes — pointing at `gate evaluate` hands the caller a gate-decision
 /// artifact the consumer still rejects. The route chains through a
 /// gate-decision file: create adopts it, update consumes the adoption.
+/// Recovery route for a missing `--from-check` artifact (#11206 item 3): the
+/// whole-repository producer is `ripr check` over the candidate tree.
+const CHECK_ARTIFACT_RECOVERY: &str = "Run `ripr check --candidate-tree HEAD^{tree} --format json > <check.json>` first, or pass the correct path";
+
+type BaselineBuilder =
+    fn(&str, &str, &str) -> Result<output::baseline::BaselineCreateReport, String>;
+
 const BASELINE_LEDGER_RECOVERY: &str = "Run `ripr baseline create --from <gate-decision.json> --out <baseline.json>` first, or pass the correct path";
 
 pub(in crate::cli) fn baseline(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        help::print_baseline_help();
+        help::print_group_help("baseline", args);
         return Ok(());
     }
     let Some((subcommand, rest)) = args.split_first() else {
@@ -53,18 +60,25 @@ pub(in crate::cli) fn baseline(args: &[String]) -> Result<(), String> {
 
 fn baseline_create(args: &[String]) -> Result<(), String> {
     let options = parse_baseline_create_options(args)?;
-    let gate_decision_json = crate::bounded_input::read_required_input(
+    let (recovery, build_report): (&str, BaselineBuilder) = if options.from_check {
+        (
+            CHECK_ARTIFACT_RECOVERY,
+            output::baseline::baseline_create_report_from_check_json,
+        )
+    } else {
+        (
+            GATE_DECISION_RECOVERY,
+            output::baseline::baseline_create_report_from_gate_decision_json,
+        )
+    };
+    let source_json = crate::bounded_input::read_required_input(
         "read baseline create source",
         &options.from,
-        Some(GATE_DECISION_RECOVERY),
+        Some(recovery),
     )?;
     let created_at = baseline_created_at()?;
     let source_report = output::baseline::display_path(&options.from);
-    let report = output::baseline::baseline_create_report_from_gate_decision_json(
-        &source_report,
-        &created_at,
-        &gate_decision_json,
-    )?;
+    let report = build_report(&source_report, &created_at, &source_json)?;
     let rendered = output::baseline::render_baseline_create_json(&report)?;
     if options.dry_run {
         print!("{rendered}");
@@ -73,6 +87,7 @@ fn baseline_create(args: &[String]) -> Result<(), String> {
     if options.out.exists() && !options.force {
         return Err(baseline_create_overwrite_error(
             &options.from,
+            options.from_check,
             &options.out,
             cfg!(windows),
         ));
@@ -97,7 +112,13 @@ fn baseline_create(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn baseline_create_overwrite_error(from: &Path, out: &Path, windows: bool) -> String {
+fn baseline_create_overwrite_error(
+    from: &Path,
+    from_check: bool,
+    out: &Path,
+    windows: bool,
+) -> String {
+    let from_flag = if from_check { "--from-check" } else { "--from" };
     let quoted_from = crate::agent::loop_commands::shell_arg_for(&from.to_string_lossy(), windows);
     let quoted_out = crate::agent::loop_commands::shell_arg_for(&out.to_string_lossy(), windows);
     let shell_hint = if windows {
@@ -106,7 +127,7 @@ fn baseline_create_overwrite_error(from: &Path, out: &Path, windows: bool) -> St
         ""
     };
     format!(
-        "{} already exists; rerun `ripr baseline create --from {quoted_from} --out {quoted_out} --force` to overwrite it{shell_hint}",
+        "{} already exists; rerun `ripr baseline create {from_flag} {quoted_from} --out {quoted_out} --force` to overwrite it{shell_hint}",
         out.display()
     )
 }
@@ -220,6 +241,7 @@ fn parse_baseline_create_options(args: &[String]) -> Result<BaselineCreateOption
 #[derive(Debug)]
 struct BaselineCreateParseState {
     from: Option<PathBuf>,
+    from_check: bool,
     out: PathBuf,
     dry_run: bool,
     force: bool,
@@ -229,6 +251,7 @@ impl Default for BaselineCreateParseState {
     fn default() -> Self {
         Self {
             from: None,
+            from_check: false,
             out: PathBuf::from(output::baseline::DEFAULT_BASELINE_OUT),
             dry_run: false,
             force: false,
@@ -239,7 +262,8 @@ impl Default for BaselineCreateParseState {
 impl BaselineCreateParseState {
     fn apply_arg(&mut self, args: &[String], i: &mut usize) -> Result<(), String> {
         match args[*i].as_str() {
-            "--from" => self.parse_from(args, i),
+            "--from" => self.parse_from(args, i, false),
+            "--from-check" => self.parse_from(args, i, true),
             "--out" => self.parse_out(args, i),
             "--dry-run" => {
                 self.dry_run = true;
@@ -253,9 +277,21 @@ impl BaselineCreateParseState {
         }
     }
 
-    fn parse_from(&mut self, args: &[String], i: &mut usize) -> Result<(), String> {
+    fn parse_from(
+        &mut self,
+        args: &[String],
+        i: &mut usize,
+        from_check: bool,
+    ) -> Result<(), String> {
+        let flag = if from_check { "--from-check" } else { "--from" };
+        if self.from.is_some() {
+            return Err(format!(
+                "baseline create takes exactly one source: pass either --from <gate-decision.json> or --from-check <check.json>, once ({flag} repeated or combined)"
+            ));
+        }
         *i += 1;
-        self.from = Some(non_empty_path_arg(args, *i, "--from", "baseline create")?);
+        self.from = Some(non_empty_path_arg(args, *i, flag, "baseline create")?);
+        self.from_check = from_check;
         Ok(())
     }
 
@@ -267,9 +303,11 @@ impl BaselineCreateParseState {
 
     fn into_options(self) -> Result<BaselineCreateOptions, String> {
         Ok(BaselineCreateOptions {
-            from: self
-                .from
-                .ok_or_else(|| "baseline create requires --from <path>".to_string())?,
+            from: self.from.ok_or_else(|| {
+                "baseline create requires --from <gate-decision.json> or --from-check <check.json>"
+                    .to_string()
+            })?,
+            from_check: self.from_check,
             out: self.out,
             dry_run: self.dry_run,
             force: self.force,
@@ -390,6 +428,7 @@ mod tests {
             assert_eq!(
                 baseline_create_overwrite_error(
                     Path::new(from),
+                    false,
                     Path::new(r"fixtures\chosen baseline.json"),
                     true,
                 ),
@@ -405,6 +444,7 @@ mod tests {
         assert_eq!(
             baseline_create_overwrite_error(
                 Path::new("gate $it's.json"),
+                false,
                 Path::new("chosen baseline.json"),
                 false,
             ),
@@ -576,6 +616,7 @@ mod tests {
             ])),
             Ok(BaselineCreateOptions {
                 from: PathBuf::from("target/ripr/reports/gate-decision.json"),
+                from_check: false,
                 out: PathBuf::from(".ripr/gate-baseline.json"),
                 dry_run: true,
                 force: true,
@@ -585,11 +626,57 @@ mod tests {
             parse_baseline_create_options(&args(&["--from", "gate.json"])),
             Ok(BaselineCreateOptions {
                 from: PathBuf::from("gate.json"),
+                from_check: false,
                 out: PathBuf::from(".ripr/gate-baseline.json"),
                 dry_run: false,
                 force: false,
             })
         );
+    }
+
+    #[test]
+    fn baseline_create_from_check_parses_and_names_its_own_flag() {
+        assert_eq!(
+            parse_baseline_create_options(&args(&["--from-check", "check.json"])),
+            Ok(BaselineCreateOptions {
+                from: PathBuf::from("check.json"),
+                from_check: true,
+                out: PathBuf::from(".ripr/gate-baseline.json"),
+                dry_run: false,
+                force: false,
+            })
+        );
+        assert_eq!(
+            parse_baseline_create_options(&args(&["--from-check", ""])),
+            Err("baseline create --from-check requires a non-empty value".to_string())
+        );
+        assert_eq!(
+            baseline_create_overwrite_error(
+                Path::new("check.json"),
+                true,
+                Path::new("b.json"),
+                false
+            ),
+            "b.json already exists; rerun `ripr baseline create --from-check check.json --out b.json --force` to overwrite it"
+        );
+    }
+
+    #[test]
+    fn baseline_create_takes_exactly_one_source() {
+        for argv in [
+            ["--from", "a.json", "--from-check", "b.json"],
+            ["--from-check", "b.json", "--from", "a.json"],
+            ["--from", "a.json", "--from", "b.json"],
+            ["--from-check", "a.json", "--from-check", "b.json"],
+        ] {
+            let error = parse_baseline_create_options(&args(&argv)).err();
+            assert!(
+                error
+                    .as_deref()
+                    .is_some_and(|text| text.contains("exactly one source")),
+                "{argv:?} -> {error:?}"
+            );
+        }
     }
 
     #[test]
@@ -604,7 +691,10 @@ mod tests {
         );
         assert_eq!(
             parse_baseline_create_options(&args(&[])),
-            Err("baseline create requires --from <path>".to_string())
+            Err(
+                "baseline create requires --from <gate-decision.json> or --from-check <check.json>"
+                    .to_string()
+            )
         );
         assert_eq!(
             parse_baseline_create_options(&args(&["--from", ""])),

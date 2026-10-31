@@ -172,9 +172,13 @@ pub(crate) fn render_repo_seams_sarif(
     config: &RiprConfig,
 ) -> String {
     let rules = seam_rules();
+    // Ordinals are assigned over every classified seam, before the severity
+    // filter, so a neighbour's class or an `off` setting never renumbers it.
+    let ordinals = seam_ordinals(classified);
     let results = classified
         .iter()
-        .filter_map(|entry| seam_result(entry, config))
+        .zip(ordinals)
+        .filter_map(|(entry, ordinal)| seam_result(entry, ordinal, config))
         .collect::<Vec<_>>();
     sarif_document_repo_seam(rules, results, limit_info)
 }
@@ -471,7 +475,7 @@ fn finding_result(
     Some(Value::Object(result))
 }
 
-fn seam_result(entry: &ClassifiedSeam, config: &RiprConfig) -> Option<Value> {
+fn seam_result(entry: &ClassifiedSeam, ordinal: usize, config: &RiprConfig) -> Option<Value> {
     let severity = config.severity().for_seam(entry.class);
     let level = sarif_level(severity)?;
     let rule_id = seam_rule_id(entry.class);
@@ -490,12 +494,12 @@ fn seam_result(entry: &ClassifiedSeam, config: &RiprConfig) -> Option<Value> {
     );
     result.insert(
         "partialFingerprints".to_string(),
-        json!({ "riprFingerprintV1": seam_fingerprint(&rule_id, entry, &file, line) }),
+        json!({ "riprFingerprintV1": seam_fingerprint(&rule_id, entry, &file, ordinal) }),
     );
     // #2627: also emit top-level fingerprints for GitHub Code Scanning cross-run dedup.
     result.insert(
         "fingerprints".to_string(),
-        json!({ "riprFingerprintV1": seam_fingerprint(&rule_id, entry, &file, line) }),
+        json!({ "riprFingerprintV1": seam_fingerprint(&rule_id, entry, &file, ordinal) }),
     );
     result.insert("properties".to_string(), seam_properties(entry, severity));
     if entry.class == SeamGripClass::Suppressed {
@@ -582,7 +586,10 @@ fn finding_properties(finding: &Finding, severity: ConfigSeverity) -> Value {
         "probe_delta".to_string(),
         json!(finding.probe.delta.as_str()),
     );
-    properties.insert("confidence".to_string(), json!(finding.confidence));
+    properties.insert(
+        "confidence".to_string(),
+        json!(crate::domain::contract_confidence(finding.confidence)),
+    );
     if let Some(owner) = &finding.probe.owner {
         properties.insert("owner".to_string(), json!(owner.0.as_str()));
     }
@@ -1061,8 +1068,147 @@ fn finding_fingerprint(rule_id: &str, finding: &Finding, file: &str, line: usize
     )
 }
 
-fn seam_fingerprint(rule_id: &str, entry: &ClassifiedSeam, file: &str, line: usize) -> String {
-    format!("{rule_id}|{}|{file}|{line}", entry.seam.id().as_str())
+/// Line- and offset-independent seam alert identity (#11219).
+///
+/// `rule_id | normalized_file | identity_hash | ordinal`. The hash covers the
+/// owner, seam kind and whitespace-collapsed expression; `ordinal` ranks
+/// textual duplicates of one `(file, owner, kind, expression)` group (see
+/// [`seam_ordinals`]). Neither the display line nor the byte offset is read,
+/// so an unrelated edit above a seam keeps its code-scanning alert. The
+/// analysis `SeamId` is offset-derived and is deliberately not used here.
+fn seam_fingerprint(rule_id: &str, entry: &ClassifiedSeam, file: &str, ordinal: usize) -> String {
+    format!(
+        "{rule_id}|{file}|{}|{ordinal}",
+        seam_identity_hash(entry, file)
+    )
+}
+
+/// Canonical identity text with length-prefixed fields so no field can bleed
+/// into its neighbour (`a|b` + `c` never equals `a` + `b|c`).
+fn seam_identity_text(entry: &ClassifiedSeam, file: &str) -> String {
+    let expression = collapse_whitespace_outside_strings(entry.seam.expression());
+    let kind = entry.seam.kind().as_str();
+    let owner = entry.seam.owner();
+    format!(
+        "{}:{file}{}:{owner}{}:{kind}{}:{expression}",
+        file.len(),
+        owner.len(),
+        kind.len(),
+        expression.len()
+    )
+}
+
+/// Collapses runs of whitespace between tokens to one space and trims the ends,
+/// but keeps the contents of string literals byte for byte: `"a  b"` and
+/// `"a b"` are different expressions, so a baseline must not conflate them.
+/// Handles `"..."` with backslash escapes and raw strings (`r"..."`,
+/// `r#"..."#`); an unterminated literal keeps the rest of the text verbatim
+/// (fail closed toward distinct fingerprints).
+fn collapse_whitespace_outside_strings(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut index = 0;
+    let mut pending_space = false;
+    while index < chars.len() {
+        let current = chars[index];
+        if current.is_whitespace() {
+            pending_space = true;
+            index += 1;
+            continue;
+        }
+        if pending_space && !out.is_empty() {
+            out.push(' ');
+        }
+        pending_space = false;
+        let end = string_literal_end(&chars, index).unwrap_or(index + 1);
+        out.extend(&chars[index..end]);
+        index = end;
+    }
+    out
+}
+
+/// End (exclusive) of the string literal starting at `start`, if one starts
+/// there; an unterminated literal runs to the end of the text.
+fn string_literal_end(chars: &[char], start: usize) -> Option<usize> {
+    let mut cursor = start;
+    let mut hashes = 0;
+    let raw = chars[cursor] == 'r' || (chars[cursor] == 'b' && chars.get(cursor + 1) == Some(&'r'));
+    if raw {
+        cursor += if chars[cursor] == 'b' { 2 } else { 1 };
+        while chars.get(cursor) == Some(&'#') {
+            hashes += 1;
+            cursor += 1;
+        }
+        if chars.get(cursor) != Some(&'"') {
+            return None;
+        }
+        cursor += 1;
+        while cursor < chars.len() {
+            let closing = chars.get(cursor + 1..cursor + 1 + hashes);
+            if chars[cursor] == '"' && closing.is_some_and(|run| run.iter().all(|c| *c == '#')) {
+                return Some(cursor + 1 + hashes);
+            }
+            cursor += 1;
+        }
+        return Some(chars.len());
+    }
+    if chars[cursor] == 'b' && chars.get(cursor + 1) == Some(&'"') {
+        cursor += 1;
+    }
+    if chars[cursor] != '"' {
+        return None;
+    }
+    cursor += 1;
+    while cursor < chars.len() {
+        match chars[cursor] {
+            '\\' => cursor += 2,
+            '"' => return Some(cursor + 1),
+            _ => cursor += 1,
+        }
+    }
+    Some(chars.len())
+}
+
+/// 128-bit identity: two FNV-1a passes with distinct offset bases, rendered as
+/// 32 lowercase hex characters. Stable across Rust versions and platforms.
+fn seam_identity_hash(entry: &ClassifiedSeam, file: &str) -> String {
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+    const BASES: [u64; 2] = [0xcbf2_9ce4_8422_2325, 0x8422_2325_cbf2_9ce4];
+    let text = seam_identity_text(entry, file);
+    let mut out = String::with_capacity(32);
+    for base in BASES {
+        let mut hash = base;
+        for byte in text.as_bytes() {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(FNV_PRIME);
+        }
+        out.push_str(&format!("{hash:016x}"));
+    }
+    out
+}
+
+/// Zero-based rank of each seam among those sharing its identity text, in
+/// source order (byte offset, then input order). Only the relative order is
+/// read, never an offset value, so distinct textual duplicates stay distinct
+/// without making the fingerprint depend on where they sit.
+fn seam_ordinals(classified: &[ClassifiedSeam]) -> Vec<usize> {
+    let mut groups: std::collections::BTreeMap<String, Vec<(usize, usize)>> =
+        std::collections::BTreeMap::new();
+    for (index, entry) in classified.iter().enumerate() {
+        let file = normalize_path(entry.seam.file());
+        groups
+            .entry(seam_identity_text(entry, &file))
+            .or_default()
+            .push((entry.seam.byte_offset(), index));
+    }
+    let mut ordinals = vec![0; classified.len()];
+    for members in groups.values_mut() {
+        members.sort();
+        for (rank, (_, index)) in members.iter().enumerate() {
+            ordinals[*index] = rank;
+        }
+    }
+    ordinals
 }
 
 fn finding_rule_id(class: &ExposureClass) -> String {
@@ -1992,7 +2138,7 @@ mod tests {
         finding.owner_kind = Some(OwnerKind::Function);
         finding.static_limit_kind = Some(StaticLimitKind::MockedModule);
         finding.evidence = vec![
-            "gap_state: advisory".to_string(),
+            "gap_state: unknown".to_string(),
             "actionability_category: incomplete_repair_packet".to_string(),
             "why_not_actionable: TypeScript preview lacks a complete repair packet contract"
                 .to_string(),
@@ -2126,6 +2272,34 @@ weakly_exposed = "note"
 
         assert_eq!(result["level"], "note");
         assert_eq!(result["properties"]["severity"], "note");
+        Ok(())
+    }
+
+    /// #10717: `properties.confidence` is the contract's two-decimal value, not
+    /// the `f32` widened to `f64` (`0.4000000059604645`).
+    #[test]
+    fn sarif_finding_confidence_uses_contract_precision() -> Result<(), String> {
+        for (stored, wire, noisy) in [
+            (0.4_f32, 0.4_f64, true),
+            (0.92, 0.92, true),
+            (0.6, 0.6, true),
+            (0.75, 0.75, false),
+        ] {
+            // Fixture check: the pre-fix widening really is noisy for the
+            // inexact values, and exact ones (0.75) are the clean control.
+            let widened = serde_json::json!(stored).to_string();
+            assert_eq!(widened.len() > 6, noisy, "fixture {stored}: {widened}");
+            let mut output = sample_output();
+            output.findings[0].confidence = stored;
+            let rendered = render_findings_sarif(&output, &parse_config("")?, &[]);
+            let sarif = parse_json(&rendered)?;
+            let result = first_result(&sarif)?;
+            assert_eq!(result["properties"]["confidence"], serde_json::json!(wire));
+            assert_eq!(
+                result["properties"]["confidence"].to_string(),
+                format!("{wire}")
+            );
+        }
         Ok(())
     }
 
@@ -2744,6 +2918,186 @@ weakly_gripped = "note"
         }
     }
 
+    fn seam_fingerprints(seams: &[ClassifiedSeam]) -> Result<Vec<String>, String> {
+        let sarif = parse_json(&render_repo_seams_sarif(
+            seams,
+            None,
+            &RiprConfig::default(),
+        ))?;
+        results(&sarif)?
+            .iter()
+            .map(|result| {
+                let partial = result["partialFingerprints"]["riprFingerprintV1"]
+                    .as_str()
+                    .ok_or_else(|| format!("missing partial fingerprint: {result}"))?;
+                if result["fingerprints"]["riprFingerprintV1"] != partial {
+                    return Err(format!("fingerprints differ from partial: {result}"));
+                }
+                Ok(partial.to_string())
+            })
+            .collect()
+    }
+
+    fn weak_seam(
+        owner: &str,
+        kind: SeamKind,
+        position: (usize, usize),
+        expr: &str,
+    ) -> ClassifiedSeam {
+        classified_seam_at(
+            SeamGripClass::WeaklyGripped,
+            "src/pricing.rs",
+            owner,
+            kind,
+            position,
+            expr,
+        )
+    }
+
+    /// #11219: an unrelated edit above a seam moves its byte offset, display
+    /// line and analysis `SeamId`, but not its code-scanning alert identity.
+    #[test]
+    fn seam_fingerprint_survives_lines_inserted_above() -> Result<(), String> {
+        let before = weak_seam(
+            "pricing::total",
+            SeamKind::PredicateBoundary,
+            (42, 3),
+            "a >= b",
+        );
+        let after = weak_seam(
+            "pricing::total",
+            SeamKind::PredicateBoundary,
+            (142, 13),
+            "a >= b",
+        );
+        // Fixture construction: the shift really moved every location input.
+        assert_ne!(
+            before.seam.id(),
+            after.seam.id(),
+            "analysis id is offset-derived"
+        );
+        assert_ne!(before.seam.display_line(), after.seam.display_line());
+        assert_ne!(before.seam.byte_offset(), after.seam.byte_offset());
+        let first = seam_fingerprints(&[before])?;
+        let second = seam_fingerprints(&[after])?;
+        assert_eq!(first.len(), 1);
+        assert_eq!(
+            first, second,
+            "fingerprint must not follow lines or offsets"
+        );
+        assert!(
+            first[0].starts_with("ripr.seam.weakly_gripped|src/pricing.rs|"),
+            "{}",
+            first[0]
+        );
+        assert!(first[0].ends_with("|0"), "{}", first[0]);
+        Ok(())
+    }
+
+    #[test]
+    fn seam_fingerprint_ignores_expression_whitespace_layout() -> Result<(), String> {
+        let tight = weak_seam("m::f", SeamKind::ReturnValue, (10, 2), "a >= b");
+        let spread = weak_seam("m::f", SeamKind::ReturnValue, (10, 2), "a  >=\n    b");
+        assert_ne!(tight.seam.expression(), spread.seam.expression());
+        assert_eq!(seam_fingerprints(&[tight])?, seam_fingerprints(&[spread])?);
+        Ok(())
+    }
+
+    #[test]
+    fn seam_fingerprint_keeps_string_literal_contents_distinct() -> Result<(), String> {
+        let seam = |expression: &str| weak_seam("m::f", SeamKind::ReturnValue, (10, 2), expression);
+        let literals = [
+            seam("pick(\"a  b\")"),
+            seam("pick(\"a b\")"),
+            seam("pick(\"a\\\" b\")"),
+            seam("pick(r#\"a  b\"#)"),
+            seam("pick(r#\"a b\"#)"),
+        ];
+        // The fixture really holds literals that differ only by inner spacing.
+        assert_eq!(literals[0].seam.expression(), "pick(\"a  b\")");
+        assert_eq!(literals[3].seam.expression(), "pick(r#\"a  b\"#)");
+        let fingerprints = seam_fingerprints(&literals)?;
+        let unique: std::collections::BTreeSet<_> = fingerprints.iter().collect();
+        assert_eq!(unique.len(), literals.len(), "{fingerprints:?}");
+        // Whitespace outside the literal still collapses.
+        let loose = seam("pick(  \"a  b\"\n)");
+        let tight = seam("pick( \"a  b\" )");
+        assert_eq!(seam_fingerprints(&[loose])?, seam_fingerprints(&[tight])?);
+        Ok(())
+    }
+
+    #[test]
+    fn distinct_seams_never_share_a_seam_fingerprint() -> Result<(), String> {
+        let variants = vec![
+            weak_seam("m::f", SeamKind::PredicateBoundary, (10, 2), "a >= b"),
+            // Same name, different scope.
+            weak_seam("m::g", SeamKind::PredicateBoundary, (10, 2), "a >= b"),
+            // Different kind.
+            weak_seam("m::f", SeamKind::ReturnValue, (10, 2), "a >= b"),
+            // Different expression.
+            weak_seam("m::f", SeamKind::PredicateBoundary, (10, 2), "a > b"),
+            // Different file.
+            classified_seam_at(
+                SeamGripClass::WeaklyGripped,
+                "src/other.rs",
+                "m::f",
+                SeamKind::PredicateBoundary,
+                (10, 2),
+                "a >= b",
+            ),
+            // Field-boundary bleed: owner/expression split differently.
+            weak_seam("m::f|a", SeamKind::PredicateBoundary, (10, 2), ">= b"),
+        ];
+        let fingerprints = seam_fingerprints(&variants)?;
+        assert_eq!(fingerprints.len(), variants.len());
+        let unique: std::collections::BTreeSet<_> = fingerprints.iter().collect();
+        assert_eq!(unique.len(), variants.len(), "{fingerprints:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn duplicate_seams_in_one_scope_get_distinct_stable_ordinals() -> Result<(), String> {
+        let seam_at = |offset: usize, line: usize| {
+            weak_seam("m::f", SeamKind::CallPresence, (offset, line), "log(x)")
+        };
+        // Input order is not source order; ordinals follow source order.
+        let fingerprints =
+            seam_fingerprints(&[seam_at(300, 30), seam_at(100, 10), seam_at(200, 20)])?;
+        let unique: std::collections::BTreeSet<_> = fingerprints.iter().collect();
+        assert_eq!(unique.len(), 3, "{fingerprints:?}");
+        assert!(fingerprints[1].ends_with("|0"), "{fingerprints:?}");
+        assert!(fingerprints[2].ends_with("|1"), "{fingerprints:?}");
+        assert!(fingerprints[0].ends_with("|2"), "{fingerprints:?}");
+        // Shifting all of them down keeps each duplicate's identity.
+        let shifted = seam_fingerprints(&[seam_at(900, 90), seam_at(700, 70), seam_at(800, 80)])?;
+        assert_eq!(fingerprints, shifted);
+        Ok(())
+    }
+
+    #[test]
+    fn seam_ordinals_ignore_neighbour_class_and_visibility() -> Result<(), String> {
+        let both = seam_fingerprints(&[
+            weak_seam("m::f", SeamKind::CallPresence, (10, 1), "log(x)"),
+            weak_seam("m::f", SeamKind::CallPresence, (20, 2), "log(x)"),
+        ])?;
+        assert_eq!(both.len(), 2);
+        // The first duplicate is reclassified to a class the default policy
+        // hides: the remaining sibling keeps ordinal 1, not 0.
+        let hidden = classified_seam_at(
+            SeamGripClass::StronglyGripped,
+            "src/pricing.rs",
+            "m::f",
+            SeamKind::CallPresence,
+            (10, 1),
+            "log(x)",
+        );
+        let sibling = weak_seam("m::f", SeamKind::CallPresence, (20, 2), "log(x)");
+        let visible = seam_fingerprints(&[hidden, sibling])?;
+        assert_eq!(visible.len(), 1, "default policy hides strongly_gripped");
+        assert_eq!(visible[0], both[1]);
+        Ok(())
+    }
+
     fn weakly_gripped_classified() -> ClassifiedSeam {
         classified_seam(SeamGripClass::WeaklyGripped)
     }
@@ -2753,13 +3107,33 @@ weakly_gripped = "note"
     }
 
     fn classified_seam(class: SeamGripClass) -> ClassifiedSeam {
-        let seam = RepoSeam::new(
+        classified_seam_at(
+            class,
             "src/pricing.rs",
             "pricing::discounted_total",
             SeamKind::PredicateBoundary,
-            42,
-            88,
+            (42, 88),
             "amount >= discount_threshold",
+        )
+    }
+
+    /// A seam whose identity inputs (file, owner, kind, expression) and
+    /// position (`(byte_offset, display_line)`) are explicit.
+    fn classified_seam_at(
+        class: SeamGripClass,
+        file: &str,
+        owner: &str,
+        kind: SeamKind,
+        position: (usize, usize),
+        expression: &str,
+    ) -> ClassifiedSeam {
+        let seam = RepoSeam::new(
+            file,
+            owner,
+            kind,
+            position.0,
+            position.1,
+            expression,
             RequiredDiscriminator::BoundaryValue {
                 description: "amount == discount_threshold".to_string(),
             },

@@ -793,7 +793,9 @@ keeps its class. A call that names the owner decides reach itself and is
 judged by its own evidence: `.name(`, `<Money as Trait>::name(` where the
 qualifier is exactly the impl type and `Trait` is the owner's trait, spelled bare
 or under `std::ops`/`core::ops` and implemented once for the type (`Add<f64>`
-beside `Add<Money>` is ambiguous), or
+beside `Add<Money>` is ambiguous; spelled trait arguments, as in
+`<Money as Add<Money>>::name(`, must equal the impl header's, with an omitted
+right-hand side read as the self type), or
 `Money::name(` when the type has no other method of that name (an inherent
 `name` wins the path, and a second trait's `name` makes it ambiguous). Another
 type's `name`, another trait's, a type that only ends in the impl type, a
@@ -815,10 +817,14 @@ definition and is admitted only when the impl header spells its self type as a
 bare name; with a qualified header (`impl Add for other::Money`) a same-module
 `type Money = ..` or other rebinding refuses the lift. A local alias to the owner still
 fails closed at the relation stage. The test must also reach this impl directly
-to be judged this way. The related rows are capped for display; a finding whose
-rows were cut stays withheld, because a naming test may be among the cut rows
-and which rows survive depends on test names. The cap counts rows, so one
-test with more than eight assertion rows also stays withheld. The call only lifts the withholding: the finding is then
+to be judged this way. Related rows are capped for display, but this decision
+reads the admitted direct rows before that cap. A named call outside the display
+window, or in a test with more than eight assertion rows, can therefore lift the
+syntax-only withholding. For capped findings, a `.name(` call lifts the
+withholding only when the bounded receiver and scope checks tie that call to the
+owner; a foreign or unresolved receiver does not. The existing uncapped method
+reading is unchanged. A capped operator-only relation still stays withheld,
+and an ignored named test does not lift that withholding. The call only lifts the withholding: the finding is then
 classified from its own stages, and an assertion-free path call leaves it an
 unconfirmed `weakly_exposed` rather than borrowing evidence.
 A confirmed
@@ -931,9 +937,31 @@ assertions that do not call the owner: they could not have been its oracle,
 or they are real gaps pinned by the runtime controls. A weak assertion alone
 stays `weakly_exposed`.
 
+### A TypeScript workspace walk cut short at its entry cap (#11767)
+
+TypeScript discovery visits at most `RIPR_TS_MAX_WORKSPACE_FILES` directory
+entries (20,000 by default), counting entries that are never indexed. When the
+cap trips, the test universe is partial, so a finding that would say no test
+reaches the change rests on tests the walk may never have read.
+
+When discovery was truncated, every TypeScript or JavaScript finding classed
+`no_static_path` with no earlier `static_limit_kind` is rewritten through
+`withhold_gap` to `static_unknown` under `typescript_workspace_discovery_truncated`.
+The first unresolved edge names the cap and the next step names the setting
+(and the read budget) or a narrower root. Findings that have a related test
+are not touched, and a walk that finishes under the cap changes nothing.
+
+The diff names what changed, so a changed source file the adapter accepts joins
+the partial file set even when the walk stopped before reaching it. Without
+that, a cut-short walk leaves the change with no owner and no finding at all.
+
+This does not make the cut-short run complete: the cap limitation still marks
+the outcome partial. Walk order, budgeting by candidate source files and the
+read budget are separate work.
+
 ## Scope boundary
 
-- Rust check findings only. The pilot seam rule is RIPR-SPEC-0230 (#5569).
+- Rust check findings only, except the TypeScript truncated-discovery rule above. The pilot seam rule is RIPR-SPEC-0230 (#5569).
 - `weakly_exposed` findings are out of scope except for the framework
   oracles above and the profile-dependent `debug_assert_eq!` above (which the
   owner pin would credit as `assert_eq!`): a credited weak oracle is read
@@ -1080,6 +1108,8 @@ Tests in `crates/ripr/tests/operator_call_credit.rs` and
 `crates/ripr/src/analysis/classify/related_tests/operator_dispatch.rs`
 (#9567):
 
+- `repo_operator_cap_uses_uncapped_direct_relations` exercises the repository producer and its capped fallback;
+  `capped_rows_do_not_hide_a_named_operator_call` and the crowded named-call controls in `a_credit_no_assertion_confirms_is_withheld_not_a_gap` preserve pre-cap decisions and operator-only withholding (#10625).
 - `typed_operands_reach_each_operator_impl` (`Add`, `Sub`, `Neg`, `Not`,
   `AddAssign`) and `an_operator_impl_reached_through_the_operator_is_credited`
 - `operands_that_are_not_established_as_the_impl_type_stay_unrelated`
@@ -1130,6 +1160,10 @@ local and known executors, item macro, `cfg_attr` and trailing-comment
 controls) and `cfg_predicates::tests::cfg_attr_introduces_test_only_under_a_predicate_known_true`.
 
 Fixtures: `gap_withheld_feature_gated_test`, `gap_kept_ignored_test`.
+
+`crates/ripr/tests/typescript_truncated_discovery.rs` (a finished walk keeps
+`no_static_path`; a truncated walk withholds it, names the cap, keeps the changed
+file in scope and leaves the outcome partial).
 
 Wire strings are pinned by
 `crates/ripr/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable`
