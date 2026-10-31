@@ -1,2 +1,0 @@
-crates/ripr/src/config/model.rs|analysis.test_harnesses.adapter `{other}` is unknown; expected \"libtest_mimic_v1\" or \"exact_attribute_v1\"
-crates/ripr/src/config/model.rs|analysis.test_harnesses.kind `{other}` is unknown; expected \"custom_harness\" or \"registered_attribute\" (un

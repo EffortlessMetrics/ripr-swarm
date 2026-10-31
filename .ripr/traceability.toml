@@ -12381,7 +12381,7 @@ tests = [
   "crates/ripr/tests/free_call_return_pin.rs::free_call_entry_over_a_non_integer_owner_is_not_credited",
   "crates/ripr/tests/free_call_return_pin.rs::free_call_entry_whose_callee_name_is_bound_elsewhere_is_not_credited",
   "crates/ripr/tests/free_call_return_pin.rs::free_call_entry_resolved_through_a_use_glob_or_another_file_is_not_credited",
-  "crates/ripr/tests/free_call_return_pin.rs::free_call_entry_with_a_test_that_does_not_pin_it_exactly_is_not_credited",
+  "crates/ripr/tests/free_call_return_pin.rs::free_call_entry_classes_follow_the_tests_shape",
   "crates/ripr/tests/free_call_return_pin.rs::free_call_entry_that_is_a_trait_method_is_not_credited",
   "crates/ripr/tests/free_call_return_pin.rs::free_call_entry_whose_callee_is_declared_in_another_scope_is_not_credited",
   "crates/ripr/tests/free_call_return_pin.rs::free_call_entry_method_beside_a_same_named_associated_fn_is_not_credited",
@@ -12391,6 +12391,17 @@ tests = [
   "crates/ripr/tests/free_call_return_pin.rs::free_call_entry_over_an_integer_name_bound_by_a_use_is_not_credited",
   "crates/ripr/tests/free_call_return_pin.rs::free_call_entry_offset_literal_follows_rust_integer_lexing",
   "crates/ripr/tests/free_call_return_pin.rs::free_call_entry_under_a_parent_glob_that_may_import_an_integer_name_is_not_credited",
+  "crates/ripr/tests/crate_qualified_free_call_pin.rs::crate_qualified_root_and_child_module_entries_are_credited",
+  "crates/ripr/tests/crate_qualified_free_call_pin.rs::crate_qualified_entry_that_swallows_or_reshapes_the_result_is_not_credited",
+  "crates/ripr/tests/crate_qualified_free_call_pin.rs::crate_qualified_entry_follows_the_library_target_name",
+  "crates/ripr/tests/crate_qualified_free_call_pin.rs::a_qualified_call_outside_the_assertion_does_not_credit_another_observed_call",
+  "crates/ripr/tests/crate_qualified_free_call_pin.rs::crate_qualified_entry_with_a_test_that_does_not_pin_it_exactly_is_not_credited",
+  "crates/ripr/tests/crate_qualified_free_call_pin.rs::crate_qualified_entry_with_the_crate_name_rebound_in_the_test_is_not_credited",
+  "crates/ripr/tests/crate_qualified_free_call_pin.rs::crate_qualified_entry_that_two_modules_declare_is_not_credited",
+  "crates/ripr/tests/crate_qualified_free_call_pin.rs::crate_qualified_entry_spelled_with_the_wrong_module_path_is_not_credited",
+  "crates/ripr/tests/crate_qualified_free_call_pin.rs::crate_qualified_entry_that_is_a_trait_method_is_not_credited",
+  "crates/ripr/tests/crate_qualified_free_call_pin.rs::bare_imported_spelling_keeps_its_credit_beside_the_qualified_one",
+  "crates/ripr/tests/crate_qualified_free_call_pin.rs::crate_qualified_entry_with_cfg_gated_variants_is_not_credited",
   "crates/ripr/src/analysis/classify/helper_transfer.rs::tests::a_bare_call_binds_only_within_one_plain_module_scope",
   "crates/ripr/src/analysis/classify/helper_transfer.rs::tests::a_callee_named_only_as_a_call_survives_the_binding_scan",
   "crates/ripr/src/analysis/classify/helper_transfer.rs::tests::a_use_binding_a_builtin_integer_name_or_a_glob_is_found",
@@ -17325,6 +17336,16 @@ tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::field_collection_count_read_refuses_a_preexisting_key",
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::assertion_field_collection_reads_name_binding_and_getter",
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::collection_subject_must_end_after_root_index_or_value_read",
+  "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::assigned_field_path_treats_a_builders_tail_self_as_the_handoff_not_a_write",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::field_write_seam_requires_the_written_field_only_for_the_last_plain_self_write",
+  "crates/ripr/tests/field_write_seam.rs::setter_with_no_read_of_the_field_names_the_field_check",
+  "crates/ripr/tests/field_write_seam.rs::sibling_field_read_does_not_check_the_written_field",
+  "crates/ripr/tests/field_write_seam.rs::read_on_another_binding_does_not_check_the_written_field",
+  "crates/ripr/tests/field_write_seam.rs::exact_read_of_the_written_field_is_checked_not_a_start",
+  "crates/ripr/tests/field_write_seam.rs::later_write_to_the_field_leaves_no_seam",
+  "crates/ripr/tests/field_write_seam.rs::builder_tail_self_is_not_a_later_write",
+  "crates/ripr/tests/field_write_seam.rs::should_panic_test_does_not_check_the_written_field",
+  "crates/ripr/tests/field_write_seam.rs::ignored_test_does_not_check_the_written_field",
 ]
 fixtures = [
   "fixtures/rust_map_overwrite_count",
@@ -17339,6 +17360,8 @@ code = [
   "crates/ripr/src/analysis/classify/activation.rs",
   "crates/ripr/src/analysis/classify/propagation_witness.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
+  "crates/ripr/src/analysis/seam_inventory.rs",
+  "crates/ripr/src/analysis/test_grip_evidence.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0228-rust-field-write-observation.md",
@@ -19033,6 +19056,15 @@ id = "RIPR-SPEC-0240"
 name = "Unknown, not a gap"
 spec = "docs/specs/RIPR-SPEC-0240-unknown-not-a-gap.md"
 tests = [
+  "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_literal_pin_reads_helper_data",
+  "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_credit_requires_readable_carried_data",
+  "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_projection_edit_needs_distinct_literal_totals",
+  "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_cfg_rows_do_not_supply_literal_data",
+  "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_raw_rival_method_does_not_pin_the_owner",
+  "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_unread_old_pipeline_supplies_no_pin",
+  "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_equivalent_binding_edits_keep_degenerate_literals",
+  "crates/ripr/tests/framework_oracle_limit.rs::a_fixture_receiver_shape_that_differs_keeps_the_finding",
+  "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_gate_does_not_lend_propagation_to_a_forwarding_entry_pin",
   "crates/ripr/tests/operator_call_credit.rs::block_statements_followed_by_minus_stay_unrelated",
   "crates/ripr/tests/operator_call_credit.rs::standalone_add_assign_keeps_typed_operand_and_unique_impl_gates",
   "crates/ripr/tests/proximity_oracle_credit.rs::unrelated_same_file_assertion_cannot_supply_the_oracle",
@@ -19188,6 +19220,9 @@ tests = [
   "crates/ripr/src/analysis/classify/pinned_shape.rs::tests::a_closure_bound_by_let_in_the_tail_block_is_not_a_closure_tail",
 ]
 fixtures = [
+  "fixtures/fixture_receiver_extension_iter",
+  "fixtures/fixture_receiver_coincident_data",
+  "fixtures/fixture_receiver_unread_data",
   "fixtures/proximity_unrelated_oracle_not_credited",
   "fixtures/macro_site_scoped_rest_limit",
   "fixtures/parser_formatted_input_provenance",
@@ -19195,6 +19230,8 @@ fixtures = [
   "fixtures/gap_kept_ignored_test",
 ]
 code = [
+  "crates/ripr/src/analysis/classify/owner_pin/fixture_receiver.rs",
+  "crates/ripr/src/analysis/classify/owner_pin/fixture_receiver/dispatch.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/classify/gap_admission.rs",
   "crates/ripr/src/analysis/classify/pinned_shape.rs",
@@ -19446,6 +19483,7 @@ tests = [
   "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::condition_holds_still_excludes_simple_false_comparison",
   "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::eval_comparison_fails_open_on_rebound_parameter",
   "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::compare_literal_values_equates_bool_like_python",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::compare_literal_values_fails_open_on_undecoded_literals",
   "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::keyword_outside_quotes_respects_word_boundaries",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::guarded_arm_return_value_below_guard_is_weakly_exposed",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::guarded_arm_return_value_with_activating_input_stays_exposed",
