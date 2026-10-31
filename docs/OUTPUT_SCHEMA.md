@@ -1112,17 +1112,10 @@ explicit `--perl-facts`/`--suppression-policy` paths) so the retry
 reproduces the requested analysis; the command carries the raw root path
 (the check-JSON `root` echo is the `display_path` spelling and escapes `%`),
 an explicit `--format VALUE` spelling when one was given, and a finite
-doubled `--timeout`. An explicit `--output-dir` destination is never
-repeated: the refused output set occupies that directory and custody rejects
-an existing destination, so the note names the occupied destination and the
-caller names a new one. For a stdin diff (`--diff -`) no literal command is
+doubled `--timeout`. An explicit `--output-dir` is never repeated (the refused set occupies it). For a stdin diff (`--diff -`) no literal command is
 offered: the consumed bytes cannot be replayed, so `recovery.kind` is
 `save_stdin_diff_to_named_file` with `command: null` and the note names the
-honest continuation. `rereads` names what a retry re-reads (the `base-ref`
-and `head-ref` of the committed `<base>...HEAD` range, worktree bytes with
-the base/head merge-base re-resolution, the diff file, or nothing for
-immutable Git candidate objects) and the note states that such a retry is
-not pinned to the timed-out run's snapshot. Input metadata never implies an
+honest continuation. `rereads` names what a retry re-reads; such a retry is not pinned to the timed-out snapshot. Input metadata never implies an
 exposure, clean, or repair-ready verdict: exit stays `2`, findings stay
 empty, the summary stays zeroed, and `downstream_consumable` stays `false`.
 
