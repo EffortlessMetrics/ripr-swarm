@@ -2170,7 +2170,7 @@ fn ripr_shell(dir: &Path, line: &str, path: &str) -> Result<String, String> {
 /// A Python repository whose base commit holds `m.py`, its test and any
 /// `extra` files; the feature commit changes `m.py` (python) or `src/lib.rs`
 /// (rust) only, so every `extra` file stays unchanged.
-#[cfg(unix)]
+#[cfg(all(unix, feature = "lang-python"))]
 fn python_repo(root: &Path, extra: &[(&str, &[u8])], change_python: bool) -> Result<(), String> {
     let w = |rel: &str, body: &[u8]| -> Result<(), String> {
         let path = root.join(rel);
@@ -2212,7 +2212,7 @@ fn python_repo(root: &Path, extra: &[(&str, &[u8])], change_python: bool) -> Res
 /// A diff that depends on that language must disclose it: before the fix the
 /// per-language child was partial while the outcome said "analysis complete"
 /// (and a debug build aborted on the reconcile assertion).
-#[cfg(unix)]
+#[cfg(all(unix, feature = "lang-python"))]
 #[test]
 fn unreadable_unchanged_python_source_is_disclosed_not_complete() -> Result<(), String> {
     let scratch = Scratch::new("unread-py")?;
@@ -2242,7 +2242,7 @@ fn unreadable_unchanged_python_source_is_disclosed_not_complete() -> Result<(), 
 
 /// The same unreadable Python file cannot affect a Rust-only diff, so it must
 /// neither abort nor downgrade that result.
-#[cfg(unix)]
+#[cfg(all(unix, feature = "lang-python"))]
 #[test]
 fn unreadable_unchanged_python_source_does_not_downgrade_a_rust_only_diff() -> Result<(), String> {
     let scratch = Scratch::new("unread-py-rust")?;
