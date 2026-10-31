@@ -68,7 +68,7 @@ pub(super) fn git_header_matches_rename(raw: &str, old: &Path, new: &Path) -> bo
     let Some(marker) = raw.strip_prefix("diff --git ") else {
         return false;
     };
-    let rest = if marker.starts_with('"') {
+    let rest = if let Some(after_quote) = marker.strip_prefix('"') {
         let Some(end) = quoted_token_end(marker) else {
             return false;
         };
@@ -76,7 +76,7 @@ pub(super) fn git_header_matches_rename(raw: &str, old: &Path, new: &Path) -> bo
             return false;
         };
         if confine_to_relative_path(&decoded.without_side_prefix("a/")).as_deref() != Some(old)
-            || !marker[1..].starts_with("a/")
+            || !after_quote.starts_with("a/")
         {
             return false;
         }
@@ -125,11 +125,11 @@ pub(super) fn git_header_matches_rename(raw: &str, old: &Path, new: &Path) -> bo
         return false;
     };
     let target = target.trim_end_matches('\r');
-    let token = if target.starts_with('"') {
+    let token = if let Some(after_quote) = target.strip_prefix('"') {
         let Some(end) = quoted_token_end(target) else {
             return false;
         };
-        if end != target.len() || !target[1..].starts_with("b/") {
+        if end != target.len() || !after_quote.starts_with("b/") {
             return false;
         }
         target

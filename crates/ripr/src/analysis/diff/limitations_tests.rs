@@ -376,8 +376,9 @@ fn normalized_old_quoted_new_with_embedded_separator() -> Result<(), String> {
         );
     }
     let deep = format!("diff --git a/{}old.rs b/src/new.rs\n", "a/".repeat(600));
-    let error =
-        parse_unified_diff_bounded_with_metadata(&deep).expect_err("deep header must be refused");
+    let Err(error) = parse_unified_diff_bounded_with_metadata(&deep) else {
+        return Err("deep header must be refused".to_string());
+    };
     assert!(error.contains("diff_path_too_deep"), "{error}");
     Ok(())
 }
