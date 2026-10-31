@@ -4,6 +4,9 @@ CI should protect correctness without making ordinary contribution slow or
 noisy. Default CI is advisory for static exposure findings until calibration and
 configuration are mature enough to support opt-in failure policies.
 
+New to RIPR in CI? Start with the short ordered path in
+[Adopting RIPR in CI](ADOPTING_IN_CI.md); this page is the long reference.
+
 ## Python wheel applicability (#4987)
 
 The Python wheel workflow retains its broad PR paths and ordinary manual
