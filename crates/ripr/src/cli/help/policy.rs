@@ -113,13 +113,19 @@ An explicit `--mode visible-only` is quiet; blocking modes remain opt-in.
 pub(super) const BASELINE_HELP: &str = r#"Create, diff, and shrink a reviewed baseline of acknowledged test gaps.
 
 Usage:
-  ripr baseline create --from PATH [--out PATH] [--dry-run] [--force]
+  ripr baseline create (--from PATH | --from-check PATH) [--out PATH] [--dry-run] [--force]
   ripr baseline diff --baseline PATH --current PATH [--out PATH] [--out-md PATH]
   ripr baseline update --baseline PATH --current PATH --remove-resolved [--migrate-legacy-identities] [--out PATH]
   ripr baseline update --baseline PATH --current PATH --migrate-legacy-identities [--out PATH]
 
 Create options:
   --from PATH    Gate-decision JSON from `ripr gate evaluate`.
+  --from-check PATH
+                 Whole-repository `ripr check --format json` artifact, from
+                 `ripr check --candidate-tree HEAD^{tree}`. Baselines the gap
+                 classes weakly_exposed, reachable_unrevealed and no_static_path
+                 of the entire tree. Refuses a diff-scoped or incomplete artifact.
+                 Give exactly one of --from or --from-check.
   --out PATH     Baseline ledger path. Defaults to .ripr/gate-baseline.json.
   --dry-run      Print the baseline ledger JSON without writing.
   --force        Overwrite an existing baseline ledger.

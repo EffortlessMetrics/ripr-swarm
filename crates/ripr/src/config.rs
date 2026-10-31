@@ -7,6 +7,10 @@
 //! initialization options after this file is loaded.
 
 use crate::app::{CheckInput, Mode};
+use crate::domain::language_availability::{
+    ConfiguredIntent, LanguageAvailabilityInput, resolve_language_availability,
+    unavailable_recovery,
+};
 use crate::domain::{LanguageId, OracleStrength};
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
@@ -1038,11 +1042,14 @@ fn parse_languages_enabled(values: &[String]) -> Result<Vec<LanguageId>, String>
                 "languages.enabled lists `{value}` more than once; remove the duplicate"
             ));
         }
-        if !language.is_available() {
+        let report = resolve_language_availability(&LanguageAvailabilityInput {
+            configured: ConfiguredIntent::Enabled,
+            ..LanguageAvailabilityInput::for_language(language)
+        });
+        if let Some(recovery) = unavailable_recovery(&report) {
             return Err(format!(
-                "languages.enabled lists `{value}`, but this ripr binary was built without Cargo feature `{}`; {}",
-                language.required_feature(),
-                language.unavailable_adapter_recovery()
+                "languages.enabled lists `{value}`, but this ripr binary was built without Cargo feature `{}`; {recovery}",
+                report.compile_feature,
             ));
         }
         parsed.push(language);

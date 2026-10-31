@@ -1450,7 +1450,7 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
         language_status: "preview".to_string(),
         scope: "diff".to_string(),
         evidence_class: "weakly_exposed".to_string(),
-        gap_state: "advisory".to_string(),
+        gap_state: "unknown".to_string(),
         policy_state: "preview".to_string(),
         repairability: "repairable".to_string(),
         repair_route: Some(repair_route),
@@ -1702,7 +1702,7 @@ pub(crate) mod tests {
             confidence: 0.4,
             evidence: vec![
                 "owner: applyDiscount".to_string(),
-                "gap_state: advisory".to_string(),
+                "gap_state: unknown".to_string(),
                 "actionability_category: incomplete_repair_packet".to_string(),
                 "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract".to_string(),
                 "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available".to_string(),

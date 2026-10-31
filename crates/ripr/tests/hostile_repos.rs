@@ -2230,6 +2230,95 @@ fn ripr_shell(dir: &Path, line: &str, path: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+/// A Python repository whose base commit holds `m.py`, its test and any
+/// `extra` files; the feature commit changes `m.py` (python) or `src/lib.rs`
+/// (rust) only, so every `extra` file stays unchanged.
+#[cfg(all(unix, feature = "lang-python"))]
+fn python_repo(root: &Path, extra: &[(&str, &[u8])], change_python: bool) -> Result<(), String> {
+    let w = |rel: &str, body: &[u8]| -> Result<(), String> {
+        let path = root.join(rel);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {e}"))?;
+        }
+        fs::write(path, body).map_err(|e| format!("write {rel} failed: {e}"))
+    };
+    fs::create_dir_all(root).map_err(|e| format!("mkdir root failed: {e}"))?;
+    git(root, &["init", "-q", "-b", "main"])?;
+    w(
+        "ripr.toml",
+        b"[languages]\nenabled = [\"rust\", \"python\"]\n",
+    )?;
+    w("Cargo.toml", MANIFEST.as_bytes())?;
+    w("src/lib.rs", BASE_LIB.as_bytes())?;
+    w("tests/t.rs", TEST.as_bytes())?;
+    w("m.py", b"def f(x):\n    return x + 1\n")?;
+    w(
+        "test_m.py",
+        b"from m import f\n\n\ndef test_f():\n    assert f(1) == 2\n",
+    )?;
+    for (rel, body) in extra {
+        w(rel, body)?;
+    }
+    git(root, &["add", "-A"])?;
+    git(root, &["commit", "-q", "-m", "base"])?;
+    git(root, &["checkout", "-q", "-b", "feat"])?;
+    if change_python {
+        w("m.py", b"def f(x):\n    return x + 2\n")?;
+    } else {
+        change_lib(root)?;
+    }
+    git(root, &["add", "-A"])?;
+    git(root, &["commit", "-q", "-m", "change"])
+}
+
+/// An unchanged source file that is not UTF-8 is never read into the index.
+/// A diff that depends on that language must disclose it: before the fix the
+/// per-language child was partial while the outcome said "analysis complete"
+/// (and a debug build aborted on the reconcile assertion).
+#[cfg(all(unix, feature = "lang-python"))]
+#[test]
+fn unreadable_unchanged_python_source_is_disclosed_not_complete() -> Result<(), String> {
+    let scratch = Scratch::new("unread-py")?;
+    let control = scratch.path.join("control");
+    python_repo(&control, &[], true)?;
+    let ran = ripr(&control, &["check", "--base", "main"], &[])?;
+    assert_sane(&ran, "control")?;
+    if !ran.stdout.contains("(analysis complete)") {
+        return Err(format!("control must be complete\n{}", ran.stdout));
+    }
+
+    let hostile = scratch.path.join("hostile");
+    python_repo(&hostile, &[("bad.py", b"x = '\xff\xfe'\n")], true)?;
+    let ran = ripr(&hostile, &["check", "--base", "main"], &[])?;
+    assert_sane(&ran, "unreadable unchanged python")?;
+    if ran.stdout.contains("(analysis complete)")
+        || !ran.stdout.contains("(analysis incomplete)")
+        || !ran.stdout.contains("re-encode them as UTF-8")
+    {
+        return Err(format!(
+            "expected a disclosed unreadable-source limitation\n{}\n{}",
+            ran.stdout, ran.stderr
+        ));
+    }
+    Ok(())
+}
+
+/// The same unreadable Python file cannot affect a Rust-only diff, so it must
+/// neither abort nor downgrade that result.
+#[cfg(all(unix, feature = "lang-python"))]
+#[test]
+fn unreadable_unchanged_python_source_does_not_downgrade_a_rust_only_diff() -> Result<(), String> {
+    let scratch = Scratch::new("unread-py-rust")?;
+    let root = scratch.path.join("r");
+    python_repo(&root, &[("bad.py", b"x = '\xff\xfe'\n")], false)?;
+    let ran = ripr(&root, &["check", "--base", "main"], &[])?;
+    assert_found_change(&ran, "rust diff beside unreadable python")?;
+    if !ran.stdout.contains("(analysis complete)") {
+        return Err(format!("Rust-only diff must stay complete\n{}", ran.stdout));
+    }
+    Ok(())
+}
+
 /// A FIFO named `package.json` or `tsconfig.json` blocks `open` forever. The
 /// TypeScript config readers and the implicit-root probe must treat it as an
 /// unreadable config (#11579), not wait on it.

@@ -7,6 +7,11 @@ on:
         description: "Run the pinned #5407 evidence pair (advisory; no wheel qualification)"
         type: boolean
         default: false
+      candidate_sha:
+        description: "Optional exact commit to qualify instead of the dispatched ref's head (40 hexadecimal characters; release candidate, #2769)"
+        required: false
+        default: ""
+        type: string
   pull_request:
     paths:
       - ".github/workflows/python-wheel-qualification.yml"
@@ -33,7 +38,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  CANDIDATE_SHA: ${{ inputs.candidate_sha || github.event.pull_request.head.sha || github.sha }}
   RUST_TARGET: x86_64-unknown-linux-gnu
   MATURIN_VERSION: "1.14.1"
   TWINE_VERSION: "7.0.0"
