@@ -85,9 +85,18 @@ pub(super) struct PythonTermFacts {
     /// function may recurse. Textual and over-approximate (#5491 `missing_input`
     /// withholds on it).
     calls_own_name: bool,
+    /// The function's text holds no `return` and no `yield` as code, so a
+    /// call's result is never a value the body computed (the implicit `None`,
+    /// or a coroutine/wrapper the call returns before the body runs). Textual
+    /// and over-approximate: a nested or bare `return` makes it false.
+    returns_no_value: bool,
 }
 
 impl PythonTermFacts {
+    pub(super) fn returns_no_value(&self) -> bool {
+        self.returns_no_value
+    }
+
     pub(super) fn calls_own_name(&self) -> bool {
         self.calls_own_name
     }
@@ -159,6 +168,8 @@ pub(super) fn term_facts(
         bound_names,
         returned_parameter,
         calls_own_name: false,
+        returns_no_value: code_mention_count(owner_text, "return") == 0
+            && code_mention_count(owner_text, "yield") == 0,
     }
 }
 
