@@ -5625,7 +5625,12 @@ mod tests {
         // `msg = "..."` / `raise Exc(msg)` form of the same downgrade, one more
         // direct-aligned weak card; `python_message_pin_local_control` is
         // exposed, no card.
-        if (direct, no_strong, orthogonal, family_selection) != (23, 27, 30, 1) {
+        // #10990: `python_boundary_local_rebound_not_credited` and
+        // `python_boundary_module_constant_rebound_not_credited` keep rebound
+        // inputs no call binds unresolved, so their weak boundary findings
+        // name no discriminator and carry no repair card; the direct-aligned
+        // inventory drops by two.
+        if (direct, no_strong, orthogonal, family_selection) != (21, 27, 30, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));
