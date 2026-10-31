@@ -430,6 +430,58 @@ fn run_command_with_env(
     spawn_command(program, Some(current_dir), args, env, None, None)
 }
 
+/// Place the built `ripr` at `destination` without ever opening a writable
+/// descriptor on it (#11449). `std::fs::copy` holds a write handle on the new
+/// file, and a sibling test thread that forks in that window leaks the handle
+/// into its child until the child reaches `exec`; executing the copy then
+/// fails with `ETXTBSY`. A hard link shares the already-sealed built inode, so
+/// no writer exists to leak. Only when the filesystem refuses the link
+/// (for example across devices) does this fall back to a byte copy.
+fn install_ripr_binary(source: &Path, destination: &Path) -> std::io::Result<()> {
+    match std::fs::hard_link(source, destination) {
+        Ok(()) => Ok(()),
+        Err(_) => std::fs::copy(source, destination).map(|_| ()),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn install_ripr_binary_links_the_built_inode_without_a_writer() -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+    let dir = unique_temp_workspace("install-ripr-link");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
+    let built = Path::new(env!("CARGO_BIN_EXE_ripr"));
+    let installed = dir.join("ripr");
+    let result = (|| -> Result<(), String> {
+        install_ripr_binary(built, &installed).map_err(|e| format!("install: {e}"))?;
+        let built_meta = std::fs::metadata(built).map_err(|e| format!("stat built: {e}"))?;
+        let installed_meta =
+            std::fs::metadata(&installed).map_err(|e| format!("stat installed: {e}"))?;
+        // On one filesystem the install must be a link (same inode), so no
+        // writable descriptor was ever opened. A cross-device temp dir takes
+        // the documented copy fallback, where the link claim does not apply.
+        if built_meta.dev() == installed_meta.dev()
+            && built_meta.ino() != installed_meta.ino()
+            && std::fs::metadata(&dir)
+                .map(|m| m.dev() == built_meta.dev())
+                .unwrap_or(false)
+        {
+            return Err("installed ripr is a separate file, not a link to the built inode".into());
+        }
+        let output = run_command(&installed.display().to_string(), None, &["--version"])
+            .map_err(|e| format!("spawn installed: {e}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "installed ripr --version failed: {:?}",
+                output.status
+            ));
+        }
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&dir);
+    result
+}
+
 /// Retry only `ETXTBSY` (`ExecutableFileBusy`). Copying `ripr` and executing
 /// the copy can fail while another test still holds a writable descriptor
 /// from a `fork` that has not reached `exec` (#4296). Three attempts and a
@@ -1776,7 +1828,7 @@ fn isolated_installed_binary_version_contract_is_side_effect_free() -> Result<()
         std::fs::create_dir_all(&bin_dir)?;
         let source_binary = std::path::Path::new(env!("CARGO_BIN_EXE_ripr"));
         let installed_binary = bin_dir.join(if cfg!(windows) { "ripr.exe" } else { "ripr" });
-        std::fs::copy(source_binary, &installed_binary)?;
+        install_ripr_binary(source_binary, &installed_binary)?;
 
         let config_path = root.join("ripr.toml");
         std::fs::write(&config_path, "this is not valid TOML\n")?;
@@ -11580,6 +11632,9 @@ fn agent_verify_and_receipt_disclose_historical_before_current_after_pair()
         json_pointer_str(&verify, "/artifact_currentness")?,
         "historical_before_current_after"
     );
+    // #3056: a clean-produced historical side carries no dirty disclosure.
+    assert!(verify.get("before_produced_from_dirty").is_none());
+    assert!(verify.get("after_produced_from_dirty").is_none());
 
     let verify_path = root.join("agent-verify.json");
     std::fs::write(&verify_path, &output.stdout)?;
@@ -11705,6 +11760,30 @@ fn agent_verify_historical_before_token_ignores_declared_dirty_production()
         json_pointer_str(&verify, "/artifact_currentness")?,
         "historical_before_current_after"
     );
+    // #3056: the pair token is unchanged, but the production-time dirty fact
+    // is preserved for the historical before side only.
+    assert_eq!(verify["before_produced_from_dirty"], true);
+    assert!(verify.get("after_produced_from_dirty").is_none());
+
+    // The receipt recomputes the same additive field; its canonical byte
+    // comparison must accept the verify output.
+    let verify_path = root.join("agent-verify.json");
+    std::fs::write(&verify_path, &output.stdout)?;
+    let receipt = root.join("agent-receipt.json");
+    let receipt_output = run_ripr(&[
+        "agent",
+        "receipt",
+        "--root",
+        &root.display().to_string(),
+        "--verify-json",
+        &verify_path.display().to_string(),
+        "--seam-id",
+        "seam-a",
+        "--json",
+        "--out",
+        &receipt.display().to_string(),
+    ]);
+    assert_success(&receipt_output);
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
@@ -13493,7 +13572,7 @@ fn doctor_names_workspace_build_first_on_path() -> Result<(), String> {
         let built = Path::new(env!("CARGO_BIN_EXE_ripr"));
         let built_dir = built.parent().ok_or("built ripr has no parent")?;
         let installed = installed_dir.join(built.file_name().ok_or("built ripr has no name")?);
-        std::fs::copy(built, &installed).map_err(|error| format!("install copy: {error}"))?;
+        install_ripr_binary(built, &installed).map_err(|error| format!("install copy: {error}"))?;
 
         let (installed_ok, report) =
             doctor_json_with_path_prefix(&installed, &workspace, &[&installed_dir])?;
@@ -20050,6 +20129,281 @@ fn pilot_language_fixture_repo(
     Ok(root)
 }
 
+#[test]
+#[cfg(feature = "lang-python")]
+fn python_mixed_boundary_calls_do_not_invent_a_missing_discriminator() -> Result<(), String> {
+    let root = pilot_language_fixture_repo(
+        "python-mixed-boundary-10990",
+        &[
+            (
+                "pyproject.toml",
+                "[project]\nname = \"boundary\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "pricing/__init__.py",
+                "def eligible(x):\n    if x > 3:\n        return True\n    return False\n",
+            ),
+            (
+                "tests/test_pricing.py",
+                "from pricing import eligible\n\ndef test_off():\n    assert eligible(5) == True\n\ndef test_unknown():\n    value = int(\"3\")\n    assert eligible(value) == True\n",
+            ),
+        ],
+        (
+            "pricing/__init__.py",
+            "def eligible(x):\n    if x >= 3:\n        return True\n    return False\n",
+        ),
+    )?;
+    let root_arg = root.display().to_string();
+    let check = || -> Result<serde_json::Value, String> {
+        let output = run_ripr(&[
+            "check",
+            "--root",
+            &root_arg,
+            "--base",
+            "origin/main",
+            "--format",
+            "json",
+        ]);
+        assert_success(&output);
+        serde_json::from_slice(&output.stdout).map_err(|err| err.to_string())
+    };
+    let report = check()?;
+    let findings = report["findings"].as_array().ok_or("missing findings")?;
+    assert_eq!(findings.len(), 1, "{report}");
+    let finding = &findings[0];
+    assert_eq!(finding["classification"], "weakly_exposed", "{finding}");
+    assert_eq!(
+        finding["missing_discriminators"].as_array().map(Vec::len),
+        Some(0),
+        "{finding}"
+    );
+    assert!(finding["python_repair_card"].is_null(), "{finding}");
+    assert!(
+        !finding["ripr"]["infect"]["summary"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("no strong related test call places"),
+        "{finding}"
+    );
+    assert!(
+        finding["missing"].to_string().contains("unresolved inputs"),
+        "{finding}"
+    );
+    assert!(
+        finding["observed_values"].to_string().contains("x = 5"),
+        "{finding}"
+    );
+    assert!(
+        !finding["recommended_next_step"]
+            .to_string()
+            .contains("x == 3"),
+        "{finding}"
+    );
+
+    std::fs::write(root.join("tests/test_pricing.py"), "from pricing import eligible\n\ndef test_off():\n    assert eligible(5) == True\n\ndef test_unknown():\n    values = (3,)\n    assert eligible(*values) == True\n").map_err(|err| err.to_string())?;
+    let unpack = check()?;
+    assert_eq!(
+        unpack["findings"][0]["classification"], "weakly_exposed",
+        "{unpack}"
+    );
+    assert_eq!(
+        unpack["findings"][0]["missing_discriminators"]
+            .as_array()
+            .map(Vec::len),
+        Some(0),
+        "{unpack}"
+    );
+    assert!(
+        unpack["findings"][0]["python_repair_card"].is_null(),
+        "{unpack}"
+    );
+
+    std::fs::write(
+        root.join("tests/test_pricing.py"),
+        "from pricing import eligible\n\ndef test_off():\n    assert eligible(5) == True\n",
+    )
+    .map_err(|err| err.to_string())?;
+    let off = check()?;
+    assert_eq!(
+        off["findings"][0]["missing_discriminators"][0]["value"], "x == 3",
+        "{off}"
+    );
+    assert!(
+        off["findings"][0]["python_repair_card"].is_object(),
+        "{off}"
+    );
+
+    std::fs::write(root.join("tests/test_pricing.py"), "from pricing import eligible\n\ndef test_on():\n    assert eligible(3) == True\n\ndef test_unknown():\n    value = int(\"3\")\n    assert eligible(value) == True\n").map_err(|err| err.to_string())?;
+    let on = check()?;
+    assert_eq!(on["findings"][0]["classification"], "exposed", "{on}");
+    assert_eq!(
+        on["findings"][0]["missing_discriminators"]
+            .as_array()
+            .map(Vec::len),
+        Some(0),
+        "{on}"
+    );
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "lang-python")]
+fn python_mixed_calls_do_not_invent_a_shifted_boundary_gap() -> Result<(), String> {
+    let root = pilot_language_fixture_repo(
+        "python-mixed-shift-10990",
+        &[
+            (
+                "pyproject.toml",
+                "[project]\nname = \"boundary\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "pricing/__init__.py",
+                "def eligible(x):\n    if x >= 3:\n        return True\n    return False\n",
+            ),
+            (
+                "tests/test_pricing.py",
+                "from pricing import eligible\n\ndef test_equal():\n    assert eligible(2) == False\n\ndef test_unknown():\n    value = int(\"3\")\n    assert eligible(value) == True\n",
+            ),
+        ],
+        (
+            "pricing/__init__.py",
+            "def eligible(x):\n    if x > 2:\n        return True\n    return False\n",
+        ),
+    )?;
+    let root_arg = root.display().to_string();
+    let check = || -> Result<serde_json::Value, String> {
+        let output = run_ripr(&[
+            "check",
+            "--root",
+            &root_arg,
+            "--base",
+            "origin/main",
+            "--format",
+            "json",
+        ]);
+        assert_success(&output);
+        serde_json::from_slice(&output.stdout).map_err(|err| err.to_string())
+    };
+    let mixed = check()?;
+    assert_eq!(
+        mixed["findings"][0]["classification"], "weakly_exposed",
+        "{mixed}"
+    );
+    assert_eq!(
+        mixed["findings"][0]["missing_discriminators"]
+            .as_array()
+            .map(Vec::len),
+        Some(0),
+        "{mixed}"
+    );
+    assert!(
+        mixed["findings"][0]["python_repair_card"].is_null(),
+        "{mixed}"
+    );
+    std::fs::write(
+        root.join("tests/test_pricing.py"),
+        "from pricing import eligible\n\ndef test_equal():\n    assert eligible(2) == False\n",
+    )
+    .map_err(|err| err.to_string())?;
+    let resolved = check()?;
+    assert_eq!(
+        resolved["findings"][0]["missing_discriminators"][0]["value"], "x == 3",
+        "{resolved}"
+    );
+    std::fs::write(root.join("tests/test_pricing.py"), "from pricing import eligible\n\ndef test_equal():\n    assert eligible(2) == False\n\ndef test_shift():\n    assert eligible(3) == True\n\ndef test_unknown():\n    value = int(\"3\")\n    assert eligible(value) == True\n").map_err(|err| err.to_string())?;
+    let witnessed = check()?;
+    assert_eq!(
+        witnessed["findings"][0]["classification"], "exposed",
+        "{witnessed}"
+    );
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "lang-python")]
+fn python_empty_comprehension_input_is_resolved_for_shifted_boundary() -> Result<(), String> {
+    let root = pilot_language_fixture_repo(
+        "python-empty-shift-10990",
+        &[
+            (
+                "pyproject.toml",
+                "[project]\nname = \"boundary\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "pricing/__init__.py",
+                "def eligible(items):\n    return [x for x in items if x >= 3]\n",
+            ),
+            (
+                "tests/test_pricing.py",
+                "from pricing import eligible\n\ndef test_equal():\n    assert eligible([2]) == []\n\ndef test_empty():\n    assert eligible([]) == []\n",
+            ),
+        ],
+        (
+            "pricing/__init__.py",
+            "def eligible(items):\n    return [x for x in items if x > 2]\n",
+        ),
+    )?;
+    let root_arg = root.display().to_string();
+    let check = || -> Result<serde_json::Value, String> {
+        let output = run_ripr(&[
+            "check",
+            "--root",
+            &root_arg,
+            "--base",
+            "origin/main",
+            "--format",
+            "json",
+        ]);
+        assert_success(&output);
+        serde_json::from_slice(&output.stdout).map_err(|err| err.to_string())
+    };
+    let empty = check()?;
+    assert_eq!(
+        empty["findings"][0]["classification"], "weakly_exposed",
+        "{empty}"
+    );
+    assert_eq!(
+        empty["findings"][0]["missing_discriminators"][0]["value"], "x == 3",
+        "{empty}"
+    );
+    assert!(
+        empty["findings"][0]["python_repair_card"].is_object(),
+        "{empty}"
+    );
+
+    std::fs::write(root.join("tests/test_pricing.py"), "from pricing import eligible\n\ndef test_equal():\n    assert eligible([2]) == []\n\ndef test_unknown():\n    values = [3]\n    assert eligible(values) == [3]\n").map_err(|err| err.to_string())?;
+    let unknown = check()?;
+    assert_eq!(
+        unknown["findings"][0]["missing_discriminators"]
+            .as_array()
+            .map(Vec::len),
+        Some(0),
+        "{unknown}"
+    );
+    assert!(
+        unknown["findings"][0]["python_repair_card"].is_null(),
+        "{unknown}"
+    );
+
+    std::fs::write(root.join("tests/test_pricing.py"), "from pricing import eligible\n\ndef test_equal():\n    assert eligible([2]) == []\n\ndef test_empty():\n    assert eligible([]) == []\n\ndef test_shift():\n    assert eligible([3]) == [3]\n").map_err(|err| err.to_string())?;
+    let witnessed = check()?;
+    assert_eq!(
+        witnessed["findings"][0]["classification"], "exposed",
+        "{witnessed}"
+    );
+    assert_eq!(
+        witnessed["findings"][0]["missing_discriminators"]
+            .as_array()
+            .map(Vec::len),
+        Some(0),
+        "{witnessed}"
+    );
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
 /// #4216 row 1: the onboarding re-walk's `pyapp` shape. A named module
 /// constant threshold leaves the boundary operand unresolved, so the Python
 /// preview finding is weakly exposed with no repair card. `check` used to
@@ -23052,7 +23406,7 @@ fn context_reuse_matches_fresh(fresh: &[u8], reused: &[u8]) -> Result<(), String
 /// is not weakened.
 fn stable_ripr_copy(workspace: &Path) -> Result<PathBuf, String> {
     let copy = workspace.join(format!("ripr{}", std::env::consts::EXE_SUFFIX));
-    std::fs::copy(env!("CARGO_BIN_EXE_ripr"), &copy)
+    install_ripr_binary(Path::new(env!("CARGO_BIN_EXE_ripr")), &copy)
         .map_err(|err| format!("copy suite binary to {}: {err}", copy.display()))?;
     Ok(copy)
 }
