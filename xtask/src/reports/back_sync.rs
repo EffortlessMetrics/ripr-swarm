@@ -430,7 +430,7 @@ fn build_receipt(options: &Options) -> Result<Receipt, String> {
         ),
         source_authority_paths_active: path_inventory(
             &authority_paths,
-            "git diff --name-status -z SWARM_BEFORE K, non-deleted rename/copy targets, filtered to source-authority paths",
+            "git diff --name-status -z SWARM_BEFORE K, non-deleted rename/copy targets, keeping .github/settings.yml and workflow files that mention publish/release keywords or cannot be read at K",
         ),
     };
     Ok(Receipt {

@@ -64,12 +64,13 @@ mod tests {
     fn serialized_shape_is_pinned() -> Result<(), String> {
         let value = serde_json::to_value(path_inventory(&paths(&["a"]), "cmd"))
             .map_err(|error| error.to_string())?;
-        let keys: Vec<&str> = value
+        let mut keys: Vec<&str> = value
             .as_object()
             .ok_or("not an object")?
             .keys()
             .map(String::as_str)
             .collect();
+        keys.sort_unstable();
         assert_eq!(
             keys,
             [
