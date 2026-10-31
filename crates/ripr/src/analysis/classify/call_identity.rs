@@ -2474,10 +2474,8 @@ fn own_crate_names_of(
     // ancestor has no single target root, yet `use package::...` names the
     // owner, #10046). Seed it so the package-name import never reads
     // foreign; sibling and dependency packages never take this branch.
-    if same_package {
-        if let Some(package) = owner_package {
-            names.insert(package.to_string());
-        }
+    if same_package && let Some(package) = owner_package {
+        names.insert(package.to_string());
     }
     let Some(owner_root) = super::owner_pin::target_root(owner_file, index, &BTreeSet::new())
     else {

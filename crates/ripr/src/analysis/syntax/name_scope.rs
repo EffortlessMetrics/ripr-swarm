@@ -241,7 +241,7 @@ pub(super) fn name_scopes_in_tree(
                     // A closure parameter shadows only its own closure body;
                     // every other binding shadows to the end of the function.
                     let end_line =
-                        closure_param_body_end(&pattern, &line_index).filter(|end| *end >= line);
+                        closure_param_body_end(&pattern, line_index).filter(|end| *end >= line);
                     let closure_fn_arity = end_line
                         .is_some()
                         .then(|| closure_param_fn_arity(&pattern))
