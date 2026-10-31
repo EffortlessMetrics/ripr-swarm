@@ -1520,7 +1520,11 @@ command, `ripr reports ci-summary --root . >> "$GITHUB_STEP_SUMMARY"`, which
 reads the artifacts earlier steps wrote and prints a regeneration route for any
 that are missing or malformed instead of failing. When the pinned ripr did not install (even if an older one is on PATH),
 the step writes a short summary saying so and pointing at the install step's
-log instead of leaving the summary empty. The summary starts with
+log instead of leaving the summary empty. When `target/ripr/review/comments.json`
+exists, the summary opens with "What RIPR found in this pull request": the count
+of changed-behavior spots where the tests may not notice a wrong result, the first
+spot with its missing check, and the `ripr agent repair` start when it is a plain
+`ripr agent repair ...` command (an unfinished analysis is never reported as clean). The summary then continues with
 the `start-here` first-run packet when `ripr first-pr` can compose one from
 explicit artifacts, then includes the PR review front panel, first useful
 action fallback, a language preview grouping section when `[languages]` enables
@@ -1576,7 +1580,14 @@ Selection and placement must stay conservative:
   to the changed region or owner function;
 - skip recommendations when a nearby test changed in the pull request;
 - target only changed lines, otherwise fall back to summary-only guidance;
-- cap inline review comments to three by default;
+- cap inline review comments to three by default, and fill those slots with
+  gaps that name a missing check before any card that offers no test to add;
+- never post a card that offers no test to add (any `gap_state` other than
+  `actionable`, including none) as an inline review comment: the publish plan
+  skips it as `not_publishable`. A present non-actionable state (a static
+  limitation) annotates as a `::notice` reading "RIPR has no test to suggest
+  here: ...", not a `::warning`; a card with no `gap_state` keeps the
+  `::warning`;
 - include the missing discriminator, suggested assertion shape, recommended
   test file, related test to imitate, and the repair start
   (`ripr agent repair --root . --seam-id <seam-id> --phase before`) when the
@@ -1685,7 +1696,26 @@ configure the workflow, so changing a mode never means editing the file:
   updated.
 - `RIPR_UPLOAD_SARIF` is set in the file, not as a variable. `"true"` uploads
   SARIF to the Security tab; set `"false"` if the repository does not use code
-  scanning.
+  scanning. Code scanning is free on public repositories; a private repository
+  needs GitHub Code Security (Advanced Security), and a fork or Dependabot pull
+  request has a read-only token that cannot upload. Where the upload cannot
+  work it fails, and because the upload steps are `continue-on-error` the job
+  stays green: the **Explain failed SARIF upload** step then adds a
+  `RIPR SARIF upload failed` warning to the run page. Set `"false"` to stop
+  trying; the job summary, annotations and artifacts do not depend on it.
+
+Pilot deadline (#11205). `RIPR_PILOT_TIMEOUT_MS` is optional and not in the
+generated file. Add it to
+the workflow `env:` (positive milliseconds) when `ripr pilot` stops at its
+deadline on a large repository. The `ripr reports ci-packet` pilot step then
+passes it as an explicit `ripr pilot --timeout-ms` hard limit, with no
+automatic extension; unset keeps pilot's 30 s default plus its automatic
+extension, and a non-numeric or zero value is refused. When the pilot packet
+is the timeout partial, the step summary's First-run status names the pilot
+deadline as the cause of the missing artifacts, the effect, and this next
+step (#11205). Per-file facts computed before the deadline are written to
+`target/ripr/cache`, so restoring that directory between runs lets the retry
+resume.
 
 Permissions and job settings:
 
@@ -1767,7 +1797,11 @@ Steps:
   reads as a workflow command.
 - **Upload RIPR diff findings** stays `continue-on-error`: upload infrastructure
   is not analysis authority (#2009), so a code-scanning outage must not fail a
-  gate the analysis passed.
+  gate the analysis passed. **Explain failed SARIF upload** runs only when
+  one of the two upload steps failed and lists the usual causes (private
+  repository without GitHub Code Security, code scanning not available, or a
+  read-only token), notes it can also be an outage or a rejected SARIF file,
+  and points at the failed step's log and the one-line fix.
 
 For a first rollout, treat code-scanning annotations as review guidance. Do not
 make the job blocking until the repository has reviewed its initial SARIF
@@ -2517,7 +2551,8 @@ Release workflows handle extension publishing and server binary releases.
 
 ## Capability Producer Inventory
 
-`cargo xtask check-capability-producers [--registry-json <path>]` compares the
+`cargo xtask check-capability-producers [--registry-json <path>]
+[--no-default-features] [--features <lang-*,...>]` compares the
 binary-resident language capability registry (`ripr capabilities --json`, #5531)
 with repository inventory the in-crate tests cannot enumerate. It builds `ripr`
 and fails when:
@@ -2527,7 +2562,11 @@ and fails when:
 - a registered language has no cell, or a cell names an unregistered language;
 - a `lang-*` Cargo feature, a registry `required_feature` and an adapter
   directory under `analysis/language/` do not name the same producer set;
-- a cell `proof_refs` entry has no `docs/specs/RIPR-SPEC-NNNN-*.md`.
+- a cell `proof_refs` entry has no `docs/specs/RIPR-SPEC-NNNN-*.md`;
+- a language's `adapter_compiled` is absent, not boolean, or differs from the
+  selected Cargo language features (including a disabled adapter reported present).
+- a language claims another language's `required_feature`, even when swapped
+  availability flags agree with those forged assignments.
 
 It is separate from `check-capabilities`, which validates
 `metrics/capabilities.toml` against `docs/CAPABILITY_MATRIX.md` and joins explicit
@@ -2536,8 +2575,30 @@ support remain separate authorities. The producer inventory does not check cell
 states, tier ceilings or docs text
 (in-crate tests and `check-support-tiers`), framework-level producers (the
 per-language disposition tests), the registry's relation to
-`metrics/capabilities.toml`, or non-default feature builds. `--registry-json`
-reads a saved registry without building and can be stale; the report says so.
+`metrics/capabilities.toml`. One selected feature combination is checked per
+invocation. Defaults come from the real `crates/ripr/Cargo.toml`; explicit
+`--features` are additive unless `--no-default-features` is supplied. Only declared
+`lang-*` names are accepted. JavaScript and TypeScript share `lang-typescript`.
+`lang-rust` is mandatory, as enforced by the product's `lib.rs`; unsupported
+Rust-disabled selections are rejected before building or reading offline input.
+`--registry-json` reads a saved registry without building and can be stale; the
+report says so. The same feature flags specify its expected build, independently
+of the JSON's availability flags.
+
+Focused controls (run serially, after resource admission):
+
+```bash
+cargo xtask check-capability-producers --no-default-features --features lang-rust
+cargo xtask check-capability-producers --no-default-features --features lang-rust,lang-perl
+```
+
+The first requires Rust present and every preview producer absent; the second
+requires Rust and Perl present. Add `lang-python` or `lang-typescript` to the
+Rust-only selection (the latter requires both TypeScript and JavaScript) for
+individual optional-language controls.
+These extra invocations are opt-in; the existing hosted default invocation does
+not run a feature matrix. Unit controls pin all four language-feature cases and
+reject either direction of a changed availability flag.
 The producer inventory is not part of `precommit` or `check-pr`; those paths
 run the separate identity join through `check-capabilities`, which reads a
 source-built registry with default features. Producer inventory is hosted:

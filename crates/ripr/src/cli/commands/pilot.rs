@@ -114,7 +114,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     let config = load_for_root(&options.root)?;
     // Refuse an invalid RIPR_PILOT_SEAM_BUDGET (#4529) before the analysis
     // it would bound, not after it.
-    analysis::pilot_seam_budget()?;
+    // The same guard bounds the built-in inventory cap by that budget (#10726).
+    let _pilot_inventory_default = analysis::PilotInventoryDefault::enter()?;
     // RIPR_GIT_TIMEOUT bounds pilot's current-change git calls as it bounds
     // check's (#2613): seconds, `0` disables the deadline, and an invalid
     // value fails closed here rather than running with the default.
@@ -384,9 +385,29 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         .with_absent_file_limitations(absent_file_limitations)
         .with_seams_counted(&classified, folded.caveat_limit);
     let budget_started = Instant::now();
-    let pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
+    let mut pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
         current_change.keeps_past_budget(entry)
     })?;
+    // The pilot-scoped default inventory cap (#10726) is the pilot budget cut
+    // earlier. Disclose it as the budget, naming `RIPR_PILOT_SEAM_BUDGET`, and
+    // not as an inventory cut whose repair route would not lift the budget.
+    // The total is the real inventory even when current-change seams folded in
+    // past the cap made the budget fire too (its own total then counts the
+    // capped inventory plus the folded seams). The population is also not what
+    // `ripr check` analyzes, so the snapshot carries no comparable identity,
+    // exactly as for a budget cut.
+    if let Some(default_cut) =
+        analysis::PilotInventoryDefault::as_budget_cut(inventory_limit_info.as_ref())
+    {
+        pilot_budget_info = Some(match pilot_budget_info {
+            Some(budget) => analysis::SeamLimitInfo {
+                total: default_cut.total,
+                ..budget
+            },
+            None => default_cut,
+        });
+        inventory_limit_info = None;
+    }
     timings.record("seam_budget", budget_started, Some(classified.len()));
     let pilot_budget_truncated = pilot_budget_info.is_some();
     // The summary's disclosure counts from the outermost population: when

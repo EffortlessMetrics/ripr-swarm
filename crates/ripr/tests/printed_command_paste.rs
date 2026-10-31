@@ -722,7 +722,7 @@ fn collect(fixture: &Fixture, subcommands: &BTreeSet<String>) -> Result<Collecte
             ),
             (
                 "first-pr",
-                2,
+                1,
                 args(&[
                     "first-pr", "--root", root, "--base", "HEAD~1", "--head", "HEAD",
                 ]),
@@ -785,8 +785,21 @@ fn collect(fixture: &Fixture, subcommands: &BTreeSet<String>) -> Result<Collecte
             ),
             (
                 "agent-card",
-                2,
+                1,
                 args(&["agent", "card", "--root", root, "--seam-id", &seam_id]),
+            ),
+            (
+                "agent-card-verbose",
+                2,
+                args(&[
+                    "agent",
+                    "card",
+                    "--verbose",
+                    "--root",
+                    root,
+                    "--seam-id",
+                    &seam_id,
+                ]),
             ),
             (
                 "agent-packet",
@@ -856,8 +869,10 @@ fn collect(fixture: &Fixture, subcommands: &BTreeSet<String>) -> Result<Collecte
             .filter(|(label, _, _)| only.is_none_or(|labels: &[&str]| labels.contains(label)))
             .collect();
         for (label, _, args) in &flows {
-            // The cold `first-pr` flow prints both the repo-exposure and the
-            // gap-ledger recovery commands only without the pilot's report;
+            // The cold `first-pr` flow prints one next command, the
+            // repo-exposure recovery (#11298), and names the gap ledger and
+            // review cards on a `Later steps` line without their commands.
+            // It does so only without the pilot's report;
             // `first-pr-after-pilot` covers the warm route.
             if *label == "first-pr" {
                 let pilot_report = fixture.root.join("target/ripr/pilot/repo-exposure.json");
@@ -875,11 +890,32 @@ fn collect(fixture: &Fixture, subcommands: &BTreeSet<String>) -> Result<Collecte
                     && stdout.contains("--repo-exposure")
                     && stdout.contains("target/ripr/pilot/repo-exposure.json")
                     && !stdout.contains("Repo exposure report at")
-                    && !stdout.contains("Also missing: Repo exposure"))
+                    && !stdout.lines().any(|line| {
+                        line.starts_with("Later steps") && line.contains("Repo exposure")
+                    }))
             {
                 return Err(format!(
                     "flow `{prefix}{label}` should name only the gap-ledger command as the missing repo-exposure/ledger input, reading the pilot report:\n{stdout}"
                 ));
+            }
+            if *label == "first-pr" {
+                let later = stdout
+                    .lines()
+                    .find(|line| line.starts_with("Later steps"))
+                    .ok_or_else(|| {
+                        format!(
+                            "cold flow `{prefix}{label}` lost its `Later steps` line:\n{stdout}"
+                        )
+                    })?;
+                if !later.contains("Gap decision ledger")
+                    || !later.contains("PR repair cards")
+                    || stdout.contains("ripr reports gap-ledger")
+                    || stdout.contains("ripr review-comments")
+                {
+                    return Err(format!(
+                        "cold flow `{prefix}{label}` must print one command and name later steps without their commands:\n{stdout}"
+                    ));
+                }
             }
             sink.ingest(&format!("{prefix}{label}"), &stdout, &stderr);
         }

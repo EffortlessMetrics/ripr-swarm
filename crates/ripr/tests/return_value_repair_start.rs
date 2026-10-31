@@ -115,10 +115,7 @@ fn assert_repair_ready(case: &str, old_src: &str, new_src: &str, test: &str) -> 
         .ok_or_else(|| format!("{case}: check printed no repair start:\n{check}"))?;
     let (ok, repair) = repo.repair_text(&[&seam])?;
     assert!(ok, "{case}: repair must start:\n{repair}");
-    assert!(
-        repair.contains("repair_ready=true (missing evidence: none)"),
-        "{case}: {repair}"
-    );
+    assert!(repair.contains("Ready to repair."), "{case}: {repair}");
     assert!(
         repair.contains("edit one test file: tests/t.rs"),
         "{case}: repair must name the test edit target:\n{repair}"
@@ -170,8 +167,7 @@ fn err_variant_with_is_err_assert_reaches_repair() -> Result<(), String> {
     let (ok, repair) = repo.repair_text(&[&seam])?;
     assert!(ok, "{repair}");
     assert!(
-        repair.contains("repair_ready=true (missing evidence: none)")
-            && repair.contains("edit one test file: tests/t.rs"),
+        repair.contains("Ready to repair.") && repair.contains("edit one test file: tests/t.rs"),
         "{repair}"
     );
     Ok(())
@@ -262,7 +258,7 @@ fn assert_no_start(case: &str, old_src: &str, new_src: &str, test: &str) -> Resu
     let (ok, repair) = repo.repair_text(&[])?;
     assert!(!ok, "{case}: repair must refuse:\n{repair}");
     assert!(
-        !repair.contains("repair_ready=true"),
+        !repair.contains("Ready to repair."),
         "{case}: repair must not be ready:\n{repair}"
     );
     Ok(repo)
@@ -296,7 +292,7 @@ fn strong_exact_assert_is_not_a_repair_start() -> Result<(), String> {
         repair.contains(&seam),
         "refusal must name the seam: {repair}"
     );
-    assert!(!repair.contains("repair_ready=true"), "{repair}");
+    assert!(!repair.contains("Ready to repair."), "{repair}");
     Ok(())
 }
 
@@ -480,7 +476,7 @@ fn repair_agrees_with_check_on_a_statically_limited_struct_field_finding() -> Re
         let (ok, repair) = repo.repair_text(&[item])?;
         assert!(!ok, "{item}: repair must refuse:\n{repair}");
         assert!(
-            !repair.contains("repair_ready=true"),
+            !repair.contains("Ready to repair."),
             "{item}: repair must not be ready:\n{repair}"
         );
         assert!(

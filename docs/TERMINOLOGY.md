@@ -65,3 +65,6 @@ Use the **internal** column in:
 
 Linking this page from a spec is unnecessary — specs are already the
 authority on internal terms.
+
+For the words default `ripr` output must not use, their plain replacements,
+and the check that enforces them, see [User text glossary](USER_TEXT_GLOSSARY.md).

@@ -69,6 +69,7 @@ const COLLECT_REPAIR_PACKET_COMMAND: &str = "ripr.collectRepairPacket";
 const COLLECT_TOP_LIMITATION_COMMAND: &str = "ripr.collectTopLimitation";
 const COLLECT_RECEIPT_STATUS_COMMAND: &str = "ripr.collectReceiptStatus";
 const OPEN_RELATED_TEST_COMMAND: &str = "ripr.openRelatedTest";
+const SHOW_RELATED_TEST_COMMAND: &str = "ripr.showRelatedTest";
 const REFRESH_COMMAND: &str = "ripr.refresh";
 const HOVER_TEXT: &str = "ripr estimates static RIPR exposure for changed Rust behavior. Run `ripr check --format json` for current findings.";
 
