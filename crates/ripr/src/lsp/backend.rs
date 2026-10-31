@@ -255,7 +255,7 @@ pub(super) struct Backend {
     /// omission locally instead of dropping it silently. Reflects the most
     /// recent disclosure attempt.
     initialize_failure_disclosure_omitted: AtomicBool,
-    refresh_scheduler: RefreshScheduler,
+    refresh_scheduler: Arc<RefreshScheduler>,
     workspace_revision: Mutex<u64>,
     /// One in-flight interactive debounce window (#8528). A trigger that
     /// finds this set returns immediately; the owner sleeps, then drops the
@@ -399,7 +399,7 @@ impl Backend {
             last_analysis_failure_shown: Mutex::new(None),
             unavailable_language_notices_shown: Mutex::new(BTreeSet::new()),
             initialize_failure_disclosure_omitted: AtomicBool::new(false),
-            refresh_scheduler: RefreshScheduler::default(),
+            refresh_scheduler: Arc::new(RefreshScheduler::default()),
             workspace_revision: Mutex::new(0),
             interactive_debounce_window_open: AtomicBool::new(false),
             refresh_idle: Notify::new(),
@@ -1569,6 +1569,14 @@ impl Backend {
         let sink = Arc::new(super::progress::RecordingSink::default());
         self.progress.install_recorder(Arc::clone(&sink));
         sink
+    }
+
+    /// Cancels every active and pending refresh when the session ends
+    /// (`exit` or end of input), without the terminal diagnostics clear that
+    /// `shutdown` performs (#11439).
+    pub(super) fn session_end_hook(&self) -> super::session_end::SessionEndHook {
+        let scheduler = Arc::clone(&self.refresh_scheduler);
+        Arc::new(move || scheduler.stop())
     }
 
     #[cfg(test)]
