@@ -1995,6 +1995,14 @@ The evidence-first fields are additive in schema `0.2`:
       related test assertion has `OracleKind::Unknown` AND a non-empty matcher
       name that is not in the recognised matcher set (real oxc-parsed AST
       evidence).
+    - `typescript_match_object_scalar_unresolved` — fired (RIPR-SPEC-0250 rule
+      4) when an oracle-eligible related test calls `toMatchObject` with a
+      scalar literal; Vitest reads it as plain equality and Jest rejects it, so
+      the row reads `unknown` and no repair start is offered.
+    - `typescript_boundary_operand_derived_unresolved` — fired (RIPR-SPEC-0027)
+      when a changed predicate compares a literal with a local the owner binds
+      only from a call that names no owner parameter, so no test call can set
+      it; no repair start is offered.
     - `typescript_dynamic_assertion_unresolved` — fired (RIPR-SPEC-0085 §PR5)
       when an oracle-eligible related test assertion in the changed seam's
       oracle family (RIPR-SPEC-0104) has a non-literal dynamic matcher argument

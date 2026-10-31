@@ -62,8 +62,8 @@ use super::test_grip_evidence::RelatedTestGrip;
 use super::test_grip_evidence::shared_grips::SharedGrips;
 use crate::config::{
     PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, TYPESCRIPT_PROJECT_MARKERS,
-    TYPESCRIPT_SOURCE_DIR_MARKERS, source_dir_contains_detectable_python,
-    source_dir_contains_detectable_typescript,
+    TYPESCRIPT_SOURCE_DIR_MARKERS, detect_javascript_led_root,
+    source_dir_contains_detectable_python, source_dir_contains_detectable_typescript,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -4659,6 +4659,11 @@ fn hash_named_workspace_files(root: &Path, file_name: &str) -> String {
 /// (bounded to two presence booleans — never a per-file enumeration).
 /// TypeScript no-config detection (`tsconfig.json`/`jsconfig.json` and
 /// detectable TypeScript source below `src`/`tests`) binds the same way.
+/// A package-led JavaScript root (#11336: root `package.json` plus detectable
+/// JS/TS source at the root or below `src`/`test`/`tests`) also selects the
+/// TypeScript adapter, so its effective detection result binds as one
+/// `js_led_root=1` line, only when true. Roots where it is false keep their
+/// prior identities byte-for-byte.
 /// Content-only edits intentionally preserve this identity while creation
 /// and deletion invalidate it. Generated files and excluded directories do
 /// not participate: detection ignores them, so binding them would orphan
@@ -4685,10 +4690,12 @@ fn hash_workspace_manifests(root: &Path) -> String {
         .copied()
         .filter(|dir| source_dir_contains_detectable_typescript(root, dir))
         .collect();
+    let javascript_led_root = detect_javascript_led_root(root);
     if present_python_markers.is_empty()
         && detectable_source_dirs.is_empty()
         && present_typescript_markers.is_empty()
         && detectable_typescript_dirs.is_empty()
+        && !javascript_led_root
     {
         return cargo_identity;
     }
@@ -4713,6 +4720,9 @@ fn hash_workspace_manifests(root: &Path) -> String {
         identity.push_str("typescript_source_dir=");
         identity.push_str(dir);
         identity.push('\n');
+    }
+    if javascript_led_root {
+        identity.push_str("js_led_root=1\n");
     }
     hash_str(&identity)
 }
@@ -7548,6 +7558,47 @@ mod tests {
             baseline.workspace_manifests_hash,
             cache_key().workspace_manifests_hash
         );
+
+        ignore_remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn package_led_javascript_root_changes_cache_identity() -> Result<(), String> {
+        let root = isolated_dir("javascript-led-root");
+        ignore_remove_dir_all(&root);
+        std::fs::create_dir_all(&root).map_err(|err| format!("create workspace: {err}"))?;
+        let identity = || hash_workspace_manifests(&root);
+        let cargo_only = hash_named_workspace_files(&root, "Cargo.toml");
+
+        // JavaScript with no manifest is not detected: the identity stays the
+        // bare Cargo identity (the early-return path), byte for byte.
+        std::fs::write(root.join("index.js"), "x").map_err(|err| format!("write index: {err}"))?;
+        assert!(!detect_javascript_led_root(&root));
+        assert_eq!(identity(), cargo_only);
+
+        let manifest = root.join("package.json");
+        std::fs::write(&manifest, "{}").map_err(|err| format!("write package.json: {err}"))?;
+        assert!(detect_javascript_led_root(&root));
+        let with_manifest = identity();
+        assert_ne!(with_manifest, cargo_only, "package.json creation flips it");
+
+        std::fs::write(&manifest, "{\"name\":\"edited\"}")
+            .map_err(|err| format!("rewrite package.json: {err}"))?;
+        assert_eq!(
+            with_manifest,
+            identity(),
+            "content-only package.json edits preserve the presence identity"
+        );
+
+        std::fs::remove_file(&manifest).map_err(|err| format!("remove package.json: {err}"))?;
+        assert_eq!(identity(), cargo_only, "package.json deletion restores it");
+
+        // A manifest alone is not a marker either.
+        std::fs::remove_file(root.join("index.js")).map_err(|err| format!("remove: {err}"))?;
+        std::fs::write(&manifest, "{}").map_err(|err| format!("write package.json: {err}"))?;
+        assert_eq!(identity(), cargo_only);
 
         ignore_remove_dir_all(&root);
         Ok(())
