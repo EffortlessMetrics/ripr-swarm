@@ -9,9 +9,9 @@ struct TempDir(PathBuf);
 
 impl TempDir {
     fn new(label: &str) -> Result<Self, String> {
-        let guard = Self(unique_command_test_dir(label));
-        std::fs::create_dir_all(&guard.0).map_err(|err| err.to_string())?;
-        Ok(guard)
+        let path = unique_command_test_dir(label);
+        std::fs::create_dir_all(&path).map_err(|err| err.to_string())?;
+        Ok(Self(path))
     }
 }
 
