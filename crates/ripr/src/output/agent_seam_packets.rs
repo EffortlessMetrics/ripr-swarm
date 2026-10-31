@@ -2886,6 +2886,18 @@ pub(crate) fn recommended_test_for(entry: &ClassifiedSeam) -> RecommendedTest {
 /// after phase, so this projection can only under-offer, never widen.
 pub(crate) fn recommended_test_is_repair_edit_target(entry: &ClassifiedSeam) -> bool {
     let recommended = recommended_test_for(entry);
+    #[cfg(feature = "lang-rust")]
+    if crate::analysis::is_source_test_candidate(&recommended.file) {
+        return repair_packet_eligibility(entry)
+            .readiness
+            .test_target
+            .as_ref()
+            .is_some_and(|target| {
+                target.file() == Path::new(&recommended.file)
+                    && target.is_exclusive_source_test_module()
+            })
+            || recommended_inline_test_module(entry, &recommended.file).is_some();
+    }
     crate::analysis::is_test_surface_path(&recommended.file)
         || recommended_inline_test_module(entry, &recommended.file).is_some()
 }
@@ -2899,7 +2911,8 @@ pub(crate) fn recommended_inline_test_module<'a>(
     recommended_file: &str,
 ) -> Option<&'a str> {
     if recommended_file == "not_applicable"
-        || crate::analysis::is_test_surface_path(recommended_file)
+        || (crate::analysis::is_test_surface_path(recommended_file)
+            && !crate::analysis::is_source_test_candidate(recommended_file))
         || display_path(entry.seam.file()) != recommended_file
     {
         return None;

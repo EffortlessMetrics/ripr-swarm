@@ -199,10 +199,10 @@ impl RepairReadiness {
                 seam_detail: None,
             };
         };
-        let Some(fix_site) = candidates
-            .into_iter()
-            .find(|site| crate::analysis::is_test_surface_path(&site.file))
-        else {
+        let Some(fix_site) = candidates.into_iter().find(|site| {
+            crate::analysis::is_test_surface_path(&site.file)
+                && !crate::analysis::is_source_test_candidate(&site.file)
+        }) else {
             return Self {
                 ready: false,
                 fix_site: Some(first),
@@ -1347,6 +1347,24 @@ mod tests {
                 item.repair_readiness.ineligibility
             ));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn finding_only_readiness_refuses_source_test_paths_without_module_authority()
+    -> Result<(), String> {
+        let mut source = finding()?;
+        for test in &mut source.related_tests {
+            test.file = PathBuf::from("src/tests/production.rs");
+        }
+        let item = GapItem::from_finding(&source, Path::new("."))?;
+        assert!(!item.repair_readiness.ready);
+        assert_eq!(
+            item.repair_readiness.ineligibility,
+            Some("fix_site_not_test_surface")
+        );
+        let control = GapItem::from_finding(&finding()?, Path::new("."))?;
+        assert!(control.repair_readiness.ready);
         Ok(())
     }
 

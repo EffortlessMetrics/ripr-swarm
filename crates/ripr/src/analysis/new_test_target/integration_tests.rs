@@ -34,6 +34,18 @@ fn claim_root(label: &str) -> Result<FixtureRoot, String> {
     Ok(FixtureRoot(root))
 }
 
+#[cfg(unix)]
+fn claim_source_root(label: &str) -> Result<FixtureRoot, String> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_nanos();
+    let root = Path::new("/tmp").join(format!("ripr-11329-{label}-{}-{stamp}", std::process::id()));
+    fs::create_dir_all(&root).map_err(|error| format!("create fixture root: {error}"))?;
+    crate::testing::fixture_git::fixture_git_ok(&root, &["-c", "init.templateDir=", "init", "-q"])?;
+    Ok(FixtureRoot(root))
+}
+
 fn write_file(root: &Path, relative: &str, contents: &str) -> Result<(), String> {
     let path = root.join(relative);
     if let Some(parent) = path.parent() {
@@ -828,8 +840,9 @@ fn library_crate_name_for_root_file_resolves_name_root_and_target_shape() -> Res
 }
 
 #[test]
+#[cfg(unix)]
 fn sibling_cfg_test_file_is_an_admitted_repair_target() -> Result<(), String> {
-    let root = claim_root("sibling-cfg-test")?;
+    let root = claim_source_root("sibling-cfg-test")?;
     write_file(
         &root.0,
         "Cargo.toml",
@@ -845,6 +858,13 @@ fn sibling_cfg_test_file_is_an_admitted_repair_target() -> Result<(), String> {
         "src/tests.rs",
         "use super::*;\n#[test] fn reaches() { assert!(discounted_total(11, 10) > 0); }\n",
     )?;
+    let files = discover_rust_files(&root.0)?;
+    let index = build_index(&root.0, &files)?;
+    assert!(crate::analysis::workspace::exclusive_test_module(
+        &root.0,
+        &index,
+        Path::new("src/tests.rs")
+    ));
     let classified = inventory_classified_seams_at(&root.0)?;
     let entry = boundary_entry(&classified)?;
     let selected = crate::output::agent_seam_packets::recommended_test_for(entry);
@@ -855,12 +875,31 @@ fn sibling_cfg_test_file_is_an_admitted_repair_target() -> Result<(), String> {
         repair_packet_eligibility(entry).readiness
     );
     assert!(crate::output::agent_seam_packets::recommended_test_is_repair_edit_target(entry));
+    let readiness = repair_packet_eligibility(entry).readiness;
+    let target = readiness
+        .test_target
+        .as_ref()
+        .ok_or("missing selected target")?;
+    assert_eq!(
+        target.test_kind(),
+        crate::analysis::test_grip_evidence::TestKind::OutOfLineUnit
+    );
+    let stub = crate::analysis::test_stub::rust_test_stub_for_classified_seam(
+        &root.0,
+        entry,
+        &fs::read_to_string(root.0.join("src/lib.rs")).map_err(|e| e.to_string())?,
+    );
+    assert_eq!(
+        stub.err(),
+        Some(crate::analysis::test_stub::TestStubRefusal::OutOfLineTestModule)
+    );
     Ok(())
 }
 
 #[test]
+#[cfg(unix)]
 fn production_tests_directory_is_not_a_whole_file_repair_target() -> Result<(), String> {
-    let root = claim_root("production-tests-dir")?;
+    let root = claim_source_root("production-tests-dir")?;
     write_file(
         &root.0,
         "Cargo.toml",
@@ -891,8 +930,9 @@ fn production_tests_directory_is_not_a_whole_file_repair_target() -> Result<(), 
 }
 
 #[test]
+#[cfg(unix)]
 fn shared_production_and_test_module_is_not_a_whole_file_repair_target() -> Result<(), String> {
-    let root = claim_root("shared-test-production")?;
+    let root = claim_source_root("shared-test-production")?;
     write_file(
         &root.0,
         "Cargo.toml",
@@ -916,5 +956,425 @@ fn shared_production_and_test_module_is_not_a_whole_file_repair_target() -> Resu
     let selected = crate::output::agent_seam_packets::recommended_test_for(entry);
     assert_eq!(selected.file, "src/tests.rs", "entry: {entry:?}");
     assert!(!crate::output::agent_seam_packets::recommended_test_is_repair_edit_target(entry));
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+fn sibling_test_module_cage_rechecks_ownership_and_confines_edits() -> Result<(), String> {
+    use crate::edit_cage::{
+        EditCageVerdictStatus, capture_attempt_baseline, evaluate_repository_edit_cage,
+    };
+    use crate::testing::fixture_git::fixture_git_ok as git_ok;
+    let root = claim_source_root("sibling-cage")?;
+    write_file(
+        &root.0,
+        "Cargo.toml",
+        "[package]\nname = \"sibling-cage\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )?;
+    let lib = format!("{}\n#[cfg(test)] mod tests;\n", public_library_source());
+    let test = "use super::*;\n#[test] fn reaches() { assert!(discounted_total(11, 10) > 0); }\n";
+    write_file(&root.0, "src/lib.rs", &lib)?;
+    write_file(&root.0, "src/tests.rs", test)?;
+    write_file(&root.0, "README.md", "baseline\n")?;
+    git_ok(&root.0, &["-c", "init.templateDir=", "init", "-q"])?;
+    git_ok(&root.0, &["config", "user.email", "ripr@example.invalid"])?;
+    git_ok(&root.0, &["config", "user.name", "RIPR Test"])?;
+    git_ok(&root.0, &["config", "commit.gpgSign", "false"])?;
+    git_ok(&root.0, &["add", "."])?;
+    git_ok(&root.0, &["commit", "-qm", "baseline"])?;
+    let classified = inventory_classified_seams_at(&root.0)?;
+    let entry = boundary_entry(&classified)?;
+    let packet = crate::output::agent_seam_packets::render_agent_seam_packet_json(entry);
+    let policy = edit_cage_policy_from_packet(&packet, entry.seam.id().as_str())?;
+    assert_eq!(policy.selected_target.path(), "src/tests.rs");
+    let baseline = capture_attempt_baseline(&root.0, &policy)?;
+    write_file(
+        &root.0,
+        "src/tests.rs",
+        &format!("{test}\n#[test] fn boundary() {{ assert_eq!(discounted_total(10, 10), 0); }}\n"),
+    )?;
+    let verdict = evaluate_repository_edit_cage(&baseline)?;
+    assert_eq!(
+        verdict.status,
+        EditCageVerdictStatus::Compliant,
+        "{verdict:?}"
+    );
+    write_file(&root.0, "README.md", "changed\n")?;
+    let verdict = evaluate_repository_edit_cage(&baseline)?;
+    assert_eq!(
+        verdict.status,
+        EditCageVerdictStatus::Violated,
+        "{verdict:?}"
+    );
+    write_file(&root.0, "README.md", "baseline\n")?;
+    write_file(&root.0, "src/lib.rs", &lib.replace("#[cfg(test)] ", ""))?;
+    assert!(
+        evaluate_repository_edit_cage(&baseline).is_err(),
+        "ownership changed after capture must refuse"
+    );
+    assert!(
+        capture_attempt_baseline(&root.0, &policy).is_err(),
+        "ownership changed after packet creation must refuse"
+    );
+    write_file(&root.0, "src/lib.rs", &lib)?;
+    write_file(&root.0, "src/tests.rs", test)?;
+    let alias_baseline = capture_attempt_baseline(&root.0, &policy)?;
+    write_file(
+        &root.0,
+        "src/tests.rs",
+        &format!("{test}\n#[test] fn boundary() {{ assert_eq!(discounted_total(10, 10), 0); }}\n"),
+    )?;
+    write_file(
+        &root.0,
+        "src/lib.rs",
+        &format!("{lib}\n#[path = \"tests.rs\"] mod production;\n"),
+    )?;
+    assert!(
+        evaluate_repository_edit_cage(&alias_baseline).is_err(),
+        "production alias after capture must refuse"
+    );
+    write_file(&root.0, "src/lib.rs", &lib)?;
+    write_file(&root.0, "src/tests.rs", test)?;
+    let manifest_baseline = capture_attempt_baseline(&root.0, &policy)?;
+    write_file(
+        &root.0,
+        "src/tests.rs",
+        &format!("{test}\n#[test] fn boundary() {{ assert_eq!(discounted_total(10, 10), 0); }}\n"),
+    )?;
+    write_file(
+        &root.0,
+        "Cargo.toml",
+        "[package]\nname = \"sibling-cage\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[lib]\npath = \"src/tests.rs\"\n",
+    )?;
+    assert!(
+        evaluate_repository_edit_cage(&manifest_baseline).is_err(),
+        "changed Cargo target after capture must refuse"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+fn forged_production_source_test_packet_fails_at_cage_capture() -> Result<(), String> {
+    use crate::edit_cage::capture_attempt_baseline;
+    use crate::testing::fixture_git::fixture_git_ok as git_ok;
+    let root = claim_source_root("forged-production")?;
+    write_file(
+        &root.0,
+        "Cargo.toml",
+        "[package]\nname = \"forged-production\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )?;
+    write_file(&root.0, "src/lib.rs", "mod tests;\n")?;
+    write_file(&root.0, "src/tests/mod.rs", "mod production;\n")?;
+    write_file(
+        &root.0,
+        "src/tests/production.rs",
+        "pub fn production_value() -> i32 { 42 }\n",
+    )?;
+    git_ok(&root.0, &["-c", "init.templateDir=", "init", "-q"])?;
+    git_ok(&root.0, &["config", "user.email", "ripr@example.invalid"])?;
+    git_ok(&root.0, &["config", "user.name", "RIPR Test"])?;
+    git_ok(&root.0, &["config", "commit.gpgSign", "false"])?;
+    git_ok(&root.0, &["add", "."])?;
+    git_ok(&root.0, &["commit", "-qm", "baseline"])?;
+    let packet = serde_json::json!({"seam_id":"seam:test", "allowed_edit_surface":["src/tests/production.rs"]}).to_string();
+    let policy = edit_cage_policy_from_packet(&packet, "seam:test")?;
+    let preflight = crate::edit_cage::validate_build_output_precondition(&root.0, &policy)
+        .err()
+        .ok_or("forged production target must fail before workflow artifacts")?;
+    assert!(
+        preflight.contains("exclusive test-module ownership"),
+        "{preflight}"
+    );
+    assert!(
+        capture_attempt_baseline(&root.0, &policy).is_err(),
+        "forged production target must refuse"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+fn source_test_authority_refuses_ambiguous_or_incomplete_ownership() -> Result<(), String> {
+    use std::os::unix::fs::symlink;
+    let root = claim_source_root("source-authority-negative")?;
+    write_file(
+        &root.0,
+        "Cargo.toml",
+        "[package]\nname = \"authority-negative\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )?;
+    let body = "use super::*;\n#[test] fn reaches() { assert!(discounted_total(11, 10) > 0); }\n";
+    write_file(&root.0, "src/tests.rs", body)?;
+    let admitted = |source: &str| -> Result<bool, String> {
+        write_file(&root.0, "src/lib.rs", source)?;
+        let files = discover_rust_files(&root.0)?;
+        let index = build_index(&root.0, &files)?;
+        Ok(crate::analysis::workspace::exclusive_test_module(
+            &root.0,
+            &index,
+            Path::new("src/tests.rs"),
+        ))
+    };
+    let lib = public_library_source();
+    assert!(admitted(&format!(
+        "{lib}\n#[cfg(test)] #[path = \"tests.rs\"] mod tests;\n"
+    ))?);
+    for declaration in [
+        "mod tests;",
+        "#[cfg_attr(test, path = \"tests.rs\")] mod tests;",
+        "#[cfg(test)] mod tests;\n#[path = \"tests.rs\"] mod production;",
+        "#[cfg(test)] mod tests;\nmod missing;",
+        "#[cfg(test)] mod tests;\ninclude!(\"tests.rs\");",
+        "#[cfg(test)] mod tests;\nmod outer { mod hidden; }",
+    ] {
+        assert!(
+            !admitted(&format!("{lib}\n{declaration}\n"))?,
+            "must refuse {declaration}"
+        );
+    }
+    write_file(
+        &root.0,
+        "src/lib.rs",
+        &format!("{lib}\n#[cfg(test)] mod tests;\n"),
+    )?;
+    symlink(root.0.join("src/tests.rs"), root.0.join("src/alias.rs")).map_err(|e| e.to_string())?;
+    let files = discover_rust_files(&root.0)?;
+    let index = build_index(&root.0, &files)?;
+    assert!(
+        !crate::analysis::workspace::exclusive_test_module(
+            &root.0,
+            &index,
+            Path::new("src/tests.rs")
+        ),
+        "symlink alias must refuse"
+    );
+    fs::remove_file(root.0.join("src/alias.rs")).map_err(|e| e.to_string())?;
+    fs::hard_link(root.0.join("src/tests.rs"), root.0.join("src/alias.rs"))
+        .map_err(|e| e.to_string())?;
+    let files = discover_rust_files(&root.0)?;
+    let index = build_index(&root.0, &files)?;
+    assert!(
+        !crate::analysis::workspace::exclusive_test_module(
+            &root.0,
+            &index,
+            Path::new("src/tests.rs")
+        ),
+        "hardlink alias must refuse"
+    );
+    assert!(!crate::analysis::is_source_test_candidate(
+        "tests/ordinary.rs"
+    ));
+    assert!(crate::analysis::is_source_test_candidate(
+        "SRC/tests/PRODUCTION.RS"
+    ));
+    assert!(crate::analysis::is_source_test_candidate(
+        "pkg/src/nested/tests/file.rs"
+    ));
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+fn source_test_authority_follows_gated_out_of_line_descendants() -> Result<(), String> {
+    let root = claim_source_root("source-authority-nested")?;
+    write_file(
+        &root.0,
+        "Cargo.toml",
+        "[package]\nname = \"authority-nested\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )?;
+    write_file(&root.0, "src/lib.rs", "#[cfg(test)] mod tests;\n")?;
+    write_file(&root.0, "src/tests/mod.rs", "mod cases;\n")?;
+    write_file(
+        &root.0,
+        "src/tests/cases.rs",
+        "#[test] fn works() { assert!(true); }\n",
+    )?;
+    let files = discover_rust_files(&root.0)?;
+    let index = build_index(&root.0, &files)?;
+    assert!(crate::analysis::workspace::exclusive_test_module(
+        &root.0,
+        &index,
+        Path::new("src/tests/cases.rs")
+    ));
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+fn source_test_ownership_stays_fresh_across_repeated_inventory() -> Result<(), String> {
+    use std::os::unix::fs::symlink;
+    let root = claim_source_root("source-authority-cache")?;
+    write_file(
+        &root.0,
+        "Cargo.toml",
+        "[package]\nname = \"authority-cache\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )?;
+    write_file(
+        &root.0,
+        "src/lib.rs",
+        &format!("{}\n#[cfg(test)] mod tests;\n", public_library_source()),
+    )?;
+    write_file(
+        &root.0,
+        "src/tests.rs",
+        "use super::*;\n#[test] fn reaches() { assert!(discounted_total(11, 10) > 0); }\n",
+    )?;
+    let offered = || -> Result<(bool, bool), String> {
+        let full = inventory_classified_seams_at(&root.0)?;
+        let compact =
+            crate::analysis::seam_inventory::inventory_compact_classified_seams_at_with_config(
+                &root.0,
+                &crate::config::RiprConfig::default(),
+            )?;
+        Ok((
+            crate::output::agent_seam_packets::recommended_test_is_repair_edit_target(
+                boundary_entry(&full)?,
+            ),
+            crate::output::agent_seam_packets::recommended_test_is_repair_edit_target(
+                boundary_entry(&compact)?,
+            ),
+        ))
+    };
+    assert_eq!(offered()?, (true, false));
+    assert_eq!(offered()?, (true, false));
+    symlink(root.0.join("src/tests.rs"), root.0.join("src/alias.rs")).map_err(|e| e.to_string())?;
+    assert_eq!(offered()?, (false, false));
+    fs::remove_file(root.0.join("src/alias.rs")).map_err(|e| e.to_string())?;
+    assert_eq!(offered()?, (true, false));
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+fn source_test_authority_refuses_parent_workspace() -> Result<(), String> {
+    let parent = claim_source_root("parent-workspace")?;
+    write_file(
+        &parent.0,
+        "child/Cargo.toml",
+        "[package]\nname = \"child\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )?;
+    write_file(&parent.0, "child/src/lib.rs", "#[cfg(test)] mod tests;\n")?;
+    write_file(
+        &parent.0,
+        "child/src/tests.rs",
+        "#[test] fn works() { assert!(true); }\n",
+    )?;
+    let child = parent.0.join("child");
+    let files = discover_rust_files(&child)?;
+    let index = build_index(&child, &files)?;
+    assert!(
+        !crate::analysis::workspace::exclusive_test_module(
+            &child,
+            &index,
+            Path::new("src/tests.rs")
+        ),
+        "a subdirectory of a different Git root must refuse"
+    );
+    crate::testing::fixture_git::fixture_git_ok(
+        &child,
+        &["-c", "init.templateDir=", "init", "-q"],
+    )?;
+    let files = discover_rust_files(&child)?;
+    let index = build_index(&child, &files)?;
+    assert!(crate::analysis::workspace::exclusive_test_module(
+        &child,
+        &index,
+        Path::new("src/tests.rs")
+    ));
+    write_file(
+        &parent.0,
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"child\"]\n",
+    )?;
+    let files = discover_rust_files(&child)?;
+    let index = build_index(&child, &files)?;
+    assert!(
+        !crate::analysis::workspace::exclusive_test_module(
+            &child,
+            &index,
+            Path::new("src/tests.rs")
+        ),
+        "a parent Cargo workspace must refuse"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+fn source_named_tests_rs_keeps_inline_region_confinement() -> Result<(), String> {
+    use crate::edit_cage::{
+        EditCageVerdictStatus, capture_attempt_baseline, evaluate_repository_edit_cage,
+    };
+    use crate::testing::fixture_git::fixture_git_ok as git_ok;
+    let root = claim_source_root("source-named-tests")?;
+    write_file(
+        &root.0,
+        "Cargo.toml",
+        "[package]\nname = \"source-named-tests\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )?;
+    write_file(&root.0, "src/lib.rs", "mod tests;\n")?;
+    let source = format!(
+        "{}\n#[cfg(test)]\nmod checks {{\n use super::*;\n #[test] fn reaches() {{ assert!(discounted_total(11, 10) > 0); }}\n}}\n",
+        public_library_source()
+    );
+    write_file(&root.0, "src/tests.rs", &source)?;
+    git_ok(&root.0, &["config", "user.email", "ripr@example.invalid"])?;
+    git_ok(&root.0, &["config", "user.name", "RIPR Test"])?;
+    git_ok(&root.0, &["config", "commit.gpgSign", "false"])?;
+    git_ok(&root.0, &["add", "."])?;
+    git_ok(&root.0, &["commit", "-qm", "baseline"])?;
+    let packet = serde_json::json!({
+        "seam_id": "seam:inline",
+        "file": "src/tests.rs",
+        "allowed_edit_surface": ["src/tests.rs"]
+    })
+    .to_string();
+    let policy = edit_cage_policy_from_packet(&packet, "seam:inline")?;
+    assert!(
+        policy.inline_test_module_target,
+        "production owner must be region-confined"
+    );
+    let baseline = capture_attempt_baseline(&root.0, &policy)?;
+    write_file(
+        &root.0,
+        "src/tests.rs",
+        &source.replace("amount - 10", "amount - 9"),
+    )?;
+    let verdict = evaluate_repository_edit_cage(&baseline)?;
+    assert_eq!(
+        verdict.status,
+        EditCageVerdictStatus::Violated,
+        "{verdict:?}"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+fn source_test_authority_refuses_source_scan_limit() -> Result<(), String> {
+    let root = claim_source_root("source-limit")?;
+    write_file(
+        &root.0,
+        "Cargo.toml",
+        "[package]\nname = \"source-limit\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )?;
+    write_file(&root.0, "src/lib.rs", "#[cfg(test)] mod tests;\n")?;
+    write_file(
+        &root.0,
+        "src/tests.rs",
+        "#[test] fn works() { assert!(true); }\n",
+    )?;
+    for n in 0..127 {
+        write_file(&root.0, &format!("src/extra{n}.rs"), "fn unused() {}\n")?;
+    }
+    let files = discover_rust_files(&root.0)?;
+    assert_eq!(files.len(), 129, "nonempty source-limit stimulus");
+    let index = build_index(&root.0, &files)?;
+    assert!(!crate::analysis::workspace::exclusive_test_module(
+        &root.0,
+        &index,
+        Path::new("src/tests.rs")
+    ));
     Ok(())
 }

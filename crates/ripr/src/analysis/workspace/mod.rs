@@ -7,6 +7,8 @@ mod module_graph;
 mod path_dependencies;
 mod select;
 mod source_role;
+#[cfg(feature = "lang-rust")]
+mod test_module_authority;
 
 pub(crate) use assertion_dependency::{
     AnyhowIdentity, LiteralJsonIdentity, config_snapshot_identity, eligible_json_root,
@@ -24,7 +26,11 @@ pub(crate) use path_dependencies::{
 };
 pub(crate) use source_role::{
     DiffOnlySource, SourceRole, SourceRoleContext, classify_with, diff_only_source,
-    is_test_surface_path, may_be_diff_only_source, seeds_diff_probes,
+    is_source_test_candidate, is_test_surface_path, may_be_diff_only_source, seeds_diff_probes,
+};
+#[cfg(feature = "lang-rust")]
+pub(crate) use test_module_authority::{
+    exclusive_test_module, source_test_cache_sensitive, source_test_module_basis,
 };
 
 pub(crate) use classify::{normalize_path, package_root};

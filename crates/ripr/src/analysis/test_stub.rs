@@ -228,6 +228,11 @@ pub(crate) fn rust_test_stub_for_classified_seam(
     // the packet surfaces.
     let selection = repair_packet_eligibility(entry).readiness.target_selection;
     let target = match &selection {
+        RepairTargetSelection::Existing(existing)
+            if existing.test_kind() == TestKind::OutOfLineUnit =>
+        {
+            return Err(TestStubRefusal::OutOfLineTestModule);
+        }
         RepairTargetSelection::Proposed(proposal) if proposal.kind == NewTestKind::Integration => {
             Some(IntegrationTarget::New(proposal))
         }

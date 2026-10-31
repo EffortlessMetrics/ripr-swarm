@@ -594,7 +594,8 @@ pub(crate) struct CachedSeamLimitInfo {
 /// no longer reads as comparing by its fields (#10684).
 /// `1.123`: return/error matches! assertions require shared test execution
 /// admission. Older entries may credit ignored or broad expected-panic tests.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.123";
+/// `1.124`: bind exclusive source test-module authority to indexed evidence.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.124";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -763,7 +764,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.123";
 /// `0.127`: same literal fold and sole-glob reach as full `1.120` (#10479).
 /// `0.128`: same Display placeholder-edit refusal as full `1.121` (#9836).
 /// `0.130`: same matches! execution admission as full `1.123`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.130";
+/// `0.131`: same source test-module authority as full `1.124`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.131";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -934,7 +936,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.130";
 /// `0.127`: same literal fold and sole-glob reach as full `1.120` (#10479).
 /// `0.128`: same Display placeholder-edit refusal as full `1.121` (#9836).
 /// `0.130`: same matches! execution admission as full `1.123`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.130";
+/// `0.131`: same source test-module authority as full `1.124`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.131";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -2196,6 +2199,7 @@ pub(crate) struct RepoSeamFactCache {
     /// [`cache_base_untrusted_reason`].
     base: PathBuf,
     untrusted_base_reason: OnceLock<Option<String>>,
+    source_test_sensitive: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2240,13 +2244,26 @@ impl RepoSeamFactCache {
             .nth(2)
             .map(Path::to_path_buf)
             .unwrap_or_else(|| dir.clone());
-        Self::rooted_at(
+        let cache = Self::rooted_at(
             dir,
             cache_layer_dir(workspace_root, sharded_layer)
                 .join(schema_version)
                 .join(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION),
             base,
-        )
+        );
+        #[cfg(feature = "lang-rust")]
+        {
+            Self {
+                source_test_sensitive: super::workspace::source_test_cache_sensitive(
+                    workspace_root,
+                ),
+                ..cache
+            }
+        }
+        #[cfg(not(feature = "lang-rust"))]
+        {
+            cache
+        }
     }
 
     /// Construct at an already resolved cache `base` (doctor's probe list).
@@ -2276,6 +2293,7 @@ impl RepoSeamFactCache {
             sharded_dir,
             base,
             untrusted_base_reason: OnceLock::new(),
+            source_test_sensitive: false,
         }
     }
 
@@ -2310,7 +2328,7 @@ impl RepoSeamFactCache {
         Option<CachedSeamLimitInfo>,
         Vec<PathBuf>,
     )> {
-        if !key.is_reusable() {
+        if self.source_test_sensitive || !key.is_reusable() {
             return CacheLoad::Miss;
         }
         if let Some(reason) = self.untrusted_base_reason() {
@@ -2418,6 +2436,12 @@ impl RepoSeamFactCache {
         lexical_fallback_files: &[PathBuf],
         store_limit: usize,
     ) -> Result<CacheStoreStatus, String> {
+        if self.source_test_sensitive {
+            return Ok(CacheStoreStatus {
+                label: "skipped_source_test_ownership".to_string(),
+                advisory: None,
+            });
+        }
         let byte_ceiling = classified_seam_cache_encoded_shard_ceiling_bytes()?;
         store::publish_classified_generation(
             self,
@@ -5351,7 +5375,7 @@ mod tests {
         // 1.120 -> 1.121: Display placeholder-edit refusal (#9836).
         // 1.121 -> 1.122: foreign embedded-type equality reading (#10684).
         // 1.122 -> 1.123: return/error matches! execution admission.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.123");
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.124");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5461,8 +5485,8 @@ mod tests {
         // 0.127 -> 0.128: same Display placeholder-edit refusal as full 1.121.
         // 0.128 -> 0.129: same foreign embedded-type reading as full 1.122.
         // 0.129 -> 0.130: same matches! admission as full 1.123.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.130");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.130");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.131");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.131");
     }
 
     #[test]

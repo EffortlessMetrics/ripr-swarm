@@ -3986,7 +3986,11 @@ fn before_phase_summary(packet: &str, packet_path: &str, edit_directive: bool) -
     if let Some(missing) = text("/missing_discriminators/0/value") {
         lines.push(format!("  missing discriminator: {missing}"));
     }
-    let inline_module_target = !crate::analysis::is_test_surface_path(test_file);
+    let inline_module_target = if crate::analysis::is_source_test_candidate(test_file) {
+        text("/file") == Some(test_file)
+    } else {
+        !crate::analysis::is_test_surface_path(test_file)
+    };
     // #7204: an unscorable attempt's summary may not hand out an unqualified
     // edit instruction; it names the target and defers to the baseline
     // warning instead.
@@ -6023,6 +6027,28 @@ mod before_phase_stdout_tests {
                 "missing `{expected}` in:\n{summary}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn sibling_source_file_summary_names_a_file_edit() -> Result<(), String> {
+        let packet = PACKET.replace("tests/pricing.rs", "src/tests.rs");
+        let summary = before_phase_stdout(&packet, "packet.json", false, &continuation())?;
+        assert!(
+            summary.contains("edit one test file: src/tests.rs"),
+            "{summary}"
+        );
+        assert!(
+            !summary.contains("inside the existing `#[cfg(test)]` module"),
+            "{summary}"
+        );
+        let inline_packet = packet.replace("src/lib.rs", "src/tests.rs");
+        let inline_summary =
+            before_phase_stdout(&inline_packet, "packet.json", false, &continuation())?;
+        assert!(
+            inline_summary.contains("inside the existing `#[cfg(test)]` module"),
+            "{inline_summary}"
+        );
         Ok(())
     }
 

@@ -162,6 +162,29 @@ pub(crate) fn classify_with(path: &Path, context: &SourceRoleContext) -> SourceR
     classify(&normalized)
 }
 
+/// Rust source paths requiring proof before a whole-file test edit.
+/// A matching path is only a candidate; it does not grant edit authority.
+pub(crate) fn is_source_test_candidate(path: &str) -> bool {
+    let normalized = path.replace('\\', "/");
+    let parts: Vec<_> = normalized.split('/').collect();
+    let Some(start) = parts
+        .iter()
+        .rposition(|part| part.eq_ignore_ascii_case("src"))
+    else {
+        return false;
+    };
+    let rest = &parts[start + 1..];
+    rest.last()
+        .is_some_and(|part| part.eq_ignore_ascii_case("tests.rs"))
+        || (rest.len() >= 2
+            && rest
+                .last()
+                .is_some_and(|part| part.to_ascii_lowercase().ends_with(".rs"))
+            && rest[..rest.len() - 1].iter().any(|part| {
+                part.eq_ignore_ascii_case("tests") || part.eq_ignore_ascii_case("test")
+            }))
+}
+
 /// Bounded positive test-surface recognition over a portable repo-relative
 /// path, for consumers that must authorize test-only edit surfaces (the
 /// repair driver's edit-cage gate). It reuses the analyzer's existing

@@ -2771,9 +2771,17 @@ pub(crate) fn edit_cage_policy_from_packet(
     // policy then confines the edit to that module; the baseline capture
     // refuses a file without exactly one such module, and the after-phase
     // verdict admits only a pure insertion of test functions into it.
-    let inline_test_module_target = !is_test_surface_path(selected_target_text)
+    let source_test_candidate = crate::analysis::is_source_test_candidate(selected_target_text);
+    let selected_is_owner =
+        value.get("file").and_then(serde_json::Value::as_str) == Some(selected_target_text);
+    let inline_test_module_target = (!is_test_surface_path(selected_target_text)
+        && !source_test_candidate
+        || source_test_candidate && selected_is_owner)
         && is_inline_test_module_candidate(selected_target_text);
-    if !is_test_surface_path(selected_target_text) && !inline_test_module_target {
+    if !is_test_surface_path(selected_target_text)
+        && !inline_test_module_target
+        && !source_test_candidate
+    {
         return Err(format!(
             "repair packet selected edit target `{selected_target_text}` is not a test surface ({}); a source file is never the test to edit, so no allowed-files list is built",
             test_surface_requirement()
@@ -2806,7 +2814,12 @@ pub(crate) fn edit_cage_policy_from_packet(
                 // Only the selected target itself may be the confined inline
                 // module file; every other allowed path is a test surface.
                 let confined_selected_target = index == 0 && inline_test_module_target;
-                if !is_test_surface_path(path) && !confined_selected_target {
+                let selected_source_candidate = index == 0 && source_test_candidate;
+                if (crate::analysis::is_source_test_candidate(path) && !selected_source_candidate)
+                    || (!is_test_surface_path(path)
+                        && !confined_selected_target
+                        && !selected_source_candidate)
+                {
                     return Err(format!(
                         "repair packet allowed edit surface `{path}` is not a test surface; a production file is never an allowed edit path"
                     ));
@@ -2821,7 +2834,7 @@ pub(crate) fn edit_cage_policy_from_packet(
                 .and_then(|test| test.get("file"))
                 .and_then(serde_json::Value::as_str)
                 .ok_or_else(|| "repair packet is missing allowed edit target".to_string())?;
-            if !is_test_surface_path(file) && !inline_test_module_target {
+            if !is_test_surface_path(file) && !inline_test_module_target && !source_test_candidate {
                 return Err(format!(
                     "repair packet recommended test `{file}` is not a test surface"
                 ));

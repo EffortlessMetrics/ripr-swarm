@@ -82,6 +82,12 @@ pub(crate) struct RepairCardInput<'a> {
 /// readiness authority's gap id. `subject.canonical_gap_id` is the readable
 /// producer id and is not compared against readiness (#8638).
 pub(crate) fn build_repair_card(input: &RepairCardInput<'_>) -> Result<RepairCardV1, String> {
+    if matches!(&input.readiness.target_selection,
+        RepairTargetSelection::Existing(target)
+            if target.test_kind() == crate::analysis::test_grip_evidence::TestKind::OutOfLineUnit)
+    {
+        return Err("repair_card.v1 cannot represent an out-of-line unit-test file; use the seam packet for the repair route".to_string());
+    }
     let selected_target = project_target(&input.readiness.target_selection);
     if input.next_command.is_some()
         && !(input.packet_eligible
@@ -347,6 +353,12 @@ fn project_assertion_goal(input: &RepairCardInput<'_>) -> Option<RepairCardAsser
 
 fn project_target(selection: &RepairTargetSelection) -> Option<RepairCardTarget> {
     match selection {
+        RepairTargetSelection::Existing(target)
+            if target.test_kind()
+                == crate::analysis::test_grip_evidence::TestKind::OutOfLineUnit =>
+        {
+            None
+        }
         RepairTargetSelection::Existing(target) => Some(RepairCardTarget::Existing {
             symbol_id: target.symbol_id().0.clone(),
             file: display_path(target.file()),
@@ -355,6 +367,7 @@ fn project_target(selection: &RepairTargetSelection) -> Option<RepairCardTarget>
                 crate::analysis::test_grip_evidence::TestKind::InlineUnit => {
                     RepairCardTestKind::InlineUnit
                 }
+                crate::analysis::test_grip_evidence::TestKind::OutOfLineUnit => return None,
                 crate::analysis::test_grip_evidence::TestKind::Integration => {
                     RepairCardTestKind::Integration
                 }
@@ -889,6 +902,30 @@ mod tests {
             return Err("proposed basis did not fall back to the owner".to_string());
         }
         Ok(())
+    }
+
+    #[test]
+    fn out_of_line_unit_target_refuses_unrepresentable_v1_card() {
+        let target = TestTargetEvidence::from_index(
+            crate::domain::SymbolId("src/tests.rs::case".to_string()),
+            PathBuf::from("src/tests.rs"),
+            3,
+            crate::analysis::test_grip_evidence::TestKind::OutOfLineUnit,
+            crate::domain::RelationReason::DirectOwnerCall,
+            "workspace:demo".to_string(),
+            true,
+        );
+        let readiness = readiness(
+            RepairRouteState::Ready,
+            RepairTargetSelection::Existing(target),
+        );
+        let instruction = instruction(FixInstructionState::FixSiteReady);
+        let result = build_repair_card(&base_input(&instruction, &readiness));
+        assert!(
+            result.err().is_some_and(
+                |error| error.contains("cannot represent an out-of-line unit-test file")
+            )
+        );
     }
 
     #[test]

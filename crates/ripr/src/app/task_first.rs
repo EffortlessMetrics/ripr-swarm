@@ -2319,15 +2319,19 @@ fn held_inline_target(
     readiness: &crate::analysis::repair_route::RepairRouteReadiness,
 ) -> Option<String> {
     use crate::analysis::repair_route::RepairTargetSelection;
-    let file = match &readiness.target_selection {
-        RepairTargetSelection::Existing(target) => target.file(),
-        RepairTargetSelection::Proposed(proposal) => proposal.file.as_path(),
+    let (file, exclusive_source_test) = match &readiness.target_selection {
+        RepairTargetSelection::Existing(target) => {
+            (target.file(), target.is_exclusive_source_test_module())
+        }
+        RepairTargetSelection::Proposed(proposal) => (proposal.file.as_path(), false),
         RepairTargetSelection::Missing => return None,
     };
     let relative = file.strip_prefix(root).unwrap_or(file);
     let relative = relative.to_string_lossy().replace('\\', "/");
     (!Path::new(&relative).is_absolute()
-        && !crate::analysis::is_test_surface_path(&relative)
+        && (!crate::analysis::is_test_surface_path(&relative)
+            || crate::analysis::is_source_test_candidate(&relative))
+        && !exclusive_source_test
         && Path::new(&relative)
             .extension()
             .is_some_and(|ext| ext == "rs")

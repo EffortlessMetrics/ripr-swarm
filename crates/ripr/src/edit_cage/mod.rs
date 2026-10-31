@@ -300,11 +300,64 @@ struct BoundedFileSnapshot {
     file_attributes: u32,
 }
 
+fn require_exclusive_source_test_module(
+    root: &Path,
+    policy: &EditCagePolicy,
+) -> Result<Option<BTreeMap<String, String>>, String> {
+    let path = policy.selected_target.path();
+    if policy.inline_test_module_target || !crate::analysis::is_source_test_candidate(path) {
+        return Ok(None);
+    }
+    #[cfg(feature = "lang-rust")]
+    if let Some(basis) = crate::analysis::source_test_module_basis(root, Path::new(path)) {
+        return Ok(Some(basis));
+    }
+    #[cfg(not(feature = "lang-rust"))]
+    let _ = root;
+    Err(format!(
+        "source test target `{path}` does not have current exclusive test-module ownership"
+    ))
+}
+
+fn require_captured_source_test_basis(
+    root: &Path,
+    policy: &EditCagePolicy,
+    capture: &AttemptBaseline,
+) -> Result<(), String> {
+    let Some(basis) = require_exclusive_source_test_module(root, policy)? else {
+        return Ok(());
+    };
+    if basis
+        .iter()
+        .any(|(path, digest)| capture.worktree_digest(path) != Some(digest.as_str()))
+    {
+        return Err("source test-module ownership basis changed during capture".to_string());
+    }
+    for (path, state) in &capture.paths {
+        if path.starts_with("target/") {
+            continue;
+        }
+        if matches!(state.worktree_identity, WorktreeIdentity::Symlink(_))
+            || ((path.ends_with(".rs") || path == "Cargo.toml" || path.ends_with("/Cargo.toml"))
+                && !basis.contains_key(path))
+            || (path.starts_with(".cargo/")
+                && !matches!(state.worktree_identity, WorktreeIdentity::Missing))
+        {
+            return Err("source test-module ownership basis is incomplete at capture".to_string());
+        }
+    }
+    if require_exclusive_source_test_module(root, policy)?.as_ref() != Some(&basis) {
+        return Err("source test-module ownership basis changed during capture".to_string());
+    }
+    Ok(())
+}
+
 pub(crate) fn capture_attempt_baseline(
     root: &Path,
     policy: &EditCagePolicy,
 ) -> Result<AttemptBaseline, String> {
     let root = canonical_repository_root(root)?;
+    require_exclusive_source_test_module(&root, policy)?;
     // A production Rust target is admitted only with its one governed inline
     // test module captured first: no region, no attempt.
     let inline_test_region = if policy.inline_test_module_target {
@@ -316,6 +369,7 @@ pub(crate) fn capture_attempt_baseline(
         None
     };
     let mut baseline = capture_repository_state(root, policy.clone(), CaptureTraceLabel::Baseline)?;
+    require_captured_source_test_basis(&baseline.root, policy, &baseline)?;
     if let Some(region) = &inline_test_region
         && baseline.worktree_digest(&region.path)
             != Some(inline_test_region::digest_bytes(region.source.as_bytes()).as_str())
@@ -362,7 +416,9 @@ pub(crate) fn evaluate_repository_edit_cage_with_head_movement(
     baseline: &AttemptBaseline,
     movement: HeadMovement,
 ) -> Result<(AttemptDelta, EditCageVerdict), String> {
+    require_exclusive_source_test_module(&baseline.root, &baseline.policy)?;
     let after = reevaluation_capture(baseline)?;
+    require_captured_source_test_basis(&baseline.root, &baseline.policy, &after)?;
     let committed = match movement {
         HeadMovement::RequireBaselineHead => (baseline.head == after.head).then(Vec::new),
         HeadMovement::AdmitDescendantCommits => {
@@ -1054,6 +1110,7 @@ pub(crate) fn validate_build_output_precondition(
     root: &Path,
     policy: &EditCagePolicy,
 ) -> Result<(), String> {
+    require_exclusive_source_test_module(root, policy)?;
     let Some(build_output) = &policy.ignored_build_output else {
         return Ok(());
     };

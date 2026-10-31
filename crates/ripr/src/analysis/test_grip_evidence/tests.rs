@@ -2880,6 +2880,7 @@ fn shared_grips_keep_every_semantic_field_distinct() -> Result<(), String> {
         TestKind::Integration,
         RelationReason::DirectOwnerCall,
         "sha256:workspace".to_string(),
+        false,
     );
     let variants = [
         (
@@ -2971,6 +2972,7 @@ fn shared_grips_keep_every_semantic_field_distinct() -> Result<(), String> {
         TestKind::Integration,
         RelationReason::DirectOwnerCall,
         "sha256:workspace".to_string(),
+        false,
     );
     let with_target = context.share_grip(RelatedTestGrip {
         test_target: Some(target),

@@ -505,6 +505,7 @@ pub(super) mod tests {
                 TestKind::Integration,
                 reason,
                 "sha256:workspace".to_owned(),
+                false,
             )),
             oracle_kind: OracleKind::ExactValue,
             oracle_strength: OracleStrength::Strong,

@@ -18963,7 +18963,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.123",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.124",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -19748,7 +19748,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.123",
+      "schema_version": "1.124",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
@@ -20026,7 +20026,20 @@ Targeted seam entries carry `repair_route_readiness` unchanged from the
 analysis authority. It records the readiness state, canonical identity,
 required/present/missing evidence, target selection (`existing`, explicit
 `proposed`, or `missing`), current/proposed oracle, and authority boundary; the
-rerun renderer does not reconstruct those facts. A `ready` route must carry an
+rerun renderer does not reconstruct those facts. Existing Rust test targets may
+also carry `exclusive_source_test_module: "exclusive"` when a bounded source
+module authority established test-only ownership. The field is absent when that
+proof was not established; the repair cage independently rechecks current
+workspace ownership before capture and after edits. For the bounded
+dependency-free, single-library Git-root shape where this proof can be granted,
+classified-seam cache reads and writes are bypassed when a source test candidate
+is present, so filesystem alias changes are checked on each inventory. An
+ancestor Cargo manifest, custom target, unresolved edge, unsupported platform,
+more than 128 Rust source files, or more than 4,096 filesystem entries keeps the
+source-file route unavailable. The internal test-target kind for an
+admitted sibling is `out_of_line_unit`; `repair_card.v1` cannot represent that
+kind and refuses the card rather than labeling it as an integration or inline
+test. The seam packet remains available for the repair route. A `ready` route must carry an
 existing or explicit proposed target. `already_gripped` and `policy_excluded`
 are terminal non-repair states; unresolved producer facts are
 `static_limitation`.

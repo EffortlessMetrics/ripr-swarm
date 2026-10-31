@@ -164,6 +164,14 @@ pub(crate) struct TestTargetEvidence {
     provenance: TestTargetProvenance,
     workspace_identity: String,
     currentness: TestTargetCurrentness,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    exclusive_source_test_module: Option<SourceTestModuleAuthority>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum SourceTestModuleAuthority {
+    Exclusive,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -178,6 +186,7 @@ pub(crate) enum TestTargetCurrentness {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum TestKind {
     InlineUnit,
+    OutOfLineUnit,
     Integration,
 }
 
@@ -197,6 +206,7 @@ impl TestTargetEvidence {
         test_kind: TestKind,
         relation: RelationReason,
         workspace_identity: String,
+        exclusive_source_test_module: bool,
     ) -> Self {
         Self {
             symbol_id,
@@ -207,7 +217,13 @@ impl TestTargetEvidence {
             provenance: TestTargetProvenance::RustIndexFunction,
             workspace_identity,
             currentness: TestTargetCurrentness::Current,
+            exclusive_source_test_module: exclusive_source_test_module
+                .then_some(SourceTestModuleAuthority::Exclusive),
         }
+    }
+
+    pub(crate) fn is_exclusive_source_test_module(&self) -> bool {
+        cfg!(unix) && self.exclusive_source_test_module.is_some()
     }
 
     pub(crate) fn symbol_id(&self) -> &SymbolId {
@@ -255,6 +271,7 @@ impl TestTargetEvidence {
             provenance: TestTargetProvenance::FixtureOnly,
             workspace_identity: "fixture".to_string(),
             currentness: TestTargetCurrentness::Current,
+            exclusive_source_test_module: None,
         }
     }
 
@@ -4164,17 +4181,22 @@ fn test_target_evidence_memo<'a>(
     if !valid {
         return None;
     }
+    let exclusive_source_test_module = context.is_exclusive_source_test_module(&function.file);
     Some(TestTargetEvidence::from_index(
         function.id.clone(),
         function.file.clone(),
         function.start_line,
-        if function.file == seam.file() || context.is_default_unit_test_file(&function.file) {
+        if exclusive_source_test_module {
+            TestKind::OutOfLineUnit
+        } else if function.file == seam.file() || context.is_default_unit_test_file(&function.file)
+        {
             TestKind::InlineUnit
         } else {
             TestKind::Integration
         },
         relation,
         authority.workspace_identity.clone(),
+        exclusive_source_test_module,
     ))
 }
 

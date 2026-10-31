@@ -54,6 +54,8 @@ pub(crate) struct CompactGripContext<'a> {
     /// Manifest-backed default target identity, once per observer file.
     /// Small, immutable-index answers survive evidence window boundaries.
     default_unit_test_files: Mutex<BTreeMap<&'a Path, bool>>,
+    #[cfg(feature = "lang-rust")]
+    source_test_modules: Mutex<BTreeMap<PathBuf, bool>>,
     pub(super) private_visibility: super::visibility::PrivateVisibilityMemo,
     /// Per production file: the parser-backed module layout new-test-target
     /// admission reads. File-bounded and small, so it survives windows.
@@ -648,6 +650,8 @@ impl<'a> CompactGripContext<'a> {
             evidence_functions_by_line_cache: Mutex::new(BTreeMap::new()),
             parsed_sources: Mutex::new(BTreeMap::new()),
             default_unit_test_files: Mutex::new(BTreeMap::new()),
+            #[cfg(feature = "lang-rust")]
+            source_test_modules: Mutex::new(BTreeMap::new()),
             private_visibility: Default::default(),
             inline_unit_layouts: Default::default(),
             owner_lookups: Mutex::new(BTreeMap::new()),
@@ -773,6 +777,36 @@ impl<'a> CompactGripContext<'a> {
         *cache
             .entry(path.as_path())
             .or_insert_with(|| self.index.member_crates.is_default_unit_target_root(path))
+    }
+
+    pub(in crate::analysis::test_grip_evidence) fn is_exclusive_source_test_module(
+        &self,
+        path: &Path,
+    ) -> bool {
+        #[cfg(feature = "lang-rust")]
+        {
+            if !crate::analysis::workspace::is_source_test_candidate(&path.to_string_lossy()) {
+                return false;
+            }
+            let mut cache = memo(&self.source_test_modules);
+            *cache.entry(path.to_path_buf()).or_insert_with(|| {
+                self.index
+                    .workspace_authority
+                    .as_ref()
+                    .is_some_and(|authority| {
+                        crate::analysis::workspace::exclusive_test_module(
+                            &authority.root,
+                            self.index,
+                            path,
+                        )
+                    })
+            })
+        }
+        #[cfg(not(feature = "lang-rust"))]
+        {
+            let _ = path;
+            false
+        }
     }
 
     /// SHA-256 of an indexed file's source, computed once per context.
