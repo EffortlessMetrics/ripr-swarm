@@ -976,13 +976,23 @@ export class RiprClientController {
    * workspace folder" without any UI to do so. The warning names the action;
    * accepting it runs the same flow as the palette command.
    */
+  private workspaceRootOfferPending = false;
+
   private async offerWorkspaceRootSelection(): Promise<void> {
-    const selection = await this.runtime.showWarningMessage(
-      'ripr cannot tell which workspace folder to analyze. Select one workspace folder to start the ripr server.',
-      SELECT_WORKSPACE_ROOT_ACTION
-    );
-    if (selection === SELECT_WORKSPACE_ROOT_ACTION) {
-      await this.selectWorkspaceRoot();
+    if (this.workspaceRootOfferPending) {
+      return;
+    }
+    this.workspaceRootOfferPending = true;
+    try {
+      const selection = await this.runtime.showWarningMessage(
+        'ripr cannot tell which workspace folder to analyze. Select one workspace folder to start the ripr server.',
+        SELECT_WORKSPACE_ROOT_ACTION
+      );
+      if (selection === SELECT_WORKSPACE_ROOT_ACTION) {
+        await this.selectWorkspaceRoot();
+      }
+    } finally {
+      this.workspaceRootOfferPending = false;
     }
   }
 
