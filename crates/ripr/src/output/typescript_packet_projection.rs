@@ -1570,6 +1570,22 @@ pub(crate) fn typescript_dynamic_assertion_blocker(finding: &Finding) -> Option<
     })
 }
 
+/// Plain-words account of a `toMatchObject(<scalar literal>)` block
+/// (RIPR-SPEC-0250 rule 4; wording under RIPR-SPEC-0122): Vitest reads a
+/// scalar expected value as plain equality and Jest rejects it, so ripr can
+/// neither call the assertion too weak nor credit it.
+pub(crate) fn typescript_match_object_scalar_blocker(finding: &Finding) -> Option<String> {
+    let sample = finding.evidence.iter().find_map(|line| {
+        line.strip_prefix(
+            "typescript_limitation_sample: typescript_match_object_scalar_unresolved at ",
+        )
+    })?;
+    Some(format!(
+        "ripr cannot tell whether the test at `{}` covers this change: its `.toMatchObject(...)` compares against a scalar literal, which Vitest checks for plain equality and Jest rejects, so ripr does not know what it pins",
+        sample.trim()
+    ))
+}
+
 /// Plain-words account of the moved-assertion-selection refusal (guard from
 /// RIPR-SPEC-0224; wording under RIPR-SPEC-0122): related tests whose assertions all check other behavior
 /// make the target test ambiguous, so no packet is projected.
@@ -1614,6 +1630,7 @@ pub(crate) fn typescript_advisory_blocker(finding: &Finding) -> Option<String> {
         return None;
     }
     typescript_dynamic_assertion_blocker(finding)
+        .or_else(|| typescript_match_object_scalar_blocker(finding))
         .or_else(|| typescript_moved_selection_blocker(finding))
 }
 
@@ -2083,6 +2100,30 @@ pub(crate) mod tests {
             record.is_none(),
             "dynamic oracle limitation must return None (G-C)"
         );
+    }
+
+    /// RIPR-SPEC-0250 rule 4: a scalar `toMatchObject` limitation withholds the
+    /// start and is worded as the scalar, not as a variable or computed value.
+    #[test]
+    fn match_object_scalar_limitation_withholds_the_start_with_its_own_wording() {
+        let mut finding = complete_finding();
+        assert!(typescript_match_object_scalar_blocker(&finding).is_none());
+        assert!(typescript_gap_record_for(&finding).is_some());
+        finding
+            .evidence
+            .push("typescript_limitation: typescript_match_object_scalar_unresolved".to_string());
+        finding.evidence.push(
+            "typescript_limitation_sample: typescript_match_object_scalar_unresolved at tests/a.test.ts:12"
+                .to_string(),
+        );
+        assert!(
+            typescript_gap_record_for(&finding).is_none(),
+            "a named limitation must withhold the start"
+        );
+        let text = typescript_match_object_scalar_blocker(&finding).unwrap_or_default();
+        assert!(text.contains("`tests/a.test.ts:12`"), "{text}");
+        assert!(text.contains("scalar literal"), "{text}");
+        assert!(!text.contains("variable or computed"), "{text}");
     }
 
     /// Named TypeScript limitations fail closed before packet validation.
