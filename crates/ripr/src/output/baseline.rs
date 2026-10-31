@@ -176,6 +176,16 @@ fn check_findings_as_decisions(check: &Value) -> Result<Vec<Value>, String> {
             kind.unwrap_or("unknown")
         ));
     }
+    // A findings-budget-bounded document is a prefix, not the whole set (#5203,
+    // #9010): the omitted lowest-priority gaps would later read as new debt.
+    if crate::output::gate::discloses_limited_findings_bound(check)
+        || crate::output::gate::discloses_bounded_analysis_document(check)
+    {
+        return Err(format!(
+            "check artifact discloses a findings-budget-bounded document (a prefix of the findings, not the whole set), so a baseline from it would be incomplete; re-run with `{}=0` for the full set; {WHOLE_REPO_PRODUCER_HINT}",
+            crate::output::json::CHECK_FINDINGS_BYTES_ENV
+        ));
+    }
     let base_tree = outcome
         .pointer("/outcome/identity/git_candidate_subject/base_tree")
         .and_then(Value::as_str);
@@ -735,6 +745,43 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn whole_repo_check_refuses_a_findings_budget_bounded_document() -> Result<(), String> {
+        let gap = vec![finding("weakly_exposed", Some("gap:a"), "src/a.rs", 1)];
+        let base: Value = serde_json::from_str(&check_artifact(
+            "complete_with_findings",
+            true,
+            Some(EMPTY_TREE),
+            gap,
+        ))
+        .map_err(|err| err.to_string())?;
+        let mut document_incomplete = base.clone();
+        document_incomplete["analysis_outcome"]["document_complete"] = json!(false);
+        document_incomplete["analysis_outcome"]["findings_rendered"] = json!(1);
+        document_incomplete["analysis_outcome"]["findings_total"] = json!(900);
+        let mut limited_run = base.clone();
+        limited_run["run_limitations"] = json!([
+            {"run_status": crate::output::json::FINDINGS_BOUND_RUN_STATUS}
+        ]);
+        for (name, doc) in [
+            ("document_complete:false", document_incomplete),
+            ("run_limitations", limited_run),
+        ] {
+            let error = from_check(&doc.to_string()).err().unwrap_or_default();
+            assert!(error.contains("findings-budget-bounded"), "{name}: {error}");
+            assert!(
+                error.contains("RIPR_CHECK_FINDINGS_BYTES=0"),
+                "{name}: {error}"
+            );
+        }
+        // The same artifact without the bound is accepted.
+        assert!(
+            from_check(&base.to_string())
+                .is_ok_and(|report| super::baseline_entry_count(&report) == 1)
+        );
+        Ok(())
     }
 
     #[test]

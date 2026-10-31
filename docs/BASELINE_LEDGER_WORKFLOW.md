@@ -132,10 +132,11 @@ ripr baseline create \
 
 `--from-check` is exclusive with `--from` and fails closed. It refuses an
 artifact that is not a complete outcome over the empty-tree base (a diff-scoped
-or partial run would baseline only part of the repository) and names the
-producer command in the error. It baselines only the gap classes
+or partial run would baseline only part of the repository) or that discloses a
+findings-budget-bounded document (set `RIPR_CHECK_FINDINGS_BYTES=0` to produce
+the full set), and names the producer command in the error. It baselines only the gap classes
 `weakly_exposed`, `reachable_unrevealed` and `no_static_path`; `exposed` and
-`*_unknown` findings are counted in the skipped summary and never written.
+`*_unknown` findings are counted under `skipped.other` and never written.
 Entries use the finding's `canonical_gap_id`, the identity `baseline-check`
 joins on; a finding without one is refused rather than baselined by
 path and line. A whole-repository `ripr check` can be slow on a large
