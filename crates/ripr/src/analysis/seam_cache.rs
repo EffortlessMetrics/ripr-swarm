@@ -7541,6 +7541,32 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn javascript_package_marker_changes_manifest_identity() -> Result<(), String> {
+        let root = isolated_dir("js-marker-cache-input");
+        ignore_remove_dir_all(&root);
+        std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+        std::fs::write(root.join("test.js"), "test('x', () => {});").map_err(|e| e.to_string())?;
+        let absent = hash_workspace_manifests(&root);
+        std::fs::write(root.join("package.json"), "{}").map_err(|e| e.to_string())?;
+        let present = hash_workspace_manifests(&root);
+        assert_ne!(
+            absent, present,
+            "package marker changes no-config language selection"
+        );
+        std::fs::write(root.join("test.js"), "test('y', () => {});").map_err(|e| e.to_string())?;
+        assert_eq!(
+            present,
+            hash_workspace_manifests(&root),
+            "presence-only input"
+        );
+        std::fs::remove_file(root.join("package.json")).map_err(|e| e.to_string())?;
+        assert_eq!(absent, hash_workspace_manifests(&root));
+        ignore_remove_dir_all(&root);
+        Ok(())
+    }
+
     #[test]
     fn python_source_dir_presence_changes_cache_identity() -> Result<(), String> {
         let root = isolated_dir("python-source-dir-inputs");

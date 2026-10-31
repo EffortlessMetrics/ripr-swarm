@@ -4751,6 +4751,43 @@ mod workspace_input_tests {
         Ok(())
     }
 
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn javascript_package_detection_inputs_trigger_config_refresh() {
+        let root = std::env::temp_dir().join("ripr-js-package-watch-input");
+        for relative in [
+            "package.json",
+            "index.js",
+            "test.js",
+            "src/app.mjs",
+            "test/unit.cjs",
+        ] {
+            let kind = workspace_input_kind(&root, &root.join(relative));
+            assert!(
+                kind.is_some_and(WorkspaceInputKind::reloads_repository_config),
+                "{relative}: {kind:?}"
+            );
+        }
+        let watchers = workspace_input_watchers()
+            .into_iter()
+            .filter_map(|v| {
+                v.get("globPattern")
+                    .and_then(|p| p.as_str())
+                    .map(str::to_string)
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            watchers.iter().any(|p| p.contains("package.json")),
+            "{watchers:?}"
+        );
+        assert!(
+            watchers.iter().any(|p| p.contains("js")
+                && !p.contains("jsconfig.json")
+                && !p.contains("package.json")),
+            "{watchers:?}"
+        );
+    }
+
     #[test]
     fn root_relative_components_follow_explicit_host_case_rule() {
         let root = Path::new("/Work/Repo");
