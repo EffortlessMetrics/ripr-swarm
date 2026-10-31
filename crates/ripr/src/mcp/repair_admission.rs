@@ -26,7 +26,6 @@ use crate::app::task_first::{
 };
 use crate::domain::Finding;
 use std::collections::HashMap;
-use std::path::Path;
 
 /// Typed reason: the shared gate names the seam and its existing tests
 /// already check it (`exposed`), so no static gap remains to repair.
