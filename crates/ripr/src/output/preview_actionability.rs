@@ -538,9 +538,7 @@ mod tests {
         finding.language = Some(LanguageId::Rust);
 
         assert!(preview_actionability_for(&finding).is_none());
-        assert!(is_preview_actionability_evidence_line(
-            "gap_state: unknown"
-        ));
+        assert!(is_preview_actionability_evidence_line("gap_state: unknown"));
         assert!(is_preview_actionability_evidence_line(
             "unlock_condition: add graph legs"
         ));
