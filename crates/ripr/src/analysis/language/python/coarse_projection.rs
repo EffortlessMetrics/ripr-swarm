@@ -13,18 +13,28 @@
 //! The rule refuses credit only when the assertion calls the owner and every
 //! such call sits under a coarse projection. A direct operand, or an owner
 //! call that also appears bare elsewhere in the assertion, keeps its verdict.
-//! `len(...)` over an owner result is coarse only when the edit is known to
-//! leave the element count alone (a changed `yield` or comprehension element,
-//! `element_only_change`) or when it measures text (`len(str(...))`).
+//! `len(...)` over an owner result is coarse only through a closed allow-list:
+//! `len(str|repr(<owner mention>))` measures text, and `len(<owner call>)`
+//! (optionally wrapped in `list`/`tuple`/`sorted`/`reversed`) counts elements
+//! that a changed `yield` or comprehension element (`element_only_change`)
+//! leaves as they were. Any other shape (`len(",".join(..))`, `len(f(3)[0])`,
+//! `len(f(3).attr)`, `len(set(..))`) can change length and keeps its verdict.
+//! Only the operands of a top-level `assert` (or the sole argument of
+//! `assertTrue`/`assertFalse`) are the asserted values; a comparison there
+//! is a genuine pin. A comparison passed as a value (`assertEqual(f(2) > 0,
+//! True)`) is a coarse projection. `%` with a string left operand is string
+//! formatting, not a remainder.
 
 use super::source_facts::parse_module_result;
 use super::{expr_full_name, source_utils::text_for_range};
 use rustpython_parser::ast::{self, Expr, Mod, Ranged, Stmt};
 use std::path::Path;
 
-/// Wrappers that re-materialize their one argument without changing which
-/// elements it holds or how many.
-const MATERIALIZERS: &[&str] = &["list", "tuple", "set", "frozenset", "sorted", "reversed"];
+/// Wrappers that re-materialize their one argument keeping every element, so
+/// the count equals the count of the wrapped owner result. `set` and
+/// `frozenset` are deliberately absent: they dedupe, so an element-only edit
+/// can change the count.
+const MATERIALIZERS: &[&str] = &["list", "tuple", "sorted", "reversed"];
 
 /// Whether the edit from `old` to `new` replaces only the element expression
 /// of a `yield` or a comprehension, so the number of produced elements is
@@ -80,8 +90,18 @@ pub(super) fn owner_call_only_in_coarse_projection(
         Stmt::Assert(assert_stmt) => walk.operands(assert_stmt.test.as_ref()),
         Stmt::Expr(expr_stmt) => match expr_stmt.value.as_ref() {
             Expr::Call(call) => {
+                let asserts_truth = expr_full_name(call.func.as_ref()).is_some_and(|name| {
+                    matches!(
+                        name.rsplit('.').next().unwrap_or(&name),
+                        "assertTrue" | "assertFalse"
+                    )
+                });
                 for argument in &call.args {
-                    walk.visit(argument, false);
+                    if asserts_truth {
+                        walk.operands(argument);
+                    } else {
+                        walk.visit(argument, false);
+                    }
                 }
                 for keyword in &call.keywords {
                     walk.visit(&keyword.value, false);
@@ -167,6 +187,9 @@ impl Walk<'_> {
                     self.visit(&keyword.value, inner);
                 }
             }
+            // A comparison reached here is consumed as a value (compared again
+            // or passed to `assertEqual`), so only its boolean outcome is read.
+            // Asserted comparisons go through `operands` instead.
             Expr::Compare(compare) => {
                 self.visit(compare.left.as_ref(), true);
                 for comparator in &compare.comparators {
@@ -180,8 +203,18 @@ impl Walk<'_> {
                 coarse || matches!(unary.op, ast::UnaryOp::Not),
             ),
             Expr::BinOp(bin_op) => {
-                let coarse = coarse || matches!(bin_op.op, ast::Operator::Mod);
-                self.visit(bin_op.left.as_ref(), coarse);
+                // `"fmt %s" % f(x)` is string formatting, not a remainder: only a
+                // left operand that is not a string literal reads as a residue.
+                let remainder = matches!(bin_op.op, ast::Operator::Mod)
+                    && !matches!(
+                        bin_op.left.as_ref(),
+                        Expr::JoinedStr(_)
+                            | Expr::Constant(ast::ExprConstant {
+                                value: ast::Constant::Str(_) | ast::Constant::Bytes(_),
+                                ..
+                            })
+                    );
+                self.visit(bin_op.left.as_ref(), coarse || remainder);
                 self.visit(bin_op.right.as_ref(), coarse);
             }
             Expr::Attribute(attribute) => {
@@ -207,7 +240,9 @@ impl Walk<'_> {
         }
     }
 
-    /// Whether `len(argument)` reads a length the edit leaves unchanged.
+    /// Whether `len(argument)` reads a length the edit leaves unchanged: text
+    /// length of an owner result, or the element count of a bare owner call
+    /// (through count-preserving materializers) under an element-only edit.
     fn len_is_coarse(&self, argument: &Expr) -> bool {
         let mut inner = argument;
         loop {
@@ -222,7 +257,7 @@ impl Walk<'_> {
                 _ => break,
             }
         }
-        self.element_only && self.mentions_owner(inner)
+        self.element_only && matches!(inner, Expr::Call(call) if self.is_owner_call(call))
     }
 }
 
@@ -284,6 +319,40 @@ mod tests {
         assert!(!coarse("assert len(list(g(3))) == 3", true));
         // The value itself is still observed.
         assert!(!coarse("assert list(f(3)) == [0, 3, 6]", true));
+    }
+
+    #[test]
+    fn asserted_comparisons_are_pins_even_through_assert_true() {
+        for text in [
+            "self.assertTrue(f(3) == 6)",
+            "self.assertTrue(f(3) > 5)",
+            "self.assertFalse(f(3) != 6)",
+            "self.assertTrue(f(3) == 6 and g(1))",
+        ] {
+            assert!(!coarse(text, false), "{text}");
+        }
+        // The same comparison passed as a value is still a coarse projection.
+        assert!(coarse("self.assertEqual(f(3) > 5, True)", false));
+    }
+
+    #[test]
+    fn string_formatting_is_not_a_remainder() {
+        assert!(!coarse("assert \"total=%s\" % f(3) == \"total=6\"", false));
+        assert!(!coarse("assert b\"%d\" % f(3) == b\"6\"", false));
+        assert!(coarse("assert f(3) % 3 == 0", false));
+    }
+
+    #[test]
+    fn length_outside_the_allow_list_keeps_credit() {
+        for text in [
+            "assert len(set(f(3))) == 3",
+            "assert len(frozenset(f(3))) == 3",
+            "assert len(\",\".join(f(3))) == 5",
+            "assert len(f(3)[0]) == 3",
+            "assert len(f(3).attr) == 3",
+        ] {
+            assert!(!coarse(text, true), "{text}");
+        }
     }
 
     #[test]
