@@ -20988,6 +20988,11 @@ fn a_test_local_shadow_of_the_impl_type_is_not_a_direct_owner_call() -> Result<(
         ),
         "control must drop the test-local type"
     );
+    assert!(
+        control.contains("let window = Window::new(3, 9);")
+            && !control.contains("let window = Window { start: 3, end: 9 };"),
+        "control must replace the struct-literal construction"
+    );
     let mut direct_by_source = Vec::new();
     for source in [shadowed, control.as_str()] {
         let path = PathBuf::from("src/lib.rs");
