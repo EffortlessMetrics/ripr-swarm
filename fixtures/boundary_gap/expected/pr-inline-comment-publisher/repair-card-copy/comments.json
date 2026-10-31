@@ -5,6 +5,7 @@
   "summary": {"comments": 1, "summary_only": 0, "suppressed": 0, "unchanged_tests": true},
   "comments": [
     {
+      "gap_state": "actionable",
       "id": "ripr-review-repair-card",
       "source": "gap_decision_ledger",
       "gap_id": "gap:pr:pricing:threshold-boundary",

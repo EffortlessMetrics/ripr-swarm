@@ -45,6 +45,7 @@ const FRONT_PANEL_MD: &str = "target/ripr/reports/pr-review-front-panel.md";
 const FIRST_ACTION_JSON: &str = "target/ripr/reports/first-useful-action.json";
 const FIRST_ACTION_MD: &str = "target/ripr/reports/first-useful-action.md";
 const PILOT_SUMMARY_MD: &str = "target/ripr/pilot/pilot-summary.md";
+const PILOT_SUMMARY_JSON: &str = "target/ripr/pilot/pilot-summary.json";
 const LEDGER_JSON: &str = "target/ripr/reports/pr-evidence-ledger.json";
 const LEDGER_MD: &str = "target/ripr/reports/pr-evidence-ledger.md";
 const COMMENTS_JSON: &str = "target/ripr/review/comments.json";
@@ -249,8 +250,45 @@ impl Summary {
         self.blank();
     }
 
+    /// Name a pilot deadline as the cause when the pilot packet is the
+    /// timeout partial (#11205). Without this the later blocks report
+    /// `missing_artifact` and `blocked` and the PR author cannot tell that one
+    /// deadline produced all of them. Fails closed: only a pilot summary that
+    /// says exactly `status: partial` with `reason: timeout` prints it; a
+    /// missing, malformed, complete or otherwise partial summary prints
+    /// nothing, so the notice never names a cause the artifacts do not show.
+    fn pilot_deadline(&mut self) {
+        let Some(doc) = self.doc(PILOT_SUMMARY_JSON) else {
+            return;
+        };
+        if doc.optional(&["status"]) != "partial" || doc.optional(&["reason"]) != "timeout" {
+            return;
+        }
+        let spent = doc.optional(&["timeout_ms"]).parse::<u64>().ok();
+        match spent {
+            Some(ms) => self.line(&format!(
+                "- Pilot deadline: `ripr pilot` stopped at its deadline after `{ms}` ms and wrote a partial packet."
+            )),
+            None => self.line(
+                "- Pilot deadline: `ripr pilot` stopped at its deadline and wrote a partial packet.",
+            ),
+        }
+        self.line("- Cause: the pilot deadline, not a missing setup step. The `missing_artifact` and `blocked` states below follow from it.");
+        self.line("- Effect: repo exposure and agent seam packets were not written, so this run has no seam findings to report and the steps that read them were skipped or blocked.");
+        let next = match spent {
+            Some(ms) => format!(
+                "set `RIPR_PILOT_TIMEOUT_MS` in the workflow `env:` to at least `{}` (milliseconds; an explicit value is a hard limit with no automatic extension) and re-run the job.",
+                ms.saturating_mul(2)
+            ),
+            None => "raise `RIPR_PILOT_TIMEOUT_MS` in the workflow `env:` (milliseconds; an explicit value is a hard limit with no automatic extension) and re-run the job.".to_string(),
+        };
+        self.line(&format!("- Next step: {next}"));
+        self.line("- Retry note: per-file facts computed before the deadline are written to `target/ripr/cache`; when the workflow restores that directory between runs, the retry resumes from them. Later whole-repo stages are not cached and can still need the larger deadline.");
+    }
+
     fn first_run_status(&mut self, base_ref: &str) {
         self.line("#### First-run status");
+        self.pilot_deadline();
         if let Some(doc) = self.doc(START_HERE_JSON) {
             self.start_here_status(&doc);
         } else if let Some(doc) = self.doc(FIRST_ACTION_JSON) {

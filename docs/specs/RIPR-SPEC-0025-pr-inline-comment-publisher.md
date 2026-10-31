@@ -171,7 +171,7 @@ Skip reasons:
 - `inline_comment_cap_reached` (SPEC-0068 renamed the historical `cap_reached` token)
 - `comment_body_too_large`
 - `unchanged_tests`
-- `not_publishable`
+- `not_publishable` (a `comments[]` item whose `gap_state` is anything other than `actionable`, including none)
 - `already_current`
 
 Blocked reasons:

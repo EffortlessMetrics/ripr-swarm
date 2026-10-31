@@ -31,6 +31,8 @@ mod effect_assertions;
 #[path = "owner_pin_execution/function_pointer.rs"]
 mod function_pointer;
 
+#[path = "owner_pin_execution/matches_panic.rs"]
+mod matches_panic;
 #[path = "owner_pin_execution/polling_helper.rs"]
 mod polling_helper;
 
