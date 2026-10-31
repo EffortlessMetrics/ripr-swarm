@@ -1548,3 +1548,36 @@ fn an_inline_unit_test_bare_call_is_still_a_boundary_input() -> Result<(), Strin
     )?;
     assert_boundary_credited(&results)
 }
+
+/// A package whose `#[path]` remap leaves no placeable owner identity cannot
+/// settle any bare call of the owner's name. The decline must read
+/// `infection_unknown`, never a named missing discriminator, whichever
+/// inputs the unplaceable calls pass (#10046).
+fn remapped_package_case(test: &str) -> Result<Vec<Finding>, String> {
+    let lib = format!(
+        "pub fn thr(x: i32) -> bool {{\n{NEW}\n}}\n\n#[path = \"generated.rs\"]\nmod generated;\n"
+    );
+    findings_with_files(
+        "x: i32",
+        "",
+        "",
+        NEW,
+        OLD,
+        test,
+        &[
+            ("src/lib.rs", lib.as_str()),
+            ("src/generated.rs", "pub fn unrelated() {}\n"),
+        ],
+    )
+}
+
+#[test]
+fn a_bare_call_with_no_placeable_owner_identity_reads_infection_unknown() -> Result<(), String> {
+    // Far-only and boundary-hitting inputs alike: no row is trusted, so
+    // neither a named gap nor a credit may be issued.
+    for test in [FAR_INPUTS, INTERMEDIATE_INPUT, AT_NEW_THRESHOLD] {
+        let results = remapped_package_case(test)?;
+        assert_identity_unresolved(&results)?;
+    }
+    Ok(())
+}

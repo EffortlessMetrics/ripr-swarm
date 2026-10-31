@@ -3361,6 +3361,10 @@ fn unresolved_call_identity(
         let mut resolving = false;
         let mut declined = false;
         let mut foreign = false;
+        // With no placeable identity every bare call declines, so absence of
+        // a row says nothing about the boundary (#10046).
+        let identity_unplaceable =
+            super::call_identity::owner_call_identity_unplaceable(index, target);
         for test in related_tests {
             let test_foreign =
                 super::call_identity::name_bound_outside_owner_crate(index, target, test);
@@ -3389,7 +3393,7 @@ fn unresolved_call_identity(
                     continue;
                 }
                 declined = true;
-                if test_foreign {
+                if test_foreign || identity_unplaceable {
                     foreign = true;
                 }
             }

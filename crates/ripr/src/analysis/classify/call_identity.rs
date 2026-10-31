@@ -2674,6 +2674,15 @@ fn bare_owner_call_names_owner(
     }
 }
 
+/// Whether a free owner has no placeable call identity (a mixed index, a
+/// `#[path]` remap or an unclassifiable layout): every bare call of its name
+/// then declines, so absence of an owner row cannot establish a missing
+/// boundary discriminator and the decline must read as unresolved (#10046).
+pub(super) fn owner_call_identity_unplaceable(index: &RustIndex, owner: &FunctionSummary) -> bool {
+    owner.item.container == FunctionContainer::Free
+        && shared_solo_owner_call_identity(index, owner).is_none()
+}
+
 /// Whether the owner's bare name is bound outside the owner's own crate in
 /// `test`: an explicit import from a sibling, dependency or otherwise
 /// unplaceable first segment, or a same-file definition in a file outside

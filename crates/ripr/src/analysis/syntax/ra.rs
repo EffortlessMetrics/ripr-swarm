@@ -961,6 +961,51 @@ fn collect_body_shadow_facts(
             });
         }
     }
+    // A macro argument is an opaque token tree, so a `let` written inside it
+    // (`assert!({ let thr = ..; thr(1) })`) is no `LetStmt` node. Read the
+    // tokens: an initialized `let <pattern> =` still shadows from its own
+    // line. Over-reading a pattern only withholds credit (fail closed).
+    for token in function
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| token.kind() == ra_ap_syntax::SyntaxKind::LET_KW)
+        .filter(|token| {
+            token
+                .parent_ancestors()
+                .any(|node| node.kind() == ra_ap_syntax::SyntaxKind::TOKEN_TREE)
+        })
+    {
+        let Some(body_relative_line) = line_of(token.text_range().start()).checked_sub(fn_line)
+        else {
+            continue;
+        };
+        let mut pattern = String::new();
+        let mut in_type = false;
+        let mut initialized = false;
+        let mut next = token.next_token();
+        while let Some(current) = next {
+            match current.kind() {
+                ra_ap_syntax::SyntaxKind::EQ => {
+                    initialized = true;
+                    break;
+                }
+                ra_ap_syntax::SyntaxKind::SEMICOLON => break,
+                ra_ap_syntax::SyntaxKind::COLON => in_type = true,
+                _ if !in_type => pattern.push_str(current.text()),
+                _ => {}
+            }
+            next = current.next_token();
+        }
+        if initialized {
+            for name in extract_pattern_words(&pattern) {
+                let_bindings.push(LetBindingFact {
+                    line: body_relative_line,
+                    name,
+                });
+            }
+        }
+    }
     let_bindings.sort_by(|left, right| left.line.cmp(&right.line).then(left.name.cmp(&right.name)));
     let_bindings.dedup();
     (nested_fn_names, let_bindings)
@@ -4499,6 +4544,23 @@ mod shadow_fact_equivalence_tests {
                 "let-shadow verdicts must agree for `{callee}` in:\n{source}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn let_inside_macro_token_tree_is_recorded_as_a_shadow() -> Result<(), String> {
+        let (_, inside) = parser_facts(
+            "fn probe() {\n    assert_eq!({ let score = build(); score(1) }, 1);\n}\n",
+        )?;
+        assert!(
+            inside.iter().any(|binding| binding.name == "score"),
+            "a block-local `let score` inside a macro argument must shadow: {inside:?}"
+        );
+        let (_, absent) = parser_facts("fn probe() {\n    assert_eq!(score(1), 1);\n}\n")?;
+        assert!(
+            absent.iter().all(|binding| binding.name != "score"),
+            "no `let` means no shadow fact: {absent:?}"
+        );
         Ok(())
     }
 
