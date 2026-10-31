@@ -29,7 +29,7 @@ jobs:
     steps:
       # Full history, like the required test step: base-resolving tests refuse on
       # a shallow clone (#10344).
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v5.1.0
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -40,7 +40,7 @@ jobs:
           components: llvm-tools-preview
 
       - name: Install CI tools
-        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with:
           tool: nextest
 

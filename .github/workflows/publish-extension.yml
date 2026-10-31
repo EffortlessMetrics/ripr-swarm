@@ -166,7 +166,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ github.event.inputs.source_sha }}
 
@@ -325,7 +325,7 @@ jobs:
       RAW_VERSION: ${{ github.event.inputs.version }}
       EXPECTED_VSIX_SHA256: ${{ needs.package.outputs.vsix_sha256 }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
           ref: ${{ github.event.inputs.source_sha }}
@@ -388,7 +388,7 @@ jobs:
       RAW_VERSION: ${{ github.event.inputs.version }}
       EXPECTED_VSIX_SHA256: ${{ needs.package.outputs.vsix_sha256 }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
           ref: ${{ github.event.inputs.source_sha }}

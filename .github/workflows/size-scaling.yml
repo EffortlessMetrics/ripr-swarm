@@ -44,7 +44,7 @@ jobs:
     # cell, so the job must outlive that.
     timeout-minutes: 150
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v5.1.0
         with:
           persist-credentials: false
 
@@ -87,7 +87,7 @@ jobs:
     # outlive that worst case rather than lose the verdict to the cap.
     timeout-minutes: 200
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v5.1.0
         with:
           fetch-depth: 0
           persist-credentials: false

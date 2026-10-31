@@ -41,7 +41,7 @@ jobs:
     steps:
       # Native merge-ready preflight admits H/B/T before invoking this inactive template.
       # Product execution consumes exact T; it has no admission/check-write authority.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v5.1.0
         with:
           ref: ${{ inputs.subject_sha }}
           persist-credentials: false
