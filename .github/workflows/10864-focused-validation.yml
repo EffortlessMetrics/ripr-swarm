@@ -1,0 +1,67 @@
+name: RIPR 10864 focused validation
+on:
+  push:
+    branches: [agents/10864-guidance-preparation]
+    paths: [.github/workflows/10864-focused-validation.yml]
+permissions:
+  contents: read
+  pull-requests: read
+concurrency:
+  group: ripr-10864-focused-validation
+  cancel-in-progress: false
+jobs:
+  validate:
+    if: github.repository == 'EffortlessMetrics/ripr-swarm' && github.event.deleted == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: '1'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 5ea6355531dd4c54120dcaf78e018c0d3927bea6
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591
+        with:
+          components: rustfmt, clippy
+      - name: Reproduce setup cause and validate exact candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CARGO_TARGET_DIR: ${{ runner.temp }}/ripr-10864-target-v2
+        run: |
+          python - <<'PY'
+          import base64, hashlib, json, os, urllib.request
+          from pathlib import Path
+          token=os.environ.pop('GH_TOKEN')
+          def get(path):
+              request=urllib.request.Request('https://api.github.com/repos/EffortlessMetrics/ripr-swarm/'+path,
+                  headers={'Authorization':'Bearer '+token,'Accept':'application/vnd.github+json'})
+              with urllib.request.urlopen(request,timeout=45) as response:
+                  data=response.read(2_000_001)
+              if len(data)>2_000_000:
+                  raise RuntimeError('bounded response exceeded')
+              return json.loads(data)
+          sha='29446cf44c687a211a85dca24b03e3ec2be9b9d5'
+          blob=get('git/blobs/'+sha)
+          data=base64.b64decode(blob['content'])
+          assert hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()==sha
+          pr=get('pulls/11331')
+          assert pr['head']['sha']=='5ea6355531dd4c54120dcaf78e018c0d3927bea6'
+          assert pr['state']=='open' and pr['draft']
+          (Path(os.environ['RUNNER_TEMP'])/'ripr-10864-pr-body.json').write_text(json.dumps({'body':pr['body']}))
+          del token
+          exec(compile(data,'exact-10864-focused-proof-v2','exec'),{'__name__':'__main__'})
+          PY
+      - name: Retain actual command logs and identities
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ripr-10864-focused-proof-v2-${{ github.run_id }}
+          path: ${{ runner.temp }}/ripr-10864-proof-v2/
+          retention-days: 7
+          if-no-files-found: warn
