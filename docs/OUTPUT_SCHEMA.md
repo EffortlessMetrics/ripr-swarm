@@ -888,8 +888,13 @@ identity agree and the analysis-outcome validator accepts the artifact.
       "schema_version": "0.1",
       "kind": "complete_with_findings",
       "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": "fnv1a64:0123456789abcdef",
         "base_revision": "origin/main",
-        "input_identity": "sha256:<diff-bytes>"
+        "input_identity": "sha256:<diff-bytes>",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
       },
       "counts": {
         "changed_file_count": 1,
@@ -1575,7 +1580,8 @@ A finding contains:
   "oracle_strength": "strong",
   "recommended_next_step": "Add boundary tests with exact assertions.",
   "suggested_next_action": "Add boundary tests with exact assertions.",
-  "language": "rust"
+  "language": "rust",
+  "source_currentness": "candidate_current"
 }
 ```
 
@@ -3808,8 +3814,8 @@ retained-count fallback and floor as check findings: older findings without
 matched-total metadata supply their known retained row count, which cannot
 establish how many rows an older producer discarded. `related_tests` remains
 the selected bounded window. Identical eight-row windows with totals 12 and
-13 therefore remain distinguishable. `witness` is additive and is omitted
-when an exposed finding has no unresolved discriminator. It contains only
+13 therefore remain distinguishable. `witness` is additive and is always present;
+its value is `null` when an exposed finding has no unresolved discriminator. It contains only
 producer-owned facts: `fix_site` and `oracle_location` are absent when the
 producer cannot identify them, and `suggested_assertion` is omitted until
 the producer supplies a symbol-resolved assertion template. The typed witness
