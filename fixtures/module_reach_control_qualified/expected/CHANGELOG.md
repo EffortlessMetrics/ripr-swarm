@@ -98,7 +98,7 @@ Updated:
 ## Pending — module_reach_control_qualified (8)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
 
 Command:
 `cargo xtask goldens bless module_reach_control_qualified --reason "..."`
@@ -110,7 +110,7 @@ Updated:
 ## Pending — module_reach_control_qualified (9)
 
 Reason:
-RIPR-SPEC-0122: explain missing input or assertion honestly
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
 
 Command:
 `cargo xtask goldens bless module_reach_control_qualified --reason "..."`
@@ -120,6 +120,18 @@ Updated:
 - `expected/human.txt`
 
 ## Pending — module_reach_control_qualified (10)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless module_reach_control_qualified --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — module_reach_control_qualified (11)
 
 Reason:
 RIPR-SPEC-0122: render the missing check in plain language

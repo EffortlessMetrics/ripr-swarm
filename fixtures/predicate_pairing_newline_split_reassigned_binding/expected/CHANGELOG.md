@@ -235,7 +235,7 @@ Updated:
 ## Pending — predicate_pairing_newline_split_reassigned_binding (18)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
 
 Command:
 `cargo xtask goldens bless predicate_pairing_newline_split_reassigned_binding --reason "..."`
@@ -246,6 +246,19 @@ Updated:
 - `expected/human-full.txt`
 
 ## Pending — predicate_pairing_newline_split_reassigned_binding (19)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless predicate_pairing_newline_split_reassigned_binding --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — predicate_pairing_newline_split_reassigned_binding (20)
 
 Reason:
 RIPR-SPEC-0122: explain missing input or assertion honestly

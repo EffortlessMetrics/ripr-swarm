@@ -49,7 +49,9 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).
-    - src/load.ts:5 (unknown); kind: return_value; reason: The change to `load` is a `literal_return` edit: the edit changes a literal return value, and the adapter does not model whether any test input reaches this return. No assertion…
+    - src/load.ts:5 (unknown: infection unclear); kind: return_value; reason: The change to `load` is a `literal_return` edit: the edit changes a literal return value, and the adapter does not model whether any test input reaches this return. No assertion…
+  Hidden classes:
+    unknown: infection unclear = ripr could not tell what input makes the change take effect
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

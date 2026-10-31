@@ -42,6 +42,8 @@ Next: drill into the top finding:
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
     - ./src/lib.rs:18 (no path); kind: return_value; reason: Missing discriminator value: ParseError::InvalidData
+  Hidden classes:
+    no path = no test path was found
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

@@ -199,6 +199,17 @@ Updated:
 ## Pending — rust_trait_impl_shadow (16)
 
 Reason:
+seam-side shadow guard: the file's seam is no longer tied to the changed line (#11382); formatting-only drift, one human.txt line, check.json unchanged
+
+Command:
+`cargo xtask goldens bless rust_trait_impl_shadow --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_trait_impl_shadow (17)
+
+Reason:
 RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
 
 Command:
@@ -209,7 +220,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — rust_trait_impl_shadow (17)
+## Pending — rust_trait_impl_shadow (18)
 
 Reason:
 RIPR-SPEC-0122: explain missing input or assertion honestly

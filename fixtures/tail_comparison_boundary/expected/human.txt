@@ -45,5 +45,8 @@ Hidden:
     - ./src/lib.rs:3 (weak); kind: return_value; reason: Missing discriminator value: items == 10
     - ./src/lib.rs:17 (exposed); kind: predicate; reason: Strong oracle found: exact value or pattern assertion
     - ./src/lib.rs:17 (exposed); kind: return_value; reason: Strong oracle found: exact value or pattern assertion
+  Hidden classes:
+    exposed = tests appear to notice the change
+    weak = tests reach it but check it only loosely
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

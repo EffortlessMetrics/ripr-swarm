@@ -23,7 +23,7 @@ Start here:
   Missing check: Related tests reach `parseLimit` with a strong oracle, but the changed line has no
     statically comparable predicate boundary; static evidence cannot tie an assertion to the changed
     branch
-  Related test: tests/limiter.test.ts:3 parseLimit parses a numeric limit (ripr could not confirm that this assertion observes the changed behavior)
+  Related test: tests/limiter.test.ts:3 parseLimit parses a numeric limit (the preview adapter could not confirm that this assertion observes the changed behavior)
   Next step — TypeScript preview advisory: add a test that exercises the changed behavior with an
     exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`); no actionable repair packet is
     emitted until the target shape is explicit
@@ -50,6 +50,8 @@ Next: drill into the top finding:
 Hidden:
   1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).
     - src/limiter.ts:4 (weak); kind: error_path; reason: Related test reaches `parseLimit` but the strongest extracted oracle is `unknown`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow`…
+  Hidden classes:
+    weak = tests reach it but check it only loosely
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

@@ -8,7 +8,7 @@ see [installation](QUICKSTART.md#installation) for published and source builds.
 | Inspect one change | `ripr check` | Static findings, or an explicit no-action or limited result. Analysis stages go to stderr; `--quiet` suppresses them. Machine stdout is unchanged. |
 | Inspect a finding | The `ripr explain` command printed by `check` | Evidence for that finding, using the same root, diff, mode, and ID. |
 | Hand off a finding | The `ripr context` command printed by `check` | Context for a human or coding agent. |
-| Explore the repository | `ripr pilot --root .` | Broader analysis, pilot reports, and a supported next action. |
+| Explore the repository | `ripr pilot --root .` | Optional broader analysis, pilot reports, and a supported next action. Not a prerequisite for `check` or `repair`. |
 | Repair a selected Rust gap | `ripr repair` | A prepared before/edit/after attempt; you or your agent edit the test. |
 | Resume a repair | `ripr status --root .` | The continuation command or a recovery step. |
 | Compose PR evidence | `ripr first-pr` with the inputs described in [First PR workflow](FIRST_PR_WORKFLOW.md) | A summary of existing artifacts, not a new analysis or repair. |
@@ -17,7 +17,7 @@ see [installation](QUICKSTART.md#installation) for published and source builds.
 | Record result usefulness | `ripr feedback record --snapshot ID --reason CODE` | Local receipt bound to a snapshot; diagnostics, classification, baselines, suppressions, gates, and gap closure stay unchanged. |
 | Check configuration | `ripr config validate` | Validation of `ripr.toml` without analysis. |
 | Start the LSP sidecar | `ripr lsp --stdio` | Saved-workspace feedback for an LSP client. |
-| Serve MCP status | `ripr mcp --stdio` | [Read-only workspace status](interop/mcp.md), not analysis or execution. |
+| Serve MCP | `ripr mcp --stdio` | [Read-only workspace status and static analysis session](interop/mcp.md): an explicit `ripr_refresh` analyzes committed input; uncommitted input needs the opt-in `source: "worktree"`. No edit or project-test authority. |
 | Read detailed help | `ripr help <command>`, `ripr help workflow [name]`, or `ripr help --all` | Options for one command, one bounded workflow's steps, or the full reference. |
 
 The bare `cache`, `baseline`, `policy`, `reports`, `calibrate`, `zero`,
@@ -37,18 +37,26 @@ or `ripr agent <subcommand> --help` to inspect the accepted command.
 
 ## Repair transaction
 
-Start with `ripr pilot --root .`. When it supplies a supported repair, run
-`ripr repair` with the listed seam ID; pilot also prints the equivalent
-advanced `ripr agent repair` spelling. `check` prints probe IDs; `repair`
-accepts repository-scoped seam IDs. They are not interchangeable.
+Start from `ripr check`. When it offers a `ripr repair` start, run the
+command it prints. `ripr repair` accepts a seam ID, a `ripr check` finding ID
+(`probe:` or `repo-probe:`), a canonical gap ID, or a `file:line` location, and
+starts the before phase when the item maps to exactly one repair-eligible seam.
+A finding ID the current seams no longer map, or that maps ambiguously, is
+refused with a recovery route instead of a guessed seam. Without an item,
+`ripr repair` starts only when exactly one eligible seam is visible; several
+eligible seams print a selection list with a retry command, and none prints
+setup or limitation guidance. IDs from different namespaces are not universally
+interchangeable. Pilot is optional broader exploration; when it supplies a
+supported repair it prints the seam ID and the equivalent advanced
+`ripr agent repair` spelling.
 
-The sequence below is a reference, not a copy-ready command: replace `SEAM_ID`
-with the ID from pilot. When several attempts are current, `ripr continue`
-names the explicit `--attempt` retry. Prefer the complete commands printed
-by ripr.
+The sequence below is a reference, not a copy-ready command: replace `ITEM`
+with a seam ID or the check finding ID. When several attempts are current,
+`ripr continue` names the explicit `--attempt` retry. Prefer the complete
+commands printed by ripr.
 
 ```bash
-ripr repair SEAM_ID --root .
+ripr repair ITEM --root .
 # Read the packet, then edit one allowed test and run its authorized test command.
 ripr continue --root .
 ```

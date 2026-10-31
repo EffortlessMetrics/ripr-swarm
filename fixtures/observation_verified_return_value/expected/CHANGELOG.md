@@ -483,7 +483,7 @@ Updated:
 ## Pending — observation_verified_return_value (40)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
 
 Command:
 `cargo xtask goldens bless observation_verified_return_value --reason "..."`
@@ -493,6 +493,18 @@ Updated:
 - `expected/human.txt`
 
 ## Pending — observation_verified_return_value (41)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless observation_verified_return_value --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — observation_verified_return_value (42)
 
 Reason:
 RIPR-SPEC-0122: explain missing input or assertion honestly

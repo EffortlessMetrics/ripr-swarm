@@ -431,7 +431,7 @@ Updated:
 ## Pending — error_path_diagnostic_escaped (32)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0001: human normalizer keeps source-text backslashes (#11178)
 
 Command:
 `cargo xtask goldens bless error_path_diagnostic_escaped --reason "..."`
@@ -444,7 +444,7 @@ Updated:
 ## Pending — error_path_diagnostic_escaped (33)
 
 Reason:
-RIPR-SPEC-0122: explain missing input or assertion honestly
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
 
 Command:
 `cargo xtask goldens bless error_path_diagnostic_escaped --reason "..."`
@@ -455,6 +455,32 @@ Updated:
 - `expected/human-full.txt`
 
 ## Pending — error_path_diagnostic_escaped (34)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless error_path_diagnostic_escaped --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_path_diagnostic_escaped (35)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless error_path_diagnostic_escaped --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_path_diagnostic_escaped (36)
 
 Reason:
 RIPR-SPEC-0122: describe classified spots without implying repair eligibility

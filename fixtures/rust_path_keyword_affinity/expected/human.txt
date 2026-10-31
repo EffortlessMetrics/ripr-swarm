@@ -44,10 +44,13 @@ Next: drill into the top finding:
 
 Hidden:
   5 finding(s) omitted: 4 lower-priority, 1 base-side evidence (not candidate edit targets).
-    - ./src/lib.rs:1 (unknown, lower-priority candidate); kind: static_unknown; reason: No relevant oracle was detected
-    - ./src/lib.rs:3 (unknown, lower-priority candidate); kind: static_unknown; reason: No relevant oracle was detected
+    - ./src/lib.rs:1 (unknown: static analysis limited, lower-priority candidate); kind: static_unknown; reason: No relevant oracle was detected
+    - ./src/lib.rs:3 (unknown: static analysis limited, lower-priority candidate); kind: static_unknown; reason: No relevant oracle was detected
     - ./src/lib.rs:4 (no path, lower-priority candidate); kind: field_construction; reason: Missing discriminator value: pub changed_slot: u64,
-    - ./src/lib.rs:7 (unknown, lower-priority candidate); kind: static_unknown; reason: No relevant oracle was detected
-    - ./src/lib.rs:7 (unknown, base-side); kind: static_unknown; reason: No relevant oracle was detected
+    - ./src/lib.rs:7 (unknown: static analysis limited, lower-priority candidate); kind: static_unknown; reason: No relevant oracle was detected
+    - ./src/lib.rs:7 (unknown: static analysis limited, base-side); kind: static_unknown; reason: No relevant oracle was detected
+  Hidden classes:
+    no path = no test path was found
+    unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

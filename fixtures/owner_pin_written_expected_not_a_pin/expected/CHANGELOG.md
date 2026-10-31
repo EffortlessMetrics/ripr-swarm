@@ -148,7 +148,7 @@ Updated:
 ## Pending — owner_pin_written_expected_not_a_pin (12)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
 
 Command:
 `cargo xtask goldens bless owner_pin_written_expected_not_a_pin --reason "..."`
@@ -160,7 +160,7 @@ Updated:
 ## Pending — owner_pin_written_expected_not_a_pin (13)
 
 Reason:
-RIPR-SPEC-0122: explain missing input or assertion honestly
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
 
 Command:
 `cargo xtask goldens bless owner_pin_written_expected_not_a_pin --reason "..."`
@@ -170,6 +170,18 @@ Updated:
 - `expected/human.txt`
 
 ## Pending — owner_pin_written_expected_not_a_pin (14)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless owner_pin_written_expected_not_a_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — owner_pin_written_expected_not_a_pin (15)
 
 Reason:
 RIPR-SPEC-0122: render the missing check in plain language

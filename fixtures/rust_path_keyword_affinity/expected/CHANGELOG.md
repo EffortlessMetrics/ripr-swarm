@@ -86,7 +86,7 @@ Updated:
 ## Pending — rust_path_keyword_affinity (7)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
 
 Command:
 `cargo xtask goldens bless rust_path_keyword_affinity --reason "..."`
@@ -98,7 +98,7 @@ Updated:
 ## Pending — rust_path_keyword_affinity (8)
 
 Reason:
-RIPR-SPEC-0122: explain missing input or assertion honestly
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
 
 Command:
 `cargo xtask goldens bless rust_path_keyword_affinity --reason "..."`
@@ -108,6 +108,18 @@ Updated:
 - `expected/human.txt`
 
 ## Pending — rust_path_keyword_affinity (9)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless rust_path_keyword_affinity --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — rust_path_keyword_affinity (10)
 
 Reason:
 RIPR-SPEC-0122: render the missing check in plain language

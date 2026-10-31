@@ -43,5 +43,7 @@ Write a test for it:
 Hidden:
   All 1 omitted finding(s) are base-side evidence, not candidate edit targets.
     - ./src/lib.rs:7 (unrevealed); kind: field_construction; reason: Missing discriminator value: retries: 1,
+  Hidden classes:
+    unrevealed = tests reach it but nothing appears to notice a change
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

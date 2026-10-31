@@ -6751,6 +6751,73 @@ fn classify_probe_shape_reads_a_returned_ternary_as_its_condition_boundary() {
     }
 }
 
+/// #11256: a quoted operand is one operand, and an operator inside a string
+/// literal is no comparison.
+#[test]
+fn boundary_discriminator_is_faithful_or_withheld() {
+    // A plain quoted literal is named whole.
+    assert_eq!(
+        typescript_boundary_discriminator("  if (arg === \"stop\") {").as_deref(),
+        Some("arg == \"stop\"")
+    );
+    assert_eq!(
+        typescript_boundary_discriminator("  if (\"stop\" === arg) {").as_deref(),
+        Some("\"stop\" == arg")
+    );
+    // A literal holding `-` or a space was cut at that character (`arg == "`).
+    for line in [
+        "  if (arg !== \"--\") {",
+        "  if (\"--\" === arg) {",
+        "  if (mode === \"a b\") {",
+        "  if (mode === 'a-b') {",
+        "  if (mode === \"unterminated) {",
+    ] {
+        assert_eq!(typescript_boundary_discriminator(line), None, "{line}");
+    }
+    // A comparison-looking operator inside a string, or an arrow, is not a
+    // second comparison.
+    assert_eq!(
+        typescript_boundary_discriminator("  if (total >= 100 && ready) {").as_deref(),
+        Some("total == 100")
+    );
+    assert_eq!(
+        typescript_boundary_discriminator("  if (kind === \"a>=b\") {").as_deref(),
+        None,
+        "an unsimple literal is withheld"
+    );
+    assert_eq!(
+        typescript_boundary_discriminator("  if (kind === \"ab\" && ok) {").as_deref(),
+        Some("kind == \"ab\"")
+    );
+    // Through the changed-comparison selection the production path uses: the
+    // `--` edit names no discriminator (it was `arg == "`), and the compound
+    // edit names its own comparison, not the neighbouring `typeof` test.
+    let narrowed = |old: &str, new: &str| {
+        typescript_boundary_discriminator(&typescript_changed_boundary_text(
+            Path::new("src/_parser.ts"),
+            &ProbeFamily::Predicate,
+            Some(old),
+            new,
+        ))
+    };
+    assert_eq!(
+        narrowed("    if (arg === \"--\") {", "    if (arg !== \"--\") {"),
+        None
+    );
+    assert_eq!(
+        narrowed("    if (arg === \"stop\") {", "    if (arg !== \"stop\") {").as_deref(),
+        Some("arg == \"stop\"")
+    );
+    assert_eq!(
+        narrowed(
+            "    if (type === \"boolean\" && typeof value === \"string\") {",
+            "    if (type !== \"boolean\" && typeof value === \"string\") {"
+        )
+        .as_deref(),
+        Some("type == \"boolean\"")
+    );
+}
+
 #[test]
 fn boundary_discriminator_reads_the_condition_of_a_one_line_guard_statement() {
     // `if (cond) return x;` is the same boundary as the braced form; the
@@ -19887,6 +19954,7 @@ mod comparison_edit_tests;
 mod custom_matcher_tests;
 mod decorated_reach_tests;
 mod default_object_member_tests;
+mod derived_operand_tests;
 mod directory_specifier_tests;
 mod dropped_term_tests;
 mod enum_member_tests;
@@ -19897,6 +19965,7 @@ mod guard_entry_tests;
 mod infection_tests;
 mod instance_class_tests;
 mod instance_factory_tests;
+mod issue10925_alias_resolution_tests;
 mod issue10925_shadow_index_tests;
 mod issue10925_shadow_scan_tests;
 mod issue7507_shadow_tests;

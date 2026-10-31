@@ -530,7 +530,7 @@ Updated:
 ## Pending — weak_error_oracle_assert_matches (44)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
 
 Command:
 `cargo xtask goldens bless weak_error_oracle_assert_matches --reason "..."`
@@ -540,6 +540,18 @@ Updated:
 - `expected/human.txt`
 
 ## Pending — weak_error_oracle_assert_matches (45)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless weak_error_oracle_assert_matches --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — weak_error_oracle_assert_matches (46)
 
 Reason:
 RIPR-SPEC-0122: explain missing input or assertion honestly

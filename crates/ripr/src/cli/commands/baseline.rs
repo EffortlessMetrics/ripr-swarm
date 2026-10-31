@@ -32,7 +32,7 @@ const BASELINE_LEDGER_RECOVERY: &str = "Run `ripr baseline create --from <gate-d
 
 pub(in crate::cli) fn baseline(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        help::print_baseline_help();
+        help::print_group_help("baseline", args);
         return Ok(());
     }
     let Some((subcommand, rest)) = args.split_first() else {

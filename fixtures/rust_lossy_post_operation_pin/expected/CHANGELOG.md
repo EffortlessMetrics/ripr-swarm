@@ -67,7 +67,7 @@ Updated:
 ## Pending — rust_lossy_post_operation_pin (6)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
 
 Command:
 `cargo xtask goldens bless rust_lossy_post_operation_pin --reason "..."`
@@ -78,6 +78,19 @@ Updated:
 - `expected/human-full.txt`
 
 ## Pending — rust_lossy_post_operation_pin (7)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless rust_lossy_post_operation_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_lossy_post_operation_pin (8)
 
 Reason:
 RIPR-SPEC-0122: explain missing input or assertion honestly

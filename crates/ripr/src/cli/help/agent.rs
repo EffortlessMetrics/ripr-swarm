@@ -78,6 +78,8 @@ Options:
                    top level; `--root .` pins this directory.
   --diff PATH      Select a diff file and line-level working set. An existing
                    file typed relative to a member directory is bound to it.
+                   The path must stay under --root; a diff outside it is
+                   refused.
   --base REV       Derive the working set from a base revision.
   --files PATHS    Comma-separated repo-relative file paths; from a member
                    directory, existing files bind to that directory.

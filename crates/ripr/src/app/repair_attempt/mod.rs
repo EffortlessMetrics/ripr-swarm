@@ -515,7 +515,36 @@ pub(crate) fn receipt_binding_from(
     }
     let (verdict, binding_holds) = recompute_after_verdict_binding(&root, &manifest, after)?;
     if !binding_holds {
-        return Err("repair attempt after verdict binding is tampered or stale".to_string());
+        // Name what is known and the route for each caller. The after phase
+        // reaches this refusal after it recorded its verdict, so only a new
+        // attempt recovers it; a receipt retry recovers by undoing the change.
+        let store_flag = quoted_store_flag_from_identity(manifest.store.as_ref());
+        let status = format!(
+            "ripr agent status --root {}{store_flag}",
+            shell_arg(&root_display)
+        );
+        let restart = crate::app::gap_bound_repair::repair_start_command(
+            &root_display,
+            &store_flag,
+            &manifest.seam_id,
+            manifest
+                .gap_binding
+                .as_ref()
+                .map(|binding| binding.base.as_str()),
+        );
+        return Err(format!(
+            "repair attempt after verdict binding is tampered or stale: the recorded binding no longer matches the attempt.\n\
+             Causes: command output redirected into a repository file during the run (stdout or stderr, including under `target/ripr`), or a path outside `target/ripr` that changed after the after phase bound it.\n\
+             Next: `{status}` reads the attempt's state.\n\
+             From `ripr agent receipt`: remove the stray file or the later edit (keep a copy first, so you do not revert your bound repair edit) and rerun.\n\
+             From the after phase: the verdict is already recorded, so a rerun reports the attempt as already finished and only a new attempt recovers it.\n\
+             The restart refuses while your repair edit is present, because that edit already reads the gap as exposed.\n\
+             To restart: 1. Copy your edited test file(s) outside the repository and check the copy is complete before overwriting anything.\n\
+             2. Restore each file's pre-edit content yourself; a newly created test file has no pre-edit content, so move it aside or remove it. Restoring bytes can leave the repair staged, so unstage it if needed (`git restore --staged <file>`).\n\
+             3. Run `{restart}`; if it fails, put your copy back.\n\
+             4. Re-apply your edit and run the new --attempt command it prints.\n\
+             Write command output outside the repository."
+        ));
     }
     validate_trusted_head_surface(
         &root,
@@ -8987,6 +9016,176 @@ mod tests {
         ] {
             if validate_gap_bound_receipt_closure(true, gap, &verify, &receipt).is_ok() {
                 return Err(format!("{label}: a gap-bound receipt was accepted"));
+            }
+        }
+        Ok(())
+    }
+
+    fn refusal_fixture(reason: &str, recorded_unix_ms: u64) -> RepairAttemptAfterRefusal {
+        RepairAttemptAfterRefusal {
+            reason: reason.to_string(),
+            repository_head: None,
+            recorded_unix_ms,
+        }
+    }
+
+    /// The retry budget and the capped history are separate bounds: the
+    /// budget trips at exactly the fifth refusal, while the history keeps only
+    /// the newest entries without letting the count fall behind.
+    #[test]
+    fn refusal_budget_trips_at_the_fifth_refusal_and_history_drops_the_oldest() -> Result<(), String>
+    {
+        let root = test_root("refusal-budget-cap")?;
+        let mut manifest = sample_manifest(&root)?;
+        let budget = REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET;
+        for n in 1..budget {
+            push_after_refusal(
+                &mut manifest,
+                refusal_fixture(&format!("r{n}"), u64::from(n)),
+            );
+        }
+        if after_refusal_budget_exhausted(&manifest) {
+            return Err(format!("budget exhausted early at {}", budget - 1));
+        }
+        push_after_refusal(&mut manifest, refusal_fixture("r5", 5));
+        if !after_refusal_budget_exhausted(&manifest) {
+            return Err("budget did not trip at the budgeted refusal".to_string());
+        }
+        for n in (budget + 1)..=10 {
+            push_after_refusal(
+                &mut manifest,
+                refusal_fixture(&format!("r{n}"), u64::from(n)),
+            );
+        }
+        let reasons = manifest
+            .after_refusal_history
+            .iter()
+            .map(|refusal| refusal.reason.as_str())
+            .collect::<Vec<_>>();
+        let last = manifest
+            .last_after_refusal
+            .as_ref()
+            .map(|refusal| refusal.reason.as_str());
+        let expected = ["r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"];
+        if manifest.after_refusal_count != 10
+            || reasons != expected
+            || reasons.len() != REPAIR_ATTEMPT_REFUSAL_HISTORY_MAX
+            || last != Some("r10")
+        {
+            return Err(format!(
+                "capped history wrong: count {} {reasons:?} last {last:?}",
+                manifest.after_refusal_count
+            ));
+        }
+        validate_manifest(&manifest)?;
+        // Single-change negative control: a history longer than the cap is
+        // rejected by the same validator that accepted the capped one.
+        manifest
+            .after_refusal_history
+            .insert(0, refusal_fixture("overflow", 0));
+        if validate_manifest(&manifest).is_ok() {
+            return Err("an over-cap refusal history was accepted".to_string());
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// A refusal reason is trimmed, left alone at the byte bound, and cut on a
+    /// character boundary one byte past it.
+    #[test]
+    fn bounded_refusal_reason_cuts_on_a_character_boundary_only_past_the_bound()
+    -> Result<(), String> {
+        if bounded_refusal_reason("  spaced out \n") != "spaced out" {
+            return Err("reason was not trimmed".to_string());
+        }
+        // The 4096-byte bound is pinned literally, not through the constant.
+        let exact = "a".repeat(4096);
+        if bounded_refusal_reason(&exact) != exact {
+            return Err("a reason at the bound was altered".to_string());
+        }
+        let over = "a".repeat(4097);
+        let cut = bounded_refusal_reason(&over);
+        if cut != format!("{} [truncated]", "a".repeat(4096)) {
+            return Err(format!("over-bound reason cut wrong: {} bytes", cut.len()));
+        }
+        // 'é' is two bytes; the bound lands inside the last one.
+        let multibyte = format!("{}é", "a".repeat(4095));
+        let cut = bounded_refusal_reason(&multibyte);
+        let expected = format!("{} [truncated]", "a".repeat(4095));
+        if cut != expected {
+            return Err(format!(
+                "multibyte cut was not on a boundary: {} bytes",
+                cut.len()
+            ));
+        }
+        Ok(())
+    }
+
+    /// Each verdict status maps to its own durable state, and a non-current
+    /// after phase is always stale whatever the verdict says.
+    #[test]
+    fn finish_state_follows_verdict_status_and_currentness() -> Result<(), String> {
+        use crate::edit_cage::EditCageVerdictStatus as Status;
+        let root = test_root("finish-state")?;
+        let manifest = sample_manifest(&root)?;
+        let after_with = |current: bool, status: Status| RepairAttemptAfter {
+            attempt_id: manifest.repair_attempt_id.clone(),
+            repository_head: manifest.repository_head.clone(),
+            delta_sha256: String::new(),
+            delta_binding: None,
+            receipt_projection_predecessor: None,
+            packet_sha256: String::new(),
+            current,
+            verdict: crate::edit_cage::EditCageVerdict {
+                status,
+                changed_paths: Vec::new(),
+                violations: Vec::new(),
+            },
+        };
+        let cases = [
+            (true, Status::Compliant, RepairAttemptState::ReadyToFinish),
+            (true, Status::Violated, RepairAttemptState::Failed),
+            (true, Status::Incomparable, RepairAttemptState::Incomparable),
+            (false, Status::Compliant, RepairAttemptState::Stale),
+            (false, Status::Violated, RepairAttemptState::Stale),
+            (false, Status::Incomparable, RepairAttemptState::Stale),
+        ];
+        for (current, status, expected) in cases {
+            let got = repair_attempt_state_for_finish(&after_with(current, status));
+            if got != expected {
+                return Err(format!(
+                    "current {current} {status:?}: expected {expected:?}, got {got:?}"
+                ));
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// Only Cargo manifests, the workspace lockfile and the root config feed
+    /// the analysis input identity; near-miss names do not.
+    #[test]
+    fn analysis_input_paths_are_exact_file_names() -> Result<(), String> {
+        for path in [
+            crate::config::CONFIG_FILE_NAME,
+            "Cargo.toml",
+            "crates/a/Cargo.toml",
+            CARGO_WORKSPACE_LOCKFILE,
+            "nested/Cargo.lock",
+        ] {
+            if !is_analysis_input_path(path) {
+                return Err(format!("{path} should be an input"));
+            }
+        }
+        for path in [
+            "Cargo.toml.bak",
+            "crates/a/MyCargo.toml",
+            "crates/a/src/lib.rs",
+            "docs/ripr.toml",
+            "Cargo.toml/readme.md",
+        ] {
+            if is_analysis_input_path(path) {
+                return Err(format!("{path} should not be an input"));
             }
         }
         Ok(())

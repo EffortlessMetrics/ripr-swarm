@@ -15,7 +15,7 @@ Updated:
 ## Pending — undeclared_target_glob_public_call (2)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
 
 Command:
 `cargo xtask goldens bless undeclared_target_glob_public_call --reason "..."`
@@ -27,7 +27,7 @@ Updated:
 ## Pending — undeclared_target_glob_public_call (3)
 
 Reason:
-RIPR-SPEC-0122: explain missing input or assertion honestly
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
 
 Command:
 `cargo xtask goldens bless undeclared_target_glob_public_call --reason "..."`
@@ -37,6 +37,18 @@ Updated:
 - `expected/human.txt`
 
 ## Pending — undeclared_target_glob_public_call (4)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless undeclared_target_glob_public_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — undeclared_target_glob_public_call (5)
 
 Reason:
 RIPR-SPEC-0122: render the missing check in plain language

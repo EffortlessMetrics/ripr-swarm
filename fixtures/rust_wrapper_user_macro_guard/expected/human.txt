@@ -48,6 +48,8 @@ Write a test for it:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:2 (unknown); kind: return_value; reason: No clear propagation path from changed behavior to an observable sink
+    - ./src/lib.rs:2 (unknown: propagation unclear); kind: return_value; reason: No clear propagation path from changed behavior to an observable sink
+  Hidden classes:
+    unknown: propagation unclear = ripr could not follow the change through an opaque boundary
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

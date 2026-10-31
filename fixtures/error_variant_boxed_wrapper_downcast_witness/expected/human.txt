@@ -57,5 +57,9 @@ Hidden:
     - ./src/lib.rs:109 (weak); kind: error_path; reason: The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically…
     - ./src/lib.rs:109 (weak); kind: return_value; reason: The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically…
     - ./src/lib.rs:123 (unrevealed); kind: return_value; reason: No detected assertion observes the changed value, error, field, or effect
+  Hidden classes:
+    exposed = tests appear to notice the change
+    weak = tests reach it but check it only loosely
+    unrevealed = tests reach it but nothing appears to notice a change
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
