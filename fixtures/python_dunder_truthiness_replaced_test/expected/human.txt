@@ -12,17 +12,17 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: static limitation `dynamic_dispatch` keeps this Python preview finding from a repair card, so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
+  Safe next action: static limitation `decorator_indirection` keeps this Python preview finding from a repair card, so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
   File: src/shapes/money.py:6
   Language: python
   Language status: preview
   Static exposure: unknown (severity: note, confidence 0.20)
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: return self.cents > 0
-  Analyzer limit: Static limit `dynamic_dispatch`: `Money.__bool__` is a dunder method Python
-    invokes through operator or `with` syntax; related tests build `Money` instances, but the
-    preview adapter does not bind the syntax to the instance or evaluate the assertion against the
-    dunder's result, so it does not grade this edit as a gap
+  Analyzer limit: Static limit `decorator_indirection`: related test `test_truthiness` uses `later
+    binding of the test name`; static evidence does not establish that its body runs and an
+    assertion failure fails verification. Add an independent active test or inspect the activation
+    condition
   Related test: tests/test_money.py:4 test_truthiness
   Evidence: reach weak · infection unknown · propagation unknown · observation weak · discriminator unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
@@ -36,7 +36,7 @@ Start here:
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach weak: 1 heuristic Python test link(s) found for owner `__bool__`; relation is uncertain
-    - infection unknown: Static limit `dynamic_dispatch` prevents a safe Python infection claim
+    - infection unknown: Static limit `decorator_indirection` prevents a safe Python infection claim
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
