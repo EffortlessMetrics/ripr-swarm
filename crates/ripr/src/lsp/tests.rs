@@ -29113,6 +29113,13 @@ fn hover_discloses_base_side_currentness_with_the_cli_wording() -> Result<(), St
     let markdown = finding_hover_markdown_for(&finding)?;
     assert!(!markdown.contains("**Source:**"), "{markdown}");
     assert_eq!(finding.source_currentness_disclosure(), None);
+    // The producer-unknown state is not described as base-side evidence.
+    finding.source_currentness = crate::domain::SourceCurrentness::UnresolvedSubject;
+    let unknown = finding
+        .source_currentness_disclosure()
+        .ok_or("unresolved_subject must carry a disclosure")?;
+    assert!(unknown.starts_with("unresolved_subject"), "{unknown}");
+    assert!(!unknown.contains("base-side"), "{unknown}");
     Ok(())
 }
 

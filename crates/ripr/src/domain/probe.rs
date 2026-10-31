@@ -936,8 +936,15 @@ impl Finding {
         if self.is_candidate_actionable() {
             return None;
         }
+        // `unresolved_subject` means the producer could not tell, so it must
+        // not be called base-side evidence.
+        let reason = if self.source_currentness.is_base_side() {
+            "base-side evidence, not a candidate edit target"
+        } else {
+            "source currentness not established, not a candidate edit target"
+        };
         Some(format!(
-            "{} \u{2014} base-side evidence, not a candidate edit target",
+            "{} \u{2014} {reason}",
             self.source_currentness.as_str()
         ))
     }
