@@ -20,7 +20,9 @@ use super::diagnostics::{
     delivered_diagnostics_for_uri, delivery_omission_diagnostic, diagnostic_refresh_plan,
     take_all_uris, withdrawn_quarantine_diagnostics,
 };
-use super::hover::NoEvidenceState;
+use super::hover::{
+    NoEvidenceState, UnanalyzedFileCause, classify_unanalyzed_file, unanalyzed_file_hover_route,
+};
 use super::hover::{
     classified_seam_hover_response, diagnostic_at_position, diagnostic_covers_position,
     diagnostic_hover_response, finding_hover_response, hover_response_without_evidence,
@@ -255,7 +257,7 @@ pub(super) struct Backend {
     /// omission locally instead of dropping it silently. Reflects the most
     /// recent disclosure attempt.
     initialize_failure_disclosure_omitted: AtomicBool,
-    refresh_scheduler: RefreshScheduler,
+    refresh_scheduler: Arc<RefreshScheduler>,
     workspace_revision: Mutex<u64>,
     /// One in-flight interactive debounce window (#8528). A trigger that
     /// finds this set returns immediately; the owner sleeps, then drops the
@@ -399,7 +401,7 @@ impl Backend {
             last_analysis_failure_shown: Mutex::new(None),
             unavailable_language_notices_shown: Mutex::new(BTreeSet::new()),
             initialize_failure_disclosure_omitted: AtomicBool::new(false),
-            refresh_scheduler: RefreshScheduler::default(),
+            refresh_scheduler: Arc::new(RefreshScheduler::default()),
             workspace_revision: Mutex::new(0),
             interactive_debounce_window_open: AtomicBool::new(false),
             refresh_idle: Notify::new(),
@@ -1571,6 +1573,14 @@ impl Backend {
         sink
     }
 
+    /// Cancels every active and pending refresh when the session ends
+    /// (`exit` or end of input), without the terminal diagnostics clear that
+    /// `shutdown` performs (#11439).
+    pub(super) fn session_end_hook(&self) -> super::session_end::SessionEndHook {
+        let scheduler = Arc::clone(&self.refresh_scheduler);
+        Arc::new(move || scheduler.stop())
+    }
+
     #[cfg(test)]
     pub(super) fn refresh_scheduler_for_test(&self) -> &RefreshScheduler {
         &self.refresh_scheduler
@@ -1920,6 +1930,18 @@ impl Backend {
     pub(super) fn set_snapshot_run_status_for_test(&self, run_status: &str) {
         if let Ok(mut health) = self.analysis_health.lock() {
             health.snapshot_run_status = Some(run_status.to_string());
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn analysis_attempt_state_for_test(&self) -> AnalysisAttemptState {
+        self.analysis_health_snapshot().state
+    }
+
+    #[cfg(test)]
+    pub(super) fn clear_latest_analysis_for_test(&self) {
+        if let Ok(mut latest) = self.latest_analysis.lock() {
+            *latest = None;
         }
     }
 
@@ -2303,7 +2325,7 @@ impl Backend {
         self.client
             .send_notification::<ShowMessage>(ShowMessageParams {
                 typ: MessageType::WARNING,
-                message: bounded_failure_message(&format!("ripr analysis failed: {message}")),
+                message: analysis_failure_shown_message(message),
             })
             .await;
     }
@@ -3699,7 +3721,7 @@ impl Backend {
                     "ripr could not apply one incremental edit and stopped trusting the retained text; saving cannot fix this. Undo the edit or revert the file so ripr receives the full document again."
                 }
                 DocumentStalenessReason::NoAnalyzedSavedContent => {
-                    "ripr has not analyzed this file's saved content yet; its evidence appears after the next refresh (`ripr.refresh`) completes. A new file must be saved first."
+                    unanalyzed_file_hover_route(self.unanalyzed_file_cause(uri))
                 }
             };
             return markdown_hover(format!(
@@ -3714,6 +3736,25 @@ impl Backend {
         hover_response_without_evidence(
             self.no_evidence_state(),
             &self.configured_language_labels(),
+        )
+    }
+
+    /// The observed cause behind a `no_analyzed_saved_content` quarantine
+    /// (#11452), read from the file, the committed snapshot and the latest
+    /// attempt state.
+    fn unanalyzed_file_cause(&self, uri: &Uri) -> UnanalyzedFileCause {
+        let file_on_disk = self
+            .document_path_for_uri(uri)
+            .is_some_and(|path| path.is_file());
+        let snapshot_committed = self
+            .latest_analysis
+            .lock()
+            .ok()
+            .is_some_and(|value| value.is_some());
+        classify_unanalyzed_file(
+            file_on_disk,
+            self.analysis_health_snapshot().state,
+            snapshot_committed,
         )
     }
 
@@ -3782,10 +3823,7 @@ impl Backend {
         let Some(text) = self.document_text(uri) else {
             return false;
         };
-        if std::fs::metadata(&path).map(|meta| meta.len()).ok() != u64::try_from(text.len()).ok() {
-            return false;
-        }
-        std::fs::read(&path).is_ok_and(|disk| disk == text.as_bytes())
+        disk_bytes_equal_text(&path, &text)
     }
 
     /// The quarantine state of an open document, as `(path, reason)`.
@@ -5466,12 +5504,93 @@ fn bounded_failure_message(message: &str) -> String {
     super::component_outcome::bounded_message(message)
 }
 
+/// The `window/showMessage` text for a failed analysis (#8583), bounded and
+/// path-redacted like every client-visible failure message.
+fn analysis_failure_shown_message(message: &str) -> String {
+    bounded_failure_message(&format!("ripr analysis failed: {message}"))
+}
+
 #[cfg(test)]
 mod interactive_debounce_fold_tests;
 
 #[cfg(test)]
 mod bounded_failure_message_tests {
-    use super::bounded_failure_message;
+    use super::{analysis_failure_shown_message, bounded_failure_message};
+
+    /// A workspace that is not a Git work tree: the shown warning must keep
+    /// the remedy (where to run, `--root`, the no-history pilot command)
+    /// within the 240-character bound, shortening only the cause. The long
+    /// root has spaces so the path redaction cannot absorb it.
+    #[test]
+    fn non_git_workspace_warning_keeps_the_remedy_inside_the_bound() -> Result<(), String> {
+        let root = crate::lsp::tests::unique_lsp_test_root("non-git-remedy")?;
+        let deep = root
+            .path()
+            .join("a long folder name with spaces ".repeat(6))
+            .join("another long folder name");
+        std::fs::create_dir_all(&deep).map_err(|error| format!("create root failed: {error}"))?;
+        // The production builder of the non-Git refusal; a non-Git temp root
+        // is not constructible here because unit-test temp roots sit inside
+        // the checkout's own work tree.
+        let error = crate::core_error::CoreError::repository_root_unusable(
+            crate::analysis::not_a_work_tree_message(&deep),
+        );
+        let shown = analysis_failure_shown_message(
+            &error.with_context("workspace analysis failed").to_string(),
+        );
+        assert!(shown.contains("is not inside a Git work tree"), "{shown}");
+        for remedy in [
+            "pass `--root <path>` to one",
+            "`ripr pilot --root .` works without Git history",
+        ] {
+            assert!(shown.contains(remedy), "remedy {remedy:?} cut: {shown}");
+        }
+        assert!(
+            shown.chars().count()
+                <= super::super::component_outcome::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND,
+            "{shown}"
+        );
+        assert!(
+            shown.ends_with('…'),
+            "the long root cause must be the part shortened: {shown}"
+        );
+        Ok(())
+    }
+
+    /// The shortest root and a multibyte root go through the same
+    /// composition: the remedy survives and the bound counts scalars.
+    #[test]
+    fn non_git_workspace_warning_keeps_the_remedy_for_short_and_multibyte_roots() {
+        let long_multibyte = format!("/{}", "é ".repeat(200));
+        for root in ["/", long_multibyte.as_str()] {
+            let error = crate::core_error::CoreError::repository_root_unusable(
+                crate::analysis::not_a_work_tree_message(std::path::Path::new(root)),
+            );
+            let shown = analysis_failure_shown_message(
+                &error.with_context("workspace analysis failed").to_string(),
+            );
+            for remedy in [
+                "pass `--root <path>` to one",
+                "`ripr pilot --root .` works without Git history",
+            ] {
+                assert!(shown.contains(remedy), "remedy {remedy:?} cut: {shown}");
+            }
+            assert!(
+                shown.chars().count()
+                    <= super::super::component_outcome::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND,
+                "{shown}"
+            );
+        }
+    }
+
+    /// Negative control: a short failure is shown whole and unchanged.
+    #[test]
+    fn short_analysis_failure_warning_is_unchanged() {
+        assert_eq!(
+            analysis_failure_shown_message("workspace analysis failed: Cargo.toml not found"),
+            "ripr analysis failed: workspace analysis failed: Cargo.toml not found"
+        );
+    }
 
     /// #8584: `ripr/analysisStatus` copies `AnalysisFailure.message`, which
     /// is bounded here. The wrapper must keep the truncation marker inside
@@ -8489,9 +8608,11 @@ fn quarantine_withdrawal_log_message(path: &Path, reason: DocumentStalenessReaso
         DocumentStalenessReason::InvalidIncrementalChange => {
             "revert the file or close and reopen it so ripr receives the full document again"
         }
-        DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent
-        | DocumentStalenessReason::NoAnalyzedSavedContent => {
+        DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent => {
             "save the file to analyze the new saved state"
+        }
+        DocumentStalenessReason::NoAnalyzedSavedContent => {
+            "save the file if it is new, then refresh (`ripr.refresh`)"
         }
     };
     format!(
@@ -8874,7 +8995,10 @@ fn workspace_status_top_actionable_packet(snapshot: &AnalysisSnapshot) -> serde_
         .first()
         .map(String::as_str)
         .unwrap_or("");
-    let repair_kind = artifact.gap_state.as_deref().unwrap_or("actionable");
+    let repair_kind = artifact
+        .gap_state
+        .as_deref()
+        .unwrap_or(crate::domain::EvidenceState::Actionable.as_str());
     serde_json::json!({
         "canonical_gap_id": canonical_gap_id,
         "file": file,
@@ -10201,19 +10325,20 @@ fn receipt_status_from_ledger(
 
     // missing_receipt_reason: only meaningful when the gap is actionable
     // but has no receipt. Otherwise not_available.
-    let missing_receipt_reason_val = if record.gap_state == "actionable"
-        && record
-            .receipt
-            .as_ref()
-            .and_then(|r| r.movement.as_deref())
-            .is_none()
-        && record.receipt_command.is_some()
-    {
-        // Receipt command exists but no movement yet — emit honest "no_attempt_recorded".
-        serde_json::Value::String("no_attempt_recorded".to_string())
-    } else {
-        serde_json::Value::String(not_available)
-    };
+    let missing_receipt_reason_val =
+        if crate::domain::EvidenceState::is_actionable_word(&record.gap_state)
+            && record
+                .receipt
+                .as_ref()
+                .and_then(|r| r.movement.as_deref())
+                .is_none()
+            && record.receipt_command.is_some()
+        {
+            // Receipt command exists but no movement yet — emit honest "no_attempt_recorded".
+            serde_json::Value::String("no_attempt_recorded".to_string())
+        } else {
+            serde_json::Value::String(not_available)
+        };
 
     (movement_val, missing_receipt_reason_val)
 }
@@ -10383,7 +10508,7 @@ fn collect_repair_packet_from_actionable_gaps(
             .find(|p| {
                 p.get("gap_state")
                     .and_then(|v| v.as_str())
-                    .is_some_and(|s| s == "actionable")
+                    .is_some_and(crate::domain::EvidenceState::is_actionable_word)
             })
             .or_else(|| packets.first())?
     };
@@ -10400,11 +10525,10 @@ fn collect_repair_packet_from_actionable_gaps(
     }
 
     // Require the packet to be actionable to emit a complete repair packet.
-    if packet
+    if !packet
         .get("gap_state")
         .and_then(|v| v.as_str())
-        .unwrap_or("")
-        != "actionable"
+        .is_some_and(crate::domain::EvidenceState::is_actionable_word)
     {
         return Some(repair_packet_sentinel(
             "gap is not actionable in actionable-gaps.json",
@@ -10571,7 +10695,9 @@ fn collect_repair_packet_from_ledger(
             .iter()
             .find(|r| r.gap_id == id || r.canonical_gap_id == id)?
     } else {
-        records.iter().find(|r| r.gap_state == "actionable")?
+        records
+            .iter()
+            .find(|r| crate::domain::EvidenceState::is_actionable_word(&r.gap_state))?
     };
     if let Some(sentinel) = ledger_source_subject_sentinel(root, repo_config, &contents) {
         return Some(sentinel);
@@ -14255,5 +14381,51 @@ mod pull_disclosure_dedup_tests {
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
         })
+    }
+}
+
+/// Whether the regular file at the client-named `path` holds exactly `text`.
+/// A cheap length check precedes the read. The path may be a device or FIFO
+/// (`/dev/zero` reports length 0), so the read goes through the bounded
+/// regular-file reader, never an unbounded `fs::read`.
+fn disk_bytes_equal_text(path: &Path, text: &str) -> bool {
+    if std::fs::metadata(path).map(|meta| meta.len()).ok() != u64::try_from(text.len()).ok() {
+        return false;
+    }
+    super::state::read_saved_bytes(path).is_some_and(|disk| disk == text.as_bytes())
+}
+
+#[cfg(test)]
+mod disk_bytes_equal_text_tests {
+    use super::disk_bytes_equal_text;
+    use std::path::Path;
+
+    #[test]
+    fn device_and_directory_paths_never_equal_empty_text() {
+        // `/dev/zero` stats as length 0, so an empty buffer passes the length
+        // check; the unbounded read that followed grew RSS past 5 GB.
+        #[cfg(target_os = "linux")]
+        assert!(!disk_bytes_equal_text(Path::new("/dev/zero"), ""));
+        assert!(!disk_bytes_equal_text(&std::env::temp_dir(), ""));
+    }
+
+    #[test]
+    fn regular_file_equality_is_exact() -> Result<(), String> {
+        let path = std::env::temp_dir().join(format!(
+            "ripr-disk-equal-{}-{:?}.txt",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::write(&path, "abc").map_err(|err| format!("write failed: {err}"))?;
+        let equal = disk_bytes_equal_text(&path, "abc");
+        let same_len_different = disk_bytes_equal_text(&path, "abd");
+        let shorter = disk_bytes_equal_text(&path, "ab");
+        let _ = std::fs::remove_file(&path);
+        if !equal || same_len_different || shorter {
+            return Err(format!(
+                "equal={equal} same_len_different={same_len_different} shorter={shorter}"
+            ));
+        }
+        Ok(())
     }
 }
