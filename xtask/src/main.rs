@@ -14190,6 +14190,9 @@ fn check_architecture() -> Result<(), String> {
         &files,
     ));
 
+    // #2958: ratchet against new inline consumer evidence-state literals.
+    violations.extend(policy::evidence_state_literals::violations(&files)?);
+
     // RIPR-SPEC-0087 §8 (issue #2028): repair-packet authority coupling guard.
     for file in &files {
         if !file.starts_with("crates/ripr/src/") || !file.ends_with(".rs") {
@@ -14219,6 +14222,7 @@ fn check_architecture() -> Result<(), String> {
                 "Keep domain model types independent from CLI, LSP, output, and JSON adapters.",
                 "Keep analysis logic out of CLI, LSP, and output adapters.",
                 "Keep convergence types and domain code independent from infrastructure adapters.",
+                "Spell consumer gap states through domain::EvidenceState; policy/evidence-state-literals.txt only ratchets down.",
                 "Route convergence command I/O and mutation through the bounded convergence ports.",
                 "Update policy/architecture.txt only when the architecture rule itself changes.",
             ],

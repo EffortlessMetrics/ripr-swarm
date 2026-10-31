@@ -15,7 +15,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:rust:src/lib.rs:bulk:return_value:return_value:n>=100
   Changed behavior: n >= 100
-  Missing check: No strong discriminator was detected
+  Missing check: No strong assertion was detected
   Related test: src/lib.rs:15 small_orders_are_not_bulk (ripr could not confirm that this assertion observes the changed behavior)
   Next step: The indexed related tests do not establish a call to the changed owner. Inspect
     existing tests, doctests and examples before changing assertions; they may already constrain the

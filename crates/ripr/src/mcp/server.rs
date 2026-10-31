@@ -340,6 +340,47 @@ impl McpServer {
         }
     }
 
+    async fn get_top_limitation_tool(
+        &self,
+        arguments: Option<serde_json::Map<String, Value>>,
+        max_envelope_bytes: usize,
+    ) -> Result<CallToolResponse, ErrorData> {
+        reject_unknown_arguments(&arguments, &["canonical_id", "snapshot_id"])?;
+        let canonical_id = required_string_argument(&arguments, "canonical_id")?;
+        let requested = optional_string_argument(&arguments, "snapshot_id")?;
+        let session = self.session.lock().await;
+        match session.get_limitation(&canonical_id, requested.as_deref()) {
+            Ok(document) => self.bounded_tool_result(
+                document,
+                gaps::LIMITATION_SCHEMA_VERSION,
+                "serialize gap limitation",
+                workspace::RECOVERY_LIMITATION_TOO_LARGE,
+                max_envelope_bytes,
+            ),
+            Err(failure) => self.typed_failure(failure, gaps::LIMITATION_SCHEMA_VERSION),
+        }
+    }
+
+    /// `ripr://gap/{canonical_id}/limitation`: the same document as the tool.
+    async fn get_limitation_resource(
+        &self,
+        uri: &str,
+        canonical_id: &str,
+        max_envelope_bytes: usize,
+    ) -> Result<ReadResourceResponse, ErrorData> {
+        let session = self.session.lock().await;
+        let result = resource_id_document(canonical_id, |id| session.get_limitation(id, None));
+        match result {
+            Ok(document) => self.resource_result(
+                document,
+                uri,
+                workspace::RECOVERY_LIMITATION_TOO_LARGE,
+                max_envelope_bytes,
+            ),
+            Err(failure) => Err(resource_failure("gap-limitation", &failure, None)),
+        }
+    }
+
     async fn prepare_repair_tool(
         &self,
         arguments: Option<serde_json::Map<String, Value>>,
@@ -597,6 +638,10 @@ impl McpServer {
                 self.get_gap_tool(request.arguments, max_envelope_bytes)
                     .await
             }
+            protocol::GET_TOP_LIMITATION_TOOL_NAME => {
+                self.get_top_limitation_tool(request.arguments, max_envelope_bytes)
+                    .await
+            }
             protocol::PREPARE_REPAIR_TOOL_NAME => {
                 self.prepare_repair_tool(request.arguments, max_envelope_bytes)
                     .await
@@ -621,13 +666,14 @@ impl McpServer {
             // (-32602), not Method Not Found; the method `tools/call` exists.
             _other => Err(ErrorData::new(
                 ErrorCode::INVALID_PARAMS,
-                "unknown tool; available: ripr_workspace_status, ripr_refresh, ripr_list_gaps, ripr_get_gap, ripr_prepare_repair, ripr_get_repair_attempt, ripr_get_receipt_status, ripr_get_repair_card, ripr_list_repair_attempts",
+                "unknown tool; available: ripr_workspace_status, ripr_refresh, ripr_list_gaps, ripr_get_gap, ripr_get_top_limitation, ripr_prepare_repair, ripr_get_repair_attempt, ripr_get_receipt_status, ripr_get_repair_card, ripr_list_repair_attempts",
                 Some(serde_json::json!({
                     "available": [
                         protocol::STATUS_TOOL_NAME,
                         protocol::REFRESH_TOOL_NAME,
                         protocol::LIST_GAPS_TOOL_NAME,
                         protocol::GET_GAP_TOOL_NAME,
+                        protocol::GET_TOP_LIMITATION_TOOL_NAME,
                         protocol::PREPARE_REPAIR_TOOL_NAME,
                         protocol::GET_REPAIR_ATTEMPT_TOOL_NAME,
                         protocol::GET_RECEIPT_STATUS_TOOL_NAME,
@@ -1100,6 +1146,7 @@ fn contained_tool_schema_version(name: &str) -> Option<&'static str> {
         protocol::REFRESH_TOOL_NAME => Some(workspace::REFRESH_SCHEMA_VERSION),
         protocol::LIST_GAPS_TOOL_NAME => Some(gaps::GAP_LIST_SCHEMA_VERSION),
         protocol::GET_GAP_TOOL_NAME => Some(gaps::GAP_SCHEMA_VERSION),
+        protocol::GET_TOP_LIMITATION_TOOL_NAME => Some(gaps::LIMITATION_SCHEMA_VERSION),
         protocol::PREPARE_REPAIR_TOOL_NAME => Some(repair::REPAIR_PACKET_SCHEMA_VERSION),
         protocol::GET_REPAIR_ATTEMPT_TOOL_NAME => Some(repair::REPAIR_ATTEMPT_SCHEMA_VERSION),
         protocol::GET_RECEIPT_STATUS_TOOL_NAME => Some(repair::RECEIPT_STATUS_SCHEMA_VERSION),
@@ -1323,6 +1370,20 @@ impl ServerHandler for McpServer {
                 )),
             };
         }
+        // A canonical id may itself end in `/limitation`; an existing item with
+        // that exact id keeps the plain gap route (checked before the suffix
+        // is stripped), so the limitation route never shadows a real item.
+        if let Some(canonical_id) = gaps::limitation_resource_id(&request.uri)
+            && !self
+                .session
+                .lock()
+                .await
+                .has_current_item(gaps::gap_resource_id(&request.uri).unwrap_or_default())
+        {
+            return self
+                .get_limitation_resource(&request.uri, canonical_id, max_envelope_bytes)
+                .await;
+        }
         if let Some(canonical_id) = gaps::gap_resource_id(&request.uri) {
             return self
                 .get_gap_resource(&request.uri, canonical_id, max_envelope_bytes)
@@ -1369,6 +1430,7 @@ impl ServerHandler for McpServer {
         let resource_templates = [
             protocol::SNAPSHOT_RESOURCE_TEMPLATE,
             protocol::GAP_RESOURCE_TEMPLATE,
+            protocol::LIMITATION_RESOURCE_TEMPLATE,
             repair::REPAIR_ATTEMPT_TEMPLATE,
             repair::RECEIPT_TEMPLATE,
             repair_card::REPAIR_CARD_TEMPLATE,

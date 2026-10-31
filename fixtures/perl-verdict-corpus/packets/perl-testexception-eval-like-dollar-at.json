@@ -17,36 +17,7 @@
       }
     }
   ],
-  "dynamic_boundaries": [
-    {
-      "boundary_id": "boundary:t/forms.t:eval_or_string_code:1",
-      "confidence": "high",
-      "file_id": "file:t/forms.t",
-      "kind": "eval_or_string_code",
-      "owner_id": null,
-      "provenance_refs": [],
-      "range": {
-        "end_column": 6,
-        "end_line": 13,
-        "start_column": 0,
-        "start_line": 13
-      }
-    },
-    {
-      "boundary_id": "boundary:t/forms.t:eval_or_string_code:2",
-      "confidence": "high",
-      "file_id": "file:t/forms.t",
-      "kind": "eval_or_string_code",
-      "owner_id": null,
-      "provenance_refs": [],
-      "range": {
-        "end_column": 6,
-        "end_line": 18,
-        "start_column": 0,
-        "start_line": 18
-      }
-    }
-  ],
+  "dynamic_boundaries": [],
   "files": [
     {
       "digest": "sha256:8562b1ba423ecb7e277739f29e3825befcc70b3398f14b680bf062e5ba74b0e7",
@@ -94,22 +65,6 @@
     ]
   },
   "limitations": [
-    {
-      "evidence_refs": [
-        "file:t/forms.t"
-      ],
-      "kind": "eval_or_string_code",
-      "limitation_id": "limitation:boundary:t/forms.t:eval_or_string_code:1",
-      "message": "Dynamic boundary `eval {` detected in t/forms.t; ripr fails closed on this boundary kind."
-    },
-    {
-      "evidence_refs": [
-        "file:t/forms.t"
-      ],
-      "kind": "eval_or_string_code",
-      "limitation_id": "limitation:boundary:t/forms.t:eval_or_string_code:2",
-      "message": "Dynamic boundary `eval {` detected in t/forms.t; ripr fails closed on this boundary kind."
-    },
     {
       "evidence_refs": [],
       "kind": "partial_emitter",
@@ -226,7 +181,7 @@
       "confidence": "medium",
       "expected_expression": null,
       "expression": "like($@, qr/zero not allowed/, 'zero is refused')",
-      "kind": "predicate_boundary_assertion",
+      "kind": "exception_observer",
       "observed_sink": null,
       "oracle_id": "oracle:t/forms.t:like:465-514",
       "provenance_refs": [
@@ -238,8 +193,8 @@
         "start_column": 0,
         "start_line": 14
       },
-      "strength": "weak_broad",
-      "target_owner_id": null,
+      "strength": "strong_exact",
+      "target_owner_id": "owner:lib/Forms.pm:sub:Forms::eval_like:546-647",
       "test_id": "test:t/forms.t"
     },
     {
@@ -475,7 +430,7 @@
       }
     }
   ],
-  "packet_fingerprint": "sha256:9ca021dd1689ab2a76f22be0543c5347b243c313d1405600530b63c4bed61f8f",
+  "packet_fingerprint": "sha256:c9c0bf1a0b01a06d95238e76b82d94ffaa37fa80658ec409c9cff478ca8c546f",
   "packet_id": "perl-lsp-ripr-facts-ripr-perl-facts-v1-s-files,owners,changes,tests,oracles,relations,dynamic_boundaries,verify_commands,limitations,provenance",
   "packet_status": "partial",
   "producer": {
@@ -566,7 +521,7 @@
     {
       "change_id": "change:file:lib/Forms.pm:37:37",
       "confidence": "medium",
-      "oracle_id": null,
+      "oracle_id": "oracle:t/forms.t:like:465-514",
       "owner_id": "owner:lib/Forms.pm:sub:Forms::eval_like:546-647",
       "provenance_refs": [],
       "reachability_hint": "reachable",

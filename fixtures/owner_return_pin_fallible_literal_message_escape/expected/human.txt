@@ -15,7 +15,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:rust:src/lib.rs:answer:return_value:return_value:7
   Changed behavior: 7
-  Missing check: No strong discriminator was detected
+  Missing check: No strong assertion was detected
   Related test: src/test_support.rs:10 observes_answer (ripr could not confirm that this assertion observes the changed behavior)
   Next step: The related test `observes_answer` already has an exact assertion; this does not
     establish observation of the returned value. Check whether the change can affect the returned

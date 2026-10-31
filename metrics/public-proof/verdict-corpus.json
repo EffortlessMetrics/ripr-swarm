@@ -1,97 +1,97 @@
 {
   "schema_version": "ripr_verdict_corpus_report.v1",
   "spec": "RIPR-SPEC-0219",
-  "cases_total": 807,
+  "cases_total": 808,
   "by_truth": {
     "discriminated": 417,
-    "not_discriminated": 263,
+    "not_discriminated": 264,
     "partially_discriminated": 127
   },
   "by_outcome": {
-    "abstained": 296,
-    "false_actionable": 4,
-    "ideal": 507
+    "abstained": 297,
+    "false_actionable": 3,
+    "ideal": 508
   },
   "by_observed_verdict": {
-    "credited": 254,
-    "gap": 257,
-    "limited": 283,
+    "credited": 255,
+    "gap": 256,
+    "limited": 284,
     "silent": 13
   },
   "false_verdict_rate": {
-    "numerator": 4,
-    "denominator": 807,
-    "rate": "0.0050"
+    "numerator": 3,
+    "denominator": 808,
+    "rate": "0.0037"
   },
   "false_actionable_rate": {
-    "numerator": 4,
+    "numerator": 3,
     "denominator": 417,
-    "rate": "0.0096"
+    "rate": "0.0072"
   },
   "false_exposed_rate": {
     "numerator": 0,
-    "denominator": 390,
+    "denominator": 391,
     "rate": "0.0000"
   },
   "false_silent_rate": {
     "numerator": 0,
-    "denominator": 390,
+    "denominator": 391,
     "rate": "0.0000"
   },
   "ideal_rate": {
-    "numerator": 507,
-    "denominator": 807,
-    "rate": "0.6283"
+    "numerator": 508,
+    "denominator": 808,
+    "rate": "0.6287"
   },
   "abstention_rate": {
-    "numerator": 296,
-    "denominator": 807,
-    "rate": "0.3668"
+    "numerator": 297,
+    "denominator": 808,
+    "rate": "0.3676"
   },
   "contradiction_rate": {
     "numerator": 0,
-    "denominator": 995,
+    "denominator": 996,
     "rate": "0.0000"
   },
   "contradictions_by_code": {},
   "by_origin": {
     "authored": {
-      "cases_total": 771,
+      "cases_total": 772,
       "by_observed_verdict": {
-        "credited": 251,
-        "gap": 253,
-        "limited": 254,
+        "credited": 252,
+        "gap": 252,
+        "limited": 255,
         "silent": 13
       },
       "false_verdict_rate": {
-        "numerator": 2,
-        "denominator": 771,
-        "rate": "0.0026"
+        "numerator": 1,
+        "denominator": 772,
+        "rate": "0.0013"
       },
       "false_actionable_rate": {
-        "numerator": 2,
+        "numerator": 1,
         "denominator": 395,
-        "rate": "0.0051"
+        "rate": "0.0025"
       },
       "false_exposed_rate": {
         "numerator": 0,
-        "denominator": 376,
+        "denominator": 377,
         "rate": "0.0000"
       },
       "false_silent_rate": {
         "numerator": 0,
-        "denominator": 376,
+        "denominator": 377,
         "rate": "0.0000"
       },
       "ideal_rate": {
-        "numerator": 502,
-        "denominator": 771,
-        "rate": "0.6511"
+        "numerator": 503,
+        "denominator": 772,
+        "rate": "0.6516"
       },
       "abstention_rate": {
-        "numerator": 267,
-        "denominator": 771,
-        "rate": "0.3463"
+        "numerator": 268,
+        "denominator": 772,
+        "rate": "0.3472"
       }
     },
     "upstream": {
@@ -7322,13 +7322,13 @@
       "hard_case": true,
       "truth": "discriminated",
       "ideal_verdict": "credited",
-      "observed_verdict": "gap",
+      "observed_verdict": "limited",
       "followed_retarget": false,
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
         "weakly_exposed"
       ],
-      "outcome": "false_actionable",
+      "outcome": "abstained",
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -7894,13 +7894,13 @@
       "hard_case": true,
       "truth": "discriminated",
       "ideal_verdict": "credited",
-      "observed_verdict": "limited",
+      "observed_verdict": "credited",
       "followed_retarget": false,
       "changed_since_labeling": true,
       "observed_classifications": [
-        "propagation_unknown"
+        "exposed"
       ],
-      "outcome": "abstained",
+      "outcome": "ideal",
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -8165,6 +8165,28 @@
         "exposed"
       ],
       "outcome": "ideal",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "proof-harness-calls-owner-no-test",
+      "subject_id": "authored-proof-harness",
+      "origin": "authored",
+      "anchor": "src/lib.rs:5",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "unit_test_assert_eq",
+      "hard_case": true,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "no_static_path"
+      ],
+      "outcome": "abstained",
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,

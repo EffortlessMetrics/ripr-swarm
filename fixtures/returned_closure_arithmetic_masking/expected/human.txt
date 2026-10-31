@@ -15,7 +15,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:rust:src/lib.rs:token_unused:return_value:return_value:move_argument_captured*argument
   Changed behavior: move |argument| captured * argument
-  Missing check: No strong discriminator was detected
+  Missing check: No strong assertion was detected
   Related test (1 of 11 matched rows): src/lib.rs:58 token_unused_pin (ripr could not confirm that this assertion observes the changed behavior)
   Next step: The related test `token_unused_pin` already has an exact assertion; this does not
     establish observation of the returned value. Check whether the change can affect the returned
@@ -49,10 +49,10 @@ Hidden:
     - ./src/lib.rs:10 (unknown: static analysis limited); kind: return_value; reason: A related Rust test calls this code and pins its whole result with an exact `assert_eq!`, but the change sits in a closure the call runs, a statement acting on the returned value,…
     - ./src/lib.rs:13 (unknown: static analysis limited); kind: return_value; reason: A related Rust test calls this code and pins its whole result with an exact `assert_eq!`, but the change sits in a closure the call runs, a statement acting on the returned value,…
     - ./src/lib.rs:16 (unknown: static analysis limited); kind: return_value; reason: A related Rust test calls this code and pins its whole result with an exact `assert_eq!`, but the change sits in a closure the call runs, a statement acting on the returned value,…
-    - ./src/lib.rs:22 (weak); kind: return_value; reason: No strong discriminator was detected
-    - ./src/lib.rs:25 (weak); kind: return_value; reason: No strong discriminator was detected
-    - ./src/lib.rs:28 (weak); kind: return_value; reason: No strong discriminator was detected
-    - ./src/lib.rs:31 (weak); kind: return_value; reason: No strong discriminator was detected
+    - ./src/lib.rs:22 (weak); kind: return_value; reason: No strong assertion was detected
+    - ./src/lib.rs:25 (weak); kind: return_value; reason: No strong assertion was detected
+    - ./src/lib.rs:28 (weak); kind: return_value; reason: No strong assertion was detected
+    - ./src/lib.rs:31 (weak); kind: return_value; reason: No strong assertion was detected
     - ./src/lib.rs:34 (unknown: static analysis limited); kind: return_value; reason: A related Rust test calls this code and pins its whole result with an exact `assert_eq!`, but the change sits in a closure the call runs, a statement acting on the returned value,…
   Hidden classes:
     weak = tests reach it but check it only loosely
