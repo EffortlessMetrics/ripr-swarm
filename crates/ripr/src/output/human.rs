@@ -2648,9 +2648,93 @@ mod tests {
             "{dirty}"
         );
 
+        // #10709: this Rust finding is not a Python/TypeScript preview gap, so
+        // its Safe next action does not name the start and nothing is labelled
+        // recommended; the start keeps its plain "Then start the repair:".
+        assert!(dirty.contains("Then start the repair:"), "{dirty}");
+        assert!(!dirty.contains("Recommended"), "{dirty}");
+
         let clean = render_with(Vec::new());
         assert!(clean.contains(start), "{clean}");
         assert!(!clean.contains("git commit"), "{clean}");
+        assert!(!clean.contains("Recommended"), "{clean}");
+    }
+
+    /// #10709: when `Next` prints a gap-bound start, the Safe next action
+    /// names that same start as the recommended route and the by-hand edit as
+    /// the single alternative; with no route (the validator or the run refused
+    /// it) the line keeps the by-hand route alone and recommends nothing.
+    #[test]
+    fn safe_next_action_and_next_block_name_one_recommended_route() {
+        let finding = typescript_preview_finding(true);
+        let finding_id = finding.id.clone();
+        let output = single_finding_output(finding);
+        let config = crate::config::RiprConfig::default();
+        let with_route = {
+            let navigation = crate::app::FindingDrillIn::Commands(
+                crate::app::FindingNavigation::legacy().with_repair_route_outcome(
+                    crate::app::CheckRepairRoute::GapRoute(crate::app::GapRepairRoute {
+                        finding_id,
+                        gap_id: "gap:typescript:typescript_preview:abcd1234".to_string(),
+                        base: "HEAD~1".to_string(),
+                        uncommitted_files: Vec::new(),
+                    }),
+                ),
+            );
+            super::render_bounded_with_config_and_navigation(
+                &output,
+                &config,
+                Some(&navigation),
+                crate::app::CheckDiffProvenance::CommittedHistory,
+            )
+        };
+        assert!(
+            with_route.contains(
+                "the repair packet is complete. Recommended: start the repair with the `ripr agent repair` command under Next; alternative, by hand: in `tests/discount.test.ts`,"
+            ),
+            "{with_route}"
+        );
+        assert!(
+            with_route.contains(
+                "Recommended follow-through (start the repair):\n  ripr agent repair --gap-id gap:typescript:typescript_preview:abcd1234 --base 'HEAD~1' --phase before"
+            ),
+            "{with_route}"
+        );
+        assert_eq!(with_route.matches("Recommended").count(), 2, "{with_route}");
+
+        // Negative: a route beside a packet the validator did not complete
+        // recommends nothing, in either place.
+        let blocked = typescript_preview_finding(false);
+        let blocked_id = blocked.id.clone();
+        let blocked_output = single_finding_output(blocked);
+        let navigation = crate::app::FindingDrillIn::Commands(
+            crate::app::FindingNavigation::legacy().with_repair_route_outcome(
+                crate::app::CheckRepairRoute::GapRoute(crate::app::GapRepairRoute {
+                    finding_id: blocked_id,
+                    gap_id: "gap:typescript:typescript_preview:abcd1234".to_string(),
+                    base: "HEAD~1".to_string(),
+                    uncommitted_files: Vec::new(),
+                }),
+            ),
+        );
+        let blocked_rendered = super::render_bounded_with_config_and_navigation(
+            &blocked_output,
+            &config,
+            Some(&navigation),
+            crate::app::CheckDiffProvenance::CommittedHistory,
+        );
+        assert!(
+            !blocked_rendered.contains("Recommended"),
+            "{blocked_rendered}"
+        );
+
+        // Negative: no gap route means no recommendation anywhere.
+        let without_route = render(&output);
+        assert!(!without_route.contains("Recommended"), "{without_route}");
+        assert!(
+            without_route.contains("the repair packet is complete: in `tests/discount.test.ts`"),
+            "{without_route}"
+        );
     }
 
     #[test]

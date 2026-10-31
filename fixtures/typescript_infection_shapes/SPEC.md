@@ -12,7 +12,7 @@ shape for which the preview adapter has no value-level infection model
 - a `??` fallback literal (`?? 10` to `?? 20`),
 - a default parameter (`loud = false` to `loud = true`),
 - an arithmetic no-op (an exact trailing ` + 0`, ` - 0`, ` * 1` or ` / 1`, here `a / b` to `a / b + 0`; never claimed behavior-neutral, so a strong oracle keeps `exposed`),
-- a comment-only edit (`return price;` to `return price; // fallback`).
+- a comment-only edit (`return price;` to `return price; // fallback`), which since #10706 emits no probe at all (see `ts_noop_trailing_comment`).
 
 A second module changes two lines under an `if` arm. One related test passes
 inputs that never enter the arm (`safeDiv(4, 2)` against `b === 0`); the other
@@ -34,7 +34,7 @@ ripr check \
   `typescript_infection: unknown (<shape>)` evidence line, the
   `infection_evidence_unknown` stop reason, no missing discriminator, no
   "assertion too weak" row and `repair_packet_ready = false`;
-- the comment-only edit also overrides a strong oracle (`exposed` to `infection_unknown`); the identity no-op under a strong oracle keeps `exposed`, because the adapter cannot prove `+ 0` neutral for strings or BigInt;
+- the comment-only edit emits no finding under any oracle (#10706); the identity no-op under a strong oracle keeps `exposed`, because the adapter cannot prove `+ 0` neutral for strings or BigInt;
 - the arm no test input enters reads `reachable_unrevealed` (no stop reason: it is a concrete gap, not an unknown) with infection
   `no` (`typescript_infection: no (branch_not_entered)`), never
   `weakly_exposed` with an "assertion too weak" explanation;
