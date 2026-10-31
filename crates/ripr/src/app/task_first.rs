@@ -1392,8 +1392,13 @@ pub(crate) enum RepairSubjectOutcome {
         reason: String,
         kind: RefusalKind,
     },
-    /// Several seams name the item; the bounded seam IDs to choose from.
-    Ambiguous(Vec<String>),
+    /// Several seams name the item: the seam IDs to choose from, and a
+    /// parallel description of each (kind, expression, owner) so the reader
+    /// can tell the candidates apart (#11466).
+    Ambiguous {
+        seam_ids: Vec<String>,
+        descriptions: Vec<String>,
+    },
     /// No current seam names the item (stale or unmapped).
     Unknown,
 }
@@ -1411,9 +1416,9 @@ pub(crate) fn resolve_repair_subject(root: &Path, item: &str) -> Result<RepairSu
         RepairSubjectOutcome::Ineligible {
             seam_id, reason, ..
         } => RepairSubject::Decision(ineligible_repair_item(root, item, &seam_id, &reason)),
-        RepairSubjectOutcome::Ambiguous(seam_ids) => {
-            let seam_refs: Vec<&str> = seam_ids.iter().map(String::as_str).collect();
-            RepairSubject::Decision(ambiguous_gap_item(root, item, &seam_refs))
+        RepairSubjectOutcome::Ambiguous { descriptions, .. } => {
+            let listed: Vec<&str> = descriptions.iter().map(String::as_str).collect();
+            RepairSubject::Decision(ambiguous_gap_item(root, item, &listed))
         }
         RepairSubjectOutcome::Unknown => RepairSubject::Decision(unknown_repair_item(root, item)),
     })
@@ -1500,12 +1505,16 @@ pub(crate) fn resolve_repair_subject_in(
     match matches.len() {
         1 => outcome_for(matches[0]),
         0 => RepairSubjectOutcome::Unknown,
-        _ => RepairSubjectOutcome::Ambiguous(
-            matches
+        _ => RepairSubjectOutcome::Ambiguous {
+            seam_ids: matches
                 .iter()
                 .map(|entry| entry.seam.id().as_str().to_string())
                 .collect(),
-        ),
+            descriptions: matches
+                .iter()
+                .map(|entry| describe_ambiguous_seam(entry))
+                .collect(),
+        },
     }
 }
 
@@ -2552,6 +2561,31 @@ pub(crate) fn unknown_repair_item_reason(root: Option<&Path>, item: &str) -> Str
         );
     }
     format!("repair item `{item}` names no seam in the selected root; run {list}")
+}
+
+/// One candidate in an ambiguous-item listing: the seam ID (what the retry
+/// takes) followed by what distinguishes it, so several seams on one line can
+/// be told apart without opening `ripr pilot` (#11466).
+fn describe_ambiguous_seam(entry: &crate::analysis::ClassifiedSeam) -> String {
+    const MAX_EXPRESSION: usize = 48;
+    let expression = entry
+        .seam
+        .expression()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let expression = if expression.chars().count() > MAX_EXPRESSION {
+        let cut: String = expression.chars().take(MAX_EXPRESSION).collect();
+        format!("{cut}...")
+    } else {
+        expression
+    };
+    format!(
+        "{} ({} `{expression}` in {})",
+        entry.seam.id().as_str(),
+        entry.seam.kind().as_str(),
+        entry.seam.owner()
+    )
 }
 
 fn ambiguous_gap_item(root: &Path, item: &str, matches: &[&str]) -> String {
@@ -4528,6 +4562,38 @@ pub(crate) mod tests {
             return Err(format!("listing must stop at eight seams:\n{many}"));
         }
         Ok(())
+    }
+
+    /// #11466: each ambiguous candidate carries its seam ID first (what the
+    /// retry takes), then kind, normalized expression and owner; a long
+    /// expression is cut so one line stays readable.
+    #[test]
+    fn ambiguous_candidates_describe_what_tells_them_apart() {
+        use crate::analysis::seams::SeamGripClass;
+        let entry = gate_entry(SeamGripClass::Ungripped, Vec::new());
+        let text = describe_ambiguous_seam(&entry);
+        assert!(
+            text.starts_with(entry.seam.id().as_str())
+                && text.contains("`amount >= discount_threshold`")
+                && text.contains("in pricing::discounted_total"),
+            "{text}"
+        );
+        let mut long = gate_entry(SeamGripClass::Ungripped, Vec::new());
+        long.seam = crate::analysis::seams::RepoSeam::new(
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            crate::analysis::seams::SeamKind::PredicateBoundary,
+            42,
+            88,
+            format!("a\n   {}", "b".repeat(80)),
+            crate::analysis::seams::RequiredDiscriminator::BoundaryValue {
+                description: "x".to_string(),
+            },
+            crate::analysis::seams::ExpectedSink::ReturnValue,
+        );
+        let text = describe_ambiguous_seam(&long);
+        assert!(text.contains("`a bbbb") && text.contains("...`"), "{text}");
+        assert!(!text.contains('\n'), "{text}");
     }
 
     /// The bound keeps the first eight matches in the order the caller supplied
