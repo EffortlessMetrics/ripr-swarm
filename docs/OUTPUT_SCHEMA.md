@@ -2257,7 +2257,10 @@ JSON fields:
   `oracle_strength`, optional `bun_cross_language_grip`, optional
   `missing_discriminator`, `suggested_assertion_shape`, `static_limits`,
   nullable `verify.command`, `why_not_actionable`, `repair_route`,
-  `repair_packet_ready`, and `limits`. The optional
+  `repair_packet_ready`, and `limits`. When `repair_packet_ready` is `true`
+  the final `limits` entry reads that the card is an advisory summary and the
+  complete repair packet is projected separately (#10709); only a card whose
+  packet is not ready says it "is not a repair packet". The optional
   `bun_cross_language_grip` object carries one coherent configured Bun bridge
   profile selected from the related evidence (including Blob,
   `copy_to_unshared`, and Markdown resizable profiles). It carries `state`,
@@ -14352,7 +14355,22 @@ Field contract:
   a gap-ledger record. The card is used only when the review-comments report
   is `tool = "ripr"`, `status = "advisory"`, and names the same root, base,
   and head as the first-pr invocation. Ledger-selected top gaps never carry
-  `repair_command`. `commands` does not repeat the repair start, so editor
+  `repair_command`. Instead a Python or TypeScript preview ledger gap
+  carries `selected.recommended_repair_command` (#10709), and only when all of
+  these hold: the record is `gap_state = "actionable"` with a
+  `canonical_gap_id` that no other record shares; it passes the shared
+  `validate_agent_gap_record_packet` validator; and the ledger's recorded
+  `analysis_outcome` is complete with no `run_limitations`, judged by the
+  predicate `ripr check` applies. The command is
+  `ripr agent repair --gap-id <id> --base <base> --root <root> --phase before`.
+  `ripr check` may print the resolved dirty origin as `--base` where first-pr
+  prints its own `--base`, and first-pr cannot see the working tree, so the
+  start itself still refuses a dirty production tree; the rendered text says
+  to commit first. When present, the CLI and markdown `Safe next action` name
+  it as the recommended route and the by-hand verify/receipt path as the one
+  alternative; when absent (validator refusal, missing or incomplete analysis
+  outcome, other language) the by-hand route stands alone and nothing is
+  recommended. `commands` does not repeat the repair start, so editor
   projections that allowlist `commands` values are unaffected.
 - `selected.verify_command`, `selected.receipt_command`,
   `selected.receipt_path`, `selected.receipt_command_source`, and
@@ -17433,7 +17451,11 @@ Field contract:
   the closing line names raising `RIPR_PILOT_SEAM_BUDGET` and
   `RIPR_REPO_EXPOSURE_SEAM_LIMIT` instead of "No gap to test", because the
   cut seams were never classified. `null` for partial summaries.
-- `top_actionable_seams[]` — ranked seams using class order
+- `top_actionable_seams[]` — ranked seams. Seams on lines of the current
+  change come first; inside each of those groups a seam with a repair route
+  (one `ripr agent repair` can start from) comes before one without, even
+  when the routable seam has a weaker class (#11292), so `next.repair_command`
+  can name a different seam than before. Then class order
   `weakly_gripped`, `ungripped`, `reachable_unrevealed` (static limitations are
   withheld, see above), with evidence tie-breakers for missing discriminator, related
   test, suggested assertion, and stable location. Within each class, each
