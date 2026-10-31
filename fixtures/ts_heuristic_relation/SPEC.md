@@ -33,7 +33,7 @@ The TypeScript preview adapter:
 
 - Identifies a heuristic same-file-proximity test relation
 - Sets `actionability_category: ambiguous_related_test` (G-D: not eligible)
-- Sets `gap_state: advisory`
+- Sets `gap_state: unknown`
 - Sets `repair_packet_ready: false`
 - Does NOT flip to actionable
 

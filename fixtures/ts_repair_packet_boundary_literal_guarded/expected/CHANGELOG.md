@@ -390,6 +390,7 @@ Updated:
 
 Reason:
 RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+RIPR-SPEC-0087: refusal reason leads with the remedy (#11671)
 
 Command:
 `cargo xtask goldens bless ts_repair_packet_boundary_literal_guarded --reason "..."`

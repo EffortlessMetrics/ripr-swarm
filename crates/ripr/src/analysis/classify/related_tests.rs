@@ -2251,13 +2251,25 @@ fn own_crate_qualified_entry_call(
     caller: &FunctionSummary,
     call_line: usize,
 ) -> bool {
+    own_crate_qualified_entry_path(index, test, caller, call_line).is_some()
+}
+
+/// [`own_crate_qualified_entry_call`] with the established spelling: the
+/// `<crate>::<module path>::<entry>` path the call at `call_line` writes,
+/// which the helper-transfer entry pin (#9638) reads as the entry's operand.
+pub(super) fn own_crate_qualified_entry_path(
+    index: &RustIndex,
+    test: &TestSummary,
+    caller: &FunctionSummary,
+    call_line: usize,
+) -> Option<String> {
     if !super::call_identity::under_tests_dir(&test.file)
         || path_is_absolute_form(&test.file)
         || path_is_absolute_form(&caller.file)
         || package_prefix(&test.file).is_some()
         || package_prefix(&caller.file).is_some()
     {
-        return false;
+        return None;
     }
     // The entry is an item of the root package's library: at the crate root,
     // or (#8999) in a `src/` file module or inline module whose path is read
@@ -2266,11 +2278,8 @@ fn own_crate_qualified_entry_call(
     let composes_under_library_root =
         super::owner_pin::target_root(&caller.file, index, &BTreeSet::new())
             .is_some_and(|root| root == Path::new("src/lib.rs"));
-    let Some(module) = super::call_identity::root_library_item_module_path(index, caller)
-        .filter(|_| composes_under_library_root)
-    else {
-        return false;
-    };
+    let module = super::call_identity::root_library_item_module_path(index, caller)
+        .filter(|_| composes_under_library_root)?;
     // Only a test-crate root (`tests/<name>.rs`, `tests/<name>/main.rs`):
     // a module child (`tests/api/child.rs`, `tests/common/mod.rs`) resolves
     // paths from a parent file whose bindings this scan does not read.
@@ -2282,22 +2291,18 @@ fn own_crate_qualified_entry_call(
         _ => false,
     };
     if !is_test_crate_root {
-        return false;
+        return None;
     }
-    let Some(facts) = index.files().get(&test.file) else {
-        return false;
-    };
+    let facts = index.files().get(&test.file)?;
     if facts.source.contains("include!")
         || super::call_identity::source_may_splice_items(&facts.source, true)
     {
-        return false;
+        return None;
     }
     // The one identifier the package's library is imported as: `[lib] name`
     // when set, else the package name (hyphens folded). The package name is
     // not a second spelling when `[lib] name` differs.
-    let Some(crate_name) = index.root_library_name.as_deref() else {
-        return false;
-    };
+    let crate_name = index.root_library_name.as_deref()?;
     let stripped_file = strip_comments_and_strings(&facts.source);
     // Any import that may bind the crate name to something else, in the
     // file or in the test body: a glob, or a path ending in that name
@@ -2320,24 +2325,22 @@ fn own_crate_qualified_entry_call(
     // own location: a call path inside a multiline raw string or block
     // comment that ends on a line holding a real call is masked out.
     let masked_file = mask_comments_and_strings(&facts.source);
-    let Some(code_line) = call_line
+    let code_line = call_line
         .checked_sub(1)
-        .and_then(|line| masked_file.lines().nth(line))
-    else {
-        return false;
-    };
+        .and_then(|line| masked_file.lines().nth(line))?;
     let spelled_path: String = std::iter::once(crate_name)
         .chain(module.iter().map(String::as_str))
         .chain(std::iter::once(caller.name.as_str()))
         .collect::<Vec<_>>()
         .join("::");
-    is_qualified_owner_call(code_line, &spelled_path)
+    (is_qualified_owner_call(code_line, &spelled_path)
         && !file_may_bind_name(&stripped_file, crate_name)
         && !body_binds_owner_name(&test.body, crate_name)
         && !super::owner_pin::file_renames_to(&facts.source, crate_name)
         && !super::owner_pin::file_renames_to(&facts.source, &format!("r#{crate_name}"))
         && !may_rebind_crate_name(&facts.source)
-        && !may_rebind_crate_name(&test.body)
+        && !may_rebind_crate_name(&test.body))
+    .then_some(spelled_path)
 }
 
 /// The call's source line as code: the line at `line` of the comment/string-

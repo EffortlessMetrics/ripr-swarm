@@ -154,10 +154,17 @@ assertion cannot lend retention to a later masked read. Resolved assertion
 helpers keep the exact helper-call span; argument evaluation does not establish
 that a field captured before the owner call observes its changed value. This
 ordering rule governs the effect-channel credit. The separate owner-result
-identity branch is not a propagation proof: a helper comparison that mentions
-the owner can still be credited there even when its result is implicit `None`.
-That inherited limitation is retained rather than refusing genuine comparisons
-whose owner returns the changed field.
+identity branches (owner name, method on a bound receiver, alias, protocol
+entry, module call) do not credit a `self` field or module-object field write when
+the owner's text holds no `return` and no `yield` as code, because the call
+then hands back only the implicit `None` (or a coroutine or generator) and its
+result carries no trace of the write (#10178). Only the effect branch, which
+reads the field after the completed call, and the changed-token branch, which
+reads the written field itself, may credit such a write. Dunder
+owners keep their protocol reading. The fact is textual and fails closed toward
+the prior reading: a bare or nested `return` leaves the result branches in
+force, and a returned changed field keeps its genuine comparison credit.
+The result branches are not a general propagation proof.
 
 ## Required Evidence
 

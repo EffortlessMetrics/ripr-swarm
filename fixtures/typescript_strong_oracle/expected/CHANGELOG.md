@@ -841,6 +841,7 @@ Updated:
 
 Reason:
 RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+RIPR-SPEC-0088: related-test selection ties keep the first row, matching the check headline (#11228)
 
 Command:
 `cargo xtask goldens bless typescript_strong_oracle --reason "..."`

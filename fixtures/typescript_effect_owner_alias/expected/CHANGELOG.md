@@ -316,6 +316,7 @@ Updated:
 
 Reason:
 RIPR-SPEC-0122: #11619 plain wording (spot) for the check screen's repair-start refusals
+RIPR-SPEC-0243: refusal reason leads with the remedy (#11671)
 
 Command:
 `cargo xtask goldens bless typescript_effect_owner_alias --reason "..."`
