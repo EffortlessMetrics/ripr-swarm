@@ -468,12 +468,23 @@ fn agent_card_prose_lines_for_attempt(
         .canonical_next_action
         .as_ref()
         .map_or(&[], |action| action.limitations());
-    let card_only: Vec<&str> = card
-        .limitations
-        .iter()
-        .filter(|limitation| !already_shown.contains(limitation))
-        .map(String::as_str)
-        .collect();
+    let card_only: Vec<&str> = if started.is_some() {
+        already_shown
+            .iter()
+            .chain(
+                card.limitations
+                    .iter()
+                    .filter(|limit| !already_shown.contains(limit)),
+            )
+            .map(String::as_str)
+            .collect()
+    } else {
+        card.limitations
+            .iter()
+            .filter(|limit| !already_shown.contains(limit))
+            .map(String::as_str)
+            .collect()
+    };
     if !card_only.is_empty() {
         lines.push(format!("  limitations: {}", card_only.join("; ")));
     }
