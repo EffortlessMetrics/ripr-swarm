@@ -298,7 +298,7 @@ fn is_repository_boundary(directory: &Path) -> bool {
     }
 
     let manifest = directory.join("Cargo.toml");
-    let Ok(contents) = std::fs::read_to_string(manifest) else {
+    let Ok(contents) = crate::bounded_input::read_to_string(manifest) else {
         return false;
     };
     if !contents.contains("workspace") {
