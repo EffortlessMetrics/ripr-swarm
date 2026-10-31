@@ -1,1 +1,0 @@
-crates/ripr/src/app/agent_receipt.rs|agent receipt {flag} {} must stay under root {}

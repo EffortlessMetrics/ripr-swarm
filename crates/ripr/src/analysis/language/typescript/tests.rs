@@ -4067,7 +4067,7 @@ fn classify_change_marks_weak_direct_typescript_candidate_advisory() -> Result<(
     let finding = classify_weak_direct_line("    if (amount >= threshold) {")?;
 
     assert!(finding.canonical_gap.is_none());
-    assert_evidence_contains(&finding, "gap_state: advisory");
+    assert_evidence_contains(&finding, "gap_state: unknown");
     assert_evidence_contains(&finding, "actionability_category: incomplete_repair_packet");
     assert_evidence_contains(
         &finding,
@@ -4134,7 +4134,7 @@ fn typescript_preview_weak_oracle_guidance_names_snapshot_exact_value_shape() ->
     assert!(matches!(finding.class, ExposureClass::WeaklyExposed));
     assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::Snapshot);
     assert!(finding.canonical_gap.is_none());
-    assert_evidence_contains(&finding, "gap_state: advisory");
+    assert_evidence_contains(&finding, "gap_state: unknown");
     assert!(
         finding.missing.iter().any(|line| {
             line.contains("snapshot evidence") && line.contains("add an exact-value assertion")
@@ -4161,7 +4161,7 @@ fn typescript_preview_weak_oracle_guidance_names_smoke_exact_value_shape() -> Re
     assert!(matches!(finding.class, ExposureClass::WeaklyExposed));
     assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::SmokeOnly);
     assert!(finding.canonical_gap.is_none());
-    assert_evidence_contains(&finding, "gap_state: advisory");
+    assert_evidence_contains(&finding, "gap_state: unknown");
     assert!(
         finding.missing.iter().any(|line| {
             line.contains("smoke-only oracle") && line.contains("exact-value assertion")
@@ -4208,7 +4208,7 @@ fn typescript_preview_weak_oracle_guidance_keeps_broad_error_advisory() -> Resul
     assert!(matches!(finding.class, ExposureClass::WeaklyExposed));
     assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::BroadError);
     assert!(finding.canonical_gap.is_none());
-    assert_evidence_contains(&finding, "gap_state: advisory");
+    assert_evidence_contains(&finding, "gap_state: unknown");
     assert!(
         finding
             .missing
@@ -4260,7 +4260,7 @@ fn typescript_preview_weak_oracle_guidance_distinguishes_mock_payload_limits() -
         OracleStrength::Medium
     );
     assert!(finding.canonical_gap.is_none());
-    assert_evidence_contains(&finding, "gap_state: advisory");
+    assert_evidence_contains(&finding, "gap_state: unknown");
     assert_evidence_contains(&finding, "actionability_category: incomplete_repair_packet");
     assert!(
             finding.missing.iter().any(|line| line.contains(
@@ -4320,7 +4320,7 @@ test("records ready status", () => {
         Some("expect(sink.record).toHaveBeenCalledWith(\"ready\")")
     );
     assert!(finding.canonical_gap.is_none());
-    assert_evidence_contains(&finding, "gap_state: advisory");
+    assert_evidence_contains(&finding, "gap_state: unknown");
     assert_evidence_contains(
         &finding,
         "mock_payload_evidence: expect(sink.record).toHaveBeenCalledWith(\"ready\")",
@@ -5507,7 +5507,7 @@ fn classify_change_returns_no_static_path_when_no_related_test() -> Result<(), S
     assert!(matches!(finding.class, ExposureClass::NoStaticPath));
     assert!(finding.related_tests.is_empty());
     assert!(finding.canonical_gap.is_none());
-    assert_evidence_contains(&finding, "gap_state: advisory");
+    assert_evidence_contains(&finding, "gap_state: unknown");
     assert_evidence_contains(&finding, "actionability_category: missing_context");
     assert_evidence_contains(&finding, "related_test_or_observer");
     Ok(())
@@ -8222,7 +8222,7 @@ test("renders summary snapshot", () => {
     );
     // static_limit_kind is unset (snapshot is not a static_limit, it is oracle-based)
     assert_eq!(finding.static_limit_kind, None);
-    // repair_packet_ready remains false — gap_state is advisory (not static_limitation)
+    // repair_packet_ready remains false — gap_state is unknown (not static_limitation)
     // because snapshot is not a StaticLimitKind
     assert!(
         !finding
@@ -11964,7 +11964,7 @@ fn untested_function_owner_guidance_names_owner_and_ordered_route() -> Result<()
     // lands advisory (the preview card's `repair_packet_ready` remains
     // false, pinned by the fixture goldens), so no packet may be emitted
     // on this evidence.
-    assert_evidence_contains(&finding, "gap_state: advisory");
+    assert_evidence_contains(&finding, "gap_state: unknown");
     let step = finding
         .recommended_next_step
         .as_deref()
@@ -14057,8 +14057,8 @@ fn remove_field_from_missing_list_unit() {
 
     // Wrong prefix — line returned unchanged.
     assert_eq!(
-        remove_field_from_missing_list("gap_state: advisory", "verify_command"),
-        "gap_state: advisory"
+        remove_field_from_missing_list("gap_state: unknown", "verify_command"),
+        "gap_state: unknown"
     );
 
     // Removing another field leaves verify_command intact.
@@ -18591,14 +18591,94 @@ fn owner_extraction_gap_discloses_arrow_function_class_field() -> Result<(), Str
 }
 
 #[test]
-fn owner_extraction_gap_discloses_private_method() -> Result<(), String> {
+fn owner_extraction_gap_discloses_string_literal_method_key() -> Result<(), String> {
     assert_owner_extraction_gap_disclosed(
-        "owner-gap-private",
+        "owner-gap-string-key",
         "src/ledger.ts",
-        "export class Ledger {\n  #adjust(amount: number): number {\n    if (amount >= 50) {\n      return amount - 5;\n    }\n    return amount;\n  }\n\n  entry(amount: number): number {\n    return this.#adjust(amount);\n  }\n}\n",
+        "export class Ledger {\n  'adjust'(amount: number): number {\n    if (amount >= 50) {\n      return amount - 5;\n    }\n    return amount;\n  }\n}\n",
         (3, "    if (amount >= 50) {"),
         "class method with unsupported key",
     )
+}
+
+/// #10440: a changed line inside a `#private` method used to read as a partial
+/// extraction with no finding. It is now an owner, and because no test can
+/// name it the finding is `static_unknown`, never the confident
+/// `no_static_path` and never credited through a public caller's assertion.
+#[test]
+fn changed_private_method_is_an_unknown_finding_not_partial_silence() -> Result<(), String> {
+    let src = "export class Ledger {\n  #adjust(amount: number): number {\n    if (amount >= 50) {\n      return amount - 5;\n    }\n    return amount;\n  }\n\n  entry(amount: number): number {\n    return this.#adjust(amount);\n  }\n}\n";
+    let test = "import { Ledger } from '../src/ledger';\n\ntest('entry adjusts large amounts', () => {\n  expect(new Ledger().entry(60)).toBe(55);\n});\n";
+    for (label, with_test) in [
+        ("private-no-test", false),
+        ("private-public-caller-test", true),
+    ] {
+        let root = ts_unique_tempdir(label)?;
+        ts_write_file(&root.join("src/ledger.ts"), src)?;
+        if with_test {
+            ts_write_file(&root.join("tests/ledger.test.ts"), test)?;
+        }
+        let result = TypeScriptAdapter.analyze_diff(
+            &ts_analysis_options(root),
+            &OraclePolicy::default(),
+            &[changed_with_lines(
+                "src/ledger.ts",
+                &[(3, "    if (amount >= 50) {")],
+            )],
+        )?;
+        assert_eq!(result.findings.len(), 1, "{label}: {:?}", result.findings);
+        let finding = &result.findings[0];
+        assert!(
+            matches!(finding.class, ExposureClass::StaticUnknown),
+            "{label}: {:?}",
+            finding.class
+        );
+        let joined = finding.evidence.join("\n");
+        assert!(joined.contains("owner: #adjust"), "{label}: {joined}");
+        assert!(
+            !result.limitations.iter().any(|limitation| limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("typescript_owner_extraction_partial"))),
+            "{label}: {:?}",
+            result.limitations
+        );
+        assert_eq!(
+            finding.stop_reasons,
+            vec![StopReason::TransitiveReachUnresolved],
+            "{label}: a private owner's unknown is unmodeled reach, not an unresolved callback"
+        );
+        let summary = finding.ripr.reveal.discriminate.summary.as_str();
+        assert!(
+            summary.contains("`#private` class member"),
+            "{label}: {summary}"
+        );
+    }
+    Ok(())
+}
+
+/// Control for the private-member arm: a public method of the same class and
+/// the same shape keeps its ordinary verdict.
+#[test]
+fn changed_public_method_keeps_its_ordinary_verdict_beside_a_private_one() -> Result<(), String> {
+    let src = "export class Ledger {\n  adjust(amount: number): number {\n    if (amount >= 50) {\n      return amount - 5;\n    }\n    return amount;\n  }\n}\n";
+    let root = ts_unique_tempdir("public-method-control")?;
+    ts_write_file(&root.join("src/ledger.ts"), src)?;
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root),
+        &OraclePolicy::default(),
+        &[changed_with_lines(
+            "src/ledger.ts",
+            &[(3, "    if (amount >= 50) {")],
+        )],
+    )?;
+    assert_eq!(result.findings.len(), 1, "{:?}", result.findings);
+    assert!(
+        matches!(result.findings[0].class, ExposureClass::NoStaticPath),
+        "{:?}",
+        result.findings[0].class
+    );
+    Ok(())
 }
 
 #[test]
@@ -20123,6 +20203,7 @@ mod nullish_chain_tests;
 mod out_dir_specifier_tests;
 mod playwright_fixture_tests;
 mod playwright_unit_tests;
+mod private_method_owner_tests;
 mod reexport_chain_tests;
 mod registration_binding_tests;
 mod require_member_import_tests;

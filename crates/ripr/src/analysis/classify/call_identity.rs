@@ -107,6 +107,11 @@ pub(crate) struct CallIdentityMemos {
     /// a guard held across a query would serialize every worker and could
     /// re-enter on the rayon thread that steals a sibling seam mid-scan.
     pub(super) receiver_pin_syntax: super::OwnerPinSyntax,
+    /// #11509: the whole-workspace macro-site scan, parsed once per index and
+    /// absorbed by every owner-pin syntax instance over it (the diff pass's
+    /// candidate index, the seam walk, the receiver owner above, the seam
+    /// inventory). Keyed by the index state it was computed under.
+    pub(super) macro_site_scans: super::owner_pin::SharedMacroScans,
     /// #9218: the same per owner, built even when the owner has no
     /// same-named rival, for resolving a qualified call's spelled path.
     solo_identities: Mutex<SoloIdentities>,
