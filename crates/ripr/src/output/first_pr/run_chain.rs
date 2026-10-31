@@ -629,10 +629,7 @@ mod tests {
         let out = windows_path('C', &["out", "a b.json"]);
         let display = format!(r#"ripr check --root "{root}" --json > "{out}""#);
         let step = step_from_display("repo exposure report", &display)?;
-        assert_eq!(
-            step.args,
-            vec!["check", "--root", root.as_str(), "--json",]
-        );
+        assert_eq!(step.args, vec!["check", "--root", root.as_str(), "--json",]);
         assert_eq!(step.stdout_to, Some(PathBuf::from(out.clone())));
         assert_eq!(step.expected, PathBuf::from(out));
         Ok(())
