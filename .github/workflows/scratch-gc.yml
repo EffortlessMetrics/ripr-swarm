@@ -63,7 +63,7 @@ jobs:
       # and leaves the promisor config behind, which would turn the
       # `fetch-depth: 0` rust-gates checkout on the same runner into a blobless
       # partial clone. rust-gates' own checkout cleans this directory away.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v5.1.0
         with:
           path: .ci-scratch-gc
           sparse-checkout: .github/actions/ci-scratch-lease

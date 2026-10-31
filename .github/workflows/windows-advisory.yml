@@ -107,7 +107,7 @@ jobs:
       # Full history, like the Linux test lanes (ci, routed-rust, rust-gates):
       # tests that resolve a default base against this checkout (pr-evidence,
       # worktree check) otherwise refuse on a shallow clone (#10344).
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v5.1.0
         with:
           fetch-depth: 0
 
@@ -404,7 +404,7 @@ jobs:
     steps:
       # Bind native subset/consumer proof to the immutable PR head; the required
       # Rust lane separately owns its integration checkout.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v5.1.0
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
@@ -412,7 +412,7 @@ jobs:
       # The storage tests below ship in this run's workflow definition (the merge ref on a
       # pull_request), so they read the consumer from that same ref and not from the PR head;
       # otherwise a branch behind main pairs new tests with an old consumer (#9521).
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v5.1.0
         with:
           ref: ${{ github.sha }}
           path: target/workflow-ref
@@ -1591,7 +1591,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v5.1.0
 
       # No toolchain or cache action here: `rust-toolchain.toml` pins 1.95 and
       # the workflow-pin tests count those actions per workflow.
