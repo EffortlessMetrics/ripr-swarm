@@ -2619,60 +2619,63 @@ fn missing_boundary_discriminator(
                 probe.location.line,
             ),
         ];
-        *unresolved = computed_input_parameters(owner, &parameters, related_tests, helper_chain)
-            .into_iter()
-            .find(|parameter| compared.iter().flatten().any(|name| name == parameter))
-            .map(|parameter| computed_argument_reason(&parameter))
-            .or_else(|| {
-                // The owner is called, but only with arguments ripr cannot
-                // read (`score(&[b'f'; 16])`): a compared operand that is
-                // neither a parameter, a literal, nor a constant (a local
-                // counter `count`) has no row to evaluate it under, so it is
-                // unreadable rather than missing (Devin review on #6796).
-                let unknown_operands = [&left, &right]
-                    .into_iter()
-                    .filter(|operand| {
-                        boundary_operand_parameter(
+        *unresolved =
+            computed_input_parameters(owner, &parameters, related_tests, helper_chain, None)
+                .into_iter()
+                .find(|parameter| compared.iter().flatten().any(|name| name == parameter))
+                .map(|parameter| computed_argument_reason(&parameter))
+                .or_else(|| {
+                    // The owner is called, but only with arguments ripr cannot
+                    // read (`score(&[b'f'; 16])`): a compared operand that is
+                    // neither a parameter, a literal, nor a constant (a local
+                    // counter `count`) has no row to evaluate it under, so it is
+                    // unreadable rather than missing (Devin review on #6796).
+                    let unknown_operands = [&left, &right]
+                        .into_iter()
+                        .filter(|operand| {
+                            boundary_operand_parameter(
+                                owner,
+                                owner_source,
+                                &parameters,
+                                operand,
+                                probe.location.line,
+                            )
+                            .is_none()
+                                && literal_operand_value(operand).is_none()
+                                && crate::analysis::value_resolution::constant_operand_name(operand)
+                                    .is_none()
+                                && crate::analysis::value_resolution::constant_offset_operand(
+                                    operand,
+                                )
+                                .is_none()
+                        })
+                        .map(String::as_str)
+                        .collect::<Vec<_>>();
+                    (!unknown_operands.is_empty()
+                        && owner_is_called(owner, related_tests, helper_chain))
+                    .then(|| {
+                        unresolved_boundary_input(
                             owner,
-                            owner_source,
                             &parameters,
-                            operand,
-                            probe.location.line,
+                            related_tests,
+                            helper_chain,
+                            &unknown_operands,
+                            [None, None],
                         )
-                        .is_none()
-                            && literal_operand_value(operand).is_none()
-                            && crate::analysis::value_resolution::constant_operand_name(operand)
-                                .is_none()
-                            && crate::analysis::value_resolution::constant_offset_operand(operand)
-                                .is_none()
                     })
-                    .map(String::as_str)
-                    .collect::<Vec<_>>();
-                (!unknown_operands.is_empty()
-                    && owner_is_called(owner, related_tests, helper_chain))
-                .then(|| {
-                    unresolved_boundary_input(
+                    .flatten()
+                })
+                .or_else(|| {
+                    call_built_input_reason(
                         owner,
                         &parameters,
                         related_tests,
-                        helper_chain,
-                        &unknown_operands,
-                        [None, None],
+                        compared,
+                        &call_values,
+                        index,
                     )
                 })
-                .flatten()
-            })
-            .or_else(|| {
-                call_built_input_reason(
-                    owner,
-                    &parameters,
-                    related_tests,
-                    compared,
-                    &call_values,
-                    index,
-                )
-            })
-            .or_else(|| unreadable_spelled_line_reason(owner, related_tests, helper_chain));
+                .or_else(|| unreadable_spelled_line_reason(owner, related_tests, helper_chain));
         return None;
     }
     let left_parameter =
@@ -3372,7 +3375,7 @@ fn unresolved_boundary_input(
             ),
         });
     }
-    let computed = computed_input_parameters(owner, parameters, related_tests, helper_chain);
+    let computed = computed_input_parameters(owner, parameters, related_tests, helper_chain, None);
     let parameter = operand_parameters
         .into_iter()
         .flatten()
@@ -5124,6 +5127,7 @@ pub(in crate::analysis) fn computed_input_parameters(
     parameters: &[String],
     related_tests: &[&TestSummary],
     helper_chain: Option<&super::helper_transfer::HelperChain>,
+    index: Option<&crate::analysis::rust_index::RustIndex>,
 ) -> Vec<String> {
     let computed_for = |name: &str, names: &[String]| -> (bool, Vec<String>) {
         let mut called = false;
@@ -5177,6 +5181,16 @@ pub(in crate::analysis) fn computed_input_parameters(
             &entry_parameters,
         )
         .is_empty()
+    {
+        return Vec::new();
+    }
+    // A hop argument computed over the caller's parameters is no longer
+    // unreadable when the entry rows bind all the way down: the binder folded
+    // each such argument exactly (`bind_helper_argument`), so the owner holds
+    // an exact row. Entry-call arguments stay as read above.
+    if computed.is_empty()
+        && let Some(index) = index
+        && !helper_transferred_rows(parameters, chain, related_tests, index).is_empty()
     {
         return Vec::new();
     }
@@ -5273,7 +5287,9 @@ fn helper_transferred_rows(
                 let Some(parameter) = target_parameters.get(index) else {
                     return Vec::new();
                 };
-                let Some(value) = bind_helper_argument(argument, &caller_parameters, row) else {
+                let Some(value) =
+                    bind_helper_argument(argument, &hop.caller, &caller_parameters, row)
+                else {
                     return Vec::new();
                 };
                 bound.push(ParameterValue {
@@ -5354,7 +5370,7 @@ pub(in crate::analysis) fn chain_row_transfer_stop(
                 !field.is_empty() && field.chars().all(|ch| ch.is_ascii_digit())
             });
             let bindable = receiver_index
-                || bind_helper_argument(argument, &caller_parameters, &row).is_some();
+                || bind_helper_argument(argument, &hop.caller, &caller_parameters, &row).is_some();
             (!bindable).then(|| trimmed.to_string())
         })
     })
@@ -5448,6 +5464,7 @@ fn let_governs_every_use(body: &str, name: &str) -> bool {
 /// transfer for that chain (#3296: named edge, no guessed value).
 fn bind_helper_argument(
     argument: &str,
+    caller: &FunctionSummary,
     caller_parameters: &[String],
     row: &[ParameterValue],
 ) -> Option<String> {
@@ -5466,17 +5483,61 @@ fn bind_helper_argument(
             .find(|cell| cell.parameter == RECEIVER_PSEUDO_PARAMETER)
             .and_then(|cell| super::helper_transfer::project_receiver_field(&cell.value, field));
     }
-    caller_parameters
+    let parameter_cell = |name: &str| {
+        caller_parameters
+            .iter()
+            .find(|parameter| parameter.as_str() == name)
+            .and_then(|parameter| {
+                row.iter()
+                    .find(|cell| cell.parameter == *parameter)
+                    // A constructed receiver string is read only through
+                    // `self.<index>`; it never binds as a parameter value.
+                    .filter(|cell| !super::helper_transfer::is_receiver_cell(&cell.value))
+                    .map(|cell| cell.value.clone())
+            })
+    };
+    if let Some(value) = parameter_cell(trimmed) {
+        return Some(value);
+    }
+    // RIPR-SPEC-0158 (hop edition): a closed integer expression over the
+    // caller's own wide integer parameters folds through the shared
+    // evaluator when each operand is a decimal row value, the caller never
+    // rebinds it and no step overflows.
+    super::argument_fold::folded_hop_argument(trimmed, |name| {
+        let value = parameter_cell(name)?;
+        (parameter_type_text(caller, name).is_some_and(|ty| is_wide_integer_type(&ty))
+            && !super::helper_transfer::caller_rebinds_parameter(&caller.body, name))
+        .then_some(value)
+    })
+}
+
+/// The declared type text of `function`'s parameter `name`, whitespace
+/// removed; `None` when no single-name parameter pattern matches.
+fn parameter_type_text(function: &FunctionSummary, name: &str) -> Option<String> {
+    let arguments = signature_arguments(function)?;
+    split_top_level_args(&arguments)
         .iter()
-        .find(|parameter| parameter.as_str() == trimmed)
-        .and_then(|parameter| {
-            row.iter()
-                .find(|cell| cell.parameter == *parameter)
-                // A constructed receiver string is read only through
-                // `self.<index>`; it never binds as a parameter value.
-                .filter(|cell| !super::helper_transfer::is_receiver_cell(&cell.value))
-                .map(|cell| cell.value.clone())
+        .find_map(|argument| {
+            let pattern = top_level_pattern(argument);
+            let bound = pattern.trim();
+            let bound = bound.strip_prefix("mut ").unwrap_or(bound).trim();
+            (bound == name).then(|| {
+                argument[pattern.len()..]
+                    .trim_start()
+                    .strip_prefix(':')
+                    .map(|ty| ty.split_whitespace().collect::<String>())
+            })?
         })
+}
+
+/// Integer types wide enough that a folded result below the evaluator's
+/// `i32::MAX` bound cannot overflow them. Narrow, aliased and generic types
+/// are not read.
+fn is_wide_integer_type(ty: &str) -> bool {
+    matches!(
+        ty,
+        "i32" | "i64" | "i128" | "isize" | "u32" | "u64" | "u128" | "usize"
+    )
 }
 
 /// The pseudo-parameter a method hop hands its callee for the receiver.
@@ -10914,7 +10975,16 @@ assert_eq!(input.amount, 100);"#
             )
         };
 
-        let computed = run(&chain_with("y + 1"), &test);
+        // RIPR-SPEC-0159 computed chain-edge argument: `y + 1` over the
+        // caller's own `u32` parameter folds exactly (9 + 1 = 10), so the
+        // owner holds a row on the boundary and nothing is unresolved.
+        let folded = run(&chain_with("y + 1"), &test);
+        assert_eq!(folded.unresolved_boundary, None);
+        assert!(folded.activation.missing_discriminators.is_empty());
+
+        // A constant the fold does not read keeps the computed argument
+        // unreadable.
+        let computed = run(&chain_with("y + LIMIT"), &test);
         assert!(computed.activation.missing_discriminators.is_empty());
         let reason = computed.unresolved_boundary.unwrap_or_default();
         assert!(
@@ -10932,7 +11002,7 @@ assert_eq!(input.amount, 100);"#
         // arguments: the computed hop is out of scope.
         let mut unrelated = test.clone();
         unrelated.calls[0].name = "other".to_string();
-        let unentered = run(&chain_with("y + 1"), &unrelated);
+        let unentered = run(&chain_with("y + LIMIT"), &unrelated);
         assert_eq!(unentered.unresolved_boundary, None);
     }
 
