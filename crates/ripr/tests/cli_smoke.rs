@@ -19700,7 +19700,7 @@ fn python_mixed_boundary_calls_do_not_invent_a_missing_discriminator() -> Result
             ),
             (
                 "tests/test_pricing.py",
-                "from pricing import eligible\n\ndef test_off():\n    assert eligible(5) == True\n\ndef test_unknown():\n    value = 3\n    assert eligible(value) == True\n",
+                "from pricing import eligible\n\ndef test_off():\n    assert eligible(5) == True\n\ndef test_unknown():\n    value = int(\"3\")\n    assert eligible(value) == True\n",
             ),
         ],
         (
@@ -19788,7 +19788,7 @@ fn python_mixed_boundary_calls_do_not_invent_a_missing_discriminator() -> Result
         "{off}"
     );
 
-    std::fs::write(root.join("tests/test_pricing.py"), "from pricing import eligible\n\ndef test_on():\n    assert eligible(3) == True\n\ndef test_unknown():\n    value = 3\n    assert eligible(value) == True\n").map_err(|err| err.to_string())?;
+    std::fs::write(root.join("tests/test_pricing.py"), "from pricing import eligible\n\ndef test_on():\n    assert eligible(3) == True\n\ndef test_unknown():\n    value = int(\"3\")\n    assert eligible(value) == True\n").map_err(|err| err.to_string())?;
     let on = check()?;
     assert_eq!(on["findings"][0]["classification"], "exposed", "{on}");
     assert_eq!(
@@ -19818,7 +19818,7 @@ fn python_mixed_calls_do_not_invent_a_shifted_boundary_gap() -> Result<(), Strin
             ),
             (
                 "tests/test_pricing.py",
-                "from pricing import eligible\n\ndef test_equal():\n    assert eligible(2) == False\n\ndef test_unknown():\n    value = 3\n    assert eligible(value) == True\n",
+                "from pricing import eligible\n\ndef test_equal():\n    assert eligible(2) == False\n\ndef test_unknown():\n    value = int(\"3\")\n    assert eligible(value) == True\n",
             ),
         ],
         (
@@ -19866,7 +19866,7 @@ fn python_mixed_calls_do_not_invent_a_shifted_boundary_gap() -> Result<(), Strin
         resolved["findings"][0]["missing_discriminators"][0]["value"], "x == 3",
         "{resolved}"
     );
-    std::fs::write(root.join("tests/test_pricing.py"), "from pricing import eligible\n\ndef test_equal():\n    assert eligible(2) == False\n\ndef test_shift():\n    assert eligible(3) == True\n\ndef test_unknown():\n    value = 3\n    assert eligible(value) == True\n").map_err(|err| err.to_string())?;
+    std::fs::write(root.join("tests/test_pricing.py"), "from pricing import eligible\n\ndef test_equal():\n    assert eligible(2) == False\n\ndef test_shift():\n    assert eligible(3) == True\n\ndef test_unknown():\n    value = int(\"3\")\n    assert eligible(value) == True\n").map_err(|err| err.to_string())?;
     let witnessed = check()?;
     assert_eq!(
         witnessed["findings"][0]["classification"], "exposed",
