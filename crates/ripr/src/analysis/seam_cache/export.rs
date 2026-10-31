@@ -82,7 +82,9 @@ fn copy_bytes(
     report: &mut CacheExportReport,
 ) -> Result<(), String> {
     let destination = relocated(path, source, &report.cache_dir)?;
-    let parent = destination.parent().ok_or("cache entry has no parent; report this as a ripr bug with the cache path")?;
+    let parent = destination
+        .parent()
+        .ok_or("cache entry has no parent; report this as a ripr bug with the cache path")?;
     fs::create_dir_all(parent).map_err(|error| format!("create {}: {error}", parent.display()))?;
     let mut file = OpenOptions::new()
         .write(true)
@@ -157,7 +159,9 @@ fn export_selected(
     // load path would refuse (Git-tracked entries, #7780) must be refused
     // here or the export launders it into a cache the loader then trusts.
     if let Some(reason) = super::cache_base_untrusted_reason(source) {
-        return Err(format!("refusing to export an untrusted cache: {reason}; clear the cache and regenerate it with `ripr check` before exporting"));
+        return Err(format!(
+            "refusing to export an untrusted cache: {reason}; clear the cache and regenerate it with `ripr check` before exporting"
+        ));
     }
     let mut report = CacheExportReport {
         schema_version: "0.1",
@@ -200,7 +204,9 @@ fn export_selected(
 pub(crate) fn export_current(root: &Path, output: &Path) -> Result<CacheExportReport, String> {
     let metadata = fs::metadata(root).map_err(|error| format!("inspect export root: {error}"))?;
     if !metadata.is_dir() {
-        return Err("cache export root must be a directory; pass the workspace root with --root".to_owned());
+        return Err(
+            "cache export root must be a directory; pass the workspace root with --root".to_owned(),
+        );
     }
     // WorkspaceKeyContext hashes the supplied root spelling. Preserve it;
     // canonical paths below serve only filesystem confinement and relocation.
@@ -225,7 +231,9 @@ pub(crate) fn export_current(root: &Path, output: &Path) -> Result<CacheExportRe
             .join(output)
     };
     refuse_links(&output)?;
-    let parent = output.parent().ok_or("export output has no parent; pass an output path inside an existing directory")?;
+    let parent = output
+        .parent()
+        .ok_or("export output has no parent; pass an output path inside an existing directory")?;
     let parent =
         fs::canonicalize(parent).map_err(|error| format!("resolve export parent: {error}"))?;
     let name = output

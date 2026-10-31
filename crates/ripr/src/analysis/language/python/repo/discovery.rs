@@ -99,9 +99,9 @@ pub(in crate::analysis::language::python) fn resolve_repo_working_set_limit(
                 source: RepoWorkingSetCapSource::EnvOverride,
             })
         }
-        Err(std::env::VarError::NotUnicode(_)) => {
-            Err(format!("{PYTHON_REPO_FILE_LIMIT_ENV} must be valid UTF-8; set it to a whole number above zero, or unset it to use the default"))
-        }
+        Err(std::env::VarError::NotUnicode(_)) => Err(format!(
+            "{PYTHON_REPO_FILE_LIMIT_ENV} must be valid UTF-8; set it to a whole number above zero, or unset it to use the default"
+        )),
     }
 }
 

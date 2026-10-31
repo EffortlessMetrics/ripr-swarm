@@ -807,7 +807,7 @@ pub(crate) fn verify_gap_closure(
     for (raw, label) in [(before_raw, "before"), (after_raw, "after")] {
         if declared_artifact_kind(raw).as_deref() != Some("check_findings") {
             return Err(format!(
-                "agent verify --gap-id requires `check-findings-json` snapshots; the {label} artifact is not one; pass a `ripr check --json` snapshot as --before and --after"
+                "agent verify --gap-id requires `check-findings-json` snapshots; the {label} artifact is not one; save `ripr check --format check-findings-json` output as both --before and --after"
             ));
         }
     }
@@ -1524,8 +1524,15 @@ const ARTIFACT_GIT_DEADLINE: Duration = Duration::from_mins(1);
 /// the adapter-level `Output` contract (exit status inspected by the caller)
 /// is unchanged.
 fn git_spawn(root: &Path, args: &[&str]) -> Result<std::process::Output, String> {
-    crate::git::run_git_output_with_deadline(root, args, Some(ARTIFACT_GIT_DEADLINE))
-        .map_err(|err| format!("run git {:?} in {} failed: {err}; check that git is installed and on PATH", args, root.display()))
+    crate::git::run_git_output_with_deadline(root, args, Some(ARTIFACT_GIT_DEADLINE)).map_err(
+        |err| {
+            format!(
+                "run git {:?} in {} failed: {err}; check that git is installed and on PATH",
+                args,
+                root.display()
+            )
+        },
+    )
 }
 
 /// Resolve the commit that Git reports for a repository root.
@@ -1550,7 +1557,9 @@ pub(crate) fn current_git_head(root: &Path) -> Result<String, String> {
 /// result must be a full lowercase commit id.
 pub(crate) fn resolve_commit_rev(root: &Path, rev: &str) -> Result<String, String> {
     if rev.trim().is_empty() || rev.starts_with('-') {
-        return Err(format!("`{rev}` is not a revision ripr can resolve; pass a commit id, branch or tag that does not start with `-`"));
+        return Err(format!(
+            "`{rev}` is not a revision ripr can resolve; pass a commit id, branch or tag that does not start with `-`"
+        ));
     }
     let spec = format!("{rev}^{{commit}}");
     let resolved =
@@ -2091,7 +2100,7 @@ mod tests {
         );
         assert_eq!(
             error.map(|closure| closure.after_classification),
-            Err("agent verify --gap-id requires `check-findings-json` snapshots; the before artifact is not one"
+            Err("agent verify --gap-id requires `check-findings-json` snapshots; the before artifact is not one; save `ripr check --format check-findings-json` output as both --before and --after"
                 .to_string())
         );
         assert!(!"agent verify --gap-id requires".starts_with(GAP_BINDING_REFUSAL_PREFIX));
@@ -2107,7 +2116,7 @@ mod tests {
         );
         assert_eq!(
             error.map(|closure| closure.after_classification),
-            Err("agent verify --gap-id requires `check-findings-json` snapshots; the after artifact is not one"
+            Err("agent verify --gap-id requires `check-findings-json` snapshots; the after artifact is not one; save `ripr check --format check-findings-json` output as both --before and --after"
                 .to_string())
         );
     }

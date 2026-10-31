@@ -87,7 +87,9 @@ fn validate_stable_id(id: &str) -> Result<(), String> {
         return Err("ID must be non-empty; give every fact a stable non-empty id".to_string());
     }
     if id.chars().any(char::is_whitespace) {
-        return Err("ID must not contain whitespace; remove the whitespace from the fact id".to_string());
+        return Err(
+            "ID must not contain whitespace; remove the whitespace from the fact id".to_string(),
+        );
     }
     if id.len() >= 2 && id.as_bytes()[1] == b':' {
         return Err(format!("ID `{id}` looks like a Windows drive path"));
@@ -123,7 +125,9 @@ fn validate_repo_relative_path(path: &str) -> Result<(), String> {
         return Err("path must be non-empty (use `.` for the repo root)".to_string());
     }
     if path.starts_with('/') {
-        return Err(format!("path `{path}` is absolute; must be repo-relative; export the path relative to the repository root"));
+        return Err(format!(
+            "path `{path}` is absolute; must be repo-relative; export the path relative to the repository root"
+        ));
     }
     if path.len() >= 2 && path.as_bytes()[1] == b':' {
         return Err(format!(
@@ -1455,7 +1459,9 @@ impl PerlFactPacket {
         for (field, ids) in &id_checks {
             for id in ids {
                 if let Err(reason) = validate_stable_id(id) {
-                    return Err(format!("ingestion: malformed {field} ID `{id}` — {reason}; regenerate the Perl fact packet with a corrected exporter and rerun"));
+                    return Err(format!(
+                        "ingestion: malformed {field} ID `{id}` — {reason}; regenerate the Perl fact packet with a corrected exporter and rerun"
+                    ));
                 }
             }
         }
@@ -4231,7 +4237,9 @@ fn fact_classes_arg(fact_classes: &[PerlFactClass]) -> String {
 
 fn stable_repo_path_arg(path: String, field: &str) -> Result<String, String> {
     if path.is_empty() {
-        return Err(format!("Perl fact export `{field}` path must not be empty; pass a repo-relative path"));
+        return Err(format!(
+            "Perl fact export `{field}` path must not be empty; pass a repo-relative path"
+        ));
     }
     if path.contains('\\')
         || path.starts_with('/')
