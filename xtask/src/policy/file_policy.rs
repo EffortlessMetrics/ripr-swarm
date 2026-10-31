@@ -115,7 +115,15 @@ pub(crate) fn check_file_policy() -> Result<(), String> {
     let policy_path = "policy/non-rust-allowlist.toml";
     let allowlist = read_file_policy_allowlist(policy_path)?;
     let mut diagnostics = Vec::new();
-    let deferred = test_coverage_deferred(std::env::var(DEFER_TEST_COVERAGE_ENV).ok().as_deref());
+    let deferred = test_coverage_deferred(
+        std::env::var(DEFER_TEST_COVERAGE_ENV).ok().as_deref(),
+        std::env::var("GITHUB_ACTIONS").ok().as_deref(),
+    );
+    if deferred {
+        eprintln!(
+            "xtask: check-file-policy is deferring test-valued covered_by enumeration ({DEFER_TEST_COVERAGE_ENV}=1); the hosted test shards run the full check"
+        );
+    }
     let coverage = if deferred {
         // Parse the selectors so a malformed ledger still fails here, but
         // enumerate nothing: the report below says so instead of implying a pass.
@@ -205,9 +213,11 @@ pub(crate) fn check_file_policy() -> Result<(), String> {
     )
 }
 
-/// Only the exact value `1` defers; anything else enumerates, so a typo fails closed.
-fn test_coverage_deferred(value: Option<&str>) -> bool {
-    value == Some("1")
+/// Only the exact value `1` defers, and only inside GitHub Actions, where the
+/// shard-1 backstop exists; anything else enumerates, so a typo or a stray
+/// local export fails closed.
+fn test_coverage_deferred(value: Option<&str>, github_actions: Option<&str>) -> bool {
+    value == Some("1") && github_actions == Some("true")
 }
 
 fn file_policy_failure_report(
@@ -700,7 +710,7 @@ mod tests {
 
     #[test]
     fn only_the_exact_value_one_defers_test_coverage_enumeration() {
-        assert!(test_coverage_deferred(Some("1")));
+        assert!(test_coverage_deferred(Some("1"), Some("true")));
         for value in [
             None,
             Some(""),
@@ -709,8 +719,18 @@ mod tests {
             Some("1 "),
             Some("yes"),
         ] {
-            assert!(!test_coverage_deferred(value), "{value:?} must enumerate");
+            assert!(
+                !test_coverage_deferred(value, Some("true")),
+                "{value:?} must enumerate"
+            );
         }
+    }
+
+    #[test]
+    fn a_local_export_cannot_defer_test_coverage_enumeration() {
+        // No shard-1 backstop exists outside GitHub Actions.
+        assert!(!test_coverage_deferred(Some("1"), None));
+        assert!(!test_coverage_deferred(Some("1"), Some("false")));
     }
 
     fn argv(command: &str) -> Vec<String> {

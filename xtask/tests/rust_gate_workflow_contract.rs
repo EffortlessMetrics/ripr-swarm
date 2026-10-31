@@ -541,6 +541,21 @@ fn routed_result_cannot_pass_without_the_hosted_shards() {
 #[test]
 fn gates_defer_test_coverage_enumeration_exactly_when_tests_are_sharded() {
     assert!(WORKFLOW.contains(
-        "RIPR_FILE_POLICY_DEFER_TEST_COVERAGE: ${{ inputs.test-shards == 1 && '' || '1' }}\n        run: cargo xtask ci-policy"
+        "RIPR_FILE_POLICY_DEFER_TEST_COVERAGE: ${{ inputs.test-shards != 1 && '1' || '' }}\n        run: cargo xtask ci-policy"
+    ));
+}
+
+#[test]
+fn gates_defer_expression_is_not_the_falsy_ternary() {
+    // `cond && '' || '1'` always yields '1' because '' is falsy, which would
+    // defer the enumeration on every route, including the unsharded ones that
+    // have no shard-1 backstop. The truthy branch must carry the '1'.
+    let changed = WORKFLOW.replace(
+        "${{ inputs.test-shards != 1 && '1' || '' }}",
+        "${{ inputs.test-shards == 1 && '' || '1' }}",
+    );
+    assert_ne!(changed, WORKFLOW);
+    assert!(!changed.contains(
+        "RIPR_FILE_POLICY_DEFER_TEST_COVERAGE: ${{ inputs.test-shards != 1 && '1' || '' }}"
     ));
 }
