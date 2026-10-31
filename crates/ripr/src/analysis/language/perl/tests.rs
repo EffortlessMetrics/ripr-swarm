@@ -3003,6 +3003,105 @@ fn h2_changed_pattern_is_not_observed_by_equal_sink_text() -> Result<(), String>
     Ok(())
 }
 
+/// RIPR-SPEC-0235 rule 22 (#8979): an exact oracle on one input observes the
+/// value at that input, not whether the input sits near a changed ordering
+/// threshold, and the packet has no row-owned predicate-input fact, so equal
+/// sink text on a changed ordering comparison is `static_unknown` with no gap
+/// and no location, never `exposed`, unless the oracle's owner call passes the
+/// threshold literal. Equal sink text with no ordering comparison, including
+/// `->` and `=>`, keeps rule 9's alignment.
+#[test]
+fn h2_changed_ordering_comparison_is_not_observed_by_equal_sink_text() -> Result<(), String> {
+    let finding_for = |sink: &str| -> Result<crate::domain::Finding, String> {
+        let packet = EXACT_RETURN_PACKET
+            .replace(
+                "\"changed_text_digest\": \"sha256:return\",",
+                &format!(
+                    "\"changed_text_digest\": \"sha256:return\",\n      \"changed_observable\": \"{sink}\","
+                ),
+            )
+            .replace(
+                "\"expression\": \"is($got, 10, 'discount threshold')\",",
+                &format!(
+                    "\"expression\": \"is($got, 10, 'discount threshold')\",\n      \"observed_sink\": \"{sink}\","
+                ),
+            );
+        Ok(findings_from_packet(&packet)?
+            .first()
+            .ok_or_else(|| "expected one finding".to_string())?
+            .clone())
+    };
+    for comparison in [
+        "'gold' if 1000 <= $points",
+        "$points >= 1000",
+        "$n < 3",
+        "$n > 3",
+        "$a lt $b",
+        "$a ge $b",
+        "$a <=> $b",
+        "$a cmp $b",
+    ] {
+        let finding = finding_for(comparison)?;
+        assert_eq!(
+            finding.class,
+            crate::domain::ExposureClass::StaticUnknown,
+            "a changed ordering comparison must not align by equal text: {comparison}"
+        );
+        assert!(
+            !finding
+                .evidence
+                .iter()
+                .any(|e| e.starts_with("perl_already_discriminated:")),
+            "{comparison}: no already-discriminated evidence"
+        );
+        assert!(
+            finding
+                .recommended_next_step
+                .as_deref()
+                .is_some_and(|step| step.contains("on each side of the boundary")),
+            "{comparison}: the next step says what settles it"
+        );
+    }
+    // An owner call whose literal argument is the threshold keeps the
+    // alignment: that test does put an input on the boundary.
+    let on_threshold = EXACT_RETURN_PACKET
+        .replace(
+            "\"changed_text_digest\": \"sha256:return\",",
+            "\"changed_text_digest\": \"sha256:return\",\n      \"changed_observable\": \"$amount >= 100\",",
+        )
+        .replace(
+            "\"expression\": \"is($got, 10, 'discount threshold')\",",
+            "\"expression\": \"is(discount(100), 10, 'discount threshold')\",\n      \"observed_sink\": \"$amount >= 100\",",
+        );
+    let exposed = findings_from_packet(&on_threshold)?
+        .first()
+        .ok_or_else(|| "expected one finding".to_string())?
+        .class
+        .clone();
+    assert_eq!(
+        exposed,
+        crate::domain::ExposureClass::Exposed,
+        "a literal threshold input in the owner call keeps exact alignment"
+    );
+    // Controls: arrows, fat commas, hash keys named like the operators and
+    // equality tests are not ordering comparisons, so equal text still aligns.
+    for plain in [
+        "$obj->total",
+        "{ lt => 1 }",
+        "$h{gt}",
+        "$rate * 0.9",
+        "$a eq $b",
+        "$a == $b",
+    ] {
+        assert_eq!(
+            finding_for(plain)?.class,
+            crate::domain::ExposureClass::Exposed,
+            "a sink with no ordering comparison keeps exact alignment: {plain}"
+        );
+    }
+    Ok(())
+}
+
 /// RIPR-SPEC-0235 rule 20 (#9416): a direct owner call no oracle is linked to,
 /// in a test that also asserts through a code reference, may be observed
 /// through a closure the owner returned, so it reads `static_unknown` with a

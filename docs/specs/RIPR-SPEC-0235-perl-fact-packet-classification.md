@@ -407,6 +407,34 @@ For each change, the first match wins:
     subs, so the line was silent and silence reads as "nothing to check". A
     file with no owner-less boundary that names a limit, and a line a
     change or owner covers, are unchanged.
+22. **A changed ordering comparison needs a threshold input (#8979).**
+    Rule 9 aligns a change whose `changed_observable` contains an ordering
+    comparison (`<`, `>`, `<=`, `>=`, `<=>`, or a `lt`, `gt`, `le`, `ge` or
+    `cmp` word that is not a variable, method or hash key name; a `>` after
+    `-` or `=` is an arrow or fat comma) only when the aligned oracle's
+    `expression` calls the changed owner's sub with a literal argument that
+    equals a numeric literal written directly beside the operator (`1000` in
+    `'gold' if 1000 <= $points`; digit separators are ignored, a leading `-`
+    counts; the sub name comes from the owner id). An exact oracle on one
+    input observes the value at that input, not whether the input sits near
+    the threshold: moving `>= 1000` changes no asserted value when the test
+    asserts only 2000 and 10. The packet carries no row-owned predicate-input
+    fact (the producer fact tracked by perl-lsp-swarm#17237 and #5562), so
+    this is a bounded lexical read of two strings the packet already
+    carries; ripr does not parse Perl. Without that threshold input the
+    change reads `static_unknown`, with no gap and no location (rule 13), a
+    next step that names what settles it, and no static limit kind. A
+    nested call, a variable, a string and any other argument form
+    contribute no input, and a literal that is not directly beside the
+    operator is not a threshold, so uncertainty only withholds `exposed`.
+    The threshold hit is not a claim that the test also asserts a value on
+    the other side of the boundary. Equality tests (`==`, `eq`) are not
+    ordering comparisons and keep rule 9. A row credited only by equal sink
+    text with inputs that are not literals (for example
+    `perl-test2-close-month-subtest`, which reaches the boundary through a
+    sum) reads `limited` until the producer emits the fact; that is an
+    accepted missed credit, not a claim that the test fails to
+    discriminate.
 
 ### Decisions
 
@@ -669,7 +697,8 @@ cases.
   adds no numbered example: the corpus counts those),
   `closure_oracle_beside_an_unlinked_owner_call_is_unknown_not_a_gap` (rule 20)
   and `uncovered_top_level_line_beside_file_boundaries_is_a_stated_limit`
-  (rule 21), which add no numbered examples either,
+  (rule 21), and `h2_changed_ordering_comparison_is_not_observed_by_equal_sink_text`
+  (rule 22), which add no numbered examples either,
   `h2_producer_declared_absent_observable_is_unknown_not_a_gap` (rule 18,
   example 32), `h2_aligned_sink_on_another_tests_oracle_does_not_promote`
   (rules 5 and 9, example 28), `h1_ownerless_file_boundary_still_blocks`,
@@ -705,6 +734,7 @@ cases.
   - `PerlFactPacket::classify_related_relation`: rules 4 to 7;
   - `PerlFactPacket::classify_change_from_related_tests`: rule 8;
   - `sink_aligned_observation`: rules 5, 9 and 19 (`matches_a_pattern`);
+    `changes_ordering_comparison` in `packet_to_findings`: rule 22;
   - `packet_to_findings_with_currentness` (`coderef_unresolved`) and
     `PerlFactPacket::test_asserts_through_code_reference`: rule 20;
   - `unowned_change_findings` and `static_limit::file_scope_kind`: rule 21;
