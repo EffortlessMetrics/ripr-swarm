@@ -1713,7 +1713,13 @@ fn run_pipeline_for_diff_text_with_language_config(
                 } else {
                     outcomes
                 });
-                if unread_sources && keeps_limitations {
+                // A changed file that cannot be read already reports its own
+                // path-bearing `language_scope_unsupported`; do not stack a
+                // pathless duplicate in front of it.
+                let already_disclosed = result.limitations.iter().any(|limitation| {
+                    limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported
+                });
+                if unread_sources && keeps_limitations && !already_disclosed {
                     limitations.push(unread_sources_limitation(*language, result.skipped_files)?);
                 }
                 if repeat_typescript_pass {
