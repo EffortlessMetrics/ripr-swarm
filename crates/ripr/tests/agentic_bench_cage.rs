@@ -1481,31 +1481,8 @@ fn b6_dirty_production_premise_refuses_before_the_inventory_in_both_arms() -> Re
         "before",
     ];
 
-    // Negative: a dirty allowed-surface-shaped test file defers to HEAD
-    // behavior, which for an unknown subject is the unknown-subject refusal.
-    let test_path = root.join("tests/pricing.rs");
-    let mut test_source = fs::read_to_string(&test_path)
-        .map_err(|error| format!("read {}: {error}", test_path.display()))?;
-    test_source.push_str("\n// focused test edit\n");
-    fs::write(&test_path, test_source)
-        .map_err(|error| format!("write {}: {error}", test_path.display()))?;
-    for (label, args) in [("seam", &seam_args[..]), ("gap", &gap_args[..])] {
-        let output = run_ripr(&root, args)?;
-        let text = combined_output(&output);
-        if text.contains("needs your source changes committed first") {
-            return Err(format!(
-                "{label} arm: a dirty test file must not early-refuse:\n{text}"
-            ));
-        }
-        if output.status.success() {
-            return Err(format!("{label} arm: unknown subject must refuse:\n{text}"));
-        }
-    }
-
     // Positive: a dirty production file refuses first, in both arms, with the
     // existing text and no workflow artifact.
-    fixture_git_ok(&root, &["checkout", "--", "tests/pricing.rs"])
-        .map_err(|error| format!("restore tests/pricing.rs: {error}"))?;
     edit_out_of_surface(&root)?;
     for (label, args) in [("seam", &seam_args[..]), ("gap", &gap_args[..])] {
         let output = run_ripr(&root, args)?;
@@ -1526,6 +1503,30 @@ fn b6_dirty_production_premise_refuses_before_the_inventory_in_both_arms() -> Re
             || root.join("target/ripr/repair-attempts").exists()
         {
             return Err(format!("{label} arm: early refusal wrote artifacts"));
+        }
+    }
+
+    fixture_git_ok(&root, &["checkout", "--", "src/lib.rs"])
+        .map_err(|error| format!("restore src/lib.rs: {error}"))?;
+
+    // Negative: a dirty allowed-surface-shaped test file defers to HEAD
+    // behavior, which for an unknown subject is the unknown-subject refusal.
+    let test_path = root.join("tests/pricing.rs");
+    let mut test_source = fs::read_to_string(&test_path)
+        .map_err(|error| format!("read {}: {error}", test_path.display()))?;
+    test_source.push_str("\n// focused test edit\n");
+    fs::write(&test_path, test_source)
+        .map_err(|error| format!("write {}: {error}", test_path.display()))?;
+    for (label, args) in [("seam", &seam_args[..]), ("gap", &gap_args[..])] {
+        let output = run_ripr(&root, args)?;
+        let text = combined_output(&output);
+        if text.contains("needs your source changes committed first") {
+            return Err(format!(
+                "{label} arm: a dirty test file must not early-refuse:\n{text}"
+            ));
+        }
+        if output.status.success() {
+            return Err(format!("{label} arm: unknown subject must refuse:\n{text}"));
         }
     }
     Ok(())
