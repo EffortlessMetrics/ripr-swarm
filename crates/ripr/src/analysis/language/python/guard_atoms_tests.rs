@@ -224,3 +224,30 @@ fn unreadable_guard_shapes_keep_the_credit() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn a_parenthesized_scalar_is_not_a_one_element_container() -> Result<(), String> {
+    // `(None)` is `None`, so the `is None` arm is taken: the credit stays.
+    let none_arm = "def label(x):\n    if x is None:\n        return 'nil'\n";
+    assert_eq!(
+        classify(none_arm, OLD_NIL, &test_of("label((None))", "'nil'"))?,
+        ExposureClass::Exposed
+    );
+    // `(0)` is falsy, so the `not x` arm is taken: the credit stays.
+    let falsy_arm = "def label(x):\n    if not x:\n        return 'nil'\n";
+    assert_eq!(
+        classify(falsy_arm, OLD_NIL, &test_of("label((0))", "'nil'"))?,
+        ExposureClass::Exposed
+    );
+    // `('')` is the empty string, also falsy.
+    assert_eq!(
+        classify(falsy_arm, OLD_NIL, &test_of("label((''))", "'nil'"))?,
+        ExposureClass::Exposed
+    );
+    // A real one-element tuple `(0,)` is truthy and still demotes the arm.
+    assert_eq!(
+        classify(falsy_arm, OLD_NIL, &test_of("label((0,))", "'nil'"))?,
+        ExposureClass::WeaklyExposed
+    );
+    Ok(())
+}
