@@ -857,9 +857,10 @@ fn root_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Sele
         }
         // `doctor` detects TypeScript or JavaScript from a `package.json` or
         // shallow source files, but the no-config rule above enables the
-        // adapter only from a `tsconfig.json`/`jsconfig.json` marker or
-        // TypeScript below `src`/`tests` (`package.json` alone is deliberately
-        // not a marker). The root is the right one in that case, so name the
+        // adapter only from a `tsconfig.json`/`jsconfig.json` marker, or from a
+        // `package.json` beside JavaScript or TypeScript source at the root or
+        // in `src`/`test`/`tests` (`package.json` alone is deliberately not a
+        // marker). The root is the right one in that case, so name the
         // missing marker instead of calling it a wrong root and looping back
         // to `doctor` (#10713). A root `doctor` also detects as Python keeps
         // `wrong_root` (its `package.json` is likely tooling), and Rust below
@@ -881,7 +882,7 @@ fn root_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Sele
                 "blocked_artifact",
                 "typescript_project_marker_missing",
                 format!(
-                    "The first-pr root `{}` looks like a {kind} project, but first-pr needs a `tsconfig.json` or `jsconfig.json` at the root, or TypeScript files under `src/` or `tests/`; a `package.json` alone is not enough. This root is not necessarily wrong: add a `{marker}` (an empty `{{}}` is enough) and rerun `ripr first-pr`.",
+                    "The first-pr root `{}` looks like a {kind} project, but first-pr needs a `tsconfig.json` or `jsconfig.json` at the root, or a `package.json` with JavaScript or TypeScript files at the root or under `src/`, `test/` or `tests/`; a `package.json` alone is not enough. This root is not necessarily wrong: add a `{marker}` (an empty `{{}}` is enough) and rerun `ripr first-pr`.",
                     options.root
                 ),
                 None,
@@ -8030,10 +8031,13 @@ mod tests {
         });
         let command = recommended_gap_repair_command(&record, &ledger, &options)
             .ok_or("validator-accepted TypeScript record must recommend the start")?;
+        let base = crate::agent::loop_commands::shell_arg("HEAD~1");
+        #[cfg(unix)]
+        assert_eq!(base, "'HEAD~1'");
         assert!(
-            command.starts_with(
-                "ripr agent repair --gap-id gap:typescript:typescript_preview:2396aec1 --base 'HEAD~1' --root "
-            ),
+            command.starts_with(&format!(
+                "ripr agent repair --gap-id gap:typescript:typescript_preview:2396aec1 --base {base} --root "
+            )),
             "{command}"
         );
         assert!(command.ends_with(" --phase before"), "{command}");
@@ -8111,6 +8115,92 @@ mod tests {
         }
         assert_eq!(
             recommended_gap_repair_command(&no_canonical, &ledger, &options),
+            None
+        );
+        Ok(())
+    }
+
+    /// #10709: end to end from the saved TypeScript check output through the
+    /// real ledger producer, `first-pr` recommends the gap-bound start only
+    /// when the producer-emitted record is candidate-current and the recorded
+    /// analysis outcome is complete. Every other state recommends nothing.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn producer_made_typescript_ledger_recommends_only_when_current_and_complete()
+    -> Result<(), String> {
+        use crate::output::gap_decision_ledger::{
+            GapDecisionLedgerInput, GapDecisionLedgerSourceKind, build_gap_decision_ledger_report,
+            render_gap_decision_ledger_json,
+        };
+        let check: Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/first_successful_pr/typescript-preview-gap/inputs/reports/before-check.json"
+        ))
+        .map_err(|error| format!("parse TypeScript check fixture: {error}"))?;
+        let options = FirstPrOptions {
+            base: "HEAD~1".to_string(),
+            ..FirstPrOptions::default()
+        };
+        let recommend = |mutate: &dyn Fn(&mut Value)| -> Result<Option<String>, String> {
+            let mut check = check.clone();
+            mutate(&mut check);
+            let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+                root: ".".to_string(),
+                generated_at: "test".to_string(),
+                source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+                records_path: "check.json".to_string(),
+                records_json: Ok(check.to_string()),
+            });
+            let ledger: Value = serde_json::from_str(&render_gap_decision_ledger_json(&report)?)
+                .map_err(|error| error.to_string())?;
+            let Some(record) = ledger["records"].get(0) else {
+                return Ok(None);
+            };
+            Ok(recommended_gap_repair_command(record, &ledger, &options))
+        };
+
+        let command = recommend(&|_| {})?
+            .ok_or("a current, complete, producer-made TypeScript record must recommend")?;
+        assert!(
+            command.starts_with(
+                "ripr agent repair --gap-id gap:typescript:typescript_preview:2396aec1 --base 'HEAD~1' --root "
+            ) && command.ends_with(" --phase before"),
+            "{command}"
+        );
+
+        // Missing and non-current source currentness: no recommendation.
+        assert_eq!(
+            recommend(&|check| {
+                if let Some(finding) = check["findings"][0].as_object_mut() {
+                    finding.remove("source_currentness");
+                }
+            })?,
+            None
+        );
+        assert_eq!(
+            recommend(&|check| check["findings"][0]["source_currentness"] = json!("unknown"))?,
+            None
+        );
+        assert_eq!(
+            recommend(
+                &|check| check["findings"][0]["source_currentness"] = json!("moved_or_renamed")
+            )?,
+            None
+        );
+        // Missing, incomplete or bounded analysis outcome: no recommendation.
+        assert_eq!(
+            recommend(&|check| {
+                if let Some(object) = check.as_object_mut() {
+                    object.remove("analysis_outcome");
+                }
+            })?,
+            None
+        );
+        assert_eq!(
+            recommend(&|check| check["analysis_outcome"]["analysis_complete"] = json!(false))?,
+            None
+        );
+        assert_eq!(
+            recommend(&|check| check["analysis_outcome"]["document_complete"] = json!(false))?,
             None
         );
         Ok(())

@@ -11,13 +11,52 @@ use std::path::Path;
 
 mod declarations;
 
+/// Changed lines handed to `declarations::type_bound_lines` between two
+/// cancellation checkpoints. A whole-file change (an unsaved buffer) puts
+/// thousands of lines in one call, and the verdict work grows faster than
+/// the line count, so one call could outlast a `shutdown` by many seconds
+/// (#11439). Each verdict depends only on its own line, so the chunking does
+/// not change any result.
+const TYPE_BOUND_CHUNK_LINES: usize = 256;
+
+fn cancellable_type_bound_lines(
+    source: &str,
+    lines: &[crate::analysis::diff::ChangedLine],
+) -> Vec<bool> {
+    verdicts_in_cancellable_chunks(lines, TYPE_BOUND_CHUNK_LINES, |chunk| {
+        declarations::type_bound_lines(source, chunk)
+    })
+}
+
+/// Runs `verdicts` over `lines` in chunks, checking the run's cancellation
+/// token before each chunk. After a cancel the remaining lines get `false`
+/// without being examined, so the result always has one entry per line. The
+/// token is sticky and every caller reaches an unconditional checkpoint
+/// before publishing, so these filler verdicts are discarded with the
+/// cancelled run and never become a finding.
+fn verdicts_in_cancellable_chunks(
+    lines: &[crate::analysis::diff::ChangedLine],
+    chunk_lines: usize,
+    mut verdicts: impl FnMut(&[crate::analysis::diff::ChangedLine]) -> Vec<bool>,
+) -> Vec<bool> {
+    let mut out = Vec::with_capacity(lines.len());
+    for chunk in lines.chunks(chunk_lines.max(1)) {
+        if crate::analysis::cancellation::checkpoint().is_err() {
+            break;
+        }
+        out.extend(verdicts(chunk));
+    }
+    out.resize(lines.len(), false);
+    out
+}
+
 pub(super) fn added_type_bound_lines(
     index: &RustIndex,
     changed: &crate::analysis::diff::ChangedFile,
 ) -> Vec<bool> {
     file_facts(index, &changed.path)
         .filter(|facts| !facts.used_lexical_fallback)
-        .map(|facts| declarations::type_bound_lines(&facts.source, &changed.added_lines))
+        .map(|facts| cancellable_type_bound_lines(&facts.source, &changed.added_lines))
         .unwrap_or_else(|| vec![false; changed.added_lines.len()])
 }
 
@@ -77,7 +116,7 @@ pub(super) fn removed_type_bounds(
     let Some(source) = old_source else {
         return unavailable();
     };
-    let lines = declarations::type_bound_lines(source, &changed.removed_lines);
+    let lines = cancellable_type_bound_lines(source, &changed.removed_lines);
     let field_declarations = declarations::field_declaration_lines(source, &changed.removed_lines);
     if !lines
         .iter()
@@ -887,6 +926,74 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
+
+    fn numbered_lines(count: usize) -> Vec<crate::analysis::diff::ChangedLine> {
+        (1..=count)
+            .map(|line| crate::analysis::diff::ChangedLine {
+                line,
+                new_side_line: line,
+                text: format!("let x{line} = {line};"),
+            })
+            .collect()
+    }
+
+    /// #11439: the verdict pass must stop examining lines once the run is
+    /// cancelled. Counting the lines the verdict closure is handed is
+    /// deterministic, unlike a wall-clock bound; the old single call over
+    /// every line would hand it all 1000.
+    #[test]
+    fn type_bound_verdicts_stop_after_cancellation() {
+        use crate::analysis::cancellation::{AnalysisAbortKind, AnalysisCancellationToken};
+        let lines = numbered_lines(1000);
+        let token = AnalysisCancellationToken::new();
+
+        // Control: an active token examines every line, in order, with the
+        // same verdicts an unchunked call would give.
+        let mut examined = 0usize;
+        let all = crate::analysis::cancellation::with_token(&token, || {
+            verdicts_in_cancellable_chunks(&lines, 100, |chunk| {
+                examined += chunk.len();
+                chunk.iter().map(|line| line.line % 2 == 0).collect()
+            })
+        });
+        assert_eq!(examined, 1000);
+        assert_eq!(all.len(), 1000);
+        assert!(
+            all.iter()
+                .enumerate()
+                .all(|(i, v)| *v == ((i + 1) % 2 == 0))
+        );
+
+        // Cancel after the third chunk: three chunks examined, no more, and
+        // the result still has one entry per line.
+        let mut chunks = 0usize;
+        let mut examined = 0usize;
+        let cancelled = crate::analysis::cancellation::with_token(&token, || {
+            verdicts_in_cancellable_chunks(&lines, 100, |chunk| {
+                chunks += 1;
+                examined += chunk.len();
+                if chunks == 3 {
+                    token.cancel(AnalysisAbortKind::Cancelled);
+                }
+                vec![true; chunk.len()]
+            })
+        });
+        assert_eq!((chunks, examined), (3, 300));
+        assert_eq!(cancelled.len(), 1000);
+        assert!(cancelled[..300].iter().all(|v| *v));
+        assert!(cancelled[300..].iter().all(|v| !*v));
+
+        // The token is sticky: a run that starts cancelled examines nothing.
+        let mut examined = 0usize;
+        let none = crate::analysis::cancellation::with_token(&token, || {
+            verdicts_in_cancellable_chunks(&lines, 100, |chunk| {
+                examined += chunk.len();
+                vec![true; chunk.len()]
+            })
+        });
+        assert_eq!(examined, 0);
+        assert_eq!(none.len(), 1000);
+    }
 
     /// #8389: an `impl` header is not a behavior line, but a one-line `impl`,
     /// a `fn` signature, an expression that merely contains the word and a

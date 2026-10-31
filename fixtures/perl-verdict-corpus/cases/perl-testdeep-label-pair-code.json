@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testdeep-label-pair-code.json",
-    "sha256": "3cd7c398daf038c04f1c985d96229e9ef45ab303add12099bb1b29b57efe588e",
+    "sha256": "8d9d4ee2c3c6ad545e99ba3b9f3468df3bcb8641b85505ef6244b5f343135300",
     "provenance": "producer"
   }
 }

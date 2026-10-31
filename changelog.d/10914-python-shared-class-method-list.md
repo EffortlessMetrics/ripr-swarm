@@ -1,2 +1,0 @@
-<!-- section: Changed -->
-- Python: every method owner of a class now shares one list of the class's method names. Before, each method held its own copy, which grew quadratically with class size. Measured locally on 4 cores against main b7b2ab74, with byte-identical output: pandas ecdb4258 warm peak RSS went from 512–514 MiB to 495–496 MiB, at 2.0–2.1 s; Django 5c13b5a went from 361–364 MiB to 355–357 MiB (#10914).

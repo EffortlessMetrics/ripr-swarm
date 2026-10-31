@@ -57,7 +57,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-idiom-regex-version.json",
-    "sha256": "0aea9186bc3de656462e6811be490fd75588bb13b493c27aae15c411c0128276",
+    "sha256": "9b6889d4e532e0c8850721c3955ba0b859fdaef880e87d8f961f620cd4b0f825",
     "provenance": "producer"
   }
 }

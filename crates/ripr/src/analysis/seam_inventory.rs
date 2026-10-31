@@ -105,6 +105,44 @@ impl PilotInventoryDefault {
     }
 }
 
+/// Serializes widened-cap holders so overlapping holders (concurrent MCP
+/// worker threads) cannot restore out of order and strand the cap.
+static WIDEN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Guard that holds a repair-widened built-in inventory cap (#1887).
+#[must_use = "the widened inventory cap lasts only while the guard is held"]
+pub(crate) struct WidenedInventoryCap {
+    previous: usize,
+    // Fields drop after `Drop::drop` runs, so the lock is released after the
+    // cap is restored.
+    _exclusive: std::sync::MutexGuard<'static, ()>,
+}
+
+impl PilotInventoryDefault {
+    /// Raises the built-in inventory cap to `cap` for the guard's lifetime, so
+    /// an in-process rerun can cover a repository the product default cut. An
+    /// explicit `RIPR_REPO_EXPOSURE_SEAM_LIMIT` still wins. Holders are
+    /// mutually exclusive, so each restores exactly the value it replaced even
+    /// when MCP worker threads widen concurrently; a second holder waits for
+    /// the first to finish its rerun.
+    pub(crate) fn widen_to(cap: usize) -> WidenedInventoryCap {
+        let exclusive = WIDEN_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let previous = PILOT_INVENTORY_DEFAULT.swap(cap, Ordering::Relaxed);
+        WidenedInventoryCap {
+            previous,
+            _exclusive: exclusive,
+        }
+    }
+}
+
+impl Drop for WidenedInventoryCap {
+    fn drop(&mut self) {
+        PILOT_INVENTORY_DEFAULT.store(self.previous, Ordering::Relaxed);
+    }
+}
+
 impl PilotInventoryDefault {
     /// Re-labels an inventory cut made by the pilot-scoped default cap as the
     /// pilot budget cut it stands in for: same analyzed and total counts, the
