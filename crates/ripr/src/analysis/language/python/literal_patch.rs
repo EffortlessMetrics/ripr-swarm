@@ -11,7 +11,7 @@
 //! changed line with control flow, and an owner that is itself patched.
 
 use super::approx_band::parse_expression;
-use super::related_tests::is_python_identifier_char;
+use super::related_tests::{is_python_identifier_char, owner_module_paths};
 use super::source_facts::parse_module_result;
 use super::{PythonImport, PythonOwner, PythonTest, expr_full_name};
 use rustpython_parser::ast::{self, Expr, Mod, Stmt};
@@ -58,6 +58,19 @@ pub(super) fn literal_patch_calls(
             return None;
         }
         let qualified = format!("{}.{name}", segments[segments.len() - 2]);
+        // Last two segments match `time.time()` for any prefix, including
+        // `other.mod.time.time`. The prefix before `qualified` must be the
+        // owner's module — the namespace whose import binds the patched name.
+        // `PythonImport.source_module` is empty for `import time`, so the
+        // owner file's module paths are the source-module fact this check can
+        // use without new parser fields.
+        let prefix = segments[..segments.len() - 2].join(".");
+        if !owner_module_paths(&owner.file)
+            .iter()
+            .any(|module| module.as_str() == prefix)
+        {
+            return None;
+        }
         // Both sides of the edit are one `return` of the same restricted
         // shape, with the substituted call and its `int(...)` wrapping the
         // same number of times, so the edit cannot sit behind the call.
@@ -234,7 +247,7 @@ fn literal_patch_targets(test: &PythonTest, owner: &PythonOwner) -> Option<Vec<S
                 if item.optional_vars.is_some() {
                     return None;
                 }
-                targets.push(patch_target(&item.context_expr, &test.imports)?);
+                targets.push(patch_target(&item.context_expr, test)?);
                 if with.body.is_empty()
                     || !with.body.iter().all(|inner| plain_statement(inner, owner))
                 {
@@ -332,11 +345,11 @@ fn mentions_substitution(text: &str) -> bool {
 }
 
 /// `patch("a.b.c", return_value=1700000000)` -> `a.b.c`.
-fn patch_target(expr: &Expr, imports: &[PythonImport]) -> Option<String> {
+fn patch_target(expr: &Expr, test: &PythonTest) -> Option<String> {
     let Expr::Call(call) = expr else {
         return None;
     };
-    if !is_unittest_mock_patch(expr_full_name(call.func.as_ref())?.as_str(), imports) {
+    if !is_unittest_mock_patch(expr_full_name(call.func.as_ref())?.as_str(), test) {
         return None;
     }
     let [Expr::Constant(target)] = call.args.as_slice() else {
@@ -368,29 +381,34 @@ fn patch_target(expr: &Expr, imports: &[PythonImport]) -> Option<String> {
 
 /// `patch` imported from `unittest.mock`/`mock`, or `mock.patch` through an
 /// import of the `mock` module, spelled by its own name.
-fn is_unittest_mock_patch(name: &str, imports: &[PythonImport]) -> bool {
+fn is_unittest_mock_patch(name: &str, test: &PythonTest) -> bool {
     let spelled = |import: &PythonImport, imported: &str| {
         import.imported == imported && (import.alias.is_empty() || import.alias == imported)
     };
     // The spelled name must be bound exactly once (a second `from x import
-    // patch` would make it something else).
+    // patch` would make it something else). Import facts alone miss a
+    // module-level `def patch` / assignment, so a non-import rebinding of
+    // the spelled name also refuses the exemption.
     let bindings = |word: &str| {
-        imports
+        test.imports
             .iter()
             .filter(|import| import.imported == word || import.alias == word)
             .count()
     };
+    let unrebound = |word: &str| !test.constant_rebinding.module_rebinds(word);
     match name {
         "patch" => {
             bindings("patch") == 1
-                && imports.iter().any(|import| {
+                && unrebound("patch")
+                && test.imports.iter().any(|import| {
                     spelled(import, "patch")
                         && matches!(import.source_module.as_str(), "unittest.mock" | "mock")
                 })
         }
         "mock.patch" => {
             bindings("mock") == 1
-                && imports.iter().any(|import| {
+                && unrebound("mock")
+                && test.imports.iter().any(|import| {
                     spelled(import, "mock")
                         && matches!(import.source_module.as_str(), "unittest" | "")
                 })

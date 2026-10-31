@@ -93,6 +93,11 @@ number, whatever the newer run's own outcome; the read uses the existing
 non-atomic read, not proof that the hosted race is closed or of which check
 GitHub selects for protection.
 
+The admission job also refuses a `merge-ready` pull-request request whose PR has
+unresolved review threads, naming each thread, so the author learns in seconds
+instead of after the roughly hour-long run. It is an early courtesy only: a read
+failure is a warning, and the late recheck above remains the authority.
+
 This is a late eligibility check, not queue-cutover acceptance. The tree match
 binds the queued commit to the head GitHub reports live at admission; it does not
 establish that this is the head a reviewer judged ready, and its premise (GitHub's
@@ -1534,8 +1539,8 @@ collapsed block; when any `RIPR_GATE_MODE` value is set they are not folded.
 The fold stays open ("needs attention") when a folded report is unreadable,
 has an unexpected shape, omits an expected count, or states a warning,
 unknown, blocker, config-error, stale or ownerless-suppression count that is
-not `0`. It folds with the "no warnings or unknowns" label only when every
-the readiness, operations, history, promotion and suppression-health report
+not `0`. It folds with the "no warnings or unknowns" label only when the
+readiness, operations, history, promotion and suppression-health report
 categories each parsed with all expected counts at `0` (preview-promotion and
 waiver-aging reports are conditional and keep it open only when present and not
 clean); it stays open ("some policy reports not found") when a required
