@@ -102,3 +102,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — returned_comparison_rival_import (9)
+
+Reason:
+check-user-text: a new human.txt carrying a banned plain-language term fails the merge-base delta; the unresolved-input reading is pinned by check.json and human-full.txt, so the redundant human.txt is not kept
+
+Command:
+`cargo xtask goldens bless returned_comparison_rival_import --reason "..."`
+
+Updated:
+- `expected/check.json` (unchanged)
+- `expected/human-full.txt` (unchanged)
+- `expected/human.txt` (removed)
