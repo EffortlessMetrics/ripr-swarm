@@ -1356,6 +1356,9 @@ fn push_powershell_variant(out: &mut String, indent: &str, command: &str) {
     }
 }
 
+mod agent;
+#[cfg(test)]
+mod agent_tests;
 mod evidence_lines;
 mod explain;
 #[cfg(test)]
@@ -1363,6 +1366,17 @@ mod hidden_locations_tests;
 mod sections;
 mod shared;
 mod triage;
+
+/// `ripr check --format agent` (#11580): the compact agent projection of the
+/// human triage. Library callers without navigation get bare finding ids.
+pub(crate) fn render_agent_with_config_and_navigation(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    drill_in: Option<&FindingDrillIn>,
+    provenance: CheckDiffProvenance,
+) -> String {
+    agent::render(output, config, drill_in, provenance)
+}
 
 pub(crate) use evidence_lines::{JsonPointerWording, plain_observation_wording};
 pub(crate) use sections::HUMAN_EVIDENCE_LEGEND;
