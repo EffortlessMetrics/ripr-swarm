@@ -24,6 +24,127 @@ use super::*;
 /// Rows beyond this bound leave the table unresolved.
 const MAX_TABLE_ROWS: usize = 64;
 
+/// The one guard every row-table entry path runs on its whole call text
+/// (registration plus callback) before a row literal is substituted.
+///
+/// A row table is read as concrete literals only when nothing in the call
+/// can reach the shared rows or the parameters by a route the scanner does
+/// not follow: `eval`, `Function`, `with`, `arguments`, `this`, `new.target`,
+/// and any backslash outside a string or template (`\u` identifier escapes)
+/// are refused wherever they appear in code, and so is a `/` that could open
+/// a regular expression. Quoted text and comments are skipped, so a title
+/// such as `"this works"` is fine. Fails closed on anything it cannot lex.
+pub(crate) fn row_text_is_inert(text: &str) -> bool {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Mode {
+        Template,
+        Expr(usize),
+    }
+    let bytes = text.as_bytes();
+    let mut modes: Vec<Mode> = vec![Mode::Expr(0)];
+    let mut idx = 0;
+    let mut previous_significant = b'(';
+    while idx < bytes.len() {
+        let byte = bytes[idx];
+        match modes.last().copied() {
+            Some(Mode::Template) => match byte {
+                b'\\' => idx += 2,
+                b'`' => {
+                    modes.pop();
+                    previous_significant = b'`';
+                    idx += 1;
+                }
+                b'$' if bytes.get(idx + 1) == Some(&b'{') => {
+                    modes.push(Mode::Expr(0));
+                    previous_significant = b'(';
+                    idx += 2;
+                }
+                _ => idx += 1,
+            },
+            Some(Mode::Expr(depth)) => match byte {
+                b'\\' => return false,
+                b'`' => {
+                    modes.push(Mode::Template);
+                    idx += 1;
+                }
+                b'"' | b'\'' => {
+                    let mut at = idx + 1;
+                    loop {
+                        match bytes.get(at) {
+                            None | Some(b'\n') => return false,
+                            Some(b'\\') => at += 2,
+                            Some(quote) if *quote == byte => break,
+                            Some(_) => at += 1,
+                        }
+                    }
+                    previous_significant = byte;
+                    idx = at + 1;
+                }
+                b'/' => match bytes.get(idx + 1) {
+                    Some(b'/') => {
+                        idx = text[idx..].find('\n').map_or(bytes.len(), |end| idx + end);
+                    }
+                    Some(b'*') => match text.get(idx + 2..).and_then(|rest| rest.find("*/")) {
+                        Some(end) => idx += 2 + end + 2,
+                        None => return false,
+                    },
+                    _ => {
+                        if !(previous_significant.is_ascii_alphanumeric()
+                            || matches!(previous_significant, b')' | b']' | b'_' | b'$'))
+                        {
+                            return false;
+                        }
+                        previous_significant = b'/';
+                        idx += 1;
+                    }
+                },
+                b'{' => {
+                    if let Some(last) = modes.last_mut() {
+                        *last = Mode::Expr(depth + 1);
+                    }
+                    previous_significant = b'{';
+                    idx += 1;
+                }
+                b'}' => {
+                    if depth == 0 {
+                        if modes.len() == 1 {
+                            return false;
+                        }
+                        modes.pop();
+                    } else if let Some(last) = modes.last_mut() {
+                        *last = Mode::Expr(depth - 1);
+                    }
+                    previous_significant = b'}';
+                    idx += 1;
+                }
+                _ if is_identifier_start(byte) => {
+                    let end = idx
+                        + bytes[idx..]
+                            .iter()
+                            .take_while(|byte| is_identifier_part(**byte))
+                            .count();
+                    let word = &text[idx..end];
+                    if matches!(word, "eval" | "with" | "Function" | "arguments" | "this") {
+                        return false;
+                    }
+                    if word == "new" && text[end..].trim_start().starts_with('.') {
+                        return false;
+                    }
+                    previous_significant = bytes[end - 1];
+                    idx = end;
+                }
+                _ if byte.is_ascii_whitespace() => idx += 1,
+                _ => {
+                    previous_significant = byte;
+                    idx += 1;
+                }
+            },
+            None => return false,
+        }
+    }
+    modes.len() == 1
+}
+
 /// The assertions of every row of an inline literal table, or `None` when
 /// the table is not resolvable (see the module documentation).
 pub(crate) fn table_row_assertions(
@@ -35,6 +156,13 @@ pub(crate) fn table_row_assertions(
     let Expression::CallExpression(each_call) = &call.callee else {
         return None;
     };
+    let text: &str = source;
+    if !text
+        .get(call.span.start as usize..call.span.end as usize)
+        .is_some_and(row_text_is_inert)
+    {
+        return None;
+    }
     let Some(rows) = literal_table_rows(each_call, source) else {
         // Object rows (`{ input, out }`) read through `row.key` (#11196).
         return object_each_assertions(each_call, callback, source, bindings);
@@ -426,6 +554,32 @@ pub(crate) fn reparse_row_assertions(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn row_text_guard_refuses_hidden_mutation_routes_outside_quotes() {
+        for ok in [
+            "test.each([{ a: 1 }])(\"this works\", (t) => { expect(f(t.a)).toBe(1); })",
+            "test(`${t.a} -> eval`, () => { expect(f(t.a)).toBe(1); // this\n })",
+            "test(\"x\", () => { expect(f(t.a / 2)).toBe(1); })",
+        ] {
+            assert!(super::row_text_is_inert(ok), "{ok}");
+        }
+        for bad in [
+            "(t) => { expect(f(t.a, arguments[0].out = 1)).toBe(t.out); }",
+            "(t) => { expect(f(t.a, eval(\"t.out = 1\"))).toBe(t.out); }",
+            "(t) => { expect(f(t.a, (0, eval)(\"1\"))).toBe(t.out); }",
+            "(t) => { expect(f(t.a, globalThis.eval(\"1\"))).toBe(t.out); }",
+            "(t) => { expect(f(t.a, new Function(\"1\")())).toBe(t.out); }",
+            "(t) => { expect(f(t.a, this.x)).toBe(t.out); }",
+            "(t) => { expect(f(t.a, new.target)).toBe(t.out); }",
+            "(t) => { expect(f(t.a, t.\\u006fut = 1)).toBe(t.out); }",
+            "(t) => { with (t) { expect(f(a)).toBe(out); } }",
+            "(t) => { expect(f(t.a, x = /\"/)).toBe(t.out); }",
+            "(t) => { expect(f(`${arguments[0]}`)).toBe(t.out); }",
+        ] {
+            assert!(!super::row_text_is_inert(bad), "{bad}");
+        }
+    }
+
     use super::*;
 
     /// The row re-parse fails closed: a synthesized callback that does not

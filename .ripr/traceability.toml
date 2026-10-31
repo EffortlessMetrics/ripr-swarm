@@ -18821,6 +18821,8 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/object_row_tests.rs::a_destructuring_pattern_repeating_a_key_is_never_resolved",
   "crates/ripr/src/analysis/language/typescript/tests/object_row_tests.rs::loop_parameter_in_registration_arguments_is_never_resolved",
   "crates/ripr/src/analysis/language/typescript/tests/object_row_tests.rs::scalar_cells_resolve_only_as_direct_reads_in_a_lone_expect",
+  "crates/ripr/src/analysis/language/typescript/tests/object_row_tests.rs::hidden_mutation_routes_are_refused_on_every_entry_path",
+  "crates/ripr/src/analysis/language/typescript/table_rows.rs::tests::row_text_guard_refuses_hidden_mutation_routes_outside_quotes",
   "crates/ripr/src/analysis/language/typescript/object_rows.rs::tests::single_expect_statement_accepts_only_one_expect_chain",
   "crates/ripr/src/analysis/language/typescript/object_rows.rs::tests::container_read_needs_a_word_bounded_direct_expect_or_matcher",
   "crates/ripr/src/app/tests/typescript_table_row_packets.rs::const_object_row_table_resolves_the_expected_value",

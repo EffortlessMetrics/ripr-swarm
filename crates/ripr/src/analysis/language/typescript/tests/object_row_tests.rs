@@ -175,6 +175,69 @@ fn scalar_cells_resolve_only_as_direct_reads_in_a_lone_expect() -> Result<(), St
 }
 
 #[test]
+fn hidden_mutation_routes_are_refused_on_every_entry_path() -> Result<(), String> {
+    // Each body would resolve "A%20B"-style literals without the shared guard.
+    let each_table = "[{ input: \"a b\", out: \"a%20b\" }]";
+    let guarded = [
+        (
+            "arguments",
+            "function (t) { expect(encode(t.input, arguments[0].out = encode(\"a\"))).toBe(t.out); }",
+        ),
+        (
+            "eval",
+            "(t) => { expect(encode(t.input, eval(\"t.out = encode('a')\"))).toBe(t.out); }",
+        ),
+        (
+            "indirect eval",
+            "(t) => { expect(encode(t.input, (0, eval)(\"1\"))).toBe(t.out); }",
+        ),
+        (
+            "Function constructor",
+            "(t) => { expect(encode(t.input, new Function(\"1\")())).toBe(t.out); }",
+        ),
+        (
+            "escaped identifier",
+            "(t) => { expect(encode(t.input, t.\\u006fut = encode(\"a\"))).toBe(t.out); }",
+        ),
+        (
+            "this",
+            "function (t) { expect(encode(t.input, this.x)).toBe(t.out); }",
+        ),
+    ];
+    // The same callback without a hidden route resolves, so the guard is the
+    // only reason the cases below stay dynamic.
+    let control = format!(
+        "{PREAMBLE}test.each({each_table})(\"x\", (t) => {{ expect(encode(t.input)).toBe(t.out); }});\n"
+    );
+    let resolved = assertions_of(&control)?;
+    assert_eq!(expected_values(&resolved), vec![Some("\"a%20b\"")]);
+    for (label, callback) in guarded {
+        let source = format!("{PREAMBLE}test.each({each_table})(\"x\", {callback});\n");
+        let assertions = assertions_of(&source)?;
+        if !all_dynamic(&assertions) {
+            return Err(format!("test.each {label} resolved: {assertions:?}"));
+        }
+        // The for...of path shares the guard.
+        let looped = describe_source(
+            TABLE,
+            "",
+            LOOP,
+            &format!(
+                "test(\"x\", {});",
+                callback
+                    .replace("(t) =>", "() =>")
+                    .replace("function (t)", "function ()")
+            ),
+        );
+        let assertions = assertions_of(&looped)?;
+        if !all_dynamic(&assertions) {
+            return Err(format!("for...of {label} resolved: {assertions:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn every_row_must_hold_a_literal_at_every_key_read() -> Result<(), String> {
     for (label, table) in [
         (

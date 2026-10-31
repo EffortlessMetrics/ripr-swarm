@@ -171,6 +171,12 @@ pub(crate) fn row_loop_of(
     };
     let (first, last) = (statements.first()?, statements.last()?);
     let text: &str = source;
+    if !text
+        .get(registration.span.start as usize..registration.span.end as usize)
+        .is_some_and(super::table_rows::row_text_is_inert)
+    {
+        return None;
+    }
     let list_text = text.get(first.span().start as usize..last.span().end as usize)?;
     if super::match_object_guard::whole_word_count(list_text, &table_name) != 2
         || super::match_object_guard::whole_word_count(list_text, "eval") > 0

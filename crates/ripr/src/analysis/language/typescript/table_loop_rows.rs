@@ -159,6 +159,7 @@ pub(crate) fn table_loop_assertions(
     let text: &str = source;
     let body = text.get(block.span.start as usize..block.span.end as usize)?;
     if !body.is_ascii()
+        || !super::table_rows::row_text_is_inert(body)
         || body
             .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
             .any(|word| {

@@ -210,6 +210,16 @@ fn touched_partial_or_derived_tables_keep_the_dynamic_refusal() -> Result<(), St
                 .to_string(),
         ),
         (
+            "each-arguments-alias",
+            "describe(\"tier\", () => {\n  test.each([\n    { input: 999, out: \"silver\" },\n    { input: 1000, out: \"gold\" },\n  ])(\"tier\", function (t) {\n    expect(tier(t.input, arguments[0].out = tier(0))).toBe(t.out);\n  });\n});"
+                .to_string(),
+        ),
+        (
+            "each-eval-write",
+            "describe(\"tier\", () => {\n  test.each([\n    { input: 999, out: \"silver\" },\n    { input: 1000, out: \"gold\" },\n  ])(\"tier\", (t) => {\n    expect(tier(t.input, eval(\"t.out = tier(0)\"))).toBe(t.out);\n  });\n});"
+                .to_string(),
+        ),
+        (
             "deleted-scalar",
             "describe(\"tier\", () => {\n  const cases = [\n    { input: 999, out: \"silver\" },\n    { input: 1000, out: \"gold\" },\n  ];\n  for (const t of cases) {\n    test(\"tier by points\", () => {\n      expect((delete t.out, tier(t.input))).toBe(t.out);\n    });\n  }\n});"
                 .to_string(),

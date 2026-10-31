@@ -430,7 +430,16 @@ comma list, `void`, `delete`, an array, an operator, a further member
 (`Object.assign(t.input, ..)`, `fix(t.input)`) refuses the table. A
 container (array or object) cell is shared by every read of the row, so it
 is additionally read at most once. The `expect` it names must be a whole
-word (not `myexpect(` or `x.expect(`). A pattern that repeats a row key
+word (not `myexpect(` or `x.expect(`).
+One guard, applied to the whole call text (registration plus callback) of
+every row-table entry path (`for...of`, `test.each` over arrays or object
+rows, destructured and array-row parameters), refuses the table when code
+(outside quoted text and comments) contains `eval`, `Function`, `with`,
+`arguments`, `this`, `new.target`, any backslash (identifier `\u` escapes),
+or a `/` that could open a regular expression; the `for...of` form also
+bans `eval`, `with` and `\u` anywhere in its statement list. A destructured
+scalar local is a copy of the cell, so it is exempt from the lone-`expect`
+rule that every `row.key` read obeys. A pattern that repeats a row key
 (`({ input: a, input: b })`) refuses the table, and in the `for...of` form
 the loop parameter may not appear in the registration's callee or in any
 registration argument other than the callback, except a title that is
