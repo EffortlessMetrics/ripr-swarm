@@ -79,3 +79,21 @@ fn help_workspace_still_rejects_changed_contents() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn help_workspaces_get_distinct_roots_even_when_created_back_to_back() -> Result<(), String> {
+    // Roots are removed on return, so reuse of a name would not be visible as
+    // a leak; compare the paths the callbacks observed instead (#10865).
+    let mut roots = Vec::new();
+    for _ in 0..64 {
+        in_help_workspace(|root| {
+            roots.push(root.to_path_buf());
+            Ok(())
+        })?;
+    }
+    let mut unique = roots.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), roots.len(), "help workspace root was reused");
+    Ok(())
+}
