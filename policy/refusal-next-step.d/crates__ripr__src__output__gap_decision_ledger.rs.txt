@@ -1,0 +1,15 @@
+crates/ripr/src/output/gap_decision_ledger.rs|case {case_id} is missing expected_gap_record
+crates/ripr/src/output/gap_decision_ledger.rs|command_specs must be an object
+crates/ripr/src/output/gap_decision_ledger.rs|command_specs.{field} contains {} role, expected {}
+crates/ripr/src/output/gap_decision_ledger.rs|command_specs.{field} is invalid: {error}
+crates/ripr/src/output/gap_decision_ledger.rs|command_specs.{field} is malformed: {error}
+crates/ripr/src/output/gap_decision_ledger.rs|command_specs.{field} must be an object or array
+crates/ripr/src/output/gap_decision_ledger.rs|expected check output object with finding_alignment.items or findings array
+crates/ripr/src/output/gap_decision_ledger.rs|expected object or array at gap record root
+crates/ripr/src/output/gap_decision_ledger.rs|expected repo exposure object with seams array
+crates/ripr/src/output/gap_decision_ledger.rs|findings array entry {index} is not a JSON object
+crates/ripr/src/output/gap_decision_ledger.rs|invalid GapRecord: {err}
+crates/ripr/src/output/gap_decision_ledger.rs|invalid JSON: {err}
+crates/ripr/src/output/gap_decision_ledger.rs|record {index}: {err} invalid GapRecord: {err}
+crates/ripr/src/output/gap_decision_ledger.rs|serialize gap decision ledger JSON failed: {err}
+crates/ripr/src/output/gap_decision_ledger.rs|serialize gap record JSON failed: {err} command_specs

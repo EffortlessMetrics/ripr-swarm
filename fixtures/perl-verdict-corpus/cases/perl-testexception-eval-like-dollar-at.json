@@ -51,7 +51,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testexception-eval-like-dollar-at.json",
-    "sha256": "965da378c832c0e381238c4a054b61c759ec3edd11d85ab88378aaa2b472ce75",
+    "sha256": "3df8524a249afb38aebb8e4fcca35cdc88b01654599fdda122e170a97dc0dc04",
     "provenance": "producer"
   }
 }

@@ -144,6 +144,14 @@ process-wrap = { version = "10.0.1", default-features = false, features = [
   "std",
   "job-object",
 ] }
+# #9564: process-wrap 10 creates each per-child job without
+# JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE and keeps the handle private, so a
+# force-terminated owner (TerminateProcess, runner teardown, editor force-kill)
+# leaked descendants. win32job is a safe API over Job Objects (its `unsafe`
+# lives inside the crate, like winsafe's); the binaries use it only to put the
+# owner process itself in one kill-on-close job, whose handle the OS closes
+# when the owner dies by any means.
+win32job = "2.0.3"
 
 [features]
 default = ["lang-rust", "lang-typescript", "lang-python"]

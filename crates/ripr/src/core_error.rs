@@ -116,6 +116,10 @@ pub(crate) enum CheckFailureKind {
     AnalysisTimeout,
     /// The shared diff parser refused part of an agent brief working set.
     DiffInputUnsupported,
+    /// The `ripr check` analysis worker stopped without producing a result,
+    /// almost always a panic (#11116). No findings exist: a refusal, never a
+    /// clean or partial result.
+    AnalysisWorkerStopped,
 }
 
 impl CheckFailureKind {
@@ -134,6 +138,7 @@ impl CheckFailureKind {
             Self::SelectorMiss => "selector_miss",
             Self::AnalysisTimeout => "analysis_timeout",
             Self::DiffInputUnsupported => "diff_input_unsupported",
+            Self::AnalysisWorkerStopped => "analysis_worker_stopped",
         }
     }
 
@@ -153,6 +158,7 @@ impl CheckFailureKind {
             Self::SelectorMiss => "analysis/selector",
             Self::AnalysisTimeout => "analysis/timeout",
             Self::DiffInputUnsupported => "analysis/diff-input",
+            Self::AnalysisWorkerStopped => "analysis/worker-stopped",
         }
     }
 }
@@ -287,6 +293,15 @@ impl CoreError {
     pub(crate) fn analysis_timeout(detail: impl Into<String>) -> Self {
         Self::CheckFailure {
             kind: CheckFailureKind::AnalysisTimeout,
+            detail: detail.into(),
+        }
+    }
+
+    /// A `ripr check` analysis worker that stopped without a result (#11116).
+    /// `detail` is the exact human diagnostic, kept verbatim.
+    pub(crate) fn analysis_worker_stopped(detail: impl Into<String>) -> Self {
+        Self::CheckFailure {
+            kind: CheckFailureKind::AnalysisWorkerStopped,
             detail: detail.into(),
         }
     }
