@@ -440,3 +440,13 @@ commands = []
 estimated_lem = 30
 artifact_families = ["release-readiness"]
 description = "Full installed-product and release readiness proof."
+
+[[lane]]
+id = "windows-subset-qualification"
+posture = "advisory"
+workflow = ".github/workflows/windows-subset-qualification.yml"
+jobs = ["windows-advisory-subset"]
+commands = []
+estimated_lem = 5
+artifact_families = []
+description = "Reusable native Windows subset: test outcomes advisory, source/status/log/receipt and nonempty execution evidence mandatory. Called after merge-ready admission or explicit standalone diagnostics."
