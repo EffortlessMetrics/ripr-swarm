@@ -108,7 +108,7 @@ fn a_negated_atom_and_a_string_or_number_truthiness_are_read() -> Result<(), Str
         classify(negated, OLD_NIL, &test_of("label(1, False)", "'quiet'"))?,
         ExposureClass::Exposed
     );
-    let text = "def label(flag):\n    if flag:  # arm\n        return 'full'\n";
+    let text = "def label(flag):\n    if flag\x3a\n        return 'full'\n";
     assert_eq!(
         classify(text, OLD_NIL, &test_of("label('')", "None"))?,
         ExposureClass::WeaklyExposed
@@ -234,7 +234,7 @@ fn a_parenthesized_scalar_is_not_a_one_element_container() -> Result<(), String>
         ExposureClass::Exposed
     );
     // `(0)` is falsy, so the `not flag` arm is taken: the credit stays.
-    let falsy_arm = "def label(flag):\n    if not flag:  # arm\n        return 'nil'\n";
+    let falsy_arm = "def label(flag):\n    if not flag\x3a\n        return 'nil'\n";
     assert_eq!(
         classify(falsy_arm, OLD_NIL, &test_of("label((0))", "'nil'"))?,
         ExposureClass::Exposed
