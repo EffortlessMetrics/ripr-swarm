@@ -465,6 +465,7 @@ enum LastWord {
 /// literals are skipped so their contents cannot inflate the estimate; the
 /// regex-vs-division choice uses the standard expression-position heuristic,
 /// and a regex that never terminates on its line falls back to code.
+#[cfg(test)]
 pub(crate) fn max_expression_nesting_estimate(source: &str) -> usize {
     max_expression_nesting_estimate_with(source, true)
 }
