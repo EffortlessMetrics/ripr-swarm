@@ -697,7 +697,7 @@ pub struct Finding {
     /// Required in every construction (no `Default` is applied by struct
     /// literals), so a producer must state its scope; repo-mode producers
     /// set it through [`Finding::mark_repo_scoped`]. Consumers read it via
-    /// [`Finding::analysis_mode`], never from the free-text evidence line.
+    /// `Finding::analysis_mode`, never from the free-text evidence line.
     /// Omitted from serialized `Finding` when `diff`; a missing field in an
     /// older artifact deserializes as `diff`, which `analysis_mode` still
     /// refuses if the legacy evidence line says otherwise.

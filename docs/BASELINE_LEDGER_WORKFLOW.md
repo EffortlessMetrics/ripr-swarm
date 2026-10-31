@@ -70,12 +70,44 @@ Do not create a baseline from a report nobody has reviewed.
 
 ## 2. Create A Candidate Baseline
 
+The gate decision is produced by the generated workflow, so on a CI-only
+adoption it is not on your machine yet. A repository variable is not carried by
+a pull request: set `RIPR_GATE_MODE` first, then push to (or re-run) a pull
+request, and pick a run that started after the variable was set. Download that
+run's `ripr-reports` artifact into a temporary directory, not your working
+tree:
+
+```bash
+gh variable set RIPR_GATE_MODE --body visible-only
+# push to or re-run the pull request, then:
+gh run list --workflow ripr.yml --branch PR_BRANCH --limit 5 \
+  --json databaseId,headBranch,conclusion,createdAt
+tmp="$(mktemp -d)"
+gh run download RUN_ID --name ripr-reports --dir "$tmp"
+decision="$(find "$tmp" -name gate-decision.json -print -quit)"
+test -n "$decision"
+```
+
+Use `$decision` as `--from` below. Notes:
+
+- Artifacts are retained for 14 days by default; download from a recent run.
+- The decision comes from that pull request's diff, so a baseline created from
+  it is PR-scoped: it records the gaps that diff exposed, not every gap in the
+  repository. The pull request you use should be representative and must not be
+  the one introducing those gaps, so the entries stay existing debt (see the
+  checklist below). Use a different pull request for a different slice.
+- If the diff has no policy-eligible gaps, the decision has nothing to
+  checkpoint and the baseline is empty or skipped; choose another pull request.
+- Use the same ripr version locally as the workflow pins (`ripr --version`
+  against the version in `.github/workflows/ripr.yml`). A mismatch can surface
+  as `stale_baseline_entry` later (#7421).
+
 Use `ripr baseline create` to turn reviewed gate decisions into a candidate
 ledger:
 
 ```bash
 ripr baseline create \
-  --from target/ripr/reports/gate-decision.json \
+  --from "$decision" \
   --out target/ripr/reports/gate-baseline.candidate.json
 ```
 
@@ -92,7 +124,8 @@ Review the candidate before checking it in:
 - every entry should remain visible in future summaries or artifacts;
 - malformed, suppressed, configured-off, or soon-to-fix entries are removed;
 - the PR explains the adoption date, configured scope, source artifact, and
-  owner.
+  owner; the baseline's recorded `source` field should name the pull request
+  and run the decision came from, matching that explanation.
 
 After review, copy the candidate into the configured baseline path:
 
@@ -221,9 +254,47 @@ scoped seams, entries in non-Rust changed files, a scope missing the
 `cap_omitted_seams`/`omitted_by_policy` disclosure, and any malformed scope
 fail closed too. A gate decision whose review-comments source drops any seam by
 policy keeps every absent entry `not_evaluated`. A gate decision built from
-`--gap-ledger` currently always yields `not_evaluated`, because the ledger
-disclosure lists only surviving records' anchor files (limitation tracked in
-#9599); use a `--pr-guidance` gate decision to retire baselined gaps. To retire a gap, feed
+`--gap-ledger` yields `not_evaluated` unless the ledger carries an
+`analysis_coverage` disclosure: `ripr reports gap-ledger --repo-exposure` over a
+complete `ripr check --format repo-exposure-json` run (no seam limit, no
+parser-declined or generated-skipped Rust files) records that the whole Rust
+workspace was analyzed, bound to the ledger's exact records and to the corpus of
+the tree `gate evaluate` runs on (so generate the ledger and evaluate the gate on
+the same checkout). With it, an absent baseline entry on a normalized relative
+Rust path in `corpus.analyzed_production_files` resolves; a
+filtered, edited or stale ledger, a limited run, and other paths stay
+`not_evaluated` (#9599). The digest is tamper-evident, not authentication.
+Accepted limits: a ledger rewritten by someone who recomputes the digest on a
+matching current tree and membership still earns the scope (no producer
+authentication), and `baseline diff`/`update` trust a hand-edited gate-decision.
+The membership list is one sorted path per production file (about 50 bytes
+each; roughly 47 KB for 900 files) and is carried in the repo-exposure
+artifact, the ledger and the gate decision; very large workspaces carry a
+proportionally larger list.
+Gate admission also recomputes the non-Rust analysis inputs (classified config
+including raw `ripr.toml` bytes, `.ripr/test_intent.toml`, the suppressions
+file, `RIPR_CFG_FEATURES`, Cargo workspace manifests/configuration,
+`Cargo.lock`, the toolchain label and the ripr build) and requires them to equal
+the ledger's `analysis_coverage.corpus.analysis_inputs` (copied from the
+repo-exposure artifact's top-level `analysis_inputs`, not from
+`source_subject.corpus`). A ledger produced under different inputs
+stays `not_evaluated`, so run the gate under the same inputs: a byte-different
+`ripr.toml` (comments, whitespace, CRLF) refuses coverage, `RIPR_CFG_FEATURES`
+and the toolchain must match the producer's, and the Cargo manifest identity is
+bound to the checkout path, so gate in the checkout that produced the ledger.
+The hashes are 64-bit FNV digests (non-adversarial change detection). The
+differing classes are named in the gate scope's `coverage_refused` and quoted by
+`baseline diff`. A writer who deletes
+records and recomputes `records_digest`/`records_total` still earns the
+disclosure: the digest is tamper-evident against accidental filtering only.
+The inventory discloses `corpus.analyzed_production_files` from its actual
+production-role inputs, including cache hits. Gate admission requires both
+that membership and the corpus hash to match current discovery and source-role
+selection. Source symlinks and symlinked parents are never followed; their
+aliased paths, deleted sources, and evidence-only files remain `not_evaluated`.
+Missing, malformed or unverified membership also remains `not_evaluated`;
+an empty membership list covers no paths. Without verified coverage, use a
+`--pr-guidance` gate decision to retire baselined gaps. To retire a gap, feed
 `update` a gate decision whose scope covers the gap's file, normally the PR
 that fixes it.
 

@@ -212,6 +212,11 @@ The `Summary terms` lines define the words the `Summary:` count line prints
 no test path) in the same static vocabulary (#9244 item 4); its last lines also define
 `found`, `suppressed by your settings`, the `unclear` bucket, `base-side`
 and the Counts line's `candidate line` (#9244 item 4 leftovers, #10691). They claim no runtime mutation outcome.
+The CLI prints the legend on the first standalone human run in a build tree that
+selects a digest (a `--output-dir` fanout member always carries it and does not
+count) and records that in `target/ripr/legend-seen`; later runs replace the ten lines with one
+`Terms: ` pointer to `--legend`, which prints them again. Library
+callers and an unwritable output tree always get the full legend (#10481).
 No legend renders when there is no selected digest (empty, all-suppressed,
 base-side-only, or unresolved-currentness-only findings). The legend adds a fixed
 ten lines; it does not expand the per-stage detail window. Full human and
@@ -377,9 +382,26 @@ finding. Two equally near seams of that kind whose source spans do not nest
 the stub is placed inline (integration-file placement needs classified
 evidence and stays with `--seam-id`). The block is printed only when the
 resolver produces a stub. When it refuses, the block is replaced by one line,
-`No test stub here: <reason>`, naming the producer's refusal. When the
-function has no seam of that kind, or the location is refused as ambiguous,
-nothing is printed. The resolver reads the files on disk, so a check
+`No test stub here: <reason>`, naming the producer's refusal. When that
+finding also prints no repair start, one further line follows (#10710):
+`Write this test by hand: <what to call and assert>. ripr has no repair
+route for this kind of change yet, ...`, so a gap with neither route never ends
+without a named next step; beside a repair advisory that names its own route or
+recovery (several binding seams, a not-ready packet, the seam budget, a
+classification failure, an unavailable gap route, an unreadable config, or no
+binding seam while the file holds seams, which points at `ripr pilot`) the
+step omits the "no repair route" clause. A refusal that already names the existing test to
+strengthen (the weak-assertion pointer) gets no such line. When several seams
+share the line and exactly one is the finding's changed expression, the block
+prints the stub command for that seam (`--seam-id`) instead of listing the
+others, so every printed `ripr agent stub` command produces a stub. When the
+function has no seam of that kind, nothing is printed. When the location is
+ambiguous and ripr cannot narrow it to a validated stub (more than eight seams
+to check, an inventory that cannot be classified, or a seam missing from it),
+the block prints `No test stub here:` with a plain reason that lists no seam ID
+and no command. A seam that is not a reported gap is worded as a stub target
+that is not a gap in the seam view, with a pointer to strengthen the existing
+test, and gets no hand-written step. The resolver reads the files on disk, so a check
 that analyzed other bytes (`--candidate-tree`, or a committed-history diff
 that read HEAD content behind uncommitted edits) prints no route, and neither
 does a finding whose expression is not on disk in the function holding its

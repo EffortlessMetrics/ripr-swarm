@@ -539,10 +539,17 @@ fn python_flat_layout_journey_runs_the_gap_bound_loop_from_the_printed_start() -
         "test node",
     )?;
     // The printed verification route is the module form, never the bare console script.
+    #[cfg(not(windows))]
     need(
         &check,
-        "Verify command: python -m pytest tests/test_pricing.py::",
-        "module-form verify",
+        "Verify command (Bash): (cd -P -- ",
+        "root-bound module-form verify",
+    )?;
+    #[cfg(windows)]
+    need(
+        &check,
+        "Suggested command (unverified; inspect and run from the selected root): python -m pytest ",
+        "manual Windows verify",
     )?;
     // #10373: the finding's GapRecord passes the shared agent-packet
     // validator, so check prints the gap-bound start instead of the #9102
@@ -660,6 +667,11 @@ fn python_flat_layout_journey_runs_the_gap_bound_loop_from_the_printed_start() -
         ],
     )?;
     expect_exit(before_ok, true, "agent repair --gap-id --phase before")?;
+    if before.contains("Some TypeScript test runners write ignored cache files") {
+        return Err(format!(
+            "Python repair received TypeScript cache guidance:\n{before}"
+        ));
+    }
     need(
         &before,
         "tests/test_pricing.py",
@@ -1192,11 +1204,7 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
         "check names the commit step on a dirty tree",
     )?;
     expect_exit(dirty_ok, false, "dirty production start")?;
-    need(
-        &dirty,
-        "outside the allowed test surface already differ from HEAD",
-        "dirty premise",
-    )?;
+    need(&dirty, "Uncommitted:", "dirty premise")?;
     need(&dirty, "--gap-id", "gap-specific restart")?;
     if dirty.contains("--seam-id") {
         return Err(format!("dirty refusal names --seam-id:\n{dirty}"));
@@ -1267,11 +1275,7 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
     std::fs::write(&production, &original)
         .map_err(|error| format!("restore production: {error}"))?;
     expect_exit(dirty_ok, false, "dirty premise with sentinels")?;
-    need(
-        &dirty,
-        "outside the allowed test surface already differ from HEAD",
-        "dirty premise",
-    )?;
+    need(&dirty, "Uncommitted:", "dirty premise")?;
     sentinels_intact("dirty premise refusal", &all_names)?;
     // Accepted gap whose publication fails after the snapshot and packet were
     // rewritten: their prior bytes return.
@@ -1304,12 +1308,28 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
     if !repair_ok {
         return Err(format!("gap-bound before phase was refused:\n{repair}"));
     }
+    need(&repair, "waiting for your test", "attempt published")?;
+    need(&repair, "test/pricing.test.ts", "edit target is the test")?;
     need(
         &repair,
-        "awaiting the focused test edit",
-        "attempt published",
+        "Some TypeScript test runners write ignored cache files",
+        "cache warning",
     )?;
-    need(&repair, "test/pricing.test.ts", "edit target is the test")?;
+    need(
+        &repair,
+        "run the focused test after continue",
+        "safe test order",
+    )?;
+    need(
+        &repair,
+        "record its result separately",
+        "runtime evidence remains separate",
+    )?;
+    need(
+        &repair,
+        "may make that receipt stale",
+        "currentness limitation",
+    )?;
     if repair.contains("--seam-id") {
         return Err(format!("gap-bound output leaks --seam-id:\n{repair}"));
     }
@@ -2142,11 +2162,70 @@ struct GapAttempt {
     decoy: PathBuf,
     gap: String,
     attempt_id: String,
+    store: Option<String>,
+}
+
+/// The cache limitation must be visible to consumers that capture only stdout.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_before_stdout_discloses_test_runner_cache_limit_in_both_modes() -> Result<(), String> {
+    for json in [true, false] {
+        let (_guard, root, decoy) = materialize(
+            "blind_journey_installed_typescript",
+            "head",
+            "ts-cache-stdout",
+            Some("[languages]\nenabled = [\"typescript\"]\n"),
+        )?;
+        let root_arg = root.to_string_lossy().into_owned();
+        let (ok, check) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+        expect_exit(ok, true, "check")?;
+        let (gap, base) = gap_start_tokens(&check).ok_or("missing gap start")?;
+        let mut args = vec![
+            "agent", "repair", "--gap-id", &gap, "--base", &base, "--root", &root_arg, "--phase",
+            "before",
+        ];
+        if json {
+            args.push("--json");
+        }
+        let output = ripr_output(&decoy, &args)?;
+        expect_exit(output.status.success(), true, "gap before")?;
+        let stdout = String::from_utf8(output.stdout).map_err(|error| error.to_string())?;
+        let guidance = if json {
+            let value: serde_json::Value =
+                serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
+            value["repair_attempt"]["test_runner_cache_guidance"]
+                .as_str()
+                .ok_or("missing JSON cache guidance")?
+                .to_string()
+        } else {
+            stdout
+        };
+        need(
+            &guidance,
+            "run the focused test after continue succeeds",
+            "stdout cache order",
+        )?;
+        need(
+            &guidance,
+            "record its result separately",
+            "stdout evidence boundary",
+        )?;
+        need(
+            &guidance,
+            "may make that receipt stale",
+            "stdout currentness limitation",
+        )?;
+    }
+    Ok(())
 }
 
 #[cfg(feature = "lang-typescript")]
 impl GapAttempt {
     fn start(label: &str) -> Result<Self, String> {
+        Self::start_in_store(label, None)
+    }
+
+    fn start_in_store(label: &str, store: Option<&str>) -> Result<Self, String> {
         let toml = "[languages]\nenabled = [\"typescript\"]\n";
         let (guard, root, decoy) = materialize(
             "blind_journey_installed_typescript",
@@ -2164,13 +2243,14 @@ impl GapAttempt {
             .and_then(|line| line.split_whitespace().nth(4))
             .ok_or_else(|| format!("check printed no gap-bound start:\n{check}"))?
             .to_string();
-        let (ok, started) = ripr(
-            &decoy,
-            &[
-                "agent", "repair", "--gap-id", &gap, "--base", "HEAD~1", "--root", &root_arg,
-                "--phase", "before",
-            ],
-        )?;
+        let mut args = vec![
+            "agent", "repair", "--gap-id", &gap, "--base", "HEAD~1", "--root", &root_arg,
+            "--phase", "before",
+        ];
+        if let Some(store) = store {
+            args.extend(["--store", store]);
+        }
+        let (ok, started) = ripr(&decoy, &args)?;
         expect_exit(ok, true, &format!("gap-bound before phase: {started}"))?;
         let attempt = Self {
             _guard: guard,
@@ -2179,6 +2259,7 @@ impl GapAttempt {
             decoy,
             gap,
             attempt_id: String::new(),
+            store: store.map(str::to_string),
         };
         let manifest = attempt.manifest_for_only_attempt()?;
         let attempt_id = attempt_id_of(&manifest)?;
@@ -2189,7 +2270,11 @@ impl GapAttempt {
     }
 
     fn manifest_for_only_attempt(&self) -> Result<serde_json::Value, String> {
-        let attempts = self.root.join("target/ripr/repair-attempts");
+        let attempts = self.root.join(
+            self.store
+                .as_deref()
+                .unwrap_or("target/ripr/repair-attempts"),
+        );
         let mut found = Vec::new();
         for entry in
             std::fs::read_dir(&attempts).map_err(|error| format!("attempts dir: {error}"))?
@@ -2221,6 +2306,9 @@ impl GapAttempt {
         if json {
             args.push("--json");
         }
+        if let Some(store) = self.store.as_deref() {
+            args.extend(["--store", store]);
+        }
         ripr_output(&self.decoy, &args)
     }
 
@@ -2230,6 +2318,12 @@ impl GapAttempt {
         self.commit_test_edit(
             "  it(\"discounts exactly at the threshold\", () => {\n    expect(discountedTotal(10000)).toBe(9500);\n  });\n\n  it(\"discounts an above-threshold subtotal\"",
             "pin the threshold",
+        )
+    }
+
+    fn edit_closing_test(&self) -> Result<(), String> {
+        self.write_test_edit(
+            "  it(\"discounts exactly at the threshold\", () => {\n    expect(discountedTotal(10000)).toBe(9500);\n  });\n\n  it(\"discounts an above-threshold subtotal\"",
         )
     }
 
@@ -2244,6 +2338,17 @@ impl GapAttempt {
     }
 
     fn commit_test_edit(&self, insertion: &str, message: &str) -> Result<(), String> {
+        self.write_test_edit(insertion)?;
+        // Only the paths the edit touched: `target/ripr` artifacts and the
+        // untracked `ripr.toml` are not part of the committed edit.
+        fixture_git_ok(&self.root, &["add", "test/pricing.test.ts"])?;
+        if self.root.join("src/extra.ts").is_file() {
+            fixture_git_ok(&self.root, &["add", "src/extra.ts"])?;
+        }
+        fixture_git_ok(&self.root, &["commit", "-q", "-m", message])
+    }
+
+    fn write_test_edit(&self, insertion: &str) -> Result<(), String> {
         let test_file = self.root.join("test/pricing.test.ts");
         let original =
             std::fs::read_to_string(&test_file).map_err(|error| format!("read test: {error}"))?;
@@ -2255,14 +2360,7 @@ impl GapAttempt {
         if edited == original {
             return Err("test edit did not apply".to_string());
         }
-        std::fs::write(&test_file, edited).map_err(|error| format!("write test: {error}"))?;
-        // Only the paths the edit touched: `target/ripr` artifacts and the
-        // untracked `ripr.toml` are not part of the committed edit.
-        fixture_git_ok(&self.root, &["add", "test/pricing.test.ts"])?;
-        if self.root.join("src/extra.ts").is_file() {
-            fixture_git_ok(&self.root, &["add", "src/extra.ts"])?;
-        }
-        fixture_git_ok(&self.root, &["commit", "-q", "-m", message])
+        std::fs::write(&test_file, edited).map_err(|error| format!("write test: {error}"))
     }
 
     fn state(&self) -> Result<String, String> {
@@ -2279,6 +2377,175 @@ fn text_of(output: &std::process::Output) -> (String, String) {
         String::from_utf8_lossy(&output.stdout).into_owned(),
         String::from_utf8_lossy(&output.stderr).into_owned(),
     )
+}
+
+/// A second edit to the *same* bound test must invalidate the receipt, even
+/// though the changed path and its kind remain unchanged (#11005).
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn finished_gap_attempt_detects_changed_bound_test_bytes() -> Result<(), String> {
+    for committed in [false, true] {
+        check_bound_test_drift(committed)?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn finished_attempt_keeps_non_owned_operational_directory_bytes_bound() -> Result<(), String> {
+    let attempt = GapAttempt::start("ts-bound-operational-neighbors")?;
+    let directories = [
+        "target/ripr/repair-attempts",
+        "target/ripr/workflow",
+        "target/ripr/reports",
+        "target/ripr/cache",
+    ];
+    let mut paths = Vec::new();
+    for directory in directories {
+        let directory = attempt.root.join(directory);
+        std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        let path = directory.join("not-owned-by-this-invocation.dat");
+        std::fs::write(&path, b"bound non-owned file\n").map_err(|error| error.to_string())?;
+        paths.push(path);
+    }
+    attempt.edit_closing_test()?;
+    let output = attempt.after(true)?;
+    expect_exit(
+        output.status.success(),
+        true,
+        "finish with operational neighbors",
+    )?;
+    let current = || -> Result<Option<bool>, String> {
+        let (ok, text) = ripr(
+            &attempt.decoy,
+            &["agent", "status", "--root", &attempt.root_arg, "--json"],
+        )?;
+        expect_exit(ok, true, "status with operational neighbors")?;
+        let doc: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|error| format!("parse status: {error}: {text}"))?;
+        let row = doc["repair_attempts"]
+            .as_array()
+            .ok_or("missing attempts")?
+            .iter()
+            .find(|row| row["attempt_id"] == attempt.attempt_id)
+            .ok_or("selected attempt missing")?;
+        if row["disposition"] != "finished" {
+            return Err(format!("attempt not finished: {row}"));
+        }
+        Ok(row["head_current"].as_bool())
+    };
+    assert_eq!(current()?, Some(true), "nonempty finished positive control");
+    for path in paths {
+        std::fs::write(&path, b"changed non-owned file\n").map_err(|error| error.to_string())?;
+        assert_eq!(
+            current()?,
+            Some(false),
+            "directory membership hid drift in {}",
+            path.display()
+        );
+        std::fs::write(&path, b"bound non-owned file\n").map_err(|error| error.to_string())?;
+        assert_eq!(
+            current()?,
+            Some(true),
+            "exact restoration did not restore {}",
+            path.display()
+        );
+    }
+    decoy_untouched(&attempt.decoy)
+}
+
+#[cfg(feature = "lang-typescript")]
+fn check_bound_test_drift(committed: bool) -> Result<(), String> {
+    let attempt = GapAttempt::start(if committed {
+        "ts-bound-committed"
+    } else {
+        "ts-bound-uncommitted"
+    })?;
+    if committed {
+        attempt.commit_closing_test()?;
+    } else {
+        attempt.edit_closing_test()?;
+    }
+    let output = attempt.after(true)?;
+    expect_exit(output.status.success(), true, "finish gap attempt")?;
+    let current = || -> Result<Option<bool>, String> {
+        let (ok, text) = ripr(
+            &attempt.decoy,
+            &["agent", "status", "--root", &attempt.root_arg, "--json"],
+        )?;
+        expect_exit(ok, true, "status")?;
+        let doc: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|error| format!("parse status: {error}: {text}"))?;
+        let rows = doc["repair_attempts"]
+            .as_array()
+            .ok_or("missing attempts")?;
+        let row = rows
+            .iter()
+            .find(|row| row["attempt_id"] == attempt.attempt_id)
+            .ok_or("selected attempt missing")?;
+        if row["disposition"] != "finished" {
+            return Err(format!("attempt not finished: {row}"));
+        }
+        Ok(row["head_current"].as_bool())
+    };
+    if current()? != Some(true) {
+        return Err("finished attempt was not initially current".to_string());
+    }
+    let file = attempt.root.join("test/pricing.test.ts");
+    let original = std::fs::read_to_string(&file).map_err(|error| error.to_string())?;
+    let wrong = original.replace(
+        "expect(discountedTotal(10000)).toBe(9500)",
+        "expect(discountedTotal(10000)).toBe(10000)",
+    );
+    if wrong == original {
+        return Err("focused assertion not found".to_string());
+    }
+    std::fs::write(&file, wrong).map_err(|error| error.to_string())?;
+    if current()? == Some(true) {
+        return Err("changed bound test bytes stayed current".to_string());
+    }
+    for json in [false, true] {
+        let mut args = vec!["agent", "status", "--root", &attempt.root_arg];
+        if json {
+            args.push("--json");
+        }
+        let (ok, status) = ripr(&attempt.decoy, &args)?;
+        expect_exit(ok, true, "same-HEAD drift status")?;
+        need(
+            &status,
+            "bound inputs no longer match",
+            "same-HEAD drift warning",
+        )?;
+        if status.contains("the repository HEAD is now") {
+            return Err(format!(
+                "same-HEAD drift misreported a moved HEAD: {status}"
+            ));
+        }
+        if status.contains("stale against HEAD") {
+            return Err(format!("same-HEAD drift blamed HEAD in status: {status}"));
+        }
+    }
+    std::fs::write(&file, original).map_err(|error| error.to_string())?;
+    if current()? != Some(true) {
+        return Err("exact restoration did not recover currentness".to_string());
+    }
+    fixture_git_ok(
+        &attempt.root,
+        &["commit", "--allow-empty", "-q", "-m", "move HEAD"],
+    )?;
+    if current()? != Some(false) {
+        return Err("moved HEAD was not stale".to_string());
+    }
+    for json in [false, true] {
+        let mut args = vec!["agent", "status", "--root", &attempt.root_arg];
+        if json {
+            args.push("--json");
+        }
+        let (ok, status) = ripr(&attempt.decoy, &args)?;
+        expect_exit(ok, true, "moved-HEAD status")?;
+        need(&status, "the repository HEAD is now", "moved-HEAD warning")?;
+    }
+    decoy_untouched(&attempt.decoy)
 }
 
 /// #9103 (RIPR-SPEC-0311): the gap-bound after phase closes a gap only on
@@ -2369,7 +2636,10 @@ fn gap_bound_after_phase_closes_the_gap_on_positive_evidence() -> Result<(), Str
                 .collect()
         })
         .unwrap_or_default();
-    if !roles.contains(&"agent_receipt") || !roles.contains(&"agent_verify") {
+    if !roles.contains(&"agent_receipt")
+        || !roles.contains(&"agent_verify")
+        || !roles.contains(&"after_check_findings")
+    {
         return Err(format!("terminal evidence not retained: {roles:?}"));
     }
     // Status reads the retained receipt as showing this gap closed and offers
@@ -2399,6 +2669,686 @@ fn gap_bound_after_phase_closes_the_gap_on_positive_evidence() -> Result<(), Str
     expect_exit(again.status.success(), false, "second after phase")?;
     need(&again_err, "--gap-id", "restart names the gap start")?;
     decoy_untouched(&attempt.decoy)
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_currentness_survives_only_proven_workflow_projection_cleanup() -> Result<(), String> {
+    let attempt = GapAttempt::start("gap-projection-cleanup")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let baseline = attempt
+            .root
+            .join("target/ripr/workflow/attempt-baseline.json");
+        std::fs::set_permissions(&baseline, std::fs::Permissions::from_mode(0o751))
+            .map_err(|error| format!("make baseline executable: {error}"))?;
+    }
+    attempt.commit_closing_test()?;
+    let output = attempt.after(true)?;
+    expect_exit(output.status.success(), true, "finish gap attempt")?;
+    let current = || -> Result<bool, String> {
+        let (ok, status) = ripr(
+            &attempt.decoy,
+            &["agent", "status", "--root", &attempt.root_arg, "--json"],
+        )?;
+        expect_exit(ok, true, "status")?;
+        let document: serde_json::Value =
+            serde_json::from_str(&status).map_err(|error| error.to_string())?;
+        let row = document["repair_attempts"]
+            .as_array()
+            .and_then(|rows| {
+                rows.iter()
+                    .find(|row| row["attempt_id"].as_str() == Some(attempt.attempt_id.as_str()))
+            })
+            .ok_or_else(|| format!("no attempt in {status}"))?;
+        let field = row
+            .get("head_current")
+            .ok_or_else(|| format!("missing currentness in {status}"))?;
+        if !field.is_null() && !field.is_boolean() {
+            return Err(format!("invalid currentness in {status}"));
+        }
+        Ok(field == true)
+    };
+    if !current()? {
+        return Err("newly finished attempt was not current".to_string());
+    }
+    let workflow = attempt.root.join("target/ripr/workflow");
+    let saved = attempt.root.join("target/ripr/workflow-saved-for-test");
+    std::fs::rename(&workflow, &saved).map_err(|error| error.to_string())?;
+    let absent_current = current();
+    std::fs::rename(&saved, &workflow).map_err(|error| error.to_string())?;
+    if !absent_current? || !current()? {
+        return Err(
+            "retained projection cleanup or restoration made the attempt stale".to_string(),
+        );
+    }
+    let after = workflow.join("after.check-findings.json");
+    let bytes = std::fs::read(&after).map_err(|error| error.to_string())?;
+    std::fs::write(&after, b"unrelated replacement").map_err(|error| error.to_string())?;
+    let drift = current();
+    std::fs::write(&after, &bytes).map_err(|error| error.to_string())?;
+    if drift? || !current()? {
+        return Err(
+            "present projection drift was hidden or restoration did not recover".to_string(),
+        );
+    }
+    let manifest = attempt.manifest_for_only_attempt()?;
+    let retained = manifest["terminal_artifacts"]
+        .as_array()
+        .ok_or("no terminal artifacts")?
+        .iter()
+        .find(|artifact| artifact["role"] == "after_check_findings")
+        .and_then(|artifact| artifact["path"].as_str())
+        .ok_or("no retained after snapshot")?;
+    let retained_path = attempt.root.join(retained);
+    let retained_bytes = std::fs::read(&retained_path).map_err(|error| error.to_string())?;
+    std::fs::write(&retained_path, b"forged").map_err(|error| error.to_string())?;
+    let unavailable = || -> Result<(), String> {
+        let (ok, status) = ripr(
+            &attempt.decoy,
+            &["agent", "status", "--root", &attempt.root_arg, "--json"],
+        )?;
+        expect_exit(ok, true, "status with invalid retained snapshot")?;
+        let document: serde_json::Value =
+            serde_json::from_str(&status).map_err(|error| error.to_string())?;
+        let row = document["repair_attempts"]
+            .as_array()
+            .and_then(|rows| {
+                rows.iter()
+                    .find(|row| row["attempt_id"].as_str() == Some(attempt.attempt_id.as_str()))
+            })
+            .ok_or_else(|| format!("attempt missing: {status}"))?;
+        let current = row.get("head_current").ok_or("missing currentness")?;
+        let disposition = row
+            .get("disposition")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("missing disposition")?;
+        if (!current.is_null() && !current.is_boolean())
+            || current == true
+            || disposition == "finished"
+            || row
+                .pointer("/receipt/unavailable")
+                .and_then(serde_json::Value::as_bool)
+                != Some(true)
+        {
+            return Err(format!("invalid retained snapshot was trusted: {status}"));
+        }
+        for json in [false, true] {
+            let mut args = vec![
+                "agent",
+                "status",
+                "--root",
+                &attempt.root_arg,
+                "--attempt",
+                &attempt.attempt_id,
+            ];
+            if json {
+                args.push("--json");
+            }
+            let (ok, selected) = ripr(&attempt.decoy, &args)?;
+            expect_exit(ok, true, "selected status with invalid retained snapshot")?;
+            need(
+                &selected,
+                "currentness could not be established",
+                "unknown evidence explanation",
+            )?;
+            if selected.contains("the current Git HEAD could not be read") {
+                return Err(format!(
+                    "unavailable evidence blamed readable HEAD: {selected}"
+                ));
+            }
+        }
+        Ok(())
+    };
+    unavailable()?;
+    let head_path = attempt.root.join(".git/HEAD");
+    let saved_head = std::fs::read(&head_path).map_err(|error| error.to_string())?;
+    std::fs::write(&head_path, b"ref: refs/heads/missing-test-head\n")
+        .map_err(|error| error.to_string())?;
+    let unreadable_head = (|| -> Result<(), String> {
+        for json in [false, true] {
+            let mut args = vec![
+                "agent",
+                "status",
+                "--root",
+                &attempt.root_arg,
+                "--attempt",
+                &attempt.attempt_id,
+            ];
+            if json {
+                args.push("--json");
+            }
+            let (ok, selected) = ripr(&attempt.decoy, &args)?;
+            expect_exit(ok, true, "selected status with unreadable HEAD")?;
+            need(
+                &selected,
+                "the current Git HEAD could not be read",
+                "unreadable HEAD explanation",
+            )?;
+        }
+        Ok(())
+    })();
+    std::fs::write(&head_path, saved_head).map_err(|error| error.to_string())?;
+    unreadable_head?;
+    std::fs::remove_file(&retained_path).map_err(|error| error.to_string())?;
+    unavailable()?;
+    std::fs::write(&retained_path, b"forged").map_err(|error| error.to_string())?;
+    std::fs::rename(&workflow, &saved).map_err(|error| error.to_string())?;
+    let forged = current();
+    std::fs::rename(&saved, &workflow).map_err(|error| error.to_string())?;
+    std::fs::write(&retained_path, retained_bytes).map_err(|error| error.to_string())?;
+    if forged? {
+        return Err("forged retained evidence established custody".to_string());
+    }
+
+    // Intact issued evidence remains readable when live HEAD is unavailable.
+    // The earlier unknown-HEAD control deliberately used corrupt evidence.
+    let saved_head = std::fs::read(&head_path).map_err(|error| error.to_string())?;
+    std::fs::write(&head_path, b"ref: refs/heads/missing-history-head\n")
+        .map_err(|error| error.to_string())?;
+    let history_read = (|| -> Result<(), String> {
+        let (ok, status) = ripr(
+            &attempt.decoy,
+            &["agent", "status", "--root", &attempt.root_arg, "--json"],
+        )?;
+        expect_exit(ok, true, "intact history at unknown HEAD")?;
+        let document: serde_json::Value =
+            serde_json::from_str(&status).map_err(|error| error.to_string())?;
+        let row = document["repair_attempts"]
+            .as_array()
+            .and_then(|rows| {
+                rows.iter()
+                    .find(|row| row["attempt_id"].as_str() == Some(attempt.attempt_id.as_str()))
+            })
+            .ok_or("missing history row")?;
+        if !row["head_current"].is_null()
+            || row["receipt"]["issued_for_attempt"] != true
+            || row["receipt"]["unavailable"] != false
+            || row["receipt"]["shows_gap_closed"] != true
+        {
+            return Err(format!(
+                "unknown HEAD erased issued history or claimed currentness: {status}"
+            ));
+        }
+        Ok(())
+    })();
+    std::fs::write(&head_path, saved_head).map_err(|error| error.to_string())?;
+    history_read?;
+
+    // A legacy retained pair without the new snapshot role cannot establish
+    // custody after projections disappear.
+    let manifest_path = attempt
+        .root
+        .join("target/ripr/repair-attempts")
+        .join(&attempt.attempt_id)
+        .join("attempt.json");
+    let original_manifest = std::fs::read(&manifest_path).map_err(|error| error.to_string())?;
+    let mut legacy: serde_json::Value =
+        serde_json::from_slice(&original_manifest).map_err(|error| error.to_string())?;
+    legacy["terminal_artifacts"]
+        .as_array_mut()
+        .ok_or("no terminal roles")?
+        .retain(|artifact| artifact["role"] != "after_check_findings");
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&legacy).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    if !current()? {
+        return Err("legacy retained pair with intact projections lost currentness".to_string());
+    }
+    std::fs::rename(&workflow, &saved).map_err(|error| error.to_string())?;
+    let legacy_current = current();
+    std::fs::rename(&saved, &workflow).map_err(|error| error.to_string())?;
+    if legacy_current? {
+        return Err("legacy pair invented missing snapshot custody".to_string());
+    }
+
+    // A pre-existing forged staged snapshot cannot be promoted: with no
+    // committed terminal roles, pending recovery must replace it from the
+    // canonically validated shared snapshot before committing descriptors.
+    legacy
+        .as_object_mut()
+        .ok_or("manifest is not an object")?
+        .remove("terminal_artifacts");
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&legacy).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(&retained_path, b"forged staged snapshot").map_err(|error| error.to_string())?;
+    let recovered = attempt.after(false)?;
+    expect_exit(
+        recovered.status.success(),
+        false,
+        "finished attempt after pending recovery",
+    )?;
+    let (_, recovered_error) = text_of(&recovered);
+    need(
+        &recovered_error,
+        "already finished",
+        "pending promotion reached the finished attempt",
+    )?;
+    let recovered_manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?;
+    if !recovered_manifest["terminal_artifacts"]
+        .as_array()
+        .is_some_and(|roles| {
+            roles
+                .iter()
+                .any(|role| role["role"] == "after_check_findings")
+        })
+        || std::fs::read(&retained_path).map_err(|error| error.to_string())? != bytes
+    {
+        return Err("forged staged snapshot was promoted or pending recovery failed".to_string());
+    }
+
+    // A crash before retention followed by a forged shared snapshot cannot
+    // promote the terminal pair or the third role.
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&legacy).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(&after, b"forged pending snapshot").map_err(|error| error.to_string())?;
+    let staged_before = std::fs::read(&retained_path).map_err(|error| error.to_string())?;
+    let pending = attempt.after(false)?;
+    expect_exit(pending.status.success(), false, "forged pending promotion")?;
+    let (_, pending_error) = text_of(&pending);
+    need(
+        &pending_error,
+        "already finished",
+        "forged pending promotion reached the finished attempt",
+    )?;
+    let pending_manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?;
+    if pending_manifest
+        .get("terminal_artifacts")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|roles| !roles.is_empty())
+        || std::fs::read(&after).map_err(|error| error.to_string())? != b"forged pending snapshot"
+        || std::fs::read(&retained_path).map_err(|error| error.to_string())? != staged_before
+    {
+        return Err("forged pending snapshot was promoted".to_string());
+    }
+    std::fs::write(&after, bytes).map_err(|error| error.to_string())?;
+    std::fs::write(&manifest_path, original_manifest).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_cleanup_does_not_hide_unrelated_bound_neighbor() -> Result<(), String> {
+    let attempt = GapAttempt::start("gap-unrelated-neighbor")?;
+    let neighbor = attempt.root.join("target/ripr/workflow/user-note.json");
+    std::fs::write(&neighbor, b"user data").map_err(|error| error.to_string())?;
+    attempt.commit_closing_test()?;
+    let output = attempt.after(true)?;
+    expect_exit(
+        output.status.success(),
+        true,
+        "finish with unrelated operational neighbor",
+    )?;
+    let workflow = attempt.root.join("target/ripr/workflow");
+    let saved = attempt.root.join("target/ripr/workflow-saved-for-test");
+    std::fs::rename(&workflow, &saved).map_err(|error| error.to_string())?;
+    let (ok, status) = ripr(
+        &attempt.decoy,
+        &["agent", "status", "--root", &attempt.root_arg, "--json"],
+    )?;
+    std::fs::rename(&saved, &workflow).map_err(|error| error.to_string())?;
+    expect_exit(ok, true, "status after cleanup")?;
+    let document: serde_json::Value =
+        serde_json::from_str(&status).map_err(|error| error.to_string())?;
+    if document["repair_attempts"][0]["head_current"] != false {
+        return Err(format!("unrelated bound neighbor was hidden: {status}"));
+    }
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_retention_accepts_default_and_relative_root_spellings() -> Result<(), String> {
+    for relative in [false, true] {
+        let attempt = GapAttempt::start(if relative {
+            "gap-relative-root"
+        } else {
+            "gap-default-root"
+        })?;
+        attempt.commit_closing_test()?;
+        let parent = attempt.root.parent().ok_or("root has no parent")?;
+        let name = attempt
+            .root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("root name is not UTF-8")?;
+        let output = if relative {
+            ripr_output(
+                parent,
+                &[
+                    "agent",
+                    "repair",
+                    "--root",
+                    name,
+                    "--phase",
+                    "after",
+                    "--attempt",
+                    &attempt.attempt_id,
+                    "--json",
+                ],
+            )?
+        } else {
+            ripr_output(
+                &attempt.root,
+                &[
+                    "agent",
+                    "repair",
+                    "--phase",
+                    "after",
+                    "--attempt",
+                    &attempt.attempt_id,
+                    "--json",
+                ],
+            )?
+        };
+        let (stdout, stderr) = text_of(&output);
+        expect_exit(
+            output.status.success(),
+            true,
+            &format!("relative-root finish: {stdout}\n{stderr}"),
+        )?;
+        let manifest = attempt.manifest_for_only_attempt()?;
+        if !manifest["terminal_artifacts"]
+            .as_array()
+            .is_some_and(|roles| {
+                roles
+                    .iter()
+                    .any(|role| role["role"] == "after_check_findings")
+            })
+        {
+            return Err(format!(
+                "relative-root snapshot was not retained: {manifest}"
+            ));
+        }
+        let workflow = attempt.root.join("target/ripr/workflow");
+        let saved = attempt.root.join("target/ripr/workflow-saved-for-test");
+        std::fs::rename(&workflow, &saved).map_err(|error| error.to_string())?;
+        let (ok, status) = ripr(
+            &attempt.decoy,
+            &["agent", "status", "--root", &attempt.root_arg, "--json"],
+        )?;
+        std::fs::rename(&saved, &workflow).map_err(|error| error.to_string())?;
+        expect_exit(ok, true, "relative-root retained status")?;
+        let document: serde_json::Value =
+            serde_json::from_str(&status).map_err(|error| error.to_string())?;
+        if document["repair_attempts"][0]["head_current"] != true {
+            return Err(format!("relative-root custody failed: {status}"));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_projection_custody_uses_the_explicit_attempt_store() -> Result<(), String> {
+    let store = "target/ripr-explicit-attempts";
+    let attempt = GapAttempt::start_in_store("gap-explicit-store", Some(store))?;
+    attempt.commit_closing_test()?;
+    let output = attempt.after(true)?;
+    let (stdout, stderr) = text_of(&output);
+    expect_exit(
+        output.status.success(),
+        true,
+        &format!("explicit-store finish: {stdout}\n{stderr}"),
+    )?;
+    let workflow = attempt.root.join("target/ripr/workflow");
+    let saved = attempt.root.join("target/ripr/workflow-saved-for-test");
+    std::fs::rename(&workflow, &saved).map_err(|error| error.to_string())?;
+    let (ok, status) = ripr(
+        &attempt.decoy,
+        &[
+            "agent",
+            "status",
+            "--root",
+            &attempt.root_arg,
+            "--store",
+            store,
+            "--json",
+        ],
+    )?;
+    std::fs::rename(&saved, &workflow).map_err(|error| error.to_string())?;
+    expect_exit(ok, true, "explicit-store status")?;
+    let document: serde_json::Value =
+        serde_json::from_str(&status).map_err(|error| error.to_string())?;
+    if document["repair_attempts"][0]["head_current"] != true {
+        return Err(format!("explicit-store custody failed: {status}"));
+    }
+    Ok(())
+}
+
+/// Two actual attempts in one repository, retaining the first attempt and
+/// all compatibility projections before starting the second (#10988).
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn repeated_gap_attempt_is_current_and_keeps_test_byte_binding() -> Result<(), String> {
+    let first = GapAttempt::start("gap-real-repeat")?;
+    let manifest = first.manifest_for_only_attempt()?;
+    let base = manifest["gap_binding"]["base_commit"]
+        .as_str()
+        .ok_or("no immutable base")?
+        .to_string();
+    first.commit_closing_test()?;
+    let output = first.after(true)?;
+    expect_exit(output.status.success(), true, "first real attempt")?;
+    let workflow = first.root.join("target/ripr/workflow");
+    for path in [
+        workflow.join("after.check-findings.json"),
+        workflow.join("agent-verify.json"),
+        workflow.join("analysis-outcome.json"),
+        first.root.join("target/ripr/reports/agent-receipt.json"),
+    ] {
+        if !path.is_file() {
+            return Err(format!("first attempt did not leave {}", path.display()));
+        }
+    }
+    let test_path = first.root.join("test/pricing.test.ts");
+    let repaired = std::fs::read_to_string(&test_path).map_err(|error| error.to_string())?;
+    let needle = "  it(\"discounts exactly at the threshold\", () => {\n    expect(discountedTotal(10000)).toBe(9500);\n  });\n\n";
+    if !repaired.contains(needle) {
+        return Err("closing test missing".to_string());
+    }
+    std::fs::write(&test_path, repaired.replacen(needle, "", 1))
+        .map_err(|error| error.to_string())?;
+    fixture_git_ok(&first.root, &["add", "test/pricing.test.ts"])?;
+    fixture_git_ok(&first.root, &["commit", "-q", "-m", "reopen gap"])?;
+    let (ok, before) = ripr(
+        &first.decoy,
+        &[
+            "agent",
+            "repair",
+            "--gap-id",
+            &first.gap,
+            "--base",
+            &base,
+            "--root",
+            &first.root_arg,
+            "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(ok, true, &format!("second before: {before}"))?;
+    let attempts = first.root.join("target/ripr/repair-attempts");
+    let ids = std::fs::read_dir(&attempts)
+        .map_err(|error| error.to_string())?
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| name.starts_with("repair-attempt-") && name != &first.attempt_id)
+        .collect::<Vec<_>>();
+    if ids.len() != 1 {
+        return Err(format!("expected one second attempt, got {ids:?}"));
+    }
+    let second = &ids[0];
+    std::fs::write(&test_path, &repaired).map_err(|error| error.to_string())?;
+    fixture_git_ok(&first.root, &["add", "test/pricing.test.ts"])?;
+    fixture_git_ok(&first.root, &["commit", "-q", "-m", "reclose gap"])?;
+    let output = ripr_output(
+        &first.decoy,
+        &["continue", "--root", &first.root_arg, "--attempt", second],
+    )?;
+    let (stdout, stderr) = text_of(&output);
+    expect_exit(
+        output.status.success(),
+        true,
+        &format!("second after: {stdout}\n{stderr}"),
+    )?;
+    let current = || -> Result<bool, String> {
+        let (ok, status) = ripr(
+            &first.decoy,
+            &["agent", "status", "--root", &first.root_arg, "--json"],
+        )?;
+        expect_exit(ok, true, "repeat status")?;
+        let document: serde_json::Value =
+            serde_json::from_str(&status).map_err(|error| error.to_string())?;
+        document["repair_attempts"]
+            .as_array()
+            .ok_or("no attempt rows")?
+            .iter()
+            .find(|row| row["attempt_id"].as_str() == Some(second.as_str()))
+            .and_then(|row| row["head_current"].as_bool())
+            .ok_or_else(|| format!("no second currentness: {status}"))
+    };
+    if !current()? {
+        return Err("second attempt was immediately noncurrent".to_string());
+    }
+    std::fs::write(&test_path, format!("{repaired}\n// drift\n"))
+        .map_err(|error| error.to_string())?;
+    let drift = current();
+    std::fs::write(&test_path, repaired).map_err(|error| error.to_string())?;
+    if drift? || !current()? {
+        return Err("bound test drift/restoration was misread".to_string());
+    }
+    Ok(())
+}
+
+/// Receipt replacement and absent gap projections must compose, rather than
+/// competing as two alternative currentness fallbacks.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_cleanup_composes_with_exact_issued_receipt_replacement() -> Result<(), String> {
+    let first = GapAttempt::start("gap-receipt-cleanup-composition")?;
+    let manifest = first.manifest_for_only_attempt()?;
+    let base = manifest["gap_binding"]["base_commit"]
+        .as_str()
+        .ok_or("missing immutable gap base")?;
+    // B's baseline must precede A's finish, so A's issued compatibility
+    // receipt becomes a changed path that B binds before replacing it.
+    let (ok, before) = ripr(
+        &first.decoy,
+        &[
+            "agent",
+            "repair",
+            "--gap-id",
+            &first.gap,
+            "--base",
+            base,
+            "--root",
+            &first.root_arg,
+            "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(ok, true, &format!("second before: {before}"))?;
+    let attempts = first.root.join("target/ripr/repair-attempts");
+    let ids = std::fs::read_dir(&attempts)
+        .map_err(|error| error.to_string())?
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| name.starts_with("repair-attempt-") && name != &first.attempt_id)
+        .collect::<Vec<_>>();
+    if ids.len() != 1 {
+        return Err(format!("expected one second attempt, got {ids:?}"));
+    }
+    let second = &ids[0];
+    first.commit_closing_test()?;
+    let output = first.after(true)?;
+    expect_exit(output.status.success(), true, "first finish")?;
+    let output = ripr_output(
+        &first.decoy,
+        &["continue", "--root", &first.root_arg, "--attempt", second],
+    )?;
+    let (stdout, stderr) = text_of(&output);
+    expect_exit(
+        output.status.success(),
+        true,
+        &format!("second finish: {stdout}\n{stderr}"),
+    )?;
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(attempts.join(second).join("attempt.json"))
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    if manifest["after"]["receipt_projection_predecessor"]["attempt_id"] != first.attempt_id {
+        return Err(format!("B did not bind A's issued receipt: {manifest}"));
+    }
+    let receipt_path = "target/ripr/reports/agent-receipt.json";
+    let projection_path = "target/ripr/workflow/after.check-findings.json";
+    let changed = manifest["after"]["verdict"]["changed_paths"]
+        .as_array()
+        .ok_or("missing bound paths")?;
+    for path in [receipt_path, projection_path] {
+        if !changed.iter().any(|value| value == path) {
+            return Err(format!(
+                "composition fixture did not bind {path}: {manifest}"
+            ));
+        }
+    }
+    let current = || -> Result<bool, String> {
+        let (ok, status) = ripr(
+            &first.decoy,
+            &["agent", "status", "--root", &first.root_arg, "--json"],
+        )?;
+        expect_exit(ok, true, "composition status")?;
+        let document: serde_json::Value =
+            serde_json::from_str(&status).map_err(|error| error.to_string())?;
+        document["repair_attempts"]
+            .as_array()
+            .ok_or("no attempt rows")?
+            .iter()
+            .find(|row| row["attempt_id"].as_str() == Some(second.as_str()))
+            .and_then(|row| row["head_current"].as_bool())
+            .ok_or_else(|| format!("no boolean B currentness: {status}"))
+    };
+    if !current()? {
+        return Err("B was not current after replacing A's receipt".to_string());
+    }
+    let projection = first.root.join(projection_path);
+    let projection_bytes = std::fs::read(&projection).map_err(|error| error.to_string())?;
+    std::fs::remove_file(&projection).map_err(|error| error.to_string())?;
+    if !current()? {
+        return Err("receipt replacement and missing projection did not compose".to_string());
+    }
+    let receipt = first.root.join(receipt_path);
+    let receipt_bytes = std::fs::read(&receipt).map_err(|error| error.to_string())?;
+    std::fs::write(&receipt, b"unowned replacement").map_err(|error| error.to_string())?;
+    let receipt_drift = current();
+    std::fs::write(&receipt, &receipt_bytes).map_err(|error| error.to_string())?;
+    if receipt_drift? || !current()? {
+        return Err("missing projection hid receipt drift or lost restoration".to_string());
+    }
+    std::fs::write(&projection, &projection_bytes).map_err(|error| error.to_string())?;
+    if !current()? {
+        return Err("projection restoration did not preserve B currentness".to_string());
+    }
+    std::fs::write(&projection, b"present projection drift").map_err(|error| error.to_string())?;
+    let projection_drift = current();
+    std::fs::write(&projection, &projection_bytes).map_err(|error| error.to_string())?;
+    if projection_drift? || !current()? {
+        return Err("receipt reconstruction hid present projection drift".to_string());
+    }
+    Ok(())
 }
 
 /// Human (non `--json`) gap-bound after output names the closure and this
@@ -2729,6 +3679,73 @@ fn gap_bound_after_phase_enforces_the_edit_cage() -> Result<(), String> {
     Ok(())
 }
 
+/// An ignored transformed module is executable test input, not a safe edit.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_bound_after_phase_still_refuses_ignored_vitest_module_cache() -> Result<(), String> {
+    let attempt = GapAttempt::start("ts-cage-vitest-cache")?;
+    std::fs::write(attempt.root.join(".git/info/exclude"), "node_modules/\n")
+        .map_err(|error| format!("exclude cache: {error}"))?;
+    attempt.commit_closing_test()?;
+    let cache = attempt.root.join("node_modules/.vitest-cache");
+    std::fs::create_dir_all(&cache).map_err(|error| format!("cache directory: {error}"))?;
+    std::fs::write(cache.join("transformed"), "transformed test code")
+        .map_err(|error| format!("cache file: {error}"))?;
+    let output = attempt.after(false)?;
+    let (_, stderr) = text_of(&output);
+    expect_exit(output.status.success(), false, "ignored module cache")?;
+    need(
+        &stderr,
+        "node_modules/.vitest-cache/transformed",
+        "refused cache",
+    )?;
+    need(&stderr, "terminal", "attempt remains fail-closed")?;
+    if attempt
+        .root
+        .join("target/ripr/reports/agent-receipt.json")
+        .exists()
+    {
+        return Err("receipt issued after cache violation".to_string());
+    }
+    Ok(())
+}
+
+/// The alternative ordering avoids a terminal refusal but does not keep the
+/// receipt current after a test runner changes the observed cache.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_bound_status_reports_cache_drift_after_receipt() -> Result<(), String> {
+    let attempt = GapAttempt::start("ts-status-vitest-cache")?;
+    std::fs::write(attempt.root.join(".git/info/exclude"), "node_modules/\n")
+        .map_err(|error| format!("exclude cache: {error}"))?;
+    attempt.commit_closing_test()?;
+    let after = attempt.after(false)?;
+    expect_exit(after.status.success(), true, "after before cache write")?;
+    let cache = attempt.root.join("node_modules/.vitest-cache");
+    std::fs::create_dir_all(&cache).map_err(|error| format!("cache directory: {error}"))?;
+    std::fs::write(cache.join("transformed"), "transformed test code")
+        .map_err(|error| format!("cache file: {error}"))?;
+    let output = ripr_output(
+        &attempt.decoy,
+        &["agent", "status", "--root", &attempt.root_arg, "--json"],
+    )?;
+    expect_exit(output.status.success(), true, "status after cache write")?;
+    let (stdout, _) = text_of(&output);
+    let status: serde_json::Value =
+        serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
+    let attempts = status["repair_attempts"]
+        .as_array()
+        .ok_or("missing attempts")?;
+    let recorded = attempts
+        .iter()
+        .find(|entry| entry["attempt_id"] == attempt.attempt_id)
+        .ok_or("missing recorded attempt")?;
+    if recorded["head_current"] != false {
+        return Err(format!("cache drift did not stale the attempt: {stdout}"));
+    }
+    Ok(())
+}
+
 /// A gap-bound refusal must point to the packet that its before phase wrote.
 #[cfg(feature = "lang-typescript")]
 #[test]
@@ -2784,5 +3801,669 @@ fn gap_bound_after_phase_stops_when_the_retry_budget_is_spent() -> Result<(), St
     if stderr.contains("--seam-id") {
         return Err(format!("budget stop leaks --seam-id:\n{stderr}"));
     }
+    Ok(())
+}
+
+/// Repeat a Python gap repair while retaining the first attempt and its
+/// compatibility projections, then check the second attempt's byte binding.
+#[cfg(feature = "lang-python")]
+#[test]
+fn python_repeated_gap_attempt_remains_current_and_detects_drift() -> Result<(), String> {
+    let (_guard, root, decoy) =
+        materialize("blind_journey_installed_python", "head", "py-repeat", None)?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let (ok, check) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+    expect_exit(ok, true, "Python check")?;
+    let (gap, base) = gap_start_tokens(&check).ok_or("no Python gap start")?;
+    let base = fixture_git_output(&root, &["rev-parse", &base])?
+        .trim()
+        .to_string();
+    let start = || -> Result<String, String> {
+        let (ok, output) = ripr(
+            &decoy,
+            &[
+                "agent", "repair", "--gap-id", &gap, "--base", &base, "--root", &root_arg,
+                "--phase", "before",
+            ],
+        )?;
+        expect_exit(ok, true, &format!("Python before: {output}"))?;
+        let line = output
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("Next, after the test edit: "))
+            .ok_or("no Python continuation")?;
+        line.split_whitespace()
+            .skip_while(|token| *token != "--attempt")
+            .nth(1)
+            .map(str::to_string)
+            .ok_or_else(|| "no attempt id".to_string())
+    };
+    let test_path = root.join("tests/test_pricing.py");
+    let original = std::fs::read_to_string(&test_path).map_err(|e| e.to_string())?;
+    let repaired = format!(
+        "{original}\n\ndef test_exact_boundary_gets_discount():\n    assert bulk_discount_rate(20) == 0.15\n"
+    );
+    let first = start()?;
+    std::fs::write(&test_path, &repaired).map_err(|e| e.to_string())?;
+    fixture_git_ok(&root, &["add", "tests/test_pricing.py"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "close gap"])?;
+    let (ok, output) = ripr(
+        &decoy,
+        &["continue", "--root", &root_arg, "--attempt", &first],
+    )?;
+    expect_exit(ok, true, &format!("first Python after: {output}"))?;
+    if !root
+        .join("target/ripr/workflow/after.check-findings.json")
+        .is_file()
+    {
+        return Err("first projection missing".into());
+    }
+    std::fs::write(&test_path, &original).map_err(|e| e.to_string())?;
+    fixture_git_ok(&root, &["add", "tests/test_pricing.py"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "reopen gap"])?;
+    let second = start()?;
+    if first == second {
+        return Err("attempt IDs reused".into());
+    }
+    std::fs::write(&test_path, &repaired).map_err(|e| e.to_string())?;
+    fixture_git_ok(&root, &["add", "tests/test_pricing.py"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "reclose gap"])?;
+    let (ok, output) = ripr(
+        &decoy,
+        &["continue", "--root", &root_arg, "--attempt", &second],
+    )?;
+    expect_exit(ok, true, &format!("second Python after: {output}"))?;
+    let current = || -> Result<bool, String> {
+        let (ok, status) = ripr(&decoy, &["agent", "status", "--root", &root_arg, "--json"])?;
+        expect_exit(ok, true, "Python status")?;
+        let doc: serde_json::Value = serde_json::from_str(&status).map_err(|e| e.to_string())?;
+        doc["repair_attempts"]
+            .as_array()
+            .ok_or("no attempts")?
+            .iter()
+            .find(|row| row["attempt_id"].as_str() == Some(&second))
+            .and_then(|row| row["head_current"].as_bool())
+            .ok_or_else(|| format!("missing second currentness: {status}"))
+    };
+    if !current()? {
+        return Err("second Python attempt was immediately noncurrent".into());
+    }
+    std::fs::write(&test_path, repaired.replace("== 0.15", "== 0.16"))
+        .map_err(|e| e.to_string())?;
+    let drift = current();
+    std::fs::write(&test_path, repaired).map_err(|e| e.to_string())?;
+    if drift? || !current()? {
+        return Err("Python drift/restoration misread".into());
+    }
+    decoy_untouched(&decoy)
+}
+
+/// Stop a real after process while it owns a backup, then run a second after
+/// from another store. The second process must not touch the live transaction.
+#[cfg(all(feature = "lang-typescript", target_os = "linux"))]
+#[test]
+fn concurrent_after_processes_in_distinct_stores_preserve_live_backups() -> Result<(), String> {
+    exercise_cross_store_after(false)
+}
+
+#[cfg(all(feature = "lang-typescript", target_os = "linux"))]
+#[test]
+fn crashed_after_leaves_unknown_backup_for_inspection() -> Result<(), String> {
+    exercise_cross_store_after(true)
+}
+
+#[cfg(all(feature = "lang-typescript", target_os = "linux"))]
+fn exercise_cross_store_after(crash: bool) -> Result<(), String> {
+    use nix::sys::signal::{Signal, kill};
+    use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
+    use nix::unistd::Pid;
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+
+    struct ChildGuard(std::process::Child);
+    impl Drop for ChildGuard {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    let first = GapAttempt::start("cross-store-process")?;
+    let manifest = first.manifest_for_only_attempt()?;
+    let base = manifest["gap_binding"]["base_commit"]
+        .as_str()
+        .ok_or("missing base")?
+        .to_string();
+    first.commit_closing_test()?;
+    let output = first.after(true)?;
+    expect_exit(output.status.success(), true, "seed first attempt")?;
+    let prior_projection = std::fs::read(
+        first
+            .root
+            .join("target/ripr/workflow/after.check-findings.json"),
+    )
+    .map_err(|e| e.to_string())?;
+    if prior_projection.is_empty() {
+        return Err("seed projection was empty".into());
+    }
+    let test_path = first.root.join("test/pricing.test.ts");
+    let repaired = std::fs::read_to_string(&test_path).map_err(|e| e.to_string())?;
+    let needle = "  it(\"discounts exactly at the threshold\", () => {\n    expect(discountedTotal(10000)).toBe(9500);\n  });\n\n";
+    if !repaired.contains(needle) {
+        return Err("seed closing test missing".into());
+    }
+    std::fs::write(&test_path, repaired.replacen(needle, "", 1)).map_err(|e| e.to_string())?;
+    fixture_git_ok(&first.root, &["add", "test/pricing.test.ts"])?;
+    fixture_git_ok(&first.root, &["commit", "-q", "-m", "reopen"])?;
+    let mut ids = Vec::new();
+    for store in ["target/ripr/store-a", "target/ripr/store-b"] {
+        let (ok, before) = ripr(
+            &first.decoy,
+            &[
+                "agent",
+                "repair",
+                "--gap-id",
+                &first.gap,
+                "--base",
+                &base,
+                "--root",
+                &first.root_arg,
+                "--store",
+                store,
+                "--phase",
+                "before",
+            ],
+        )?;
+        expect_exit(ok, true, &format!("start {store}: {before}"))?;
+        let mut found = Vec::new();
+        for entry in std::fs::read_dir(first.root.join(store)).map_err(|e| e.to_string())? {
+            let path = entry
+                .map_err(|e| e.to_string())?
+                .path()
+                .join("attempt.json");
+            if path.is_file() {
+                let doc: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
+                        .map_err(|e| e.to_string())?;
+                found.push(attempt_id_of(&doc)?);
+            }
+        }
+        if found.len() != 1 {
+            return Err(format!("expected one attempt in {store}: {found:?}"));
+        }
+        ids.push(found.remove(0));
+    }
+    std::fs::write(&test_path, repaired).map_err(|e| e.to_string())?;
+    fixture_git_ok(&first.root, &["add", "test/pricing.test.ts"])?;
+    fixture_git_ok(&first.root, &["commit", "-q", "-m", "reclose"])?;
+    let backup = first
+        .root
+        .join("target/ripr/workflow/after.check-findings.json.ripr-preattempt-backup");
+    let child = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .current_dir(&first.decoy)
+        .args([
+            "agent",
+            "repair",
+            "--root",
+            &first.root_arg,
+            "--store",
+            "target/ripr/store-a",
+            "--phase",
+            "after",
+            "--attempt",
+            &ids[0],
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let mut child = ChildGuard(child);
+    let pid = Pid::from_raw(i32::try_from(child.0.id()).map_err(|e| e.to_string())?);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while std::fs::read(&backup).ok().as_deref() != Some(prior_projection.as_slice()) {
+        if let Some(status) = child.0.try_wait().map_err(|e| e.to_string())? {
+            return Err(format!("first process exited before backup: {status}"));
+        }
+        if Instant::now() >= deadline {
+            return Err("first process did not create a backup".into());
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    kill(pid, Signal::SIGSTOP).map_err(|e| e.to_string())?;
+    if !matches!(
+        waitpid(pid, Some(WaitPidFlag::WUNTRACED)).map_err(|e| e.to_string())?,
+        WaitStatus::Stopped(_, Signal::SIGSTOP)
+    ) {
+        return Err("first process did not stop".into());
+    }
+    let saved = std::fs::read(&backup).map_err(|e| e.to_string())?;
+    let (ok, second) = ripr(
+        &first.decoy,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &first.root_arg,
+            "--store",
+            "target/ripr/store-b",
+            "--phase",
+            "after",
+            "--attempt",
+            &ids[1],
+        ],
+    )?;
+    expect_exit(ok, false, "concurrent after")?;
+    need(
+        &second,
+        "another repair phase is using the shared workflow artifacts",
+        "cross-store lock refusal",
+    )?;
+    if std::fs::read(&backup).map_err(|e| e.to_string())? != saved {
+        return Err("concurrent after changed live backup".into());
+    }
+    if crash {
+        child.0.kill().map_err(|e| e.to_string())?;
+        child.0.wait().map_err(|e| e.to_string())?;
+        let (ok, retry) = ripr(
+            &first.decoy,
+            &[
+                "agent",
+                "repair",
+                "--root",
+                &first.root_arg,
+                "--store",
+                "target/ripr/store-b",
+                "--phase",
+                "after",
+                "--attempt",
+                &ids[1],
+            ],
+        )?;
+        expect_exit(ok, false, "after following crash")?;
+        need(&retry, "unresolved workflow backup", "crash backup refusal")?;
+        if std::fs::read(&backup).map_err(|e| e.to_string())? != saved {
+            return Err("crash recovery changed unknown backup".into());
+        }
+        return decoy_untouched(&first.decoy);
+    }
+    kill(pid, Signal::SIGCONT).map_err(|e| e.to_string())?;
+    let status = child.0.wait().map_err(|e| e.to_string())?;
+    if !status.success() {
+        use std::io::Read as _;
+        let mut stderr = String::new();
+        if let Some(pipe) = &mut child.0.stderr {
+            pipe.read_to_string(&mut stderr)
+                .map_err(|e| e.to_string())?;
+        }
+        return Err(format!("first after did not finish: {status}: {stderr}"));
+    }
+    if backup.exists() {
+        return Err("successful first after left its backup".into());
+    }
+    decoy_untouched(&first.decoy)
+}
+
+#[cfg(all(feature = "lang-typescript", unix))]
+#[test]
+fn after_preserves_original_when_backup_creation_is_denied() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let attempt = GapAttempt::start("backup-create-denied")?;
+    let workflow = attempt.root.join("target/ripr/workflow");
+    let projection = workflow.join("after.check-findings.json");
+    std::fs::write(&projection, b"prior projection").map_err(|e| e.to_string())?;
+    attempt.commit_closing_test()?;
+    let permissions = std::fs::metadata(&workflow)
+        .map_err(|e| e.to_string())?
+        .permissions();
+    std::fs::set_permissions(&workflow, std::fs::Permissions::from_mode(0o555))
+        .map_err(|e| e.to_string())?;
+    // A privileged user can bypass mode bits. Check the actual premise rather
+    // than treating a successful write under that identity as a product bug.
+    let probe = workflow.join("backup-permission-probe");
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+    {
+        Ok(file) => {
+            drop(file);
+            std::fs::set_permissions(&workflow, permissions).map_err(|e| e.to_string())?;
+            std::fs::remove_file(&probe).map_err(|e| e.to_string())?;
+            eprintln!("permission-denial premise unavailable: workflow directory is writable");
+            return Ok(());
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {}
+        Err(error) => {
+            std::fs::set_permissions(&workflow, permissions).map_err(|e| e.to_string())?;
+            return Err(format!("permission probe failed unexpectedly: {error}"));
+        }
+    }
+    let result = attempt.after(true);
+    std::fs::set_permissions(&workflow, permissions).map_err(|e| e.to_string())?;
+    let output = result?;
+    let (_, stderr) = text_of(&output);
+    expect_exit(output.status.success(), false, "denied backup creation")?;
+    need(&stderr, "create backup", "backup creation failure")?;
+    if std::fs::read(&projection).map_err(|e| e.to_string())? != b"prior projection"
+        || workflow
+            .join("after.check-findings.json.ripr-preattempt-backup")
+            .exists()
+    {
+        return Err("failed backup creation changed the original or published a backup".into());
+    }
+    Ok(())
+}
+
+/// Model the durable states observed after killing the CLI immediately after
+/// finish, then immediately after receipt publication. This is a state-based
+/// control; the separate Linux process probe establishes exclusion while a
+/// backup exists, not an exact post-finish or post-receipt crash window.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn pending_terminal_recovery_requires_published_receipt() -> Result<(), String> {
+    let attempt = GapAttempt::start("pending-terminal-recovery")?;
+    attempt.commit_closing_test()?;
+    let finished = attempt.after(true)?;
+    expect_exit(finished.status.success(), true, "finish initial attempt")?;
+    let manifest_path = attempt
+        .root
+        .join("target/ripr/repair-attempts")
+        .join(&attempt.attempt_id)
+        .join("attempt.json");
+    let mut manifest = attempt.manifest_for_only_attempt()?;
+    let roles = manifest["terminal_artifacts"]
+        .as_array()
+        .ok_or("no terminal roles")?
+        .clone();
+    if roles.len() != 3 {
+        return Err(format!("expected three terminal roles: {roles:?}"));
+    }
+    for role in &roles {
+        let path = role["path"].as_str().ok_or("terminal role lacks path")?;
+        std::fs::remove_file(attempt.root.join(path)).map_err(|e| e.to_string())?;
+    }
+    manifest
+        .as_object_mut()
+        .ok_or("manifest is not an object")?
+        .remove("terminal_artifacts");
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let receipt = attempt.root.join("target/ripr/reports/agent-receipt.json");
+    let receipt_bytes = std::fs::read(&receipt).map_err(|e| e.to_string())?;
+    std::fs::remove_file(&receipt).map_err(|e| e.to_string())?;
+    let read_row = || -> Result<serde_json::Value, String> {
+        let (ok, text) = ripr(
+            &attempt.decoy,
+            &["agent", "status", "--root", &attempt.root_arg, "--json"],
+        )?;
+        expect_exit(ok, true, "pending status")?;
+        let document: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+        document["repair_attempts"]
+            .as_array()
+            .and_then(|rows| {
+                rows.iter()
+                    .find(|row| row["attempt_id"].as_str() == Some(attempt.attempt_id.as_str()))
+            })
+            .cloned()
+            .ok_or_else(|| format!("attempt missing: {text}"))
+    };
+    let before = read_row()?;
+    if before["disposition"] != "unconfirmed" {
+        return Err(format!("finish without receipt was confirmed: {before}"));
+    }
+    let missing = attempt.after(false)?;
+    expect_exit(
+        missing.status.success(),
+        false,
+        "after without published receipt",
+    )?;
+    let (_, missing_error) = text_of(&missing);
+    need(
+        &missing_error,
+        "already finished",
+        "missing receipt retry reached the finished attempt",
+    )?;
+    if receipt.exists() {
+        return Err("missing receipt was recreated without evidence".into());
+    }
+    let missing_manifest = attempt.manifest_for_only_attempt()?;
+    if missing_manifest
+        .get("terminal_artifacts")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|roles| !roles.is_empty())
+        || read_row()?["disposition"] != "unconfirmed"
+    {
+        return Err("missing receipt was promoted".into());
+    }
+    std::fs::write(&receipt, receipt_bytes).map_err(|e| e.to_string())?;
+    let retried = attempt.after(false)?;
+    expect_exit(
+        retried.status.success(),
+        false,
+        "already-finished retry after receipt",
+    )?;
+    let (_, stderr) = text_of(&retried);
+    need(
+        &stderr,
+        "already finished",
+        "retry completed retention before refusing repeat",
+    )?;
+    let recovered = attempt.manifest_for_only_attempt()?;
+    let recovered_roles = recovered["terminal_artifacts"]
+        .as_array()
+        .ok_or("recovery omitted roles")?;
+    if recovered_roles.len() != 3 || !roles.iter().all(|role| recovered_roles.contains(role)) {
+        return Err(format!("wrong recovered roles: {recovered_roles:?}"));
+    }
+    let after = read_row()?;
+    if after["disposition"] != "finished" || after["head_current"] != true {
+        return Err(format!("recovered receipt is not current: {after}"));
+    }
+
+    // Model interruption after a staged after snapshot was linked into place
+    // but before its temporary name was removed or terminal roles committed.
+    let mut partial = recovered;
+    partial
+        .as_object_mut()
+        .ok_or("manifest is not an object")?
+        .remove("terminal_artifacts");
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&partial).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let after_role = roles
+        .iter()
+        .find(|role| role["role"] == "after_check_findings")
+        .and_then(|role| role["path"].as_str())
+        .ok_or("missing retained after role")?;
+    let retained_after = attempt.root.join(after_role);
+    let temporary = retained_after.with_extension("tmp-9999-3");
+    std::fs::hard_link(&retained_after, &temporary).map_err(|e| e.to_string())?;
+    let partial_retry = attempt.after(false)?;
+    expect_exit(
+        partial_retry.status.success(),
+        false,
+        "partial retention retry",
+    )?;
+    let (_, partial_error) = text_of(&partial_retry);
+    need(
+        &partial_error,
+        "already finished",
+        "partial retention reached the finished attempt",
+    )?;
+    let partial_row = read_row()?;
+    if partial_row["disposition"] != "finished" || partial_row["head_current"] != false {
+        return Err(format!(
+            "partial retention residue was hidden: {partial_row}"
+        ));
+    }
+    std::fs::remove_file(&temporary).map_err(|e| e.to_string())?;
+    let restored = read_row()?;
+    if restored["disposition"] != "finished" || restored["head_current"] != true {
+        return Err(format!(
+            "removing the modeled residue did not restore currentness: {restored}"
+        ));
+    }
+    decoy_untouched(&attempt.decoy)
+}
+
+/// Execute the actual printed action from a decoy directory using a local
+/// argv/cwd-checking python stand-in. The real pytest run is separate proof.
+#[cfg(all(unix, feature = "lang-python"))]
+#[test]
+fn python_printed_verify_runs_in_selected_root_from_foreign_cwd() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let (guard, root, decoy) =
+        materialize("blind_journey_installed_python", "head", "py-action", None)?;
+    let quoted_parent = guard.0.join("sélected ' root");
+    std::fs::rename(root.parent().ok_or("root has no parent")?, &quoted_parent)
+        .map_err(|e| e.to_string())?;
+    let root = quoted_parent.join("repo");
+    let root_arg = root.to_str().ok_or("non-UTF8 root")?;
+    let (ok, check) = ripr(&decoy, &["check", "--root", root_arg, "--base", "HEAD~1"])?;
+    if !ok {
+        return Err(format!("check failed: {check}"));
+    }
+    let action = check
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Verify command (Bash): "))
+        .and_then(|line| line.strip_suffix(" (high)"))
+        .ok_or("missing printed verify action")?;
+    let bin = guard.0.join("bin");
+    std::fs::create_dir(&bin).map_err(|e| e.to_string())?;
+    let python = bin.join("python");
+    std::fs::write(&python, "#!/bin/sh\n[ \"$1\" = -m ] && [ \"$2\" = pytest ] || exit 9\n[ \"$PWD\" = \"$EXPECTED_ROOT\" ] || exit 8\n[ \"$3\" = \"$EXPECTED_NODE\" ] || exit 6\nfile=${3%%::*}\n[ -f \"$file\" ] || exit 7\nprintf 'selected one fixture test\\n'\n").map_err(|e| e.to_string())?;
+    std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755))
+        .map_err(|e| e.to_string())?;
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let run = |cwd: &Path, script: &str, expected_root: &str, expected_node: &str| {
+        Command::new("bash")
+            .args(["-c", script])
+            .current_dir(cwd)
+            .env("PATH", &path)
+            .env("EXPECTED_ROOT", expected_root)
+            .env("EXPECTED_NODE", expected_node)
+            .output()
+            .map_err(|e| e.to_string())
+    };
+    for cwd in [&decoy, &root] {
+        let result = run(
+            cwd,
+            action,
+            root_arg,
+            "tests/test_pricing.py::test_above_boundary_gets_discount",
+        )?;
+        if !result.status.success()
+            || !String::from_utf8_lossy(&result.stdout).contains("selected one fixture test")
+        {
+            return Err(format!("action failed from {}: {result:?}", cwd.display()));
+        }
+    }
+    // The OS follows the symlink before applying `..`; a logical shell cd
+    // would instead land in a/repo, not the repository ripr analyzed.
+    std::fs::create_dir(quoted_parent.join("x")).map_err(|e| e.to_string())?;
+    let alias_parent = guard.0.join("a");
+    std::fs::create_dir(&alias_parent).map_err(|e| e.to_string())?;
+    std::fs::create_dir(alias_parent.join("repo")).map_err(|e| e.to_string())?;
+    std::os::unix::fs::symlink(quoted_parent.join("x"), alias_parent.join("link"))
+        .map_err(|e| e.to_string())?;
+    let alias = alias_parent.join("link/../repo");
+    let alias_arg = alias.to_str().ok_or("non-UTF8 alias")?;
+    let (ok, alias_check) = ripr(&decoy, &["check", "--root", alias_arg, "--base", "HEAD~1"])?;
+    if !ok {
+        return Err(format!("alias check failed: {alias_check}"));
+    }
+    let alias_action = alias_check
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Verify command (Bash): "))
+        .and_then(|line| line.strip_suffix(" (high)"))
+        .ok_or("missing alias action")?;
+    let result = run(
+        &decoy,
+        alias_action,
+        root_arg,
+        "tests/test_pricing.py::test_above_boundary_gets_discount",
+    )?;
+    if !result.status.success()
+        || !String::from_utf8_lossy(&result.stdout).contains("selected one fixture test")
+    {
+        return Err(format!(
+            "symlink-parent action selected the wrong root: {result:?}"
+        ));
+    }
+    let prefix = action
+        .strip_prefix("(cd -P -- ")
+        .and_then(|s| s.split_once(" && "))
+        .ok_or("unexpected action")?
+        .0;
+    let wrong = action.replacen(prefix, &format!("'{}'", decoy.display()), 1);
+    let result = run(
+        &decoy,
+        &wrong,
+        root_arg,
+        "tests/test_pricing.py::test_above_boundary_gets_discount",
+    )?;
+    if result.status.code() != Some(8) || !result.stdout.is_empty() {
+        return Err(format!("wrong-root action was not rejected: {result:?}"));
+    }
+    let missing = action.replacen(prefix, &format!("'{}/missing'", guard.0.display()), 1);
+    let result = run(
+        &decoy,
+        &missing,
+        root_arg,
+        "tests/test_pricing.py::test_above_boundary_gets_discount",
+    )?;
+    if result.status.success() || !result.stdout.is_empty() {
+        return Err(format!("missing-root action ran: {result:?}"));
+    }
+    // A limited finding has placement evidence but no Python repair card.
+    // Execute the action copied from the full output, not the digest.
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/python_dynamic_namespace_reload");
+    let limited_root = guard.0.join("limited ' root");
+    copy_tree(&fixture.join("input"), &limited_root)?;
+    let limited_root_arg = limited_root.to_str().ok_or("non-UTF8 limited root")?;
+    let diff = fixture.join("diff.patch");
+    let (ok, full) = ripr(
+        &decoy,
+        &[
+            "check",
+            "--root",
+            limited_root_arg,
+            "--diff",
+            diff.to_str().ok_or("non-UTF8 diff")?,
+            "--mode",
+            "fast",
+            "--format",
+            "human-full",
+        ],
+    )?;
+    if !ok {
+        return Err(format!("limited full check failed: {full}"));
+    }
+    let full_action = full
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("verify (Bash): "))
+        .and_then(|line| line.strip_suffix(" (high)"))
+        .ok_or_else(|| format!("missing rooted full-output action: {full}"))?;
+    let result = run(
+        &decoy,
+        full_action,
+        limited_root_arg,
+        "tests/test_pricing.py::test_discount",
+    )?;
+    if !result.status.success()
+        || !String::from_utf8_lossy(&result.stdout).contains("selected one fixture test")
+    {
+        return Err(format!("full-output action failed: {result:?}"));
+    }
+    decoy_untouched(&decoy)?;
     Ok(())
 }

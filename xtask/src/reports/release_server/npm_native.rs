@@ -499,11 +499,13 @@ pub(super) fn produce(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use super::super::payload::{
         NativeRuntimeEvidenceIdentity, PayloadBuildEnvironmentIdentity, PayloadSourceIdentity,
         PayloadToolchainIdentity,
     };
     use super::*;
+    #[cfg(unix)]
     use crate::policy::distribution::parse_distribution_contract;
 
     #[test]
@@ -753,6 +755,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
     fn mutate(input: &Path, output: &Path, mutation: &str) -> Result<(), String> {
         let mut source = tar::Archive::new(GzDecoder::new(
             File::open(input).map_err(|e| e.to_string())?,

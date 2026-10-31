@@ -183,6 +183,19 @@ pub(crate) struct TypeScriptTest {
     /// so a binding such as `let f = require('./owner')` may no longer hold
     /// the owner function. Populated once per file by `extract_tests`.
     pub(crate) written_locals_in_file: Shared<String>,
+    /// Identifier tokens the containing test file passes to a replacement
+    /// call (`spyOn`, `mock`, `doMock`, `stubGlobal`, `stub`, `replace`,
+    /// `mockImplementation`, `mockReturnValue`) or assigns as a member
+    /// (`.name =`). A getter, class or factory named here may be replaced, so
+    /// a relation that credits it refuses (#10402). The single entry `"*"`
+    /// refuses every name: it is recorded when the file mentions
+    /// `defineProperty`, `defineProperties`, `setPrototypeOf`,
+    /// `replaceProperty`, `__proto__`, `replaceGetter`, `replaceSetter`,
+    /// `proxyquire`, `rewire` or `createStubInstance`, or `td.replace`, has a
+    /// `spyOn` without a plain string-literal member name, a `mocked` of
+    /// anything but an identifier path, an index assignment, or an argument
+    /// list past 8 KB. Populated once per file by `extract_tests`.
+    pub(crate) member_replacements_in_file: Shared<String>,
     /// Test-local mock factories of the containing test file
     /// (RIPR-SPEC-0247 rule 1, amended 2026-10-15): top-level
     /// `function f() { return { ... }; }` or `const f = () => ({ ... });`
@@ -330,6 +343,8 @@ pub(crate) fn reshare_file_lists(tests: &mut [TypeScriptTest]) {
             .share_with(&previous.default_member_only_locals_in_file);
         test.written_locals_in_file
             .share_with(&previous.written_locals_in_file);
+        test.member_replacements_in_file
+            .share_with(&previous.member_replacements_in_file);
         test.mock_factories_in_file
             .share_with(&previous.mock_factories_in_file);
         test.mock_spread_sources_in_file
@@ -468,6 +483,22 @@ pub(crate) struct TypeScriptConditionalCreditGap {
     pub(crate) sample_line: usize,
     /// Bounded single-line source text of the unevaluated condition.
     pub(crate) condition: String,
+    /// Every unevaluated branch in the file holding a credited assertion,
+    /// with the calls enclosing it. Empty means the sites are unknown, so the
+    /// whole file counts (fail-closed); the sample above is the first site.
+    #[serde(default)]
+    pub(crate) sites: Vec<TypeScriptCreditSite>,
+}
+
+/// One unevaluated branch holding a credited assertion, and where it sits.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct TypeScriptCreditSite {
+    pub(crate) line: usize,
+    /// Bounded single-line source text of the unevaluated condition.
+    pub(crate) condition: String,
+    /// Start lines of the calls enclosing the branch, outermost first. A
+    /// registered test reports its call's start line as its own line.
+    pub(crate) enclosing_call_lines: Vec<usize>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

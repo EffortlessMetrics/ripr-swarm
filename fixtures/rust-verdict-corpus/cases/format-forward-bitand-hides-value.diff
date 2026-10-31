@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -21,7 +21,7 @@
+ }
+ 
+ pub fn base() -> u32 {
+-    2
++    4
+ }
+ 
+ pub fn parity_label() -> String {
