@@ -1,0 +1,9 @@
+# Registers the shared cfg-gate owner-pin withholding (#9643) under RIPR-SPEC-0240.
+[[extend]]
+id = "RIPR-SPEC-0240"
+tests = [
+  "crates/ripr/tests/shared_cfg_gate_owner_pin.rs::a_test_module_under_the_owners_gate_is_unknown_not_a_gap",
+  "crates/ripr/tests/shared_cfg_gate_owner_pin.rs::a_gate_the_owner_does_not_share_keeps_the_gap",
+  "crates/ripr/tests/shared_cfg_gate_owner_pin.rs::every_test_gate_must_be_carried_by_the_owner",
+  "crates/ripr/tests/shared_cfg_gate_owner_pin.rs::the_ungated_owner_control_refuses_for_the_gate_not_for_a_comment",
+]

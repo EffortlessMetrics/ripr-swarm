@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust exact pin in a test module that sits under the same `#[cfg(feature = "..")]` gate as the changed owner (the `#[cfg(feature = "v4")] pub mod v4 { fn stamp .. #[cfg(test)] mod tests { .. } }` shape) now reads `static_unknown` with `rust_assertion_context_unresolved` instead of a `reachable_unrevealed` gap: the test is compiled whenever the changed code is, and ripr cannot know which feature set a run enables. A gate only the test carries, a different or provably disabled gate, and an `#[ignore]` test keep the gap (#9643).

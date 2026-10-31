@@ -90,7 +90,18 @@ outcome whatever the assertion does. The syntax scan names an
 outcome-settling attribute as the refusal wherever it sits among the test's
 attributes, ahead of `async` and other attributes, so a feature gate listed
 first cannot hide an `#[ignore]`. A gated module stays a gap because
-`cfg(any())` is indistinguishable from a feature gate at that refusal.
+`cfg(any())` is indistinguishable from a feature gate at that refusal, with
+one exception (#9643): when every unevaluated `cfg` gate on the test and its
+enclosing modules is also carried, spelled identically (whitespace aside), by
+the changed owner or its enclosing items in the same file, the test is
+compiled whenever the changed code is, and which feature set a run enables is
+not known statically. That refusal is an analyzer limit
+(`unestablished_cfg_gates_of_fn`): `#[cfg(feature = "v4")] pub mod v4 { fn
+stamp .. #[cfg(test)] mod tests { .. } }` reads `static_unknown`, neither a
+gap nor credit. A gate only the test carries (the default run never compiles
+the test), a different gate, a provably disabled gate (`cfg(any())`), a
+`cfg_attr` or unreadable gate, an owner in another file and an `#[ignore]`
+test keep the gap.
 `cfg(false)` is read through the same shared evaluator, which does not yet
 evaluate the literal, so a test gated only by it is withheld rather than kept.
 Likewise `#[cfg_attr(test, ignore)]` and `#[cfg_attr(test, should_panic)]`
@@ -978,6 +989,10 @@ read budget are separate work.
 - Unit tests pin the withholding, its confidence rescore, idempotence, the
   marker contract, and that named limits and non-gap classes are untouched.
 - Unit tests pin `is_analyzer_limit` for each refusal kind and attribute.
+- `shared_cfg_gate_owner_pin.rs` pins the shared-gate exception (#9643): the
+  nested `cfg(feature)` module and a spelling-insensitive shared gate read
+  `static_unknown`, while an ungated owner, another feature, `cfg(any())` and
+  an ignored test keep the gap.
 - A paired fixture: a default-feature `cfg` test is withheld
   (`gap_withheld_feature_gated_test`); an `#[ignore]` test keeps the gap
   (`gap_kept_ignored_test`).

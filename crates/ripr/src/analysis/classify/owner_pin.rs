@@ -2768,6 +2768,11 @@ impl AssertionRefusal {
         }
     }
 
+    /// Whether the refusal is an enclosing `cfg` gate on the test (#9643).
+    pub(in crate::analysis) fn is_gated_item(&self) -> bool {
+        matches!(self, Self::Syntax(AssertionContextRefusal::GatedItem(_)))
+    }
+
     /// One reader-facing clause: what blocked crediting the assertion.
     pub(in crate::analysis) fn describe(&self) -> String {
         let at = |path: &Path, line: usize| {
