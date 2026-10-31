@@ -268,3 +268,33 @@ fn tool_discovery_guidance_keeps_absence_and_denial_distinct() -> Result<(), Str
     }
     Ok(())
 }
+
+#[test]
+fn denial_guidance_distinguishes_independent_writes_from_denied_operations() -> Result<(), String> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("missing repository root")?;
+    let protocol = fs::read_to_string(root.join("docs/agent-context/remote-wait-discipline.md"))
+        .map_err(|e| e.to_string())?;
+    for phrase in [
+        "retain the tool, exact action,",
+        "does not by itself establish a denial of a distinct write",
+        "authorization, dependencies and actual holds separately",
+        "write to obtain data from a denied read",
+        "Do not retry an unchanged denial",
+    ] {
+        assert!(protocol.contains(phrase), "missing {phrase}");
+    }
+    let scenarios =
+        fs::read_to_string(root.join("docs/agent-context/delivery-continuation-scenarios.md"))
+            .map_err(|e| e.to_string())?;
+    for phrase in [
+        "Denied read, distinct prepared write",
+        "separate review-comment hold",
+        "Denied body write",
+        "Preserve the denied body-write hold",
+    ] {
+        assert!(scenarios.contains(phrase), "missing {phrase}");
+    }
+    Ok(())
+}

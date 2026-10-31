@@ -63,8 +63,12 @@ Classify source, test/oracle, instrument and infrastructure failures using the
 actual head and applicable evidence; keep an unknown cause unknown. A deterministic
 failure calls for investigation or repair, not repeated identical runs. A bounded
 retry is appropriate for a demonstrated transient when it can change the decision.
-A denied operation blocks only dependent work: retain the exact action, target and
-reason, and continue independent authorized work. Do not retry an unchanged denial
+A denied operation blocks only dependent work: retain the tool, exact action,
+target and stated reason, and continue independent authorized work. A denied read
+does not by itself establish a denial of a distinct write. Assess each action's
+authorization, dependencies and actual holds separately; do not use a distinct
+write to obtain data from a denied read or otherwise route around that denial.
+Do not retry an unchanged denial
 or seek broader permissions as a generic remedy. If a denied operation is known
 not to have executed, retry it at most once after material new evidence changes
 the basis for that operation, subject to the host's restrictions. If a write's
