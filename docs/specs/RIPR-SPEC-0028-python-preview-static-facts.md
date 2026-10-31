@@ -663,6 +663,15 @@ A workspace assignment to a function's `__code__`, `__defaults__`, `__kwdefaults
 `__closure__` can replace a reader without rebinding its name, so it withholds the module
 constant's credit for scalar and table constants alike (#10626).
 
+A boundary input that a test passes as a plain name resolves like a literal
+when the name is bound once in the test body, by a top-level single-target
+assignment of a literal before the call (#10707). The test is parsed; the name
+is refused if it is a parameter, is stored, deleted, imported, declared
+`global`/`nonlocal`, bound by a `for`, `with`, `except`, walrus, comprehension,
+nested `def`/`class`/`lambda`, tuple unpack or augmented assignment, or if the
+body contains a `match`. A refused name stays unresolved, so the verdict is
+the weak one. Module-level constants are not resolved by this rule.
+
 A changed line whose old and new text differ only in a trailing `#` comment or
 in whitespace between tokens emits no probe (#10706). Both lines are lexed and
 compared by the source spelling of each token, so the statement is the same

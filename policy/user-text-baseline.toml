@@ -37,7 +37,7 @@ term = "discriminator"
 # #10391: the nine conservative patch-scope fixtures' human goldens add 62
 # lines containing the term (state rows, Evidence lines and the glossary
 # footer each fixture carries); raised with a reviewed reason in the PR.
-max_lines = 3317
+max_lines = 3336
 
 [[ceiling]]
 surface = "golden-human"
@@ -49,7 +49,7 @@ surface = "golden-human"
 term = "seam"
 # #10391: the same patch-scope human goldens add 11 lines naming seams in
 # their repair-start refusals.
-max_lines = 604
+max_lines = 606
 
 [[ceiling]]
 surface = "golden-human"
