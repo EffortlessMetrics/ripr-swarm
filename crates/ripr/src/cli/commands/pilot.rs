@@ -1404,23 +1404,23 @@ mod tests {
         );
         assert_eq!(
             pilot(&args(&["--out"])),
-            Err("missing value for --out".to_string())
+            Err("missing value for --out; pass a value right after it".to_string())
         );
         assert_eq!(
             pilot(&args(&["--mode"])),
-            Err("missing value for --mode".to_string())
+            Err("missing value for --mode; pass a value right after it".to_string())
         );
         assert_eq!(
             pilot(&args(&["--max-seams"])),
-            Err("missing value for --max-seams".to_string())
+            Err("missing value for --max-seams; pass a value right after it".to_string())
         );
         assert_eq!(
             pilot(&args(&["--timeout-ms"])),
-            Err("missing value for --timeout-ms".to_string())
+            Err("missing value for --timeout-ms; pass a value right after it".to_string())
         );
         assert_eq!(
             pilot(&args(&["--format"])),
-            Err("missing value for --format".to_string())
+            Err("missing value for --format; pass a value right after it".to_string())
         );
     }
 

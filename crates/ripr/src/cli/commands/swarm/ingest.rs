@@ -191,7 +191,7 @@ mod tests {
         );
         assert_eq!(
             parse(&["--result"]),
-            Err("missing value for --result".to_string())
+            Err("missing value for --result; pass a value right after it".to_string())
         );
         assert_eq!(
             parse(&["--result", "r.json", "--root"]),
@@ -199,7 +199,7 @@ mod tests {
         );
         assert_eq!(
             parse(&["--result", "r.json", "--format"]),
-            Err("missing value for --format".to_string())
+            Err("missing value for --format; pass a value right after it".to_string())
         );
     }
 

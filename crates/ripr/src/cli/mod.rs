@@ -1155,19 +1155,19 @@ mod tests {
         assert_eq!(
             run(args(&["ripr", "first-pr", "--gap-ledger"])),
             Err(CommandError::Failure(
-                "missing value for --gap-ledger".to_string()
+                "missing value for --gap-ledger; pass a value right after it".to_string()
             ))
         );
         assert_eq!(
             run(args(&["ripr", "start-here", "--gap-ledger"])),
             Err(CommandError::Failure(
-                "missing value for --gap-ledger".to_string()
+                "missing value for --gap-ledger; pass a value right after it".to_string()
             ))
         );
         assert_eq!(
             run(args(&["ripr", "first-action", "--assistant-proof"])),
             Err(CommandError::Failure(
-                "missing value for --assistant-proof".to_string()
+                "missing value for --assistant-proof; pass a value right after it".to_string()
             ))
         );
     }
@@ -1196,7 +1196,7 @@ mod tests {
         assert_eq!(
             run(args(&["ripr", "check", "--base", "-v"])),
             Err(CommandError::Failure(
-                "missing value for --base".to_string()
+                "missing value for --base; pass a value right after it".to_string()
             ))
         );
     }

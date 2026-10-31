@@ -26,7 +26,7 @@ fn diff_format_errors_preserve_exit_and_suggestions() {
     }
     assert_usage_error(
         run_ripr(&["diff", "--format"]),
-        "missing value for --format",
+        "missing value for --format; pass a value right after it",
     );
 }
 

@@ -1366,7 +1366,7 @@ mod tests {
         );
         assert_eq!(
             parse_review_comments_options(&args(&["--base"])),
-            Err("missing value for --base".to_string())
+            Err("missing value for --base; pass a value right after it".to_string())
         );
     }
 

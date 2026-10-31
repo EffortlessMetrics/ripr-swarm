@@ -411,7 +411,7 @@ mod tests {
         let when_value_is_missing = expect_value(&values, 2, "--diff");
         assert_eq!(
             when_value_is_missing,
-            Err("missing value for --diff".to_string())
+            Err("missing value for --diff; pass a value right after it".to_string())
         );
     }
 

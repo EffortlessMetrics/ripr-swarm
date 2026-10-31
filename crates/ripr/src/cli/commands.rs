@@ -3835,15 +3835,15 @@ mod tests {
         );
         assert_eq!(
             reports(&args(&["gap-ledger", "--records"])),
-            Err("missing value for --records".to_string())
+            Err("missing value for --records; pass a value right after it".to_string())
         );
         assert_eq!(
             reports(&args(&["gap-ledger", "--repo-exposure"])),
-            Err("missing value for --repo-exposure".to_string())
+            Err("missing value for --repo-exposure; pass a value right after it".to_string())
         );
         assert_eq!(
             reports(&args(&["gap-ledger", "--check-output"])),
-            Err("missing value for --check-output".to_string())
+            Err("missing value for --check-output; pass a value right after it".to_string())
         );
         assert_eq!(
             reports(&args(&[
@@ -3904,7 +3904,7 @@ mod tests {
         );
         assert_eq!(
             reports(&args(&["ts-limitations", "--check-output"])),
-            Err("missing value for --check-output".to_string())
+            Err("missing value for --check-output; pass a value right after it".to_string())
         );
     }
 
@@ -3984,7 +3984,7 @@ mod tests {
         );
         assert_eq!(
             reports(&args(&["ts-false-actionable", "--corpus"])),
-            Err("missing value for --corpus".to_string())
+            Err("missing value for --corpus; pass a value right after it".to_string())
         );
     }
 
@@ -7882,7 +7882,7 @@ language = "rust"
         );
         assert_eq!(
             init(&args(&["--ci"])),
-            Err("missing value for --ci".to_string())
+            Err("missing value for --ci; pass a value right after it".to_string())
         );
     }
 
@@ -8962,19 +8962,19 @@ language = "rust"
         );
         assert_eq!(
             explain(&args(&["--base"])),
-            Err("missing value for --base".to_string())
+            Err("missing value for --base; pass a value right after it".to_string())
         );
         assert_eq!(
             explain(&args(&["--diff"])),
-            Err("missing value for --diff".to_string())
+            Err("missing value for --diff; pass a value right after it".to_string())
         );
         assert_eq!(
             explain(&args(&["--perl-facts"])),
-            Err("missing value for --perl-facts".to_string())
+            Err("missing value for --perl-facts; pass a value right after it".to_string())
         );
         assert_eq!(
             explain(&args(&["--suppression-policy"])),
-            Err("missing value for --suppression-policy".to_string())
+            Err("missing value for --suppression-policy; pass a value right after it".to_string())
         );
     }
 

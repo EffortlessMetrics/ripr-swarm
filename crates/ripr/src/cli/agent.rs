@@ -2318,11 +2318,11 @@ mod tests {
         );
         assert_eq!(
             parse_agent_start_options(&args(&["--seam-id"])),
-            Err("missing value for --seam-id".to_string())
+            Err("missing value for --seam-id; pass a value right after it".to_string())
         );
         assert_eq!(
             parse_agent_start_options(&args(&["--out"])),
-            Err("missing value for --out".to_string())
+            Err("missing value for --out; pass a value right after it".to_string())
         );
         assert_eq!(
             parse_agent_start_options(&args(&["--seam-id", "abc", "--out", ""])),
@@ -2468,23 +2468,23 @@ mod tests {
         );
         assert_eq!(
             parse_agent_brief_options(&args(&["--diff"])),
-            Err("missing value for --diff".to_string())
+            Err("missing value for --diff; pass a value right after it".to_string())
         );
         assert_eq!(
             parse_agent_brief_options(&args(&["--base"])),
-            Err("missing value for --base".to_string())
+            Err("missing value for --base; pass a value right after it".to_string())
         );
         assert_eq!(
             parse_agent_brief_options(&args(&["--files"])),
-            Err("missing value for --files".to_string())
+            Err("missing value for --files; pass a value right after it".to_string())
         );
         assert_eq!(
             parse_agent_brief_options(&args(&["--seam-id"])),
-            Err("missing value for --seam-id".to_string())
+            Err("missing value for --seam-id; pass a value right after it".to_string())
         );
         assert_eq!(
             parse_agent_brief_options(&args(&["--max-seams"])),
-            Err("missing value for --max-seams".to_string())
+            Err("missing value for --max-seams; pass a value right after it".to_string())
         );
     }
 
@@ -2765,7 +2765,7 @@ mod tests {
                 "--gap-id",
             ]))
             .map(|options| options.gap_id),
-            Err("missing value for --gap-id".to_string())
+            Err("missing value for --gap-id; pass a value right after it".to_string())
         );
     }
 
@@ -3201,19 +3201,22 @@ mod tests {
     fn agent_stub_rejects_blank_missing_and_malformed_selector_values() {
         assert_eq!(
             parse_agent_stub_options(&args(&["--seam-id", "  "])),
-            Err("agent stub --seam-id requires a non-empty value".to_string())
+            Err("agent stub --seam-id requires a non-empty value; pass a value right after --seam-id".to_string())
         );
         assert_eq!(
             parse_agent_stub_options(&args(&["--at", ""])),
-            Err("agent stub --at requires a non-empty value".to_string())
+            Err(
+                "agent stub --at requires a non-empty value; pass a value right after --at"
+                    .to_string()
+            )
         );
         assert_eq!(
             parse_agent_stub_options(&args(&["--at"])),
-            Err("missing value for --at".to_string())
+            Err("missing value for --at; pass a value right after it".to_string())
         );
         assert_eq!(
             parse_agent_stub_options(&args(&["--kind"])),
-            Err("missing value for --kind".to_string())
+            Err("missing value for --kind; pass a value right after it".to_string())
         );
         assert_eq!(
             parse_agent_stub_options(&args(&["--at", "src/lib.rs"])),
