@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- `ripr check` no longer aborts with a stack overflow on a Rust file where a lone `'` inside a message (for example `"expected 'git version ...', got: {x}"`) precedes a very deeply nested expression. The nesting budget's literal scan now follows `rustc_lexer` for unterminated char literals, so the deep file is refused with `rust_nesting_budget` instead of crashing the process (#11351).
