@@ -246,14 +246,14 @@ existing rules and limits.
   delegating config written that way keeps the credit. A config above the
   repository boundary is not read.
 - A `preset:` option that is not a plain `ts-jest` preset refuses (#10139).
-  A spread of anything but an object literal on the root config object
+  A spread on the root config object
   (`...require("./jest.base")`, `...baseConfig`) and a root key built from a
   variable (`[name]: ...`) refuse too, since the unread base may carry a
   snapshot override (#9940). Spreads in arrays
   (`[...defaults.moduleFileExtensions]`) and in nested objects
   (`transform: { ...preset }`) are not root keys and keep the credit. A
-  string or comment the scan cannot close, such as a quote inside a regex
-  literal, refuses when the root could hide a spread behind it. A member
+  regex literal, a `function` keyword, a block arrow body, or a string or
+  comment the scan cannot close refuses, since the root could hide behind it. A member
   assignment through a variable key (`config[name] = ...`) and a base merged
   through a call (`mergeConfig(base, {...})`) are not read and keep the
   credit; both stay tracked as known limits.

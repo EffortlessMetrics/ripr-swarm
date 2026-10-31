@@ -2135,7 +2135,27 @@ fn root_spread_of_unread_base_and_computed_key_refuse_but_plain_configs_keep_cre
             OracleStrength::Strong,
         ),
         (
-            "module.exports = { ...{ testEnvironment: \"node\" } };",
+            "module.exports = { ...{ ...base } };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = async () => { const base = await load(); return { ...base, a: 1 }; };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = function () { return { ...base }; };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { re: /\\{/, ...base };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { a: /'/, ...base, b: /'/ };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { maxWorkers: cpus / 2, testEnvironment: \"node\" };",
             OracleStrength::Strong,
         ),
         (
