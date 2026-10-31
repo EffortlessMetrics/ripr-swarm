@@ -5,6 +5,10 @@ packet for one focused test. RIPR does not call a model, choose a provider,
 generate tests, or edit source files. It compiles static test-gap context into
 artifacts that a human, CI reviewer, or LLM tool can inspect.
 
+Looking for the short instruction block to give your own coding agent? Run
+`ripr init --agents claude|codex|cursor|all` and see the
+[agent quickstart](AGENT_QUICKSTART.md); this guide is the artifact-level reference.
+
 The loop is:
 
 ```text

@@ -16002,6 +16002,107 @@ fn init_dry_run_prints_config_without_writing() -> Result<(), String> {
     Ok(())
 }
 
+/// `ripr init --agents` end to end: dry run writes nothing, the real run
+/// appends a marked section to the user's file and creates the others, a rerun
+/// leaves every byte alone, and a malformed marker is refused without a write.
+#[test]
+fn init_agents_appends_marked_section_idempotently_and_never_clobbers() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    let root = workspace.display().to_string();
+    let claude = workspace.join("CLAUDE.md");
+    let mine = "# Mine\n\nKeep this line.\n";
+    std::fs::write(&claude, mine).map_err(|e| format!("write CLAUDE.md: {e}"))?;
+
+    let dry = run_ripr(&[
+        "init",
+        "--root",
+        &root,
+        "--agents",
+        "all",
+        "--mcp",
+        "--dry-run",
+    ]);
+    assert_success(&dry);
+    let dry_out = String::from_utf8_lossy(&dry.stdout);
+    for path in [
+        "CLAUDE.md",
+        "AGENTS.md",
+        ".cursor/rules/ripr.mdc",
+        ".cursor/mcp.json",
+    ] {
+        assert!(
+            dry_out.contains(path),
+            "dry run should name {path}: {dry_out}"
+        );
+    }
+    assert!(!workspace.join("AGENTS.md").exists());
+    assert!(!workspace.join(".cursor").exists());
+    assert_eq!(
+        std::fs::read_to_string(&claude).map_err(|e| e.to_string())?,
+        mine
+    );
+
+    let first = run_ripr(&["init", "--root", &root, "--agents", "all", "--mcp"]);
+    assert_success(&first);
+    let after_claude = std::fs::read_to_string(&claude).map_err(|e| e.to_string())?;
+    assert!(
+        after_claude.starts_with(mine),
+        "user content must stay first"
+    );
+    assert!(after_claude.contains("<!-- ripr:agents:end -->"));
+    assert!(after_claude.contains("STOP and report"));
+    let rule = std::fs::read_to_string(workspace.join(".cursor/rules/ripr.mdc"))
+        .map_err(|e| e.to_string())?;
+    assert!(rule.starts_with("---\n"), "{rule}");
+    let cursor_mcp =
+        std::fs::read_to_string(workspace.join(".cursor/mcp.json")).map_err(|e| e.to_string())?;
+    assert!(
+        cursor_mcp.contains("\"mcpServers\"") && cursor_mcp.contains("\"ripr\""),
+        "{cursor_mcp}"
+    );
+    let agents_before =
+        std::fs::read_to_string(workspace.join("AGENTS.md")).map_err(|e| e.to_string())?;
+
+    let second = run_ripr(&["init", "--root", &root, "--agents", "all", "--mcp"]);
+    assert_success(&second);
+    assert_eq!(
+        std::fs::read_to_string(&claude).map_err(|e| e.to_string())?,
+        after_claude,
+        "a rerun must not change CLAUDE.md"
+    );
+    assert_eq!(
+        std::fs::read_to_string(workspace.join("AGENTS.md")).map_err(|e| e.to_string())?,
+        agents_before
+    );
+    assert_eq!(
+        std::fs::read_to_string(workspace.join(".cursor/rules/ripr.mdc"))
+            .map_err(|e| e.to_string())?,
+        rule
+    );
+
+    // Negative: an unterminated marker fails the whole run before any write.
+    let broken = "keep\n<!-- ripr:agents:begin -->\nmy notes\n";
+    std::fs::write(workspace.join("AGENTS.md"), broken).map_err(|e| e.to_string())?;
+    let refused = run_ripr(&["init", "--root", &root, "--agents", "codex", "--force"]);
+    assert!(!refused.status.success(), "unterminated marker must fail");
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("without its end marker"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(workspace.join("AGENTS.md")).map_err(|e| e.to_string())?,
+        broken
+    );
+
+    let unknown = run_ripr(&["init", "--root", &root, "--agents", "copilot"]);
+    assert!(!unknown.status.success());
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("copilot"));
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
 /// #4378: on Windows the init preview mixed a forward-slash argv prefix with the
 /// joined `\ripr.toml` suffix, and doctor mixed `.\`-relative lines with a
 /// verbatim `\\?\` executable. Both surfaces render one slash convention.

@@ -109,7 +109,7 @@ rendering/upload. It does not run mutation
 testing, enable CI blocking policy, or unlock basic CLI usefulness.
 
 ```text
-ripr init [--root PATH] [--ci github] [--mcp] [--dry-run] [--force]
+ripr init [--root PATH] [--ci github] [--mcp] [--agents claude|codex|cursor|all] [--dry-run] [--force]
 ```
 
 After writing, `init` prints `doctor` and `check` commands with the selected
@@ -140,6 +140,7 @@ remains but its executable refresh command is omitted.
 | `--root PATH` | current directory | Workspace root where `ripr.toml` should be written. |
 | `--ci github` | _(off)_ | Also write `.github/workflows/ripr.yml`. The workflow installs `ripr`, runs `ripr pilot`, uploads pilot/report/agent artifacts, writes repo badge JSON, optionally renders and uploads SARIF when `RIPR_UPLOAD_SARIF` is true, and uses `continue-on-error` so the default path is advisory. |
 | `--mcp` | _(off)_ | Also add the `ripr` MCP server to `.mcp.json` (Claude Code project config). Other servers in an existing file are kept; an existing `ripr` entry is kept unless `--force`; a symlink or a file that is not a JSON object is refused. The file is rewritten with sorted keys. Like `--ci`, `--mcp` keeps an existing `ripr.toml`. Codex config is user-global and is never written: `init` prints the `codex mcp add` command instead. |
+| `--agents TARGET` | _(off)_ | Also add the short ripr loop (find a gap, write a test, verify, with an explicit done and stop rule) for a coding agent: `claude` writes `CLAUDE.md`, `codex` writes `AGENTS.md`, `cursor` writes `.cursor/rules/ripr.mdc`, `all` writes all three; repeatable. The text sits in a `<!-- ripr:agents:begin -->` / `<!-- ripr:agents:end -->` section appended to an existing file, so your other content is never touched; a rerun changes nothing, an edited section is kept unless `--force` refreshes it, and a symlink, a non-UTF-8 file or an unterminated marker is refused. Like `--ci` and `--mcp`, `--agents` keeps an existing `ripr.toml`. With `cursor`, `--mcp` also merges the `ripr` server into `.cursor/mcp.json`. See [Agent quickstart](AGENT_QUICKSTART.md). |
 | `--dry-run` | _(off)_ | Preview the run without writing. Prints a plan naming each target path and what would happen to it (`create`, `overwrite`, `leave existing`), then the body of each file that would be written. |
 | `--force` | _(off)_ | Overwrite an existing `ripr.toml`, generated workflow, or `ripr` MCP entry. Without this flag, existing repo policy and workflow files are left unchanged. |
 
