@@ -6,9 +6,12 @@
 
 use super::{RustIndex, TestFact};
 use crate::analysis::syntax::{proptest_expansions, ra::summarize_file_with_parser};
-use crate::analysis::workspace::verified_proptest_identity;
+use crate::analysis::workspace::{MetadataProbeFailure, verified_proptest_identity_result};
 use std::collections::BTreeSet;
 use std::sync::Arc;
+
+#[cfg(test)]
+mod metadata_failure_tests;
 
 #[derive(Clone, Debug)]
 pub(super) struct ProptestReceipt {
@@ -18,11 +21,37 @@ pub(super) struct ProptestReceipt {
     pub(super) name_scopes: Arc<crate::analysis::syntax::NameScopes>,
 }
 
+/// A failed attempt is diagnostic context, never a generated-test receipt.
+#[derive(Clone, Debug)]
+pub(super) struct ProptestMetadataFailure {
+    failure: MetadataProbeFailure,
+    source: Arc<str>,
+}
+
+impl RustIndex {
+    pub(crate) fn proptest_metadata_failure(
+        &self,
+        path: &std::path::Path,
+        macro_line: usize,
+        macro_name: &str,
+    ) -> Option<MetadataProbeFailure> {
+        let failed = self.proptest_metadata_failures.get(&(
+            path.to_path_buf(),
+            macro_line,
+            macro_name.to_string(),
+        ))?;
+        // Even a same-line/same-name replacement cannot borrow an older
+        // invocation's operational explanation from an incrementally edited index.
+        (self.files.get(path)?.data.source == failed.source).then_some(failed.failure)
+    }
+}
+
 pub(super) fn register_proptest_tests(
     index: &mut RustIndex,
     root: &std::path::Path,
 ) -> Result<(), String> {
     index.proptest_receipts.clear();
+    index.proptest_metadata_failures.clear();
     let files = index
         .files()
         .iter()
@@ -33,8 +62,31 @@ pub(super) fn register_proptest_tests(
     if files.is_empty() {
         return Ok(());
     }
-    let Some(identity) = verified_proptest_identity(root) else {
-        return Ok(());
+    let identity = match verified_proptest_identity_result(root) {
+        Ok(Some(identity)) => identity,
+        Ok(None) => return Ok(()),
+        Err(failure) => {
+            for (path, expansions) in files {
+                crate::analysis::cancellation::checkpoint()?;
+                let Some(file) = index.files.get(&path) else {
+                    continue;
+                };
+                let source = Arc::clone(&file.data.source);
+                // Only the syntax reader's supported invocations reached this
+                // verification. Opaque/unsupported neighboring macros keep
+                // their generic limitation and acquire no provider diagnosis.
+                for expansion in expansions {
+                    index.proptest_metadata_failures.insert(
+                        (path.clone(), expansion.macro_line, expansion.macro_name),
+                        ProptestMetadataFailure {
+                            failure,
+                            source: Arc::clone(&source),
+                        },
+                    );
+                }
+            }
+            return Ok(());
+        }
     };
     let mut known = index
         .tests()

@@ -51,7 +51,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testdeep-adjust-exact-hash.json",
-    "sha256": "f2f4952e27587e61938c1c89528873867f9a638d371c49c8488477bb17c1026d",
+    "sha256": "145be7bf1b749a9378db5dd061fe8e58264208c4b8b74b152bf92ea773cdffc6",
     "provenance": "producer"
   }
 }

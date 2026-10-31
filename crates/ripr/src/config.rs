@@ -298,7 +298,7 @@ fn is_repository_boundary(directory: &Path) -> bool {
     }
 
     let manifest = directory.join("Cargo.toml");
-    let Ok(contents) = std::fs::read_to_string(manifest) else {
+    let Ok(contents) = crate::bounded_input::read_to_string(manifest) else {
         return false;
     };
     if !contents.contains("workspace") {
@@ -1041,6 +1041,9 @@ fn parse_languages_enabled(values: &[String]) -> Result<Vec<LanguageId>, String>
 
 fn parse_generated_file_patterns(values: &[String]) -> Result<Vec<String>, String> {
     let mut parsed = Vec::with_capacity(values.len());
+    // Set membership keeps duplicate detection linear: a hostile `ripr.toml`
+    // may list tens of thousands of entries (#11560).
+    let mut seen = std::collections::HashSet::with_capacity(values.len());
     for value in values {
         if value.chars().any(char::is_control) {
             return Err(
@@ -1056,7 +1059,7 @@ fn parse_generated_file_patterns(values: &[String]) -> Result<Vec<String>, Strin
                     .to_string(),
             );
         }
-        if parsed.iter().any(|existing| existing == trimmed) {
+        if !seen.insert(trimmed) {
             return Err(format!(
                 "languages.rust.generated_file_patterns lists `{trimmed}` more than once; remove the duplicate"
             ));
@@ -1073,6 +1076,7 @@ fn parse_handwritten_files(
     extension_ok: impl Fn(&str) -> bool,
 ) -> Result<Vec<String>, String> {
     let mut parsed = Vec::with_capacity(values.len());
+    let mut seen = std::collections::HashSet::with_capacity(values.len());
     for value in values {
         if value.chars().any(char::is_control) {
             return Err(format!("{field} must not contain control characters"));
@@ -1091,7 +1095,7 @@ fn parse_handwritten_files(
             return Err(format!("{field} must identify {extension_desc}"));
         }
         let normalized = path.to_string_lossy().replace('\\', "/");
-        if parsed.contains(&normalized) {
+        if !seen.insert(normalized.clone()) {
             return Err(format!(
                 "{field} lists `{normalized}` more than once; remove the duplicate"
             ));
@@ -1116,10 +1120,11 @@ fn parse_bun_ub_profile(raw: RawBunUbProfileConfig) -> Result<BunUbProfileConfig
         return Err("profiles.bun_ub.test_roots must list at least one test root".to_string());
     }
     let mut parsed_roots = Vec::with_capacity(test_roots.len());
+    let mut seen = std::collections::HashSet::with_capacity(test_roots.len());
     for root in test_roots {
         let trimmed = root.trim();
         parse_relative_path("profiles.bun_ub.test_roots", trimmed)?;
-        if parsed_roots.iter().any(|existing| existing == trimmed) {
+        if !seen.insert(trimmed.to_string()) {
             return Err(format!(
                 "profiles.bun_ub.test_roots lists `{trimmed}` more than once; remove the duplicate"
             ));
