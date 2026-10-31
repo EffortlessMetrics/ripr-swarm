@@ -1270,8 +1270,8 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
     );
 
     let step_level_cleanup = workflow.replace(
-        "    uses: ./.github/workflows/rust-gates.yml\n    with:\n      runner-config: '\"ubuntu-latest\"'",
-        "    uses: ./.github/workflows/rust-gates.yml\n    # cleanup may use always()\n    with:\n      runner-config: '\"ubuntu-latest\"'",
+        "    uses: ./.github/workflows/rust-gates.yml\n    with:\n      proof-profile:",
+        "    uses: ./.github/workflows/rust-gates.yml\n    # cleanup may use always()\n    with:\n      proof-profile:",
     );
     assert_ne!(step_level_cleanup, workflow, "fixture must add the comment");
     assert!(
@@ -1373,8 +1373,8 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&any_label_request)
     );
     let skippable_result = workflow.replace(
-        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Recheck initially admitted eligibility",
-        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Recheck initially admitted eligibility",
+        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Verify immutable qualification subject",
+        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Verify immutable qualification subject",
     );
     assert_ne!(
         skippable_result, workflow,

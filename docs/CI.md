@@ -823,6 +823,8 @@ fork or otherwise untrusted PR:
   GitHub-hosted only
 ```
 
+#### Deployed main behavior before staged activation
+
 Label events are not an implicit full-gate refresh, and Draft iteration does not
 allocate the heavy required gate (#4986):
 
@@ -923,6 +925,40 @@ needs its own evidence.
   for the exact new head. Reassess exact-head merge prerequisites first.
 - Labels such as `full-ci` take effect at the next `merge-ready` request, not
   when they are added; add them before the request.
+
+#### Staged exact-subject candidate; activation held
+
+Ordinary Draft/open/synchronize/Ready activity does not launch the routed gate.
+The explicit request is `pull_request:labeled` with event label `merge-ready`,
+for a currently reviewed non-Draft H. Live preflight binds H/base B/integration T
+and readiness; native run readback handles sequential duplicates. Other labels
+emit `Merge-ready Nonrequest`, never a skipped `Ripr Rust Small Result`.
+Qualification and per-run metadata concurrency are separate. Running work is
+preserved, but native default concurrency can replace a pending identical request;
+read back existing work before requesting again. There is no exactly-once claim.
+
+Existing Rust/docs producers and the extracted Windows subset feed the aggregate.
+The subset preserves advisory verdicts and mandatory status/log/nonempty execution,
+source/receipt/cleanup evidence. The unchanged `windows-advisory-subset` job in
+`windows-advisory.yml` still runs on schedule, manual dispatch and an explicit
+`merge-ready` labeled request, separately from the admitted aggregate child. The full Windows suite and other feature/wheel/
+security/editor lanes remain separately owned; this bounded patch does not claim
+that every legacy automatic launch has migrated.
+
+No per-main routed full run or branch dispatch can impersonate the protected PR
+result. Cache acceleration may be cold/stale after retiring that writer; proof
+still executes and no warm-cache or <=20-minute result is assumed. Main-health
+sampling remains a separate proposal rather than a cutover prerequisite.
+
+Early UB review remains separate, including Drafts. Quota, skipped sensors,
+failed-to-review and missing provider output are not clean reviews. The
+[explicit request handoff](PR_AUTOMATION.md#draft-to-ready-handoff) binds source
+review before qualification and final REVIEW_READY/current-state decision after
+green. The result refreshes current readiness again; separate read/publication
+operations are not atomic. Protected expected-head squash and landed-tree readback
+retain current server enforcement, without a native merge queue or added settings.
+The known required mapping remains `Ripr Rust Small Result`, app15368; complete
+classic strictness is unreadable, not assumed absent and not a new settings gate.
 
 The router uses the repository or organization `EM_RUNNER_READ_TOKEN` secret
 when available. It selects a self-hosted runner only when the runner is idle and

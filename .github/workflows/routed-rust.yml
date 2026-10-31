@@ -22,6 +22,7 @@ on:
 permissions:
   actions: read
   contents: read
+  pull-requests: read
 
 concurrency:
   group: ${{ github.event_name == 'pull_request' && github.event.label.name != 'merge-ready' && format('{0}-{1}-nonrequest-{2}', github.workflow, github.event.pull_request.number, github.run_id) || format('{0}-{1}-{2}', github.workflow, github.event.pull_request.number || github.ref, github.event_name) }}
@@ -33,11 +34,280 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  NATIVE_SUBJECT_QUERY: |
+    query($number:Int!){repository(owner:"EffortlessMetrics",name:"ripr-swarm"){id nameWithOwner ref(qualifiedName:"refs/heads/main"){name prefix target{__typename oid}} pullRequest(number:$number){id number headRefOid headRepository{id} baseRefName baseRefOid baseRepository{id} baseRef{name prefix repository{id} target{__typename oid}} potentialMergeCommit{oid tree{oid} parents(first:3){nodes{oid}pageInfo{hasNextPage}}}}}}
+  NATIVE_SUBJECT_JQ: |
+    def oid: type == "string" and test("^[0-9a-f]{40}$");
+    (.errors == null and (.data.repository != null)) as $ok |
+    if $ok then .data.repository as $r | $r.pullRequest as $p |
+      if ($r.id == $repo_id and $r.nameWithOwner == $repo and
+          $p.id == $pr_id and $p.number == $number and $p.headRepository.id == $repo_id and
+          $p.headRefOid == $head and $p.baseRepository.id == $repo_id and
+          $p.baseRefName == "main" and $p.baseRef.name == "main" and
+          $p.baseRef.prefix == "refs/heads/" and $p.baseRef.repository.id == $repo_id and
+          $p.baseRef.target.__typename == "Commit" and ($p.baseRef.target.oid | oid) and
+          $r.ref.name == "main" and $r.ref.prefix == "refs/heads/" and
+          $r.ref.target.__typename == "Commit" and $r.ref.target.oid == $p.baseRef.target.oid and
+          $p.potentialMergeCommit.oid == $merge and ($p.potentialMergeCommit.tree.oid | oid) and
+          $p.potentialMergeCommit.parents.pageInfo.hasNextPage == false and
+          ([$p.potentialMergeCommit.parents.nodes[].oid] == [$p.baseRef.target.oid,$head])) then
+        {version:2,repository_id:$repo_id,repository:$repo,pr_id:$pr_id,pr_number:$number,
+         destination_repository_id:$repo_id,destination_ref:"refs/heads/main",
+         head:$head,base:$p.baseRef.target.oid,merge:$merge,tree:$p.potentialMergeCommit.tree.oid,
+         parents:[$p.baseRef.target.oid,$head],workflow_generation:$generation}
+      else error("incoherent live qualification subject") end
+    else error("missing/error identity response") end
+  # Partial #8157 mitigation: interpret current attestations, not narrative tokens.
+  # This does not authenticate a publisher or establish referenced proof custody.
+  REVIEW_DISPOSITION_JQ: |
+    def current_comment_ready:
+      if type != "string" then error("review body must be a string") else
+        reduce (gsub("\r\n"; "\n") | split("\n")[]) as $line
+          ({first:true, fence:null, quoted:false, dispositions:[]};
+           if .fence != null then
+             .fence as $fence |
+             if ($line | test("^ {0,3}" + $fence.char + "{" + ($fence.size|tostring) + ",}[ \t]*$"))
+             then .fence = null else . end
+           elif ($line | test("^[ \t]*$")) then .quoted = false
+           elif ($line | test("^ {0,3}>")) then .first = false | .quoted = true
+           elif .quoted then .first = false
+           elif ($line | test("^ {0,3}(`{3,}|~{3,})")) then
+             ($line | capture("^ {0,3}(?<fence>`{3,}|~{3,})")) as $match |
+             .first = false | .fence = {char:$match.fence[0:1], size:($match.fence|length)}
+           elif ($line | test("^( {4}|\t)")) then .first = false
+           else
+             (if .first and ($line | test("^ {0,3}(SOURCE_REVIEW_READY|REVIEW_READY)([^A-Za-z0-9_]|$)"))
+              then .dispositions += ["positive"] else . end) |
+             (if ($line | test("^disposition:[ \t]*")) then
+                .dispositions += [(if ($line | test("^disposition:[ \t]*(SOURCE_REVIEW_READY|REVIEW_READY)[ \t]*$"))
+                                    then "positive" else "refuse" end)]
+              else . end) | .first = false
+           end) |
+        .fence == null and (.dispositions | length > 0 and all(. == "positive"))
+      end;
+    # Only a repository OWNER/MEMBER/COLLABORATOR can supply a positive
+    # attestation; any reviewer can still block with CHANGES_REQUESTED.
+    def trusted: (.author_association // "") as $a | ["OWNER","MEMBER","COLLABORATOR"] | index($a) != null;
+
+  NATIVE_REQUEST_JQ: |
+    .node_id == $pr_id and .number == $number and .state == "open" and .draft == false and
+    .head.repo.node_id == $repo_id and .head.repo.full_name == $repo and .head.sha == $head and
+    .base.repo.node_id == $repo_id and .base.ref == "main" and
+    any(.labels[]; .name == "merge-ready")
+  NATIVE_COMMIT_JQ: |
+    .sha == $merge and .tree.sha == $tree and (.parents | map(.sha) == [$base,$head])
+  QUALIFICATION_SUBJECT_JQ: |
+    def oid: type == "string" and test("^[0-9a-f]{40}$");
+    . as $q | if (($q.base | oid) and ($q.tree | oid)) then
+      {version:2,repository_id:$repo_id,repository:$repo,pr_id:$pr_id,pr_number:$number,
+       destination_repository_id:$repo_id,destination_ref:"refs/heads/main",
+       head:$head,base:$q.base,merge:$merge,tree:$q.tree,parents:[$q.base,$head],
+       workflow_generation:$generation} as $expected |
+      if $q == $expected then $q else error("substituted qualification subject") end
+    else error("invalid qualification subject") end
+  FINAL_CURRENTNESS_JQ: |
+    def oid: type == "string" and test("^[0-9a-f]{40}$");
+    .data.repository as $r | $r.pullRequest as $p |
+    {graphql_ok:(.errors == null),
+     repository_identity:($r.id == $repo_id and $r.nameWithOwner == $repo),
+     pr_identity:($p.id == $pr_id and $p.number == $number),
+     head_identity:($p.headRepository.id == $repo_id and $p.headRefOid == $head),
+     destination_identity:($p.baseRepository.id == $repo_id and $p.baseRefName == "main" and
+       $p.baseRef.name == "main" and $p.baseRef.prefix == "refs/heads/" and $p.baseRef.repository.id == $repo_id),
+     live_base_shape:($p.baseRef.target.__typename == "Commit" and ($p.baseRef.target.oid | oid)),
+     independent_destination:($r.ref.name == "main" and $r.ref.prefix == "refs/heads/" and $r.ref.target.__typename == "Commit"),
+     live_base_agrees:($r.ref.target.oid == $p.baseRef.target.oid)} as $checks |
+    if all($checks[]; . == true) then $r.ref.target.oid
+    else error("incoherent current repository observation: " + ($checks | tojson)) end
+  NATIVE_REVIEWS_JQ: |
+    [ .[][] ] as $reviews |
+    ($reviews | map(select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")) |
+    group_by(.user.login) | map(max_by(.submitted_at))) as $dispositions |
+    all($dispositions[]; .state != "CHANGES_REQUESTED") and
+    (any($dispositions[]; .commit_id == $head and .state == "APPROVED" and trusted) or
+    any($reviews | map(select(trusted)) | group_by(.user.login) | map(max_by(.submitted_at))[];
+    .commit_id == $head and .state == "COMMENTED" and
+    (.body | current_comment_ready)))
+  NATIVE_PRIOR_REQUESTS_JQ: |
+    [.[].workflow_runs[] | select(.workflow_id == $workflow and .head_sha == $head and
+    .repository.node_id == $repo_id and .event == "pull_request" and .run_number < $current and
+    (.display_title | startswith("Merge-ready ")) and
+    any(.pull_requests[]; .id == $pr_database_id and .number == $number))] | sort_by(.run_number) | reverse
+  NATIVE_PRIOR_JOBS_JQ: |
+    [.[].jobs[]] as $jobs | ($jobs | length > 0) and
+    all($jobs[]; .run_id == $run and .head_sha == $head) and
+    ([$jobs[].id] | length == (unique | length))
+  NATIVE_PRIOR_ADMISSION_JQ: |
+    [.[].jobs[]] as $jobs |
+    ([$jobs[] | select(.name == "Live merge-ready preflight")] | length == 1) and
+    ([$jobs[].steps[]? | select(.name == $marker)] | length == 1) and
+    any($jobs[]; .name == "Live merge-ready preflight" and .status == "completed" and .conclusion == "success" and
+    any(.steps[]; .name == $marker and .status == "completed" and .conclusion == "success"))
+  READINESS_SUBJECT_DIAGNOSTIC_JQ: |
+    {payload:"qualification-subject", checks:{expected_present:($expected | length > 0),
+    exact_subject:($observed == $expected and ($observed | length > 0))}}
+  READINESS_PR_DIAGNOSTIC_JQ: |
+    def check(f): try f catch "unreadable";
+    def sha: if type == "string" and test("^[0-9a-f]{40}$") then . else null end;
+    .[0] as $pr | {payload:(if length == 0 then "missing" else ($pr | type) end),
+    expected:{head:$head,base:$base,subject:$subject}, checks:($pr | {
+    open: check(.state == "open"), non_draft: check(.draft == false),
+    same_repository: check(.head.repo.full_name == $repo), main_base: check(.base.ref == "main"),
+    mergeable: check(.mergeable == true), exact_head: check(.head.sha == $head),
+    stored_base_matches_event: check(.base.sha == $base), exact_subject: check(.merge_commit_sha == $subject),
+    merge_ready: check(any(.labels[]; .name == "merge-ready"))}),
+    observed:($pr | {head:check(.head.sha | sha),base:check(.base.sha | sha),subject:check(.merge_commit_sha | sha)})}
+  READINESS_REVIEWS_DIAGNOSTIC_JQ: |
+    [ .[][] ] as $reviews |
+    ($reviews | map(select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")) |
+    group_by(.user.login) | map(max_by(.submitted_at))) as $dispositions |
+    ($reviews | map(select(trusted)) | group_by(.user.login) | map(max_by(.submitted_at))) as $latest |
+    {payload:"review-pages", pages:length, latest_count:($latest | length),
+    latest_ids:($latest | map(.id | if type == "number" then . else null end) | .[:20]),
+    checks:{no_changes_requested:all($dispositions[]; .state != "CHANGES_REQUESTED"),
+    current_head_approved:any($dispositions[]; .commit_id == $head and .state == "APPROVED" and trusted),
+    current_head_marker:any($latest[];
+    .commit_id == $head and .state == "COMMENTED" and
+    (.body | current_comment_ready))}}
+  READINESS_THREADS_DIAGNOSTIC_JQ: |
+    def check(f): try f catch "unreadable";
+    .[0] as $page | {payload:(if length == 0 then "missing" else ($page | type) end),
+    checks:($page | {no_graphql_errors:check(.errors == null),
+    all_resolved:check(.data.repository.pullRequest.reviewThreads.nodes | all(.isResolved == true)),
+    next_page_boolean:check(.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | type == "boolean"),
+    cursor_nonempty:check(.data.repository.pullRequest.reviewThreads.pageInfo.endCursor | type == "string" and length > 0)}),
+    unresolved_count:($page | check([.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved != true)] | length))}
 
 jobs:
+  qualification:
+    if: github.event_name == 'pull_request'
+    name: Live merge-ready preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      execute: ${{ steps.preflight.outputs.execute }}
+      prior_result: ${{ steps.preflight.outputs.prior_result }}
+      tree: ${{ steps.preflight.outputs.tree }}
+      head: ${{ steps.preflight.outputs.head }}
+      base: ${{ steps.preflight.outputs.base }}
+      merge: ${{ steps.preflight.outputs.merge }}
+      generation: ${{ steps.preflight.outputs.generation }}
+      subject: ${{ steps.preflight.outputs.subject }}
+      identity: ${{ steps.preflight.outputs.identity }}
+      request_id: ${{ steps.preflight.outputs.request_id }}
+    steps:
+      - name: Reconcile native request and current readiness
+        id: preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          ACTION: ${{ github.event.action }}
+          LABEL: ${{ github.event.label.name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          STORED_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          SUBJECT_SHA: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+          REPOSITORY_ID: ${{ github.event.repository.node_id }}
+          PR_ID: ${{ github.event.pull_request.node_id }}
+          PR_DATABASE_ID: ${{ github.event.pull_request.id }}
+          GENERATION: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [ "$ACTION" != labeled ] || [ "$LABEL" != merge-ready ]; then
+            printf 'execute=false\nprior_result=nonrequest\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [[ "$REPOSITORY" = EffortlessMetrics/ripr-swarm && "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          [[ -n "$REPOSITORY_ID" && -n "$PR_ID" ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ && "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          for sha in "$HEAD_SHA" "$SUBJECT_SHA" "$GENERATION"; do [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; done
+          permission=$(gh api "repos/$REPOSITORY/collaborators/$ACTOR/permission" --jq .permission)
+          case "$permission" in admin|maintain|write) ;; *) echo 'Untrusted request actor' >&2; exit 1;; esac
+          settle_request() {
+            local attempt state
+            for attempt in 1 2 3; do
+              pr=$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER") || return
+              jq -e --arg repo "$REPOSITORY" --arg repo_id "$REPOSITORY_ID" --arg pr_id "$PR_ID" --argjson number "$PR_NUMBER" --arg head "$HEAD_SHA" --arg merge "$SUBJECT_SHA" "${NATIVE_REQUEST_JQ:?}" <<< "$pr" >/dev/null || return
+              state=$(jq -er 'if .mergeable == null then "pending" elif .mergeable == true then "ready" else "refused" end' <<< "$pr") || return
+              case "$state" in
+                ready) jq -e --arg merge "$SUBJECT_SHA" ' .merge_commit_sha == $merge ' <<< "$pr" >/dev/null || return; return 0 ;;
+                refused) echo 'Mergeability refused' >&2; return 1 ;;
+                pending) [ "$attempt" = 3 ] || sleep 2 ;;
+              esac
+            done
+            echo 'Mergeability not established within bounded refresh' >&2
+            return 1
+          }
+          read_subject() {
+            # The REST merge ref and the GraphQL live view rebuild at different
+            # times after a main push; a bounded refresh reads the pair the way
+            # settle_request reads mergeability, without widening admission.
+            local attempt frame base tree candidate=''
+            for attempt in 1 2 3; do
+              frame=$(gh api graphql -f query="$NATIVE_SUBJECT_QUERY" -F number="$PR_NUMBER") || { [ "$attempt" = 3 ] || sleep 2; continue; }
+              candidate=$(jq -ceS --arg repo "$REPOSITORY" --arg repo_id "$REPOSITORY_ID" --arg pr_id "$PR_ID" --argjson number "$PR_NUMBER" --arg head "$HEAD_SHA" --arg merge "$SUBJECT_SHA" --arg generation "$GENERATION" "$NATIVE_SUBJECT_JQ" <<< "$frame") && break
+              [ "$attempt" = 3 ] || sleep 2
+            done
+            [ -n "$candidate" ] || return 1
+            base=$(jq -er .base <<< "$candidate") || return
+            tree=$(jq -er .tree <<< "$candidate") || return
+            commit=$(gh api "repos/$REPOSITORY/git/commits/$SUBJECT_SHA") || return
+            jq -e --arg merge "$SUBJECT_SHA" --arg base "$base" --arg head "$HEAD_SHA" --arg tree "$tree" "${NATIVE_COMMIT_JQ:?}" <<< "$commit" >/dev/null || return
+            printf '%s\n' "$candidate"
+          }
+          settle_request
+          subject_before=$(read_subject)
+          reviews=$(gh api --paginate "repos/$REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100")
+          author=$(jq -r .user.login <<< "$pr")
+          jq -s -e --arg head "$HEAD_SHA" --arg author "$author" "$REVIEW_DISPOSITION_JQ${NATIVE_REVIEWS_JQ:?}" <<< "$reviews" >/dev/null
+          cursor=null
+          while :; do
+            threads=$(gh api graphql -f query="query(\$number:Int!,\$cursor:String){repository(owner:\"EffortlessMetrics\",name:\"ripr-swarm\"){pullRequest(number:\$number){reviewThreads(first:100,after:\$cursor){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}" -F number="$PR_NUMBER" -F cursor="$cursor")
+            jq -e '.errors == null and (.data.repository.pullRequest.reviewThreads.nodes | all(.isResolved == true))' <<< "$threads" >/dev/null
+            more=$(jq -er '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | if type == "boolean" then tostring else error("invalid pagination") end' <<< "$threads")
+            [ "$more" = true ] || break
+            cursor=$(jq -er '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor | select(length > 0)' <<< "$threads")
+          done
+          settle_request
+          subject=$(read_subject)
+          [[ "$subject" == "$subject_before" ]] || { echo 'Qualification subject changed during admission' >&2; exit 1; }
+          BASE_SHA=$(jq -er .base <<< "$subject")
+          tree=$(jq -er .tree <<< "$subject")
+          identity=$(printf '%s' "$subject" | sha256sum | cut -d ' ' -f1)
+          workflow_file=${GITHUB_WORKFLOW_REF#*/.github/workflows/}
+          workflow_file=${workflow_file%%@*}
+          workflow_id=$(gh api "repos/$REPOSITORY/actions/workflows/$workflow_file" --jq .id)
+          runs=$(gh api --paginate "repos/$REPOSITORY/actions/runs?head_sha=$HEAD_SHA&event=pull_request&per_page=100")
+          prior_runs=$(jq -cs --arg head "$HEAD_SHA" --arg repo_id "$REPOSITORY_ID" --argjson pr_database_id "$PR_DATABASE_ID" --argjson workflow "$workflow_id" --argjson number "$PR_NUMBER" --argjson current "$GITHUB_RUN_NUMBER" "${NATIVE_PRIOR_REQUESTS_JQ:?}" <<< "$runs")
+          while IFS= read -r prior; do
+            [ -n "$prior" ] || continue
+            [[ "$(jq -er .status <<< "$prior")" = completed ]] || { echo 'Prior native request pending/running; no relaunch' >&2; exit 1; }
+            prior_id=$(jq -er '.id | select(type == "number" and . > 0)' <<< "$prior")
+            attempt=$(jq -er '.run_attempt | select(type == "number" and . >= 1)' <<< "$prior")
+            jobs=$(gh api --paginate "repos/$REPOSITORY/actions/runs/$prior_id/attempts/$attempt/jobs?per_page=100")
+            marker="Admitted v2 $identity run $prior_id attempt $attempt"
+            jq -s -e --arg head "$HEAD_SHA" --argjson run "$prior_id" "${NATIVE_PRIOR_JOBS_JQ:?}" <<< "$jobs" >/dev/null
+            count=$(jq -sr --arg marker "$marker" '[.[].jobs[].steps[]? | select(.name == $marker)] | length' <<< "$jobs")
+            [ "$count" != 0 ] || { echo 'origin-identity-unavailable: prior request lacks verified v2 identity; no replacement' >&2; exit 1; }
+            jq -s -e --arg marker "$marker" "${NATIVE_PRIOR_ADMISSION_JQ:?}" <<< "$jobs" >/dev/null
+            # Metadata identity discovery is not producer proof. No recursive reused-run
+            # chain or aggregate-only pass; actual MSRV/VSCode receipts are not verified.
+            echo 'origin-proof-unavailable: same-attempt native producer receipt identities are not qualified; no reuse or replacement' >&2
+            exit 1
+          done < <(jq -c '.[]' <<< "$prior_runs")
+          {
+            printf 'head=%s\nbase=%s\nmerge=%s\ntree=%s\ngeneration=%s\n' "$HEAD_SHA" "$BASE_SHA" "$SUBJECT_SHA" "$tree" "$GENERATION"
+            printf 'subject=%s\nidentity=%s\nexecute=true\nprior_result=none\n' "$subject" "$identity"
+            printf 'request_id=%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+          } >> "$GITHUB_OUTPUT"
+      - name: Admitted v2 ${{ steps.preflight.outputs.identity }} run ${{ github.run_id }} attempt ${{ github.run_attempt }}
+        if: steps.preflight.outputs.execute == 'true'
+        run: ':'
+
   route:
-    name: Route Ripr Rust Small
     if: github.event_name != 'pull_request' || github.event.label.name == 'merge-ready'
+    name: Route Ripr Rust Small
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -104,7 +374,17 @@ jobs:
           fi
 
   detect-docs-only:
-    if: github.event_name != 'pull_request' || github.event.label.name == 'merge-ready'
+    needs: [qualification]
+    if: >-
+      !cancelled() &&
+      (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready')
+      && ((github.event_name == 'push' &&
+        (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) ||
+       github.event_name == 'workflow_dispatch' ||
+       github.event_name == 'merge_group' ||
+       (github.event_name == 'pull_request' &&
+        needs.qualification.result == 'success' &&
+        needs.qualification.outputs.execute == 'true'))
     name: Detect Docs-Only Surface
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -114,12 +394,55 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ needs.qualification.outputs.merge || github.sha }}
+      - name: Verify admitted integration before proof
+        id: admitted
+        env:
+          PROFILE: ${{ github.event_name == 'pull_request' && 'qualification' || 'legacy' }}
+          SUBJECT_JSON: ${{ needs.qualification.outputs.subject }}
+          ADMITTED_HEAD: ${{ needs.qualification.outputs.head }}
+          ADMITTED_BASE: ${{ needs.qualification.outputs.base }}
+          ADMITTED_MERGE: ${{ needs.qualification.outputs.merge }}
+          ADMITTED_TREE: ${{ needs.qualification.outputs.tree }}
+          GENERATION: ${{ needs.qualification.outputs.generation }}
+          IDENTITY: ${{ needs.qualification.outputs.identity }}
+          LEGACY_HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          LEGACY_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          REPOSITORY_ID: ${{ github.event.repository.node_id }}
+          PR_ID: ${{ github.event.pull_request.node_id }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          case "$PROFILE" in
+            legacy)
+              for value in "$SUBJECT_JSON" "$ADMITTED_HEAD" "$ADMITTED_BASE" "$ADMITTED_MERGE" "$ADMITTED_TREE" "$GENERATION" "$IDENTITY"; do
+                [[ -z "$value" ]] || { echo 'Partial qualification cannot use legacy profile' >&2; exit 1; }
+              done
+              printf 'head=%s\nbase=%s\n' "$LEGACY_HEAD" "$LEGACY_BASE" >> "$GITHUB_OUTPUT"
+              ;;
+            qualification)
+              for value in "$ADMITTED_HEAD" "$ADMITTED_BASE" "$ADMITTED_MERGE" "$ADMITTED_TREE" "$GENERATION"; do [[ "$value" =~ ^[0-9a-f]{40}$ ]]; done
+              [[ "$IDENTITY" =~ ^[0-9a-f]{64}$ && "$GENERATION" == "$GITHUB_WORKFLOW_SHA" ]]
+              jq -e --arg repo "$GITHUB_REPOSITORY" --arg repo_id "$REPOSITORY_ID" --arg pr_id "$PR_ID" --argjson number "$PR_NUMBER" --arg head "$ADMITTED_HEAD" --arg base "$ADMITTED_BASE" --arg merge "$ADMITTED_MERGE" --arg tree "$ADMITTED_TREE" --arg generation "$GENERATION" '
+                .version == 2 and .repository == $repo and .repository_id == $repo_id and .pr_id == $pr_id and .pr_number == $number and
+                .destination_repository_id == $repo_id and .destination_ref == "refs/heads/main" and
+                .head == $head and .base == $base and .merge == $merge and .tree == $tree and
+                .parents == [$base,$head] and .workflow_generation == $generation' <<< "$SUBJECT_JSON" >/dev/null
+              canonical=$(jq -cS . <<< "$SUBJECT_JSON")
+              [[ "$(printf '%s' "$canonical" | sha256sum | cut -d ' ' -f1)" == "$IDENTITY" ]]
+              [[ "$(git cat-file -t HEAD)" == commit && "$(git rev-parse HEAD)" == "$ADMITTED_MERGE" ]]
+              [[ "$(git rev-parse 'HEAD^{tree}')" == "$ADMITTED_TREE" ]]
+              [[ "$(git show -s --format=%P HEAD)" == "$ADMITTED_BASE $ADMITTED_HEAD" ]]
+              printf 'head=%s\nbase=%s\nmerge=%s\ntree=%s\n' "$ADMITTED_HEAD" "$ADMITTED_BASE" "$ADMITTED_MERGE" "$ADMITTED_TREE" >> "$GITHUB_OUTPUT"
+              ;;
+            *) echo 'Unknown source profile' >&2; exit 1 ;;
+          esac
       - name: Check whether every changed file is docs/spec/markdown
         id: check
         env:
           EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          BASE_SHA: ${{ steps.admitted.outputs.base }}
+          HEAD_SHA: ${{ steps.admitted.outputs.head }}
         run: |
           docs_only=false reason=not_pull_request
           classify() {
@@ -347,6 +670,14 @@ jobs:
     if: needs.route.outputs.router_target == 'cx43' && needs.admission.result == 'success' && needs.detect-docs-only.outputs.docs_only != 'true'
     uses: ./.github/workflows/rust-gates.yml
     with:
+      proof-profile: ${{ github.event_name == 'pull_request' && 'qualification' || 'legacy' }}
+      head-sha: ${{ needs.qualification.outputs.head }}
+      base-sha: ${{ needs.qualification.outputs.base }}
+      subject-sha: ${{ needs.qualification.outputs.merge }}
+      subject-tree: ${{ needs.qualification.outputs.tree }}
+      workflow-generation: ${{ needs.qualification.outputs.generation }}
+      subject-json: ${{ needs.qualification.outputs.subject }}
+      subject-identity: ${{ needs.qualification.outputs.identity }}
       runner-config: '{"group":"em-ci-small","labels":["self-hosted","linux","x64","em-ci","cx43","rust-medium","trusted-pr"]}'
       cargo-build-jobs: "12"
       disk-guard-threshold: 35
@@ -365,6 +696,14 @@ jobs:
     if: needs.route.outputs.router_target == 'cpx42' && needs.admission.result == 'success' && needs.detect-docs-only.outputs.docs_only != 'true'
     uses: ./.github/workflows/rust-gates.yml
     with:
+      proof-profile: ${{ github.event_name == 'pull_request' && 'qualification' || 'legacy' }}
+      head-sha: ${{ needs.qualification.outputs.head }}
+      base-sha: ${{ needs.qualification.outputs.base }}
+      subject-sha: ${{ needs.qualification.outputs.merge }}
+      subject-tree: ${{ needs.qualification.outputs.tree }}
+      workflow-generation: ${{ needs.qualification.outputs.generation }}
+      subject-json: ${{ needs.qualification.outputs.subject }}
+      subject-identity: ${{ needs.qualification.outputs.identity }}
       runner-config: '{"group":"em-ci-small","labels":["self-hosted","linux","x64","em-ci","cpx42","rust-medium","rust-16gb","trusted-pr"]}'
       cargo-build-jobs: "8"
       disk-guard-threshold: 35
@@ -383,6 +722,14 @@ jobs:
     if: needs.route.outputs.router_target == 'cx53' && needs.admission.result == 'success' && needs.detect-docs-only.outputs.docs_only != 'true'
     uses: ./.github/workflows/rust-gates.yml
     with:
+      proof-profile: ${{ github.event_name == 'pull_request' && 'qualification' || 'legacy' }}
+      head-sha: ${{ needs.qualification.outputs.head }}
+      base-sha: ${{ needs.qualification.outputs.base }}
+      subject-sha: ${{ needs.qualification.outputs.merge }}
+      subject-tree: ${{ needs.qualification.outputs.tree }}
+      workflow-generation: ${{ needs.qualification.outputs.generation }}
+      subject-json: ${{ needs.qualification.outputs.subject }}
+      subject-identity: ${{ needs.qualification.outputs.identity }}
       runner-config: '{"group":"em-ci-small","labels":["self-hosted","linux","x64","em-ci","cx53","rust-large","trusted-pr"]}'
       cargo-build-jobs: "12"
       disk-guard-threshold: 50
@@ -414,6 +761,14 @@ jobs:
       (needs.route.outputs.router_target == 'cx53' && needs.rust-cx53.outputs.scratch_status == 'tempfail'))
     uses: ./.github/workflows/rust-gates.yml
     with:
+      proof-profile: ${{ github.event_name == 'pull_request' && 'qualification' || 'legacy' }}
+      head-sha: ${{ needs.qualification.outputs.head }}
+      base-sha: ${{ needs.qualification.outputs.base }}
+      subject-sha: ${{ needs.qualification.outputs.merge }}
+      subject-tree: ${{ needs.qualification.outputs.tree }}
+      workflow-generation: ${{ needs.qualification.outputs.generation }}
+      subject-json: ${{ needs.qualification.outputs.subject }}
+      subject-identity: ${{ needs.qualification.outputs.identity }}
       runner-config: '"ubuntu-latest"'
       cargo-build-jobs: "8"
       disk-guard-threshold: 0
@@ -442,7 +797,7 @@ jobs:
 
   docs-gate:
     name: Ripr Docs Gate
-    needs: [admission, detect-docs-only]
+    needs: [admission, qualification, detect-docs-only]
     if: needs.admission.result == 'success' && (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.detect-docs-only.outputs.docs_only == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -450,6 +805,49 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ needs.qualification.outputs.merge || github.sha }}
+      - name: Verify admitted docs producer before proof
+        id: admitted
+        env:
+          PROFILE: ${{ github.event_name == 'pull_request' && 'qualification' || 'legacy' }}
+          SUBJECT_JSON: ${{ needs.qualification.outputs.subject }}
+          ADMITTED_HEAD: ${{ needs.qualification.outputs.head }}
+          ADMITTED_BASE: ${{ needs.qualification.outputs.base }}
+          ADMITTED_MERGE: ${{ needs.qualification.outputs.merge }}
+          ADMITTED_TREE: ${{ needs.qualification.outputs.tree }}
+          GENERATION: ${{ needs.qualification.outputs.generation }}
+          IDENTITY: ${{ needs.qualification.outputs.identity }}
+          LEGACY_HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          LEGACY_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          REPOSITORY_ID: ${{ github.event.repository.node_id }}
+          PR_ID: ${{ github.event.pull_request.node_id }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          case "$PROFILE" in
+            legacy)
+              for value in "$SUBJECT_JSON" "$ADMITTED_HEAD" "$ADMITTED_BASE" "$ADMITTED_MERGE" "$ADMITTED_TREE" "$GENERATION" "$IDENTITY"; do
+                [[ -z "$value" ]] || { echo 'Partial qualification cannot use legacy profile' >&2; exit 1; }
+              done
+              printf 'head=%s\nbase=%s\n' "$LEGACY_HEAD" "$LEGACY_BASE" >> "$GITHUB_OUTPUT"
+              ;;
+            qualification)
+              for value in "$ADMITTED_HEAD" "$ADMITTED_BASE" "$ADMITTED_MERGE" "$ADMITTED_TREE" "$GENERATION"; do [[ "$value" =~ ^[0-9a-f]{40}$ ]]; done
+              [[ "$IDENTITY" =~ ^[0-9a-f]{64}$ && "$GENERATION" == "$GITHUB_WORKFLOW_SHA" ]]
+              jq -e --arg repo "$GITHUB_REPOSITORY" --arg repo_id "$REPOSITORY_ID" --arg pr_id "$PR_ID" --argjson number "$PR_NUMBER" --arg head "$ADMITTED_HEAD" --arg base "$ADMITTED_BASE" --arg merge "$ADMITTED_MERGE" --arg tree "$ADMITTED_TREE" --arg generation "$GENERATION" '
+                .version == 2 and .repository == $repo and .repository_id == $repo_id and .pr_id == $pr_id and .pr_number == $number and
+                .destination_repository_id == $repo_id and .destination_ref == "refs/heads/main" and
+                .head == $head and .base == $base and .merge == $merge and .tree == $tree and
+                .parents == [$base,$head] and .workflow_generation == $generation' <<< "$SUBJECT_JSON" >/dev/null
+              canonical=$(jq -cS . <<< "$SUBJECT_JSON")
+              [[ "$(printf '%s' "$canonical" | sha256sum | cut -d ' ' -f1)" == "$IDENTITY" ]]
+              [[ "$(git cat-file -t HEAD)" == commit && "$(git rev-parse HEAD)" == "$ADMITTED_MERGE" ]]
+              [[ "$(git rev-parse 'HEAD^{tree}')" == "$ADMITTED_TREE" ]]
+              [[ "$(git show -s --format=%P HEAD)" == "$ADMITTED_BASE $ADMITTED_HEAD" ]]
+              printf 'head=%s\nbase=%s\nmerge=%s\ntree=%s\n' "$ADMITTED_HEAD" "$ADMITTED_BASE" "$ADMITTED_MERGE" "$ADMITTED_TREE" >> "$GITHUB_OUTPUT"
+              ;;
+            *) echo 'Unknown source profile' >&2; exit 1 ;;
+          esac
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: 1.95.0
@@ -502,16 +900,209 @@ jobs:
           if-no-files-found: ignore
           retention-days: 5
 
+  windows-subset:
+    needs: [qualification]
+    if: needs.qualification.outputs.execute == 'true'
+    uses: ./.github/workflows/windows-subset-qualification.yml
+    with:
+      proof_profile: qualification
+      request_id: ${{ format('{0}-{1}', github.run_id, github.run_attempt) }}
+      head_sha: ${{ needs.qualification.outputs.head }}
+      base_sha: ${{ needs.qualification.outputs.base }}
+      subject_sha: ${{ needs.qualification.outputs.merge }}
+      subject_tree: ${{ needs.qualification.outputs.tree }}
+      workflow_generation: ${{ github.workflow_sha }}
+
+  python-wheel:
+    needs: [qualification]
+    if: needs.qualification.outputs.execute == 'true'
+    uses: ./.github/workflows/python-wheel-qualification.yml
+    with:
+      proof_profile: qualification
+      request_id: ${{ format('{0}-{1}', github.run_id, github.run_attempt) }}
+      head_sha: ${{ needs.qualification.outputs.head }}
+      base_sha: ${{ needs.qualification.outputs.base }}
+      subject_sha: ${{ needs.qualification.outputs.merge }}
+      subject_tree: ${{ needs.qualification.outputs.tree }}
+      workflow_generation: ${{ github.workflow_sha }}
+
+  ci-feature:
+    needs: [qualification]
+    if: needs.qualification.outputs.execute == 'true'
+    uses: ./.github/workflows/ci.yml
+    with:
+      proof_profile: qualification
+      request_id: ${{ format('{0}-{1}', github.run_id, github.run_attempt) }}
+      head_sha: ${{ needs.qualification.outputs.head }}
+      base_sha: ${{ needs.qualification.outputs.base }}
+      subject_sha: ${{ needs.qualification.outputs.merge }}
+      subject_tree: ${{ needs.qualification.outputs.tree }}
+      workflow_generation: ${{ github.workflow_sha }}
+
+      # Conservative frozen intent: applicability is not narrowed in this source stage.
+      run_rust_only: true
+      run_release_proof: true
+      run_msrv: true
+      run_vscode: true
+
+  printed-command:
+    needs: [qualification]
+    if: needs.qualification.outputs.execute == 'true'
+    uses: ./.github/workflows/printed-command-paste.yml
+    with:
+      proof_profile: qualification
+      request_id: ${{ format('{0}-{1}', github.run_id, github.run_attempt) }}
+      head_sha: ${{ needs.qualification.outputs.head }}
+      base_sha: ${{ needs.qualification.outputs.base }}
+      subject_sha: ${{ needs.qualification.outputs.merge }}
+      subject_tree: ${{ needs.qualification.outputs.tree }}
+      workflow_generation: ${{ github.workflow_sha }}
+
   result:
     # Static `Ripr Rust Small Result` only for main/manual runs and an explicit
     # merge-ready request. Any other pull_request label event is a nonrequest
     # under a different name so the required context is never satisfied by it.
     name: ${{ (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}
-    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53, rust-github, rust-github-tests, docs-gate]
+    needs: [admission, qualification, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53, rust-github, rust-github-tests, docs-gate, windows-subset, python-wheel, ci-feature, printed-command]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Verify immutable qualification subject
+        if: github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          LABEL: ${{ github.event.label.name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          STORED_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          SUBJECT_SHA: ${{ github.sha }}
+          REPOSITORY_ID: ${{ github.event.repository.node_id }}
+          PR_ID: ${{ github.event.pull_request.node_id }}
+          PR_DATABASE_ID: ${{ github.event.pull_request.id }}
+          GENERATION: ${{ github.workflow_sha }}
+          EXPECTED_SUBJECT: ${{ needs.qualification.outputs.subject }}
+          EXPECTED_IDENTITY: ${{ needs.qualification.outputs.identity }}
+          EXPECTED_REQUEST_ID: ${{ needs.qualification.outputs.request_id }}
+        run: |
+          set -euo pipefail
+          trap 'status=$?; printf "qualification_refusal status=%s\n" "$status" >&2; exit "$status"' ERR
+          [ "$LABEL" = merge-ready ] || exit 0
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ && "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$EXPECTED_REQUEST_ID" == "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" ]] || { echo 'Qualification attempt substitution refused' >&2; exit 1; }
+          for sha in "$HEAD_SHA" "$SUBJECT_SHA" "$GENERATION"; do [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; done
+          candidate=$(jq -ceS --arg repo "$REPOSITORY" --arg repo_id "$REPOSITORY_ID" --arg pr_id "$PR_ID" --argjson number "$PR_NUMBER" --arg head "$HEAD_SHA" --arg merge "$SUBJECT_SHA" --arg generation "$GENERATION" "$QUALIFICATION_SUBJECT_JQ" <<< "$EXPECTED_SUBJECT")
+          identity=$(printf '%s' "$candidate" | sha256sum | cut -d ' ' -f1)
+          [[ "$identity" == "$EXPECTED_IDENTITY" ]] || { echo 'Qualification identity substitution refused' >&2; exit 1; }
+          base=$(jq -er .base <<< "$candidate")
+          tree=$(jq -er .tree <<< "$candidate")
+          commit=$(gh api "repos/$REPOSITORY/git/commits/$SUBJECT_SHA")
+          jq -e --arg merge "$SUBJECT_SHA" --arg base "$base" --arg head "$HEAD_SHA" --arg tree "$tree" "${NATIVE_COMMIT_JQ:?}" <<< "$commit" >/dev/null
+          printf 'Qualified request `%s`, identity `%s`, subject `%s`; final_currentness_required=true.\n' "$EXPECTED_REQUEST_ID" "$EXPECTED_IDENTITY" "$candidate" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Recheck current head and base before result publication
+        if: github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          LABEL: ${{ github.event.label.name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          STORED_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          SUBJECT_SHA: ${{ github.sha }}
+          REPOSITORY_ID: ${{ github.event.repository.node_id }}
+          PR_ID: ${{ github.event.pull_request.node_id }}
+          PR_DATABASE_ID: ${{ github.event.pull_request.id }}
+          GENERATION: ${{ github.workflow_sha }}
+          EXPECTED_SUBJECT: ${{ needs.qualification.outputs.subject }}
+          EXPECTED_IDENTITY: ${{ needs.qualification.outputs.identity }}
+          EXPECTED_REQUEST_ID: ${{ needs.qualification.outputs.request_id }}
+        run: |
+          set -euo pipefail
+          readiness_refused() { # Advisory diagnostics preserve the original status.
+            local status=$? diagnostic='{"payload":"not-read"}'
+            trap - ERR
+            set +e
+            printf 'readiness_refusal phase=%s status=%s\n' "$readiness_phase" "$status" >&2
+            case "$readiness_phase" in
+              subject-check|subject-final-check)
+                diagnostic='{"payload":"current-repository-observation","currentness_established":false}'
+                ;;
+              pull-request-check)
+                diagnostic=$(jq -cs --arg repo "$REPOSITORY" --arg head "$HEAD_SHA" --arg base "$STORED_BASE_SHA" --arg subject "$SUBJECT_SHA" "${READINESS_PR_DIAGNOSTIC_JQ:-halt_error(5)}" <<< "${pr-}" 2>/dev/null) || diagnostic='{"payload":"invalid-json-or-shape"}'
+                ;;
+              reviews-check)
+                diagnostic=$(jq -cs --arg head "$HEAD_SHA" "$REVIEW_DISPOSITION_JQ${READINESS_REVIEWS_DIAGNOSTIC_JQ:-halt_error(5)}" <<< "${reviews-}" 2>/dev/null) || diagnostic='{"payload":"invalid-json-or-shape"}'
+                ;;
+              threads-check|threads-page-parse|threads-cursor-parse)
+                diagnostic=$(jq -cs "${READINESS_THREADS_DIAGNOSTIC_JQ:-halt_error(5)}" <<< "${threads-}" 2>/dev/null) || diagnostic='{"payload":"invalid-json-or-shape"}'
+                ;;
+            esac
+            printf 'readiness_detail=%s\n' "$diagnostic" >&2
+            exit "$status"
+          }
+          readiness_phase='start'
+          trap readiness_refused ERR
+          [ "$LABEL" = merge-ready ] || exit 0
+          settle_request() {
+            local attempt state
+            for attempt in 1 2 3; do
+              readiness_phase='pull-request-fetch'
+              pr=$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER") || return
+              readiness_phase='pull-request-check'
+              jq -e --arg repo "$REPOSITORY" --arg repo_id "$REPOSITORY_ID" --arg pr_id "$PR_ID" --argjson number "$PR_NUMBER" --arg head "$HEAD_SHA" --arg merge "$SUBJECT_SHA" "${NATIVE_REQUEST_JQ:?}" <<< "$pr" >/dev/null || return
+              state=$(jq -er 'if .mergeable == null then "pending" elif .mergeable == true then "ready" else "refused" end' <<< "$pr") || return
+              case "$state" in
+                ready) jq -e '.merge_commit_sha | type == "string" and test("^[0-9a-f]{40}$")' <<< "$pr" >/dev/null || return; return 0 ;;
+                refused) echo 'Mergeability refused' >&2; return 1 ;;
+                pending) [ "$attempt" = 3 ] || sleep 2 ;;
+              esac
+            done
+            echo 'Mergeability not established within bounded refresh' >&2
+            return 1
+          }
+          observe_current_base() {
+            local frame
+            frame=$(gh api graphql -f query="$NATIVE_SUBJECT_QUERY" -F number="$PR_NUMBER") || return
+            jq -er --arg repo "$REPOSITORY" --arg repo_id "$REPOSITORY_ID" --arg pr_id "$PR_ID" --argjson number "$PR_NUMBER" --arg head "$HEAD_SHA" "$FINAL_CURRENTNESS_JQ" <<< "$frame"
+          }
+          readiness_phase='subject-refresh'
+          settle_request || readiness_refused
+          readiness_phase='subject-check'
+          current_base_before=$(observe_current_base) || readiness_refused
+          readiness_phase='reviews-fetch'
+          reviews=$(gh api --paginate "repos/$REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100")
+          readiness_phase='author-parse'
+          author=$(jq -r .user.login <<< "$pr")
+          readiness_phase='reviews-check'
+          jq -s -e --arg head "$HEAD_SHA" --arg author "$author" "$REVIEW_DISPOSITION_JQ${NATIVE_REVIEWS_JQ:?}" <<< "$reviews" >/dev/null
+          cursor=null
+          while :; do
+            readiness_phase='threads-fetch'
+            threads=$(gh api graphql -f query="query(\$number:Int!,\$cursor:String){repository(owner:\"EffortlessMetrics\",name:\"ripr-swarm\"){pullRequest(number:\$number){reviewThreads(first:100,after:\$cursor){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}" -F number="$PR_NUMBER" -F cursor="$cursor")
+            readiness_phase='threads-check'
+            jq -e '.errors == null and (.data.repository.pullRequest.reviewThreads.nodes | all(.isResolved == true))' <<< "$threads" >/dev/null
+            readiness_phase='threads-page-parse'
+            more=$(jq -er '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | if type == "boolean" then tostring else error("invalid pagination") end' <<< "$threads")
+            [ "$more" = true ] || break
+            readiness_phase='threads-cursor-parse'
+            cursor=$(jq -er '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor | select(length > 0)' <<< "$threads")
+          done
+          readiness_phase='subject-final-refresh'
+          settle_request || readiness_refused
+          readiness_phase='subject-final-check'
+          current_base_after=$(observe_current_base) || readiness_refused
+          # Qualification describes Tq. Bm compatibility and merge permission are
+          # a separate final judgment, even when the observed base did not move.
+          {
+            printf '### Immutable qualification subject\n\n'
+            printf 'Request: `%s`; identity: `%s`\n\n' "$EXPECTED_REQUEST_ID" "$EXPECTED_IDENTITY"
+            printf 'Observed main before/after review: `%s` / `%s`\n\n' "$current_base_before" "$current_base_after"
+            printf 'final_currentness_required=true; current-main compatibility and merge permission are not asserted.\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+
       - name: Recheck initially admitted eligibility
         id: eligibility
         if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'))
@@ -621,6 +1212,13 @@ jobs:
           ADMISSION_COMPETING_PRS: ${{ needs.admission.outputs.competing_prs }}
           ADMISSION_CHANGED_FILES: ${{ needs.admission.outputs.changed_files }}
           ADMISSION_CHANGED_LINES: ${{ needs.admission.outputs.changed_lines }}
+          REF: ${{ github.ref }}
+          QUALIFICATION_RESULT: ${{ needs.qualification.result }}
+          QUALIFICATION_EXECUTE: ${{ needs.qualification.outputs.execute }}
+          WINDOWS_RESULT: ${{ needs.windows-subset.result }}
+          PASTE_RESULT: ${{ needs.printed-command.result }}
+          CI_RESULT: ${{ needs.ci-feature.result }}
+          WHEEL_RESULT: ${{ needs.python-wheel.result }}
           TARGET: ${{ needs.route.outputs.router_target }}
           REASON: ${{ needs.route.outputs.router_reason }}
           ROUTE_RESULT: ${{ needs.route.result }}
@@ -652,9 +1250,32 @@ jobs:
           WORKFLOW_REF: ${{ github.ref }}
           ELIGIBILITY_RESULT: ${{ steps.eligibility.outcome }}
         run: |
-          status=pass message="selected implementation job succeeded"
-          if [ "$EVENT_NAME" = "pull_request" ] && [ "${LABEL_NAME,,}" != "merge-ready" ]; then message="not a merge-ready request; named Merge-ready Nonrequest, never the required context"
-          elif [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$WORKFLOW_REF" != "refs/heads/main" ] && [ "$WORKFLOW_REF" != "refs/heads/master" ]; then
+          case "$EVENT_NAME:$REF" in
+            push:refs/heads/main|push:refs/heads/master|workflow_dispatch:*)
+              [ "$QUALIFICATION_RESULT" = skipped ] || { echo 'Legacy profile must skip PR qualification admission' >&2; exit 1; }
+              for result in "$WINDOWS_RESULT" "$PASTE_RESULT" "$CI_RESULT" "$WHEEL_RESULT"; do
+                [ "$result" = skipped ] || { echo 'Legacy profile must skip PR-only leaves' >&2; exit 1; }
+              done
+              ;;
+            pull_request:*)
+              [ "$LABEL_NAME" = merge-ready ] || exit 0
+              [ "$QUALIFICATION_RESULT" = success ] || { echo 'Qualification admission missing/failed' >&2; exit 1; }
+              [ "$QUALIFICATION_EXECUTE" = true ] || { echo 'Incomplete native request' >&2; exit 1; }
+              [ "$WINDOWS_RESULT" = success ] || { echo 'Selected Windows evidence missing/failed' >&2; exit 1; }
+              [ "$PASTE_RESULT" = success ] || { echo 'Selected printed-command evidence missing/failed' >&2; exit 1; }
+              [ "$CI_RESULT" = success ] || { echo 'Selected CI evidence missing/failed' >&2; exit 1; }
+              [ "$WHEEL_RESULT" = success ] || { echo 'Selected wheel evidence missing/failed' >&2; exit 1; }
+              ;;
+            merge_group:*)
+              for result in "$WINDOWS_RESULT" "$PASTE_RESULT" "$CI_RESULT" "$WHEEL_RESULT"; do
+                [ "$result" = skipped ] || { echo 'Queue profile must skip PR-only leaves' >&2; exit 1; }
+              done
+              ;;
+            *) echo 'Unsupported qualification event profile' >&2; exit 1 ;;
+          esac
+          status=pass
+          message="selected implementation job succeeded"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$WORKFLOW_REF" != "refs/heads/main" ] && [ "$WORKFLOW_REF" != "refs/heads/master" ]; then
             status=fail
             message="branch/tag dispatch is diagnostic-only; PR qualification requires the merge queue or the merge-ready label"
           elif [ "$ADMISSION_CUT_STATUS" = "refused" ] && [ "$ADMISSION_STATUS" != "refused" ] && { [ "$ADMISSION_STATUS" = "admitted" ] || [ "$ADMISSION_RESULT" = "success" ]; }; then status=fail; message="hard-cut admission refused: ${ADMISSION_CUT_REASON:-unknown} — ${ADMISSION_CUT_DETAIL:-the active cut is frozen; only a packet-only #5114/#2766 control update may qualify before #1609}"
@@ -719,3 +1340,35 @@ jobs:
             echo "- ${row%%:*}: \`${row#*:}\`" >> "$GITHUB_STEP_SUMMARY"
           done
           [ "$status" = "pass" ]
+      - name: Record immutable qualification completion
+        if: github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready' && needs.qualification.outputs.execute == 'true'
+        env:
+          QUALIFICATION_SUBJECT: ${{ needs.qualification.outputs.subject }}
+          QUALIFICATION_IDENTITY: ${{ needs.qualification.outputs.identity }}
+          QUALIFICATION_REQUEST: ${{ needs.qualification.outputs.request_id }}
+          PRODUCER_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          [[ "$QUALIFICATION_REQUEST" == "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" ]]
+          jq -n --argjson subject "$QUALIFICATION_SUBJECT" --arg identity "$QUALIFICATION_IDENTITY" \
+            --arg request "$QUALIFICATION_REQUEST" --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson producers "$PRODUCER_RESULTS" \
+            '{version:1,kind:"immutable-qualification-completion",subject:$subject,identity:$identity,
+              request_id:$request,run_id:$run,run_attempt:$attempt,producer_results:$producers,
+              final_currentness_required:true,current_main_compatibility:"not_asserted",
+              cross_run_reuse:"not_qualified"}' > "$RUNNER_TEMP/qualification-completion.json"
+      - name: Retain immutable qualification completion
+        if: github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready' && needs.qualification.outputs.execute == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: qualification-completion-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/qualification-completion.json
+          if-no-files-found: error
+          retention-days: 5
+      # Re-evaluate cancellation after readiness and aggregation, including reuse.
+      # The explicit status functions keep this rejection reachable after failure.
+      - name: Reject workflow cancellation before final result
+        if: always() && cancelled()
+        run: |
+          echo 'Workflow cancelled; required result cannot succeed' >&2
+          exit 1

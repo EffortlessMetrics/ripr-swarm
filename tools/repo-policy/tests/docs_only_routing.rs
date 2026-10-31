@@ -33,17 +33,33 @@ fn result_step() -> TestResult<&'static str> {
     let (_, step) = job("result")?
         .split_once("      - name: Summarize routed result\n")
         .ok_or("production summary step exists")?;
-    Ok(step)
+    // Later result-job steps (completion record, cancellation guard) carry
+    // their own run blocks; scope to the summary step only.
+    Ok(step.split("\n      - name:").next().unwrap_or(step))
 }
 
 fn shell(name: &str) -> TestResult<String> {
     let source = if name == "result" {
         result_step()?
+    } else if name == "detect-docs-only" {
+        // The detector job first verifies the admitted integration in its own
+        // run block; the classifier under test is the named step after it.
+        let (_, step) = job(name)?
+            .split_once("      - name: Check whether every changed file is docs/spec/markdown\n")
+            .ok_or("classifier step exists")?;
+        step
     } else {
         job(name)?
     };
-    assert_eq!(source.matches("        run: |\n").count(), 1);
-    let (_, body) = source.split_once("        run: |\n").ok_or("shell block")?;
+    // The detector job verifies the admitted integration in an earlier step; the
+    // classifier under test is its last shell block.
+    // The result step's aggregate is its first shell block.
+    let (_, body) = if name == "result" {
+        source.split_once("        run: |\n")
+    } else {
+        source.rsplit_once("        run: |\n")
+    }
+    .ok_or("shell block")?;
     let script = body
         .lines()
         .take_while(|line| line.is_empty() || line.starts_with("          "))
@@ -437,6 +453,14 @@ impl Fixture {
         let output = self.run(
             script,
             &[
+                ("LABEL", "merge-ready"),
+                ("ADMISSION_RESULT", "success"),
+                ("EXECUTE", "true"),
+                ("PRIOR_RESULT", "none"),
+                ("WINDOWS_RESULT", "success"),
+                ("PASTE_RESULT", "success"),
+                ("CI_RESULT", "success"),
+                ("WHEEL_RESULT", "success"),
                 ("EVENT_NAME", event),
                 ("BASE_SHA", base),
                 ("HEAD_SHA", head),
@@ -494,7 +518,11 @@ impl Drop for Fixture {
 #[test]
 fn event_commit_bindings_are_exact_and_history_is_available() -> TestResult {
     let detector = job("detect-docs-only")?;
-    let (step, _) = detector
+    let selector = detector
+        .split_once("      - name: Check whether every changed file is docs/spec/markdown\n")
+        .ok_or("selector step")?
+        .1;
+    let (step, _) = selector
         .split_once("        run: |\n")
         .ok_or("detector step")?;
     let (_, env) = step
@@ -502,8 +530,8 @@ fn event_commit_bindings_are_exact_and_history_is_available() -> TestResult {
         .ok_or("detector step env")?;
     for binding in [
         "          EVENT_NAME: ${{ github.event_name }}",
-        "          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}",
-        "          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}",
+        "          BASE_SHA: ${{ steps.admitted.outputs.base }}",
+        "          HEAD_SHA: ${{ steps.admitted.outputs.head }}",
     ] {
         assert_eq!(
             env.lines().filter(|line| *line == binding).count(),
@@ -665,6 +693,8 @@ fn invalid_identities_empty_diff_and_non_pr_events_use_full_proof() -> TestResul
     fixture.write("src/mixed.rs", "fn mixed() {}\n")?;
     let mixed = fixture.commit()?;
     assert!(!fixture.detect(&production, "pull_request", &base, &mixed, None)?);
+    // Branch-isolation controls for the aggregate body, not admission events.
+    // Native admission separately refuses these as qualification requests.
     for event in ["push", "workflow_dispatch"] {
         assert!(
             !fixture.detect(&production, event, &base, &head, None)?,
@@ -773,7 +803,28 @@ fn routed_result_admitted(
         })
         .collect::<Vec<_>>();
     assert!(env.len() >= 20, "actual result env is initialized");
+    // An explicit merge-ready request carries admitted qualification and all
+    // four selected leaves; main/manual runs skip both (legacy profile).
+    let (qualification, execute, leaf) = if event == "pull_request" {
+        ("success", "true", "success")
+    } else {
+        ("skipped", "", "skipped")
+    };
     env.extend([
+        ("QUALIFICATION_RESULT", qualification),
+        ("QUALIFICATION_EXECUTE", execute),
+        (
+            "REF",
+            if event == "pull_request" {
+                "refs/pull/10/merge"
+            } else {
+                "refs/heads/main"
+            },
+        ),
+        ("WINDOWS_RESULT", leaf),
+        ("PASTE_RESULT", leaf),
+        ("CI_RESULT", leaf),
+        ("WHEEL_RESULT", leaf),
         ("EVENT_NAME", event),
         // A pull_request result is a qualification only for an explicit
         // merge-ready request; other labels are exercised separately.
@@ -817,6 +868,32 @@ fn routed_result_admitted(
         ("ADMISSION_RESULT", admission_result),
         ("ADMISSION_STATUS", admission_status),
     ]);
+    // A merge-ready pull_request earns every staged exact-subject obligation;
+    // legacy main/manual profiles must skip the PR-only qualification leaves.
+    let (staged, leaf) = if event == "pull_request" {
+        ("success", "success")
+    } else {
+        ("skipped", "skipped")
+    };
+    env.extend([
+        (
+            "REF",
+            if event == "pull_request" {
+                "refs/pull/10/merge"
+            } else {
+                "refs/heads/main"
+            },
+        ),
+        ("QUALIFICATION_RESULT", staged),
+        (
+            "QUALIFICATION_EXECUTE",
+            if event == "pull_request" { "true" } else { "" },
+        ),
+        ("WINDOWS_RESULT", leaf),
+        ("PASTE_RESULT", leaf),
+        ("CI_RESULT", leaf),
+        ("WHEEL_RESULT", leaf),
+    ]);
     let output = fixture.run(&shell("result")?, &env, None)?;
     let summary = fs::read_to_string(fixture.root.join(".git/actions-summary"))?;
     assert!(
@@ -840,14 +917,15 @@ fn actual_result_block_treats_other_labels_as_a_nonrequest_that_never_qualifies(
     let (_, run) = result_step()?
         .split_once("        run: |\n")
         .ok_or("result step")?;
-    let first_decision = run
-        .lines()
-        .find(|line| line.trim_start().starts_with("if ["))
-        .ok_or("first decision")?;
-    assert!(
-        first_decision.contains("\"${LABEL_NAME,,}\" != \"merge-ready\""),
-        "{first_decision}"
-    );
+    let nonrequest = run
+        .find("[ \"$LABEL_NAME\" = merge-ready ] || exit 0")
+        .ok_or("nonrequest exit")?;
+    let first_qualification_decision = run
+        .find("[ \"$QUALIFICATION_RESULT\" = success ]")
+        .ok_or("qualification decision")?;
+    let status_decision = run.find("status=pass").ok_or("status decision")?;
+    assert!(nonrequest < first_qualification_decision);
+    assert!(nonrequest < status_decision);
     assert!(source.contains("'Merge-ready Nonrequest'"));
     Ok(())
 }

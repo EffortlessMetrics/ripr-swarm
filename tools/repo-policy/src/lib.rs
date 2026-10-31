@@ -1081,6 +1081,35 @@ pub fn routed_rust_job_block_any(
     false
 }
 
+// Fold only the named job's own condition, never a step or run-block decoy.
+fn routed_rust_job_condition(workflow: &str, job: &str) -> Option<String> {
+    let mut condition = None;
+    let mut folded = false;
+    routed_rust_job_block_any(workflow, job, |line| {
+        if let Some(value) = line.strip_prefix("    if: ") {
+            folded = value == ">-";
+            condition = Some(if folded {
+                String::new()
+            } else {
+                value.to_owned()
+            });
+        } else if folded {
+            if line.starts_with("      ") {
+                if let Some(value) = condition.as_mut() {
+                    if !value.is_empty() {
+                        value.push(' ');
+                    }
+                    value.push_str(line.trim());
+                }
+            } else if !line.trim().is_empty() {
+                folded = false;
+            }
+        }
+        false
+    });
+    condition
+}
+
 pub fn routed_rust_job_block_has_deadline(workflow: &str, job: &str) -> bool {
     routed_rust_job_block_any(workflow, job, |line| {
         !line.trim_start().starts_with('#') && line.contains("timeout-minutes:")
@@ -1138,13 +1167,15 @@ pub fn routed_rust_workflow_contract_violations(
     routed_rust_workflow_contract_violations_with_reusable(workflow, None, settings, lane_whitelist)
 }
 
-/// How Routed Rust Small treats one GitHub event after reading the workflow YAML.
+/// How the PR admission profile treats one event after reading workflow YAML.
 ///
 /// The workflow file is the authority. This classifier inspects `on.pull_request.types`
-/// so a re-added Draft or label event cannot be hidden behind a hardcoded
-/// desired policy (#4380, #4986).
+/// so re-added ordinary PR activity cannot be hidden behind a hardcoded
+/// desired policy (#4380, #4986). Legacy main/manual execution is a separate
+/// preserved profile; non-PR input is not triggered through this PR classifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoutedRustEventRoute {
+    BookkeepingOnly,
     LaunchFullGate,
     /// A non-request label event: the workflow runs but allocates no work and
     /// posts only `Merge-ready Nonrequest`, never the required context.
@@ -1499,18 +1530,6 @@ pub fn routed_rust_workflow_contract_violations_with_reusable(
         ("CX53 capacity label", "rust-large"),
         ("normalized result job", "Ripr Rust Small Result"),
         (
-            "CX43 conditional implementation job",
-            "if: needs.route.outputs.router_target == 'cx43'",
-        ),
-        (
-            "CPX42 conditional implementation job",
-            "if: needs.route.outputs.router_target == 'cpx42'",
-        ),
-        (
-            "CX53 conditional implementation job",
-            "if: needs.route.outputs.router_target == 'cx53'",
-        ),
-        (
             "hosted fallback conditional job",
             "needs.route.outputs.router_target == 'github'",
         ),
@@ -1545,6 +1564,32 @@ pub fn routed_rust_workflow_contract_violations_with_reusable(
             violations.push(format!(
                 ".github/workflows/routed-rust.yml is missing {label}: `{snippet}`"
             ));
+        }
+    }
+
+    // Admission adds a skipped ancestor on legacy events; only pre-admission
+    // callers may retain an implicit-success implementation condition.
+    let has_admission = routed_rust_job_block_any(workflow, "admission", |_| true);
+    for (job, target) in [
+        ("rust-cx43", "cx43"),
+        ("rust-cpx42", "cpx42"),
+        ("rust-cx53", "cx53"),
+    ] {
+        let legacy = format!("needs.route.outputs.router_target == '{target}'");
+        let legacy_docs = format!("{legacy} && needs.detect-docs-only.outputs.docs_only != 'true'");
+        // The trusted-candidate admission job is an explicit success dependency;
+        // the implicit success() of a skipped ancestor withholds the work.
+        let staged = format!(
+            "{legacy} && needs.admission.result == 'success' && needs.detect-docs-only.outputs.docs_only != 'true'"
+        );
+        let condition = routed_rust_job_condition(workflow, job);
+        let reviewed = match condition.as_deref() {
+            Some(value) if has_admission => value == staged,
+            Some(value) => value == legacy || value == legacy_docs,
+            None => false,
+        };
+        if !reviewed {
+            violations.push(format!("routed Rust job `{job}` must retain its selected target and reviewed legacy or cancellation-aware staging condition"));
         }
     }
 

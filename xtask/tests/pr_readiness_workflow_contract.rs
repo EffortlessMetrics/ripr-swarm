@@ -143,7 +143,7 @@ fn required_pr_context_is_withheld_until_merge_ready() -> Result<(), String> {
     assert_eq!(terminal_context(&source), Some(EXPECTED_RESULT_NAME));
     assert!(EXPECTED_RESULT_NAME.contains(REQUIRED_CONTEXT));
     assert!(!source.contains("Ripr Rust Small Ignored Label Event"));
-    assert!(!source.contains("github.event.pull_request.draft"));
+    assert!(!source.contains("    if: github.event.pull_request.draft"));
     Ok(())
 }
 
@@ -214,7 +214,7 @@ fn staleness_watchdog_reports_without_dispatching() -> Result<(), String> {
     assert_eq!(
         watchdog_dispatch_fragments(&source),
         Vec::<&str>::new(),
-        "watchdog must be alert-only: a Ready head returns to Draft -> Ready",
+        "watchdog must be alert-only: a Ready head returns to explicit merge-ready",
     );
     Ok(())
 }
@@ -264,7 +264,7 @@ fn contract_rejects_a_watchdog_without_the_in_flight_check() -> Result<(), Strin
 /// `routed-rust.yml` evaluates from the merge ref, which does not exist while
 /// the PR conflicts (#7079). The report must carry each PR's `mergeable_state`
 /// so the conflicted dark mode ("merge main first") is distinguishable from a
-/// dropped delivery ("re-toggle Draft -> Ready").
+/// dropped delivery ("re-toggle explicit merge-ready").
 const WATCHDOG_MERGEABLE_STATE_QUERY: &str = "repos/$REPOSITORY/pulls/$number";
 const WATCHDOG_MERGEABLE_STATE_COLUMN: &str = "| PR | head | mergeable_state | disposition |";
 
@@ -433,11 +433,11 @@ fn contract_rejects_ready_reentry_and_missing_repair_publication() -> Result<(),
 
 #[test]
 fn event_parser_ignores_decoys_outside_pull_request() -> Result<(), String> {
-    let source = "# types: [ready_for_review]\non:\n  workflow_dispatch:\n    inputs:\n      types: [ready_for_review]\n  pull_request:\n    types: ['opened', \"synchronize\", reopened] # real events\njobs:\n  decoy:\n    run: |\n      types: [ready_for_review]\n";
+    let source = "# types: [labeled]\non:\n  workflow_dispatch:\n    inputs:\n      types: [labeled]\n  pull_request:\n    types: ['opened', \"synchronize\", reopened] # real events\njobs:\n  decoy:\n    run: |\n      types: [labeled]\n";
     assert_eq!(parsed_types(source)?, ["opened", "synchronize", "reopened"]);
     assert!(
         repo_policy::routed_rust_pull_request_types(
-            "jobs:\n  decoy:\n    run: |\n      types: [ready_for_review]\n"
+            "jobs:\n  decoy:\n    run: |\n      types: [labeled]\n"
         )
         .is_none()
     );
