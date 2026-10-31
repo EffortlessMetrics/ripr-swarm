@@ -1487,15 +1487,22 @@ fn find_related_tests_with_candidates<'a>(
             None => {
                 // `package_prefix` reads a later `/tests/` or `/src/` segment
                 // as a package marker, so a root test at `src/tests/mod.rs`
-                // would look like package `src/`. Root-relative target
-                // directories are the root package by construction.
-                let root_target_path = {
-                    let normalized = normalize_path(&test.file);
-                    ["src/", "tests/", "benches/", "examples/"]
-                        .iter()
-                        .any(|dir| normalized.starts_with(dir))
-                };
-                (root_target_path || package_prefix(&test.file).is_none())
+                // would look like package `src/`. When the discovered
+                // manifests are known, the package is the nearest manifest of
+                // each file (a member under `examples/` or `tests/` has its
+                // own manifest, so it is another package); the path shape is
+                // only the fallback and fails closed.
+                let same_manifest = dependency_edges.and_then(|context| {
+                    let owner = owner_fn?;
+                    Some(
+                        nearest_manifest_identity(context.manifest_dir_prefixes, &test.file)?
+                            == nearest_manifest_identity(
+                                context.manifest_dir_prefixes,
+                                &owner.file,
+                            )?,
+                    )
+                });
+                same_manifest.unwrap_or_else(|| package_prefix(&test.file).is_none())
                     && !path_is_absolute_form(&test.file)
                     && owner_fn.is_some_and(|owner| !path_is_absolute_form(&owner.file))
             }

@@ -95,14 +95,35 @@ fn manifest(name: &str, dependency: Option<&str>, members: &[&str]) -> String {
 
 /// Writes `files` under a fresh root and returns the tests (by name) that the
 /// changed helper line in `changed_file` relates to by `helper_owner_call`.
+/// The changed helper line and the finding owner it belongs to.
+struct Change {
+    old: &'static str,
+    new: &'static str,
+    owner: &'static str,
+}
+
+const SANITIZE: Change = Change {
+    old: OLD_BODY,
+    new: NEW_BODY,
+    owner: "::sanitize_label",
+};
+
 fn helper_related(files: &[(&str, String)], changed_file: &str) -> Result<Vec<String>, String> {
+    related_for(files, changed_file, &SANITIZE)
+}
+
+fn related_for(
+    files: &[(&str, String)],
+    changed_file: &str,
+    change: &Change,
+) -> Result<Vec<String>, String> {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
         "ripr-fmt-package-scope-{}-{}",
         std::process::id(),
         SEQUENCE.fetch_add(1, Ordering::Relaxed)
     ));
-    let result = helper_related_in(&root, files, changed_file);
+    let result = helper_related_in(&root, files, changed_file, change);
     let _ = std::fs::remove_dir_all(&root);
     result
 }
@@ -111,6 +132,7 @@ fn helper_related_in(
     root: &Path,
     files: &[(&str, String)],
     changed_file: &str,
+    change: &Change,
 ) -> Result<Vec<String>, String> {
     for (path, content) in files {
         let full: PathBuf = root.join(path);
@@ -125,9 +147,10 @@ fn helper_related_in(
         .ok_or("premise: the changed file is a fixture file")?;
     let line = source
         .lines()
-        .position(|line| line == NEW_BODY)
+        .position(|line| line == change.new)
         .map(|index| index + 1)
         .ok_or("premise: the changed helper body is in the source")?;
+    let (old, new) = (change.old, change.new);
     std::fs::write(
         root.join("diff.patch"),
         format!(
@@ -136,8 +159,8 @@ index 1111111..2222222 100644
 --- a/{changed_file}
 +++ b/{changed_file}
 @@ -{line},1 +{line},1 @@
--{OLD_BODY}
-+{NEW_BODY}
+-{old}
++{new}
 "
         ),
     )
@@ -160,7 +183,7 @@ index 1111111..2222222 100644
                     .probe
                     .owner
                     .as_ref()
-                    .is_some_and(|owner| owner.0.ends_with("::sanitize_label"))
+                    .is_some_and(|owner| owner.0.ends_with(change.owner))
         })
         .collect();
     if findings.is_empty() {
@@ -315,5 +338,132 @@ fn a_member_prefix_is_a_directory_not_a_name_prefix() -> Result<(), String> {
         ("app-extra/tests/pin.rs", pin_test("app", "app_extra_pin")),
     ];
     assert_eq!(helper_related(&files, "app/src/lib.rs")?, ["app_pin"]);
+    Ok(())
+}
+
+const CARET_OLD: &str = "    ver.major >= cmp.major";
+const CARET_NEW: &str = "    ver.major >= cmp.major + 1";
+
+const CARET: Change = Change {
+    old: CARET_OLD,
+    new: CARET_NEW,
+    owner: "::matches_caret",
+};
+
+fn caret_lib() -> String {
+    "mod eval;
+
+pub struct Version {
+    pub major: u64,
+}
+
+pub struct Comparator {
+    pub major: u64,
+}
+
+pub struct VersionReq {
+    pub comparators: Vec<Comparator>,
+}
+
+impl VersionReq {
+    pub fn matches(&self, version: &Version) -> bool {
+        eval::matches_req(&self.comparators, version)
+    }
+}
+"
+    .to_string()
+}
+
+fn caret_eval() -> String {
+    format!(
+        "use crate::{{Comparator, Version}};
+
+pub(crate) fn matches_req(comparators: &[Comparator], ver: &Version) -> bool {{
+    for cmp in comparators {{
+        if !matches_impl(cmp, ver) {{
+            return false;
+        }}
+    }}
+    true
+}}
+
+fn matches_impl(cmp: &Comparator, ver: &Version) -> bool {{
+    matches_caret(cmp, ver)
+}}
+
+fn matches_caret(cmp: &Comparator, ver: &Version) -> bool {{
+{CARET_NEW}
+}}
+"
+    )
+}
+
+fn caret_pin(name: &str) -> String {
+    format!(
+        "use merged::{{Comparator, Version, VersionReq}};
+
+#[test]
+fn {name}() {{
+    let req = VersionReq {{
+        comparators: vec![Comparator {{ major: 1 }}],
+    }};
+    assert!(req.matches(&Version {{ major: 5 }}));
+}}
+"
+    )
+}
+
+#[test]
+fn a_root_method_entry_relates_its_own_test_but_not_a_member_dir_test() -> Result<(), String> {
+    // The inherent-method route shares the in-package rule: a member under
+    // `examples/` (its own manifest) is another package.
+    let demo_manifest = "[package]\nname = \"demo\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\nmerged = { path = \"../..\" }\n";
+    let files = [
+        (
+            "Cargo.toml",
+            "[package]\nname = \"merged\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\nmembers = [\"examples/demo\"]\n"
+                .to_string(),
+        ),
+        ("src/lib.rs", caret_lib()),
+        ("src/eval.rs", caret_eval()),
+        ("tests/api.rs", caret_pin("root_api_pin")),
+        ("examples/demo/Cargo.toml", demo_manifest.to_string()),
+        ("examples/demo/src/lib.rs", "pub fn unrelated() {}\n".to_string()),
+        ("examples/demo/tests/pin.rs", caret_pin("demo_api_pin")),
+    ];
+    assert_eq!(
+        related_for(&files, "src/eval.rs", &CARET)?,
+        ["root_api_pin"]
+    );
+    Ok(())
+}
+
+#[test]
+fn members_under_examples_or_tests_directories_are_other_packages() -> Result<(), String> {
+    // Root-relative `examples/` and `tests/` paths are not the root package
+    // when a manifest of their own sits there.
+    for member in ["examples/demo", "tests/harness"] {
+        let member_manifest = "[package]\nname = \"member\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\nmerged = { path = \"../..\" }\n".to_string();
+        let manifest_path = format!("{member}/Cargo.toml");
+        let lib_path = format!("{member}/src/lib.rs");
+        let test_path = format!("{member}/tests/pin.rs");
+        let files = [
+            (
+                "Cargo.toml",
+                format!(
+                    "[package]\nname = \"merged\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\nmembers = [\"{member}\"]\n"
+                ),
+            ),
+            ("src/lib.rs", merge_lib(IN_PACKAGE_TESTS)),
+            (manifest_path.as_str(), member_manifest),
+            (lib_path.as_str(), "pub fn unrelated() {}\n".to_string()),
+            (test_path.as_str(), pin_test("merged", "member_pin")),
+        ];
+        assert_eq!(
+            helper_related(&files, "src/lib.rs")?,
+            ["in_package_pin"],
+            "member {member}"
+        );
+    }
     Ok(())
 }
