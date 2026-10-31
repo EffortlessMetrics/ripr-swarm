@@ -27,8 +27,9 @@ analysis of the saved workspace against the base ref. Typing without saving
 does not re-analyze: the edited file's diagnostics are withdrawn, and hover
 says its evidence is paused until the file is saved. A file that no refresh
 has analyzed yet says so, and its evidence appears after the next refresh. Save to get fresh
-evidence, or run the `ripr.refresh` command. The server advertises full
-document sync and relies on `textDocument/didSave`.
+evidence, or run the `ripr.refresh` command. The server advertises incremental
+document sync (so it can tell when an open buffer diverges from the analyzed
+saved content) and relies on `textDocument/didSave`.
 
 **Few diagnostics is normal.** The default `actionable` profile publishes only
 `weakly_exposed`, `reachable_unrevealed`, and `no_static_path` findings that
@@ -56,10 +57,22 @@ client advertises pull diagnostics (`textDocument.diagnostic`).
 **Commands.** `executeCommandProvider` lists `ripr.refresh`,
 `ripr.collectContext`, `ripr.collectEvidenceContext`,
 `ripr.collectWorkspaceStatus`, `ripr.collectRepairPacket`,
-`ripr.collectTopLimitation`, and `ripr.collectReceiptStatus`. The server runs
-all of them. Clipboard and navigation actions (`ripr.copy*`,
-`ripr.openRelatedTest`) are offered only to clients that advertise them in the
-`experimental.riprEditor` capability, which only the VS Code extension does.
+`ripr.collectTopLimitation`, `ripr.collectReceiptStatus`, and
+`ripr.showRelatedTest`. The server runs all of them. Clipboard actions
+(`ripr.copy*`) and the client-side `ripr.openRelatedTest` command are offered
+only to clients that advertise them in the `experimental.riprEditor`
+capability, which only the VS Code extension does. Other clients navigate
+through `ripr.showRelatedTest` instead.
+
+**Jump to a related test.** A finding that names related tests offers the code
+action "Write targeted test: open best related test" to a client that
+advertises `window.showDocument`. It runs `ripr.showRelatedTest`, and the
+server answers with a `window/showDocument` request for the test file and
+line. A client without `showDocument` is not offered the action. The action
+only navigates: it never edits source and never runs the test. If the
+analysis input changed since the action was listed (or the request carries no
+analysis identity), the server refuses with an
+`InvalidParams` error that names `ripr.refresh`.
 
 **Custom notification.** The server sends `ripr/analysisStatus` after startup
 and each refresh. A client without a handler can ignore it. `ripr.collectWorkspaceStatus` returns a

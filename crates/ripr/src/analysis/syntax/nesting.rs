@@ -40,8 +40,8 @@ pub(crate) fn parse_clean_source_file(text: &str) -> Option<Parse<SourceFile>> {
     if rust_nesting_refusal(text).is_some() {
         return None;
     }
-    let parse = parse_source_file(text);
-    parse.errors().is_empty().then_some(parse)
+    let (parse, error_count) = parse_source_file_checked(text);
+    (error_count == 0).then_some(parse)
 }
 
 /// Parse with the current edition, retrying as Rust 2021 when that fails.
@@ -51,23 +51,34 @@ pub(crate) fn parse_clean_source_file(text: &str) -> Option<Parse<SourceFile>> {
 /// 2021 parse is used only when it is error-free. A file that uses the
 /// legacy `try!(..)` macro and still fails both is retried once as Rust 2015
 /// (#10054), again used only when error-free.
+#[cfg(test)]
 pub(crate) fn parse_source_file(text: &str) -> Parse<SourceFile> {
+    parse_source_file_checked(text).0
+}
+
+/// [`parse_source_file`] plus the error count of the parse it returns.
+/// `Parse::errors` re-runs the whole-tree validation pass and allocates on
+/// every call (about 14% of a cold tokio `check`), so the count is computed
+/// once per distinct parse and memoized with it: callers that only need to
+/// know whether the file is clean (or how many errors it has) no longer
+/// validate the same tree again on every memo hit.
+pub(crate) fn parse_source_file_checked(text: &str) -> (Parse<SourceFile>, usize) {
     if text.len() > PARSE_CACHE_MAX_BYTES {
         return parse_source_file_uncached(text);
     }
     PARSE_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
-        if let Some(position) = cache.iter().position(|(source, _)| source == text) {
+        if let Some(position) = cache.iter().position(|(source, _, _)| source == text) {
             // Move-to-front keeps the hot file resident.
             let entry = cache.remove(position);
-            let parse = entry.1.clone();
+            let result = (entry.1.clone(), entry.2);
             cache.insert(0, entry);
-            return parse;
+            return result;
         }
-        let parse = parse_source_file_uncached(text);
-        cache.insert(0, (text.to_string(), parse.clone()));
+        let (parse, error_count) = parse_source_file_uncached(text);
+        cache.insert(0, (text.to_string(), parse.clone(), error_count));
         cache.truncate(PARSE_CACHE_ENTRIES);
-        parse
+        (parse, error_count)
     })
 }
 
@@ -80,21 +91,35 @@ pub(crate) fn parse_source_file(text: &str) -> Parse<SourceFile> {
 const PARSE_CACHE_ENTRIES: usize = 4;
 const PARSE_CACHE_MAX_BYTES: usize = 512 * 1024;
 
-type ParseCacheEntries = Vec<(String, Parse<SourceFile>)>;
+type ParseCacheEntries = Vec<(String, Parse<SourceFile>, usize)>;
 
 thread_local! {
     static PARSE_CACHE: std::cell::RefCell<ParseCacheEntries> =
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
-fn parse_source_file_uncached(text: &str) -> Parse<SourceFile> {
+#[cfg(test)]
+thread_local! {
+    /// Test-only count of `Parse::errors` validation passes run by the
+    /// uncached parse, so a test can assert the memo does not revalidate.
+    static VALIDATION_PASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The parse for `text` and the error count of that parse.
+fn parse_source_file_uncached(text: &str) -> (Parse<SourceFile>, usize) {
+    let validated = |parse: &Parse<SourceFile>| {
+        #[cfg(test)]
+        VALIDATION_PASSES.with(|passes| passes.set(passes.get() + 1));
+        parse.errors().len()
+    };
     let parse = SourceFile::parse(text, Edition::CURRENT);
-    if parse.errors().is_empty() {
-        return parse;
+    let current_errors = validated(&parse);
+    if current_errors == 0 {
+        return (parse, 0);
     }
     let legacy = SourceFile::parse(text, Edition::Edition2021);
-    if legacy.errors().is_empty() {
-        return legacy;
+    if validated(&legacy) == 0 {
+        return (legacy, 0);
     }
     // A Rust 2015 crate may still use the `try!(..)` macro, which 2018+
     // reserves as a keyword; both newer editions reject the whole file and
@@ -103,13 +128,13 @@ fn parse_source_file_uncached(text: &str) -> Parse<SourceFile> {
     // or `dyn` as identifiers) and genuinely broken buffers keep failing
     // closed and do not pay a third full parse.
     if !(text.contains("try!") || text.contains("try !")) {
-        return parse;
+        return (parse, current_errors);
     }
     let oldest = SourceFile::parse(text, Edition::Edition2015);
-    if oldest.errors().is_empty() {
-        oldest
+    if validated(&oldest) == 0 {
+        (oldest, 0)
     } else {
-        parse
+        (parse, current_errors)
     }
 }
 
@@ -226,6 +251,13 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
                 estimate.else_if_chain = estimate.else_if_chain.max(*chain);
             }
             previous_word_was_else = word == "else";
+            if is_recursive_prefix_keyword(word) {
+                // `return return ..`, `if if ..` and the like recurse once per
+                // keyword in the parser exactly like a prefix operator run, but
+                // never reach the bracket arms below (#11407).
+                unary_run = unary_run.saturating_add(1);
+                estimate.depth = estimate.depth.max(depth.saturating_add(unary_run));
+            }
             after_operand = !is_expression_keyword(word);
             if after_operand {
                 unary_run = 0;
@@ -294,9 +326,15 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
 
 /// Words after which a `-`, `*`, `&` or `!` is a prefix operator.
 fn is_expression_keyword(word: &str) -> bool {
+    is_recursive_prefix_keyword(word) || matches!(word, "in" | "else" | "let" | "mut" | "move")
+}
+
+/// Keywords whose operand is parsed by recursing into the expression parser,
+/// so a run of them nests one parser level per keyword like a prefix operator.
+fn is_recursive_prefix_keyword(word: &str) -> bool {
     matches!(
         word,
-        "return" | "break" | "in" | "if" | "else" | "match" | "while" | "let" | "mut" | "move"
+        "return" | "break" | "yield" | "become" | "if" | "match" | "while"
     )
 }
 
@@ -515,27 +553,67 @@ fn skip_raw_string(bytes: &[u8], mut index: usize) -> Option<usize> {
 }
 
 /// A char literal (`'x'`, `'\n'`, `'é'`) or a lifetime/label (`'a`).
+///
+/// Mirrors `rustc_lexer`: a `'` that cannot start a lifetime opens a char
+/// literal that runs to the closing `'`, and an unterminated one ends at the
+/// end of the line (or a `/`). The suffix of a malformed literal such as
+/// `'git version ...', got: {x}"` therefore stays inside the token; treating
+/// the lone `'` as a lifetime let the scan open a string at a quote the
+/// parser never lexes as one, inverting string parity for the rest of the
+/// file and hiding thousands of nested parens from the budget.
 fn skip_char_or_lifetime(text: &str, index: usize) -> usize {
     let bytes = text.as_bytes();
-    if bytes.get(index + 1) == Some(&b'\\') {
-        // Skip the escaped character itself so `'\''` closes correctly.
-        let mut cursor = index + 3;
-        while bytes
-            .get(cursor)
-            .is_some_and(|b| *b != b'\'' && *b != b'\n')
-        {
-            cursor += 1;
-        }
-        return cursor + 1;
+    let mut rest = text.get(index + 1..).unwrap_or("").chars();
+    let first = rest.next();
+    let can_be_lifetime = first.is_some_and(|c| {
+        c != '\'' && (c == '_' || c.is_ascii_digit() || unicode_ident::is_xid_start(c))
+    });
+    if !can_be_lifetime {
+        return skip_single_quoted(text, index + 1);
     }
-    let width = text
-        .get(index + 1..)
-        .and_then(|rest| rest.chars().next())
-        .map_or(0, char::len_utf8);
-    if width > 0 && bytes.get(index + 1 + width) == Some(&b'\'') {
-        return index + 2 + width;
+    // A lifetime, or a multi-character char literal such as `'ab'`.
+    let ident_len = first.map_or(0, char::len_utf8)
+        + rest
+            .take_while(|c| unicode_ident::is_xid_continue(*c))
+            .map(char::len_utf8)
+            .sum::<usize>();
+    if bytes.get(index + 1 + ident_len) == Some(&b'\'') {
+        return index + 2 + ident_len;
     }
     index + 1
+}
+
+/// `index` is just past the opening `'` of a char literal. Returns the index
+/// past its closing `'`, or where the lexer gives up on an unterminated one.
+fn skip_single_quoted(text: &str, mut index: usize) -> usize {
+    let bytes = text.as_bytes();
+    // `rustc_lexer` consumes any single symbol followed by `'` as a terminated
+    // char (`'/'`, `'''`) before the `/` and newline rules below apply.
+    if bytes.get(index) != Some(&b'\\') {
+        let width = text
+            .get(index..)
+            .and_then(|tail| tail.chars().next())
+            .map_or(0, char::len_utf8);
+        if width > 0 && bytes.get(index + width) == Some(&b'\'') {
+            return index + width + 1;
+        }
+    }
+    while let Some(&byte) = bytes.get(index) {
+        match byte {
+            b'\'' => return index + 1,
+            b'/' => break,
+            b'\n' if bytes.get(index + 1) != Some(&b'\'') => break,
+            b'\\' => {
+                let escaped = text
+                    .get(index + 1..)
+                    .and_then(|tail| tail.chars().next())
+                    .map_or(0, char::len_utf8);
+                index += 1 + escaped;
+            }
+            _ => index += 1,
+        }
+    }
+    index
 }
 
 #[cfg(test)]
@@ -553,13 +631,16 @@ mod tests {
         for round in 0..3 {
             for text in sources.iter().chain(sources.iter().rev()) {
                 let cached = parse_source_file(text);
-                let fresh = parse_source_file_uncached(text);
+                let (fresh, fresh_errors) = parse_source_file_uncached(text);
                 assert_eq!(
                     format!("{:#?}", cached.syntax_node()),
                     format!("{:#?}", fresh.syntax_node()),
                     "round {round}: {text}"
                 );
                 assert_eq!(cached.errors().len(), fresh.errors().len(), "{text}");
+                let (_, checked) = parse_source_file_checked(text);
+                assert_eq!(checked, fresh_errors, "{text}");
+                assert_eq!(checked, fresh.errors().len(), "{text}");
             }
         }
         // More distinct sources than cache slots still return correct parses.
@@ -572,7 +653,59 @@ mod tests {
         }
     }
 
+    /// Counter oracle: the memo hit must not rerun `Parse::errors`. One
+    /// clean source asked for five times validates once; a source that
+    /// fails every edition validates once per edition tried, once overall.
+    #[test]
+    fn repeated_clean_checks_of_one_source_validate_once() {
+        let clean = "fn counter_probe_clean() { let x = 1; }\n";
+        let before = VALIDATION_PASSES.with(std::cell::Cell::get);
+        for _ in 0..5 {
+            assert!(parse_clean_source_file(clean).is_some());
+            assert_eq!(parse_source_file_checked(clean).1, 0);
+        }
+        let after = VALIDATION_PASSES.with(std::cell::Cell::get);
+        assert_eq!(after - before, 1, "clean source validated more than once");
+
+        let broken = "fn counter_probe_broken( {\n";
+        let before = VALIDATION_PASSES.with(std::cell::Cell::get);
+        let expected = SourceFile::parse(broken, Edition::CURRENT).errors().len();
+        assert!(expected > 0);
+        for _ in 0..5 {
+            assert!(parse_clean_source_file(broken).is_none());
+            assert_eq!(parse_source_file_checked(broken).1, expected);
+        }
+        let after = VALIDATION_PASSES.with(std::cell::Cell::get);
+        // current + 2021 editions on the first ask (no `try!`), then memo hits.
+        assert_eq!(after - before, 2, "broken source revalidated on memo hits");
+    }
+
     use super::*;
+
+    /// #11407: a long run of recursive prefix keywords nests the parser once
+    /// per keyword; it must hit the same budget as a prefix-operator run.
+    #[test]
+    fn keyword_prefix_runs_are_refused_like_prefix_operator_runs() {
+        for keyword in ["return", "break", "yield", "become", "if", "match", "while"] {
+            let over = format!(
+                "fn f() {{ let _v = {}x; }}\n",
+                format!("{keyword} ").repeat(3_000)
+            );
+            assert!(
+                rust_nesting_refusal(&over)
+                    .is_some_and(|reason| reason.contains("rust_nesting_budget")),
+                "{keyword} x3000 must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_keyword_use_stays_within_the_nesting_budget() {
+        let source = "fn f(a: bool, b: Option<u8>) -> u8 {\n    if a { return 1; }\n    while a { break; }\n    match b { Some(x) if x > 1 => return x, _ => {} }\n    else_ok(if a { 1 } else if !a { 2 } else { 3 })\n}\n";
+        assert_eq!(rust_nesting_refusal(source), None);
+        let chained = format!("fn f() {{ {}1; }}\n", "return ".repeat(10));
+        assert_eq!(rust_nesting_refusal(&chained), None);
+    }
 
     #[test]
     fn block_comment_only_lines_lists_interior_lines_and_not_code_lines() {
@@ -858,5 +991,52 @@ mod tests {
         let estimate = estimate_rust_nesting(&source);
         assert!(estimate.operator_run < 32, "{estimate:?}");
         assert!(rust_nesting_refusal(&source).is_none());
+    }
+
+    /// Fuzz finding: a lone `'` in a message (`'git version ...', got: {x}"`)
+    /// is an unterminated char literal to the parser, so the quote after it is
+    /// not a string opener. The scan used to treat it as a lifetime, invert
+    /// string parity, and hide a 4,000-deep paren chain from the budget (stack
+    /// overflow in `ra_ap_parser`).
+    #[test]
+    fn an_unterminated_char_literal_does_not_invert_string_parity() {
+        let source = format!(
+            "fn f(r: &str) -> String {{ format!(\"expected 'git version ...', got: {{r}}\") }}\nfn g(x: i32) -> i32 {{ {}x {{ 1 }} }}\n",
+            "(".repeat(4_000)
+        );
+        assert!(rust_nesting_refusal(&source).is_some());
+        assert!(parse_clean_source_file(&source).is_none());
+        // Real chars and lifetimes still close where the lexer closes them.
+        for ok in [
+            "let c = '\\'';",
+            "let c = 'é';",
+            "fn f<'a>(x: &'a str) {}",
+            "let c = '\\u{1F600}';",
+            "let l = 'outer: loop {};",
+        ] {
+            let at = ok.find('\'').unwrap_or(0);
+            assert!(skip_char_or_lifetime(ok, at) > at, "{ok}");
+        }
+        assert_eq!(skip_char_or_lifetime("'a' x", 0), 3);
+        assert_eq!(skip_char_or_lifetime("'a x", 0), 1);
+        assert_eq!(skip_char_or_lifetime("'\\'' x", 0), 4);
+        assert_eq!(skip_char_or_lifetime("', got\n\"y", 0), 6);
+        // An unterminated literal stops at a `/` (a possible comment).
+        assert_eq!(skip_char_or_lifetime("', x/ y'", 0), 4);
+        assert_eq!(skip_char_or_lifetime("'/' x", 0), 3);
+        assert_eq!(skip_char_or_lifetime("''' x", 0), 3);
+        // A lone quote outside any string is the case that used to flip parity.
+        let source = format!(
+            "fn g() {{ let c = 'git version ...', got: x\"; }}\nfn h(x: i32) -> i32 {{ {}x {{ 1 }} }}\n",
+            "(".repeat(4_000)
+        );
+        assert!(rust_nesting_refusal(&source).is_some());
+        // `'/'` closes as a char, so the brackets after it still balance.
+        let source = "fn f(s: &str) { s.split('/'); s.split('/'); }\n".repeat(300);
+        assert!(rust_nesting_refusal(&source).is_none());
+        assert_eq!(
+            block_comment_only_lines("x = '/'; /* c */\n/* d */\n").len(),
+            1
+        );
     }
 }

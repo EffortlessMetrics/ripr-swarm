@@ -276,10 +276,11 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
     // outside a collapsed block.
     let openers = summary.matches("<details><summary>Full report: ").count();
     assert!(openers > 0, "summary collapses no full report:\n{summary}");
+    // The governance fold is a `<details>` block too, so compare every opener.
     assert_eq!(
-        openers,
+        summary.matches("<details").count(),
         summary.matches("</details>").count(),
-        "every collapsed full report must close"
+        "every collapsed block must close"
     );
     let mut collapsed = false;
     for line in summary.lines() {
@@ -2913,7 +2914,7 @@ fn generated_capture_step_runs_end_to_end() -> Result<(), Box<dyn Error>> {
     );
     assert!(
         String::from_utf8_lossy(&run.stdout)
-            .contains("::error title=Capture pull request diff::ripr: cannot resolve base ref origin/nonexistent-base-branch"),
+            .contains("::error title=Capture pull request diff::ripr: the pull request base `origin/nonexistent-base-branch` is not in this checkout"),
         "missing base must name the failure; got:\n{}",
         String::from_utf8_lossy(&run.stdout)
     );
