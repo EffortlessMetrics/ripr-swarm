@@ -1224,8 +1224,10 @@ pub(super) enum DocumentStalenessReason {
     /// longer authoritative for line identity, so diagnostics stay
     /// quarantined until a later full replacement/open re-establishes it.
     InvalidIncrementalChange,
-    /// No refresh has analyzed this document's saved content in the current
-    /// session, so there is no analyzed baseline to serve against.
+    /// No analyzed baseline records this document's saved content, so there
+    /// is nothing to serve against. The cause (no attempt, in progress,
+    /// failed, or not recorded by a committed snapshot) is not part of the
+    /// reason; renderers that name one must observe it (#11452).
     NoAnalyzedSavedContent,
 }
 
@@ -1248,9 +1250,7 @@ impl DocumentStalenessReason {
             Self::InvalidIncrementalChange => {
                 "an incremental document change could not be applied under the negotiated position encoding"
             }
-            Self::NoAnalyzedSavedContent => {
-                "the document's saved content has not been analyzed in this session"
-            }
+            Self::NoAnalyzedSavedContent => "the document's saved content has no analyzed baseline",
         }
     }
 }
@@ -1903,7 +1903,7 @@ fn read_saved_digest(uri: &Uri) -> Option<String> {
 /// A client names this path in `didOpen`, so it may be a device, FIFO or
 /// huge file (`/dev/zero`, `/dev/stdin`). Read only a regular file, and no
 /// more than one LSP message can carry: an open document never exceeds that.
-fn read_saved_bytes(path: &Path) -> Option<Vec<u8>> {
+pub(super) fn read_saved_bytes(path: &Path) -> Option<Vec<u8>> {
     use std::io::Read as _;
     let limit = crate::lsp::transport_bounds::MAX_MESSAGE_BYTES as u64;
     let metadata = std::fs::metadata(path).ok()?;
