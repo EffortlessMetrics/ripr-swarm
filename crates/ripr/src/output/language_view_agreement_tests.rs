@@ -381,29 +381,32 @@ fn every_surface_discloses_what_the_view_says() -> Result<(), String> {
             },
             "{name}"
         );
-        let json_rows: Vec<(String, String, u64)> = completeness["languages"]
+        let json_rows: Vec<serde_json::Value> = completeness["languages"]
             .as_array()
             .ok_or_else(|| format!("{name}: no languages array"))?
-            .iter()
-            .map(|row| {
-                (
-                    row["language"].as_str().unwrap_or_default().to_string(),
-                    row["status"].as_str().unwrap_or_default().to_string(),
-                    row["findings"].as_u64().unwrap_or(u64::MAX),
-                )
-            })
-            .collect();
-        let view_rows: Vec<(String, String, u64)> = view
+            .clone();
+        let view_rows: Vec<serde_json::Value> = view
             .rows
             .iter()
             .map(|row| {
-                (
-                    row.label.clone(),
-                    row.status.as_str().to_string(),
-                    row.findings as u64,
-                )
+                serde_json::json!({
+                    "language": row.label,
+                    "status": row.status.as_str(),
+                    "findings": row.findings,
+                    "limitations": row.limitations,
+                    "disclosure": match row.disclosure {
+                        LanguageDisclosure::Silent => "silent",
+                        LanguageDisclosure::PublicRun(_) => "language_run",
+                        LanguageDisclosure::TypedLimitation => "typed_limitation",
+                        LanguageDisclosure::AdvisoryOnly => "advisory_only",
+                    },
+                })
             })
             .collect();
+        assert_eq!(
+            completeness["total_findings"], view.total_findings,
+            "{name}"
+        );
         assert_eq!(json_rows, view_rows, "{name}");
 
         // Unsupported scope cannot disappear: the typed limitation reaches
