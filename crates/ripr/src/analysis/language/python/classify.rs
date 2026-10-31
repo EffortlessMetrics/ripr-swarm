@@ -18,7 +18,8 @@ use super::module_value::{ModuleEdit, module_constant_credits};
 use super::no_behavior::{
     changed_default_overridden_params, format_param_name_list, is_annotation_only_def_change,
     is_annotation_only_var_change, is_comment_or_whitespace_only_change,
-    is_new_def_header_without_defaults, is_python_no_behavior_line, is_structural_def_header_text,
+    is_new_def_header_without_defaults, is_object_base_only_class_change,
+    is_python_no_behavior_line, is_structural_def_header_text,
 };
 use super::probe_shape::{
     canonical_python_gap_for, classify_probe_shape_with_old, python_flow_sink_for,
@@ -292,6 +293,16 @@ fn classify_change_full<'a>(
     if let Some(old) = old_line_text
         && same_indentation(old, line_text)
         && is_annotation_only_def_change(old, line_text)
+    {
+        return None;
+    }
+    // Sole-`object`-base `class`-header guard (#11888): `class X(object):` and
+    // `class X:` are the same class in Python 3, so a header edit that only adds
+    // or drops that one base has no behavior delta. Requires the paired old line
+    // and fails closed on any other base, a keyword or a multi-line header.
+    if let Some(old) = old_line_text
+        && same_indentation(old, line_text)
+        && is_object_base_only_class_change(old, line_text)
     {
         return None;
     }

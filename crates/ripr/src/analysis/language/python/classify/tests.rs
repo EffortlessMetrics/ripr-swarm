@@ -3831,3 +3831,71 @@ fn truthiness_swap_fails_open_on_a_separating_default_or_a_branch_value_edit() -
     assert_ne!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
     Ok(())
 }
+
+const OBJECT_BASE_TESTS: &str =
+    "from src.subject import Box\n\ndef test_double():\n    assert Box(2).double() == 4\n";
+
+fn class_header_case(after: &str, before: &str) -> Option<Finding> {
+    let source = format!(
+        "{after}\n    def __init__(self, value):\n        self.value = value\n\n    def double(self):\n        return self.value * 2\n"
+    );
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, &source);
+    let tests = extract_tests(Path::new("tests/test_subject.py"), OBJECT_BASE_TESTS);
+    classify_change_with_old(file, 1, after, Some(before), &owners, &tests)
+}
+
+// RIPR-SPEC-0028 / #11888: `class X(object):` and `class X:` are the same
+// class in Python 3, so a header edit that only adds or drops the sole
+// `object` base has no behavior delta and earns no probe, whatever test
+// reaches the class.
+#[test]
+fn a_sole_object_base_edit_to_a_class_header_earns_no_probe() {
+    for (before, after) in [
+        ("class Box(object):", "class Box:"),
+        ("class Box:", "class Box(object):"),
+        ("class Box(object):", "class Box():"),
+        ("class Box(object):  # legacy", "class Box:"),
+        (
+            "class Box(object, metaclass=Meta):",
+            "class Box(metaclass=Meta):",
+        ),
+    ] {
+        assert!(
+            class_header_case(after, before).is_none(),
+            "{before} -> {after}"
+        );
+    }
+}
+
+// Discriminating negatives: every other header edit keeps its probe and the
+// existing `exposed` credit from the strong related test.
+#[test]
+fn a_class_header_edit_beyond_the_sole_object_base_keeps_its_probe() -> Result<(), String> {
+    for (before, after) in [
+        ("class Box(object):", "class Box(Base):"),
+        ("class Box(Base):", "class Box(Other):"),
+        ("class Box(Base, object):", "class Box(Base):"),
+        ("class Box(object, Base):", "class Box(Base):"),
+        ("class Box(object):", "class Box(object, metaclass=Meta):"),
+        (
+            "class Box(object, metaclass=Meta):",
+            "class Box(metaclass=Other):",
+        ),
+        ("class Box(object):", "class Box(builtins.object):"),
+        ("class Box(object):", "class Box(object, object):"),
+        ("class Box(object):", "class Box(*bases):"),
+    ] {
+        let finding = class_header_case(after, before)
+            .ok_or_else(|| format!("{before} -> {after} must keep a probe"))?;
+        // A metaclass keyword makes the class opaque to the admission gate, so
+        // it reads `static_unknown`; the probe is kept either way.
+        let expected = if after.contains("metaclass") {
+            ExposureClass::StaticUnknown
+        } else {
+            ExposureClass::Exposed
+        };
+        assert_eq!(finding.class, expected, "{before} -> {after}");
+    }
+    Ok(())
+}

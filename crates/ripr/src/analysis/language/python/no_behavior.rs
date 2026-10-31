@@ -280,6 +280,74 @@ pub(super) fn is_annotation_only_def_change(old_line: &str, new_line: &str) -> b
     }
 }
 
+/// The runtime-significant skeleton of a single-line `class` header: its name,
+/// its positional bases and its keyword arguments (`metaclass=...`) as written,
+/// with a lone bare `object` base dropped. Python 3 gives `class X(object):` and
+/// `class X:` the same bases, so that one base carries no runtime behavior
+/// (#11888).
+type ClassHeaderSkeleton = (String, Vec<String>, Vec<String>);
+
+fn class_header_skeleton(line: &str) -> Option<ClassHeaderSkeleton> {
+    let trimmed = line.trim_start();
+    if !trimmed.starts_with("class ") {
+        return None;
+    }
+    // Synthesize a parseable statement: a `class` header alone is not a module.
+    // A one-line `class X: pass` or a multi-line header fails to parse here and
+    // so keeps its probe.
+    let snippet = format!("{trimmed}\n    pass\n");
+    let Ok(Mod::Module(module)) = parse_module_result(Path::new("class_header_probe.py"), &snippet)
+    else {
+        return None;
+    };
+    let [Stmt::ClassDef(class)] = module.body.as_slice() else {
+        return None;
+    };
+    if !class.decorator_list.is_empty() {
+        return None;
+    }
+    let slice = |range: rustpython_parser::text_size::TextRange| -> String {
+        snippet
+            .get(usize::from(range.start())..usize::from(range.end()))
+            .unwrap_or_default()
+            .to_string()
+    };
+    let lone_object = matches!(
+        class.bases.as_slice(),
+        [Expr::Name(name)] if name.id.as_str() == "object"
+    );
+    let bases = if lone_object {
+        Vec::new()
+    } else {
+        class.bases.iter().map(|base| slice(base.range())).collect()
+    };
+    let keywords = class
+        .keywords
+        .iter()
+        .map(|keyword| slice(keyword.range()))
+        .collect();
+    Some((class.name.to_string(), bases, keywords))
+}
+
+/// Whether the `class`-header change only adds or drops a sole `object` base
+/// (`class X(object):` <-> `class X:` / `class X():`), which Python 3 treats
+/// identically, so the edit has no behavior delta (#11888). Fails closed: false
+/// when either line is not a parseable single-line `class` header, when the
+/// lines are identical, or when anything else differs (name, any other base,
+/// `object` among several bases, a keyword such as `metaclass=`).
+pub(super) fn is_object_base_only_class_change(old_line: &str, new_line: &str) -> bool {
+    if old_line.trim() == new_line.trim() {
+        return false;
+    }
+    match (
+        class_header_skeleton(old_line),
+        class_header_skeleton(new_line),
+    ) {
+        (Some(old), Some(new)) => old == new,
+        _ => false,
+    }
+}
+
 /// Whether `line` (1-based) sits inside the multi-line `def` header that
 /// starts at or after `owner_start_line` in `source`, and its text only names
 /// parameters or opens/closes the header: `self,`, `key: int,`, `*args,`,
