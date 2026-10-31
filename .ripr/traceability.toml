@@ -7672,6 +7672,10 @@ tests = [
   "crates/ripr/src/output/human.rs::tests::typescript_advisory_names_javascript_and_mixed_files",
   "crates/ripr/tests/cli_smoke/language_completeness_json.rs::a_findings_run_names_the_completed_language_and_its_count",
   "crates/ripr/tests/cli_smoke/language_completeness_json.rs::a_complete_zero_run_is_distinct_from_nothing_in_scope",
+  "crates/ripr/tests/cli_smoke/language_completeness_json.rs::a_worktree_run_names_the_worktree_scope",
+  "crates/ripr/src/app/progress.rs::tests::scope_labels_match_the_published_language_completeness_scopes",
+  "crates/ripr/src/analysis/language_outcome/view.rs::projection_tests::schema_enums_equal_the_canonical_producer_spellings",
+  "xtask/src/verification_contracts.rs::language_completeness_schema_tests::real_check_output_validates_and_invalid_projections_are_rejected",
   "crates/ripr/src/analysis/language_outcome/view.rs::projection_tests::projection_restates_every_row_with_canonical_status_and_count",
   "crates/ripr/src/analysis/language_outcome/view.rs::projection_tests::projection_keeps_silent_rows_that_the_public_run_projection_drops"
 ]
