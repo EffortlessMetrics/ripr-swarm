@@ -188,7 +188,12 @@ impl Repo {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        Ok(text.replace(&self.0.to_string_lossy().into_owned(), "<root>"))
+        // The product prints a Windows root with `/` separators, so mask both
+        // spellings of this repository's own root.
+        let native = self.0.to_string_lossy().into_owned();
+        Ok(text
+            .replace(&native, "<root>")
+            .replace(&native.replace('\\', "/"), "<root>"))
     }
 
     /// Assert the fixture holds the intended change before any downstream

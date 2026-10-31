@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- `ripr lsp --stdio` no longer waits out an in-flight analysis when the editor closes. An `exit` notification (including one sent right behind `shutdown`, which cancelled the `shutdown` handler before it could stop the analysis) and the end of stdin now cancel the active and pending refresh, and probe seeding for a changed file checks that cancellation every 256 changed lines, so closing an editor with a large unsaved buffer open returns promptly instead of after the remaining analysis (#11439).

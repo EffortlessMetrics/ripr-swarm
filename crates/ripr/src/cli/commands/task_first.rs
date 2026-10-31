@@ -934,13 +934,24 @@ mod tests {
     #[test]
     fn retry_template_translates_root_around_its_placeholder() {
         let root = crate::agent::loop_commands::shell_arg("/home/o'neil/proj");
-        assert_eq!(
-            retry_lines(&format!("ripr continue --attempt <attempt-id> --root {root}")),
-            vec![
-                format!("retry: ripr continue --attempt <attempt-id> --root {root}"),
+        let mut expected = vec![format!(
+            "retry: ripr continue --attempt <attempt-id> --root {root}"
+        )];
+        if cfg!(windows) {
+            // The Windows console form is double-quoted, which PowerShell
+            // reads unchanged, so no second line is printed.
+            assert_eq!(root, "\"/home/o'neil/proj\"");
+        } else {
+            expected.push(
                 "retry (PowerShell): ripr continue --attempt <attempt-id> --root '/home/o''neil/proj'"
                     .to_string(),
-            ]
+            );
+        }
+        assert_eq!(
+            retry_lines(&format!(
+                "ripr continue --attempt <attempt-id> --root {root}"
+            )),
+            expected
         );
         assert_eq!(
             retry_lines("ripr repair <seam-id> --root /work/proj"),
