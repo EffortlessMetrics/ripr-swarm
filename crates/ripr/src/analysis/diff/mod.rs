@@ -9,7 +9,7 @@ pub(crate) use source::reconstruct_old_source;
 pub mod records;
 
 pub(crate) use load::{
-    AnalyzedRevisions, HeadRefState, probe_head_ref_state, resolve_analyzed_revisions,
+    AnalyzedRevisions, HeadRefState, LoadedDiff, probe_head_ref_state, resolve_analyzed_revisions,
     working_tree_has_uncommitted_changes,
 };
 pub(crate) use load::{

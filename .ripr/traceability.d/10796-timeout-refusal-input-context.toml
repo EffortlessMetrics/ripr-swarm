@@ -1,0 +1,11 @@
+# Foundation tests for availability-qualified input facts (RIPR-SPEC-0241, #10796).
+[[extend]]
+id = "RIPR-SPEC-0241"
+tests = [
+  "crates/ripr/src/analysis/input_facts.rs::captured_facts_round_trip_and_merge_across_producers",
+  "crates/ripr/src/analysis/input_facts.rs::early_deadline_leaves_the_slot_empty",
+  "crates/ripr/src/analysis/input_facts.rs::facts_published_at_or_after_the_deadline_stamp_are_masked",
+  "crates/ripr/src/analysis/input_facts.rs::interrupted_intake_keeps_its_deadline_reason_distinct",
+  "crates/ripr/src/analysis/input_facts.rs::publish_without_capture_is_a_no_op",
+  "crates/ripr/src/analysis/input_facts.rs::source_labels_stay_distinct_from_analysis_mode",
+]

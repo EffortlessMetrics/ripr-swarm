@@ -14,6 +14,12 @@ pub(crate) use generated_rust_corpus::{
     absent_changed_rust_file_limitations, generated_rust_recovery,
 };
 pub(crate) mod harness_projection;
+mod input_facts;
+pub(crate) use input_facts::{
+    InputSource, publish_input_source as publish_input_source_fact,
+    publish_loaded_diff as publish_loaded_input_facts,
+    publish_scoped_intake as publish_scoped_intake_facts,
+};
 pub(crate) mod language;
 pub(crate) mod language_outcome;
 pub(crate) mod new_test_target;
