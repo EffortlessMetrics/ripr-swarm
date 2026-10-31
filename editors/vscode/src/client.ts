@@ -2619,7 +2619,13 @@ export class RiprClientController {
     const status = typeof packet['status'] === 'string' ? packet['status'] : undefined;
     if (status === 'not_actionable_or_incomplete' || packet['kind'] !== 'repair_packet') {
       const reason = typeof packet['reason'] === 'string' ? packet['reason'] : undefined;
-      this.runtime.showInformationMessage(reason ?? 'No complete repair packet available.');
+      // #4427: the server says whether a refresh is in flight (retry shortly)
+      // or ended without a result (recover); surface its guidance.
+      const recovery = typeof packet['recovery'] === 'string' ? packet['recovery'] : undefined;
+      // Show only the hint when present; the raw reason token is not user text.
+      this.runtime.showInformationMessage(
+        recovery ?? reason ?? 'No complete repair packet available.',
+      );
       return;
     }
     try {

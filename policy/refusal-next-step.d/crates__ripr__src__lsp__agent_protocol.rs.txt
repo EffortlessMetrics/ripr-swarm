@@ -1,7 +1,0 @@
-crates/ripr/src/lsp/agent_protocol.rs|{field}: command spec field `{key}` is not part of the published schema
-crates/ripr/src/lsp/agent_protocol.rs|{field}: command spec must be an object
-crates/ripr/src/lsp/agent_protocol.rs|{field}: identity strings must be non-empty
-crates/ripr/src/lsp/agent_protocol.rs|{field}: {error} {field}: identity strings must be non-empty
-crates/ripr/src/lsp/agent_protocol.rs|{slot}: a command spec requires a non-null route
-crates/ripr/src/lsp/agent_protocol.rs|{slot}: command spec role does not match the slot role
-crates/ripr/src/lsp/agent_protocol.rs|{slot}: declared readiness does not match the route and command spec
