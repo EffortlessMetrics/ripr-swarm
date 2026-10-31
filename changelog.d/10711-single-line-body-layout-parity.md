@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A changed `if` whose branches sit on the same line as the function signature (`pub fn grade(score: u32) -> u32 { if score > 50 { 1 } else { 0 } }`) now reaches the returned value the same way the rustfmt layout does, so `ripr check` reports the same gap for both instead of "unknown". A fixture pair now keeps one-line and rustfmt layouts of a changed predicate in step for both `ripr check` and `ripr repair` (#10711).

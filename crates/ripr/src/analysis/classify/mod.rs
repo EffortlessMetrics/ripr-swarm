@@ -95,7 +95,8 @@ pub(in crate::analysis) use gap_admission::{
     CALL_BUDGET_SATURATED, DEBUG_ASSERT_EQ_PIN_PREFIX, MIXED_REFUSAL_IS_ANALYZER_LIMIT,
     REFUSALS_ARE_ANALYZER_LIMITS, is_ignored, should_panic_tests_deciding_changed_panic,
     withhold_call_budget_gap, withhold_debug_assertion_gap, withhold_log_capture_gap,
-    withhold_mixed_refusal_gap, withhold_should_panic_gap, withhold_unsupported_gap,
+    withhold_mixed_refusal_gap, withhold_should_panic_gap, withhold_truncated_discovery_gap,
+    withhold_unsupported_gap,
 };
 pub(in crate::analysis) use helper_transfer::{FieldProjectionReceipt, field_projection_receipt};
 pub(in crate::analysis) use helper_transfer::{
@@ -137,8 +138,9 @@ pub(in crate::analysis) use pinned_shape::{
 pub(in crate::analysis) use propagation_witness::{
     PropagationWitnessV1, assertion_compares_hand_built_field,
     assertion_observes_collection_argument, assertion_observes_direct_collection_for_probe,
-    current_path_witness_with, direct_collection_mutation_receiver, field_assignment_target,
-    owner_may_exit_before_line, retain_returned_ledger, returned_ledger_witness,
+    concat_literal_tail, concat_tail_witness, current_path_witness_with,
+    direct_collection_mutation_receiver, field_assignment_target, owner_may_exit_before_line,
+    retain_returned_ledger, returned_ledger_witness,
 };
 pub(in crate::analysis) use propagation_witness::{
     constant_tail_witness, fallible_literal_witness, format_tail_witness, result_map_witness,
