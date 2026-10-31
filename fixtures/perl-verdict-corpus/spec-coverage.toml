@@ -707,6 +707,7 @@ scope = "out"
 reason = "Rust analyzer transfer rule over Rust syntax; a Perl packet case cannot label it"
 
 # Rust spec 0154
+# Assertion-form parity
 [[spec]]
 id = "RIPR-SPEC-0154"
 scope = "out"

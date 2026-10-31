@@ -60,6 +60,9 @@ mod assertion_selection_tests;
 mod boundary_input;
 #[cfg(test)]
 mod boundary_input_tests;
+#[cfg(test)]
+mod boundary_label_tests;
+mod boundary_selection;
 mod bounded_read;
 mod bun_bridge;
 mod call_removal_guard;
@@ -84,6 +87,10 @@ mod error_payload_guard;
 mod extraction_cache;
 mod fact_store;
 pub(crate) use fact_store::TypeScriptFileFactStore;
+mod comment_whitespace_only;
+type MultilineRanges = (Vec<(usize, usize)>, Vec<(usize, usize)>);
+#[cfg(test)]
+mod comment_whitespace_only_tests;
 #[cfg(test)]
 mod fact_store_tests;
 mod field_update_guard;
@@ -199,6 +206,7 @@ pub(crate) use assertion_selection::{
 };
 pub(crate) use boolean_pin_guard::*;
 pub(crate) use boundary_input::*;
+pub(crate) use boundary_selection::typescript_changed_boundary_text;
 pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
 pub(crate) use class_entries::*;
@@ -1094,6 +1102,27 @@ impl TypeScriptAdapter {
             // pairing: by position in an even block, by content in an uneven
             // one, by coordinate where a removed line interrupts the run.
             let counterparts = changed.aligned_counterparts();
+            let mut multiline_lines: Option<Option<MultilineRanges>> = None;
+            // #11250: one facts lookup and one line-table build per
+            // changed file, not per added line. `file_facts_cached`
+            // re-hashes the whole source for its key on every call and
+            // `lines().nth(n)` re-scans from the file start, so per-line
+            // calls cost O(changed lines x file bytes); the facts cache
+            // itself already avoids re-parsing, and the phase-2 consumers
+            // above have already warmed it for this file. Parse-error
+            // files yield no facts, so the classifier keeps its
+            // line-text fallback exactly as before.
+            let ast_probe_facts = source_by_normalized.get(&changed_norm).and_then(|source| {
+                let facts = extraction_cache::file_facts_cached(
+                    &changed.path,
+                    source,
+                    &options.root,
+                    alias_map_ref,
+                )
+                .ok()
+                .filter(|facts| facts.parse_error.is_none())?;
+                Some((source.lines().collect::<Vec<_>>(), facts))
+            });
             for added in &changed.added_lines {
                 if !is_probe_candidate(added.line, &added.text) {
                     continue;
@@ -1140,6 +1169,47 @@ impl TypeScriptAdapter {
                 let old_line_text = counterparts
                     .get(&added.line)
                     .map(|removed| removed.text.as_str());
+                // Trailing-comment / trailing-whitespace guard (#10706): the
+                // same statement with a `//` comment or trailing space added
+                // runs identically, so there is no behavior delta and no
+                // probe; the gap id and discriminator would otherwise embed
+                // the comment text. Fails closed without a parse of the file
+                // or inside a construct that crosses a line break.
+                if let (Some(old), Some(removed)) = (old_line_text, counterparts.get(&added.line))
+                    && old != added.text
+                    && infection_shape::same_executable_text(old, &added.text)
+                {
+                    // Multiline-construct ranges of the new file and of the
+                    // reconstructed old file; either missing means no guard.
+                    let ranges = multiline_lines.get_or_insert_with(|| {
+                        let source = source_by_normalized.get(&changed_norm)?;
+                        let old_source = comment_whitespace_only::reconstruct_old_source(
+                            source,
+                            &changed.added_lines,
+                            &changed.removed_lines,
+                        )?;
+                        Some((
+                            comment_whitespace_only::multiline_construct_lines(
+                                &changed.path,
+                                source,
+                            )?,
+                            comment_whitespace_only::multiline_construct_lines(
+                                &changed.path,
+                                &old_source,
+                            )?,
+                        ))
+                    });
+                    if ranges.as_ref().is_some_and(|(new_ranges, old_ranges)| {
+                        comment_whitespace_only::is_trailing_comment_or_whitespace_only_change(
+                            old,
+                            &added.text,
+                            (added.line, new_ranges),
+                            (removed.line, old_ranges),
+                        )
+                    }) {
+                        continue;
+                    }
+                }
                 let resolved_finding = owner_plan
                     .owner_index_and_ref_for_line(added.line)
                     .and_then(|(owner_idx, owner)| {
@@ -1174,6 +1244,18 @@ impl TypeScriptAdapter {
                             &reexport_index,
                             alias_map_ref,
                             alias_load_gap.as_ref(),
+                            // #11250: an AST fact describes the source
+                            // line at this number; when the changed text
+                            // is not that line (a pre-change workspace, a
+                            // stale diff coordinate), the fact is absent
+                            // and the classifier keeps its line-text shape.
+                            ast_probe_facts.as_ref().and_then(|(lines, facts)| {
+                                let disk_line = lines.get(added.line.checked_sub(1)?)?;
+                                if disk_line.trim() != added.text.trim() {
+                                    return None;
+                                }
+                                facts.phase_two.probe_shape_for_line(added.line).cloned()
+                            }),
                         )
                     });
                 if let Some(mut finding) = resolved_finding {
@@ -1286,6 +1368,9 @@ impl TypeScriptAdapter {
                         &reexport_index,
                         alias_map_ref,
                         alias_load_gap.as_ref(),
+                        // Old-side text has no new-side AST fact; the
+                        // classifier keeps its line-text fallback (#11250).
+                        None,
                     )
                 },
             );
