@@ -322,7 +322,7 @@ fn split_guard(pattern: &str) -> Option<(&str, bool)> {
 /// Whether `int`, `float`, `str` and `bool` still name the builtins: no
 /// parameter, assignment, `def`/`class`, import or star import of the file
 /// rebinds one, so a `case int()` class pattern means what it spells.
-fn builtin_classes_intact(owner: &PythonOwner, owner_source: &str) -> bool {
+pub(super) fn builtin_classes_intact(owner: &PythonOwner, owner_source: &str) -> bool {
     const BUILTINS: [&str; 4] = ["int", "float", "str", "bool"];
     if owner
         .parameters
@@ -409,7 +409,7 @@ fn is_capture_name(text: &str) -> bool {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum ScalarKind {
+pub(super) enum ScalarKind {
     None,
     Bool,
     Int,
@@ -417,7 +417,7 @@ enum ScalarKind {
     Str,
 }
 
-fn scalar_kind(value: &str) -> Option<ScalarKind> {
+pub(super) fn scalar_kind(value: &str) -> Option<ScalarKind> {
     match value {
         "None" => return Some(ScalarKind::None),
         "True" | "False" => return Some(ScalarKind::Bool),

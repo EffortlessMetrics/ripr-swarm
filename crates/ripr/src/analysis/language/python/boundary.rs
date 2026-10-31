@@ -1826,7 +1826,7 @@ fn bind_call_arguments(
 /// a scalar literal (`[3, -1, 4]`); None for anything else, including a
 /// display with a computed or nested element, whose elements are not all
 /// known.
-fn literal_elements(text: &str) -> Option<Vec<String>> {
+pub(super) fn literal_elements(text: &str) -> Option<Vec<String>> {
     let text = text.trim();
     let inner = ["[]", "()", "{}"].into_iter().find_map(|pair| {
         let (open, close) = (pair.chars().next()?, pair.chars().nth(1)?);
