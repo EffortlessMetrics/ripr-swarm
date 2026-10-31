@@ -99,14 +99,15 @@ fn repair_facts(repo: &Repo) -> Result<Vec<String>, String> {
         .lines()
         .map(str::trim)
         .filter(|line| {
-            line.starts_with("readiness:")
-                || line.starts_with("missing discriminator:")
-                || line.starts_with("changed behavior:")
+            line.starts_with("Ready to repair")
+                || line.starts_with("Not ready to repair")
+                || line.starts_with("Missing check")
+                || line.starts_with("Changed behavior:")
         })
         .map(str::to_string)
         .collect();
     assert!(
-        facts.iter().any(|l| l.contains("repair_ready=true")),
+        facts.iter().any(|l| l.starts_with("Ready to repair")),
         "precondition, repair starts for this layout:\n{repair}"
     );
     Ok(facts)

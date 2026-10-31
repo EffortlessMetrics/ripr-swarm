@@ -138,7 +138,10 @@ The MCP tool envelopes carry the schema-versioned document as
 double-carry envelope cannot fit the id-aware response bound refuses typed
 with `result_too_large` instead of shipping a success without
 `structuredContent` (#7768; details in
-[MCP workspace status server](interop/mcp.md)).
+[MCP workspace status server](interop/mcp.md)). `content[0].text` is the
+compact JSON copy by default; `RIPR_MCP_TEXT_CONTENT=summary` opts a server
+process into a digest instead while `structuredContent` stays the one
+complete result (#9360).
 
 The published JSON Schemas have these current versions. Each row is checked
 against the schema's pinned `const` and every named producer source by
@@ -2224,7 +2227,8 @@ JSON fields:
     source text, emitted ONLY when the argument is a concrete resolvable literal
     (string, number, boolean, null, a safe all-literal object, or, for the
     deep-equality matchers AVA `deepEqual` and Jest `toEqual` / `toStrictEqual`,
-    an all-literal array). NOT emitted
+    an all-literal array; for Jest `toEqual` / `toStrictEqual` / `toMatchObject`
+    also an all-literal object or array nested to any depth). NOT emitted
     for dynamic/non-literal arguments; those trigger
     `typescript_dynamic_assertion_unresolved` instead.
   - `typescript_oracle_confidence: <level>` — additive; confidence derived from
@@ -9796,7 +9800,11 @@ Field contract:
   already-current items.
 - `skip_reason` is `mode_off`, `summary_only`, `suppressed`,
   `inline_comment_cap_reached`, `comment_body_too_large`, `unchanged_tests`,
-  `not_publishable`, or `already_current`.
+  `not_publishable`, or `already_current`. A `comments[]` item whose
+  `gap_state` is anything other than `actionable` (a named `static_limitation`,
+  `already_observed`, `internal_only`, or no `gap_state` at all) offers no test to add and is recorded in
+  `skipped[]` as `not_publishable` instead of an operation, so it never
+  becomes an inline review comment or uses a slot of the cap.
 - Each untrusted field of `operations[].body` is bounded before rendering:
   1,000 characters for a code-span field (changed behavior, verify or repair
   start command), 2,000 for prose (why this matters, repair, reason), and 200
@@ -14369,6 +14377,15 @@ Field contract:
 - `missing_artifact`, `malformed_artifact`, `stale_artifact`, `wrong_root`,
   `blocked_artifact`, and `timeout` require `status = "blocked"` and a
   bounded next command when one is known.
+- A root without `Cargo.toml` that `ripr doctor` detects as TypeScript or
+  JavaScript (for example a `package.json` plus `.ts` files), not also as
+  Python, and that has no `tsconfig.json` or `jsconfig.json` at the root and
+  no TypeScript under `src/` or `tests/` (`package.json` alone is not enough)
+  reports `blocked_artifact` with
+  `selected.reason_code = "typescript_project_marker_missing"` and no next
+  command, not `wrong_root`. Its message says to add `tsconfig.json`
+  (`jsconfig.json` for a JavaScript-only root). A root also detected as
+  Python keeps `wrong_root`.
 - For a check-output-derived or legacy preview/mixed, presentation-text, or unclassifiable
   records ledger with no selected repair, `blocked_artifact`
   carries `selected.reason_code = "source_currentness_unavailable"`
@@ -14692,8 +14709,16 @@ Field contract:
   its after phase would evaluate the current `HEAD` as the attempt's, by the
   attempt authority's rule: the prepared head, or for an ordinary attempt a
   commit that descends from it; for an attempt with an after verdict, whether
-  `HEAD` is still the head that verdict recorded; `null` when `HEAD` cannot be
-  read or related to the prepared head), `disposition` (`resumable`,
+  its bound inputs are still current: the recorded `HEAD`, packet, delta,
+  and captured contents/index identities of already-bound paths must match.
+  This field is not a HEAD-only comparison. Producer-owned temporary workflow
+  backups are excluded only when their exact paths and identities match the
+  current producer transaction; another attempt's manifest remains bound.
+  `null` means currentness cannot be established, including legacy path-only
+  deltas that lack path identities. Those legacy attempts remain readable as
+  unknown currentness in status, but receipt reissue refuses them; a fresh
+  before phase is required. `null` also applies when `HEAD` cannot be read or
+  related to the prepared head), `disposition` (`resumable`,
   `prepared_at_other_head`, `retry_budget_spent`, `head_unknown`,
   `not_published`, `finished`, `gap_open`, `unconfirmed`, or `ended`), `manifest`, `command` (the command
   that would move this attempt or its seam forward, or `null`),
@@ -18938,7 +18963,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.122",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.123",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -19723,7 +19748,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.122",
+      "schema_version": "1.123",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

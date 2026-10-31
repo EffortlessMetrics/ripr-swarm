@@ -320,6 +320,90 @@ fn gate_acknowledgeable_keeps_waived_candidate_visible() -> Result<(), String> {
     Ok(())
 }
 
+/// #11206: a baseline-check run with no baseline is the first-time-team
+/// misconfiguration; the config error must say how to proceed.
+#[test]
+fn gate_baseline_mode_without_baseline_names_the_way_forward() -> Result<(), String> {
+    let (_fixture_input, input) = fixture_input(GateMode::BaselineCheck)?;
+    let report = build_gate_decision_report(&input)?;
+    assert_eq!(report.status, "config_error");
+    let error = report
+        .config_errors
+        .iter()
+        .find(|error| error.contains("requires an explicit --baseline"))
+        .ok_or("missing baseline config error")?;
+    assert!(error.contains("ripr baseline create --from"), "{error}");
+    assert!(error.contains("--mode visible-only"), "{error}");
+    assert!(error.contains("BASELINE_LEDGER_WORKFLOW.md"), "{error}");
+    Ok(())
+}
+
+/// Discriminating negative: a required baseline that is named but missing
+/// gets the same pointer, while an unrelated config error (a gap ledger that
+/// cannot be read) does not borrow the baseline advice.
+#[test]
+fn gate_baseline_hint_is_only_on_baseline_errors() -> Result<(), String> {
+    let (_fixture_input, mut input) = fixture_input(GateMode::BaselineCheck)?;
+    input.baseline = Some(PathBuf::from("no-such-baseline.json"));
+    input.gap_ledger = Some(PathBuf::from("no-such-ledger.json"));
+    let report = build_gate_decision_report(&input)?;
+    let baseline_error = report
+        .config_errors
+        .iter()
+        .find(|error| error.contains("required baseline"))
+        .ok_or("missing required-baseline config error")?;
+    assert!(
+        baseline_error.contains("ripr baseline create --from"),
+        "{baseline_error}"
+    );
+    let ledger_error = report
+        .config_errors
+        .iter()
+        .find(|error| error.contains("gap decision ledger input"))
+        .ok_or("missing ledger config error")?;
+    assert!(
+        !ledger_error.contains("ripr baseline create"),
+        "{ledger_error}"
+    );
+    Ok(())
+}
+
+/// #11206: a repo-exposure report passed as `--gap-ledger` names the inputs
+/// the gate accepts; a document that is not a repo-exposure report does not
+/// claim to be one.
+#[test]
+fn gate_gap_ledger_that_is_not_a_ledger_names_accepted_sources() -> Result<(), String> {
+    let dir = temp_dir("gate-gap-ledger-hint")?;
+    let exposure = write_temp_json(&dir, "repo-exposure.json", r#"{"seams": []}"#)?;
+    let other = write_temp_json(&dir, "other.json", r#"{"unknown_key": []}"#)?;
+    let (_fixture_input, mut input) = fixture_input(GateMode::VisibleOnly)?;
+    input.pr_guidance = None;
+
+    input.gap_ledger = Some(exposure);
+    let report = build_gate_decision_report(&input)?;
+    let error = report
+        .config_errors
+        .first()
+        .ok_or("repo-exposure ledger must be a config error")?;
+    assert!(error.contains("repo-exposure report"), "{error}");
+    assert!(error.contains("--pr-guidance"), "{error}");
+    assert!(
+        error.contains("ripr reports gap-ledger --check-output"),
+        "{error}"
+    );
+
+    input.gap_ledger = Some(other);
+    let report = build_gate_decision_report(&input)?;
+    let error = report
+        .config_errors
+        .first()
+        .ok_or("unknown ledger must be a config error")?;
+    assert!(error.contains("not a gap decision ledger"), "{error}");
+    assert!(!error.contains("repo-exposure report"), "{error}");
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
 #[test]
 fn gate_calibrated_mode_requires_explicit_baseline() -> Result<(), String> {
     let (_fixture_input, input) = fixture_input(GateMode::CalibratedGate)?;
@@ -6553,6 +6637,135 @@ fn e2e_real_ledger_symlink_keeps_baseline_debt(parent: bool) -> Result<(), Strin
             before,
             "an unchanged source reached by a skipped symlink must retain its real baseline debt",
         );
+    }
+    ignore_remove_dir_all(root);
+    Ok(())
+}
+
+/// #11101: the aliased-path refusal must run on every host, including the
+/// Windows evidence lane where the `#[cfg(unix)]` symlink tests cannot. Every
+/// forged spelling below is refused by membership-set equality against the
+/// discovered (component-normalized) membership; this test does not isolate
+/// the path shape owner, which is pinned directly by
+/// `rust_workspace_path_gap_refuses_aliased_spellings` in `corpus.rs`. It
+/// injects aliased spellings into the membership of a real, otherwise-current
+/// coverage ledger instead of creating a link.
+#[test]
+fn e2e_aliased_path_in_forged_membership_keeps_baseline_debt() -> Result<(), String> {
+    let shallow = "pub fn early(n: i32) -> bool { n >= 10 }\n";
+    let fixed = "pub fn unrelated() {}\n";
+    let original_gate = e2e_gate_json(Some(&e2e_real_review_doc(shallow)?), None)?;
+    let captured = crate::output::baseline::baseline_create_report_from_gate_decision_json(
+        "gate.json",
+        "unix_ms:1",
+        &original_gate,
+    )?;
+    let before = crate::output::baseline::baseline_entry_count(&captured);
+    assert!(
+        before > 0,
+        "real production pipeline must produce baseline debt"
+    );
+    let baseline = crate::output::baseline::render_baseline_create_json(&captured)?;
+
+    let root = temp_dir("gate-e2e-ledger-forged-alias-11101")?;
+    e2e_write_project(&root, fixed)?;
+    let ledger = e2e_real_ledger_at(&root, &crate::config::RiprConfig::default())?;
+    let genuine: Value = serde_json::from_str(&ledger).map_err(|err| err.to_string())?;
+    // Fixture construction: a genuine membership names exactly the real file,
+    // so none of the aliased spellings below is already in it.
+    let members = genuine["analysis_coverage"]["corpus"]["analyzed_production_files"]
+        .as_array()
+        .cloned()
+        .ok_or_else(|| format!("no disclosed membership: {genuine}"))?;
+    assert_eq!(members, vec![json!("src/lib.rs")], "{genuine}");
+
+    let evaluate = |ledger: &str| -> Result<(Value, Value, usize), String> {
+        let gate = e2e_real_gate_from_ledger_at(&root, ledger)?;
+        let gate_value: Value = serde_json::from_str(&gate).map_err(|err| err.to_string())?;
+        let delta = crate::output::baseline_delta::build_baseline_delta_report(
+            crate::output::baseline_delta::BaselineDeltaInput {
+                root: root.to_string_lossy().to_string(),
+                baseline_path: "baseline.json".to_string(),
+                current_gate_decision_path: "gate.json".to_string(),
+                baseline_json: Ok(baseline.clone()),
+                current_gate_decision_json: Ok(gate.clone()),
+            },
+        );
+        let delta: Value = serde_json::from_str(
+            &crate::output::baseline_delta::render_baseline_delta_json(&delta)?,
+        )
+        .map_err(|err| err.to_string())?;
+        let update = crate::output::baseline_update::build_baseline_update_remove_resolved(
+            crate::output::baseline_update::BaselineUpdateInput {
+                baseline_path: "baseline.json".to_string(),
+                current_gate_decision_path: "gate.json".to_string(),
+                baseline_json: baseline.clone(),
+                current_gate_decision_json: gate,
+                remove_resolved: true,
+                migrate_legacy_identities: false,
+            },
+        )?;
+        Ok((
+            gate_value,
+            delta,
+            crate::output::baseline_update::baseline_update_after_entry_count(&update),
+        ))
+    };
+
+    // Discriminating positive: the unforged ledger earns complete coverage and
+    // resolves the fixed debt, so a retained debt below is attributable to the
+    // injected path and not to a broken fixture.
+    let (gate, delta, after) = evaluate(&ledger)?;
+    assert_eq!(
+        gate["analysis_scope"]["scope"], "rust_workspace_complete",
+        "{gate}"
+    );
+    assert_eq!(delta["delta"]["resolved"], before as u64, "{delta}");
+    assert_eq!(after, 0, "{delta}");
+
+    // Negative: each aliased membership must keep the debt unresolved, whatever
+    // the host's link support. Same bytes at a different path (the parent-alias
+    // shape), an alias beside the real file, non-normalized spellings, and the
+    // real path dropped (an empty membership, not an alias).
+    let aliased: [(&str, Vec<&str>); 6] = [
+        (
+            "parent alias replaces the real path",
+            vec!["real/src/lib.rs"],
+        ),
+        (
+            "alias added beside the real path",
+            vec!["src/lib.rs", "real/src/lib.rs"],
+        ),
+        ("dot-dot spelling", vec!["src/lib.rs", "src/../src/lib.rs"]),
+        ("dot-slash spelling", vec!["./src/lib.rs"]),
+        ("backslash spelling", vec!["src\\lib.rs"]),
+        ("real path dropped", vec![]),
+    ];
+    for (label, files) in aliased {
+        let mut forged = genuine.clone();
+        forged["analysis_coverage"]["corpus"]["analyzed_production_files"] = json!(files);
+        let forged = serde_json::to_string(&forged).map_err(|err| err.to_string())?;
+        let (gate, delta, after) = evaluate(&forged)?;
+        assert_ne!(
+            gate["analysis_scope"]["scope"], "rust_workspace_complete",
+            "{label}: {gate}"
+        );
+        assert_eq!(delta["delta"]["resolved"], 0, "{label}: {delta}");
+        assert_eq!(
+            delta["delta"]["stale_baseline_entry"], before as u64,
+            "{label}: {delta}"
+        );
+        assert_eq!(
+            delta["items"].as_array().map(|items| {
+                items
+                    .iter()
+                    .filter(|item| item["evaluation"] == "not_evaluated")
+                    .count()
+            }),
+            Some(before),
+            "{label}: {delta}",
+        );
+        assert_eq!(after, before, "{label}: debt must be retained");
     }
     ignore_remove_dir_all(root);
     Ok(())

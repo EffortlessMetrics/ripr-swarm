@@ -92,7 +92,9 @@ Environment variables:
                                  When the budget is applied, both artifacts include a
                                  limitations[] disclosure naming the env var and a repair route.
   RIPR_REPO_EXPOSURE_SEAM_LIMIT Maximum gaps analyzed and ranked in one pilot run.
-                                 Default: 10000. Set to 0 to analyze every seam. When the
+                                 Default: the pilot seam budget (2000), so pilot does not
+                                 classify seams it would not rank; `ripr check` keeps 10000.
+                                 Set to 0 to analyze every seam. When the
                                  limit cuts the ranking, the terminal and summary state
                                  "ranked N of M seams" and actionable seam totals become
                                  lower bounds until you raise or remove the limit.
@@ -251,6 +253,11 @@ Options:
                            output then notes that those edits were not
                            analyzed. Cannot be combined with --worktree,
                            --diff, --candidate-tree, or repo-scope formats.
+  --legend                 Print the Evidence stage and summary definitions in
+                           the human output (a lookup: it does not record the
+                           first run). They are shown on the first run in a
+                           build tree; later runs keep one pointer line. No
+                           effect on other formats.
   --mode MODE              How much of the workspace is indexed: instant
                            (changed files only, cheapest), draft (packages the
                            diff touches; the default), fast (same as draft for
@@ -756,6 +763,8 @@ Server-executed commands (workspace/executeCommand), with their arguments:
   ripr.collectWorkspaceStatus   no arguments
   ripr.collectTopLimitation     no arguments
   ripr.collectReceiptStatus     no arguments
+  ripr.showRelatedTest          one object: {"uri": "file:///...", "line": N, "input_identity": "..."};
+                                asks the client to open the related test via window/showDocument
 
   Copy ids and evidence_identity from a ripr diagnostic's data. A shape the
   server cannot read, or an id missing from the current snapshot, is a
