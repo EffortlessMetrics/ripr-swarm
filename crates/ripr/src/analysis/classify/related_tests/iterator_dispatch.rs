@@ -317,4 +317,57 @@ mod tests {
             assert!(adaptors(body).is_empty(), "{body}");
         }
     }
+
+    use crate::analysis::rust_index::summarize_file;
+    use std::path::PathBuf;
+
+    /// Whether the one test of `source` drives a `Countdown`, read through the
+    /// real index and the production entry point.
+    fn relates(source: &str) -> bool {
+        let path = PathBuf::from("src/lib.rs");
+        let facts = summarize_file(path.clone(), source.to_string());
+        let mut index = RustIndex::default();
+        index.extend_functions(facts.functions.iter().cloned());
+        index.extend_tests(facts.tests.iter().cloned());
+        index.insert_file_only(path, facts);
+        assert_eq!(index.tests().len(), 1, "fixture must hold one test");
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "next");
+        assert!(owner.is_some(), "the Iterator impl must be indexed");
+        let Some(owner) = owner else { return false };
+        let Some(iterator) = iterator_owner(owner, &index) else {
+            panic!("the fixture owner must read as a standard Iterator impl");
+        };
+        test_drives_owner(index.tests().at(0), owner, &iterator, Some(source), &index)
+    }
+
+    fn fixture(prelude: &str) -> String {
+        format!(
+            "pub struct Countdown(pub u32);\n\
+             impl Iterator for Countdown {{\n    type Item = u32;\n    \
+             fn next(&mut self) -> Option<u32> {{\n        \
+             if self.0 == 0 {{ None }} else {{ self.0 -= 1; Some(self.0) }}\n    }}\n}}\n\
+             #[test]\n\
+             fn t() {{\n    let c = Countdown(3);\n    {prelude}\n    \
+             let mut n = 0;\n    for x in c {{ n += x; }}\n    assert_eq!(n, 3);\n}}\n"
+        )
+    }
+
+    #[test]
+    fn an_early_return_before_the_loop_yields_no_relation() {
+        // Positive control: the same test without the exit is related.
+        assert!(relates(&fixture("")));
+        // #10805: the loop may never run when the test returns first.
+        assert!(!relates(&fixture("if true { return; }")));
+        assert!(!relates(&fixture("let v = Some(1).ok_or(())?;")));
+    }
+
+    #[test]
+    fn exit_words_in_strings_and_comments_do_not_refuse() {
+        assert!(relates(&fixture(
+            "let s = \"return? panic!()\"; // return ?"
+        )));
+    }
 }
