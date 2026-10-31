@@ -697,7 +697,7 @@ fn committed_refresh_over_unrelated_dirty_files_keeps_the_card() -> Result<(), S
 
 /// An untracked routed Rust file has no committed content, so the findings
 /// producer cannot capture it and the owner withholds. The cause names the
-/// path and the remedy is to stage it, not to commit or stash an edit.
+/// path and the remedy is to commit the uncommitted Rust file.
 #[test]
 fn committed_refresh_over_untracked_rust_file_withholds_with_a_commit_remedy() -> Result<(), String>
 {
@@ -842,4 +842,32 @@ fn committed_refresh_with_no_findings_over_dirty_tree_makes_no_custody_claim() -
         ));
     }
     Ok(())
+}
+
+/// Workspace discovery does not apply `.gitignore`, so a gitignored Rust file
+/// can be read by the inventory without being analyzed by the committed
+/// findings; the dirty-Rust rule covers it and names the path.
+#[test]
+fn committed_refresh_over_gitignored_rust_file_withholds() -> Result<(), String> {
+    let fixture = install_fixture("ignored-rust")?;
+    write(
+        &fixture.root,
+        ".gitignore",
+        "/target/\n/.ripr/\n/ignored/\n",
+    )?;
+    commit(&fixture.root, "ignore a directory")?;
+    assert_serves_card(committed_refresh(&fixture.root)?, &fixture.root)
+        .map_err(|error| format!("clean control: {error}"))?;
+    write(
+        &fixture.root,
+        "ignored/gen.rs",
+        "pub fn generated() -> i32 {\n    1\n}\n",
+    )?;
+    let snapshot = committed_refresh(&fixture.root)?;
+    match &snapshot.custody {
+        SourceCustody::CommittedOverUncommitted { reason } if reason.contains("ignored/gen.rs") => {
+            Ok(())
+        }
+        other => Err(format!("a gitignored Rust file must withhold: {other:?}")),
+    }
 }

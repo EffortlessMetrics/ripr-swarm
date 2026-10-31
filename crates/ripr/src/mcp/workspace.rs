@@ -1622,7 +1622,8 @@ fn tracked_scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
         .trim_end_matches('.')
         .to_string();
     let withheld = format!(
-        "Repair cards and repair readiness are withheld for this snapshot because the findings read committed content while the seam inventory reads the checkout's current Rust files ({reason}); commit the uncommitted Rust source or test files (untracked ones included) and run ripr_refresh again, or run ripr_refresh with source `worktree` to analyze saved edits"
+        "Repair cards and repair readiness are withheld for this snapshot because the findings read committed content while the seam inventory reads the checkout's current Rust files ({reason}). {}",
+        committed_withheld_remedy(reason)
     );
     let withheld_note = json!(if note.is_empty() {
         withheld
@@ -2173,10 +2174,7 @@ fn committed_over_uncommitted_refusal(
         .as_ref()
         .and_then(|revisions| revisions.head_commit.as_deref());
     if producer_head.is_some_and(|head| head != inventory.repository_head) {
-        return Some(
-            "the repository head the findings producer observed does not match the head the seam inventory bound"
-                .to_string(),
-        );
+        return Some(COMMITTED_HEAD_MOVED_REASON.to_string());
     }
     match ConsumedRustSources::establish_agreement(findings_sources, &inventory.consumed_sources) {
         Ok(_) | Err(CustodyRefusal::FindingsObservedNothing) => {}
@@ -2220,6 +2218,9 @@ fn dirty_rust_routed_paths(root: &Path) -> Result<Vec<String>, String> {
     };
     let mut paths = overlay.dirty_source_paths();
     paths.extend(overlay.untracked_source_paths());
+    // Workspace discovery does not apply `.gitignore`, so the inventory can
+    // read a gitignored Rust file the committed findings never analyzed.
+    paths.extend(overlay.ignored_source_paths());
     paths.retain(|path| {
         crate::analysis::language::route(Path::new(path)) == Some(crate::domain::LanguageId::Rust)
     });
@@ -2228,11 +2229,26 @@ fn dirty_rust_routed_paths(root: &Path) -> Result<Vec<String>, String> {
     Ok(paths)
 }
 
+/// The reason a committed refresh withholds when the head moved between the
+/// findings and the inventory.
+const COMMITTED_HEAD_MOVED_REASON: &str = "the repository head the findings producer observed does not match the head the seam inventory bound";
+
+/// The recovery that matches a committed withheld reason: a moved head needs
+/// only another refresh, uncommitted Rust files need committing first.
+fn committed_withheld_remedy(reason: &str) -> &'static str {
+    if reason == COMMITTED_HEAD_MOVED_REASON {
+        "Run ripr_refresh again once the repository head settles"
+    } else {
+        "Commit the uncommitted Rust source or test files (untracked and gitignored ones included) and run ripr_refresh again, or run ripr_refresh with source `worktree` to analyze saved edits"
+    }
+}
+
 /// Why a committed snapshot whose findings and checkout were not shown to
 /// agree carries no repair readiness or repair card (#7357).
 pub(crate) fn committed_card_withheld_detail(reason: &str) -> String {
     format!(
-        "this snapshot analyzed committed content, but its findings and the live seam inventory were not shown to have consumed the same Rust source bytes ({reason}), so repair readiness and cards are withheld rather than claimed current. Commit the uncommitted Rust source or test files (untracked ones included) and run ripr_refresh again, or run ripr_refresh with source `worktree` to analyze saved edits"
+        "this snapshot analyzed committed content, but its findings and the live seam inventory were not shown to have consumed the same Rust source bytes ({reason}), so repair readiness and cards are withheld rather than claimed current. {}",
+        committed_withheld_remedy(reason)
     )
 }
 
@@ -4787,6 +4803,115 @@ mod tests {
             "no worktree item is repair ready"
         );
         assert!(worktree.card_producers.is_none());
+        Ok(())
+    }
+
+    fn refusal_inputs(
+        language: crate::domain::LanguageId,
+        producer_head: Option<&str>,
+        findings_digest: &[u8],
+        inventory_digest: &[u8],
+    ) -> Result<
+        (
+            crate::app::CheckOutput,
+            crate::analysis::consumed_source::ConsumedRustSources,
+            super::super::repair_card::SeamInventory,
+        ),
+        String,
+    > {
+        let mut out = output(AnalysisOutcomeKind::CompleteWithFindings, 1, Vec::new())?;
+        let mut finding = crate::mcp::gaps::test_finding()?;
+        finding.language = Some(language);
+        out.findings = vec![finding];
+        out.analyzed_revisions = producer_head.map(|head| crate::analysis::AnalyzedRevisions {
+            head_commit: Some(head.to_string()),
+            ..Default::default()
+        });
+        let mut findings = crate::analysis::consumed_source::ConsumedRustSources::default();
+        findings.record(Path::new("src/lib.rs"), Some(findings_digest));
+        let mut inventory_sources =
+            crate::analysis::consumed_source::ConsumedRustSources::default();
+        inventory_sources.record(Path::new("src/lib.rs"), Some(inventory_digest));
+        let inventory = super::super::repair_card::SeamInventory {
+            repository_head: "head-a".to_string(),
+            candidate_seams: Vec::new(),
+            completeness: Default::default(),
+            config: crate::config::RiprConfig::default(),
+            consumed_sources: inventory_sources,
+        };
+        Ok((out, findings, inventory))
+    }
+
+    /// #7357: the committed custody decision itself, with the agreement Ok so
+    /// the dirty-Rust rule is the only thing that can withhold.
+    #[test]
+    fn committed_refusal_dirty_rust_rule_is_isolated_from_the_agreement() -> Result<(), String> {
+        use crate::domain::LanguageId::{Python, Rust};
+        let reason = |language, head, dirty: Result<Vec<String>, String>| {
+            let (out, findings, inventory) = refusal_inputs(language, head, b"a", b"a")?;
+            Ok::<_, String>(committed_over_uncommitted_refusal(
+                &out,
+                &findings,
+                &inventory,
+                || dirty,
+            ))
+        };
+        // Agreement Ok, a dirty Rust path: withheld by the dirty rule's own text.
+        let dirty = reason(Rust, Some("head-a"), Ok(vec!["src/h.rs".to_string()]))?
+            .ok_or("a dirty Rust path must withhold")?;
+        if !dirty.contains("uncommitted Rust source or test files") || !dirty.contains("src/h.rs") {
+            return Err(format!("unexpected dirty reason: {dirty}"));
+        }
+        // An unestablishable list fails closed.
+        let failed = reason(Rust, Some("head-a"), Err("git failed".to_string()))?
+            .ok_or("an unestablishable dirty list must withhold")?;
+        if !failed.contains("could not be established") {
+            return Err(format!("unexpected probe-failure reason: {failed}"));
+        }
+        // Rust findings and no dirty path: no withholding.
+        if reason(Rust, Some("head-a"), Ok(Vec::new()))?.is_some() {
+            return Err("a clean Rust checkout must not withhold".to_string());
+        }
+        // An unobserved producer head is not compared.
+        if reason(Rust, None, Ok(Vec::new()))?.is_some() {
+            return Err("an unobserved head is not a mismatch".to_string());
+        }
+        // A producer head that differs from the inventory's withholds.
+        let moved =
+            reason(Rust, Some("head-b"), Ok(Vec::new()))?.ok_or("a moved head must withhold")?;
+        if moved != COMMITTED_HEAD_MOVED_REASON
+            || committed_withheld_remedy(&moved).contains("Commit the uncommitted")
+        {
+            return Err(format!("the head remedy must be a plain refresh: {moved}"));
+        }
+        // Non-Rust findings never consult the dirty list.
+        let (out, findings, inventory) = refusal_inputs(Python, Some("head-a"), b"a", b"a")?;
+        let consulted = std::cell::Cell::new(false);
+        let python = committed_over_uncommitted_refusal(&out, &findings, &inventory, || {
+            consulted.set(true);
+            Ok(vec!["src/h.rs".to_string()])
+        });
+        if python.is_some() || consulted.get() {
+            return Err("non-Rust findings must not consult the dirty-Rust list".to_string());
+        }
+        // No findings never consult it either.
+        let (mut out, findings, inventory) = refusal_inputs(Rust, Some("head-a"), b"a", b"a")?;
+        out.findings.clear();
+        let none = committed_over_uncommitted_refusal(&out, &findings, &inventory, || {
+            consulted.set(true);
+            Ok(vec!["src/h.rs".to_string()])
+        });
+        if none.is_some() || consulted.get() {
+            return Err("no findings must not consult the dirty-Rust list".to_string());
+        }
+        // The agreement still names a moved consumed path first.
+        let (out, findings, inventory) = refusal_inputs(Rust, Some("head-a"), b"a", b"b")?;
+        let moved_path =
+            committed_over_uncommitted_refusal(&out, &findings, &inventory, || Ok(Vec::new()))
+                .ok_or("a moved consumed path must withhold")?;
+        if !moved_path.contains("src/lib.rs") || !moved_path.contains("changed between") {
+            return Err(format!("the owner must name the moved path: {moved_path}"));
+        }
         Ok(())
     }
 

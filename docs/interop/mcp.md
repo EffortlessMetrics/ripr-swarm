@@ -239,12 +239,12 @@ edits outside MCP, or inside MCP with the opt-in `source: "worktree"`
 established producer-custody agreement, withheld with the cause
 otherwise). A committed refresh whose findings and checkout Rust files were not
 shown to agree (a consumed file edited, staged, deleted or changed during the
-refresh, or any uncommitted or untracked Rust source or test file, including
+refresh, or any uncommitted, untracked or gitignored Rust source or test file, including
 one outside the diff) likewise withholds repair cards (`incomplete_inventory`)
 and turns repair-ready items not ready (`worktree_source_not_committed`; an
 item already not ready keeps its own reason) and says why, because its
 findings read committed content while the cards would read the checkout;
-commit the uncommitted Rust source or test files (untracked ones included) and
+commit the uncommitted Rust source or test files (untracked and gitignored ones included) and
 refresh again. A dirty non-Rust file does not withhold. The
 existing response `scope` note discloses detected excluded edits. The call blocks until the attempt reaches a terminal state and reports it: `completed` with the new
 snapshot identity (a `snapshot:sha256:` digest over the typed outcome, the

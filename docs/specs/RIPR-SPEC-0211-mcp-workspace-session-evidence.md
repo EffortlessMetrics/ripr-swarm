@@ -296,7 +296,7 @@ official SDK transport:
     inventory's also withholds (an unobserved head is not compared on the
     committed path, an existing residual). Because the agreement only covers
     paths the findings consumed while the inventory reads the whole
-    analyzable Rust corpus, any dirty or untracked Rust-routed path (a
+    analyzable Rust corpus, any dirty, untracked or gitignored Rust-routed path (a
     `.rs` file, including a helper or test outside the findings scope) also
     withholds when there are Rust findings; if that list cannot be
     established the refresh withholds. A dirty non-Rust file (README, `.py`)
@@ -312,7 +312,7 @@ official SDK transport:
     untracked Rust file the committed findings could not capture) and
     otherwise says an uncommitted Rust source or test file is read by the
     inventory. Findings, list and gap evidence are still served; the remedy is
-    to commit the uncommitted Rust source or test files (untracked ones
+    to commit the uncommitted Rust source or test files (untracked and gitignored ones
     included) and refresh again, or refresh with source `worktree`. No
     commitment is bound into a committed identity.
   - Residuals under #7357 / #1765 / #1602, worktree mode only: a Rust file
