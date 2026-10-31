@@ -1,0 +1,16 @@
+[[extend]]
+id = "RIPR-SPEC-0263"
+tests = [
+  "crates/ripr/tests/guarded_error_return_unentered.rs::an_exact_variant_assertion_on_another_branch_does_not_read_exposed",
+  "crates/ripr/tests/guarded_error_return_unentered.rs::the_repair_is_an_input_that_enters_the_guard_never_an_assertion",
+  "crates/ripr/tests/guarded_error_return_unentered.rs::a_call_that_enters_the_guard_keeps_the_exposed_reading",
+  "crates/ripr/tests/guarded_error_return_unentered.rs::a_changed_error_return_in_a_guard_the_tests_enter_names_nothing",
+  "crates/ripr/tests/guarded_error_return_unentered.rs::shared_refusals_keep_the_exposed_reading_for_error_returns",
+  "crates/ripr/tests/guarded_error_return_unentered.rs::a_predicate_in_an_unentered_guard_with_a_later_err_names_no_guard",
+]
+code = [
+  "crates/ripr/src/analysis/classify/activation.rs",
+  "crates/ripr/src/analysis/classifier/finding.rs",
+  "crates/ripr/src/domain/probe.rs",
+  "crates/ripr/src/output/human/explain.rs",
+]
