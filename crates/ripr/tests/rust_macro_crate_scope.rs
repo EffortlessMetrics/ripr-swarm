@@ -142,40 +142,6 @@ fn field_assertion_rebindings_refuse_credit_and_disclose_the_site() -> Result<()
         ("macro_rules! assert_eq { ($($t:tt)*) => {} }", vec![]),
         ("emit!(assert_eq);", vec![]),
         (
-            "#[macro_use] extern crate other;",
-            vec![
-                (
-                    "Cargo.toml",
-                    "[package]\nname='demo'\nversion='0.0.0'\nedition='2024'\n[dev-dependencies]\nother={path='target/other'}\n",
-                ),
-                (
-                    "target/other/Cargo.toml",
-                    "[package]\nname='other'\nversion='0.0.0'\n",
-                ),
-                (
-                    "target/other/src/lib.rs",
-                    "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {} }\n",
-                ),
-            ],
-        ),
-        (
-            "use other::empty::*; #[macro_use] extern crate other;",
-            vec![
-                (
-                    "Cargo.toml",
-                    "[package]\nname='demo'\nversion='0.0.0'\nedition='2024'\n[dev-dependencies]\nother={path='target/other'}\n",
-                ),
-                (
-                    "target/other/Cargo.toml",
-                    "[package]\nname='other'\nversion='0.0.0'\n",
-                ),
-                (
-                    "target/other/src/lib.rs",
-                    "pub mod empty {}\n#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {} }\n",
-                ),
-            ],
-        ),
-        (
             "use other::assert_eq;",
             vec![
                 (

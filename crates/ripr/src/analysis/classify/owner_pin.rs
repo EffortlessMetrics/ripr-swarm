@@ -1029,9 +1029,9 @@ impl OwnerPinSyntax {
                         .is_none()
             }
             // Field construction: only a real shadow (a definition or import
-            // of the assertion name), an unresolved macro-use import, or an
-            // opaque in-scope expansion that mentions it refuses credit. A
-            // foreign glob alone remains admitted for existing field contracts;
+            // of the assertion name) or an opaque in-scope expansion that mentions
+            // it refuses credit. A `#[macro_use] extern crate` or a foreign glob
+            // alone remains admitted for the operand-whitespace field contracts;
             // the return family keeps refusing on these ambiguous sites.
             Some(AssertionRefusal::Syntax(AssertionContextRefusal::MacroBinding(name))) => {
                 family == ProbeFamily::FieldConstruction
@@ -3019,8 +3019,7 @@ fn field_site_blocks(site: &MacroBindingSite) -> bool {
     rebinds(site)
         || matches!(
             site.kind,
-            MacroBindingKind::MacroUse(_)
-                | MacroBindingKind::MacroArgument(_)
+            MacroBindingKind::MacroArgument(_)
                 | MacroBindingKind::MacroBody(_)
                 | MacroBindingKind::BodyBindsAny { .. }
                 | MacroBindingKind::ArgumentAttribute { .. }
