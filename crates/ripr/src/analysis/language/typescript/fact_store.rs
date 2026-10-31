@@ -540,11 +540,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         assert!(
             matches!(stale_load, CacheLoad::Miss),
-            "a stale-schema envelope must read as a miss, got {stale_load:?}"
+            "a stale-schema envelope must read as a miss"
         );
         assert!(
             matches!(current_load, CacheLoad::Hit(_)),
-            "a current-schema envelope at the same path must be a hit, got {current_load:?}"
+            "a current-schema envelope at the same path must be a hit"
         );
         Ok(())
     }
