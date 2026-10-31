@@ -95,6 +95,7 @@ pub fn ripr::cli::run_with_interrupt_handling
 pub use ripr::cli::extract_global_verbose
 pub fn ripr::domain::language_availability::resolve_language_availability
 pub fn ripr::domain::language_availability::resolve_language_availability_all
+pub fn ripr::domain::language_availability::unavailable_recovery
 pub fn ripr::lsp::diagnostic_budget::build_budget_items_from_diagnostics
 pub fn ripr::lsp::diagnostic_budget::evaluate_diagnostic_budget
 pub fn ripr::lsp::serve
