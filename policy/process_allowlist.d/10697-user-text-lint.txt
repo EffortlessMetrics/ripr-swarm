@@ -1,0 +1,2 @@
+xtask/src/policy/user_text.rs|Command::new|3|user-text-lint|#10697: check-user-text builds the ripr binary with one `cargo build`, creates a throwaway scratch Git repository with `git`, and runs the built `ripr` binary to capture its real default human output. Each call is a direct argv spawn with no shell, waits for exit through `.output()`/`.status()`, and runs in a scratch directory outside the checkout.
+xtask/src/policy/user_text.rs|use std::process::Command|1|user-text-lint|#10697: import for the three bounded spawns above.
