@@ -298,11 +298,13 @@ pub(crate) fn parse_baseline(text: &str) -> Result<Baseline, String> {
 fn render_baseline(baseline: &Baseline) -> String {
     let mut out = String::from(
         "# Ceilings for banned plain-language terms in default human output (#10697).\n\
-         # Each number is the count of output lines containing the term on `main`.\n\
+         # Each number is a ceiling on output lines containing the term; `main` may sit\n\
+         # above it after parallel merges, which is reported as a warning.\n\
          # Golden rows (`golden-human`) gate each PR on its own delta against the\n\
          # merge-base, so a PR never edits this file to pass; a golden count above\n\
-         # its ceiling is only a warning. Live-surface rows fail above their ceiling,\n\
-         # as do golden rows when the merge-base is unreadable (shallow clone).\n\
+         # its ceiling is only a warning. Live-surface rows fail above their ceiling\n\
+         # (raising one needs an explicit reviewed reason), as do golden rows when\n\
+         # the merge-base is unreadable (shallow clone).\n\
          # Lower ceilings with `cargo xtask check-user-text --ratchet` (lowering only);\n\
          # never raise one. A term with no row has a ceiling of 0.\n\
          # See docs/USER_TEXT_GLOSSARY.md.\n\
@@ -324,14 +326,18 @@ pub(crate) struct Evaluation {
     pub warnings: Vec<String>,
 }
 
-/// Compare against counts at the merge-base instead of absolute ceilings for
-/// the golden surface (#11374). `base` holds the merge-base golden counts.
-/// Golden rows fail only on a net increase; over-ceiling goldens are warnings.
-/// Every other surface keeps its absolute ceiling.
+/// Compare golden counts against the merge-base per `(path, term)` instead of
+/// absolute ceilings (#11374). `head_paths` and `base_paths` are keyed by golden
+/// path and term, so a removal in one file never offsets a rise in another, and
+/// a path absent at the merge-base counts every banned line as an increase (a
+/// rename that keeps old jargon is a deliberate false red, the safe direction).
+/// Over-ceiling golden totals are warnings; every other surface keeps its
+/// absolute ceiling.
 pub(crate) fn evaluate_delta(
     counts: &Counts,
     baseline: &Baseline,
-    base: &BTreeMap<(String, String), usize>,
+    head_paths: &Counts,
+    base_paths: &BTreeMap<(String, String), usize>,
 ) -> Evaluation {
     let absolute = evaluate(counts, baseline);
     let golden_prefix = format!("in {GOLDEN_SURFACE}:");
@@ -340,17 +346,19 @@ pub(crate) fn evaluate_delta(
         lowerable: absolute.lowerable,
         warnings: Vec::new(),
     };
-    for ((surface, term), found) in counts {
-        if surface != GOLDEN_SURFACE {
-            continue;
-        }
-        let before = base
-            .get(&(surface.clone(), term.clone()))
+    for ((path, term), found) in head_paths {
+        let before = base_paths
+            .get(&(path.clone(), term.clone()))
             .copied()
             .unwrap_or(0);
         if found.lines > before {
+            let origin = if base_paths.keys().any(|(base_path, _)| base_path == path) {
+                format!("{before} at the merge-base")
+            } else {
+                "new path, 0 at the merge-base".to_string()
+            };
             evaluation.violations.push(format!(
-                "`{term}` in {surface}: {} line(s), {before} at the merge-base (+{}). First hits: {}",
+                "`{term}` in {GOLDEN_SURFACE} {path}: {} line(s), {origin} (+{}). First hits: {}",
                 found.lines,
                 found.lines - before,
                 found.examples.join(" | ")
@@ -423,12 +431,36 @@ pub(crate) fn ratchet_outcome(counts: &Counts, baseline: &Baseline) -> Option<Ba
 
 // ------------------------------------------------------- merge-base goldens
 
-fn git_text(root: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
+/// The one `git` spawn for this check: runs `args` in `root`, optionally feeding
+/// `stdin`, and returns stdout. Direct argv, no shell, waits for exit.
+fn git_run(root: &Path, args: &[&str], stdin: Option<Vec<u8>>) -> Result<Vec<u8>, String> {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = Command::new("git")
         .current_dir(root)
         .args(args)
-        .output()
+        .stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|err| format!("git {}: {err}", args.join(" ")))?;
+    let writer = match (stdin, child.stdin.take()) {
+        (Some(input), Some(mut pipe)) => Some(std::thread::spawn(move || pipe.write_all(&input))),
+        _ => None,
+    };
+    let output = child
+        .wait_with_output()
+        .map_err(|err| format!("git {}: {err}", args.join(" ")))?;
+    if let Some(writer) = writer {
+        writer
+            .join()
+            .map_err(|_| "git stdin writer panicked".to_string())?
+            .map_err(|err| format!("git {} stdin: {err}", args.join(" ")))?;
+    }
     if !output.status.success() {
         return Err(format!(
             "git {} failed: {}",
@@ -436,72 +468,36 @@ fn git_text(root: &Path, args: &[&str]) -> Result<String, String> {
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    String::from_utf8(output.stdout).map_err(|err| format!("git output is not UTF-8: {err}"))
+    Ok(output.stdout)
+}
+
+fn git_text(root: &Path, args: &[&str]) -> Result<String, String> {
+    String::from_utf8(git_run(root, args, None)?)
+        .map_err(|err| format!("git output is not UTF-8: {err}"))
 }
 
 pub(crate) fn is_golden_human_path(path: &str) -> bool {
     path.starts_with("fixtures/") && path.ends_with("/expected/human.txt")
 }
 
-/// Banned-term counts of the default `human.txt` goldens at the merge-base with
-/// `origin/main`, read through Git objects without building or checking out the
-/// base. Errors (no `origin/main`, shallow history) mean the caller must fall
-/// back to absolute ceilings; this never returns an empty guess.
-fn merge_base_golden_counts(root: &Path) -> Result<(String, Counts), String> {
-    let base = git_text(root, &["merge-base", "origin/main", "HEAD"])?
-        .trim()
-        .to_string();
-    if base.is_empty() {
-        return Err("git merge-base returned nothing".to_string());
-    }
-    let listing = git_text(
-        root,
-        &["ls-tree", "-r", "--name-only", &base, "--", "fixtures"],
-    )?;
-    let paths: Vec<&str> = listing
-        .lines()
+/// Paths from `git ls-tree -r -z --name-only` output (NUL-separated, so quoted
+/// or non-ASCII names are neither escaped nor dropped), kept to default goldens.
+pub(crate) fn golden_paths_from_ls_tree_z(listing: &str) -> Vec<&str> {
+    listing
+        .split('\0')
         .filter(|path| is_golden_human_path(path))
-        .collect();
-    if paths.is_empty() {
-        return Err(format!("no default human.txt goldens found at {base}"));
-    }
-    let mut child = Command::new("git")
-        .current_dir(root)
-        .args(["cat-file", "--batch"])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|err| format!("git cat-file: {err}"))?;
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| "git cat-file: no stdin".to_string())?;
-    let request: String = paths
-        .iter()
-        .map(|path| format!("{base}:{path}\n"))
-        .collect();
-    let writer = std::thread::spawn(move || {
-        use std::io::Write;
-        stdin.write_all(request.as_bytes())
-    });
-    let output = child
-        .wait_with_output()
-        .map_err(|err| format!("git cat-file: {err}"))?;
-    writer
-        .join()
-        .map_err(|_| "git cat-file writer panicked".to_string())?
-        .map_err(|err| format!("git cat-file write: {err}"))?;
-    if !output.status.success() {
-        return Err("git cat-file --batch failed".to_string());
-    }
+        .collect()
+}
+
+/// Scan `git cat-file --batch` output for `paths` (in request order) into
+/// counts keyed by `(path, term)`.
+pub(crate) fn scan_cat_file_batch(data: &[u8], paths: &[&str]) -> Result<Counts, String> {
     let mut counts = Counts::new();
-    let data = output.stdout;
     let mut pos = 0usize;
-    for path in &paths {
-        let end = data[pos..]
-            .iter()
-            .position(|byte| *byte == b'\n')
+    for path in paths {
+        let end = data
+            .get(pos..)
+            .and_then(|rest| rest.iter().position(|byte| *byte == b'\n'))
             .map(|offset| pos + offset)
             .ok_or_else(|| format!("git cat-file: truncated header for {path}"))?;
         let header = String::from_utf8_lossy(&data[pos..end]).to_string();
@@ -518,15 +514,180 @@ fn merge_base_golden_counts(root: &Path) -> Result<(String, Counts), String> {
         let body = data
             .get(start..stop)
             .ok_or_else(|| format!("git cat-file: truncated body for {path}"))?;
-        scan_text(
-            GOLDEN_SURFACE,
-            path,
-            &String::from_utf8_lossy(body),
-            &mut counts,
-        );
+        scan_text(path, path, &String::from_utf8_lossy(body), &mut counts);
         pos = stop + 1;
     }
-    Ok((base, counts))
+    Ok(counts)
+}
+
+/// The inputs a delta decision was made from, recorded in the report.
+pub(crate) struct BaseRead {
+    pub upstream: String,
+    pub upstream_sha: String,
+    pub base_sha: String,
+    pub head_sha: String,
+    pub dirty_goldens: bool,
+    pub counts: Counts,
+}
+
+impl BaseRead {
+    pub(crate) fn describe(&self) -> String {
+        let short = |sha: &str| sha[..sha.len().min(12)].to_string();
+        let head_side = if self.dirty_goldens {
+            "head side is the WORKING TREE (uncommitted changes to golden paths)"
+        } else {
+            "head side is the committed tree"
+        };
+        format!(
+            "Gate: golden-human rows compare per file against the merge-base {} ({} is at {}); HEAD {}; {head_side}; live rows use absolute ceilings.",
+            short(&self.base_sha),
+            self.upstream,
+            short(&self.upstream_sha),
+            short(&self.head_sha),
+        )
+    }
+}
+
+fn resolve_sha(root: &Path, args: &[&str]) -> Result<String, String> {
+    let sha = git_text(root, args)?.trim().to_string();
+    if sha.len() < 40 || !sha.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(format!(
+            "git {} did not return a commit sha",
+            args.join(" ")
+        ));
+    }
+    Ok(sha)
+}
+
+/// Banned-term counts per `(golden path, term)` at the merge-base with
+/// `upstream` (`origin/main` in production), read through Git objects without
+/// building or checking out the base. The merge-base is resolved to a commit
+/// SHA once and every read uses that SHA. Errors (no upstream, shallow history)
+/// mean the caller must fall back or fail; this never returns an empty guess.
+fn merge_base_golden_counts(root: &Path, upstream: &str) -> Result<BaseRead, String> {
+    let upstream_sha = resolve_sha(
+        root,
+        &["rev-parse", "--verify", &format!("{upstream}^{{commit}}")],
+    )?;
+    let base = resolve_sha(root, &["merge-base", &upstream_sha, "HEAD"])?;
+    let head_sha = resolve_sha(root, &["rev-parse", "--verify", "HEAD^{commit}"])?;
+    let dirty = git_text(
+        root,
+        &[
+            "status",
+            "--porcelain",
+            "-z",
+            "--untracked-files=all",
+            "--",
+            "fixtures",
+        ],
+    )?;
+    let dirty_goldens = dirty.split('\0').any(|entry| {
+        entry.len() > 3 && is_golden_human_path(&entry[3..]) || is_golden_human_path(entry)
+    });
+    let listing = git_text(
+        root,
+        &[
+            "ls-tree",
+            "-r",
+            "-z",
+            "--name-only",
+            &base,
+            "--",
+            "fixtures",
+        ],
+    )?;
+    let paths = golden_paths_from_ls_tree_z(&listing);
+    if paths.is_empty() {
+        return Err(format!("no default human.txt goldens found at {base}"));
+    }
+    if paths.iter().any(|path| path.contains('\n')) {
+        return Err("a golden path contains a newline; cannot batch-read it".to_string());
+    }
+    let request: String = paths
+        .iter()
+        .map(|path| format!("{base}:{path}\n"))
+        .collect();
+    let output = git_run(root, &["cat-file", "--batch"], Some(request.into_bytes()))?;
+    Ok(BaseRead {
+        upstream: upstream.to_string(),
+        upstream_sha,
+        base_sha: base,
+        head_sha,
+        dirty_goldens,
+        counts: scan_cat_file_batch(&output, &paths)?,
+    })
+}
+
+/// Per-`(path, term)` counts of the default goldens under `root`.
+pub(crate) fn scan_golden_paths(root: &Path) -> Result<Counts, String> {
+    let mut counts = Counts::new();
+    for path in golden_human_files(root)? {
+        let text = fs::read_to_string(&path)
+            .map_err(|err| format!("read golden {}: {err}", path.display()))?;
+        let label = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        scan_text(&label, &label, &text, &mut counts);
+    }
+    Ok(counts)
+}
+
+pub(crate) const BASE_UNAVAILABLE_LABEL: &str =
+    "base unavailable: absolute-ceiling check only, no PR-relative no-growth established";
+
+/// Hosted CI always has full history, so an unreadable base there is a failure.
+pub(crate) fn running_in_ci() -> bool {
+    std::env::var("GITHUB_ACTIONS").is_ok_and(|value| !value.is_empty())
+        || std::env::var("CI").is_ok_and(|value| value == "true")
+}
+
+/// Pick the gate: per-path delta against the merge-base with `upstream`. When
+/// the merge-base is unreadable: under `ci` fail closed; locally fall back to
+/// the absolute ceilings, labelled as not establishing PR-relative no-growth.
+pub(crate) fn gate_goldens(
+    root: &Path,
+    upstream: &str,
+    ci: bool,
+    counts: &Counts,
+    head_paths: &Counts,
+    baseline: &Baseline,
+) -> (Evaluation, String) {
+    match merge_base_golden_counts(root, upstream) {
+        Ok(read) => {
+            let note = read.describe();
+            let base: BTreeMap<(String, String), usize> = read
+                .counts
+                .into_iter()
+                .map(|(key, found)| (key, found.lines))
+                .collect();
+            (evaluate_delta(counts, baseline, head_paths, &base), note)
+        }
+        Err(reason) => {
+            let fetch = "Run `git fetch --deepen=200 origin main` (or `git fetch origin main`) so the per-PR delta gate can run.";
+            if ci {
+                let note = format!(
+                    "Gate: {BASE_UNAVAILABLE_LABEL} ({reason}). Failing closed under CI. {fetch}"
+                );
+                let evaluation = Evaluation {
+                    violations: vec![format!(
+                        "merge-base unreadable under CI ({reason}); the per-PR delta cannot be established"
+                    )],
+                    ..Evaluation::default()
+                };
+                (evaluation, note)
+            } else {
+                (
+                    evaluate(counts, baseline),
+                    format!(
+                        "Gate: {BASE_UNAVAILABLE_LABEL} ({reason}); falling back to absolute ceilings for every row. {fetch}"
+                    ),
+                )
+            }
+        }
+    }
 }
 
 // ------------------------------------------------------------- live surface
@@ -544,27 +705,16 @@ struct Scratch {
 }
 
 fn run_git(repo: &Path, args: &[&str]) -> Result<(), String> {
-    let output = Command::new("git")
-        .args([
-            "-c",
-            "user.email=user-text@example.invalid",
-            "-c",
-            "user.name=user-text",
-            "-c",
-            "commit.gpgsign=false",
-        ])
-        .args(args)
-        .current_dir(repo)
-        .output()
-        .map_err(|err| format!("git {args:?}: {err}"))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "git {args:?} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ))
-    }
+    let mut full = vec![
+        "-c",
+        "user.email=user-text@example.invalid",
+        "-c",
+        "user.name=user-text",
+        "-c",
+        "commit.gpgsign=false",
+    ];
+    full.extend_from_slice(args);
+    git_run(repo, &full, None).map(|_| ())
 }
 
 fn write_file(path: &Path, text: &str) -> Result<(), String> {
@@ -1005,29 +1155,16 @@ pub(crate) fn check_user_text_with_args(args: &[String]) -> Result<(), String> {
         (Vec::new(), golden_only)
     };
 
-    // Golden rows gate on this tree's delta against the merge-base (#11374).
-    // Without a readable merge-base, fall back to the absolute ceilings, loudly.
-    let (evaluation, gate_note) = match merge_base_golden_counts(&root) {
-        Ok((base_sha, base_counts)) => {
-            let base: BTreeMap<(String, String), usize> = base_counts
-                .into_iter()
-                .map(|(key, found)| (key, found.lines))
-                .collect();
-            (
-                evaluate_delta(&counts, &baseline, &base),
-                format!(
-                    "Gate: golden-human rows compare against the merge-base {} (delta); live rows use absolute ceilings.",
-                    &base_sha[..base_sha.len().min(12)]
-                ),
-            )
-        }
-        Err(reason) => (
-            evaluate(&counts, &baseline),
-            format!(
-                "Gate: merge-base unavailable ({reason}); falling back to absolute ceilings for every row. Run `git fetch origin main` or `git fetch --deepen=200 origin main` so the per-PR delta gate can run."
-            ),
-        ),
-    };
+    // Golden rows gate per file on this tree's delta (#11374).
+    let head_paths = scan_golden_paths(&root)?;
+    let (evaluation, gate_note) = gate_goldens(
+        &root,
+        "origin/main",
+        running_in_ci(),
+        &counts,
+        &head_paths,
+        &baseline,
+    );
     println!("check-user-text: {gate_note}");
     let status = if evaluation.violations.is_empty() {
         "pass"
@@ -1125,12 +1262,32 @@ mod tests {
         assert_eq!(evaluate(&clean, &baseline), Evaluation::default());
     }
 
-    fn base_of(counts: &Counts) -> BTreeMap<(String, String), usize> {
-        counts
+    /// Per-path counts for `(path, text)` goldens, and their surface totals.
+    fn goldens(files: &[(&str, &str)]) -> (Counts, Counts) {
+        let mut paths = Counts::new();
+        let mut totals = Counts::new();
+        for (path, text) in files {
+            scan_text(path, path, text, &mut paths);
+            scan_text(GOLDEN_SURFACE, path, text, &mut totals);
+        }
+        (paths, totals)
+    }
+
+    fn base_of(files: &[(&str, &str)]) -> BTreeMap<(String, String), usize> {
+        goldens(files)
+            .0
             .iter()
             .map(|(key, found)| (key.clone(), found.lines))
             .collect()
     }
+
+    fn delta(base: &[(&str, &str)], head: &[(&str, &str)], baseline: &Baseline) -> Evaluation {
+        let (paths, totals) = goldens(head);
+        evaluate_delta(&totals, baseline, &paths, &base_of(base))
+    }
+
+    const A: &str = "fixtures/a/expected/human.txt";
+    const B: &str = "fixtures/b/expected/human.txt";
 
     /// #11374 positive: adding a banned golden line fails against the merge-base
     /// even when the absolute ceiling would have allowed it.
@@ -1138,19 +1295,24 @@ mod tests {
     fn delta_gate_fails_a_pr_that_adds_a_banned_line() {
         let mut baseline = Baseline::new();
         baseline.insert((GOLDEN_SURFACE.into(), "seam".into()), 100);
-        let base = base_of(&scan(GOLDEN_SURFACE, "a seam\nb seam\n"));
-        let grown = scan(GOLDEN_SURFACE, "a seam\nb seam\nc seam\n");
-        let evaluation = evaluate_delta(&grown, &baseline, &base);
+        let evaluation = delta(
+            &[(A, "a seam\nb seam\n")],
+            &[(A, "a seam\nb seam\nc seam\n")],
+            &baseline,
+        );
         assert_eq!(evaluation.violations.len(), 1, "{evaluation:?}");
         assert!(evaluation.violations[0].contains("+1"));
+        assert!(evaluation.violations[0].contains(A));
     }
 
     /// A new term with no base row and no ceiling also fails (any row).
     #[test]
     fn delta_gate_fails_a_newly_introduced_term() {
-        let base = base_of(&scan(GOLDEN_SURFACE, "plain\n"));
-        let grown = scan(GOLDEN_SURFACE, "1 probe checked\n");
-        let evaluation = evaluate_delta(&grown, &Baseline::new(), &base);
+        let evaluation = delta(
+            &[(A, "plain\n")],
+            &[(A, "1 probe checked\n")],
+            &Baseline::new(),
+        );
         assert_eq!(evaluation.violations.len(), 1, "{evaluation:?}");
     }
 
@@ -1159,10 +1321,41 @@ mod tests {
     fn delta_gate_passes_a_pr_that_removes_banned_lines() {
         let mut baseline = Baseline::new();
         baseline.insert((GOLDEN_SURFACE.into(), "seam".into()), 2);
-        let base = base_of(&scan(GOLDEN_SURFACE, "a seam\nb seam\n"));
-        let shrunk = scan(GOLDEN_SURFACE, "a seam\n");
-        let evaluation = evaluate_delta(&shrunk, &baseline, &base);
+        let evaluation = delta(&[(A, "a seam\nb seam\n")], &[(A, "a seam\n")], &baseline);
         assert!(evaluation.violations.is_empty(), "{evaluation:?}");
+    }
+
+    /// Netting: deleting banned lines in one golden buys no room for new jargon
+    /// in another golden, and a path new at the head counts in full.
+    #[test]
+    fn delta_gate_does_not_net_removals_against_additions_across_paths() {
+        let base = [(A, "a seam\nb seam\n"), (B, "plain\n")];
+        let moved = delta(
+            &base,
+            &[(A, "a seam\n"), (B, "now a seam\n")],
+            &Baseline::new(),
+        );
+        assert_eq!(moved.violations.len(), 1, "{moved:?}");
+        assert!(moved.violations[0].contains(B), "{moved:?}");
+
+        let fresh = delta(
+            &base,
+            &[
+                (A, "plain\n"),
+                (B, "plain\n"),
+                ("fixtures/c/expected/human.txt", "a seam\n"),
+            ],
+            &Baseline::new(),
+        );
+        assert_eq!(fresh.violations.len(), 1, "{fresh:?}");
+        assert!(fresh.violations[0].contains("new path"), "{fresh:?}");
+    }
+
+    /// Documented false red: a rename that keeps old jargon reads as a new path.
+    #[test]
+    fn delta_gate_treats_a_renamed_golden_as_a_new_path() {
+        let evaluation = delta(&[(A, "a seam\n")], &[(B, "a seam\n")], &Baseline::new());
+        assert_eq!(evaluation.violations.len(), 1, "{evaluation:?}");
     }
 
     /// Negative: an unrelated PR passes while main is above its absolute ceiling,
@@ -1171,20 +1364,19 @@ mod tests {
     fn delta_gate_passes_unrelated_pr_while_over_absolute_ceiling() {
         let mut baseline = Baseline::new();
         baseline.insert((GOLDEN_SURFACE.into(), "seam".into()), 1);
-        let same = scan(GOLDEN_SURFACE, "a seam\nb seam\n");
-        let base = base_of(&same);
-        let evaluation = evaluate_delta(&same, &baseline, &base);
+        let same = [(A, "a seam\nb seam\n")];
+        let evaluation = delta(&same, &same, &baseline);
         assert!(evaluation.violations.is_empty(), "{evaluation:?}");
         assert_eq!(evaluation.warnings.len(), 1, "{evaluation:?}");
         // The absolute fallback (shallow clone) still fails closed on the same input.
-        assert_eq!(evaluate(&same, &baseline).violations.len(), 1);
+        assert_eq!(evaluate(&goldens(&same).1, &baseline).violations.len(), 1);
     }
 
     /// Live surfaces keep absolute ceilings: a rise there fails regardless of base.
     #[test]
     fn delta_gate_keeps_absolute_ceilings_for_live_surfaces() {
         let live = scan("check", "a discriminator\n");
-        let evaluation = evaluate_delta(&live, &Baseline::new(), &BTreeMap::new());
+        let evaluation = evaluate_delta(&live, &Baseline::new(), &Counts::new(), &BTreeMap::new());
         assert_eq!(evaluation.violations.len(), 1, "{evaluation:?}");
         assert!(evaluation.warnings.is_empty());
     }
@@ -1194,6 +1386,174 @@ mod tests {
         assert!(is_golden_human_path("fixtures/a/expected/human.txt"));
         assert!(!is_golden_human_path("fixtures/a/expected/human-full.txt"));
         assert!(!is_golden_human_path("docs/expected/human.txt"));
+    }
+
+    #[test]
+    fn ls_tree_z_listing_keeps_quoted_and_non_ascii_golden_paths() {
+        let listing = "fixtures/a/expected/human.txt\0fixtures/caf\u{e9} \"q\"/expected/human.txt\0fixtures/a/expected/human-full.txt\0fixtures/a/input.rs\0";
+        assert_eq!(
+            golden_paths_from_ls_tree_z(listing),
+            vec![
+                "fixtures/a/expected/human.txt",
+                "fixtures/caf\u{e9} \"q\"/expected/human.txt"
+            ]
+        );
+    }
+
+    #[test]
+    fn cat_file_batch_output_is_scanned_per_path() -> Result<(), String> {
+        let first = "one seam\ntwo seam\n";
+        let second = "clean\n";
+        let data = format!(
+            "{} blob {}\n{first}\n{} blob {}\n{second}\n",
+            "a".repeat(40),
+            first.len(),
+            "b".repeat(40),
+            second.len()
+        );
+        let counts = scan_cat_file_batch(data.as_bytes(), &[A, B])?;
+        let seams = counts.get(&(A.to_string(), "seam".to_string()));
+        assert_eq!(seams.map(|found| found.lines), Some(2));
+        assert!(!counts.keys().any(|(path, _)| path == B));
+
+        let missing = format!("{}:{A} missing\n", "a".repeat(40));
+        assert!(scan_cat_file_batch(missing.as_bytes(), &[A]).is_err());
+        assert!(scan_cat_file_batch(b"", &[A]).is_err());
+        let truncated = format!("{} blob 99\nshort\n", "a".repeat(40));
+        assert!(scan_cat_file_batch(truncated.as_bytes(), &[A]).is_err());
+        Ok(())
+    }
+
+    /// A temp repository with `main` holding `base` goldens and `HEAD` on a
+    /// branch holding `head` goldens. Returns the root.
+    fn golden_repo(
+        name: &str,
+        base: &[(&str, &str)],
+        head: &[(&str, &str)],
+    ) -> Result<PathBuf, String> {
+        let root = temp_root(name)?;
+        run_git(&root, &["init", "-q", "-b", "main"])?;
+        run_git(&root, &["config", "user.email", "t@example.com"])?;
+        run_git(&root, &["config", "user.name", "t"])?;
+        run_git(&root, &["config", "commit.gpgsign", "false"])?;
+        for (path, text) in base {
+            write_file(&root.join(path), text)?;
+        }
+        run_git(&root, &["add", "-A"])?;
+        run_git(&root, &["commit", "-q", "-m", "base"])?;
+        run_git(&root, &["checkout", "-q", "-b", "pr"])?;
+        for (path, text) in head {
+            write_file(&root.join(path), text)?;
+        }
+        run_git(&root, &["add", "-A"])?;
+        run_git(&root, &["commit", "-q", "--allow-empty", "-m", "head"])?;
+        Ok(root)
+    }
+
+    fn gate_in(root: &Path, upstream: &str) -> Result<(Evaluation, String), String> {
+        gate_in_ci(root, upstream, false)
+    }
+
+    fn gate_in_ci(root: &Path, upstream: &str, ci: bool) -> Result<(Evaluation, String), String> {
+        let mut totals = Counts::new();
+        scan_goldens(root, &mut totals)?;
+        let paths = scan_golden_paths(root)?;
+        Ok(gate_goldens(
+            root,
+            upstream,
+            ci,
+            &totals,
+            &paths,
+            &Baseline::new(),
+        ))
+    }
+
+    /// The production gate function applies the merge-base delta end to end:
+    /// an added banned golden line fails, and removing it passes.
+    #[test]
+    fn gate_goldens_reads_the_merge_base_and_applies_the_delta() -> Result<(), String> {
+        let base = [(A, "a seam\n"), (B, "plain\n")];
+        let added = golden_repo(
+            "gate-add",
+            &base,
+            &[(A, "a seam\n"), (B, "plain\nnew seam here\n")],
+        )?;
+        let (failing, note) = gate_in(&added, "main")?;
+        let _ = fs::remove_dir_all(&added);
+        assert_eq!(failing.violations.len(), 1, "{failing:?}");
+        assert!(
+            note.contains("merge-base") && !note.contains("unavailable"),
+            "{note}"
+        );
+
+        let removed = golden_repo("gate-remove", &base, &[(A, "plain\n"), (B, "plain\n")])?;
+        let (passing, _) = gate_in(&removed, "main")?;
+        let _ = fs::remove_dir_all(&removed);
+        assert!(passing.violations.is_empty(), "{passing:?}");
+        Ok(())
+    }
+
+    /// No upstream ref: loud fallback to absolute ceilings, never a silent pass.
+    #[test]
+    fn gate_goldens_without_an_upstream_falls_back_loudly_to_absolute_ceilings()
+    -> Result<(), String> {
+        let root = golden_repo("gate-fallback", &[(A, "a seam\n")], &[(A, "a seam\n")])?;
+        let (evaluation, note) = gate_in(&root, "origin/main")?;
+        let _ = fs::remove_dir_all(&root);
+        assert!(note.contains(BASE_UNAVAILABLE_LABEL), "{note}");
+        assert!(
+            note.contains("git fetch --deepen=200 origin main"),
+            "{note}"
+        );
+        assert_eq!(evaluation.violations.len(), 1, "{evaluation:?}");
+        Ok(())
+    }
+
+    /// Under CI an unreadable base fails closed even when the absolute ceiling
+    /// would pass (growth under a loose ceiling must not read as qualified).
+    #[test]
+    fn gate_goldens_fails_closed_under_ci_when_the_base_is_unreadable() -> Result<(), String> {
+        let root = golden_repo("gate-ci", &[(A, "plain\n")], &[(A, "plain\n")])?;
+        let (evaluation, note) = gate_in_ci(&root, "origin/main", true)?;
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(evaluation.violations.len(), 1, "{evaluation:?}");
+        assert!(
+            note.contains(BASE_UNAVAILABLE_LABEL) && note.contains("closed"),
+            "{note}"
+        );
+        Ok(())
+    }
+
+    /// The report records the merge-base, upstream and HEAD shas, and says when
+    /// the head side is the working tree.
+    #[test]
+    fn gate_goldens_records_inputs_and_flags_a_dirty_working_tree() -> Result<(), String> {
+        let root = golden_repo("gate-inputs", &[(A, "plain\n")], &[(A, "plain\n")])?;
+        let (_, clean) = gate_in(&root, "main")?;
+        let head = git_text(&root, &["rev-parse", "HEAD"])?;
+        let base = git_text(&root, &["rev-parse", "main"])?;
+        assert!(clean.contains(&head.trim()[..12]), "{clean}");
+        assert!(clean.contains(&base.trim()[..12]), "{clean}");
+        assert!(clean.contains("committed tree"), "{clean}");
+        write_file(&root.join(A), "plain\nnew seam\n")?;
+        let (dirty_eval, dirty) = gate_in(&root, "main")?;
+        let _ = fs::remove_dir_all(&root);
+        assert!(dirty.contains("WORKING TREE"), "{dirty}");
+        assert_eq!(dirty_eval.violations.len(), 1, "{dirty_eval:?}");
+        Ok(())
+    }
+
+    /// Quoted and non-ASCII golden paths survive the real `ls-tree -z` read, so a
+    /// jargon line in such a file is compared with its base, not treated as new.
+    #[test]
+    fn gate_goldens_reads_non_ascii_paths_from_the_base() -> Result<(), String> {
+        let odd = "fixtures/caf\u{e9} d/expected/human.txt";
+        let root = golden_repo("gate-odd", &[(odd, "a seam\n")], &[(odd, "a seam\n")])?;
+        let (evaluation, note) = gate_in(&root, "main")?;
+        let _ = fs::remove_dir_all(&root);
+        assert!(!note.contains("unavailable"), "{note}");
+        assert!(evaluation.violations.is_empty(), "{evaluation:?}");
+        Ok(())
     }
 
     #[test]
@@ -1399,28 +1759,36 @@ mod tests {
         Ok(())
     }
 
-    /// The committed baseline parses and the committed goldens scan. Staying
-    /// under the absolute ceiling is deliberately not asserted here (#11374):
-    /// parallel merges move it, and the gate is each PR's delta; the over-ceiling
-    /// state is a report warning instead.
+    /// The committed baseline parses, every row names a known surface and term,
+    /// the committed goldens scan, and the header still matches what `--ratchet`
+    /// would write. Staying under the absolute ceiling is deliberately not
+    /// asserted (#11374): the gate is each PR's delta.
     #[test]
-    fn committed_goldens_scan_and_baseline_parses_without_an_absolute_gate() -> Result<(), String> {
+    fn committed_baseline_rows_are_known_and_the_header_matches_the_renderer() -> Result<(), String>
+    {
         let root = repo_root()?;
-        let baseline = parse_baseline(
-            &fs::read_to_string(root.join(BASELINE_PATH))
-                .map_err(|err| format!("read baseline: {err}"))?,
-        )?;
+        let text = fs::read_to_string(root.join(BASELINE_PATH))
+            .map_err(|err| format!("read baseline: {err}"))?;
+        let baseline = parse_baseline(&text)?;
+        assert!(!baseline.is_empty(), "baseline has no rows");
+        for (surface, term) in baseline.keys() {
+            assert!(
+                surface == GOLDEN_SURFACE
+                    || surface
+                        .bytes()
+                        .all(|byte| byte.is_ascii_lowercase() || byte == b'-'),
+                "unknown surface `{surface}`"
+            );
+            assert!(BANNED.iter().any(|banned| banned.id == term), "term {term}");
+        }
+        assert_eq!(render_baseline(&baseline), text, "header or format drifted");
         let mut counts = Counts::new();
         let scanned = scan_goldens(&root, &mut counts)?;
-        if scanned == 0 {
-            return Err("no default human.txt goldens were scanned".into());
-        }
-        let itself = base_of(&counts);
-        let evaluation = evaluate_delta(&counts, &baseline, &itself);
-        if evaluation.violations.is_empty() {
-            Ok(())
-        } else {
-            Err(evaluation.violations.join("\n"))
-        }
+        assert!(scanned > 0, "no default human.txt goldens were scanned");
+        assert!(
+            !counts.is_empty(),
+            "committed goldens scanned to zero banned lines"
+        );
+        Ok(())
     }
 }

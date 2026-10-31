@@ -1,9 +1,11 @@
 # Ceilings for banned plain-language terms in default human output (#10697).
-# Each number is the count of output lines containing the term on `main`.
+# Each number is a ceiling on output lines containing the term; `main` may sit
+# above it after parallel merges, which is reported as a warning.
 # Golden rows (`golden-human`) gate each PR on its own delta against the
 # merge-base, so a PR never edits this file to pass; a golden count above
-# its ceiling is only a warning. Live-surface rows fail above their ceiling,
-# as do golden rows when the merge-base is unreadable (shallow clone).
+# its ceiling is only a warning. Live-surface rows fail above their ceiling
+# (raising one needs an explicit reviewed reason), as do golden rows when
+# the merge-base is unreadable (shallow clone).
 # Lower ceilings with `cargo xtask check-user-text --ratchet` (lowering only);
 # never raise one. A term with no row has a ceiling of 0.
 # See docs/USER_TEXT_GLOSSARY.md.
