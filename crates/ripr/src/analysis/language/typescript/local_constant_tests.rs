@@ -88,6 +88,9 @@ fn rebound_shadowed_or_computed_local_never_resolves() {
         "expect(f(edge)).toBe(1);\nconst edge = 50;",
         "if (cond) { const edge = 50; }\nexpect(f(edge)).toBe(1);",
         "for (const edge = 50; ;) { break; }\nexpect(f(edge)).toBe(1);",
+        "helper(() => { const edge = 50; });\nexpect(f(edge)).toBe(1);",
+        "function inner() { const edge = 50; return edge; }\ninner();\nexpect(f(edge)).toBe(1);",
+        "const edge = 50;\nhelper(() => { const edge = 60; });\nexpect(f(edge)).toBe(1);",
         "const edge = 50;\neval('edge = 49');\nexpect(f(edge)).toBe(1);",
     ];
     for inner in refused {

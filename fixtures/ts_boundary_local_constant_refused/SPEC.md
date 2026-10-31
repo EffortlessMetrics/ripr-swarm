@@ -4,7 +4,7 @@ Spec: RIPR-SPEC-0027
 
 ## Given
 
-Eight TypeScript owners whose changed predicate `score > 50` becomes
+Ten TypeScript owners whose changed predicate `score > 50` becomes
 `score >= 50` (issues #10707 and #10706), each with one related test that
 reaches the owner through a name that is NOT a provably single immutable
 integer binding:
@@ -18,7 +18,11 @@ integer binding:
 - `importedConstant`: `edge` imported from a module the adapter cannot
   resolve to the owner;
 - `mutatedConstant`: `config.edge` of an object whose property is rewritten;
-- `offValueConstant`: `const edge = 60;`, a single constant off the boundary.
+- `offValueConstant`: `const edge = 60;`, a single constant off the boundary;
+- `nestedClosureConstant`: `const edge = 50` inside a closure passed to a
+  helper call, a module `const edge = 10` read outside it;
+- `nestedFunctionConstant`: `const edge = 50` inside a nested function
+  declaration, read outside it.
 
 ## When
 

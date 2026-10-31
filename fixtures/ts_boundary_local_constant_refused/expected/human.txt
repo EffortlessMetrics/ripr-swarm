@@ -3,12 +3,12 @@ mode: fast
 root: fixtures/ts_boundary_local_constant_refused/input
 config: <cwd>/fixtures/ts_boundary_local_constant_refused/input/ripr.toml
 
-Summary: 8 changed behaviors checked: 0 appear noticed by tests, 8 partly noticed, 0 reached but not noticed, 0 no test path. 8 found, 0 suppressed by your settings
+Summary: 10 changed behaviors checked: 0 appear noticed by tests, 10 partly noticed, 0 reached but not noticed, 0 no test path. 10 found, 0 suppressed by your settings
 
-Changed file(s) by language: typescript = 8
+Changed file(s) by language: typescript = 10
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 8 changed file(s), 16 changed line(s), 8 candidate line(s), 8 changed behavior(s) checked, 8 finding(s)
+  Counts: 10 changed file(s), 20 changed line(s), 10 candidate line(s), 10 changed behavior(s) checked, 10 finding(s)
 
 Start here:
   State: preview language, advisory only
@@ -48,11 +48,13 @@ Next: drill into the top finding:
   no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
 
 Hidden:
-  7 lower-priority finding(s) omitted from default human output (TypeScript preview: 7).
+  9 lower-priority finding(s) omitted from default human output (TypeScript preview: 9).
     - src/importedConstant.ts:2 (weak); kind: predicate; reason: Related tests reach `importedConstant` with a strong oracle, but no strong assertion observes a `importedConstant(...)` call at the changed predicate boundary `score == 50`;…
     - src/innerBlockConstant.ts:2 (weak); kind: predicate; reason: Related tests reach `innerBlockConstant` with a strong oracle, but no strong assertion observes a `innerBlockConstant(...)` call at the changed predicate boundary `score == 50`;…
     - src/letConstant.ts:2 (weak); kind: predicate; reason: Related tests reach `letConstant` with a strong oracle, but no strong assertion observes a `letConstant(...)` call at the changed predicate boundary `score == 50`; inputs on one…
     - src/mutatedConstant.ts:2 (weak); kind: predicate; reason: Related tests reach `mutatedConstant` with a strong oracle, but no strong assertion observes a `mutatedConstant(...)` call at the changed predicate boundary `score == 50`; inputs…
+    - src/nestedClosureConstant.ts:2 (weak); kind: predicate; reason: Related tests reach `nestedClosureConstant` with a strong oracle, but no strong assertion observes a `nestedClosureConstant(...)` call at the changed predicate boundary…
+    - src/nestedFunctionConstant.ts:2 (weak); kind: predicate; reason: Related tests reach `nestedFunctionConstant` with a strong oracle, but no strong assertion observes a `nestedFunctionConstant(...)` call at the changed predicate boundary…
     - src/offValueConstant.ts:2 (weak); kind: predicate; reason: Related tests reach `offValueConstant` with a strong oracle, but no strong assertion observes a `offValueConstant(...)` call at the changed predicate boundary `score == 50`;…
     - src/reassignedConstant.ts:2 (weak); kind: predicate; reason: Related tests reach `reassignedConstant` with a strong oracle, but no strong assertion observes a `reassignedConstant(...)` call at the changed predicate boundary `score == 50`;…
     - src/shadowedConstant.ts:2 (weak); kind: predicate; reason: Related tests reach `shadowedConstant` with a strong oracle, but no strong assertion observes a `shadowedConstant(...)` call at the changed predicate boundary `score == 50`;…
@@ -60,4 +62,4 @@ Hidden:
   Machine data: rerun with --format json
 
 
-Note: 8 TypeScript files analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.
+Note: 10 TypeScript files analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

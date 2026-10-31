@@ -175,10 +175,13 @@ fn parse_body(file: &Path, body: &str, name: &str) -> Option<ParsedBody> {
 }
 
 /// Collect the `const NAME = <integer literal>` declarators that sit
-/// directly in a statement list of the callback: the list itself (a bare
-/// statement list), or the block body of a function passed to a call or
-/// written as the statement. Nested blocks, loop headers and parameter
-/// lists are never entered.
+/// directly in the callback's own top-level statement list: the program's
+/// statements for a bare statement list, otherwise the block body of the
+/// function a top-level registering call (or the text itself) is. Nothing
+/// nested is entered: not a function passed to an inner call, not a nested
+/// function declaration, block, loop header or parameter list. A same-name
+/// declaration in any of those is left to the occurrence rules, which
+/// refuse the name.
 fn collect_block_declarations(
     statements: &[Statement<'_>],
     name: &str,
@@ -186,66 +189,91 @@ fn collect_block_declarations(
 ) {
     for statement in statements {
         match statement {
-            Statement::VariableDeclaration(declaration) => {
-                if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const
-                    || declaration.declare
-                {
-                    continue;
-                }
-                for declarator in &declaration.declarations {
-                    let BindingPattern::BindingIdentifier(id) = &declarator.id else {
-                        continue;
-                    };
-                    if id.name != name {
-                        continue;
-                    }
-                    if let Some(Expression::NumericLiteral(literal)) = &declarator.init
-                        && let Some(value) = literal
-                            .raw
-                            .as_ref()
-                            .and_then(|raw| integer_literal(raw.as_str()))
-                        && is_safe_number_integer(value)
-                    {
-                        out.push((id.span.start as usize, value, declarator.span.end as usize));
-                    }
-                }
-            }
             Statement::ExpressionStatement(statement) => {
-                collect_from_expression(&statement.expression, name, out);
+                collect_callback_bodies(&statement.expression, name, out);
             }
+            // The wrapper function of the statement-list parse variant.
             Statement::FunctionDeclaration(function) => {
                 if let Some(body) = &function.body {
-                    collect_block_declarations(&body.statements, name, out);
+                    collect_direct_declarations(&body.statements, name, out);
                 }
             }
             _ => {}
         }
     }
+    // A bare statement list declares at the program level.
+    collect_direct_declarations(statements, name, out);
 }
 
-fn collect_from_expression(
+/// The declarators among `statements` themselves.
+fn collect_direct_declarations(
+    statements: &[Statement<'_>],
+    name: &str,
+    out: &mut Vec<(usize, i64, usize)>,
+) {
+    for statement in statements {
+        let Statement::VariableDeclaration(declaration) = statement else {
+            continue;
+        };
+        if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const || declaration.declare {
+            continue;
+        }
+        for declarator in &declaration.declarations {
+            let BindingPattern::BindingIdentifier(id) = &declarator.id else {
+                continue;
+            };
+            if id.name != name {
+                continue;
+            }
+            if let Some(Expression::NumericLiteral(literal)) = &declarator.init
+                && let Some(value) = literal
+                    .raw
+                    .as_ref()
+                    .and_then(|raw| integer_literal(raw.as_str()))
+                && is_safe_number_integer(value)
+            {
+                out.push((id.span.start as usize, value, declarator.span.end as usize));
+            }
+        }
+    }
+}
+
+/// The callback of the statement's expression: the function itself, or a
+/// function passed directly to the registering call. Only the block body of
+/// that one function is read.
+fn collect_callback_bodies(
+    expression: &Expression<'_>,
+    name: &str,
+    out: &mut Vec<(usize, i64, usize)>,
+) {
+    match expression {
+        Expression::CallExpression(call) => {
+            for argument in &call.arguments {
+                if let Some(expression) = argument.as_expression() {
+                    collect_function_body(expression, name, out);
+                }
+            }
+        }
+        other => collect_function_body(other, name, out),
+    }
+}
+
+fn collect_function_body(
     expression: &Expression<'_>,
     name: &str,
     out: &mut Vec<(usize, i64, usize)>,
 ) {
     match expression {
         Expression::ParenthesizedExpression(inner) => {
-            collect_from_expression(&inner.expression, name, out);
+            collect_function_body(&inner.expression, name, out);
         }
         Expression::FunctionExpression(function) => {
             if let Some(body) = &function.body {
-                collect_block_declarations(&body.statements, name, out);
+                collect_direct_declarations(&body.statements, name, out);
             }
         }
         Expression::ArrowFunctionExpression(arrow) if !arrow.expression => {
-            collect_block_declarations(&arrow.body.statements, name, out);
-        }
-        Expression::CallExpression(call) => {
-            for argument in &call.arguments {
-                if let Some(expression) = argument.as_expression() {
-                    collect_from_expression(expression, name, out);
-                }
-            }
+            collect_direct_declarations(&arrow.body.statements, name, out);
         }
         _ => {}
     }

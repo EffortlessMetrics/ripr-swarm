@@ -86,3 +86,25 @@ index 0000000..1111111 100644
          return "gold";
      }
      return "basic";
+diff --git a/src/nestedClosureConstant.ts b/src/nestedClosureConstant.ts
+index 0000000..1111111 100644
+--- a/src/nestedClosureConstant.ts
++++ b/src/nestedClosureConstant.ts
+@@ -1,5 +1,5 @@
+ export function nestedClosureConstant(score: number): string {
+-    if (score > 50) {
++    if (score >= 50) {
+         return "gold";
+     }
+     return "basic";
+diff --git a/src/nestedFunctionConstant.ts b/src/nestedFunctionConstant.ts
+index 0000000..1111111 100644
+--- a/src/nestedFunctionConstant.ts
++++ b/src/nestedFunctionConstant.ts
+@@ -1,5 +1,5 @@
+ export function nestedFunctionConstant(score: number): string {
+-    if (score > 50) {
++    if (score >= 50) {
+         return "gold";
+     }
+     return "basic";

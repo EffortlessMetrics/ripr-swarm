@@ -11,3 +11,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_boundary_local_constant_refused (2)
+
+Reason:
+RIPR-SPEC-0027 #10707: refused fixture gains nested-closure and nested-function declarations that must not bind the outer name
+
+Command:
+`cargo xtask goldens bless ts_boundary_local_constant_refused --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
