@@ -41,7 +41,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: ". -> target/ub-review-build"
-          key: ub-review-55e4fbab879b3a83c31f35cdc9f7e5cd99f0a6c8
+          key: ub-review-8d45f2cace407b1b0117cffe30e32bf6267d5182
 
       # Sensors resolve the locked anyhow fixture offline. Prepare the runner's
       # default Cargo home, also used by the action's sanitized sensor process.
@@ -57,7 +57,7 @@ jobs:
       - name: ub-review
         env:
           CARGO_TARGET_DIR: target/ub-review-build
-        uses: EffortlessMetrics/ub-review@55e4fbab879b3a83c31f35cdc9f7e5cd99f0a6c8
+        uses: EffortlessMetrics/ub-review@8d45f2cace407b1b0117cffe30e32bf6267d5182
         with:
           # review-mode hides the internal mode/fail-on-gate/review_forward
           # knobs. advisory = comment only; gate = recommended CI gate;
