@@ -312,7 +312,7 @@ impl PythonFileFactEnvelope {
         if self.payload_digest.as_deref() == Some(expected.as_str()) {
             Ok(())
         } else {
-            Err("missing or mismatching semantic payload digest".to_owned())
+            Err("missing or mismatching semantic payload digest; delete the cache entry and rerun `ripr check` to rebuild it".to_owned())
         }
     }
 }

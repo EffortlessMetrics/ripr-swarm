@@ -59,6 +59,8 @@ mod assertion_selection;
 mod assertion_selection_tests;
 mod boundary_input;
 #[cfg(test)]
+mod boundary_input_one_line_tests;
+#[cfg(test)]
 mod boundary_input_tests;
 #[cfg(test)]
 mod boundary_label_tests;
@@ -1004,12 +1006,35 @@ impl TypeScriptAdapter {
                 continue;
             }
 
+            let private_boundaries = source_by_normalized
+                .get(&normalized_path(&changed.path))
+                .map(|source| {
+                    unsupported_private_member_ranges(
+                        &changed.path,
+                        source,
+                        &options.root,
+                        alias_map_ref,
+                    )
+                })
+                .unwrap_or_default();
             // Owner-extraction gap detection (#4104-A): a changed line inside
             // an owner shape the extractor does not index produces NO finding
             // below, so this bounded disclosure is the only honest signal.
             if let Some(source) = source_by_normalized.get(&normalized_path(&changed.path)) {
-                let changed_lines: Vec<usize> =
-                    changed.added_lines.iter().map(|added| added.line).collect();
+                let changed_lines: Vec<usize> = changed
+                    .added_lines
+                    .iter()
+                    .map(|added| added.line)
+                    .chain(
+                        changed
+                            .removed_lines
+                            .iter()
+                            .map(|removed| removed.new_side_line)
+                            .filter(|line| {
+                                inside_private_member_boundary(&private_boundaries, *line)
+                            }),
+                    )
+                    .collect();
                 if let Some(gap) = detect_owner_extraction_gap(
                     &changed.path,
                     source,
@@ -1146,6 +1171,9 @@ impl TypeScriptAdapter {
                 Some((source.lines().collect::<Vec<_>>(), facts))
             });
             for added in &changed.added_lines {
+                if inside_private_member_boundary(&private_boundaries, added.line) {
+                    continue;
+                }
                 if !is_probe_candidate(added.line, &added.text) {
                     continue;
                 }
@@ -1289,7 +1317,7 @@ impl TypeScriptAdapter {
                     // inference returns `None`. `typescript_test_runner_unresolved`
                     // names a missing runner, so emit it only when neither a
                     // framework nor a package-manager runner resolved. An empty
-                    // `related_tests` list also yields `None` (`max_by_key`
+                    // `related_tests` list also yields `None` (`min_by_key`
                     // over an empty iterator); that is a missing test target,
                     // not an unknown runner. When the runner is already known
                     // (`typescript_test_runner: vitest`, mocha detected, npm
@@ -1299,7 +1327,10 @@ impl TypeScriptAdapter {
                     let inferred_cmd = finding
                         .related_tests
                         .iter()
-                        .max_by_key(|t| t.oracle_strength.rank())
+                        // #11228: the first of the strongest rows, the one the
+                        // headline, card and packet name (`max_by_key` would
+                        // return the last of equal strength).
+                        .min_by_key(|t| std::cmp::Reverse(t.oracle_strength.rank()))
                         .and_then(|best_test| {
                             verify_command_for_discovery(&pkg_discovery, &best_test.file)
                         });
@@ -1348,6 +1379,9 @@ impl TypeScriptAdapter {
                 &all_owners,
                 &findings,
                 |line, text, owner| {
+                    if inside_private_member_boundary(&private_boundaries, line) {
+                        return None;
+                    }
                     // The wrapper's owner lookup is the span check only: the
                     // caller already resolved the sole owner this closure
                     // receives (its file matched by normalized path), so a
