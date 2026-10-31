@@ -1234,16 +1234,18 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn perl_cache_dir_refuses_link_outside_root_and_allows_inside() {
+    fn perl_cache_dir_refuses_link_outside_root_and_allows_inside() -> Result<(), String> {
         let base = std::env::temp_dir().join(format!("ripr-perl-cache-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let root = base.join("root");
         let victim = base.join("victim");
-        std::fs::create_dir_all(root.join("inside")).expect("root");
-        std::fs::create_dir_all(&victim).expect("victim");
-        std::os::unix::fs::symlink(&victim, root.join("escape")).expect("link");
-        std::os::unix::fs::symlink(root.join("inside"), root.join("ok")).expect("link");
-        std::os::unix::fs::symlink(base.join("missing"), root.join("dangling")).expect("link");
+        std::fs::create_dir_all(root.join("inside")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&victim).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&victim, root.join("escape")).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(root.join("inside"), root.join("ok"))
+            .map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(base.join("missing"), root.join("dangling"))
+            .map_err(|e| e.to_string())?;
 
         let refused = ensure_perl_cache_dir_contained(&root, &root.join("escape/facts"));
         assert!(refused.is_err_and(|e| e.contains("outside the workspace")));
@@ -1251,6 +1253,7 @@ mod tests {
         assert!(ensure_perl_cache_dir_contained(&root, &root.join("ok/facts")).is_ok());
         assert!(ensure_perl_cache_dir_contained(&root, &root.join("new/deep/facts")).is_ok());
         let _ = std::fs::remove_dir_all(&base);
+        Ok(())
     }
 
     #[test]
