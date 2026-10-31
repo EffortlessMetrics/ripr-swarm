@@ -8955,7 +8955,10 @@ fn workspace_status_top_actionable_packet(snapshot: &AnalysisSnapshot) -> serde_
         .first()
         .map(String::as_str)
         .unwrap_or("");
-    let repair_kind = artifact.gap_state.as_deref().unwrap_or("actionable");
+    let repair_kind = artifact
+        .gap_state
+        .as_deref()
+        .unwrap_or(crate::domain::EvidenceState::Actionable.as_str());
     serde_json::json!({
         "canonical_gap_id": canonical_gap_id,
         "file": file,
@@ -10282,19 +10285,20 @@ fn receipt_status_from_ledger(
 
     // missing_receipt_reason: only meaningful when the gap is actionable
     // but has no receipt. Otherwise not_available.
-    let missing_receipt_reason_val = if record.gap_state == "actionable"
-        && record
-            .receipt
-            .as_ref()
-            .and_then(|r| r.movement.as_deref())
-            .is_none()
-        && record.receipt_command.is_some()
-    {
-        // Receipt command exists but no movement yet — emit honest "no_attempt_recorded".
-        serde_json::Value::String("no_attempt_recorded".to_string())
-    } else {
-        serde_json::Value::String(not_available)
-    };
+    let missing_receipt_reason_val =
+        if crate::domain::EvidenceState::is_actionable_word(&record.gap_state)
+            && record
+                .receipt
+                .as_ref()
+                .and_then(|r| r.movement.as_deref())
+                .is_none()
+            && record.receipt_command.is_some()
+        {
+            // Receipt command exists but no movement yet — emit honest "no_attempt_recorded".
+            serde_json::Value::String("no_attempt_recorded".to_string())
+        } else {
+            serde_json::Value::String(not_available)
+        };
 
     (movement_val, missing_receipt_reason_val)
 }
@@ -10464,7 +10468,7 @@ fn collect_repair_packet_from_actionable_gaps(
             .find(|p| {
                 p.get("gap_state")
                     .and_then(|v| v.as_str())
-                    .is_some_and(|s| s == "actionable")
+                    .is_some_and(crate::domain::EvidenceState::is_actionable_word)
             })
             .or_else(|| packets.first())?
     };
@@ -10481,11 +10485,10 @@ fn collect_repair_packet_from_actionable_gaps(
     }
 
     // Require the packet to be actionable to emit a complete repair packet.
-    if packet
+    if !packet
         .get("gap_state")
         .and_then(|v| v.as_str())
-        .unwrap_or("")
-        != "actionable"
+        .is_some_and(crate::domain::EvidenceState::is_actionable_word)
     {
         return Some(repair_packet_sentinel(
             "gap is not actionable in actionable-gaps.json",
@@ -10652,7 +10655,9 @@ fn collect_repair_packet_from_ledger(
             .iter()
             .find(|r| r.gap_id == id || r.canonical_gap_id == id)?
     } else {
-        records.iter().find(|r| r.gap_state == "actionable")?
+        records
+            .iter()
+            .find(|r| crate::domain::EvidenceState::is_actionable_word(&r.gap_state))?
     };
     if let Some(sentinel) = ledger_source_subject_sentinel(root, repo_config, &contents) {
         return Some(sentinel);
