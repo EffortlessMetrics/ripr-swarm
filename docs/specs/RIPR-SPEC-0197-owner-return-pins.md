@@ -41,6 +41,8 @@ Linked issues:
 - #7266 (`ManifestInventory` skips a `[[test]]` whose `required-features`
   are unmet under cargo defaults; the same target stays live when those
   features are default-enabled)
+- #11810 (field assertions refuse a selected local literal macro export
+  imported through `#[macro_use]`, preserving existing benign imports)
 
 Linked PRs:
 
@@ -88,6 +90,33 @@ wrong in three shapes, each of which an earlier candidate credited:
    exit and never evaluates the changed `Ok(..)`.
 
 ## Behavior
+
+For field construction, a plain crate-root `#[macro_use] extern crate` that
+selects the assertion name withholds its assertion credit when every resolved
+consumer placement binds the same selected local library and that library root
+contains a literal unconditional `#[macro_export] macro_rules!` declaration of
+the name (#11810). The source crate identifier, dependency rename, library name
+and library path decide that binding; the extern crate's local alias does not.
+Exactly one plain `macro_use` selector is supported on that import.
+The refusal names the import and export location. It retains the existing
+analyzer-limit classification because the imported macro's behavior is not
+expanded. It supplies no functional or protection evidence.
+
+This witness enters the existing retained field-blocking rank and per-test
+query, so an earlier foreign glob cannot mask it. Withheld or incomplete scans
+remain blocking; a missing export witness never clears another ambiguity.
+The unchanged standard-alias, non-assertion proc-macro and glob-only field
+contracts remain. This bounded refusal does not establish that other external
+macro imports are safe: registry/git sources, conditional/generated exports,
+nested-module exports, reexports, ambiguous consumer placement and library roots
+larger than 256 KiB are outside the witness. Selected-snapshot source reads do
+not turn ignored dependency files into production subjects or bypass the native
+output-set input boundary.
+
+An unchanged-file index reuse refreshes this auxiliary manifest/export authority
+and its dependent assertion-site memos without reparsing or changing source roles.
+An exporter or selected manifest edit can therefore add or revoke this refusal
+even when the supplied indexed Rust files stay byte-for-byte unchanged.
 
 The bounded provider-backed proptest profile in RIPR-SPEC-0117 (#10839) may
 supply a generated test with a receipt for an ordinary-assertion interpretation.
