@@ -61,7 +61,9 @@ use process_wrap::std::{ChildWrapper, CommandWrap, JobObject};
 /// bounded command (git, the cargo metadata and Perl probes, xtask test and
 /// verify runners) that must not outlive the process that asked for it, and no
 /// ripr path intentionally leaves a detached child behind. Closing the job at
-/// a normal exit therefore only ends processes that were already orphaned.
+/// a normal exit therefore ends only processes that should not outlive the
+/// owner; a descendant that outlives it by design (a build-cache daemon started
+/// by a plain `cargo`, for example) is also ended and restarts on its next use.
 ///
 /// Call this once, first thing in a binary's `main`. It is deliberately not
 /// called from [`OwnedProcess::spawn`] so that a program embedding the `ripr`
