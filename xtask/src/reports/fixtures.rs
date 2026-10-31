@@ -3099,8 +3099,8 @@ mod tests {
         // `std::path::absolute` rewrites a rooted, driveless path against the
         // process drive on Windows, so compare the trailing components rather
         // than the whole path (docs/LEARNINGS.md, #7937).
-        let isolated = super::isolated_default_target_dir(shared)
-            .unwrap_or_else(|err| std::path::PathBuf::from(err));
+        let isolated =
+            super::isolated_default_target_dir(shared).unwrap_or_else(std::path::PathBuf::from);
         assert!(isolated.is_absolute(), "{isolated:?}");
         assert!(
             isolated.ends_with(std::path::Path::new("target/fixture-variants/default")),
