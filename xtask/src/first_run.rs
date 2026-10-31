@@ -1483,7 +1483,8 @@ mod tests {
         let legacy = "Static exposure: unknown (severity: warning, confidence 0.43)\n    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;\n";
         assert_eq!(verdict_of(legacy), Some("static_unknown"));
         // A wire token after the label still refines it.
-        let refined = "Static exposure: unknown (infection_unknown, warning)\n    exposed/weak = legend\n";
+        let refined =
+            "Static exposure: unknown (infection_unknown, warning)\n    exposed/weak = legend\n";
         assert_eq!(verdict_of(refined), Some("infection_unknown"));
     }
 
