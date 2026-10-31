@@ -1919,6 +1919,19 @@ impl Backend {
     }
 
     #[cfg(test)]
+    pub(super) fn set_interactive_debounce_open_for_test(&self, open: bool) {
+        self.interactive_debounce_window_open
+            .store(open, Ordering::Release);
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_pending_attempt_for_test(&self, id: Option<u64>) {
+        if let Ok(mut health) = self.analysis_health.lock() {
+            health.pending_attempt_id = id;
+        }
+    }
+
+    #[cfg(test)]
     pub(super) fn set_snapshot_run_status_for_test(&self, run_status: &str) {
         if let Ok(mut health) = self.analysis_health.lock() {
             health.snapshot_run_status = Some(run_status.to_string());
@@ -9817,7 +9830,18 @@ impl Backend {
     fn collect_repair_packet(&self, gap_id: Option<&str>) -> Option<LSPAny> {
         let health = self.analysis_health_snapshot();
         if !health.allows_current_repairs() {
-            return Some(repair_packet_sentinel("analysis_snapshot_stale"));
+            // The reason stays `analysis_snapshot_stale` and the packet stays
+            // withheld; the added fields only tell a client whether to retry
+            // or recover (#4427).
+            let (refresh_state, recovery) = health.repair_block_guidance(
+                self.interactive_debounce_window_open
+                    .load(Ordering::Acquire),
+            );
+            let mut sentinel = repair_packet_sentinel("analysis_snapshot_stale");
+            sentinel["refresh_state"] = serde_json::json!(refresh_state);
+            sentinel["attempt_state"] = serde_json::json!(health.state.as_str());
+            sentinel["recovery"] = serde_json::json!(recovery);
+            return Some(sentinel);
         }
         let authority = self.workspace_root_authority();
         if !authority.allows_analysis() {
