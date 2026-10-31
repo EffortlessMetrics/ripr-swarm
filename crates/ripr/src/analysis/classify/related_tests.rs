@@ -1485,7 +1485,17 @@ fn find_related_tests_with_candidates<'a>(
             // of the root) shares its package; a workspace member's
             // test, and any path that cannot be scoped, fails closed.
             None => {
-                package_prefix(&test.file).is_none()
+                // `package_prefix` reads a later `/tests/` or `/src/` segment
+                // as a package marker, so a root test at `src/tests/mod.rs`
+                // would look like package `src/`. Root-relative target
+                // directories are the root package by construction.
+                let root_target_path = {
+                    let normalized = normalize_path(&test.file);
+                    ["src/", "tests/", "benches/", "examples/"]
+                        .iter()
+                        .any(|dir| normalized.starts_with(dir))
+                };
+                (root_target_path || package_prefix(&test.file).is_none())
                     && !path_is_absolute_form(&test.file)
                     && owner_fn.is_some_and(|owner| !path_is_absolute_form(&owner.file))
             }

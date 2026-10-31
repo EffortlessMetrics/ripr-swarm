@@ -267,3 +267,53 @@ fn a_same_named_type_with_the_same_display_in_another_package_fails_closed() -> 
     );
     Ok(())
 }
+
+#[test]
+fn a_single_crate_root_relates_tests_under_nested_tests_directories() -> Result<(), String> {
+    // `src/tests/mod.rs` and `src/foo/tests/mod.rs` are the root package's own
+    // files even though their paths contain a `tests/` segment.
+    let pin = |name: &str| {
+        format!(
+            "use crate::Merge;\n\n#[test]\nfn {name}() {{\n    let merge: Merge = Merge::new(vec![\"a\\nb\".to_string()]);\n    assert_eq!(merge.to_string(), \"a b\\n\");\n}}\n"
+        )
+    };
+    let files = [
+        ("Cargo.toml", manifest("merged", None, &[])),
+        (
+            "src/lib.rs",
+            merge_lib("\nmod foo;\n\n#[cfg(test)]\nmod tests;\n"),
+        ),
+        ("src/foo/mod.rs", "#[cfg(test)]\nmod tests;\n".to_string()),
+        ("src/tests/mod.rs", pin("nested_pin")),
+        ("src/foo/tests/mod.rs", pin("deep_pin")),
+    ];
+    assert_eq!(
+        helper_related(&files, "src/lib.rs")?,
+        ["deep_pin", "nested_pin"]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_member_prefix_is_a_directory_not_a_name_prefix() -> Result<(), String> {
+    // `app-extra/` starts with the text `app` but is another package.
+    let app_manifest = "[package]\nname = \"app\"\nversion = \"0.0.0\"\nedition = \"2024\"\n";
+    let extra_manifest = "[package]\nname = \"app-extra\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\napp = { path = \"../app\" }\n";
+    let files = [
+        (
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"app\", \"app-extra\"]\n".to_string(),
+        ),
+        ("app/Cargo.toml", app_manifest.to_string()),
+        ("app/src/lib.rs", merge_lib("")),
+        ("app/tests/pin.rs", pin_test("app", "app_pin")),
+        ("app-extra/Cargo.toml", extra_manifest.to_string()),
+        (
+            "app-extra/src/lib.rs",
+            "pub fn unrelated() {}\n".to_string(),
+        ),
+        ("app-extra/tests/pin.rs", pin_test("app", "app_extra_pin")),
+    ];
+    assert_eq!(helper_related(&files, "app/src/lib.rs")?, ["app_pin"]);
+    Ok(())
+}
