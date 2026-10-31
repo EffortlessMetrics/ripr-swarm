@@ -1239,7 +1239,11 @@ mod tests {
     fn generated_config_is_unchanged_without_markers() -> Result<(), String> {
         let root = temp_root("no-markers")?;
         let body = generated_init_config_for_root(&root);
-        assert!(body.contains("\nenabled = [\"rust\"]\n"), "{body}");
+        assert_eq!(
+            body.matches("\nenabled = [\"rust\"]\n").count(),
+            1,
+            "the language-list replacement anchors on exactly one line: {body}"
+        );
         let parsed = crate::config::parse_config_diagnostic(&body)
             .map_err(|err| format!("generated config must parse: {err:?}"))?;
         assert_eq!(parsed.languages().enabled(), [LanguageId::Rust]);
