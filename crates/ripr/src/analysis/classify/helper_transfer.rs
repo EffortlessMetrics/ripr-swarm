@@ -2632,7 +2632,8 @@ fn hops_carry_owner_string_data(owner_name: &str, hops: &[HelperHop], index: &Ru
     };
     !hops.is_empty()
         && std_data_return(owner)
-        && !owner_builds_with_macro()
+        && (!owner_builds_with_macro()
+            || super::propagation_witness::concat_literal_tail(owner, index).is_some())
         && hops.iter().enumerate().all(|(step, hop)| {
             let callee = match step.checked_sub(1) {
                 None => *owner,

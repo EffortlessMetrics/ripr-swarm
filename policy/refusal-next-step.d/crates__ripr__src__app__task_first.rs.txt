@@ -1,0 +1,2 @@
+crates/ripr/src/app/task_first.rs|repair start refused: the seam inventory is truncated ({} of {} seams); {WIDEN_SEAM_BUDGET}
+crates/ripr/src/app/task_first.rs|repair-start decision bound no subject

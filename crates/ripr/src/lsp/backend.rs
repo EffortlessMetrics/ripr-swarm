@@ -20,7 +20,9 @@ use super::diagnostics::{
     delivered_diagnostics_for_uri, delivery_omission_diagnostic, diagnostic_refresh_plan,
     take_all_uris, withdrawn_quarantine_diagnostics,
 };
-use super::hover::NoEvidenceState;
+use super::hover::{
+    NoEvidenceState, UnanalyzedFileCause, classify_unanalyzed_file, unanalyzed_file_hover_route,
+};
 use super::hover::{
     classified_seam_hover_response, diagnostic_at_position, diagnostic_covers_position,
     diagnostic_hover_response, finding_hover_response, hover_response_without_evidence,
@@ -39,10 +41,10 @@ use super::refresh_scheduler::{
 };
 use super::state::{
     AnalysisAttemptState, AnalysisFailure, AnalysisFailureKind, AnalysisHealth, AnalysisSnapshot,
-    ConfigPullState, DocumentStalenessReason, DocumentState, DocumentStore, QuarantineTransition,
-    WorkspaceFolderEntry, WorkspaceFolderEventRejection, WorkspaceFolderSelection,
-    WorkspaceFolderSet, WorkspaceRootAuthority, WorkspaceRootState, content_digest,
-    format_duration,
+    ConfigPullCoordinator, ConfigPullState, DocumentStalenessReason, DocumentState, DocumentStore,
+    QuarantineTransition, WorkspaceFolderEntry, WorkspaceFolderEventRejection,
+    WorkspaceFolderSelection, WorkspaceFolderSet, WorkspaceRootAuthority, WorkspaceRootState,
+    content_digest, format_duration,
 };
 use super::uri::{
     CappedArtifactRead, absolute_join, display_path, file_uri_for_path, file_uri_is_within_root,
@@ -181,21 +183,8 @@ pub(super) struct Backend {
     /// the client advertised. The negotiated session fields below are
     /// populated from it; the bounded status projection is rendered from it.
     client_features: Mutex<ClientFeatureProfile>,
-    /// Epoch guarding pull responses: `workspace/didChangeConfiguration` in
-    /// pull mode bumps it, and a response arriving for an older epoch is
-    /// dropped. Mirrors `workspace_root_epoch`.
-    config_pull_epoch: AtomicU64,
-    config_pull_state: Mutex<ConfigPullState>,
-    /// Coalesces pull scheduling to one in-flight request plus at most one
-    /// queued re-pull for the latest epoch.
-    config_pull_coordinator: Mutex<ConfigPullCoordinator>,
-    /// The root the currently retained pulled layer was scoped to. Pulled
-    /// settings are valid only for that root; any transition landing on a
-    /// different analysis-capable root must re-pull. Compared rather than
-    /// derived from transition deltas so a direct A -> B switch (which
-    /// rewrites to a non-analyzable `RootChanged` state and is re-selected
-    /// later with `root_changed == false`) is still caught.
-    config_pull_scope_root: Mutex<Option<PathBuf>>,
+    /// Config-pull epoch, lifecycle state, coalescing and scope root (#2942).
+    config_pull: ConfigPullCoordinator,
     last_diagnostic_uris: Mutex<BTreeSet<Uri>>,
     /// URIs whose latest push publication is the analysis-pending marker
     /// rather than committed diagnostics (#8732): the first snapshot commit
@@ -320,12 +309,6 @@ struct DiagnosticsInputWatch {
     registered: bool,
 }
 
-#[derive(Default)]
-struct ConfigPullCoordinator {
-    in_flight: bool,
-    queued: bool,
-}
-
 pub(super) struct RefreshTransaction {
     pub(super) plan: DiagnosticRefreshPlan,
     pub(super) snapshot: AnalysisSnapshot,
@@ -376,10 +359,7 @@ impl Backend {
             configuration_failure: Mutex::new(None),
             configuration_mode: Mutex::new(ConfigurationMode::InitializationOnly),
             client_features: Mutex::new(ClientFeatureProfile::unsupported()),
-            config_pull_epoch: AtomicU64::new(0),
-            config_pull_state: Mutex::new(ConfigPullState::NotApplicable),
-            config_pull_coordinator: Mutex::new(ConfigPullCoordinator::default()),
-            config_pull_scope_root: Mutex::new(None),
+            config_pull: ConfigPullCoordinator::default(),
             last_diagnostic_uris: Mutex::new(BTreeSet::new()),
             pending_push_marker_uris: Mutex::new(BTreeMap::new()),
             last_diagnostics: Mutex::new(BTreeMap::new()),
@@ -1932,6 +1912,18 @@ impl Backend {
     }
 
     #[cfg(test)]
+    pub(super) fn analysis_attempt_state_for_test(&self) -> AnalysisAttemptState {
+        self.analysis_health_snapshot().state
+    }
+
+    #[cfg(test)]
+    pub(super) fn clear_latest_analysis_for_test(&self) {
+        if let Ok(mut latest) = self.latest_analysis.lock() {
+            *latest = None;
+        }
+    }
+
+    #[cfg(test)]
     pub(super) fn set_analysis_attempt_state_for_test(&self, state: AnalysisAttemptState) {
         if let Ok(mut health) = self.analysis_health.lock() {
             health.attempt_id = Some(2);
@@ -2639,7 +2631,7 @@ impl Backend {
                 // interleave a state change into a torn payload (e.g. a
                 // failure from a newer state beside an older state string).
                 "state": pull_state.as_str(),
-                "epoch": self.config_pull_epoch.load(Ordering::Relaxed),
+                "epoch": self.config_pull.epoch(),
                 "failure": pull_state.failure().map(|failure| serde_json::json!({
                     "kind": failure.kind.as_str(),
                     "message": failure.message,
@@ -2778,47 +2770,8 @@ impl Backend {
     }
 
     async fn apply_workspace_root_resolution(&self, resolution: WorkspaceRootResolution) {
-        self.apply_workspace_root_authority(Self::workspace_root_authority_for_resolution(
-            resolution,
-        ))
-        .await;
-    }
-
-    fn workspace_root_authority_for_resolution(
-        resolution: WorkspaceRootResolution,
-    ) -> WorkspaceRootAuthority {
-        match resolution {
-            WorkspaceRootResolution::Selected(root) => {
-                if !root.is_absolute() {
-                    WorkspaceRootAuthority::unavailable(format!(
-                        "workspace root is not absolute: {}",
-                        root.display()
-                    ))
-                } else if !root.is_dir() {
-                    WorkspaceRootAuthority::unavailable(format!(
-                        "workspace root is inaccessible or not a directory: {}",
-                        root.display()
-                    ))
-                } else {
-                    WorkspaceRootAuthority::selected(root)
-                }
-            }
-            WorkspaceRootResolution::Ambiguous(candidates) => {
-                if candidates
-                    .iter()
-                    .any(|root| !root.is_absolute() || !root.is_dir())
-                {
-                    WorkspaceRootAuthority::unavailable(
-                        "one or more workspace folders are inaccessible or not directories",
-                    )
-                } else {
-                    WorkspaceRootAuthority::ambiguous(candidates)
-                }
-            }
-            WorkspaceRootResolution::Unavailable(detail) => {
-                WorkspaceRootAuthority::unavailable(detail)
-            }
-        }
+        self.apply_workspace_root_authority(WorkspaceRootAuthority::from_resolution(resolution))
+            .await;
     }
 
     async fn apply_workspace_root_authority(&self, authority: WorkspaceRootAuthority) {
@@ -2919,7 +2872,7 @@ impl Backend {
             && root_changed
             && self.configuration_mode() == ConfigurationMode::Pull
         {
-            self.config_pull_epoch.fetch_add(1, Ordering::SeqCst);
+            self.config_pull.bump_epoch();
         }
         if changed {
             self.refresh_scheduler.invalidate_input();
@@ -2975,11 +2928,7 @@ impl Backend {
         // schedules after the transition guard is released.
         let pull_scope_stale = {
             let restartable = {
-                let in_flight = self
-                    .config_pull_coordinator
-                    .lock()
-                    .map(|coordinator| coordinator.in_flight)
-                    .unwrap_or(false);
+                let in_flight = self.config_pull.in_flight();
                 in_flight
                     || matches!(
                         self.config_pull_state(),
@@ -2987,12 +2936,7 @@ impl Backend {
                     )
             };
             restartable
-                && self
-                    .config_pull_scope_root
-                    .lock()
-                    .ok()
-                    .and_then(|scope_root| scope_root.clone())
-                    != self.workspace_root_authority().effective_root
+                && self.config_pull.scope_root() != self.workspace_root_authority().effective_root
         };
         let schedule_deferred_pull = self.configuration_mode() == ConfigurationMode::Pull
             && (matches!(self.config_pull_state(), ConfigPullState::Deferred) || pull_scope_stale)
@@ -3313,16 +3257,11 @@ impl Backend {
     }
 
     fn config_pull_state(&self) -> ConfigPullState {
-        self.config_pull_state
-            .lock()
-            .map(|state| state.clone())
-            .unwrap_or(ConfigPullState::NotApplicable)
+        self.config_pull.state()
     }
 
     fn set_config_pull_state(&self, state: ConfigPullState) {
-        if let Ok(mut current) = self.config_pull_state.lock() {
-            *current = state;
-        }
+        self.config_pull.set_state(state);
     }
 
     /// Schedule one coalesced `workspace/configuration` pull (#2031). At most
@@ -3331,34 +3270,15 @@ impl Backend {
     /// The pull is a pure LSP round-trip: it never launches analysis, git,
     /// network beyond the LSP connection, or edits.
     async fn schedule_configuration_pull(&self) {
-        {
-            let Ok(mut coordinator) = self.config_pull_coordinator.lock() else {
-                return;
-            };
-            if coordinator.in_flight {
-                coordinator.queued = true;
-                return;
-            }
-            coordinator.in_flight = true;
+        if !self.config_pull.begin_or_queue() {
+            return;
         }
         loop {
-            let epoch = self.config_pull_epoch.load(Ordering::SeqCst);
+            let epoch = self.config_pull.epoch();
             self.set_config_pull_state(ConfigPullState::Pending);
             self.publish_analysis_status().await;
             self.pull_and_apply_configuration(epoch).await;
-            let queued = {
-                let Ok(mut coordinator) = self.config_pull_coordinator.lock() else {
-                    return;
-                };
-                if coordinator.queued {
-                    coordinator.queued = false;
-                    true
-                } else {
-                    coordinator.in_flight = false;
-                    false
-                }
-            };
-            if !queued {
+            if !self.config_pull.finish_cycle() {
                 return;
             }
         }
@@ -3393,7 +3313,7 @@ impl Backend {
             .await;
         // Epoch guard: a response for an older epoch is dropped; the queued
         // re-pull for the current epoch owns the disclosed state.
-        if self.config_pull_epoch.load(Ordering::SeqCst) != epoch {
+        if self.config_pull.epoch() != epoch {
             return;
         }
         match result {
@@ -3403,9 +3323,7 @@ impl Backend {
                     // The retained layer is scoped to the root it was pulled
                     // for; root transitions compare against this to decide
                     // whether a re-pull is needed.
-                    if let Ok(mut scope_root) = self.config_pull_scope_root.lock() {
-                        *scope_root = Some(root);
-                    }
+                    self.config_pull.set_scope_root(root);
                 }
                 Err(message) => {
                     self.set_config_pull_state(ConfigPullState::Failed(AnalysisFailure {
@@ -3469,7 +3387,7 @@ impl Backend {
     /// are dropped) and schedule one coalesced re-pull. The retained pulled
     /// layer stays in effect as last-known-good until the re-pull resolves.
     async fn handle_pull_mode_configuration_change(&self) {
-        self.config_pull_epoch.fetch_add(1, Ordering::SeqCst);
+        self.config_pull.bump_epoch();
         self.schedule_configuration_pull().await;
     }
 
@@ -3707,7 +3625,7 @@ impl Backend {
                     "ripr could not apply one incremental edit and stopped trusting the retained text; saving cannot fix this. Undo the edit or revert the file so ripr receives the full document again."
                 }
                 DocumentStalenessReason::NoAnalyzedSavedContent => {
-                    "ripr has not analyzed this file's saved content yet; its evidence appears after the next refresh (`ripr.refresh`) completes. A new file must be saved first."
+                    unanalyzed_file_hover_route(self.unanalyzed_file_cause(uri))
                 }
             };
             return markdown_hover(format!(
@@ -3722,6 +3640,25 @@ impl Backend {
         hover_response_without_evidence(
             self.no_evidence_state(),
             &self.configured_language_labels(),
+        )
+    }
+
+    /// The observed cause behind a `no_analyzed_saved_content` quarantine
+    /// (#11452), read from the file, the committed snapshot and the latest
+    /// attempt state.
+    fn unanalyzed_file_cause(&self, uri: &Uri) -> UnanalyzedFileCause {
+        let file_on_disk = self
+            .document_path_for_uri(uri)
+            .is_some_and(|path| path.is_file());
+        let snapshot_committed = self
+            .latest_analysis
+            .lock()
+            .ok()
+            .is_some_and(|value| value.is_some());
+        classify_unanalyzed_file(
+            file_on_disk,
+            self.analysis_health_snapshot().state,
+            snapshot_committed,
         )
     }
 
@@ -6538,7 +6475,7 @@ impl LanguageServer for Backend {
         }
         let authority = match derived.0 {
             None => WorkspaceRootAuthority::removed(self.effective_root()),
-            Some(resolution) => Self::workspace_root_authority_for_resolution(resolution),
+            Some(resolution) => WorkspaceRootAuthority::from_resolution(resolution),
         };
         let previous = self.workspace_root_authority();
         self.apply_workspace_folder_set_authority(authority, folder_set_epoch)
@@ -8575,9 +8512,11 @@ fn quarantine_withdrawal_log_message(path: &Path, reason: DocumentStalenessReaso
         DocumentStalenessReason::InvalidIncrementalChange => {
             "revert the file or close and reopen it so ripr receives the full document again"
         }
-        DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent
-        | DocumentStalenessReason::NoAnalyzedSavedContent => {
+        DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent => {
             "save the file to analyze the new saved state"
+        }
+        DocumentStalenessReason::NoAnalyzedSavedContent => {
+            "save the file if it is new, then refresh (`ripr.refresh`)"
         }
     };
     format!(
@@ -8960,7 +8899,10 @@ fn workspace_status_top_actionable_packet(snapshot: &AnalysisSnapshot) -> serde_
         .first()
         .map(String::as_str)
         .unwrap_or("");
-    let repair_kind = artifact.gap_state.as_deref().unwrap_or("actionable");
+    let repair_kind = artifact
+        .gap_state
+        .as_deref()
+        .unwrap_or(crate::domain::EvidenceState::Actionable.as_str());
     serde_json::json!({
         "canonical_gap_id": canonical_gap_id,
         "file": file,
@@ -10287,19 +10229,20 @@ fn receipt_status_from_ledger(
 
     // missing_receipt_reason: only meaningful when the gap is actionable
     // but has no receipt. Otherwise not_available.
-    let missing_receipt_reason_val = if record.gap_state == "actionable"
-        && record
-            .receipt
-            .as_ref()
-            .and_then(|r| r.movement.as_deref())
-            .is_none()
-        && record.receipt_command.is_some()
-    {
-        // Receipt command exists but no movement yet — emit honest "no_attempt_recorded".
-        serde_json::Value::String("no_attempt_recorded".to_string())
-    } else {
-        serde_json::Value::String(not_available)
-    };
+    let missing_receipt_reason_val =
+        if crate::domain::EvidenceState::is_actionable_word(&record.gap_state)
+            && record
+                .receipt
+                .as_ref()
+                .and_then(|r| r.movement.as_deref())
+                .is_none()
+            && record.receipt_command.is_some()
+        {
+            // Receipt command exists but no movement yet — emit honest "no_attempt_recorded".
+            serde_json::Value::String("no_attempt_recorded".to_string())
+        } else {
+            serde_json::Value::String(not_available)
+        };
 
     (movement_val, missing_receipt_reason_val)
 }
@@ -10469,7 +10412,7 @@ fn collect_repair_packet_from_actionable_gaps(
             .find(|p| {
                 p.get("gap_state")
                     .and_then(|v| v.as_str())
-                    .is_some_and(|s| s == "actionable")
+                    .is_some_and(crate::domain::EvidenceState::is_actionable_word)
             })
             .or_else(|| packets.first())?
     };
@@ -10486,11 +10429,10 @@ fn collect_repair_packet_from_actionable_gaps(
     }
 
     // Require the packet to be actionable to emit a complete repair packet.
-    if packet
+    if !packet
         .get("gap_state")
         .and_then(|v| v.as_str())
-        .unwrap_or("")
-        != "actionable"
+        .is_some_and(crate::domain::EvidenceState::is_actionable_word)
     {
         return Some(repair_packet_sentinel(
             "gap is not actionable in actionable-gaps.json",
@@ -10657,7 +10599,9 @@ fn collect_repair_packet_from_ledger(
             .iter()
             .find(|r| r.gap_id == id || r.canonical_gap_id == id)?
     } else {
-        records.iter().find(|r| r.gap_state == "actionable")?
+        records
+            .iter()
+            .find(|r| crate::domain::EvidenceState::is_actionable_word(&r.gap_state))?
     };
     if let Some(sentinel) = ledger_source_subject_sentinel(root, repo_config, &contents) {
         return Some(sentinel);
@@ -14358,14 +14302,16 @@ fn disk_bytes_equal_text(path: &Path, text: &str) -> bool {
 #[cfg(test)]
 mod disk_bytes_equal_text_tests {
     use super::disk_bytes_equal_text;
-    use std::path::Path;
 
     #[test]
     fn device_and_directory_paths_never_equal_empty_text() {
         // `/dev/zero` stats as length 0, so an empty buffer passes the length
         // check; the unbounded read that followed grew RSS past 5 GB.
         #[cfg(target_os = "linux")]
-        assert!(!disk_bytes_equal_text(Path::new("/dev/zero"), ""));
+        assert!(!disk_bytes_equal_text(
+            std::path::Path::new("/dev/zero"),
+            ""
+        ));
         assert!(!disk_bytes_equal_text(&std::env::temp_dir(), ""));
     }
 
