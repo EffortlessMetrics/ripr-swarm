@@ -2005,6 +2005,10 @@ impl SharedWorkflowArtifacts {
                         })?
                         .permissions();
                     if permissions.readonly() {
+                        #[expect(
+                            clippy::permissions_set_readonly_false,
+                            reason = "Windows-only backup cleanup clears FILE_ATTRIBUTE_READONLY, not Unix write permission bits."
+                        )]
                         permissions.set_readonly(false);
                         std::fs::set_permissions(backup, permissions).map_err(|error| {
                             format!("make backup {} removable failed: {error}", backup.display())
@@ -5806,22 +5810,34 @@ mod repair_summary_tests {
         std::fs::create_dir_all(path.parent().ok_or("missing parent")?)
             .map_err(|error| error.to_string())?;
         std::fs::write(&path, b"prior").map_err(|error| error.to_string())?;
-        let mut permissions = std::fs::metadata(&path)
+        let original_permissions = std::fs::metadata(&path)
             .map_err(|error| error.to_string())?
             .permissions();
+        let mut permissions = original_permissions.clone();
         permissions.set_readonly(true);
         std::fs::set_permissions(&path, permissions).map_err(|error| error.to_string())?;
         let tracked = SharedWorkflowArtifacts::track(&root, true)?;
-        tracked.resolve(true, false, false)?;
         let backup = path.with_extension("json.ripr-preattempt-backup");
+        if !std::fs::metadata(&backup)
+            .map_err(|error| error.to_string())?
+            .permissions()
+            .readonly()
+        {
+            return Err("readonly backup premise was not established".to_string());
+        }
+        tracked.resolve(true, false, false)?;
         if backup.exists() {
             return Err("readonly backup remained".to_string());
         }
-        let mut permissions = std::fs::metadata(&path)
-            .map_err(|error| error.to_string())?
-            .permissions();
-        permissions.set_readonly(false);
-        std::fs::set_permissions(&path, permissions).map_err(|error| error.to_string())?;
+        if std::fs::read(&path).map_err(|error| error.to_string())? != b"prior"
+            || !std::fs::metadata(&path)
+                .map_err(|error| error.to_string())?
+                .permissions()
+                .readonly()
+        {
+            return Err("unchanged readonly projection was modified".to_string());
+        }
+        std::fs::set_permissions(&path, original_permissions).map_err(|error| error.to_string())?;
         std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
         Ok(())
     }
