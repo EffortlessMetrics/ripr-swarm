@@ -294,6 +294,72 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
     finding
 }
 
+/// Evidence line that marks a finding whose classification stopped on an
+/// internal error (#11116). Present only on [`classification_incomplete_finding`].
+pub(in crate::analysis) const CLASSIFICATION_INCOMPLETE_EVIDENCE: &str = "classification_incomplete: classification of this probe stopped on an internal error; no exposure claim is made";
+
+/// The fail-closed stand-in for a probe whose classification panicked
+/// (#11116). One probe's internal failure must not abort the run or read as a
+/// result: the probe keeps its identity and location but is `static_unknown`
+/// with every stage unknown, no related tests, no discriminator and no
+/// canonical gap, so it can never be `exposed` or an actionable repair signal.
+/// The panic payload is not echoed: it can quote repository text and the
+/// installed panic hook has already reported it.
+pub(in crate::analysis) fn classification_incomplete_finding(probe: &Probe) -> Finding {
+    let stage = StageEvidence::new(
+        StageState::Unknown,
+        Confidence::Low,
+        "Not established: classification of this probe stopped on an internal error",
+    );
+    Finding {
+        analysis_scope: AnalysisScope::Diff,
+        confidence_basis: Vec::new(),
+        id: probe.id.0.clone(),
+        canonical_gap: None,
+        probe: probe.clone(),
+        class: ExposureClass::StaticUnknown,
+        ripr: RiprEvidence {
+            reach: stage.clone(),
+            infect: stage.clone(),
+            propagate: stage.clone(),
+            reveal: RevealEvidence {
+                observe: stage.clone(),
+                discriminate: stage,
+            },
+        },
+        confidence: 0.0,
+        evidence: vec![
+            CLASSIFICATION_INCOMPLETE_EVIDENCE.to_string(),
+            format!("{LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX}the changed probe"),
+            format!("{LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX}classification of this probe"),
+            format!("{LIMITATION_ANALYZER_ROUTE_PREFIX}analysis/classifier"),
+            format!(
+                "{LIMITATION_NON_CLAIM_PREFIX}no test gap and no exposure are established for this probe"
+            ),
+        ],
+        missing: vec![
+            "classification abstains: ripr stopped on an internal error while classifying this probe".to_string(),
+        ],
+        flow_sinks: Vec::new(),
+        activation: ActivationEvidence::default(),
+        stop_reasons: vec![StopReason::StaticProbeUnknown],
+        related_tests_matched_total: None,
+        related_tests: Vec::new(),
+        recommended_next_step: Some(
+            "ripr could not classify this change because of an internal error, so it makes no claim about whether a test would notice it. Inspect the related tests by hand and report the failure at https://github.com/EffortlessMetrics/ripr-swarm/issues.".to_string(),
+        ),
+        language: None,
+        language_status: None,
+        owner_kind: None,
+        static_limit_kind: None,
+        changed_sink: None,
+        observed_sink: None,
+        oracle_alignment: None,
+        alignment_reason: None,
+        source_currentness: SourceCurrentness::UnresolvedSubject,
+    }
+}
+
 /// Proc-macro code is exercised through `#[derive]`/attribute expansion in
 /// another crate, so a name scan finding no test call proves nothing about
 /// reach. `no_static_path` there is an unsupported claim (serde_derive,

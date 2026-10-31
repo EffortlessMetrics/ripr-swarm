@@ -5,6 +5,7 @@ use super::render_helpers::{
 use super::why_line;
 use crate::agent::loop_commands::shell_path;
 use crate::analysis::ClassifiedSeam;
+use crate::domain::LanguageId;
 use crate::output::agent_seam_packets::{
     suggested_assertion_for_classified_seam, targeted_test_brief_outline_for_classified_seam,
 };
@@ -20,6 +21,7 @@ use crate::output::pilot::ranking::{
     actionable_in_change, actionable_in_owner, actionable_total, top_actionable_seams,
     withheld_static_limitations,
 };
+use crate::output::pilot::types::PilotPythonFirstUseStatus;
 use crate::output::pilot::{
     ChangeSeams, PILOT_SUMMARY_SCHEMA_VERSION, PilotCurrentChange, PilotLanguageRoute,
     PilotLanguageRoutes, PilotPythonFirstUse, PilotSummaryContext, RUST_EXCLUDED_GUIDANCE,
@@ -820,8 +822,9 @@ fn render_pilot_terminal_with_target(
         push_rust_exclusion_terminal(&mut out, excluded);
     }
     let routes = required_routes(context);
-    if let Some(routes) = routes {
-        push_language_routes_terminal(&mut out, routes);
+    let unscanned = unanalyzed_routes(context);
+    if !unscanned.is_empty() {
+        push_language_routes_terminal(&mut out, &unscanned);
     }
 
     out.push_str("Full report (Markdown):\n");
@@ -1437,6 +1440,24 @@ fn required_routes<'a>(context: PilotSummaryContext<'a>) -> Option<&'a [PilotLan
     context
         .language_routes
         .and_then(PilotLanguageRoutes::required)
+}
+
+/// Required routes minus languages pilot actually analyzed: a Python run that
+/// produced findings already prints its own "Python preview" block, so
+/// listing Python under "Not scanned" would contradict it.
+fn unanalyzed_routes(context: PilotSummaryContext<'_>) -> Vec<PilotLanguageRoute> {
+    let python_analyzed = context.python_first_use.is_some_and(|first_use| {
+        matches!(
+            first_use.status,
+            PilotPythonFirstUseStatus::Ready | PilotPythonFirstUseStatus::NoRepairCards
+        )
+    });
+    required_routes(context)
+        .unwrap_or_default()
+        .iter()
+        .filter(|route| !(python_analyzed && route.language == LanguageId::Python))
+        .cloned()
+        .collect()
 }
 
 /// Enabled supported-language check route the top recommendation should name

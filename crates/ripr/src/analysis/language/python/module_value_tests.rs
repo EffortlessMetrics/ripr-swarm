@@ -1028,6 +1028,45 @@ fn subtracting_the_excluded_file_matches_rebuilding_every_write_set() {
 }
 
 #[test]
+fn excluding_views_share_the_word_counts_and_keep_the_sorted_wire_form() -> Check {
+    // #10914: each changed file's view reads the workspace's shared per-word
+    // counts and hides only the words its own file alone holds, so a view
+    // is not a copy of every workspace word. It still serializes as the
+    // sorted word list, and reads back to an equal view.
+    let sources = [
+        (Path::new("c.py"), "LIMIT = 10\n"),
+        (
+            Path::new("a.py"),
+            "import c\nc.LIMIT = 1\nc.__defaults__ = ()\nc.__x__ = 0\nc._ = 1\n",
+        ),
+        (Path::new("b.py"), "import c\nc.LIMIT = 2\nc.RATE = 3\n"),
+    ];
+    let index = super::module_value::ForeignIndex::build(sources.iter().copied(), false);
+    let module = Path::new("c.py");
+    let without_a = index.excluding(Path::new("a.py"));
+    let without_b = index.excluding(Path::new("b.py"));
+    assert!(without_a.shares_word_counts(&without_b));
+    assert!(without_a.shares_word_counts(&without_a.clone()));
+    assert!(without_a.may_rebind("LIMIT", module) && without_a.may_rebind("RATE", module));
+    assert!(!without_a.may_rebind("_", module));
+    assert!(!without_a.writes_dunder() && !without_a.may_replace_reader_code());
+    assert!(without_b.writes_dunder() && without_b.may_replace_reader_code());
+    assert!(without_b.may_rebind("_", module) && !without_b.may_rebind("RATE", module));
+
+    let wire = serde_json::to_value(&without_b).map_err(|error| error.to_string())?;
+    assert_eq!(
+        wire["attributes"],
+        serde_json::json!(["LIMIT", "_", "__defaults__", "__x__"]),
+        "{wire}"
+    );
+    let read: super::module_value::ForeignWrites =
+        serde_json::from_value(wire).map_err(|error| error.to_string())?;
+    assert_eq!(read, without_b);
+    assert!(read.writes_dunder() && !read.may_rebind("RATE", module));
+    Ok(())
+}
+
+#[test]
 fn the_source_fact_parse_gives_the_foreign_index_the_same_attribute_writes() -> Check {
     // #10914: the workspace pass hands the index each file's assigned
     // attributes from its source-fact parse instead of parsing again. A test
