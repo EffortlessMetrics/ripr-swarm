@@ -131,12 +131,6 @@ fn unmodeled_shapes_read_infection_unknown_and_never_a_packet() -> Result<(), St
             "  return n ?? 20;",
             "fallback_literal",
         ),
-        (
-            "comment",
-            "  return n;",
-            "  return n; // fallback",
-            "comment_only",
-        ),
         ("noop", "  return n;", "  return n + 0;", "arithmetic_noop"),
     ] {
         let finding = shape_change(label, old, new)?;
@@ -220,7 +214,8 @@ fn a_dropped_semicolon_before_a_comment_is_never_a_neutral_comment_edit() -> Res
         "{:?}",
         finding.evidence
     );
-    // Control: the same edit with the semicolon kept is a comment-only edit.
+    // Control: the same edit with the semicolon kept is a comment-only edit,
+    // which emits no probe at all (#10706).
     let kept = finding_for(
         "infect-comment-kept",
         "export function price(n: number): number {\n  const f = (x: number) => x + n;\n  return f; // note\n}\n",
@@ -228,7 +223,30 @@ fn a_dropped_semicolon_before_a_comment_is_never_a_neutral_comment_edit() -> Res
         "  return f;",
         "  return f; // note",
         &weak_test("price(2)"),
-    )?;
-    assert_eq!(kept.class, ExposureClass::InfectionUnknown);
+    );
+    assert!(kept.is_err(), "{kept:?}");
     Ok(())
+}
+
+#[test]
+fn a_trailing_comment_or_whitespace_edit_emits_no_probe_but_a_changed_token_keeps_it() {
+    let source = "export function price(n: number): number {\n  return n;\n}\n";
+    let test = weak_test("price(2)");
+    for (label, new) in [
+        ("noop-comment", "  return n; // fallback"),
+        ("noop-comment-edit", "  return n; // other"),
+        ("noop-space", "  return n;   "),
+    ] {
+        let found = finding_for(label, source, 2, "  return n;", new, &test);
+        assert!(found.is_err(), "{label}: {found:?}");
+    }
+    // Controls through the same production path: a changed token (with or
+    // without a comment) still reads as an edit.
+    for (label, new) in [
+        ("edit-token", "  return n + 1;"),
+        ("edit-token-comment", "  return n + 1; // fallback"),
+    ] {
+        let found = finding_for(label, source, 2, "  return n;", new, &test);
+        assert!(found.is_ok(), "{label}: {found:?}");
+    }
 }

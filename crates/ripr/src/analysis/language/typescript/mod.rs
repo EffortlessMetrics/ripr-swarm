@@ -84,6 +84,9 @@ mod error_payload_guard;
 mod extraction_cache;
 mod fact_store;
 pub(crate) use fact_store::TypeScriptFileFactStore;
+mod comment_whitespace_only;
+#[cfg(test)]
+mod comment_whitespace_only_tests;
 #[cfg(test)]
 mod fact_store_tests;
 mod field_update_guard;
@@ -1094,6 +1097,7 @@ impl TypeScriptAdapter {
             // pairing: by position in an even block, by content in an uneven
             // one, by coordinate where a removed line interrupts the run.
             let counterparts = changed.aligned_counterparts();
+            let mut multiline_lines: Option<Option<Vec<(usize, usize)>>> = None;
             for added in &changed.added_lines {
                 if !is_probe_candidate(added.line, &added.text) {
                     continue;
@@ -1140,6 +1144,35 @@ impl TypeScriptAdapter {
                 let old_line_text = counterparts
                     .get(&added.line)
                     .map(|removed| removed.text.as_str());
+                // Trailing-comment / trailing-whitespace guard (#10706): the
+                // same statement with a `//` comment or trailing space added
+                // runs identically, so there is no behavior delta and no
+                // probe; the gap id and discriminator would otherwise embed
+                // the comment text. Fails closed without a parse of the file
+                // or inside a construct that crosses a line break.
+                if let Some(old) = old_line_text
+                    && old != added.text
+                    && infection_shape::same_executable_text(old, &added.text)
+                {
+                    let multiline = multiline_lines.get_or_insert_with(|| {
+                        source_by_normalized.get(&changed_norm).and_then(|source| {
+                            comment_whitespace_only::multiline_construct_lines(
+                                &changed.path,
+                                source,
+                            )
+                        })
+                    });
+                    if multiline.as_deref().is_some_and(|ranges| {
+                        comment_whitespace_only::is_trailing_comment_or_whitespace_only_change(
+                            old,
+                            &added.text,
+                            added.line,
+                            ranges,
+                        )
+                    }) {
+                        continue;
+                    }
+                }
                 let resolved_finding = owner_plan
                     .owner_index_and_ref_for_line(added.line)
                     .and_then(|(owner_idx, owner)| {

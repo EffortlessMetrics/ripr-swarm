@@ -85,6 +85,17 @@ pub(crate) fn ts_unmodeled_infection(
     None
 }
 
+/// Whether two lines have the same executable text (a trailing `//` comment
+/// and surrounding whitespace aside; the semicolon is part of the text) and
+/// both split into code and comment reliably (#10706).
+pub(crate) fn same_executable_text(old: &str, new: &str) -> bool {
+    let (old_exec, new_exec) = (without_comment(old), without_comment(new));
+    !is_undecidable_line(old)
+        && !is_undecidable_line(new)
+        && old_exec == new_exec
+        && !new_exec.is_empty()
+}
+
 /// The line with a trailing `//` comment and a trailing `;` removed. Quotes
 /// are tracked so a `//` inside a string literal is kept.
 fn without_comment(line: &str) -> &str {

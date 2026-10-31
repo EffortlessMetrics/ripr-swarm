@@ -3674,7 +3674,12 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/infection_tests.rs::an_arm_some_test_input_enters_stays_weakly_exposed",
   "crates/ripr/src/analysis/language/typescript/tests/infection_tests.rs::unmodeled_shapes_read_infection_unknown_and_never_a_packet",
   "crates/ripr/src/analysis/language/typescript/tests/infection_tests.rs::an_unmodeled_shape_in_an_untaken_arm_reads_the_stronger_no_fact",
-  "crates/ripr/src/analysis/language/typescript/tests/infection_tests.rs::a_dropped_semicolon_before_a_comment_is_never_a_neutral_comment_edit"
+  "crates/ripr/src/analysis/language/typescript/tests/infection_tests.rs::a_dropped_semicolon_before_a_comment_is_never_a_neutral_comment_edit",
+  "crates/ripr/src/analysis/language/typescript/tests/infection_tests.rs::a_trailing_comment_or_whitespace_edit_emits_no_probe_but_a_changed_token_keeps_it",
+  "crates/ripr/src/analysis/language/typescript/comment_whitespace_only_tests.rs::a_trailing_comment_or_trailing_whitespace_edit_is_a_no_op",
+  "crates/ripr/src/analysis/language/typescript/comment_whitespace_only_tests.rs::a_changed_token_semicolon_or_indent_is_still_an_edit",
+  "crates/ripr/src/analysis/language/typescript/comment_whitespace_only_tests.rs::a_line_inside_a_multiline_construct_is_never_a_no_op",
+  "crates/ripr/src/analysis/language/typescript/comment_whitespace_only_tests.rs::multiline_constructs_are_found_from_the_whole_file"
 ]
 fixtures = [
   "fixtures/typescript_typeof_kind_gap",
@@ -3683,6 +3688,9 @@ fixtures = [
   "fixtures/benches_harness_evidence",
   "fixtures/typescript_boundary_gap",
   "fixtures/typescript_infection_shapes",
+  "fixtures/ts_noop_trailing_comment",
+  "fixtures/ts_noop_trailing_whitespace",
+  "fixtures/ts_trailing_whitespace_in_template",
   "fixtures/typescript_strong_oracle",
   "fixtures/ts_return_ternary_boundary",
   "fixtures/ts_return_comparison_boundary",
