@@ -1610,6 +1610,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         out_of_scope_test_file_findings,
         unavailable_adapter,
         language_view,
+        rust_diagnostic_origins: origins,
     };
     Ok(WorkspaceDiagnostics { snapshot, batches })
 }
@@ -1995,6 +1996,7 @@ fn git_timeout_limited_diagnostics(
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
+        rust_diagnostic_origins: Default::default(),
     };
     WorkspaceDiagnostics {
         snapshot,
@@ -2101,6 +2103,7 @@ pub(super) fn oversized_diff_limited_diagnostics(
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
+        rust_diagnostic_origins: Default::default(),
     };
     WorkspaceDiagnostics { snapshot, batches }
 }
@@ -7357,7 +7360,7 @@ mod lsp_next_step_parity_tests {
             confidence: 0.4,
             evidence: vec![
                 "owner: applyDiscount".to_string(),
-                "gap_state: advisory".to_string(),
+                "gap_state: unknown".to_string(),
                 "actionability_category: incomplete_repair_packet".to_string(),
                 "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract".to_string(),
                 "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available".to_string(),
@@ -7627,6 +7630,7 @@ mod delivery_tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         })
     }
 

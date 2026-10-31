@@ -34,8 +34,11 @@ into that Unreleased heading instead of crowding user-facing sections.
   format: the section line (the only HTML comment allowed), every entry a
   `- ` bullet at column 0 with indented continuation lines, an issue or PR
   reference in each entry, a lowercase kebab-case name that is more than
-  a number, and that verdict-corpus case-count or `Repo ops:` bookkeeping
-  uses `Internal / CI` rather than a user-facing section. Nothing checks that
+  a number, that verdict-corpus case-count, `Repo ops:`, or maintainer-tooling
+  entries (opening with a backticked `cargo xtask` command, `.github/`,
+  `policy/`, `AGENTS.md`, `CLAUDE.md` or a maintainer doc) use `Internal / CI`
+  rather than a user-facing section, and that no entry repeats another
+  fragment or Unreleased entry word for word. Nothing checks that
   a PR which needs an entry carries one; reviewers do. The fold step below is
   the repo-owned `cargo xtask fold-changelog` command.
 - Existing `CHANGELOG.md` entries stay where they are. Do not move them.

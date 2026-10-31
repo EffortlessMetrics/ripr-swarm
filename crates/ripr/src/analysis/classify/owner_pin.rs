@@ -45,11 +45,15 @@ mod call_term_fold;
 pub(super) mod closure_adaptor;
 mod expected_binding;
 mod fallible_check;
+mod fixture_receiver;
 mod helper_arguments;
 pub(super) mod result_map;
 pub(super) mod returned_closure;
+mod shared_macro_scan;
 pub(super) mod short_circuit;
 pub(in crate::analysis) use fallible_check::{FallibleCheckReceipt, fallible_check_receipt};
+use shared_macro_scan::ScanPart;
+pub(in crate::analysis) use shared_macro_scan::SharedMacroScans;
 
 use super::super::rust_index::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use super::call_identity::{CallTarget, ConstantTable, OwnerCallIdentity};
@@ -1545,8 +1549,13 @@ impl OwnerPinSyntax {
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
             module_declaration_resolved(resolved_modules, index, file, line, declaration)
         };
-        let (_, rest) = partition_macro_scan_files(index);
-        let sites = scan_macro_sites(&rest, index, self.target_roots(index), &module_resolved);
+        // #11509: the index-owned scan, shared with every other instance.
+        let sites = index.call_identity_memos.macro_site_scans.scan(
+            ScanPart::Rest,
+            index,
+            self.target_roots(index),
+            &module_resolved,
+        );
         // Resolved before the map borrow: target roots never re-enter the
         // site scan, and the mutable borrow must not outlive its purpose.
         let roots = self.target_roots(index);
@@ -1557,7 +1566,7 @@ impl OwnerPinSyntax {
         if retained.complete {
             return;
         }
-        retain_macro_sites(sites.retained, retained, roots, index);
+        retain_macro_sites(&sites.retained, retained, roots, index);
         retained.complete = true;
         #[cfg(test)]
         {
@@ -2760,6 +2769,11 @@ impl AssertionRefusal {
         }
     }
 
+    /// Whether the refusal is an enclosing `cfg` gate on the test (#9643).
+    pub(in crate::analysis) fn is_gated_item(&self) -> bool {
+        matches!(self, Self::Syntax(AssertionContextRefusal::GatedItem(_)))
+    }
+
     /// One reader-facing clause: what blocked crediting the assertion.
     pub(in crate::analysis) fn describe(&self) -> String {
         let at = |path: &Path, line: usize| {
@@ -3195,9 +3209,9 @@ fn trusted_macro_sites_in(
     // every test, no later file (scoped sites included) changes an answer,
     // so the rest are skipped. A refusal that needs a site completes the
     // retained scan once instead (#8255).
-    let (likely, rest) = partition_macro_scan_files(index);
+    let shared = &index.call_identity_memos.macro_site_scans;
     absorb_macro_sites(
-        scan_macro_sites(&likely, index, roots, module_resolved),
+        &shared.scan(ScanPart::Likely, index, roots, module_resolved),
         &mut global,
         &mut scoped,
         &mut by_root,
@@ -3207,7 +3221,7 @@ fn trusted_macro_sites_in(
     );
     if global.len() < assertion_context_macros().len() {
         absorb_macro_sites(
-            scan_macro_sites(&rest, index, roots, module_resolved),
+            &shared.scan(ScanPart::Rest, index, roots, module_resolved),
             &mut global,
             &mut scoped,
             &mut by_root,
@@ -3312,7 +3326,7 @@ fn scan_macro_sites(
 
 /// Both initial absorption and deferred completion exclude every scoped site.
 fn retain_macro_sites(
-    sites: Vec<(PathBuf, String, usize, MacroBindingSite)>,
+    sites: &[(PathBuf, String, usize, MacroBindingSite)],
     retained: &mut WorkspaceMacroSiteIndex,
     roots: &TargetRoots,
     index: &RustIndex,
@@ -3321,17 +3335,17 @@ fn retain_macro_sites(
         if site.scope.is_some() {
             continue;
         }
-        if module_confined(&site, &path, roots, index) {
+        if module_confined(site, path, roots, index) {
             let binding = retained.by_module.entry(path.clone()).or_default();
-            binding.roots = roots.roots(&path, index);
+            binding.roots = roots.roots(path, index);
             binding
                 .sites
-                .entry(name)
+                .entry(name.clone())
                 .or_default()
-                .absorb(&path, position, &site);
+                .absorb(path, *position, site);
             continue;
         }
-        if let Some(contexts) = roots.binding_roots(&path, &site, index) {
+        if let Some(contexts) = roots.binding_roots(path, site, index) {
             for root in contexts {
                 retained
                     .by_root
@@ -3339,14 +3353,14 @@ fn retain_macro_sites(
                     .or_default()
                     .entry(name.clone())
                     .or_default()
-                    .absorb(&path, position, &site);
+                    .absorb(path, *position, site);
             }
         } else {
             retained
                 .global
-                .entry(name)
+                .entry(name.clone())
                 .or_default()
-                .absorb(&path, position, &site);
+                .absorb(path, *position, site);
         }
     }
 }
@@ -3427,7 +3441,7 @@ pub(in crate::analysis) fn nested_parallelism_allowed() -> bool {
     reason = "one ordered fold over four run-scoped ambiguity outputs and the retention index"
 )]
 fn absorb_macro_sites(
-    sites: ScannedMacroSites,
+    sites: &ScannedMacroSites,
     global: &mut BTreeSet<String>,
     scoped: &mut ScopedMacroBindings,
     by_root: &mut CrateMacroBindings,
@@ -3435,24 +3449,27 @@ fn absorb_macro_sites(
     roots: &TargetRoots,
     index: &RustIndex,
 ) {
-    retain_macro_sites(sites.retained, retained, roots, index);
-    for (path, name, site) in sites.ambiguities {
+    retain_macro_sites(&sites.retained, retained, roots, index);
+    for (path, name, site) in &sites.ambiguities {
         if site.scope.is_some() {
-            scoped.entry(path).or_default().push((name, site));
+            scoped
+                .entry(path.clone())
+                .or_default()
+                .push((name.clone(), site.clone()));
             continue;
         }
-        if module_confined(&site, &path, roots, index) {
+        if module_confined(site, path, roots, index) {
             let binding = retained.by_module.entry(path.clone()).or_default();
-            binding.roots = roots.roots(&path, index);
-            binding.names.insert(name);
+            binding.roots = roots.roots(path, index);
+            binding.names.insert(name.clone());
             continue;
         }
-        if let Some(contexts) = roots.binding_roots(&path, &site, index) {
+        if let Some(contexts) = roots.binding_roots(path, site, index) {
             for root in contexts {
                 by_root.entry(root).or_default().insert(name.clone());
             }
         } else {
-            global.insert(name);
+            global.insert(name.clone());
         }
     }
 }
@@ -3598,6 +3615,8 @@ enum ReturnPathGate {
     /// one pure `&&` or `||` chain over its parameters. The pinned call
     /// must evaluate every operand on some run.
     ShortCircuit(short_circuit::ShortCircuitTail),
+    /// #9766: literal helper data reaches a receiver-field tuple projection.
+    FixtureReceiver(fixture_receiver::FixtureReceiver),
     /// RIPR-SPEC-0225: field `field` of the `type_name { .. }` literal the
     /// owner returns (inside `wrapper(..)` when the owner returns
     /// `Result`/`Option`). The pinned value must be a literal of that type,
@@ -3949,6 +3968,15 @@ impl OwnerReturnPin {
                         .map(|tail| ReturnPathGate::Adaptor {
                             position: tail.position,
                             requires_ok: tail.collects_result(),
+                        })
+                        .or_else(|| {
+                            fixture_receiver::FixtureReceiver::establish(
+                                owner,
+                                &probe.expression,
+                                probe.before.as_deref(),
+                                index,
+                            )
+                            .map(ReturnPathGate::FixtureReceiver)
                         })
                         // RIPR-SPEC-0265 rule 5: a returned closure applied in the
                         // pinned expression.
@@ -4460,6 +4488,13 @@ impl OwnerReturnPin {
         })
     }
 
+    /// A credited pin with this gate reads nonempty literal receiver data
+    /// through the whole returned sum. Reveal must credit the pin before
+    /// the classifier may use this owner-side flow fact.
+    pub(in crate::analysis) fn reads_literal_fixture_receiver(&self) -> bool {
+        matches!(self.path, ReturnPathGate::FixtureReceiver(_))
+    }
+
     /// The test-side gates: whether `assertion` in `test` pins the owner's
     /// return value through a call that names the owner.
     /// [`owner_call_shape`], reading an `async` owner's result through one
@@ -4492,7 +4527,11 @@ impl OwnerReturnPin {
                     .then(|| owner_call_shape(future, name))
                     .flatten()
             }
-            (false, _) => owner_call_shape(operand, name),
+            (false, _) => owner_call_shape(operand, name).or_else(|| {
+                matches!(self.path, ReturnPathGate::FixtureReceiver(_))
+                    .then(|| fixture_receiver::FixtureReceiver::inline_call(operand, name))
+                    .flatten()
+            }),
         }
     }
 
@@ -5176,6 +5215,15 @@ impl OwnerReturnPin {
                 {
                     return false;
                 }
+                if let ReturnPathGate::FixtureReceiver(fixture) = path
+                    && !call_text.is_some_and(|text| {
+                        fixture
+                            .admits(test, assertion, text, expected, index, syntax)
+                            .is_some()
+                    })
+                {
+                    return false;
+                }
                 // RIPR-SPEC-0265 rule 5: the application must tell the
                 // closure's operators apart.
                 if let ReturnPathGate::ReturnedClosure { arity, arithmetic } = path
@@ -5374,33 +5422,47 @@ impl OwnerReturnPin {
                 },
                 CallShape::Method(_) | CallShape::Constructed(_),
             ) => {
-                let receiver_type = match call {
-                    CallShape::Method(receiver) => {
-                        if bound_by_macro(&masked_body, receiver) {
-                            return false;
-                        }
-                        test_receiver_type(
-                            test,
-                            receiver,
-                            test_source,
-                            index,
-                            imports_foreign,
-                            owner_scope,
-                            syntax,
-                        )
-                    }
-                    // An inline constructor types the receiver the same way
-                    // a `let receiver = Type::constructor(..);` binding does.
-                    CallShape::Constructed(receiver) => binding_type(
-                        &format!("= {receiver}"),
+                let receiver_type = if let ReturnPathGate::FixtureReceiver(fixture) = &self.path {
+                    // The gate above read the actual helper value, not merely
+                    // its return type. Existing type/shadow/import authority
+                    // still binds the record to this owner.
+                    named_or_slice(
+                        &fixture.type_name,
                         test,
                         test_source,
                         index,
                         imports_foreign,
                         owner_scope,
-                        syntax,
-                    ),
-                    CallShape::Bare | CallShape::Path(_) | CallShape::Associated(_) => None,
+                    )
+                } else {
+                    match call {
+                        CallShape::Method(receiver) => {
+                            if bound_by_macro(&masked_body, receiver) {
+                                return false;
+                            }
+                            test_receiver_type(
+                                test,
+                                receiver,
+                                test_source,
+                                index,
+                                imports_foreign,
+                                owner_scope,
+                                syntax,
+                            )
+                        }
+                        // An inline constructor types the receiver the same way
+                        // a `let receiver = Type::constructor(..);` binding does.
+                        CallShape::Constructed(receiver) => binding_type(
+                            &format!("= {receiver}"),
+                            test,
+                            test_source,
+                            index,
+                            imports_foreign,
+                            owner_scope,
+                            syntax,
+                        ),
+                        CallShape::Bare | CallShape::Path(_) | CallShape::Associated(_) => None,
+                    }
                 };
                 let Some(receiver_type) = receiver_type else {
                     return false;
@@ -6215,7 +6277,10 @@ impl ReturnPathGate {
 
     fn admits(&self, expected: &str) -> bool {
         match self {
-            Self::Any | Self::ReturnedClosure { .. } | Self::ShortCircuit(_) => true,
+            Self::Any
+            | Self::ReturnedClosure { .. }
+            | Self::ShortCircuit(_)
+            | Self::FixtureReceiver(_) => true,
             Self::Adaptor { requires_ok, .. } => {
                 !requires_ok || constructor_call_span(expected.trim(), "Ok").is_some()
             }
