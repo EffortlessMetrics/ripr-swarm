@@ -4663,7 +4663,12 @@ fn dirty_path_cannot_be_repair_target(root: &Path, path: &str) -> bool {
         return false;
     }
     match std::fs::read_to_string(&candidate_path) {
-        Ok(content) => !content.contains("#[cfg(test)]"),
+        // The cfg-predicate authority reads the attribute, so the marker is
+        // not re-derived here from a spelling (#3530, #3534).
+        Ok(content) => !content.lines().map(str::trim).any(|line| {
+            line.starts_with("#[cfg(")
+                && crate::analysis::cfg_predicates::attribute_requires_test(line)
+        }),
         Err(_) => false,
     }
 }
