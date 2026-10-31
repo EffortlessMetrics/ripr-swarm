@@ -1,0 +1,21 @@
+{
+  "subject_id": "authored-verification-prelude",
+  "origin": "authored",
+  "version_label": "authored 2026-10-31 for RIPR-SPEC-0369 (a prusti_contracts glob export list contains no assertion macro); prusti-contracts pinned to 0.3.3",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "b3957e5a8083fec63ac6f33f43f5116c1222ac9e4ad84d5495efcb8430c4183d"
+    },
+    {
+      "path": "Cargo.lock",
+      "sha256": "95a40286053b022263413faa1011d1b0935cc14c3bcfbfa9a34baf7d3683145c"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "0384cbf19bc8c2472b3f582419383d086808b31f9517ade6ca8bee39f58f31d2"
+    }
+  ]
+}
