@@ -1064,6 +1064,17 @@ unchanged. It is the one limitation kind that may ride on a complete outcome
 (`complete_with_findings` / `complete_no_findings`); every other kind marks the
 outcome incomplete. Human output renders it without the incomplete-scope hedge.
 
+`verification_only_change` (RIPR-SPEC-0368, #10749) is the second change-shape
+disclosure that may ride on a complete outcome. Changed lines that are
+verifier-only text (contract attributes such as `#[requires]`/`#[ensures]`,
+Creusot `#[logic]` items, `proof_assert!`/`snapshot!`/`ghost!`/`pearlite!` and
+Prusti `prusti_assert!`/`body_invariant!`) seed no probe, so they never become
+a finding or an actionable repair start. One aggregate limitation at
+`probe_generation` (human output: "change point detection") reports the changed-line count, the file count and the files
+(bounded), with the recovery to re-run the verifier. A contract-only diff stays
+`no_behavioral_candidates` but no longer reports an empty `limitations` list.
+ripr does not evaluate contracts, proofs or ghost code.
+
 `unevaluated_condition` (#8714) discloses conditional assertion credit: a
 credited test assertion sits under a branch condition static analysis cannot
 evaluate, so the credited oracle may never execute. The limitation names the
