@@ -9161,8 +9161,9 @@ fn renamed_names_memoized(source: &str) -> Option<Arc<BTreeSet<String>>> {
     Some(renamed)
 }
 
-/// A cheap memo key for `source`: its length and up to 1024 bytes spread
-/// evenly across it. Equal texts always share a key; unequal texts may, which
+/// A cheap memo key for `source`: its length and a byte sample spread evenly
+/// across it (the whole file when it is under 2048 bytes, otherwise up to
+/// about 2047 bytes at a stride of `len / 1024`). Equal texts always share a key; unequal texts may, which
 /// callers resolve by comparing the full text.
 fn source_sample_key(source: &str) -> u64 {
     use std::hash::{Hash, Hasher};

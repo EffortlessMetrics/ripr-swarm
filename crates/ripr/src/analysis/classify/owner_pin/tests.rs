@@ -13079,8 +13079,11 @@ fn memoized_file_renames_to_matches_the_direct_scan() {
 fn rename_memo_keys_that_collide_still_answer_per_file() {
     let pad = "x".repeat(2400);
     // Length 2400+ puts the sampling stride above 1, so odd offsets are
-    // skipped; "Fxo" and "Foo" differ at offset 20 + 1 = odd.
-    let renames = format!("use a::B as Foo; // {pad}\n");
+    // skipped; "Fxo" and "Foo" differ at offset 13 ("use a::B as " is 12
+    // bytes), which is odd. Both names appear in the trailing comment of both
+    // texts so `file_renames_to` passes its `contains` shortcut and reaches
+    // the memo; the comment is masked, so only the real `as` item answers.
+    let renames = format!("use a::B as Foo; // Foo Fxo {pad}\n");
     let other = renames.replacen("as Foo", "as Fxo", 1);
     assert_eq!(renames.len(), other.len());
     assert_ne!(renames, other);
