@@ -33,14 +33,23 @@ pub(crate) fn review_summary_before_analysis_artifact(
 
 pub(crate) fn reviewer_summary_headline_markdown(
     status: &str,
-    target: &str,
+    target_seam: Option<&AgentReviewTargetSeam>,
     movement: &AgentReviewStaticMovement,
     analysis_outcome: Option<&crate::analysis_outcome::AnalysisOutcome>,
     surfaces: &[AgentReviewSurface],
 ) -> String {
     if review_summary_before_analysis_artifact(surfaces, analysis_outcome) {
-        return format!("No analysis yet for {target}. Run `ripr check` first.");
+        return match target_seam {
+            Some(seam) => format!(
+                "No analysis yet for {}. Run `ripr check` first.",
+                seam.seam_id
+            ),
+            None => NO_ANALYSIS_YET.to_string(),
+        };
     }
+    let target = target_seam
+        .map(|seam| seam.seam_id.as_str())
+        .unwrap_or("unknown seam");
     reviewer_summary_headline(status, target, movement, analysis_outcome)
 }
 

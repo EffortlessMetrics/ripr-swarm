@@ -24,7 +24,7 @@ pub(crate) fn render_agent_review_summary_markdown(report: &AgentReviewSummaryRe
     let before_analysis =
         review_summary_before_analysis_artifact(&report.surfaces, report.analysis_outcome.as_ref());
     if before_analysis && report.static_movement.state == "missing_artifact" {
-        rendered.push_str(&format!("Movement: {}\n", report.static_movement.summary));
+        rendered.push_str("Movement: nothing to compare yet.\n");
         rendered.push_str(&format!("Receipt: {NO_RECEIPT_BEFORE_REPAIR}\n"));
     } else {
         rendered.push_str(&format!("Movement: {}\n", report.static_movement.state));
@@ -77,11 +77,7 @@ pub(crate) fn render_agent_review_summary_markdown(report: &AgentReviewSummaryRe
     rendered.push_str("## Reviewer Focus\n\n");
     let headline = reviewer_summary_headline_markdown(
         &report.status,
-        report
-            .target_seam
-            .as_ref()
-            .map(|seam| seam.seam_id.as_str())
-            .unwrap_or("unknown seam"),
+        report.target_seam.as_ref(),
         &report.static_movement,
         report.analysis_outcome.as_ref(),
         &report.surfaces,
