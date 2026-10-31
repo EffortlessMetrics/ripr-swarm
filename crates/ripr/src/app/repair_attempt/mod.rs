@@ -1518,6 +1518,10 @@ pub(crate) fn canonically_admit_terminal_pair(
     for document in [&mut supplied, &mut expected] {
         if let Some(object) = document.as_object_mut() {
             object.remove("artifact_currentness");
+            // #3056: derived from the same read-time Historical
+            // classification, so it is equally a HEAD observation.
+            object.remove("before_produced_from_dirty");
+            object.remove("after_produced_from_dirty");
         }
     }
     if supplied == expected {
@@ -8872,6 +8876,85 @@ mod tests {
             return Err(format!(
                 "honest pair must keep disposition {first_disposition} after the snapshots advance, got {later_disposition}"
             ));
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    /// #3056: `before_produced_from_dirty` / `after_produced_from_dirty` are
+    /// read-time Historical observations like `artifact_currentness`, so a
+    /// verify document minted before they existed (or when the artifact was
+    /// still current) must stay admitted after the artifact became
+    /// historical-and-dirty-produced. Dropping the two `remove()` strips in
+    /// `canonically_admit_terminal_pair` makes the flagless pair refused.
+    #[test]
+    fn terminal_pair_minted_without_produced_from_dirty_stays_admitted() -> Result<(), String> {
+        let root = test_repo_root("produced-from-dirty-strip")?;
+        let dirty_source = root.join("src/lib.rs");
+        std::fs::create_dir_all(root.join("src"))
+            .map_err(|error| format!("create src failed: {error}"))?;
+        std::fs::write(&dirty_source, "pub fn sample() {}\n")
+            .map_err(|error| format!("write {} failed: {error}", dirty_source.display()))?;
+        let seams = || {
+            serde_json::json!([crate::testing::verify_fixture::snapshot_seam(
+                "seam:sample",
+                "predicate_boundary",
+                "src/lib.rs",
+                1,
+                "weakly_gripped",
+            )])
+        };
+        // Before snapshot minted while the worktree is dirty (untracked Rust
+        // source), then HEAD advances so it classifies as Historical.
+        let before_path = root.join("before.json");
+        let before =
+            crate::testing::verify_fixture::mint_repo_exposure_snapshot(root.as_path(), seams())?;
+        std::fs::write(&before_path, before.as_bytes())
+            .map_err(|error| format!("write {} failed: {error}", before_path.display()))?;
+        run_git(&root, &["add", "src/lib.rs"])?;
+        run_git(&root, &["commit", "--no-gpg-sign", "-m", "advance"])?;
+        let after_path = root.join("after.json");
+        let after =
+            crate::testing::verify_fixture::mint_repo_exposure_snapshot(root.as_path(), seams())?;
+        std::fs::write(&after_path, after.as_bytes())
+            .map_err(|error| format!("write {} failed: {error}", after_path.display()))?;
+        let verify = crate::testing::verify_fixture::mint_canonical_verify(
+            root.as_path(),
+            &before_path,
+            &after_path,
+        )?;
+        let mut flagged: serde_json::Value = serde_json::from_str(&verify)
+            .map_err(|error| format!("parse canonical verify failed: {error}"))?;
+        // Precondition: the current canonical render really carries the flag,
+        // otherwise the strip would be vacuous.
+        if flagged["before_produced_from_dirty"] != serde_json::json!(true) {
+            return Err("canonical render must carry before_produced_from_dirty".to_string());
+        }
+        // Control: the flagged document is admitted as-is.
+        match canonically_admit_terminal_pair(root.as_path(), verify.as_bytes()) {
+            CanonicalAdmission::Admitted => {}
+            other => return Err(format!("flagged pair must be admitted, got {other:?}")),
+        }
+        // A document minted without the flag is admitted too.
+        if let Some(object) = flagged.as_object_mut() {
+            object.remove("before_produced_from_dirty");
+            object.remove("after_produced_from_dirty");
+        }
+        let flagless = serde_json::to_vec_pretty(&flagged)
+            .map_err(|error| format!("serialize flagless verify failed: {error}"))?;
+        match canonically_admit_terminal_pair(root.as_path(), &flagless) {
+            CanonicalAdmission::Admitted => {}
+            other => return Err(format!("flagless pair must be admitted, got {other:?}")),
+        }
+        // Negative control: the strip is scoped to the two flags; any other
+        // divergence is still refused.
+        flagged["summary"]["unchanged"] = serde_json::json!(99);
+        let tampered = serde_json::to_vec_pretty(&flagged)
+            .map_err(|error| format!("serialize tampered verify failed: {error}"))?;
+        match canonically_admit_terminal_pair(root.as_path(), &tampered) {
+            CanonicalAdmission::Refused { .. } => {}
+            other => return Err(format!("tampered pair must be refused, got {other:?}")),
         }
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
