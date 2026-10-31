@@ -120,6 +120,8 @@ mod recall_tradeoff;
 #[cfg(unix)]
 #[path = "cli_smoke/receipt_recovery_root.rs"]
 mod receipt_recovery_root;
+#[path = "cli_smoke/refusal_envelope.rs"]
+mod refusal_envelope;
 #[path = "cli_smoke/related_test_count.rs"]
 mod related_test_count;
 #[cfg(feature = "lang-rust")]
@@ -712,6 +714,26 @@ fn workspace_root() -> PathBuf {
 
 fn sample_diff() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sample/example.diff")
+}
+
+/// #11584: a selector miss is usage-class (exit 2, prose on stderr).
+/// `explain` has no JSON output, so its stdout stays empty; `context` emits
+/// JSON only, so its stdout is one `cli_refusal` document naming
+/// `selector_miss`.
+fn selector_miss_stdout_matches_contract(command: &str, stdout: &[u8]) -> bool {
+    if command == "explain" {
+        return stdout.is_empty();
+    }
+    serde_json::from_slice::<serde_json::Value>(stdout).is_ok_and(|document| {
+        document
+            .pointer("/status")
+            .and_then(serde_json::Value::as_str)
+            == Some("refused")
+            && document
+                .pointer("/error/code")
+                .and_then(serde_json::Value::as_str)
+                == Some("selector_miss")
+    })
 }
 
 fn unique_temp_workspace(label: &str) -> PathBuf {

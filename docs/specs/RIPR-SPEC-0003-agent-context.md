@@ -31,7 +31,10 @@ context's reciprocal explain command retain that choice. Without an explicit
 source, the CLI siblings follow check's dirty-worktree default. Explicit
 `--worktree`, supplied `--diff`, and verified `--from` replay retain their own
 input sources. `--committed` conflicts with those three explicit sources and
-refuses before input or root reads. Misses remain exit 2 with no machine stdout.
+refuses before input or root reads. Misses remain exit 2. `explain` keeps stdout
+empty; `context` emits JSON only, so a miss writes the standalone `cli_refusal`
+document (`code: selector_miss`, #11584) to stdout while the guidance and retry
+listing stay on stderr.
 A selector naming several findings (for example two findings at one
 `file:line`, or a canonical gap identity shared by grouped findings) refuses
 as ambiguous with the bounded candidate finding IDs instead of silently
@@ -55,7 +58,8 @@ the selector's syntax/seam guidance and effective root/base/source/mode retry.
 Successful selection, ambiguity and ordinary misses without such limitations
 retain their existing behavior. Recorded `--from` lookups do not infer these
 facts from ambient configuration: the artifact has no complete advisory carrier.
-Exit 2, prose stderr and empty stdout remain the miss contract (#10720).
+Exit 2 and the prose stderr remain the miss contract (#10720); `context` adds the
+`cli_refusal` stdout document, `explain` keeps empty stdout.
 
 The packet should include:
 

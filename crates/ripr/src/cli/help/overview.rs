@@ -115,8 +115,8 @@ Analysis:
   ripr calibrate cargo-mutants --mutants-json PATH --repo-exposure-json PATH [--format md|json] [--out PATH]
 
 Repair:
-  ripr repair [<item>] [--root PATH]
-  ripr continue [--attempt ID] [--root PATH]
+  ripr repair [<item>] [--root PATH] [--json]
+  ripr continue [--attempt ID] [--root PATH] [--json]
   ripr status [--attempt ID] [--root PATH] [--json]
 
 Editor & Agent:

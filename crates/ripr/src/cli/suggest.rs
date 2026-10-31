@@ -12,6 +12,51 @@
 //! it suggestible with no second edit.
 
 use crate::cli::help;
+use std::cell::RefCell;
+
+/// The typed identity of a usage error whose message this module built.
+///
+/// Usage errors travel as plain `String`s, so a machine renderer would have
+/// to guess their class from prose. The message builders below record the
+/// class beside the message they return; [`take_usage_refusal`] hands it back
+/// only for the exact message, so no renderer inspects error text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct UsageRefusal {
+    /// Closed set: `unknown_argument`, `unknown_value`, `unknown_command`.
+    pub(crate) code: &'static str,
+    /// The one command that answers the mistake, when there is one.
+    pub(crate) next_command: Option<String>,
+    message: String,
+}
+
+thread_local! {
+    static LAST_USAGE_REFUSAL: RefCell<Option<UsageRefusal>> = const { RefCell::new(None) };
+}
+
+/// Record the class of the usage message just built and return the message.
+pub(crate) fn record_usage_refusal(
+    code: &'static str,
+    next_command: Option<String>,
+    message: String,
+) -> String {
+    LAST_USAGE_REFUSAL.with(|slot| {
+        *slot.borrow_mut() = Some(UsageRefusal {
+            code,
+            next_command,
+            message: message.clone(),
+        });
+    });
+    message
+}
+
+/// The recorded class of `message`, if this thread built exactly that usage
+/// message. Taking clears the record, so a later unrelated error never
+/// inherits a stale class.
+pub(crate) fn take_usage_refusal(message: &str) -> Option<UsageRefusal> {
+    LAST_USAGE_REFUSAL
+        .with(|slot| slot.borrow_mut().take())
+        .filter(|recorded| recorded.message == message)
+}
 
 /// The help route an unknown-argument error points at. `check`'s default help
 /// is a one-screen summary that omits advanced flags, so a mistyped option
@@ -32,6 +77,11 @@ fn help_pointer(command: &str) -> String {
 /// `check` points at `--help --all` (see [`help_pointer`]).
 pub(crate) fn unknown_argument(command: &str, arg: &str) -> String {
     let pointer = help_pointer(command);
+    let message = unknown_argument_message(command, arg, &pointer);
+    record_usage_refusal("unknown_argument", Some(pointer), message)
+}
+
+fn unknown_argument_message(command: &str, arg: &str, pointer: &str) -> String {
     // `--version` is a process-level identity query scoped to the top level
     // (`parse.rs`); a subcommand that does not implement its own version
     // contract rejects it. Naming the spelling that works (#4318) beats
@@ -63,6 +113,11 @@ fn implements_local_version(command: &str) -> bool {
 /// as a near-miss suggestion, so the same mistake names the fix on every
 /// command instead of only where a parser happens to inline the list.
 pub(in crate::cli) fn unknown_value(label: &str, value: &str, accepted: &[&str]) -> String {
+    let message = unknown_value_message(label, value, accepted);
+    record_usage_refusal("unknown_value", None, message)
+}
+
+fn unknown_value_message(label: &str, value: &str, accepted: &[&str]) -> String {
     match closest(value, accepted.iter().copied()) {
         Some(suggestion) => format!(
             "unknown {label} {value:?}. Did you mean `{suggestion}`? Accepted: {}.",
@@ -83,6 +138,15 @@ pub(in crate::cli) fn unknown_value(label: &str, value: &str, accepted: &[&str])
 /// names (#9359). The near-miss suggestion still names the fix when one
 /// format is close enough (#4318).
 pub(in crate::cli) fn unknown_format_value(value: &str, accepted: &[&str]) -> String {
+    let message = unknown_format_value_message(value, accepted);
+    record_usage_refusal(
+        "unknown_value",
+        Some("ripr check --help --all".to_string()),
+        message,
+    )
+}
+
+fn unknown_format_value_message(value: &str, accepted: &[&str]) -> String {
     match closest(value, accepted.iter().copied()) {
         Some(suggestion) => format!(
             "unknown format {value:?}. Did you mean `{suggestion}`? \
@@ -361,6 +425,45 @@ pub(in crate::cli) fn edit_distance(left: &str, right: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn usage_builders_record_a_typed_class_for_exactly_their_message() {
+        let message = unknown_argument("check", "--forma");
+        let recorded = take_usage_refusal(&message);
+        assert_eq!(
+            recorded.as_ref().map(|usage| usage.code),
+            Some("unknown_argument")
+        );
+        assert_eq!(
+            recorded.and_then(|usage| usage.next_command),
+            Some("ripr check --help --all".to_string())
+        );
+        // Taking clears the record: a stale class is never inherited.
+        assert_eq!(take_usage_refusal(&message), None);
+
+        let value = unknown_value("mode", "turbo", &["fast", "deep"]);
+        assert_eq!(
+            take_usage_refusal(&value).map(|usage| usage.code),
+            Some("unknown_value")
+        );
+        let format = unknown_format_value("yaml", &["json", "human"]);
+        assert_eq!(
+            take_usage_refusal(&format).map(|usage| usage.code),
+            Some("unknown_value")
+        );
+    }
+
+    #[test]
+    fn a_different_message_never_takes_the_recorded_class() {
+        let _ = unknown_argument("check", "--forma");
+        // An unrelated error with different text must stay prose-only, even
+        // while a class is recorded on this thread.
+        assert_eq!(take_usage_refusal("some operational failure"), None);
+        assert_eq!(
+            take_usage_refusal("unknown check argument \"--forma\""),
+            None
+        );
+    }
 
     #[test]
     fn unknown_argument_suggests_the_nearest_documented_flag() {

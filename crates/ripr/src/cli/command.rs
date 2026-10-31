@@ -270,6 +270,14 @@ fn cli_command_from_dispatch(
 }
 
 fn unknown_command_error(command: &str) -> String {
+    super::suggest::record_usage_refusal(
+        "unknown_command",
+        Some("ripr --help".to_string()),
+        unknown_command_message(command),
+    )
+}
+
+fn unknown_command_message(command: &str) -> String {
     // A flag in command position means options were put before the command.
     if command.starts_with('-') {
         if let Some(flag) = closest_flag(command) {

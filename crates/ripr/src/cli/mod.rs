@@ -123,7 +123,71 @@ fn run_with_policy(args: Vec<String>, interrupt_handling: bool) -> Result<(), Co
     outcome
 }
 
-fn run_command(mut args: Vec<String>, interrupt_handling: bool) -> Result<(), CommandError> {
+fn run_command(args: Vec<String>, interrupt_handling: bool) -> Result<(), CommandError> {
+    let argv = args.clone();
+    run_command_inner(args, interrupt_handling)
+        .map_err(|error| announce_usage_refusal(&argv, error))
+}
+
+/// Whether argv asks for a JSON document on stdout: `--json`, or a
+/// `--format` whose value is `json` or a `*-json` family.
+fn json_output_requested(argv: &[String]) -> bool {
+    fn is_json_format(value: &str) -> bool {
+        value == "json" || value.ends_with("-json")
+    }
+    let mut words = argv.iter().skip(1).peekable();
+    while let Some(word) = words.next() {
+        match word.as_str() {
+            "--json" => return true,
+            "--format" => {
+                if words.peek().is_some_and(|value| is_json_format(value)) {
+                    return true;
+                }
+            }
+            other => {
+                if other.strip_prefix("--format=").is_some_and(is_json_format) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Machine-readable usage errors (#11584). An argv usage error (unknown
+/// flag, flag value or command) happens before the command writes anything,
+/// so under a JSON request stdout is free for the shared refusal document.
+/// The class comes from the usage-message builder that produced exactly this
+/// message ([`suggest::take_usage_refusal`]); an error no builder recorded
+/// stays prose-only. The exit code and the stderr prose are unchanged.
+fn announce_usage_refusal(argv: &[String], error: CommandError) -> CommandError {
+    if !json_output_requested(argv) {
+        return error;
+    }
+    let Some(usage) = suggest::take_usage_refusal(error.message()) else {
+        return error;
+    };
+    let command = argv
+        .get(1)
+        .map(String::as_str)
+        .filter(|word| !word.starts_with('-'));
+    let rendered =
+        crate::output::cli_refusal::render_cli_refusal(&crate::output::cli_refusal::CliRefusal {
+            command,
+            exit_code: error.exit_code(),
+            code: usage.code,
+            message: error.message(),
+            next_command: usage.next_command.as_deref(),
+        });
+    match rendered.and_then(commands_context::write_stdout_refusal_json) {
+        Ok(()) => error,
+        // No machine answer reached the caller: report the operational
+        // failure instead of the usage class.
+        Err(delivery) => CommandError::Failure(delivery),
+    }
+}
+
+fn run_command_inner(mut args: Vec<String>, interrupt_handling: bool) -> Result<(), CommandError> {
     let version_requested = parse::top_level_version_requested(&args);
     // #2610: the global --verbose/-v spelling is extracted before command
     // dispatch so it works with any subcommand. #5009: the extraction has
@@ -720,6 +784,31 @@ fn persist_before_repair_attempt(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn json_output_is_requested_by_json_flag_or_json_format_family() {
+        let argv =
+            |words: &[&str]| -> Vec<String> { words.iter().map(|word| word.to_string()).collect() };
+        for yes in [
+            &["ripr", "check", "--json"][..],
+            &["ripr", "check", "--format", "json"][..],
+            &["ripr", "check", "--format=json"][..],
+            &["ripr", "check", "--format", "badge-json"][..],
+            &["ripr", "check", "--bogus", "--json"][..],
+        ] {
+            assert!(super::json_output_requested(&argv(yes)), "{yes:?}");
+        }
+        for no in [
+            &["ripr", "check"][..],
+            &["ripr", "check", "--format", "sarif"][..],
+            &["ripr", "check", "--format", "human"][..],
+            &["ripr", "check", "--format"][..],
+            // argv[0] is the program name, never a flag.
+            &["--json", "check"][..],
+        ] {
+            assert!(!super::json_output_requested(&argv(no)), "{no:?}");
+        }
+    }
+
     /// The manifest binding is read from the retained before snapshot, so a
     /// ref that moved after the snapshot was produced cannot split the two.
     #[test]
