@@ -478,7 +478,11 @@ files first with `--dry-run`. On a PR, read the summary comment it posts on the
 conversation (one comment, updated on every push; same-repository PRs only), then the job summary
 and the linked artifacts for the evidence and suggested test.
 The generated workflow is non-blocking by default; a policy gate is a separate,
-explicit adoption decision.
+explicit adoption decision. It also uploads SARIF to the Security tab; that needs
+code scanning (free on public repositories, GitHub Code Security on private
+ones). Where it is unavailable the upload fails without failing the job, and
+the run page shows a `RIPR SARIF upload failed` warning; set
+`RIPR_UPLOAD_SARIF` to `"false"` in the workflow to stop trying.
 The workflow runs on `ubuntu-latest` and pins `shell: bash`, so its steps
 still parse if you move the job to another runner; only the Linux runner is
 covered by ripr's own tests.
@@ -613,12 +617,13 @@ PR-facing packet. It does not run analysis or repair the code. See
 [First successful PR workflow](FIRST_PR_WORKFLOW.md) for the inputs and
 `ripr help first-pr` for its options.
 
-On a fresh checkout the first `first-pr` run lists the whole missing chain in
-dependency order: a `Missing artifact` command, then `Also missing` entries
-with their `Then run` commands (repo exposure, gap ledger, and review cards
-via `ripr review-comments --root . --base BASE --head HEAD --out
-target/ripr/review/comments.json`). Run the printed commands, then rerun
-`first-pr`; it reads artifact presence only and runs none of them. Commit your test first, because the
+On a fresh checkout the first `first-pr` run prints one next command (the
+`Missing artifact` regeneration command for repo exposure) and names the later
+steps (gap ledger, then review cards) on a `Later steps` line without their
+commands. Run the printed command, then rerun `first-pr`; it prints the next
+command each time. It reads artifact presence only and runs none of them. The
+packet JSON (`selected.also_missing`) still carries every later step with its
+literal command. Commit your test first, because the
 committed diff does not include uncommitted edits. After a successful repair
 the final state `no actionable gap` is expected: the gap is already addressed.
 It also appears when no repairable PR-local gap was selected; read the printed

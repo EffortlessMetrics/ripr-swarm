@@ -3742,6 +3742,9 @@ mod tests {
                 // CodeQL flake must not fail a gate the analysis passed.
                 "Upload RIPR diff findings",
                 "Upload RIPR repo seams",
+                // #11145: continue-on-error hides a failed upload, so this
+                // step says why and what to change.
+                "Explain failed SARIF upload",
             ],
             forbidden_fragments: &[
                 "fail-on-new-warning",
@@ -8521,8 +8524,8 @@ language = "rust"
         // The DX bar from #5409: a workflow an adopter can read in one sitting.
         let line_count = workflow.lines().count();
         assert!(
-            line_count <= 175,
-            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, and #4452 added step env bindings"
+            line_count <= 181,
+            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, #4452 added step env bindings, and #11145 added the failed-SARIF-upload explanation"
         );
 
         assert!(workflow.contains("RIPR_UPLOAD_SARIF: \"true\""));
@@ -8695,6 +8698,49 @@ language = "rust"
                 "`{step}` must stay gated by RIPR_UPLOAD_SARIF"
             );
         }
+        // #11145: `continue-on-error` turns a rejected upload (private
+        // repository without Code Security, code scanning off, read-only fork
+        // token) into a green step. The explanation fires on the upload
+        // steps' own outcome, so it names both ids, names the fix, and does
+        // not fire when no upload ran.
+        let upload_ids = [
+            ("Upload RIPR diff findings", "id: sarif_findings"),
+            ("Upload RIPR repo seams", "id: sarif_seams"),
+        ];
+        for (step, id) in upload_ids {
+            assert!(
+                workflow_step(&workflow, step).contains(id),
+                "`{step}` needs `{id}`"
+            );
+        }
+        let explain = workflow_step(&workflow, "Explain failed SARIF upload");
+        assert!(
+            explain.contains("steps.sarif_findings.outcome == 'failure'")
+                && explain.contains("steps.sarif_seams.outcome == 'failure'"),
+            "{explain}"
+        );
+        assert!(explain.contains("always()"), "{explain}");
+        assert!(explain.contains("continue-on-error: true"), "{explain}");
+        assert!(
+            explain.contains("set RIPR_UPLOAD_SARIF to false")
+                && explain.contains("GitHub Code Security"),
+            "{explain}"
+        );
+        // Failure only: the whole `if:` is exactly this condition, so no
+        // success/skipped/`!=` branch can be added without failing here. The
+        // behavior (failure runs it; success, skipped, cancelled do not) is
+        // pinned by `explain_failed_sarif_upload_condition_follows_the_upload_outcomes`.
+        assert!(
+            explain.contains(
+                "if: always() && (steps.sarif_findings.outcome == 'failure' || steps.sarif_seams.outcome == 'failure')\n"
+            ),
+            "{explain}"
+        );
+        assert!(
+            explain.contains("Usual causes include")
+                && explain.contains("log of the failed upload step"),
+            "the warning must hedge the cause and point at the failed step's log: {explain}"
+        );
         // The SARIF renders stay gated by RIPR_UPLOAD_SARIF inside the packet.
         assert!(packet.contains("--format sarif"));
         assert!(packet.contains("--format repo-sarif"));
