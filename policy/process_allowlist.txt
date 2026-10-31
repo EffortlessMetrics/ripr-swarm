@@ -234,3 +234,5 @@ tools/repo-policy/tests/runner_inventory_diagnostics.rs|Command::new|1|runner-di
 tools/repo-policy/tests/runner_inventory_diagnostics.rs|use std::process::Command|1|runner-diagnostic-proof|#8858: import for the same bounded local-only route-shell fixture helper.
 tools/repo-policy/tests/wheel_trap_markers.rs|Command::new|1|wheel-trap-marker-proof|#9044: bounded Linux-only replay of the checked-in wheel qualification trap generators and generated Bash wrappers with literal marker and native-status oracles; no wheel builds, network or publication.
 tools/repo-policy/tests/wheel_trap_markers.rs|use std::process::Command|1|wheel-trap-marker-proof|#9044: import for the same bounded test-only trap replay.
+xtask/tests/gh_pr_status_no_settings.rs|Command::new|1|gh-pr-status-no-settings-test|#11014: executes the built xtask command with a local fake gh to verify routine PR reads and ordinary failure handling; no real credentials or network.
+xtask/tests/gh_pr_status_no_settings.rs|use std::process::Command|1|gh-pr-status-no-settings-test|#11014: test-only import for the bounded fake-gh command probe.

@@ -218,9 +218,26 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
             continue;
         }
         if byte == b'\'' {
+            let start = index;
             index = skip_char_or_lifetime(text, index);
-            after_operand = true;
-            unary_run = 0;
+            // A char literal is an operand. A lifetime or label (`break 'a`,
+            // `&'a T`) is neither an operand nor a run breaker, so it must
+            // not reset a prefix-keyword run (`break 'a break 'a ..`).
+            let char_literal =
+                index.saturating_sub(start) >= 3 && bytes.get(index - 1) == Some(&b'\'');
+            if char_literal {
+                after_operand = true;
+                unary_run = 0;
+            } else {
+                // `skip_char_or_lifetime` stops after the quote; consume the
+                // name so it is not scanned as an operand word.
+                while bytes
+                    .get(index)
+                    .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b >= 0x80)
+                {
+                    index += 1;
+                }
+            }
             previous_word_was_else = false;
             continue;
         }
@@ -279,8 +296,10 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
         previous_word_was_else = false;
         match byte {
             b'(' | b'[' | b'{' => {
-                if after_operand && byte != b'{' {
-                    // Postfix call or index: `f()()..`, `x[0][0]..` nest left.
+                if after_operand && byte != b'{' && follows_closer(bytes, index) {
+                    // Postfix call or index on a closed group: `f()()..`,
+                    // `x[0][0]..` nest left. A flat run of siblings such as
+                    // the token tree of `m!(foo() foo() ..)` does not.
                     bump_operator_run(&mut operators, depth, &mut open_operators, &mut estimate);
                 }
                 depth = depth.saturating_add(1);
@@ -333,7 +352,7 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
                 after_operand = false;
             }
             b'.' | b'?' | b'+' | b'-' | b'*' | b'/' | b'%' | b'^' | b'|' | b'&' | b'<' | b'>'
-            | b'=' => {
+            | b'=' | b'@' => {
                 if let Some(run) = operators.get_mut(depth) {
                     *run = run.saturating_add(1);
                     open_operators = open_operators.saturating_add(1);
@@ -354,6 +373,15 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
         index += 1;
     }
     estimate
+}
+
+/// True when the last significant byte before `index` closes a group, so a
+/// following `(` or `[` is a postfix call or index on that group's value.
+fn follows_closer(bytes: &[u8], index: usize) -> bool {
+    bytes
+        .get(..index)
+        .and_then(|head| head.iter().rev().find(|b| !b.is_ascii_whitespace()))
+        .is_some_and(|b| matches!(b, b')' | b']'))
 }
 
 /// Words after which a `-`, `*`, `&` or `!` is a prefix operator.
@@ -802,6 +830,46 @@ mod tests {
         }
         let ordinary = "use std::collections::BTreeMap;\nfn f(v: Vec<Vec<u8>>, m: BTreeMap<u8, u8>) -> u8 { let a = v[0][1] as u8; let b = std::cmp::max(a, m.get(&1).copied().unwrap_or(0)); g(b)(a) }\n";
         assert_eq!(rust_nesting_refusal(ordinary), None);
+    }
+
+    /// #11572: left-nested `@` binding chains and `break 'a` label runs, and
+    /// the flat sibling-call controls that must stay accepted.
+    #[test]
+    fn binding_and_label_chains_are_refused_and_flat_runs_are_not() {
+        let refused = [
+            (
+                "binding",
+                format!("fn f() {{ let {}z = 1; }}\n", "y @ ".repeat(5_000)),
+            ),
+            (
+                "label",
+                format!("fn f() {{ let _v = {}x; }}\n", "break 'a ".repeat(5_000)),
+            ),
+        ];
+        for (name, source) in refused {
+            assert!(
+                rust_nesting_refusal(&source)
+                    .is_some_and(|reason| reason.contains("rust_nesting_budget")),
+                "{name}"
+            );
+        }
+        let flat = [
+            (
+                "flat macro calls",
+                format!("fn f() {{ m!({}); }}\n", "foo() ".repeat(5_000)),
+            ),
+            (
+                "flat macro indexes",
+                format!("fn f() {{ m!({}); }}\n", "a[0] ".repeat(5_000)),
+            ),
+            (
+                "flat lifetimes",
+                format!("fn f<{}>() {{}}\n", "'a, ".repeat(5_000)),
+            ),
+        ];
+        for (name, source) in flat {
+            assert_eq!(rust_nesting_refusal(&source), None, "{name}");
+        }
     }
 
     #[test]
