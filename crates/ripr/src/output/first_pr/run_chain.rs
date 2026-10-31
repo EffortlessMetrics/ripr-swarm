@@ -18,7 +18,8 @@ use super::{
 use std::collections::VecDeque;
 use std::io::{BufRead, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::Command;
+use std::process::{Child, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 /// Stderr lines kept to name a failed step's own last diagnostic.
