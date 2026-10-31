@@ -358,6 +358,30 @@ fixtures/ts_static_limit             — named limitation (additive golden)
 fixtures/ts_no_verify_command        — named limitation (additive golden)
 ```
 
+## One recommended route and consistent card wording (#10709)
+
+For a Python or TypeScript preview gap whose packet the shared validator
+accepts, three surfaces agree on one recommended follow-through:
+
+- `ripr check` prints `Recommended follow-through (start the repair):` before
+  the gap-bound `ripr agent repair --gap-id ... --phase before` line, and its
+  `Safe next action` names that start (under `Next`) as the recommended route
+  with the by-hand test edit as the single alternative. When the start is
+  withheld (static limit, incomplete run, validator refusal), no route is
+  recommended and the by-hand `Safe next action` stands alone.
+- `ripr first-pr`'s top-gap `Safe next action` and `selected.
+  recommended_repair_command` name the same command, built only when the
+  ledger record parses as a `GapRecord` and passes
+  `validate_agent_gap_record_packet`; otherwise the field is absent.
+- A TypeScript preview card whose `repair_packet_ready` is `true` no longer
+  states "This card is advisory and is not a repair packet."; it says the card
+  is an advisory summary and the complete packet is projected separately. A
+  card whose packet is not ready keeps the original sentence.
+
+No new decision is introduced: `check` reads the existing
+`gap_repair_route_for` result and `first-pr` reads the shared validator, so the
+actionability flip remains fail-closed.
+
 ## Implementation Mapping
 
 ```text

@@ -2244,7 +2244,10 @@ JSON fields:
   `oracle_strength`, optional `bun_cross_language_grip`, optional
   `missing_discriminator`, `suggested_assertion_shape`, `static_limits`,
   nullable `verify.command`, `why_not_actionable`, `repair_route`,
-  `repair_packet_ready`, and `limits`. The optional
+  `repair_packet_ready`, and `limits`. When `repair_packet_ready` is `true`
+  the final `limits` entry reads that the card is an advisory summary and the
+  complete repair packet is projected separately (#10709); only a card whose
+  packet is not ready says it "is not a repair packet". The optional
   `bun_cross_language_grip` object carries one coherent configured Bun bridge
   profile selected from the related evidence (including Blob,
   `copy_to_unshared`, and Markdown resizable profiles). It carries `state`,
@@ -14335,7 +14338,18 @@ Field contract:
   a gap-ledger record. The card is used only when the review-comments report
   is `tool = "ripr"`, `status = "advisory"`, and names the same root, base,
   and head as the first-pr invocation. Ledger-selected top gaps never carry
-  `repair_command`. `commands` does not repeat the repair start, so editor
+  `repair_command`; instead a Python or TypeScript preview ledger gap carries
+  `selected.recommended_repair_command` (#10709) only when its record is
+  `gap_state = "actionable"`, has a `canonical_gap_id`, and passes the shared
+  `validate_agent_gap_record_packet` validator that `ripr check` also consults
+  before it prints its `ripr agent repair --gap-id ... --base ... --root ...
+  --phase before` start. first-pr does not inspect the working tree or the
+  producing run's analysis outcome, so the start itself still refuses a dirty
+  production tree or an incomplete run; the rendered text says to commit
+  first. When present, the CLI and markdown `Safe next
+  action` name it as the recommended route and the by-hand verify/receipt
+  path as the one alternative; when absent (validator refusal, other
+  language) the by-hand route stands alone and nothing is recommended. `commands` does not repeat the repair start, so editor
   projections that allowlist `commands` values are unaffected.
 - `selected.verify_command`, `selected.receipt_command`,
   `selected.receipt_path`, `selected.receipt_command_source`, and

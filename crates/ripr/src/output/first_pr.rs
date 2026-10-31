@@ -1253,6 +1253,12 @@ struct TopGapSelection {
     /// gap came from. `None` when that report is absent or a repair start
     /// carries its own after phase.
     static_recheck_command: Option<String>,
+    /// The one recommended follow-through for a Python/TypeScript ledger gap
+    /// (#10709): the gap-bound `ripr agent repair` start, present only when
+    /// the shared agent-packet validator accepts the record, the same
+    /// decision `ripr check` uses to print that start. `None` leaves the
+    /// by-hand verify/receipt route as the only route (fail closed).
+    recommended_repair_command: Option<String>,
 }
 
 impl TopGapSelection {
@@ -1300,6 +1306,9 @@ impl TopGapSelection {
         // selections keep their existing shape.
         if let Some(command) = &self.repair_command {
             value["repair_command"] = Value::String(command.clone());
+        }
+        if let Some(command) = &self.recommended_repair_command {
+            value["recommended_repair_command"] = Value::String(command.clone());
         }
         if let Some(command) = &self.analysis_outcome_command {
             value["analysis_outcome_command"] = Value::String(command.clone());
@@ -1939,6 +1948,7 @@ fn top_gap_from_review_card(card: &Value, options: &FirstPrOptions) -> Option<To
         agent_packet_command: None,
         repair_command: Some(repair_command),
         static_recheck_command: None,
+        recommended_repair_command: None,
     })
 }
 
@@ -2338,6 +2348,7 @@ fn top_gap_from_record(
     } else {
         None
     };
+    let recommended_repair_command = recommended_gap_repair_command(record, options);
     let repair_route_kind = string_from_sources(&[(repair_route, &["route_kind"])])
         .unwrap_or_else(|| "RepairRouteUnavailable".to_string());
     let target_file = string_from_sources(&[(repair_route, &["target_file"])]);
@@ -2390,6 +2401,7 @@ fn top_gap_from_record(
         static_limit_detail: string_path(record, &["static_limit_detail"]),
         repair_command: None,
         static_recheck_command,
+        recommended_repair_command,
         agent_packet_command: Some(format!(
             "ripr agent packet --root {} --gap-ledger {} --gap-id {} --json > {}",
             shell_arg(&options.command_root()),
@@ -2402,6 +2414,42 @@ fn top_gap_from_record(
             options.anchored_arg(&options.agent_packet)
         )),
     }
+}
+
+/// The gap-bound start `ripr check` recommends for a Python/TypeScript gap
+/// (#10709), so `first-pr` and `check` name one route. The ledger record is
+/// parsed back into the typed `GapRecord` and judged by the shared
+/// `validate_agent_gap_record_packet`; nothing is decided here. A record that
+/// does not parse, has no canonical gap id, is another language, or fails the
+/// validator yields `None` and keeps the by-hand route alone. The command is
+/// spelled as `check` spells it (`--base`, `--root`, `--phase before`). Unlike
+/// `check`, first-pr does not inspect the working tree or the producing run's
+/// analysis outcome, so the start itself still refuses a dirty tree or an
+/// incomplete run; the rendered text says to commit first.
+fn recommended_gap_repair_command(record: &Value, options: &FirstPrOptions) -> Option<String> {
+    use crate::output::agent_seam_packets::validate_agent_gap_record_packet;
+    use crate::output::gap_decision_ledger::GapRecord;
+    let language = string_path(record, &["language"])?;
+    if !matches!(language.as_str(), "python" | "typescript") {
+        return None;
+    }
+    if string_path(record, &["gap_state"]).as_deref() != Some("actionable") {
+        return None;
+    }
+    if options.base.trim().is_empty() {
+        return None;
+    }
+    let typed: GapRecord = serde_json::from_value(record.clone()).ok()?;
+    if typed.canonical_gap_id.trim().is_empty() {
+        return None;
+    }
+    validate_agent_gap_record_packet(&typed).ok()?;
+    Some(format!(
+        "ripr agent repair --gap-id {} --base {} --root {} --phase before",
+        shell_arg(&typed.canonical_gap_id),
+        shell_arg(&options.base),
+        shell_arg(&options.command_root())
+    ))
 }
 
 fn current_evidence_strength_for_gap(kind: &str, language: Option<&str>) -> String {
@@ -7648,6 +7696,70 @@ mod tests {
                 }
             ]
         })
+    }
+
+    /// #10709: the recommended gap-bound start is derived only from a record
+    /// the shared agent-packet validator accepts, so a record it refuses (or
+    /// another language, or a non-actionable gap) recommends nothing.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn recommended_repair_command_follows_the_shared_validator_and_fails_closed()
+    -> Result<(), String> {
+        let mut record = ledger_with_typescript_repairable_gap()["records"][0].clone();
+        record["projection_eligibility"] = json!({
+            "agent_packet": {"eligible": true, "reason": "bounded_repair_route"}
+        });
+        let options = FirstPrOptions {
+            base: "HEAD~1".to_string(),
+            ..FirstPrOptions::default()
+        };
+        let command = recommended_gap_repair_command(&record, &options)
+            .ok_or("validator-accepted TypeScript record must recommend the start")?;
+        assert!(
+            command.starts_with(
+                "ripr agent repair --gap-id gap:typescript:typescript_preview:2396aec1 --base 'HEAD~1' --root "
+            ),
+            "{command}"
+        );
+        assert!(command.ends_with(" --phase before"), "{command}");
+
+        let mut ineligible = record.clone();
+        ineligible["projection_eligibility"]["agent_packet"]["eligible"] = json!(false);
+        assert_eq!(recommended_gap_repair_command(&ineligible, &options), None);
+
+        let mut no_projection = record.clone();
+        if let Some(object) = no_projection.as_object_mut() {
+            object.remove("projection_eligibility");
+        }
+        assert_eq!(
+            recommended_gap_repair_command(&no_projection, &options),
+            None
+        );
+
+        let mut no_receipt = record.clone();
+        no_receipt["receipt_command"] = json!("  ");
+        assert_eq!(recommended_gap_repair_command(&no_receipt, &options), None);
+
+        let mut rust = record.clone();
+        rust["language"] = json!("rust");
+        assert_eq!(recommended_gap_repair_command(&rust, &options), None);
+
+        let mut not_actionable = record.clone();
+        not_actionable["gap_state"] = json!("no_action");
+        assert_eq!(
+            recommended_gap_repair_command(&not_actionable, &options),
+            None
+        );
+
+        let mut no_canonical = record;
+        if let Some(object) = no_canonical.as_object_mut() {
+            object.remove("canonical_gap_id");
+        }
+        assert_eq!(
+            recommended_gap_repair_command(&no_canonical, &options),
+            None
+        );
+        Ok(())
     }
 
     #[test]
