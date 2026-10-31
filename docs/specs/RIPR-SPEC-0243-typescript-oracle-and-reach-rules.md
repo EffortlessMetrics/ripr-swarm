@@ -421,20 +421,21 @@ or `Number.POSITIVE_INFINITY`/`NaN` (outside the literal vocabulary),
 leaves the whole table unresolved. The row parameter may appear only as a
 plain `row.key` read (a spread of an array cell is a plain read); a bare
 row, `row[key]`, `row?.key`, an assignment, a declaration or shadowing
-parameter is refused. A container (array or object) cell is shared by
-every read of the row, so it resolves only when the callback is one
-`expect(..).matcher(..)` statement and the cell is read at most once, as
+parameter is refused. Every `row.key` read, scalar or container, resolves only when the
+callback is exactly one `expect(..).matcher(..)` statement and the read is
 a direct argument of the call that is the whole argument of `expect(` or of
-the matcher call; a second read, a read wrapped in parentheses, through a
-further member, or as an argument of any other call or statement
-(`Object.assign(t.input, ..)`, `fix(t.input)`, `(t.input).pop()`)
-refuses the table. The `expect` it names must be a whole word (not
-`myexpect(` or `x.expect(`). A pattern that repeats a row key
+the matcher call. A second statement, or a read wrapped in parentheses, a
+comma list, `void`, `delete`, an array, an operator, a further member
+(`t.out.toString()`, `(t.input).pop()`) or an argument of any other call
+(`Object.assign(t.input, ..)`, `fix(t.input)`) refuses the table. A
+container (array or object) cell is shared by every read of the row, so it
+is additionally read at most once. The `expect` it names must be a whole
+word (not `myexpect(` or `x.expect(`). A pattern that repeats a row key
 (`({ input: a, input: b })`) refuses the table, and in the `for...of` form
 the loop parameter may not appear in the registration's callee or in any
-argument outside the callback, except a title that is exactly `t.key` or
-`t.key.toString()` over a scalar cell in every row. Scalar cells are
-otherwise unaffected. The assertions of a
+registration argument other than the callback, except a title that is
+exactly `t.key` or `t.key.toString()` over a scalar cell in every row.
+The assertions of a
 resolved table are the concatenation over its rows, each with that
 row's literals, so the credit is an aggregate over the row set and the
 existing classifier decides whether any row's input reaches the changed

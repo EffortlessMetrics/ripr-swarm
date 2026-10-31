@@ -210,6 +210,11 @@ fn touched_partial_or_derived_tables_keep_the_dynamic_refusal() -> Result<(), St
                 .to_string(),
         ),
         (
+            "deleted-scalar",
+            "describe(\"tier\", () => {\n  const cases = [\n    { input: 999, out: \"silver\" },\n    { input: 1000, out: \"gold\" },\n  ];\n  for (const t of cases) {\n    test(\"tier by points\", () => {\n      expect((delete t.out, tier(t.input))).toBe(t.out);\n    });\n  }\n});"
+                .to_string(),
+        ),
+        (
             "mutating-title",
             "describe(\"tier\", () => {\n  const cases = [\n    { input: { points: 999 }, out: \"silver\" },\n    { input: { points: 1000 }, out: \"silver\" },\n  ];\n  for (const t of cases) {\n    test(String(Object.assign(t.input, { points: 5 })), () => {\n      expect(tier(t.input)).toBe(t.out);\n    });\n  }\n});"
                 .to_string(),

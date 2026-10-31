@@ -252,25 +252,43 @@ fn registration_arguments_are_pure(
         if whole_word_count(argument_text, param) == 0 {
             continue;
         }
-        let compact: String = argument_text.split_whitespace().collect();
-        let Some(rest) = compact
-            .strip_prefix(param)
-            .and_then(|r| r.strip_prefix('.'))
-        else {
+        // A template title whose every substitution is a plain scalar
+        // `t.key` read is as pure as the bare read.
+        if let oxc_ast::ast::Argument::TemplateLiteral(template) = argument {
+            let pure = template.expressions.iter().all(|expression| {
+                slice(expression.span()).is_some_and(|inner| {
+                    scalar_key_title(&inner.split_whitespace().collect::<String>(), param, rows)
+                })
+            });
+            if pure {
+                continue;
+            }
             return false;
-        };
-        let key = rest.strip_suffix(".toString()").unwrap_or(rest);
-        let plain_key = !key.is_empty() && key.bytes().all(ident_part);
-        if !plain_key
-            || !rows.iter().all(|row| {
-                row.cell(key)
-                    .is_some_and(|cell| !cell.starts_with(['[', '{']))
-            })
-        {
+        }
+        let compact: String = argument_text.split_whitespace().collect();
+        if !scalar_key_title(&compact, param, rows) {
             return false;
         }
     }
     true
+}
+
+/// `true` when `compact` is exactly `param.key` or `param.key.toString()`
+/// over a scalar (non-container) cell in every row.
+fn scalar_key_title(compact: &str, param: &str, rows: &[ObjectRow]) -> bool {
+    let Some(rest) = compact
+        .strip_prefix(param)
+        .and_then(|r| r.strip_prefix('.'))
+    else {
+        return false;
+    };
+    let key = rest.strip_suffix(".toString()").unwrap_or(rest);
+    !key.is_empty()
+        && key.bytes().all(ident_part)
+        && rows.iter().all(|row| {
+            row.cell(key)
+                .is_some_and(|cell| !cell.starts_with(['[', '{']))
+        })
 }
 
 /// The assertions of a registration inside a [`RowLoop`] read once per row,
@@ -546,18 +564,23 @@ pub(crate) fn substitute_member_row(
                 if !plain_read_with(body, idx, key_end, brackets.last().copied(), container) {
                     return None;
                 }
-                // A container cell is shared by every read of the row, so a
-                // callback that could change it must not be credited on the
-                // original literal: see `container_read_is_direct`.
+                // Every row read, scalar or container, is trusted only in a
+                // callback that is exactly one `expect(..).matcher(..)`
+                // statement and only as a direct argument of the call that
+                // is the whole argument of `expect(` or of the matcher call.
+                // Another statement or any wrapping (`delete t.out`, a comma
+                // list, `void`, an array, a member) could change what the
+                // runtime reads, so it is never credited on the literal.
+                if !single_expect_statement(body)
+                    || !container_read_is_direct(body, idx, key_end, opens.last().copied())
+                {
+                    return None;
+                }
+                // A container cell is shared by every read of the row, so it
+                // is read at most once.
                 if container {
                     let key = &body[end + 1..key_end];
-                    // A container cell is only trusted in a callback that is one
-                    // `expect` statement: another statement could change the
-                    // shared row first.
-                    if container_reads.iter().any(|read| read == key)
-                        || !single_expect_statement(body)
-                        || !container_read_is_direct(body, idx, key_end, opens.last().copied())
-                    {
+                    if container_reads.iter().any(|read| read == key) {
                         return None;
                     }
                     container_reads.push(key.to_string());

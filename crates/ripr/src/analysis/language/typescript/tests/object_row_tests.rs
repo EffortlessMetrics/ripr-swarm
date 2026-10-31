@@ -128,6 +128,53 @@ fn container_cells_resolve_only_as_bare_values() -> Result<(), String> {
 }
 
 #[test]
+fn scalar_cells_resolve_only_as_direct_reads_in_a_lone_expect() -> Result<(), String> {
+    // A wrapped or sequenced read can see a value the table literal does not
+    // hold (`delete t.out` makes the runtime expected value `undefined`).
+    for (label, body) in [
+        (
+            "delete in a void array",
+            "test(\"x\", () => { void [delete t.out]; expect(encode(t.input)).toStrictEqual(t.out); });",
+        ),
+        (
+            "delete in a comma list",
+            "test(\"x\", () => { expect((delete t.out, encode(t.input))).toStrictEqual(t.out); });",
+        ),
+        (
+            "delete as the observed argument",
+            "test(\"x\", () => { expect(encode(delete t.out, t.input)).toStrictEqual(t.out); });",
+        ),
+        (
+            "a second statement",
+            "test(\"x\", () => { const n = 1; expect(encode(t.input)).toStrictEqual(t.out); });",
+        ),
+        (
+            "a member read",
+            "test(\"x\", () => { expect(encode(t.input)).toStrictEqual(t.out.toString()); });",
+        ),
+        (
+            "an operator around the read",
+            "test(\"x\", () => { expect(encode(t.input + \"\")).toStrictEqual(t.out); });",
+        ),
+    ] {
+        let assertions = assertions_of(&describe_source(TABLE, "", LOOP, body))?;
+        if !all_dynamic(&assertions) {
+            return Err(format!("{label} resolved: {assertions:?}"));
+        }
+    }
+    // A negative number followed by a member would re-lex as `-1.5.toString()`.
+    let negative = "[\n    { input: \"a\", out: -1.5 },\n    { input: \"b\", out: -2.5 },\n  ]";
+    let member = describe_source(
+        negative,
+        "",
+        LOOP,
+        "test(\"x\", () => { expect(encode(t.input)).toStrictEqual(t.out.toString()); });",
+    );
+    assert!(all_dynamic(&assertions_of(&member)?));
+    Ok(())
+}
+
+#[test]
 fn every_row_must_hold_a_literal_at_every_key_read() -> Result<(), String> {
     for (label, table) in [
         (
@@ -385,6 +432,21 @@ fn loop_parameter_in_registration_arguments_is_never_resolved() -> Result<(), St
             true,
         ),
         ("no use", format!("test(\"x\", {callback});"), true),
+        (
+            "a template title of scalar key reads",
+            format!("test(`${{t.name}} -> ${{t.out}}`, {callback});"),
+            true,
+        ),
+        (
+            "a template title calling a helper",
+            format!("test(`${{fix(t)}}`, {callback});"),
+            false,
+        ),
+        (
+            "a template title with a container key",
+            format!("test(`${{t.input}}`, {callback});"),
+            false,
+        ),
         (
             "Object.assign in the title",
             format!("test(String(Object.assign(t.input, [9])), {callback});"),
