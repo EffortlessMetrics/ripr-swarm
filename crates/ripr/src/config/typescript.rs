@@ -144,46 +144,48 @@ pub(crate) fn detect_typescript_project(root: &Path) -> bool {
         || detect_javascript_led_root(root)
 }
 
-/// A plain JavaScript package (#11336): `package.json` at the root, JavaScript
-/// source (not tooling config files) at the root or under `src`/`test`/`tests`,
-/// and no `Cargo.toml` or Python project marker. `package.json` alone stays a non-marker (#10941):
-/// Rust and Python repositories carry one for docs or tooling, so the root
-/// must be JavaScript-led, not merely contain a manifest.
+/// A package-led root (#11336): `package.json` at the root plus JavaScript or
+/// TypeScript source (not tooling config files) at the root or under
+/// `src`/`test`/`tests`. A Cargo or Python project at the same root does not
+/// exclude it: a polyglot repository whose JS/TS changes were reported as
+/// "not analyzed" is the case this exists for. `package.json` alone stays a
+/// non-marker (#10941), as does JavaScript with no manifest.
 #[cfg(any(feature = "lang-typescript", test))]
-fn detect_javascript_led_root(root: &Path) -> bool {
+pub(crate) fn detect_javascript_led_root(root: &Path) -> bool {
     root.join("package.json").is_file()
-        && !root.join("Cargo.toml").is_file()
-        && !crate::config::detect_python_project(root)
-        && (dir_has_javascript_file(root)
+        && (dir_has_package_source_file(root)
             || ["src", "test", "tests"]
                 .iter()
-                .any(|dir| dir_contains_javascript_source(&root.join(dir))))
+                .any(|dir| dir_contains_package_source(&root.join(dir))))
 }
 
 #[cfg(any(feature = "lang-typescript", test))]
-fn is_detectable_javascript_source_name(name: &str) -> bool {
-    Path::new(name)
+fn is_detectable_package_source_name(name: &str) -> bool {
+    let is_javascript = Path::new(name)
         .extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| {
             crate::analysis::ts_js_source_kind(extension)
                 == Some(crate::analysis::TsJsSourceKind::JavaScript)
-        })
+        });
+    (is_javascript
         && !is_detectable_generated_typescript_name(name)
-        && !is_javascript_tooling_config_name(name)
+        && !is_javascript_tooling_config_name(name))
+        || is_detectable_typescript_source_name(name)
 }
 
 /// Tooling config files (`eslint.config.js`, `webpack.config.mjs`,
 /// `.eslintrc.cjs`) say a project uses a bundler or linter, not that its own
-/// code is JavaScript, so they never select the adapter on their own.
+/// code is JavaScript, so they never select the adapter on their own. Only
+/// dotfiles and `*.config.*` names count; `src.js` and `rc.js` are source.
 #[cfg(any(feature = "lang-typescript", test))]
 fn is_javascript_tooling_config_name(name: &str) -> bool {
-    name.starts_with('.') || name.contains(".config.") || name.contains("rc.")
+    name.starts_with('.') || name.contains(".config.")
 }
 
 /// Direct children only: root-level `index.js` / `test.js` style packages.
 #[cfg(any(feature = "lang-typescript", test))]
-fn dir_has_javascript_file(dir: &Path) -> bool {
+fn dir_has_package_source_file(dir: &Path) -> bool {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return false;
     };
@@ -192,16 +194,16 @@ fn dir_has_javascript_file(dir: &Path) -> bool {
             && entry
                 .file_name()
                 .to_str()
-                .is_some_and(is_detectable_javascript_source_name)
+                .is_some_and(is_detectable_package_source_name)
     })
 }
 
 #[cfg(any(feature = "lang-typescript", test))]
-fn dir_contains_javascript_source(dir: &Path) -> bool {
-    dir_has_javascript_file(dir)
+fn dir_contains_package_source(dir: &Path) -> bool {
+    dir_has_package_source_file(dir)
         || child_directories(dir)
             .iter()
-            .any(|child| dir_contains_javascript_source(child))
+            .any(|child| dir_contains_package_source(child))
 }
 
 #[cfg(any(feature = "lang-typescript", test))]
@@ -487,10 +489,9 @@ mod tests {
         std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
     }
 
-    /// #11336: a JavaScript-led root (manifest plus JavaScript source, no
-    /// Cargo or Python project) selects the adapter; a manifest next to a
-    /// Rust or Python project, or next to excluded/generated JavaScript, does
-    /// not (#10941).
+    /// #11336: a package-led root (manifest plus JavaScript/TypeScript source,
+    /// Cargo or Python project or not) selects the adapter; a manifest alone,
+    /// tooling config files, or excluded/generated JavaScript do not (#10941).
     #[test]
     fn javascript_led_roots_select_the_adapter() -> Result<(), String> {
         let root = detection_root("js-led")?;
@@ -513,12 +514,21 @@ mod tests {
         write(&root, "index.js")?;
         assert!(detect_typescript_project(&root), "root-level JavaScript");
         write(&root, "Cargo.toml")?;
-        assert!(!detect_typescript_project(&root), "Rust project root");
+        assert!(detect_typescript_project(&root), "polyglot Rust root");
         std::fs::remove_file(root.join("Cargo.toml")).map_err(|err| err.to_string())?;
         write(&root, "pyproject.toml")?;
-        assert!(!detect_typescript_project(&root), "Python project root");
+        assert!(detect_typescript_project(&root), "polyglot Python root");
         std::fs::remove_file(root.join("pyproject.toml")).map_err(|err| err.to_string())?;
         std::fs::remove_file(root.join("index.js")).map_err(|err| err.to_string())?;
+        write(&root, "src.js")?;
+        assert!(
+            detect_typescript_project(&root),
+            "`src.js` is source, not rc"
+        );
+        std::fs::remove_file(root.join("src.js")).map_err(|err| err.to_string())?;
+        write(&root, "index.ts")?;
+        assert!(detect_typescript_project(&root), "root-level TypeScript");
+        std::fs::remove_file(root.join("index.ts")).map_err(|err| err.to_string())?;
         write(&root, "test/unit.mjs")?;
         assert!(detect_typescript_project(&root), "JavaScript under test/");
         std::fs::remove_dir_all(&root).map_err(|err| err.to_string())

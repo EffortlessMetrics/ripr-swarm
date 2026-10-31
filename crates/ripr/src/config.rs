@@ -56,7 +56,7 @@ pub(crate) use toolchain_file::{repository_toolchain_path_pin, toolchain_path_pi
 #[cfg(feature = "lang-typescript")]
 pub(crate) use typescript::{
     TYPESCRIPT_PROJECT_MARKERS, TYPESCRIPT_SOURCE_DIR_MARKERS,
-    declared_typescript_handwritten_under, detect_typescript_project,
+    declared_typescript_handwritten_under, detect_javascript_led_root, detect_typescript_project,
     is_detectable_typescript_source_name, is_typescript_dir_pruned_from_discovery,
     source_dir_contains_detectable_typescript, typescript_project_marker_name,
     typescript_source_dir_marker_name,
@@ -84,6 +84,10 @@ mod typescript_absent {
         false
     }
 
+    pub(crate) fn detect_javascript_led_root(_root: &Path) -> bool {
+        false
+    }
+
     pub(crate) fn typescript_project_marker_name(_name: &str) -> Option<&'static str> {
         None
     }
@@ -102,9 +106,10 @@ mod typescript_absent {
 }
 #[cfg(not(feature = "lang-typescript"))]
 pub(crate) use typescript_absent::{
-    TYPESCRIPT_PROJECT_MARKERS, TYPESCRIPT_SOURCE_DIR_MARKERS, detect_typescript_project,
-    is_detectable_typescript_source_name, source_dir_contains_detectable_typescript,
-    typescript_project_marker_name, typescript_source_dir_marker_name,
+    TYPESCRIPT_PROJECT_MARKERS, TYPESCRIPT_SOURCE_DIR_MARKERS, detect_javascript_led_root,
+    detect_typescript_project, is_detectable_typescript_source_name,
+    source_dir_contains_detectable_typescript, typescript_project_marker_name,
+    typescript_source_dir_marker_name,
 };
 
 pub(crate) const CONFIG_FILE_NAME: &str = "ripr.toml";
