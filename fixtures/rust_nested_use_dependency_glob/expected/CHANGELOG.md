@@ -115,3 +115,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_nested_use_dependency_glob (10)
+
+Reason:
+RIPR-SPEC-0117 #10046: PR call-value identity reads these nested-use owners unresolved (infection_unknown/warning) composed with current main
+
+Command:
+`cargo xtask goldens bless rust_nested_use_dependency_glob --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
