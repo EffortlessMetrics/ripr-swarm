@@ -3331,6 +3331,67 @@ fn annotation_only_detection_is_conservative() {
         "    return x + 1",
         "    return x - 1"
     )); // not a def
+    // #11888 object-base-only class header (suppress):
+    assert!(is_annotation_only_def_change(
+        "class Box(object):",
+        "class Box:"
+    ));
+    assert!(is_annotation_only_def_change("class Box():", "class Box:"));
+    assert!(is_annotation_only_def_change(
+        "class Box:",
+        "class Box(object):"
+    ));
+    // NOT object-base-only (must still analyze):
+    assert!(!is_annotation_only_def_change(
+        "class Box(object, Mixin):",
+        "class Box:"
+    ));
+    assert!(!is_annotation_only_def_change(
+        "class Box(Base):",
+        "class Box:"
+    ));
+    assert!(!is_annotation_only_def_change(
+        "class Box(object, metaclass=M):",
+        "class Box:"
+    ));
+    assert!(!is_annotation_only_def_change(
+        "class Box(object):",
+        "class Crate:"
+    ));
+    assert!(!is_annotation_only_def_change(
+        "class Box(\n    object):",
+        "class Box:"
+    ));
+}
+
+#[test]
+fn object_base_only_class_header_change_emits_no_probe() -> Result<(), String> {
+    // #11888: pyupgrade-style `class Box(object):` -> `class Box:` is behavior-preserving.
+    let source = concat!(
+        "class Box(object):\n",
+        "    def __init__(self, value):\n",
+        "        self.value = value\n\n",
+        "    def double(self):\n",
+        "        return self.value * 2\n"
+    );
+    let owners = extract_owners(Path::new("src/box.py"), source);
+    let tests = extract_tests(
+        Path::new("tests/test_box.py"),
+        "from src.box import Box\n\n\ndef test_double():\n    assert Box(2).double() == 4\n",
+    );
+    let finding = classify_change_with_old(
+        Path::new("src/box.py"),
+        1,
+        "class Box:",
+        Some("class Box(object):"),
+        &owners,
+        &tests,
+    );
+    assert!(
+        finding.is_none(),
+        "removing the legacy object base from a class header must emit no probe"
+    );
+    Ok(())
 }
 
 #[test]

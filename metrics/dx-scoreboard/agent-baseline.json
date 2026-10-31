@@ -4,10 +4,10 @@
   "boards": [
     {
       "counts": {
-        "below_target": 1,
+        "below_target": 3,
         "comparison_failed": 0,
         "failed": 0,
-        "meets_target": 5,
+        "meets_target": 7,
         "not_measured": 7,
         "regressed": 0
       },
@@ -17,6 +17,10 @@
         "agent.answer_key_mutants_caught",
         "agent.ripr_commands_to_fix",
         "agent.tool_steps_to_fix",
+        "agent.check_bytes_human",
+        "agent.check_bytes_agent_format",
+        "agent.check_bytes_json",
+        "agent.agent_format_gaps_before_fix",
         "agent.false_weak_findings_after_fix",
         "agent.stale_recheck_cycles",
         "agent.white_box_tests_to_satisfy_ripr",
@@ -34,21 +38,46 @@
   "corpus": [],
   "corpus_version": null,
   "gate": {
-    "baseline_revision": null,
-    "baseline_runner_class": null,
-    "enabled": false,
+    "baseline_revision": "acb0f4da401e4fa299bfce9b8f72cd124947ffc6",
+    "baseline_runner_class": "local-linux-x86_64-4cpu-intel-r-xeon-r-processor-2-80ghz",
+    "ceiling_breaches": [],
+    "enabled": true,
     "failed_comparisons": [],
     "failed_instruments": [],
     "regressions": [],
     "review": [],
-    "status": "not_run",
-    "uncompared": []
+    "status": "pass",
+    "uncompared": [
+      {
+        "metric": "agent.check_bytes_human",
+        "reason": "metric absent from baseline"
+      },
+      {
+        "metric": "agent.check_bytes_agent_format",
+        "reason": "metric absent from baseline"
+      },
+      {
+        "metric": "agent.check_bytes_json",
+        "reason": "metric absent from baseline"
+      },
+      {
+        "metric": "agent.agent_format_gaps_before_fix",
+        "reason": "metric absent from baseline"
+      }
+    ]
   },
   "metrics": [
     {
       "baseline": {
-        "comparable": false,
-        "reason": "no baseline supplied"
+        "allowed_worsening": 0.0,
+        "comparable": true,
+        "delta": 0.0,
+        "missing_repos": [],
+        "new_repos": [],
+        "recovered_repos": [],
+        "regressed": false,
+        "regressed_repos": [],
+        "value": 1.0
       },
       "board": "agent",
       "direction": "higher_is_better",
@@ -58,7 +87,7 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
           "repo": null,
           "status": "meets_target",
           "value": 1.0
@@ -73,8 +102,15 @@
     },
     {
       "baseline": {
-        "comparable": false,
-        "reason": "no baseline supplied"
+        "allowed_worsening": 0.0,
+        "comparable": true,
+        "delta": 0.0,
+        "missing_repos": [],
+        "new_repos": [],
+        "recovered_repos": [],
+        "regressed": false,
+        "regressed_repos": [],
+        "value": 3.0
       },
       "board": "agent",
       "direction": "higher_is_better",
@@ -84,19 +120,19 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
           "repo": "bytesize",
           "status": "meets_target",
           "value": 3.0
         },
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
           "repo": "humantime",
           "status": "meets_target",
           "value": 3.0
         },
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
           "repo": "semver",
           "status": "meets_target",
           "value": 3.0
@@ -111,8 +147,15 @@
     },
     {
       "baseline": {
-        "comparable": false,
-        "reason": "no baseline supplied"
+        "allowed_worsening": 3.0,
+        "comparable": true,
+        "delta": 0.0,
+        "missing_repos": [],
+        "new_repos": [],
+        "recovered_repos": [],
+        "regressed": false,
+        "regressed_repos": [],
+        "value": 10.0
       },
       "board": "agent",
       "direction": "lower_is_better",
@@ -122,19 +165,19 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
           "repo": "bytesize",
           "status": "meets_target",
           "value": 7.0
         },
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
           "repo": "humantime",
           "status": "meets_target",
           "value": 8.0
         },
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
           "repo": "semver",
           "status": "meets_target",
           "value": 10.0
@@ -149,8 +192,15 @@
     },
     {
       "baseline": {
-        "comparable": false,
-        "reason": "no baseline supplied"
+        "allowed_worsening": 3.0,
+        "comparable": true,
+        "delta": 0.0,
+        "missing_repos": [],
+        "new_repos": [],
+        "recovered_repos": [],
+        "regressed": false,
+        "regressed_repos": [],
+        "value": 9.0
       },
       "board": "agent",
       "direction": "lower_is_better",
@@ -160,19 +210,19 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
           "repo": "bytesize",
           "status": "meets_target",
           "value": 8.0
         },
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
           "repo": "humantime",
           "status": "meets_target",
           "value": 9.0
         },
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
           "repo": "semver",
           "status": "meets_target",
           "value": 9.0
@@ -188,7 +238,166 @@
     {
       "baseline": {
         "comparable": false,
-        "reason": "no baseline supplied"
+        "reason": "metric absent from baseline"
+      },
+      "board": "agent",
+      "direction": "lower_is_better",
+      "id": "agent.check_bytes_human",
+      "partial": false,
+      "per_repo": true,
+      "runner_dependent": false,
+      "samples": [
+        {
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "repo": "bytesize",
+          "status": "meets_target",
+          "value": 3773.0
+        },
+        {
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "repo": "humantime",
+          "status": "meets_target",
+          "value": 3797.0
+        },
+        {
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "repo": "semver",
+          "status": "meets_target",
+          "value": 3155.0
+        }
+      ],
+      "source": "ingest:agent-as-user",
+      "status": "meets_target",
+      "target": 8000.0,
+      "title": "Bytes written by the first `ripr check` (default human format) on the gap commit",
+      "unit": "bytes",
+      "value": 3797.0
+    },
+    {
+      "baseline": {
+        "comparable": false,
+        "reason": "metric absent from baseline"
+      },
+      "board": "agent",
+      "direction": "lower_is_better",
+      "id": "agent.check_bytes_agent_format",
+      "partial": false,
+      "per_repo": true,
+      "runner_dependent": false,
+      "samples": [
+        {
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "repo": "bytesize",
+          "status": "meets_target",
+          "value": 773.0
+        },
+        {
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "repo": "humantime",
+          "status": "meets_target",
+          "value": 391.0
+        },
+        {
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "repo": "semver",
+          "status": "meets_target",
+          "value": 984.0
+        }
+      ],
+      "source": "ingest:agent-as-user",
+      "status": "meets_target",
+      "target": 4000.0,
+      "title": "Bytes written by the first `ripr check --format agent` on the gap commit",
+      "unit": "bytes",
+      "value": 984.0
+    },
+    {
+      "baseline": {
+        "comparable": false,
+        "reason": "metric absent from baseline"
+      },
+      "board": "agent",
+      "direction": "lower_is_better",
+      "id": "agent.check_bytes_json",
+      "partial": false,
+      "per_repo": true,
+      "runner_dependent": false,
+      "samples": [
+        {
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "repo": "bytesize",
+          "status": "below_target",
+          "value": 57586.0
+        },
+        {
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "repo": "humantime",
+          "status": "below_target",
+          "value": 110467.0
+        },
+        {
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "repo": "semver",
+          "status": "below_target",
+          "value": 70880.0
+        }
+      ],
+      "source": "ingest:agent-as-user",
+      "status": "below_target",
+      "target": 40000.0,
+      "title": "Bytes written by the first `ripr check --json` on the gap commit",
+      "unit": "bytes",
+      "value": 110467.0
+    },
+    {
+      "baseline": {
+        "comparable": false,
+        "reason": "metric absent from baseline"
+      },
+      "board": "agent",
+      "direction": "higher_is_better",
+      "id": "agent.agent_format_gaps_before_fix",
+      "partial": false,
+      "per_repo": true,
+      "runner_dependent": false,
+      "samples": [
+        {
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "repo": "bytesize",
+          "status": "meets_target",
+          "value": 2.0
+        },
+        {
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "repo": "humantime",
+          "status": "below_target",
+          "value": 0.0
+        },
+        {
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "repo": "semver",
+          "status": "meets_target",
+          "value": 4.0
+        }
+      ],
+      "source": "ingest:agent-as-user",
+      "status": "below_target",
+      "target": 1.0,
+      "title": "Gaps named by `ripr check --format agent` on the gap commit, before any fix",
+      "unit": "gaps",
+      "value": 0.0
+    },
+    {
+      "baseline": {
+        "allowed_worsening": 0.0,
+        "comparable": true,
+        "delta": 0.0,
+        "missing_repos": [],
+        "new_repos": [],
+        "recovered_repos": [],
+        "regressed": false,
+        "regressed_repos": [],
+        "value": 4.0
       },
       "board": "agent",
       "direction": "lower_is_better",
@@ -198,19 +407,19 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
           "repo": "bytesize",
           "status": "meets_target",
           "value": 0.0
         },
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
           "repo": "humantime",
           "status": "below_target",
           "value": 4.0
         },
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
           "repo": "semver",
           "status": "below_target",
           "value": 1.0
@@ -226,7 +435,10 @@
     {
       "baseline": {
         "comparable": false,
-        "reason": "no baseline supplied"
+        "new_repos": [],
+        "reason": "baseline or current value is missing",
+        "recovered_repos": [],
+        "value": null
       },
       "board": "agent",
       "direction": "lower_is_better",
@@ -244,8 +456,15 @@
     },
     {
       "baseline": {
-        "comparable": false,
-        "reason": "no baseline supplied"
+        "allowed_worsening": 0.0,
+        "comparable": true,
+        "delta": 0.0,
+        "missing_repos": [],
+        "new_repos": [],
+        "recovered_repos": [],
+        "regressed": false,
+        "regressed_repos": [],
+        "value": 0.0
       },
       "board": "agent",
       "direction": "lower_is_better",
@@ -255,7 +474,7 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
           "repo": null,
           "status": "meets_target",
           "value": 0.0
@@ -271,7 +490,10 @@
     {
       "baseline": {
         "comparable": false,
-        "reason": "no baseline supplied"
+        "new_repos": [],
+        "reason": "baseline or current value is missing",
+        "recovered_repos": [],
+        "value": null
       },
       "board": "agent",
       "direction": "higher_is_better",
@@ -290,7 +512,10 @@
     {
       "baseline": {
         "comparable": false,
-        "reason": "no baseline supplied"
+        "new_repos": [],
+        "reason": "baseline or current value is missing",
+        "recovered_repos": [],
+        "value": null
       },
       "board": "agent",
       "direction": "higher_is_better",
@@ -309,7 +534,10 @@
     {
       "baseline": {
         "comparable": false,
-        "reason": "no baseline supplied"
+        "new_repos": [],
+        "reason": "baseline or current value is missing",
+        "recovered_repos": [],
+        "value": null
       },
       "board": "agent",
       "direction": "higher_is_better",
@@ -328,7 +556,10 @@
     {
       "baseline": {
         "comparable": false,
-        "reason": "no baseline supplied"
+        "new_repos": [],
+        "reason": "baseline or current value is missing",
+        "recovered_repos": [],
+        "value": null
       },
       "board": "agent",
       "direction": "higher_is_better",
@@ -347,7 +578,10 @@
     {
       "baseline": {
         "comparable": false,
-        "reason": "no baseline supplied"
+        "new_repos": [],
+        "reason": "baseline or current value is missing",
+        "recovered_repos": [],
+        "value": null
       },
       "board": "agent",
       "direction": "lower_is_better",
@@ -366,7 +600,8 @@
     {
       "baseline": {
         "comparable": false,
-        "reason": "no baseline supplied"
+        "reason": "runner class differs (baseline `local-linux-x86_64-4cpu-intel-r-xeon-r-processor-2-80ghz`, current `local-linux-x86_64-4cpu-intel-r-xeon-r-processor-2-10ghz`)",
+        "value": null
       },
       "board": "agent",
       "direction": "lower_is_better",
@@ -395,6 +630,7 @@
         "regressed": 0
       },
       "id": "serde",
+      "language": "rust",
       "metrics": [],
       "note": "small library workspace, macro-heavy tests",
       "sha": "dd18663450ec3ee38e35e3a4ee141932614e662c",
@@ -410,6 +646,7 @@
         "regressed": 0
       },
       "id": "ripgrep",
+      "language": "rust",
       "metrics": [],
       "note": "multi-crate CLI workspace",
       "sha": "020687a77d13146923333f0beb274eeabd54a270",
@@ -425,6 +662,7 @@
         "regressed": 0
       },
       "id": "regex",
+      "language": "rust",
       "metrics": [],
       "note": "large library workspace with generated test suites",
       "sha": "72d650cb0a880a01ab6dc2137c0888e8f89740f7",
@@ -440,6 +678,7 @@
         "regressed": 0
       },
       "id": "ripr-swarm",
+      "language": "rust",
       "metrics": [],
       "note": "large workspace (~900 files); pinned, not the checkout under test",
       "sha": "7c64b9c8d0778cc7a6aeaab0deb0452d9e521663",
@@ -455,6 +694,7 @@
         "regressed": 0
       },
       "id": "cargo",
+      "language": "rust",
       "metrics": [],
       "note": "large long-lived binary workspace (~1400 .rs files); shared corpus pin",
       "sha": "f3865b2a4d1acc5276f6b3c67d0e057f4dab3928",
@@ -470,22 +710,263 @@
         "regressed": 0
       },
       "id": "ripr-swarm-2026-10",
+      "language": "rust",
       "metrics": [],
       "note": "this repository at its 2026-10 size (~2100 .rs files), a fixed pin that will stop being current; the commit edits product Rust under crates/ripr, so the warm check pays for the macro-binding scan",
       "sha": "8fbe8bd1598e0b11752c6c989aa54198a0510a2f",
       "status": "not_measured"
+    },
+    {
+      "counts": {
+        "below_target": 0,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 0,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "serde-no-rust",
+      "language": "rust",
+      "metrics": [],
+      "note": "serde commit that changes only .github/workflows/ci.yml (no Rust)",
+      "sha": "576e2ef9d8b985cb9399fa3a35913ef86503bad4",
+      "status": "not_measured"
+    },
+    {
+      "counts": {
+        "below_target": 0,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 0,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "cargo-no-rust",
+      "language": "rust",
+      "metrics": [],
+      "note": "cargo merge commit whose diff against its first parent changes only doc/book/src/CHANGELOG.md (no Rust); ~1400 .rs files stay untouched",
+      "sha": "523e530d77cce92813eebbf6ac009a04f2df2ac2",
+      "status": "not_measured"
+    },
+    {
+      "counts": {
+        "below_target": 0,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 0,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "click-python",
+      "language": "python",
+      "metrics": [],
+      "note": "small Python library; commit edits src/click/utils.py and its test",
+      "sha": "f67c2bb6c2f055c1c7a57cd46c3697fc26a7742e",
+      "status": "not_measured"
+    },
+    {
+      "counts": {
+        "below_target": 0,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 0,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "poetry-python",
+      "language": "python",
+      "metrics": [],
+      "note": "larger Python application (~450 .py files); commit edits src/poetry/utils/authenticator.py and its test",
+      "sha": "a416efd1be6b6787019e751e7c4f6fa1a0911050",
+      "status": "not_measured"
+    },
+    {
+      "counts": {
+        "below_target": 0,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 0,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "pandas-python",
+      "language": "python",
+      "metrics": [],
+      "note": "large Python library (~1500 .py files, ~23k tests); commit edits scripts/validate_min_versions_in_sync.py and its test",
+      "sha": "ecdb4258a39cdfc8ba70ce1aa3edda1615b1defc",
+      "status": "not_measured"
+    },
+    {
+      "counts": {
+        "below_target": 0,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 0,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "django-python",
+      "language": "python",
+      "metrics": [],
+      "note": "large Python framework (2,937 .py files); commit adds HTTP QUERY method support across django/ and its tests",
+      "sha": "5c13b5a19864807cae7266339554c14e151e5961",
+      "status": "not_measured"
+    },
+    {
+      "counts": {
+        "below_target": 0,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 0,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "defu-typescript",
+      "language": "typescript",
+      "metrics": [],
+      "note": "small TypeScript library; commit edits src/defu.ts and its test",
+      "sha": "11ba02213d4b1c6b02dd686041f75edc479c98e9",
+      "status": "not_measured"
+    },
+    {
+      "counts": {
+        "below_target": 0,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 0,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "ky-typescript",
+      "language": "typescript",
+      "metrics": [],
+      "note": "mid-size TypeScript library (~100 files); commit edits source/utils/merge.ts, source/types/options.ts and test/hooks.ts",
+      "sha": "33462fcbf8f9001fc3d7a08576992098e571c5ff",
+      "status": "not_measured"
+    },
+    {
+      "counts": {
+        "below_target": 0,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 0,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "h3-typescript",
+      "language": "typescript",
+      "metrics": [],
+      "note": "HTTP server framework with Vitest suites; commit edits src/tracing.ts and test/tracing.test.ts",
+      "sha": "3444ff78970e95c65e481ed2ff9a7d43c880ab1c",
+      "status": "not_measured"
+    },
+    {
+      "counts": {
+        "below_target": 0,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 0,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "execa-typescript",
+      "language": "typescript",
+      "metrics": [],
+      "note": "process-execution library tested with ava; the commit edits JavaScript (lib/transform/generator.js and test/transform/encoding-multibyte.js) through the same TypeScript/JavaScript adapter",
+      "sha": "ed80079bc4e21a259fdc521c5a4b27126b308c9a",
+      "status": "not_measured"
+    },
+    {
+      "counts": {
+        "below_target": 0,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 0,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "destr-typescript",
+      "language": "typescript",
+      "metrics": [],
+      "note": "JSON-ish parser with Vitest tests; the commit edits src/index.ts and test/index.test.ts to skip the fast path when the input may contain escape characters",
+      "sha": "f9c78d402556aba3e50f94d46176f36a0570acbd",
+      "status": "not_measured"
+    },
+    {
+      "counts": {
+        "below_target": 0,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 0,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "zod-typescript",
+      "language": "typescript",
+      "metrics": [],
+      "note": "schema-validation library tested with Vitest; the commit edits packages/zod/src/v4/core/schemas.ts and its union test, and the repository tracks a tooling directory alias that a link-aware walk must not report as skipped",
+      "sha": "680d19f7d1e042e55934209caeb79bc843b94f44",
+      "status": "not_measured"
+    },
+    {
+      "counts": {
+        "below_target": 0,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 0,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "valibot-typescript",
+      "language": "typescript",
+      "metrics": [],
+      "note": "schema library whose sources live in library/ rather than the root; the commit edits six object-schema sources and no test, so the row measures a TypeScript workspace with a large package table (#10943) and nested detection (#10941)",
+      "sha": "e6b538386cfa4ccf8be6122f7f457ea7d4020325",
+      "status": "not_measured"
+    },
+    {
+      "counts": {
+        "below_target": 0,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 0,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "remeda-typescript",
+      "language": "typescript",
+      "metrics": [],
+      "note": "pnpm monorepo whose package is packages/remeda; the commit edits packages/remeda/src/funnel.ts and its test, and only nested detection (#10941) selects the TypeScript adapter without a ripr.toml",
+      "sha": "d02c3bdb5e18cfa53e76f33f4ae525adce515379",
+      "status": "not_measured"
+    },
+    {
+      "counts": {
+        "below_target": 0,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 0,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "hono-typescript",
+      "language": "typescript",
+      "metrics": [],
+      "note": "web framework with Vitest suites; the commit edits src/middleware/serve-static/index.ts and its test, and the repository declares tsconfig references and extends in nested packages, a vite config naming a lint rule with `alias`, and a self-import of its own package name, which each used to switch off reach scoping of the test-extraction disclosure (#10954)",
+      "sha": "d54720da80134a180f5fe2dd98a7676cfc8f08b4",
+      "status": "not_measured"
     }
   ],
-  "revision": "acb0f4da401e4fa299bfce9b8f72cd124947ffc6",
+  "revision": "9db2819fc2aa0516eb6015ecf7d6f74a8299de05",
   "rollup": {
-    "below_target": 1,
+    "below_target": 3,
     "comparison_failed": 0,
     "failed": 0,
-    "meets_target": 5,
+    "meets_target": 7,
     "not_measured": 7,
     "regressed": 0
   },
-  "runner_class": "local-linux-x86_64-4cpu-intel-r-xeon-r-processor-2-80ghz",
+  "runner_class": "local-linux-x86_64-4cpu-intel-r-xeon-r-processor-2-10ghz",
   "schema_version": "ripr-dx-scoreboard-v1",
   "tool": "ripr"
 }

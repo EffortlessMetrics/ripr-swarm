@@ -221,7 +221,7 @@ pub(super) fn python_boundary_evidence(
                     resolve_operand(left, row, &constants),
                     resolve_operand(right, row, &constants),
                 ),
-                (Some(l), Some(r)) if !literals_equal(&l, &r)
+                (Some(l), Some(r)) if literals_equal(&l, &r) == Some(false)
             )
         })
     {
@@ -431,7 +431,7 @@ pub(super) fn python_boundary_evidence(
         if let Some((left_value, right_value)) = left_candidates.iter().find_map(|left_value| {
             right_candidates
                 .iter()
-                .find(|right_value| literals_equal(left_value, right_value))
+                .find(|right_value| literals_equal(left_value, right_value) == Some(true))
                 .map(|right_value| (left_value, right_value))
         }) {
             observed_new = true;
@@ -459,7 +459,7 @@ pub(super) fn python_boundary_evidence(
             let old_right_value = resolve_operand(old_right, row, &constants);
             if let (Some(old_left_value), Some(old_right_value)) =
                 (&old_left_value, &old_right_value)
-                && literals_equal(old_left_value, old_right_value)
+                && literals_equal(old_left_value, old_right_value) == Some(true)
             {
                 observed_old = true;
                 observed_values.push(ValueFact {
@@ -497,7 +497,7 @@ pub(super) fn python_boundary_evidence(
             !rows.iter().any(|row| {
                 candidates(&step.variable, row)
                     .iter()
-                    .any(|value| literals_equal(value, &step.value))
+                    .any(|value| literals_equal(value, &step.value) == Some(true))
             })
         });
     if let Some(step) = step {
@@ -2081,23 +2081,61 @@ pub(super) fn literal_value(text: &str) -> Option<String> {
     None
 }
 
-/// Literal equality as Python compares the scalar values: decimals by value
-/// (`100 == 100.0`), strings by content regardless of quote style, and
-/// `True`/`False`/`None` by identity. Mixed kinds never compare equal here
-/// (for example `True == 1`), which fails closed toward "not observed".
-pub(super) fn literals_equal(left: &str, right: &str) -> bool {
+/// Literal equality as Python compares scalar values: decimals by value
+/// (`100 == 100.0`), bools against numbers (`True == 1`, `False == 0`),
+/// strings by decoded content, and `True`/`False`/`None` by identity.
+/// Returns `None` when static evidence cannot read the comparison (mixed
+/// unreadable kinds, escapes, prefixes) rather than a definite inequality.
+pub(super) fn literals_equal(left: &str, right: &str) -> Option<bool> {
+    match (bool_as_decimal(left), bool_as_decimal(right)) {
+        (Some(left), Some(right)) => return Some(left == right),
+        (Some(bool_value), None) => {
+            if let Some(number) = canonical_decimal(right) {
+                return Some(number == bool_value);
+            }
+        }
+        (None, Some(bool_value)) => {
+            if let Some(number) = canonical_decimal(left) {
+                return Some(number == bool_value);
+            }
+        }
+        (None, None) => {}
+    }
     match (canonical_decimal(left), canonical_decimal(right)) {
-        (Some(left), Some(right)) => return left == right,
-        (Some(_), None) | (None, Some(_)) => return false,
+        (Some(left), Some(right)) => return Some(left == right),
+        (Some(_), None) | (None, Some(_)) => return None,
         (None, None) => {}
     }
     match (
         python_string_literal_value(left),
         python_string_literal_value(right),
     ) {
-        (Some(left), Some(right)) => left == right,
-        (None, None) => left == right,
-        _ => false,
+        (Some(left), Some(right)) => Some(left == right),
+        (None, None) => {
+            if left == right {
+                Some(true)
+            } else if provably_unequal(left, right) {
+                Some(false)
+            } else {
+                None
+            }
+        }
+        _ => {
+            if provably_unequal(left, right) {
+                Some(false)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// The decimal value Python equates a bool literal with.
+fn bool_as_decimal(text: &str) -> Option<String> {
+    match text {
+        "True" => Some("1".to_string()),
+        "False" => Some("0".to_string()),
+        _ => None,
     }
 }
 
@@ -2182,6 +2220,22 @@ fn test_body_after_header(text: &str) -> Option<&str> {
     let close = matching_call_paren(text, open)?;
     let colon = close + text[close..].find(':')?;
     text.get(colon + 1..)
+}
+
+#[cfg(test)]
+mod literals_equal_tests {
+    use super::literals_equal;
+
+    #[test]
+    fn python_bool_numeric_equality_and_inequality() {
+        assert_eq!(literals_equal("True", "1"), Some(true));
+        assert_eq!(literals_equal("1", "True"), Some(true));
+        assert_eq!(literals_equal("True", "1.0"), Some(true));
+        assert_eq!(literals_equal("False", "0"), Some(true));
+        assert_eq!(literals_equal("0", "False"), Some(true));
+        assert_eq!(literals_equal("True", "2"), Some(false));
+        assert_eq!(literals_equal("2", "True"), Some(false));
+    }
 }
 
 #[cfg(test)]
