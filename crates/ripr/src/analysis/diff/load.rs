@@ -2615,7 +2615,7 @@ pub(crate) fn no_merge_base_diagnosis(
 
 /// Whether `root` is a shallow clone. `false` when Git cannot answer, so a
 /// failed probe never invents a shallow-clone diagnosis.
-fn is_shallow_repository(root: &Path, git_timeout: Option<Duration>) -> bool {
+pub(crate) fn is_shallow_repository(root: &Path, git_timeout: Option<Duration>) -> bool {
     crate::git::run_git_output_with_deadline(
         root,
         &["rev-parse", "--is-shallow-repository"],
