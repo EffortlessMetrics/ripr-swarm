@@ -1619,10 +1619,16 @@ fn tracked_scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
         .get("note")
         .and_then(Value::as_str)
         .unwrap_or_default()
+        .trim_end_matches('.')
         .to_string();
-    let withheld_note = json!(format!(
-        "{note}. Repair cards and repair readiness are withheld for this snapshot because the findings read committed content while the seam inventory reads the checkout's current Rust files ({reason}); settle the checkout (commit or stash the edits, or stage untracked files) and run ripr_refresh again, or run ripr_refresh with source `worktree` to analyze saved edits"
-    ));
+    let withheld = format!(
+        "Repair cards and repair readiness are withheld for this snapshot because the findings read committed content while the seam inventory reads the checkout's current Rust files ({reason}); commit the uncommitted Rust source or test files (untracked ones included) and run ripr_refresh again, or run ripr_refresh with source `worktree` to analyze saved edits"
+    );
+    let withheld_note = json!(if note.is_empty() {
+        withheld
+    } else {
+        format!("{note}. {withheld}")
+    });
     if let Some(object) = disclosure.as_object_mut() {
         object.insert("note".to_string(), withheld_note);
         object.insert(
@@ -1948,7 +1954,9 @@ pub(crate) fn run_check(
         // files for the inventory (#7357); only the shared custody owner may
         // say they agree.
         if let Some(reason) =
-            committed_over_uncommitted_refusal(&output, &findings_sources, &inventory)
+            committed_over_uncommitted_refusal(&output, &findings_sources, &inventory, || {
+                dirty_rust_routed_paths(Path::new(root))
+            })
         {
             let admission = super::repair_admission::SeamAdmission::withheld(
                 &output.findings,
@@ -2140,43 +2148,91 @@ fn worktree_custody(
 ///
 /// The shared [`ConsumedRustSources::establish_agreement`] owner decides on
 /// every committed refresh with findings, so a checkout that changed after the
-/// findings ran is caught even when it was clean at that time. When the
-/// findings producer recorded no Rust bytes the owner cannot compare, so the
-/// dirty flag is the fallback trigger, and only for Rust findings: a dirty
-/// non-Rust file does not withhold Rust cards. A Rust file only the inventory
-/// read (untracked, or outside the findings scope) is bound by neither side
-/// and stays the documented residual.
+/// findings ran is caught even when it was clean at that time, and it names the
+/// moved path when it can. The agreement only covers paths the findings
+/// consumed, but the inventory reads the whole analyzable Rust corpus, so with
+/// Rust findings any dirty or untracked Rust-routed path also withholds
+/// (`dirty_rust` lists them; it is evaluated only when needed and an
+/// unestablishable list fails closed). Dirty non-Rust files never withhold. A
+/// head the findings producer observed that differs from the inventory's also
+/// withholds; an unobserved head is not compared on the committed path.
 ///
 /// [`ConsumedRustSources::establish_agreement`]: crate::analysis::consumed_source::ConsumedRustSources::establish_agreement
 fn committed_over_uncommitted_refusal(
     output: &crate::app::CheckOutput,
     findings_sources: &crate::analysis::consumed_source::ConsumedRustSources,
     inventory: &super::repair_card::SeamInventory,
+    dirty_rust: impl FnOnce() -> Result<Vec<String>, String>,
 ) -> Option<String> {
     use crate::analysis::consumed_source::{ConsumedRustSources, CustodyRefusal};
     if output.findings.is_empty() {
         return None;
     }
-    match ConsumedRustSources::establish_agreement(findings_sources, &inventory.consumed_sources) {
-        Ok(_) => None,
-        Err(CustodyRefusal::FindingsObservedNothing) => {
-            let rust_findings = output
-                .findings
-                .iter()
-                .any(|finding| finding.language == Some(crate::domain::LanguageId::Rust));
-            (output.unanalyzed_working_tree && rust_findings).then(|| {
-                "the findings producer recorded no Rust source bytes to compare while the checkout has uncommitted edits".to_string()
-            })
-        }
-        Err(refusal) => Some(refusal.describe()),
+    let producer_head = output
+        .analyzed_revisions
+        .as_ref()
+        .and_then(|revisions| revisions.head_commit.as_deref());
+    if producer_head.is_some_and(|head| head != inventory.repository_head) {
+        return Some(
+            "the repository head the findings producer observed does not match the head the seam inventory bound"
+                .to_string(),
+        );
     }
+    match ConsumedRustSources::establish_agreement(findings_sources, &inventory.consumed_sources) {
+        Ok(_) | Err(CustodyRefusal::FindingsObservedNothing) => {}
+        Err(refusal) => return Some(refusal.describe()),
+    }
+    let rust_findings = output
+        .findings
+        .iter()
+        .any(|finding| finding.language == Some(crate::domain::LanguageId::Rust));
+    if !rust_findings {
+        return None;
+    }
+    match dirty_rust() {
+        Err(error) => Some(format!(
+            "the checkout's uncommitted Rust files could not be established ({error})"
+        )),
+        Ok(paths) if paths.is_empty() => None,
+        Ok(paths) => {
+            let named = paths.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
+            let more = paths.len().saturating_sub(3);
+            let listing = if more > 0 {
+                format!("{named} and {more} more")
+            } else {
+                named
+            };
+            Some(format!(
+                "uncommitted Rust source or test files ({listing}) are read by the seam inventory and the committed findings never saw them"
+            ))
+        }
+    }
+}
+
+/// The dirty and untracked Rust-routed paths of the checkout, from the same
+/// committed-source probe the committed findings producer uses.
+fn dirty_rust_routed_paths(root: &Path) -> Result<Vec<String>, String> {
+    let overlay =
+        crate::analysis::committed_source::probe(root, Some(crate::app::default_cli_git_timeout()))
+            .map_err(|error| error.to_string())?;
+    let Some(overlay) = overlay else {
+        return Ok(Vec::new());
+    };
+    let mut paths = overlay.dirty_source_paths();
+    paths.extend(overlay.untracked_source_paths());
+    paths.retain(|path| {
+        crate::analysis::language::route(Path::new(path)) == Some(crate::domain::LanguageId::Rust)
+    });
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
 }
 
 /// Why a committed snapshot whose findings and checkout were not shown to
 /// agree carries no repair readiness or repair card (#7357).
 pub(crate) fn committed_card_withheld_detail(reason: &str) -> String {
     format!(
-        "this snapshot analyzed committed content, but its findings and the live seam inventory were not shown to have consumed the same Rust source bytes ({reason}), so repair readiness and cards are withheld rather than claimed current. Settle the checkout (commit or stash the edits, or stage untracked files) and run ripr_refresh again, or run ripr_refresh with source `worktree` to analyze saved edits"
+        "this snapshot analyzed committed content, but its findings and the live seam inventory were not shown to have consumed the same Rust source bytes ({reason}), so repair readiness and cards are withheld rather than claimed current. Commit the uncommitted Rust source or test files (untracked ones included) and run ripr_refresh again, or run ripr_refresh with source `worktree` to analyze saved edits"
     )
 }
 

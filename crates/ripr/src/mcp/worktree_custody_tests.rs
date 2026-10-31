@@ -699,7 +699,7 @@ fn committed_refresh_over_unrelated_dirty_files_keeps_the_card() -> Result<(), S
 /// producer cannot capture it and the owner withholds. The cause names the
 /// path and the remedy is to stage it, not to commit or stash an edit.
 #[test]
-fn committed_refresh_over_untracked_rust_file_withholds_with_a_staging_remedy() -> Result<(), String>
+fn committed_refresh_over_untracked_rust_file_withholds_with_a_commit_remedy() -> Result<(), String>
 {
     let fixture = install_fixture("untracked-rust")?;
     write(
@@ -722,10 +722,84 @@ fn committed_refresh_over_untracked_rust_file_withholds_with_a_staging_remedy() 
         .iter()
         .find_map(|item| item.repair_readiness.seam_detail.clone())
         .ok_or("a withheld item must explain itself")?;
-    if !detail.contains("stage untracked files") {
-        return Err(format!("the remedy must say to stage the file: {detail}"));
+    if !detail.contains("Commit the uncommitted Rust source or test files") {
+        return Err(format!("the remedy must say to commit the files: {detail}"));
     }
     Ok(())
+}
+
+/// A tracked Rust helper outside the findings scope (never part of the diff)
+/// that is dirty on disk is still read by the inventory, so the card is
+/// withheld with its path named. Discriminating control: the same helper
+/// clean keeps the card (the clean control inside the loop), and the dirty
+/// non-Rust controls above keep it too.
+#[test]
+fn committed_refresh_over_dirty_rust_helper_outside_the_diff_withholds() -> Result<(), String> {
+    for (tag, relative) in [
+        ("dirty-helper-src", "src/helper_unrelated.rs"),
+        ("dirty-helper-test", "tests/helper_unrelated.rs"),
+    ] {
+        let fixture = install_fixture(tag)?;
+        write(
+            &fixture.root,
+            relative,
+            "pub fn helper_value() -> i32 {\n    1\n}\n",
+        )?;
+        commit(&fixture.root, "add helper")?;
+        assert_serves_card(committed_refresh(&fixture.root)?, &fixture.root)
+            .map_err(|error| format!("{relative}: clean control: {error}"))?;
+        write(
+            &fixture.root,
+            relative,
+            "pub fn helper_value() -> i32 {\n    2\n}\n",
+        )?;
+        let snapshot = committed_refresh(&fixture.root)?;
+        let SourceCustody::CommittedOverUncommitted { reason } = &snapshot.custody else {
+            return Err(format!(
+                "{relative}: a dirty Rust helper must withhold: {:?}",
+                snapshot.custody
+            ));
+        };
+        if !reason.contains(relative) {
+            return Err(format!(
+                "{relative}: the cause must name the path: {reason}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// `HEAD` moving between the committed findings and the inventory withholds,
+/// like the worktree path.
+#[test]
+fn committed_refresh_with_head_moved_after_findings_withholds_the_card() -> Result<(), String> {
+    let fixture = install_fixture("committed-moved-head")?;
+    let root = fixture.root.clone();
+    after_worktree_findings_hook::install(move || {
+        let _ = fixture_git_ok(
+            &root,
+            &[
+                "-c",
+                "user.name=ripr fixture",
+                "-c",
+                "user.email=fixture@ripr.invalid",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "moved head",
+            ],
+        );
+    });
+    let snapshot = committed_refresh(&fixture.root)?;
+    match &snapshot.custody {
+        SourceCustody::CommittedOverUncommitted { reason }
+            if reason.contains("repository head") =>
+        {
+            Ok(())
+        }
+        other => Err(format!("a moved head must withhold: {other:?}")),
+    }
 }
 
 /// A finding-level refusal that already held keeps its first-failing reason:
