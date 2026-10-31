@@ -253,6 +253,18 @@ as strong for one credit branch only; its table row is unchanged.
    syntax in a pattern, a non-literal pattern, a comparison of `str(exc.value)`,
    an f-string message and an exception class change fail open and keep the
    existing verdict.
+   The two-step form reads the same way: when the changed line is a plain
+   `name = "..."` assignment (one name, one string literal on each side, the
+   same name) and the owner function mentions `name` as a whole identifier
+   exactly twice, the assignment and one later single-line
+   `raise Exc(name)` with no cause and no keyword, the message is resolved
+   through that raise and the rule above applies to the old and the new
+   literal. Any other mention of the name (a rebind, a second use, a
+   transforming call, a parameter, a nested scope, a raise before the
+   assignment), a dynamic scope read (`locals`, `vars`, `globals`, `exec`,
+   `eval`, `setattr`) or a non-function owner leaves the message unresolved
+   and keeps the existing verdict (#9185, the attrs `default_if_none`
+   instance).
 3. **A fluent helper chain is a custom helper.** A call statement whose
    callee chain contains a call whose last segment starts with `assert_`
    or equals `assert_that` (`assert_that(x).is_equal_to(y)`) assigns
@@ -1059,7 +1071,18 @@ mutant calibrates the rule; ripr reports only the static shape.
     notices the edit.** With `--doctest-modules` in the `addopts` of the
     pytest configuration (`pyproject.toml`, `pytest.ini`, `tox.ini` or
     `setup.cfg`, first configuration wins), a `>>>` example in a changed
-    module's function docstring is read as the assertion it states.
+    module's function docstring is read as the assertion it states. When no
+    pytest configuration exists at all (no `pyproject.toml` pytest table of
+    either form), a `tox.ini` `[testenv]` `commands` line that is exactly one
+    bare `pytest`, `py.test` or `python -m pytest` run carrying
+    `--doctest-modules` is the same signal; the line must hold no shell
+    operator, factor condition or substitution other than an empty
+    `{posargs}`, and the same flag and target refusals apply (#4561). Only the
+    literal `[testenv]` section is read, one command per line (a trailing
+    backslash leaves a stray token and refuses the read); a factor or named
+    section such as `[testenv:docs]` overrides `commands` for that
+    environment alone, so it is not evidence that the default run collects
+    doctests, and is a deliberate non-claim.
     Collection is refused when the configuration holds any flag that
     reshapes it (`--ignore*`, `--deselect`, `-k`, `-m`, `-o`, `-c`, `-p`,
     `--doctest-glob`, `--import-mode`, cache selectors such as `--lf`, and
@@ -1207,17 +1230,28 @@ mutant calibrates the rule; ripr reports only the static shape.
     and `not Money(0)` do not distinguish `!= 0` from `> 0`; `Money(-1)` does
     (#9795). This does not broaden equality guards, properties or `__str__`.
 
+    Owner-resolved credit (#9814): `f(g(x)) == g(x)` discriminates a change
+    to the bare function `f` when `g(x)` is independent, although rule 25
+    demotes the assertion at extraction. Extraction records the outer callee
+    when `f` takes the shared call as its sole argument and does not appear
+    inside it; a finding whose owner is exactly that module-level function
+    reads the assertion as an exact value check. Every other owner, including
+    `g`, keeps the demotion, so a constant edit of `g` still reads
+    `weakly_exposed`. The `py-nested-independent-outer-owner` corpus case
+    retains the credit; `py-nested-repeated-inner-owner` and
+    `py-nested-idempotent-owner` retain the negative controls.
+
 30. **A coarse projection of the owner's result pins no value.** An
     assertion credits a changed owner only when it reads the result itself.
     When every call of the owner in the assertion sits under a projection
     that an edit commonly leaves unchanged, the assertion keeps its
     `exact_value` kind but earns no `exposed` credit (`weakly_exposed`, the
     same fail-closed reading as an opaque wrapper): a comparison, `is` or
-    `not` result nested in an operand (`assertEqual(f(2) > 0, True)`,
-    `assertEqual(f(2) is None, False)`), a remainder (`assert f(3) % 3 == 0`),
+    `not` result used as a value in an operand (`assertEqual(f(2) > 0, True)`,
+    `assertEqual(f(2) is None, False)`), a numeric remainder (`assert f(3) % 3 == 0`; string formatting is not one),
     `.__class__` or `.__name__` of the result, `len(str(f(x)))` or
-    `len(repr(f(x)))`, and `len(...)` over the owner's result (through
-    `list`, `tuple`, `set`, `sorted`) when the edit replaces only the element
+    `len(repr(f(x)))`, and `len(...)` directly over the owner's result (through
+    `list`, `tuple`, `sorted`, `reversed`) when the edit replaces only the element
     expression of a `yield` or comprehension, so the element count cannot
     move. A direct operand beside such a read (`assert f(3) == 6 and f(3) % 3
     == 0`), a top-level `>` boundary, other arithmetic and a `len` over an

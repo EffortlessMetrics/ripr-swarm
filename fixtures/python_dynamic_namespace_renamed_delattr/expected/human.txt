@@ -12,7 +12,7 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: this Python preview finding has no repair card (static evidence cannot bind `DISCOUNT_THRESHOLD` to a test input, so the boundary equality cannot become a repair target), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
+  Safe next action: this Python preview finding has no repair card (static evidence cannot place every strong related test input, so the boundary equality cannot become a repair target), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
   File: shop/pricing.py:5
   Language: python
   Language status: preview
@@ -21,9 +21,9 @@ Start here:
   Gap ID (for scripts): gap:python:shop/pricing.py:discounted_total:predicate_boundary:predicate:amount>=discount_threshold
   Changed behavior: if amount >= DISCOUNT_THRESHOLD:
   Missing check: A strong Python oracle reaches `discounted_total`, but static evidence does not
-    place a related test input at the changed predicate boundary. No strong related test call places
-    amount equal to DISCOUNT_THRESHOLD; observed amount values: 20000; observed DISCOUNT_THRESHOLD
-    values: unresolved
+    place a related test input at the changed predicate boundary. Some strong related calls have
+    unresolved inputs, so static evidence cannot determine whether they reach the changed boundary
+    of `amount >= DISCOUNT_THRESHOLD`
   Related test: tests/test_pricing.py:6 test_discount
   Suggested test file: tests/test_pricing.py
   Suggested test: test_discount
@@ -41,7 +41,7 @@ Start here:
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: 1 related Python test(s) found for owner `discounted_total`
-    - infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary
+    - infection weak: Related tests reach the changed predicate, but static evidence does not place a strong related test input at the changed boundary
     - 6 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
@@ -51,7 +51,9 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (Python preview: 1).
-    - shop/route.py:7 (unknown); kind: field_construction; reason: A mocked module replaces the real implementation, so a passing test may not observe the actual changed behavior.
+    - shop/route.py:7 (unknown: static analysis limited); kind: field_construction; reason: A mocked module replaces the real implementation, so a passing test may not observe the actual changed behavior.
+  Hidden classes:
+    unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

@@ -441,11 +441,11 @@ envelope, environment posture, and declared limitations.
 ## MCP adapter
 
 `ripr mcp --stdio` serves a bounded, read-only workspace session for MCP
-clients: nine tools (`ripr_workspace_status`, `ripr_refresh`, `ripr_list_gaps`,
-`ripr_get_gap`, `ripr_prepare_repair`, `ripr_get_repair_attempt`,
+clients: ten tools (`ripr_workspace_status`, `ripr_refresh`, `ripr_list_gaps`,
+`ripr_get_gap`, `ripr_get_top_limitation`, `ripr_prepare_repair`, `ripr_get_repair_attempt`,
 `ripr_get_receipt_status`, `ripr_get_repair_card`,
 `ripr_list_repair_attempts`) and the `ripr://workspace/status` resource plus
-five resource templates. It declares no source-edit, verification-execution,
+six resource templates. It declares no source-edit, verification-execution,
 mutation-execution, or model-provider authority (ADR 0022): a prepared repair
 transaction is in-memory and authorizes nothing, and the client owns the edit,
 the verification and the receipt. The workspace root is resolved once at

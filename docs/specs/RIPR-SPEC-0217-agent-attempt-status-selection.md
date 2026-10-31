@@ -149,6 +149,34 @@ receipt strength, and currentness as separate facts:
   blocked-outside and eligible-outside hints, which would argue with
   `ripr check`'s "nothing to repair". A gripped spot beside an open finding on
   the change is counted as a different check, never cited as its verdict.
+  The closing next step follows the same scope (#11111 burn-down): when every
+  changed spot is already checked it says there is nothing to do for the
+  change; when the changed Rust lines touch no seam the refusal leads with
+  that, even with no repairable spot elsewhere (also when the repository
+  has no seams at all), and closes with a hand-written test; otherwise it
+  keeps the repository route. The closing `ripr check` names the same
+  `--base` the repair run was given, so "reports the same" holds for the
+  command the reader runs. A
+  route-not-ready reason names a `ripr agent stub` command only when the stub
+  would write one, and otherwise names the stub's own refusal; the MCP
+  server reads the same sources and carries the same refusal, without
+  `--root`. An opaque seam
+  names what ripr could not establish; intentional and suppressed seams keep
+  the general label (the `*_unknown` classes are headline classes and reach
+  the route gate instead).
+
+- That diff's base is inferred the way a bare `ripr check` infers it, through
+  the shared base resolver (#11246), so a change committed on a branch scopes
+  repair like the same change left uncommitted (already true before #11246;
+  pinned by regression tests). Inference only narrows: when
+  no base resolves, or nothing differs from the inferred base (for example on
+  the default branch itself), the selection stays unscoped and the refusal
+  says first that ripr could not tell which lines changed. `--base REF`, as on
+  `ripr check`, names the base explicitly and wins over inference; it is
+  refused together with an item, which is never scoped. The note appears only
+  in a refusal (including the zero-seam one); a selection or start that is
+  shown does not repeat it. The MCP repair route builds its own diff-scoped
+  inventory and does not call this selector, so it needs no `--base`.
 
 - A restart or fresh-start route is named only when the shared repair
   eligibility gate admits the seam (#8766): `repair_refusal` (the gate
@@ -269,6 +297,23 @@ store.
 - `crates/ripr/tests/cli_help_hierarchy.rs::agent_status_help_names_the_selected_store_and_exact_attempt_selection`
 - `crates/ripr/tests/task_first_facade.rs::status_and_continue_do_not_offer_a_start_the_repair_gate_refuses`
 - `crates/ripr/tests/task_first_facade.rs::status_keeps_the_restart_when_the_repair_gate_admits_the_seam`
+- `crates/ripr/tests/repair_infer_base.rs::committed_error_variant_change_scopes_repair_like_the_uncommitted_one`
+- `crates/ripr/tests/repair_infer_base.rs::committed_workspace_change_scopes_repair_like_the_uncommitted_one`
+- `crates/ripr/tests/repair_infer_base.rs::a_spot_outside_the_changed_lines_is_not_offered_as_the_start`
+- `crates/ripr/tests/repair_infer_base.rs::no_resolvable_base_keeps_the_unscoped_list_and_says_so`
+- `crates/ripr/tests/repair_infer_base.rs::refusal_with_no_resolvable_base_says_it_could_not_tell_which_lines_changed`
+- `crates/ripr/tests/repair_infer_base.rs::refusal_on_the_default_branch_says_nothing_differs_from_the_base`
+- `crates/ripr/tests/repair_infer_base.rs::an_explicit_base_wins_over_inference`
+- `crates/ripr/tests/repair_infer_base.rs::repair_base_is_refused_with_an_item`
+- `crates/ripr/src/cli/commands/task_first.rs::tests::repair_base_is_optional_and_never_combines_with_an_item`
+- `crates/ripr/src/app/task_first.rs::unscoped_note_tests::unreadable_diff_says_no_base_could_be_found`
+- `crates/ripr/src/app/task_first.rs::unscoped_note_tests::empty_diff_says_nothing_differs_from_the_base`
+- `crates/ripr/src/app/task_first.rs::unscoped_note_tests::a_readable_nonempty_diff_adds_no_note`
+- `crates/ripr/tests/repair_infer_base.rs::an_explicit_base_narrows_a_selection_to_the_changed_spot`
+- `crates/ripr/tests/repair_infer_base.rs::an_explicit_base_reads_the_dirty_working_tree_too`
+- `crates/ripr/tests/repair_infer_base.rs::zero_seam_refusal_leads_with_the_unscoped_note`
+- `crates/ripr/tests/repair_infer_base.rs::an_explicit_base_reaches_the_non_rust_guidance`
+- `crates/ripr/src/app/task_first.rs::unscoped_note_tests::an_explicit_base_is_named_when_its_diff_cannot_be_read`
 
 ## Implementation Mapping
 
