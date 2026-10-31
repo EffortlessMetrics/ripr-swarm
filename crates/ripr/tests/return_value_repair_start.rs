@@ -1084,3 +1084,128 @@ fn shadowed_receiver_type_is_not_a_match_arm_repair_start() -> Result<(), String
         "src/lib.rs:7",
     )
 }
+
+// Review probes for the match-arm start: every gate must hold for one and the
+// same test, and the literal must be the argument the arm's own match reads.
+
+/// One test passes the arm's literal but ignores the result; another observes
+/// the result of a sibling arm. No single test does both, so no start.
+#[test]
+fn arm_literal_and_observing_assertion_in_different_tests_is_not_a_start() -> Result<(), String> {
+    assert_no_start_at(
+        "arm-split-tests",
+        ARM_OLD,
+        ARM_NEW,
+        "use ar::rate;\n\n#[test]\nfn silver_ignored() {\n    let _r = rate(\"silver\");\n}\n\n#[test]\nfn gold_runs() {\n    let r = rate(\"gold\");\n    assert!(r < 100);\n}\n",
+        "src/lib.rs:4",
+    )
+}
+
+const TWO_PARAM_OLD: &str = "pub fn rate(a: u32, b: u32) -> u32 {\n    match b {\n        0 => 10,\n        1 => 5,\n        _ => a,\n    }\n}\n";
+
+/// The arm's literal in a different argument than the scrutinee is no
+/// evidence that the arm runs.
+#[test]
+fn arm_literal_in_another_argument_is_not_a_start() -> Result<(), String> {
+    assert_no_start_at(
+        "arm-other-argument",
+        TWO_PARAM_OLD,
+        &TWO_PARAM_OLD.replace("1 => 5", "1 => 7"),
+        "use ar::rate;\n\n#[test]\nfn runs() {\n    assert!(rate(1, 9) < 100);\n}\n",
+        "src/lib.rs:4",
+    )
+}
+
+/// The same owner with the literal in the scrutinee's own argument starts.
+#[test]
+fn arm_literal_in_the_scrutinee_argument_reaches_repair() -> Result<(), String> {
+    let old = "pub fn rate(scale: u32, kind: &str) -> u32 {\n    match kind {\n        \"gold\" => 10,\n        \"silver\" => 5,\n        _ => scale,\n    }\n}\n";
+    assert_repair_ready(
+        "arm-scrutinee-argument",
+        old,
+        &old.replace("\"silver\" => 5", "\"silver\" => 7"),
+        "use ar::rate;\n\n#[test]\nfn runs() {\n    assert!(rate(9, \"silver\") < 100);\n}\n",
+    )
+}
+
+/// A derived scrutinee (`n + 1`) does not equal the argument.
+#[test]
+fn derived_scrutinee_is_not_a_start() -> Result<(), String> {
+    let old = "pub fn rate(n: u32) -> u32 {\n    match n + 1 {\n        2 => 10,\n        3 => 5,\n        _ => 0,\n    }\n}\n";
+    assert_no_start_at(
+        "arm-derived-scrutinee",
+        old,
+        &old.replace("3 => 5", "3 => 7"),
+        "use ar::rate;\n\n#[test]\nfn runs() {\n    assert!(rate(3) < 100);\n}\n",
+        "src/lib.rs:4",
+    )
+}
+
+/// An inner arm under an outer arm the test does not take.
+#[test]
+fn nested_arm_under_an_untaken_outer_arm_is_not_a_start() -> Result<(), String> {
+    let old = "pub fn rate(kind: &str, tier: u32) -> u32 {\n    match tier {\n        0 => match kind {\n            \"silver\" => 5,\n            _ => 0,\n        },\n        _ => 1,\n    }\n}\n";
+    assert_no_start_at(
+        "arm-nested",
+        old,
+        &old.replace("\"silver\" => 5", "\"silver\" => 7"),
+        "use ar::rate;\n\n#[test]\nfn runs() {\n    assert!(rate(\"silver\", 1) < 100);\n}\n",
+        "src/lib.rs:4",
+    )
+}
+
+/// An earlier guard arm may take the input first.
+#[test]
+fn earlier_guard_arm_is_not_a_start() -> Result<(), String> {
+    let old = "pub fn rate(kind: &str) -> u32 {\n    match kind {\n        s if s.len() > 3 => 1,\n        \"silver\" => 5,\n        _ => 0,\n    }\n}\n";
+    assert_no_start_at(
+        "arm-guard-first",
+        old,
+        &old.replace("\"silver\" => 5", "\"silver\" => 7"),
+        "use ar::rate;\n\n#[test]\nfn runs() {\n    assert!(rate(\"silver\") < 100);\n}\n",
+        "src/lib.rs:4",
+    )
+}
+
+/// A builder call naming the literal never reaches the owner's argument.
+#[test]
+fn builder_literal_that_never_reaches_the_owner_is_not_a_start() -> Result<(), String> {
+    assert_no_start_at(
+        "arm-builder-literal",
+        ARM_OLD,
+        ARM_NEW,
+        "use ar::rate;\n\nstruct B;\nimpl B {\n    fn silver(self, _s: &str) -> Self {\n        self\n    }\n}\n\n#[test]\nfn runs() {\n    let _b = B.silver(\"silver\");\n    let k = String::from(\"gold\");\n    assert!(rate(&k) < 100);\n}\n",
+        "src/lib.rs:4",
+    )
+}
+
+const METHOD_ARM_OLD: &str = "pub struct Window {\n    pub tier: u32,\n}\n\nimpl Window {\n    pub fn rate(&self, kind: &str) -> u32 {\n        match kind {\n            \"gold\" => 10,\n            \"silver\" => 5,\n            _ => self.tier,\n        }\n    }\n}\n";
+const METHOD_ARM_TEST: &str = "use ar::Window;\n\n#[test]\nfn runs() {\n    let window = Window { tier: 1 };\n    assert!(window.rate(\"silver\") < 100);\n}\n";
+
+/// Positive control for the impl-identity guard: a method arm on a type the
+/// workspace declares once starts.
+#[test]
+fn method_arm_on_a_uniquely_declared_type_reaches_repair() -> Result<(), String> {
+    assert_repair_ready(
+        "method-arm",
+        METHOD_ARM_OLD,
+        &METHOD_ARM_OLD.replace("\"silver\" => 5", "\"silver\" => 7"),
+        METHOD_ARM_TEST,
+    )
+}
+
+/// The same method arm with a second `struct Window` elsewhere in the
+/// workspace: which `Window` a test names is not resolved, so no start.
+#[test]
+fn method_arm_on_a_type_declared_twice_is_not_a_start() -> Result<(), String> {
+    let old = format!(
+        "{METHOD_ARM_OLD}\npub mod other {{\n    pub struct Window {{\n        pub tier: u32,\n    }}\n}}\n"
+    );
+    assert_no_start_at(
+        "method-arm-two-windows",
+        &old,
+        &old.replace("\"silver\" => 5", "\"silver\" => 7"),
+        METHOD_ARM_TEST,
+        "src/lib.rs:9",
+    )
+}

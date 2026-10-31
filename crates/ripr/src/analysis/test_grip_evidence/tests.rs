@@ -20963,30 +20963,30 @@ fn inherent_helper_declarations_are_not_executable_self_edges() -> Result<(), St
     Ok(())
 }
 
-/// Not-ready burn-down: a match-arm start credits only a single literal
-/// pattern that a related test passes verbatim.
+/// Not-ready burn-down: a match-arm start credits only a plain literal arm
+/// pattern; and the literal-aware scanners skip brackets inside literals.
 #[test]
-fn match_arm_literal_is_credited_only_when_passed_verbatim() {
-    let fact = |value: &str| ValueFact {
-        file: Some(PathBuf::from("tests/t.rs")),
-        line: 5,
-        text: format!("let r = rate({value});"),
-        value: value.to_string(),
-        context: ValueContext::FunctionArgument,
-    };
-    let observed = vec![fact("\"silver\""), fact("3"), fact("'x'")];
-    assert!(match_arm_literal_observed("\"silver\" =>", &observed));
-    assert!(match_arm_literal_observed("3", &observed));
-    assert!(match_arm_literal_observed("'x' =>", &observed));
-    assert!(!match_arm_literal_observed("\"gold\" =>", &observed));
-    assert!(!match_arm_literal_observed(
-        "\"silver\" | \"gold\" =>",
-        &observed
-    ));
-    assert!(!match_arm_literal_observed("1..=3 =>", &observed));
-    assert!(!match_arm_literal_observed("Kind::Silver =>", &observed));
-    assert!(!match_arm_literal_observed("_ =>", &observed));
-    assert!(!match_arm_literal_observed("\"silver\" =>", &[]));
+fn match_arm_patterns_and_scanners_read_only_plain_literals() {
+    for literal in ["\"silver\"", "3", "-4", "'x'"] {
+        assert!(is_plain_literal_pattern(literal), "{literal}");
+    }
+    for pattern in [
+        "\"si\\\"lver\"",
+        "1..=3",
+        "Kind::Silver",
+        "_",
+        "s if s.len() > 3",
+        "other",
+        "'\\n'",
+        "",
+    ] {
+        assert!(!is_plain_literal_pattern(pattern), "{pattern}");
+    }
+    let text = "{ \"}{\" => '}', x => (1, 2) }";
+    assert_eq!(matching_close(text, 0), Some(text.len() - 1));
+    assert_eq!(find_top_level(text, 1, text.len() - 1, "=>"), Some(7));
+    assert_eq!(skip_literal("'a b", 0), 0);
+    assert_eq!(skip_literal("'}' x", 0), 3);
 }
 
 /// The shadow guard counts whole-word item declarations only.

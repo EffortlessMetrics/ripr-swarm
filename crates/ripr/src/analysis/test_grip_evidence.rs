@@ -472,18 +472,46 @@ fn evidence_for_seam_with_context(
         .filter(|test| test_has_contradicted_assertion(test, owner_fn))
         .count();
 
+    // For a changed match arm: which related tests pass the arm's own literal
+    // in the argument the arm's match reads (aligned with `related_tests`).
+    // Empty when the arm is not a plain literal arm of the owner's top-level
+    // match on a bare parameter, so the start withholds.
+    let arm_literal_tests: Vec<bool> = owner_fn
+        .filter(|_| seam.kind() == SeamKind::MatchArm)
+        .and_then(|owner| arm_scrutinee_argument(seam, owner).map(|arm| (owner, arm)))
+        .map(|(owner, (parameter, literal))| {
+            let selection =
+                ObservedArgumentSelection::ArgumentOperands(vec![ObservedArgumentOperand {
+                    index: parameter,
+                    projection: None,
+                }]);
+            related_with_reason
+                .iter()
+                .map(|(indexed, _)| {
+                    observed_value_facts_for_test(seam, indexed, context, owner, &selection)
+                        .iter()
+                        .any(|fact| {
+                            fact.context == ValueContext::FunctionArgument
+                                && fact.value.trim() == literal
+                        })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let mut missing_discriminators = missing_discriminators;
     let path_established = [&reach, &activate, &propagate]
         .iter()
         .all(|stage| stage.state == StageState::Yes);
     if let Some(fact) = return_value_missing_discriminator(
         seam,
-        &related_tests,
-        &related,
+        AlignedRelatedTests {
+            grips: &related_tests,
+            summaries: &related,
+            passes_arm_literal: &arm_literal_tests,
+        },
         path_established.then_some(&discriminate),
         statically_contradicted_related_tests,
         owner_fn,
-        &observed_values,
         context.index,
     ) {
         missing_discriminators.push(fact);
@@ -539,16 +567,28 @@ const ERROR_VARIANT_START_REASON: &str = "no related test asserts the exact chan
 const MATCH_ARM_START_REASON: &str =
     "no related test asserts the exact result of the changed match arm";
 
+/// The related tests of one seam, aligned by position: each test's grip, its
+/// summary, and whether it passes the changed arm's literal as the matched
+/// argument (always `false` off a match arm).
+struct AlignedRelatedTests<'a> {
+    grips: &'a [Arc<RelatedTestGrip>],
+    summaries: &'a [&'a TestSummary],
+    passes_arm_literal: &'a [bool],
+}
+
 fn return_value_missing_discriminator(
     seam: &RepoSeam,
-    related_tests: &[Arc<RelatedTestGrip>],
-    related_summaries: &[&TestSummary],
+    related: AlignedRelatedTests<'_>,
     discriminate: Option<&StageEvidence>,
     statically_contradicted_related_tests: usize,
     owner_fn: Option<&FunctionSummary>,
-    observed_values: &[ValueFact],
     index: &RustIndex,
 ) -> Option<MissingDiscriminatorFact> {
+    let AlignedRelatedTests {
+        grips: related_tests,
+        summaries: related_summaries,
+        passes_arm_literal: arm_literal_tests,
+    } = related;
     if !matches!(
         seam.kind(),
         SeamKind::ReturnValue | SeamKind::ErrorVariant | SeamKind::MatchArm
@@ -602,13 +642,6 @@ fn return_value_missing_discriminator(
     if description.trim().is_empty() {
         return None;
     }
-    // A changed arm is only reached by an input its pattern matches; a test
-    // that exercises a sibling arm would be strengthened in the wrong place.
-    // Only a literal pattern a related test passes verbatim is credited.
-    if reason == MATCH_ARM_START_REASON && !match_arm_literal_observed(description, observed_values)
-    {
-        return None;
-    }
     // A related test that asserts an exact error variant other than the new
     // one is contradicted by the change (or not about it): adding a variant
     // assertion beside it is not the repair, so the start is withheld.
@@ -654,23 +687,31 @@ fn return_value_missing_discriminator(
     {
         return None;
     }
-    // A match-arm start additionally needs the related test's owner call to
-    // be direct under `check`'s own relation rules, so a receiver bound to a
-    // test-local shadow type (#6951) never starts one. (A struct-field change
-    // keeps its own producer route in `activate_evidence`.)
-    let check_side_direct_required = seam.kind() == SeamKind::MatchArm;
-    let direct_call_with_target =
-        related_tests
-            .iter()
-            .zip(related_summaries.iter())
-            .any(|(test, summary)| {
-                test.relation_reason == RelationReason::DirectOwnerCall
-                    && test.test_target.is_some()
-                    && (!check_side_direct_required
-                        || (crate::analysis::classify::owner_call_is_direct(
-                            summary, owner_fn, index,
-                        ) && impl_identity_is_unambiguous(owner_fn, index)))
-            });
+    let direct_call_with_target = if seam.kind() == SeamKind::MatchArm {
+        // A match-arm start needs ONE related test that does everything at
+        // once: passes the arm's literal in the argument the arm's match
+        // reads, calls the owner directly with an edit target under `check`'s
+        // own relation rules (no test-local shadow type, #6951), and asserts
+        // on the result. Gates satisfied by different tests prove nothing
+        // about the arm. (A struct-field change keeps its own producer route
+        // in `activate_evidence`.)
+        impl_identity_is_unambiguous(owner_fn, index)
+            && related_tests
+                .iter()
+                .zip(related_summaries.iter())
+                .zip(arm_literal_tests.iter())
+                .any(|((test, summary), passes_literal)| {
+                    *passes_literal
+                        && test.relation_reason == RelationReason::DirectOwnerCall
+                        && test.test_target.is_some()
+                        && crate::analysis::classify::owner_call_is_direct(summary, owner_fn, index)
+                        && test_assertion_observes_owner(summary, owner_fn, index)
+                })
+    } else {
+        related_tests.iter().any(|test| {
+            test.relation_reason == RelationReason::DirectOwnerCall && test.test_target.is_some()
+        })
+    };
     direct_call_with_target.then(|| MissingDiscriminatorFact {
         value: description.clone(),
         reason: reason.to_string(),
@@ -1108,11 +1149,10 @@ fn count_item_declarations(masked: &str, name: &str, keywords: &[&str]) -> usize
         .sum()
 }
 
-/// Whether `arm` is a single literal pattern (a string, char or integer
-/// literal, no `|`, range or guard) that some related test passes verbatim as
-/// an argument of the owner call. Anything else withholds.
-fn match_arm_literal_observed(arm: &str, observed_values: &[ValueFact]) -> bool {
-    let pattern = arm.trim().trim_end_matches("=>").trim();
+/// Whether `pattern` is one plain literal: a string or char literal with no
+/// escape or inner quote, or a decimal integer. Anything else withholds.
+fn is_plain_literal_pattern(pattern: &str) -> bool {
+    let pattern = pattern.trim();
     let is_string = pattern.len() >= 2
         && pattern.starts_with('"')
         && pattern.ends_with('"')
@@ -1125,12 +1165,171 @@ fn match_arm_literal_observed(arm: &str, observed_values: &[ValueFact]) -> bool 
         let digits = pattern.strip_prefix('-').unwrap_or(pattern);
         !digits.is_empty() && digits.chars().all(|ch| ch.is_ascii_digit())
     };
-    if !(is_string || is_char || is_integer) {
-        return false;
+    is_string || is_char || is_integer
+}
+
+/// For a changed match arm, the owner parameter index the arm's match reads
+/// and the arm's literal, only when the shape makes "a test passes this
+/// literal in that argument" mean "the test runs this arm": the owner's whole
+/// body is one `match <parameter> { .. }` on a bare parameter, the changed arm
+/// is a top-level arm of it whose pattern is one plain literal, and every
+/// earlier arm is plain literals only (no guard, binding, wildcard, range or
+/// path that could take the input first). Anything else is `None`.
+fn arm_scrutinee_argument(seam: &RepoSeam, owner: &FunctionSummary) -> Option<(usize, String)> {
+    let target = seam.expression().trim().trim_end_matches("=>").trim();
+    if !is_plain_literal_pattern(target) {
+        return None;
     }
-    observed_values
+    let (scrutinee, arms) = whole_body_match_arms(owner)?;
+    let parameter = function_parameters(owner)
         .iter()
-        .any(|fact| fact.value.trim() == pattern)
+        .position(|name| *name == scrutinee)?;
+    for (pattern, line) in arms {
+        if line == seam.display_line() && pattern.trim() == target {
+            return Some((parameter, target.to_string()));
+        }
+        if !pattern.split('|').all(is_plain_literal_pattern) {
+            return None;
+        }
+    }
+    None
+}
+
+/// The scrutinee and top-level arms (pattern text, 1-based file line) of an
+/// owner whose body is exactly one `match <identifier> { .. }`. Strings and
+/// chars are skipped while scanning; any shape it cannot read is `None`.
+fn whole_body_match_arms(owner: &FunctionSummary) -> Option<(String, Vec<(String, usize)>)> {
+    let body = owner.body.as_str();
+    let params_open = body.find('(')?;
+    let body_open = params_open + body[params_open..].find('{')?;
+    let body_close = body.rfind('}')?;
+    if body_close <= body_open {
+        return None;
+    }
+    let inner = &body[body_open + 1..body_close];
+    let lead = inner.len() - inner.trim_start().len();
+    let rest = inner.trim_start().strip_prefix("match ")?;
+    let arms_open_rel = rest.find('{')?;
+    let scrutinee = rest[..arms_open_rel].trim();
+    if scrutinee.is_empty()
+        || !scrutinee
+            .chars()
+            .all(|ch| ch.is_alphanumeric() || ch == '_')
+    {
+        return None;
+    }
+    // Absolute offset of the arms block's `{` in `body`.
+    let arms_open = body_open + 1 + lead + "match ".len() + arms_open_rel;
+    let arms_close = matching_close(body, arms_open)?;
+    if !body[arms_close + 1..body_close].trim().is_empty() {
+        return None;
+    }
+    let line_of = |offset: usize| owner.start_line + body[..offset].matches('\n').count();
+    let mut arms = Vec::new();
+    let mut at = arms_open + 1;
+    loop {
+        while at < arms_close
+            && (body[at..].starts_with(char::is_whitespace) || body[at..].starts_with(','))
+        {
+            at += body[at..].chars().next()?.len_utf8();
+        }
+        if at >= arms_close {
+            break;
+        }
+        let arrow = find_top_level(body, at, arms_close, "=>")?;
+        arms.push((body[at..arrow].to_string(), line_of(at)));
+        let mut end = arrow + 2;
+        while let Some(ch) = body[end..].chars().next().filter(|ch| ch.is_whitespace()) {
+            end += ch.len_utf8();
+        }
+        end = if body[end..].starts_with('{') {
+            matching_close(body, end)? + 1
+        } else {
+            find_top_level(body, end, arms_close, ",").unwrap_or(arms_close)
+        };
+        at = end;
+    }
+    Some((scrutinee.to_string(), arms))
+}
+
+/// The offset of the bracket closing the one at `open`, skipping string and
+/// char literals.
+fn matching_close(text: &str, open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut at = open;
+    while at < text.len() {
+        at = skip_literal(text, at);
+        let ch = text[at..].chars().next()?;
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(at);
+                }
+            }
+            _ => {}
+        }
+        at += ch.len_utf8();
+    }
+    None
+}
+
+/// The first offset in `from..to` where `needle` starts outside any bracket
+/// or literal.
+fn find_top_level(text: &str, from: usize, to: usize, needle: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut at = from;
+    while at < to {
+        at = skip_literal(text, at);
+        if at >= to {
+            return None;
+        }
+        if depth == 0 && text[at..].starts_with(needle) {
+            return Some(at);
+        }
+        let ch = text[at..].chars().next()?;
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.checked_sub(1)?,
+            _ => {}
+        }
+        at += ch.len_utf8();
+    }
+    None
+}
+
+/// Past a string or char literal starting at `at` (with escapes), else `at`.
+/// A lifetime-like `'a` is not a char literal and is left in place.
+fn skip_literal(text: &str, at: usize) -> usize {
+    let bytes = text.as_bytes();
+    match bytes.get(at) {
+        Some(b'"') => {
+            let mut index = at + 1;
+            while index < bytes.len() {
+                match bytes[index] {
+                    b'\\' => index += 2,
+                    b'"' => return skip_literal(text, index + 1),
+                    _ => index += 1,
+                }
+            }
+            text.len()
+        }
+        Some(b'\'') => {
+            let closing = if bytes.get(at + 1) == Some(&b'\\') {
+                bytes
+                    .get(at + 3..)
+                    .and_then(|tail| tail.iter().position(|b| *b == b'\''))
+                    .map(|p| at + 3 + p)
+            } else if bytes.get(at + 2) == Some(&b'\'') {
+                Some(at + 2)
+            } else {
+                None
+            };
+            closing.map_or(at, |close| skip_literal(text, close + 1))
+        }
+        _ => at,
+    }
 }
 
 /// Whether `expression` is a struct literal, not a block, `if`, `match` or loop.
