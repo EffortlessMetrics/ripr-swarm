@@ -50,6 +50,11 @@ pub fn check_workspace_with_config(
 /// instead of re-reading rendered text. Also returns the run's crate-private
 /// mixed-language completeness view (#6475), the same sidecar the LSP
 /// refresh receives; the public entry points are unchanged.
+///
+/// It also returns the raw Rust byte commitments the producer recorded while
+/// loading each source (HEAD content for a dirty tracked file under the
+/// committed-history overlay), so the MCP refresh can compare them with what
+/// the live-file seam inventory later reads (#7357).
 pub(crate) fn check_workspace_with_config_typed(
     input: CheckInput,
     config: &RiprConfig,
@@ -57,12 +62,13 @@ pub(crate) fn check_workspace_with_config_typed(
     (
         CheckOutput,
         Option<crate::analysis::language_outcome::LanguageCompletenessView>,
+        crate::analysis::consumed_source::ConsumedRustSources,
     ),
     CoreError,
 > {
-    let (output, _, _, view) =
+    let (output, _, consumed_sources, view) =
         check_with_progress_and_origins(input, config, AnalysisProgressScope::Diff, None)?;
-    Ok((output, view))
+    Ok((output, view, consumed_sources))
 }
 
 /// [`check_workspace_worktree_with_config`] keeping the failure typed and
