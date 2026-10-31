@@ -672,9 +672,10 @@ only it is the mapping, not an observed `resources/read` response.
 `analysis_failed` is also the code for a contained internal handler panic in
 any tool, including a glue panic in `ripr_refresh` (#11116). It names the tool and is retryable:
 retry the tool, then `ripr_refresh`; if it repeats, restart `ripr mcp` and
-report the stderr panic message. A glue panic in `resources/read`,
-`tools/list` or `initialize` answers a `-32603` JSON-RPC error with
-`error.data.code` `analysis_failed` and the session keeps serving.
+report the stderr panic message. A glue panic in `resources/read` or
+`tools/list` answers a `-32603` JSON-RPC error with `error.data.code`
+`analysis_failed` and the session keeps serving. The `initialize` handshake
+runs inside the SDK before the service loop and is not covered.
 
 Genuine invariant failures are different: the server could not build or
 serialize a result it should always be able to build (`serialize workspace

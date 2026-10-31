@@ -521,7 +521,7 @@ impl McpServer {
     /// `ripr_refresh` is included for glue panics: worker and adapter panics
     /// are already typed at the analysis boundary (#11132), and its
     /// `InFlightAttempt` guard clears `in_flight` on unwind. Non-tool requests
-    /// (`initialize`, `tools/list`, `resources/read`) are contained by
+    /// (`tools/list`, `resources/read`) are contained by
     /// `contain_request`. An unknown tool never reaches a handler.
     async fn call_tool_contained(
         &self,
@@ -1537,7 +1537,7 @@ impl rmcp::Service<RoleServer> for InitializeSessionService {
     }
 }
 
-/// Contains a panic in the glue of any request (`initialize`, `tools/list`,
+/// Contains a panic in the glue of a post-handshake request (`tools/list`,
 /// `resources/read`; tool calls are also contained per tool) as a typed
 /// `analysis_failed` JSON-RPC error instead of ending the stdio session
 /// (#11116). The payload is not echoed.
