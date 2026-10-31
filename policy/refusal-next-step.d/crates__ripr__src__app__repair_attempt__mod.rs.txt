@@ -34,7 +34,6 @@ crates/ripr/src/app/repair_attempt/mod.rs|repair packet is not UTF-8: {error}
 crates/ripr/src/app/repair_attempt/mod.rs|retained gap receipt does not bind {pointer}
 crates/ripr/src/app/repair_attempt/mod.rs|retained gap snapshot does not match the verify, base or after head
 crates/ripr/src/app/repair_attempt/mod.rs|retained gap snapshot is not UTF-8: {error}
-crates/ripr/src/app/repair_attempt/mod.rs|retained gap snapshot path, root or raw digest is not bound to the receipt
 crates/ripr/src/app/repair_attempt/mod.rs|retained gap terminal evidence is unavailable
 crates/ripr/src/app/repair_attempt/mod.rs|retained receipt has no root
 crates/ripr/src/app/repair_attempt/mod.rs|retained role {role} is too large
