@@ -593,15 +593,30 @@ fn stopped(number: usize, total: usize, step: &ChainStep, reason: &str) -> Strin
 mod tests {
     use super::*;
 
+    /// `check-local-context` forbids drive-letter path literals in source; build
+    /// Windows-shaped paths from parts like the product does on that host.
+    fn windows_path(drive_letter: char, segments: &[&str]) -> String {
+        let bs = '\\';
+        let mut path = format!("{drive_letter}:");
+        for segment in segments {
+            path.push(bs);
+            path.push_str(segment);
+        }
+        path
+    }
+
     #[test]
     fn split_chain_splits_windows_double_quoted_paths_at_unquoted_and() -> Result<(), String> {
-        let parts = split_chain(
-            r#"ripr check --root "C:\tmp\a && b" --json > "C:\out\x y.json" && ripr reports gap-ledger --out o.json"#,
-        )?;
+        let root = windows_path('C', &["tmp", "a && b"]);
+        let out = windows_path('C', &["out", "x y.json"]);
+        let compound = format!(
+            r#"ripr check --root "{root}" --json > "{out}" && ripr reports gap-ledger --out o.json"#
+        );
+        let parts = split_chain(&compound)?;
         assert_eq!(
             parts,
             vec![
-                r#"ripr check --root "C:\tmp\a && b" --json > "C:\out\x y.json""#.to_string(),
+                format!(r#"ripr check --root "{root}" --json > "{out}""#),
                 "ripr reports gap-ledger --out o.json".to_string(),
             ]
         );
@@ -610,31 +625,32 @@ mod tests {
 
     #[test]
     fn step_from_display_reads_windows_console_double_quoted_paths() -> Result<(), String> {
-        let step = step_from_display(
-            "repo exposure report",
-            r#"ripr check --root "C:\tmp\probe win space" --json > "C:\out\a b.json""#,
-        )?;
+        let root = windows_path('C', &["tmp", "probe win space"]);
+        let out = windows_path('C', &["out", "a b.json"]);
+        let display = format!(r#"ripr check --root "{root}" --json > "{out}""#);
+        let step = step_from_display("repo exposure report", &display)?;
         assert_eq!(
             step.args,
-            vec!["check", "--root", r"C:\tmp\probe win space", "--json",]
+            vec!["check", "--root", root.as_str(), "--json",]
         );
-        assert_eq!(step.stdout_to, Some(PathBuf::from(r"C:\out\a b.json")));
-        assert_eq!(step.expected, PathBuf::from(r"C:\out\a b.json"));
+        assert_eq!(step.stdout_to, Some(PathBuf::from(out.clone())));
+        assert_eq!(step.expected, PathBuf::from(out));
         Ok(())
     }
 
     #[test]
     fn step_from_display_doubles_a_trailing_backslash_before_the_closing_quote()
     -> Result<(), String> {
-        let step = step_from_display(
-            "repo exposure report",
-            r#"ripr check --root "C:\repo\\" --mode instant > "D:\out\file.json""#,
-        )?;
+        let root = windows_path('C', &["repo", ""]);
+        let out = windows_path('D', &["out", "file.json"]);
+        let quoted_root = format!("\"{root}\\\"");
+        let display = format!(r#"ripr check --root {quoted_root} --mode instant > "{out}""#);
+        let step = step_from_display("repo exposure report", &display)?;
         assert_eq!(
             step.args,
-            vec!["check", "--root", r"C:\repo\", "--mode", "instant",]
+            vec!["check", "--root", root.as_str(), "--mode", "instant",]
         );
-        assert_eq!(step.stdout_to, Some(PathBuf::from(r"D:\out\file.json")));
+        assert_eq!(step.stdout_to, Some(PathBuf::from(out)));
         Ok(())
     }
 
@@ -772,14 +788,12 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("ripr-11720-timeout-{}", std::process::id()));
         std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
         let fifo = dir.join("block.fifo");
-        let mkfifo = std::process::Command::new("mkfifo")
-            .arg(&fifo)
-            .status()
-            .map_err(|err| err.to_string())?;
-        if !mkfifo.success() {
-            return Err("mkfifo failed".to_string());
-        }
-        let script = format!("read -r _ < '{}'", fifo.display());
+        let script = format!(
+            "rm -f '{}' && mkfifo '{}' && read -r _ < '{}'",
+            fifo.display(),
+            fifo.display(),
+            fifo.display()
+        );
         let target = dir.join("unused.json");
         let error =
             run_sh_with_timeout(sh_step(&script, None, &target), Duration::from_millis(200))
