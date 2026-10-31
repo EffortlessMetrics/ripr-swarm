@@ -3096,12 +3096,17 @@ mod tests {
     #[test]
     fn isolated_default_target_sits_beside_the_shared_debug_dir_not_inside_it() {
         let shared = std::path::Path::new("/w/target/debug/ripr");
-        assert_eq!(
-            super::isolated_default_target_dir(shared),
-            Ok(std::path::PathBuf::from(
-                "/w/target/fixture-variants/default"
-            ))
+        // `std::path::absolute` rewrites a rooted, driveless path against the
+        // process drive on Windows, so compare the trailing components rather
+        // than the whole path (docs/LEARNINGS.md, #7937).
+        let isolated = super::isolated_default_target_dir(shared)
+            .unwrap_or_else(|err| std::path::PathBuf::from(err));
+        assert!(isolated.is_absolute(), "{isolated:?}");
+        assert!(
+            isolated.ends_with(std::path::Path::new("target/fixture-variants/default")),
+            "{isolated:?}"
         );
+        assert!(!isolated.starts_with("/w/target/debug"), "{isolated:?}");
         let missing = super::isolated_default_target_dir(std::path::Path::new("ripr"));
         assert_eq!(missing, Err("missing shared target root".to_string()));
     }
