@@ -294,13 +294,13 @@ fn predicate_flow_sinks(
     Vec::new()
 }
 
-/// Whether the `if` / `else if` / `else` chain that starts on `probe_line`
-/// (one line or rustfmt layout) has a later arm whose body is text-identical
-/// to the first arm's, so the choice between them is unobservable for some
-/// inputs. Mirrors the first-arm repeat rule of the tail-`if` form (#9843),
-/// for arms that are statements (`r = 1;`) rather than a tail value. Only a
-/// chain that starts at an `if` on the line is read; anything unbalanced or
-/// unrecognised answers no, which leaves the existing sink selection as it is.
+/// Whether the plain `if` / `else` that starts on `probe_line` (one line or
+/// rustfmt layout) has two text-identical arm bodies, so which arm runs is
+/// unobservable for every input. Mirrors the repeat rule of the tail-`if` form
+/// (#9843) for arms that are statements (`r = 1;`) rather than a tail value.
+/// An `else if` ladder is not read: a later arm can still differ from the
+/// first for some inputs. Anything unbalanced or unrecognised answers no,
+/// which leaves the existing sink selection as it is.
 fn statement_if_arms_repeat(owner_fn: Option<&FunctionSummary>, probe_line: usize) -> bool {
     let Some(function) = owner_fn else {
         return false;
@@ -345,9 +345,8 @@ fn statement_if_arms_repeat(owner_fn: Option<&FunctionSummary>, probe_line: usiz
             return false;
         }
     }
-    arms.iter()
-        .skip(1)
-        .any(|text| !text.is_empty() && *text == arms[0] && !branch_is_diverging(text))
+    matches!(arms.as_slice(), [then_arm, else_arm]
+        if !then_arm.is_empty() && then_arm == else_arm && !branch_is_diverging(then_arm))
 }
 
 /// The declared name of one generic parameter item (`E: From<X>` -> `E`,
@@ -1797,29 +1796,14 @@ mod tests {
         let layouts = [
             "pub fn f(x: i32) -> i32 {\n    let r;\n    if x >= 5 { r = 1; } else { r = 1; }\n    r + 0\n}",
             "pub fn f(x: i32) -> i32 {\n    let r;\n    if x >= 5 {\n        r = 1;\n    } else {\n        r = 1;\n    }\n    r + 0\n}",
-            "pub fn f(x: i32) -> i32 {\n    let r;\n    if x >= 5 {\n        r = 1;\n    } else if x > 2 {\n        r = 3;\n    } else {\n        r = 1;\n    }\n    r * 2\n}",
         ];
         for body in layouts {
             let mut owner = function(body);
             owner.returns = vec![ReturnFact {
-                line: body.lines().count(),
-                text: body
-                    .lines()
-                    .last()
-                    .unwrap_or("")
-                    .trim_end_matches('}')
-                    .trim()
-                    .to_string(),
+                line: body.lines().count() - 1,
+                text: "r + 0".to_string(),
             }];
             let probe = probe(ProbeFamily::Predicate, "x >= 5", 3);
-            let probe = if body.contains("\n        r = 1;") {
-                Probe {
-                    location: SourceLocation::new("src/lib.rs", 3, 1),
-                    ..probe
-                }
-            } else {
-                probe
-            };
             let sinks = local_flow_sinks(&probe, Some(&owner));
             assert!(
                 sinks
@@ -1835,6 +1819,9 @@ mod tests {
         let layouts = [
             "pub fn f(x: i32) -> i32 {\n    let r;\n    if x >= 5 { r = 1; } else { r = 2; }\n    r + 0\n}",
             "pub fn f(x: i32) -> i32 {\n    let r;\n    if x >= 5 {\n        r = 1;\n    } else {\n        r = 2;\n    }\n    r + 0\n}",
+            // A ladder whose last arm repeats the first is observable for some
+            // inputs (x = 3 takes the middle arm), so the first keeps its sink.
+            "pub fn f(x: i32) -> i32 {\n    let r;\n    if x >= 5 {\n        r = 1;\n    } else if x > 2 {\n        r = 3;\n    } else {\n        r = 1;\n    }\n    r + 0\n}",
         ];
         for body in layouts {
             let mut owner = function(body);
