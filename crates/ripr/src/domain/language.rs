@@ -1117,6 +1117,8 @@ mod tests {
         assert_eq!(
             StaticLimitKind::ProofHarnessNotEvaluated.as_str(),
             "proof_harness_not_evaluated"
+        );
+        assert_eq!(
             StaticLimitKind::RustInherentReceiverUnestablished.as_str(),
             "rust_inherent_receiver_unestablished"
         );
