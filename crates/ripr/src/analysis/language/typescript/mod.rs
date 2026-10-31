@@ -88,6 +88,7 @@ mod extraction_cache;
 mod fact_store;
 pub(crate) use fact_store::TypeScriptFileFactStore;
 mod comment_whitespace_only;
+type MultilineRanges = (Vec<(usize, usize)>, Vec<(usize, usize)>);
 #[cfg(test)]
 mod comment_whitespace_only_tests;
 #[cfg(test)]
@@ -1101,7 +1102,7 @@ impl TypeScriptAdapter {
             // pairing: by position in an even block, by content in an uneven
             // one, by coordinate where a removed line interrupts the run.
             let counterparts = changed.aligned_counterparts();
-            let mut multiline_lines: Option<Option<Vec<(usize, usize)>>> = None;
+            let mut multiline_lines: Option<Option<MultilineRanges>> = None;
             for added in &changed.added_lines {
                 if !is_probe_candidate(added.line, &added.text) {
                     continue;
@@ -1154,24 +1155,36 @@ impl TypeScriptAdapter {
                 // probe; the gap id and discriminator would otherwise embed
                 // the comment text. Fails closed without a parse of the file
                 // or inside a construct that crosses a line break.
-                if let Some(old) = old_line_text
+                if let (Some(old), Some(removed)) = (old_line_text, counterparts.get(&added.line))
                     && old != added.text
                     && infection_shape::same_executable_text(old, &added.text)
                 {
-                    let multiline = multiline_lines.get_or_insert_with(|| {
-                        source_by_normalized.get(&changed_norm).and_then(|source| {
+                    // Multiline-construct ranges of the new file and of the
+                    // reconstructed old file; either missing means no guard.
+                    let ranges = multiline_lines.get_or_insert_with(|| {
+                        let source = source_by_normalized.get(&changed_norm)?;
+                        let old_source = comment_whitespace_only::reconstruct_old_source(
+                            source,
+                            &changed.added_lines,
+                            &changed.removed_lines,
+                        )?;
+                        Some((
                             comment_whitespace_only::multiline_construct_lines(
                                 &changed.path,
                                 source,
-                            )
-                        })
+                            )?,
+                            comment_whitespace_only::multiline_construct_lines(
+                                &changed.path,
+                                &old_source,
+                            )?,
+                        ))
                     });
-                    if multiline.as_deref().is_some_and(|ranges| {
+                    if ranges.as_ref().is_some_and(|(new_ranges, old_ranges)| {
                         comment_whitespace_only::is_trailing_comment_or_whitespace_only_change(
                             old,
                             &added.text,
-                            added.line,
-                            ranges,
+                            (added.line, new_ranges),
+                            (removed.line, old_ranges),
                         )
                     }) {
                         continue;

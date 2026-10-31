@@ -250,3 +250,40 @@ fn a_trailing_comment_or_whitespace_edit_emits_no_probe_but_a_changed_token_keep
         assert!(found.is_ok(), "{label}: {found:?}");
     }
 }
+
+#[test]
+fn a_paired_old_line_inside_a_template_keeps_its_probe_when_the_new_line_is_code()
+-> Result<(), String> {
+    // The real diff pairing sends new line 3 (`return 7;` plus trailing
+    // spaces) to old line 3 (`return 7;`, template content). Equal trimmed
+    // text is not a no-op: the old line was string content.
+    let new_source = "export function price(): number {\n  const s = `old`;\n  return 7;   \n  // formerly the rest of a template\n}\n";
+    let patch = "--- a/src/price.ts\n+++ b/src/price.ts\n@@ -1,5 +1,5 @@\n export function price(): number {\n-  const s = `old\n-  return 7;\n-`; return 0;\n+  const s = `old`;\n+  return 7;   \n+  // formerly the rest of a template\n }\n";
+    let changed = crate::analysis::diff::parse_unified_diff(patch);
+    let file = changed.first().ok_or("no changed file")?;
+    let pairs = file.aligned_counterparts();
+    assert_eq!(
+        pairs.get(&3).map(|removed| removed.text.as_str()),
+        Some("  return 7;"),
+        "new line 3 must pair with old `  return 7;`"
+    );
+    let root = ts_unique_tempdir("infect-old-template")?;
+    ts_write_file(&root.join("src/price.ts"), new_source)?;
+    ts_write_file(&root.join("tests/price.test.ts"), &weak_test("price()"))?;
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &changed,
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let findings = result?.findings;
+    assert!(
+        findings.iter().any(|f| f.probe.location.line == 3),
+        "line 3 must stay reported: {:?}",
+        findings
+            .iter()
+            .map(|f| f.probe.location.line)
+            .collect::<Vec<_>>()
+    );
+    Ok(())
+}

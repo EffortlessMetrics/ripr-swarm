@@ -161,7 +161,8 @@ fn is_undecidable_line(line: &str) -> bool {
             }
             // A `/` after an operator or opener starts a regex literal.
             '/' if chars.get(index + 1) != Some(&'/')
-                && previous_code.is_none_or(|p| "(,=:[!&|?{};+-*%~^".contains(p)) =>
+                && (previous_code.is_none_or(|p| "(,=:[!&|?{};+-*%~^".contains(p))
+                    || follows_regex_keyword(&chars[..index])) =>
             {
                 return true;
             }
@@ -172,6 +173,33 @@ fn is_undecidable_line(line: &str) -> bool {
         }
     }
     quote.is_some()
+}
+
+/// Whether the text before a `/` ends in a keyword after which `/` opens a
+/// regex literal (`return /a/`), not a division.
+fn follows_regex_keyword(before: &[char]) -> bool {
+    let text: String = before.iter().collect();
+    let word = text
+        .trim_end()
+        .rsplit(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+        .next()
+        .unwrap_or_default();
+    matches!(
+        word,
+        "return"
+            | "typeof"
+            | "case"
+            | "in"
+            | "of"
+            | "delete"
+            | "void"
+            | "throw"
+            | "new"
+            | "else"
+            | "do"
+            | "yield"
+            | "await"
+    )
 }
 
 fn is_arithmetic_noop(old: &str, new: &str) -> bool {

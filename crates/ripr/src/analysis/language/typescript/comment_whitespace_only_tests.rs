@@ -1,10 +1,12 @@
 use super::comment_whitespace_only::{
     is_trailing_comment_or_whitespace_only_change, multiline_construct_lines,
+    reconstruct_old_source,
 };
+use crate::analysis::diff::ChangedLine;
 use std::path::Path;
 
 fn noop(old: &str, new: &str) -> bool {
-    is_trailing_comment_or_whitespace_only_change(old, new, 1, &[])
+    is_trailing_comment_or_whitespace_only_change(old, new, (1, &[]), (1, &[]))
 }
 
 #[test]
@@ -32,19 +34,60 @@ fn a_changed_token_semicolon_or_indent_is_still_an_edit() {
 }
 
 #[test]
-fn a_line_inside_a_multiline_construct_is_never_a_no_op() {
-    assert!(!is_trailing_comment_or_whitespace_only_change(
-        "  return x;",
-        "  return x;   ",
-        3,
-        &[(2, 4)]
-    ));
-    assert!(is_trailing_comment_or_whitespace_only_change(
-        "  return x;",
-        "  return x;   ",
-        5,
-        &[(2, 4)]
-    ));
+fn a_line_inside_a_multiline_construct_on_either_side_is_never_a_no_op() {
+    let check =
+        |new_line, new_ranges: &[(usize, usize)], old_line, old_ranges: &[(usize, usize)]| {
+            is_trailing_comment_or_whitespace_only_change(
+                "  return x;",
+                "  return x;   ",
+                (new_line, new_ranges),
+                (old_line, old_ranges),
+            )
+        };
+    assert!(!check(3, &[(2, 4)], 9, &[]));
+    assert!(!check(9, &[], 3, &[(2, 4)]));
+    assert!(check(5, &[(2, 4)], 5, &[(2, 4)]));
+}
+
+#[test]
+fn comment_shapes_that_ride_along_stay_edits() {
+    // `//` inside a string, a regex or after a block comment is not a plain
+    // trailing comment edit.
+    assert!(!noop("  return 'a';", "  return 'a'; // x // y'"));
+    assert!(!noop("  return /a/;", "  return /a/; // c"));
+    // `//` inside a regex character class is not a comment start.
+    assert!(!noop("  return /[ //a]/;", "  return /[ //b]/;"));
+    assert!(!noop("  return x;", "  return x; /* c */ // d"));
+    assert!(!noop("  return 'a//b';", "  return 'a//c';"));
+}
+
+fn line(number: usize, text: &str) -> ChangedLine {
+    ChangedLine {
+        line: number,
+        text: text.to_string(),
+        new_side_line: number.min(2),
+    }
+}
+
+#[test]
+fn the_old_source_is_rebuilt_from_the_diff_and_fails_closed_when_it_cannot_be() {
+    let new_source = "a\n  const s = `old`;\n  return 7;   \n  // rest\n}\n";
+    let added = [
+        line(2, "  const s = `old`;"),
+        line(3, "  return 7;   "),
+        line(4, "  // rest"),
+    ];
+    let removed = [
+        line(2, "  const s = `old"),
+        line(3, "  return 7;"),
+        line(4, "`; return 0;"),
+    ];
+    assert_eq!(
+        reconstruct_old_source(new_source, &added, &removed).as_deref(),
+        Some("a\n  const s = `old\n  return 7;\n`; return 0;\n}\n")
+    );
+    // A diff that does not line up with the source gets no old source.
+    assert_eq!(reconstruct_old_source("a\n", &added, &removed), None);
 }
 
 #[test]

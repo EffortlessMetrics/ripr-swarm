@@ -25,14 +25,18 @@ use oxc_ast_visit::{Visit, walk};
 pub(crate) fn is_trailing_comment_or_whitespace_only_change(
     old: &str,
     new: &str,
-    new_line_number: usize,
-    multiline: &[(usize, usize)],
+    (new_line_number, multiline): (usize, &[(usize, usize)]),
+    (old_line_number, old_multiline): (usize, &[(usize, usize)]),
 ) -> bool {
-    if old == new
-        || multiline
+    let inside = |ranges: &[(usize, usize)], line: usize| {
+        ranges
             .iter()
-            .any(|(start, end)| (*start..=*end).contains(&new_line_number))
-    {
+            .any(|(start, end)| (*start..=*end).contains(&line))
+    };
+    // Both sides must sit outside such a construct: a paired old line that was
+    // template content while the new line is code (or the reverse) is a real
+    // change even when the trimmed text is equal.
+    if old == new || inside(multiline, new_line_number) || inside(old_multiline, old_line_number) {
         return false;
     }
     let indent = |text: &str| text.len() - text.trim_start().len();
@@ -40,6 +44,39 @@ pub(crate) fn is_trailing_comment_or_whitespace_only_change(
         return false;
     }
     super::infection_shape::same_executable_text(old, new)
+}
+
+/// The pre-change source, rebuilt from the post-change `new_source` and the
+/// diff: removed lines sit at their old-side line numbers and the unchanged
+/// lines fill the other slots in order. `None` (fail closed) when the diff and
+/// the source do not line up, so no guard applies.
+pub(crate) fn reconstruct_old_source(
+    new_source: &str,
+    added: &[crate::analysis::diff::ChangedLine],
+    removed: &[crate::analysis::diff::ChangedLine],
+) -> Option<String> {
+    let added_lines: std::collections::BTreeSet<usize> = added.iter().map(|l| l.line).collect();
+    let removed_at: std::collections::BTreeMap<usize, &str> =
+        removed.iter().map(|l| (l.line, l.text.as_str())).collect();
+    if removed_at.len() != removed.len() || removed_at.contains_key(&0) {
+        return None;
+    }
+    let mut unchanged = new_source
+        .lines()
+        .enumerate()
+        .filter(|(index, _)| !added_lines.contains(&(index + 1)))
+        .map(|(_, text)| text);
+    let total = new_source.lines().count().checked_sub(added_lines.len())? + removed_at.len();
+    let mut out = String::new();
+    for old_line in 1..=total {
+        let text = match removed_at.get(&old_line) {
+            Some(text) => *text,
+            None => unchanged.next()?,
+        };
+        out.push_str(text);
+        out.push('\n');
+    }
+    unchanged.next().is_none().then_some(out)
 }
 
 /// 1-based inclusive line ranges of every template literal, block comment,
