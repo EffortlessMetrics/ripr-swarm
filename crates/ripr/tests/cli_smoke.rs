@@ -19030,7 +19030,13 @@ fn pilot_accepts_python_project_without_ripr_config() -> Result<(), String> {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("RIPR pilot complete."));
-    assert!(stdout.contains("Python preview:"));
+    // #11297: Python is listed as not scanned, so the zero-finding preview
+    // block (`no_python_findings`, `findings: 0`) must not print.
+    assert!(stdout.contains("Not scanned by pilot"), "{stdout}");
+    assert!(!stdout.contains("Python preview:"), "{stdout}");
+    assert!(!stdout.contains("no_python_findings"), "{stdout}");
+    assert!(!stdout.contains("findings: 0"), "{stdout}");
+    assert!(!stdout.contains("Rust code it checked"), "{stdout}");
     assert!(out_dir.join("pilot-summary.json").exists());
 
     ignore_remove_dir_all(&out_dir);
@@ -19739,11 +19745,13 @@ fn assert_pilot_headline_names_supported_check_route(
         ),
         "headline must not read as an empty recommendation:\n{stdout}"
     );
+    // The fixture repo has no Rust source, so the Rust-gaps sentence is
+    // omitted (#11297), and an unscanned Python route is not a "no findings"
+    // preview block.
+    assert!(!stdout.contains("Rust code it checked"), "{stdout}");
     assert!(
-        stdout.contains(
-            "(pilot found no gaps in the Rust code it checked; see the other languages below)"
-        ),
-        "{stdout}"
+        !stdout.contains("no_python_findings") && !stdout.contains("findings: 0"),
+        "unscanned language must not read as 'no findings':\n{stdout}"
     );
     assert!(
         md.contains(&format!("Analyze the {language_display} diff: `{command}`")),
@@ -19802,9 +19810,7 @@ fn pilot_names_typescript_diff_first_route_when_repo_has_no_rust_seams() -> Resu
     // analyze it, so the headline stays none while the languages section
     // still names the route (#7665).
     assert!(
-        stdout.contains(
-            "none: pilot found no gaps in the Rust code it checked; see the other languages below"
-        ),
+        stdout.contains("none: pilot found no Rust code to scan; see the other languages below"),
         "disabled TypeScript must not headline the check route:\n{stdout}"
     );
     assert!(!stdout.contains("analyze the TypeScript diff:"), "{stdout}");
@@ -20001,17 +20007,15 @@ fn pilot_says_perl_is_unavailable_when_repo_has_no_rust_seams() -> Result<(), St
         // Perl is compiled in but not in the default enabled set, so the
         // headline stays none (same as disabled TypeScript).
         assert!(
-            stdout.contains(
-                "none: pilot found no gaps in the Rust code it checked; see the other languages below"
-            ),
+            stdout
+                .contains("none: pilot found no Rust code to scan; see the other languages below"),
             "disabled Perl keeps the none headline:\n{stdout}"
         );
         assert!(!stdout.contains("analyze the Perl diff:"), "{stdout}");
     } else {
         assert!(
-            stdout.contains(
-                "none: pilot found no gaps in the Rust code it checked; see the other languages below"
-            ),
+            stdout
+                .contains("none: pilot found no Rust code to scan; see the other languages below"),
             "unavailable Perl keeps the none headline:\n{stdout}"
         );
         let notice = "Perl analysis is not available from this ripr binary. It needs both a ripr build with Cargo feature `lang-perl` (`cargo install ripr --features lang-perl`) and a compatible Perl fact exporter (`perl-ripr-facts`), which is not yet published; no released ripr setup analyzes Perl yet, and adding `perl` to ripr.toml [languages] alone does not enable it.";
