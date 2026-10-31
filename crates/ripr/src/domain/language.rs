@@ -1136,6 +1136,8 @@ mod tests {
         assert_eq!(
             StaticLimitKind::RustInherentReceiverUnestablished.as_str(),
             "rust_inherent_receiver_unestablished"
+        );
+        assert_eq!(
             StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated.as_str(),
             "typescript_workspace_discovery_truncated"
         );

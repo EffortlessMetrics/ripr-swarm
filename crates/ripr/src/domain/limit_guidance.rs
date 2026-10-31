@@ -17,7 +17,7 @@ impl StaticLimitKind {
     /// Every kind, so tests can walk the vocabulary. The ordinal test keeps
     /// this list in step with the enum.
     #[cfg(test)]
-    pub(crate) const ALL: [StaticLimitKind; 32] = [
+    pub(crate) const ALL: [StaticLimitKind; 33] = [
         StaticLimitKind::DynamicDispatch,
         StaticLimitKind::Metaprogramming,
         StaticLimitKind::MissingImportGraph,
@@ -191,6 +191,7 @@ impl StaticLimitKind {
                 "Assert on the changed method's result with the standard `assert_eq!`, in a \
                  test whose Cargo target ripr can place, so the assertion macro binding can be \
                  verified."
+            }
             StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => {
                 "Run ripr from a narrower root, or raise RIPR_TS_MAX_WORKSPACE_FILES (and \
                  RIPR_TS_MAX_WORKSPACE_READ_BYTES if the run then reports a read budget), then \
