@@ -1,0 +1,14 @@
+{
+  "id": "rust_comparison_counterpart_integer_width",
+  "language": "rust",
+  "tier": "pure",
+  "source_fixture": "fixtures/binding_value_counterpart_width",
+  "vector": "declared_narrow_counterpart_constrains_bool_selected_local_arithmetic",
+  "probe_family": "predicate",
+  "assertions": [
+    { "type": "must_not_report_clean" },
+    { "type": "expected_finding_count", "count": 2 },
+    { "type": "must_not_promote" },
+    { "type": "expected_class", "class": "infection_unknown" }
+  ]
+}

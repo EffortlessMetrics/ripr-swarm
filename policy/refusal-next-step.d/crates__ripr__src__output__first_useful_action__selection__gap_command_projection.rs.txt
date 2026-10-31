@@ -1,0 +1,3 @@
+crates/ripr/src/output/first_useful_action/selection/gap_command_projection.rs|selected gap record {gap_id} is invalid: {error}
+crates/ripr/src/output/first_useful_action/selection/gap_command_projection.rs|selected gap record {gap_id} is missing from the gap ledger
+crates/ripr/src/output/first_useful_action/selection/gap_command_projection.rs|selected gap report has no gap ledger input

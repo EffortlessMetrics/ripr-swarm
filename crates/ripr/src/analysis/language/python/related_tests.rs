@@ -3344,7 +3344,7 @@ pub(super) fn test_rebinds_import_alias(test: &PythonTest, alias: &str) -> bool 
 
 /// Whether `name` is bound by anything other than a plain `name = ...`
 /// assignment: a loop or `with` target, `def`, `class`, walrus, augmented
-/// assignment, import or `nonlocal`.
+/// assignment, import, `nonlocal`, `global`, `del` or a `type` statement.
 pub(super) fn text_binds_beyond_assignment(text: &str, name: &str) -> bool {
     keyword_or_operator_binds_text(text, name, true)
 }
@@ -3352,27 +3352,29 @@ pub(super) fn text_binds_beyond_assignment(text: &str, name: &str) -> bool {
 fn keyword_or_operator_binds_text(body: &str, name: &str, import_as_binds: bool) -> bool {
     augmented_assignment(body, name)
         || walrus_binds(body, name)
-        || ["def", "class", "for", "as", "import", "nonlocal"]
-            .into_iter()
-            .any(|keyword| {
-                body.match_indices(keyword).any(|(idx, _)| {
-                    let after_keyword = idx + keyword.len();
-                    let spaced = &body[after_keyword..];
-                    // Any run of blanks (or a backslash continuation) may separate
-                    // the keyword from the name: `for  r  in`, `as\tr`.
-                    let rest = skip_blank_forward(spaced, false);
-                    let name_at = body.len() - rest.len();
-                    let line_start = body[..idx].rfind('\n').map_or(0, |offset| offset + 1);
-                    let line = body[line_start..].trim_start();
-                    let import_line = line.starts_with("import ") || line.starts_with("from ");
-                    rest.len() != spaced.len()
-                        && rest.starts_with(name)
-                        && python_callee_start_has_boundary(body, idx)
-                        && !next_char_is_identifier(body, name_at + name.len())
-                        && !python_text_hides_code(body, idx)
-                        && (import_as_binds || !matches!(keyword, "as" | "import") || !import_line)
-                })
+        || [
+            "def", "class", "for", "as", "import", "nonlocal", "global", "del", "type",
+        ]
+        .into_iter()
+        .any(|keyword| {
+            body.match_indices(keyword).any(|(idx, _)| {
+                let after_keyword = idx + keyword.len();
+                let spaced = &body[after_keyword..];
+                // Any run of blanks (or a backslash continuation) may separate
+                // the keyword from the name: `for  r  in`, `as\tr`.
+                let rest = skip_blank_forward(spaced, false);
+                let name_at = body.len() - rest.len();
+                let line_start = body[..idx].rfind('\n').map_or(0, |offset| offset + 1);
+                let line = body[line_start..].trim_start();
+                let import_line = line.starts_with("import ") || line.starts_with("from ");
+                rest.len() != spaced.len()
+                    && rest.starts_with(name)
+                    && python_callee_start_has_boundary(body, idx)
+                    && !next_char_is_identifier(body, name_at + name.len())
+                    && !python_text_hides_code(body, idx)
+                    && (import_as_binds || !matches!(keyword, "as" | "import") || !import_line)
             })
+        })
 }
 
 /// A line that starts with `name <op>=` (`total += 1`, `x //= 2`).
@@ -3532,6 +3534,16 @@ fn inside_triple_quoted_string(text: &str, idx: usize) -> bool {
             triple = Some((delimiter, string_prefix_is_f_string(text, cursor)));
             cursor += 3;
         } else if rest.starts_with('#') || rest.starts_with('"') || rest.starts_with('\'') {
+            // A single-line f-string whose quote pairing cannot be followed
+            // (3.12 same-quote nesting in a field, a newline in a field)
+            // hides the rest of the text: a miss, never an invented call
+            // (#9230).
+            if !rest.starts_with('#')
+                && string_prefix_is_f_string(text, cursor)
+                && super::static_limits::single_line_fstring_is_ambiguous(rest.chars())
+            {
+                return true;
+            }
             let len = if rest.starts_with('#') {
                 rest.find('\n').unwrap_or(rest.len())
             } else {

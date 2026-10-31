@@ -1,0 +1,10 @@
+diff --git a/tests/other.rs b/tests/other.rs
+--- a/tests/other.rs
++++ b/tests/other.rs
+@@ -1,5 +1,5 @@
+ fn other_base() -> u32 {
+-    6
++    3 + 3
+ }
+ 
+ #[test]

@@ -49,6 +49,20 @@ type ObjectTest<'a> = dyn Fn(&serde_json::Map<String, Value>) -> Result<bool, Fa
 
 const REPORTS: &str = "target/ripr/reports";
 const START_HERE_JSON: &str = "target/ripr/reports/start-here.json";
+/// Policy report categories the fold has read, one bit each. Several files
+/// can belong to one category (promotion), so presence is tracked per
+/// category rather than per file.
+const READINESS: u8 = 1;
+const OPERATIONS: u8 = 2;
+const HISTORY: u8 = 4;
+const PROMOTION: u8 = 8;
+const SUPPRESSION: u8 = 16;
+const PREVIEW: u8 = 32;
+const WAIVER: u8 = 64;
+/// The categories every producer run emits. Preview packets depend on the
+/// enabled languages and waiver aging on a PR ledger, so their absence is not
+/// a gap; they still keep the fold open when present and not clean.
+const REQUIRED_POLICY_REPORTS: u8 = READINESS | OPERATIONS | HISTORY | PROMOTION | SUPPRESSION;
 const START_HERE_MD: &str = "target/ripr/reports/start-here.md";
 const INDEX_JSON: &str = "target/ripr/reports/index.json";
 const INDEX_MD: &str = "target/ripr/reports/index.md";
@@ -61,6 +75,10 @@ const PILOT_SUMMARY_JSON: &str = "target/ripr/pilot/pilot-summary.json";
 const LEDGER_JSON: &str = "target/ripr/reports/pr-evidence-ledger.json";
 const LEDGER_MD: &str = "target/ripr/reports/pr-evidence-ledger.md";
 const COMMENTS_JSON: &str = "target/ripr/review/comments.json";
+/// The producer check document the PR-guidance step renders (#11161). When
+/// the producer refused to run, this envelope is the only place that names
+/// the cause; every downstream packet degrades to a missing/blocked state.
+const CHECK_JSON: &str = "target/ripr/pr/check.json";
 const GATE_JSON: &str = "target/ripr/reports/gate-decision.json";
 const GATE_MD: &str = "target/ripr/reports/gate-decision.md";
 const DELTA_JSON: &str = "target/ripr/reports/baseline-debt-delta.json";
@@ -84,6 +102,9 @@ pub(crate) struct CiSummaryInput {
     pub(crate) upload_sarif: bool,
     /// `RIPR_GATE_BASELINE` is set.
     pub(crate) gate_baseline: bool,
+    /// `RIPR_GATE_MODE` is not blank. When false the policy
+    /// and governance sections are folded (#11217).
+    pub(crate) gate_configured: bool,
     /// `RIPR_COMMENT_MODE`, `off` when unset.
     pub(crate) comment_mode: String,
     /// The enabled language names `ripr doctor --json` reports.
@@ -97,6 +118,8 @@ pub(crate) fn render_ci_summary(input: &CiSummaryInput) -> Vec<u8> {
         root: input.root.clone(),
         relative: repo_relative_for(&input.root),
         out: Vec::new(),
+        attention: false,
+        policy_reports_read: 0,
     };
     summary.headline();
     summary.start_here();
@@ -111,13 +134,7 @@ pub(crate) fn render_ci_summary(input: &CiSummaryInput) -> Vec<u8> {
     summary.evidence_ledger();
     summary.assistant_proof();
     summary.agent_proof_status();
-    summary.policy_readiness();
-    summary.policy_operations();
-    summary.policy_history();
-    summary.policy_promotion();
-    summary.preview_promotion();
-    summary.waiver_aging();
-    summary.suppression_health();
+    summary.governance(input.gate_configured);
     summary.gate_decision();
     summary.baseline_delta(input.gate_baseline);
     summary.ripr_zero();
@@ -187,6 +204,12 @@ struct Summary {
     root: PathBuf,
     relative: RepoRelative,
     out: Vec<u8>,
+    /// A folded governance section carried a count that is not exactly `0`.
+    attention: bool,
+    /// Bitmask of the required policy report categories read so far (one bit
+    /// per category, OR-ed in by `note_attention`); compared against
+    /// `REQUIRED_POLICY_REPORTS` to tell a complete read from a partial one.
+    policy_reports_read: u8,
 }
 
 impl Summary {
@@ -224,6 +247,63 @@ impl Summary {
         self.line("</details>");
     }
 
+    /// The policy and governance sections. With no gate configured they carry
+    /// nothing a first-time adopter acts on, so they fold into one collapsed
+    /// block; with a gate they stay open. Content is never dropped (#11217).
+    fn governance(&mut self, gate_configured: bool) {
+        let start = self.out.len();
+        self.policy_readiness();
+        self.policy_operations();
+        self.policy_history();
+        self.policy_promotion();
+        self.preview_promotion();
+        self.waiver_aging();
+        self.suppression_health();
+        if gate_configured {
+            return;
+        }
+        let body = self.out.split_off(start);
+        // Fail closed: only parsed reports with every count exactly `0` fold
+        // as clean; anything else stays open or says nothing was read.
+        if self.attention {
+            self.line("<details open><summary>Policy and governance (advisory; no gate configured; needs attention)</summary>");
+        } else if self.policy_reports_read & REQUIRED_POLICY_REPORTS == REQUIRED_POLICY_REPORTS {
+            self.line(
+                "<details><summary>Policy and governance (advisory; no gate configured; no warnings or unknowns)</summary>",
+            );
+        } else if self.policy_reports_read > 0 {
+            self.line("<details open><summary>Policy and governance (advisory; no gate configured; some policy reports not found)</summary>");
+        } else {
+            self.line("<details open><summary>Policy and governance (advisory; no gate configured; no policy reports found)</summary>");
+        }
+        self.blank();
+        self.out.extend(body);
+        self.line("</details>");
+        self.blank();
+    }
+
+    /// Record what a folded section's report establishes. Only a report that
+    /// parsed with every listed count present and exactly `0` is clean;
+    /// unreadable, wrong-shape and missing-count reports need attention.
+    fn note_attention(&mut self, doc: &Doc, category: u8, count_paths: &[&str]) {
+        self.policy_reports_read |= category;
+        if count_paths
+            .iter()
+            .any(|path| doc.strict_count(path) != Some(0))
+        {
+            self.attention = true;
+        }
+    }
+
+    /// A first-run status row, left out when its value is the
+    /// `not_available` placeholder (#11217). Only the placeholder is
+    /// dropped; `unknown`, `none` and real values still print.
+    fn status_row(&mut self, value: &str, text: &str) {
+        if value != "not_available" {
+            self.line(text);
+        }
+    }
+
     /// Lead with a carried repair start and its after phase (#3906).
     fn repair_start(&mut self, label: &str, command: &str) {
         self.line(&format!("- {label}: `{command}`"));
@@ -255,25 +335,29 @@ impl Summary {
 
     fn start_here(&mut self) {
         self.line("### Start here");
-        self.line("- Open `target/ripr/reports/start-here.md` first when it exists.");
+        self.line("- Open `start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.");
         self.line(
-            "- Then open `target/ripr/reports/index.md` to navigate deeper evidence artifacts.",
+            "- Then open `index.md` in the same artifact to navigate deeper evidence artifacts.",
         );
-        self.line("- Safe next action: repair one named gap, regenerate missing or malformed artifacts, refresh stale evidence, fix wrong-root setup, or stop on no-action.");
-        self.line("- Recovery states: missing artifact, stale evidence, wrong root, malformed artifact, no actionable gap, and preview-limited evidence are explicit stop or regeneration states.");
-        self.line("- Proof rail: the repair start, verify, receipt, and receipt path are static movement evidence only; verify and receipt run after the test edit.");
-        self.line("- Preview boundary: preview-limited evidence stays syntax-first and advisory, with static limits before repair language.");
-        self.line("- Gate authority: `ripr gate evaluate` remains the pass/fail source only when `RIPR_GATE_MODE` is configured.");
         if self.is_file(START_HERE_MD) {
-            self.line("- Start-here artifact: `target/ripr/reports/start-here.md`");
+            self.line("- Start-here artifact: `start-here.md` in the `ripr-reports` artifact");
         } else if let Some(index) = self.doc(INDEX_JSON) {
             let path =
                 inline(&index.field(&["summary.start_here"], "not_available", "not_available"));
-            self.line(&format!("- Start-here artifact: `{path}`"));
+            if path == "not_available" {
+                self.line("- Start-here artifact: `not_available`");
+            } else {
+                let name = path.rsplit('/').next().unwrap_or(&path);
+                self.line(&format!(
+                    "- Start-here artifact: `{name}` in the `ripr-reports` artifact"
+                ));
+            }
         } else if self.is_file(FRONT_PANEL_MD) {
-            self.line("- Start-here artifact: `target/ripr/reports/pr-review-front-panel.md`");
+            self.line(
+                "- Start-here artifact: `pr-review-front-panel.md` in the `ripr-reports` artifact",
+            );
         } else if self.is_file(PILOT_SUMMARY_MD) {
-            self.line("- Start-here artifact: `target/ripr/pilot/pilot-summary.md`");
+            self.line("- Start-here artifact: `pilot-summary.md` in the `ripr-reports` artifact");
         } else {
             self.line("- Start-here artifact: not generated yet; inspect uploaded artifacts and job logs.");
         }
@@ -318,6 +402,15 @@ impl Summary {
 
     fn first_run_status(&mut self, base_ref: &str) {
         self.line("#### First-run status");
+        // #11161: when the producer refused to run, the downstream packets
+        // carry missing/blocked states whose regeneration commands cannot
+        // succeed — the author sees an unexplained "blocked". The refusal
+        // cause lives only in `target/ripr/pr/check.json`'s own disclosure,
+        // so name it here: the typed status, the producer's message, that
+        // nothing was analyzed, and the next step. A complete, absent, or
+        // malformed check document adds nothing (keeps the downstream
+        // states), and a non-refusal envelope adds nothing either.
+        self.analysis_refusal_status();
         self.pilot_deadline();
         if let Some(doc) = self.doc(START_HERE_JSON) {
             self.start_here_status(&doc);
@@ -365,8 +458,8 @@ impl Summary {
             "unknown",
         ));
         let kind = field(&["selected.kind"], "none");
-        let changed =
-            code_span(&doc.field(&["selected.changed_behavior"], "not_available", "unknown"));
+        let changed_raw = doc.field(&["selected.changed_behavior"], "not_available", "unknown");
+        let changed = code_span(&changed_raw);
         let evidence = field(
             &["selected.current_evidence_strength", "selected.state"],
             "not_available",
@@ -432,27 +525,33 @@ impl Summary {
         if !repair_command.is_empty() {
             self.repair_start("Start repair", &inline(&repair_command));
         }
-        self.line(&format!("- Status: `{status}`"));
-        self.line(&format!("- Selected state: `{state}`"));
-        self.line(&format!("- Canonical gap: `{gap}`"));
-        self.line(&format!("- Language: `{language}`"));
-        self.line(&format!("- Top gap/no-action: `{kind}`"));
-        self.line(&format!("- Repair: `{repair}`"));
-        self.line(&format!("- Changed behavior: {changed}"));
-        self.line(&format!("- Current evidence strength: `{evidence}`"));
-        self.line(&format!("- Missing discriminator: `{missing}`"));
-        self.line(&format!("- Focused proof intent: `{focused}`"));
-        self.line(&format!("- Boundary: `{boundary}`"));
-        self.line(&format!("- Repair target: `{target}`"));
-        self.line(&format!("- Related test: `{related}`"));
-        self.line(&format!("- Static limit: `{limit}`"));
-        self.line(&format!("- {}: `{verify}`", labels.verify));
-        self.line(&format!("- {}: `{receipt}`", labels.receipt));
-        self.line(&format!("- Receipt path: `{receipt_path}`"));
-        self.line(&format!("- Receipt state: `{receipt_state}`"));
-        self.line(&format!("- Safe next action command: `{next}`"));
-        self.line(&format!("- Warnings: `{warnings}`"));
-        self.line("- Artifacts: `target/ripr/reports/start-here.json`, `target/ripr/reports/start-here.md`");
+        self.status_row(&status, &format!("- Status: `{status}`"));
+        self.status_row(&state, &format!("- Selected state: `{state}`"));
+        self.status_row(&gap, &format!("- Canonical gap: `{gap}`"));
+        self.status_row(&language, &format!("- Language: `{language}`"));
+        self.status_row(&kind, &format!("- Top gap/no-action: `{kind}`"));
+        self.status_row(&repair, &format!("- Repair: `{repair}`"));
+        self.status_row(&changed_raw, &format!("- Changed behavior: {changed}"));
+        self.status_row(
+            &evidence,
+            &format!("- Current evidence strength: `{evidence}`"),
+        );
+        self.status_row(&missing, &format!("- Missing discriminator: `{missing}`"));
+        self.status_row(&focused, &format!("- Focused proof intent: `{focused}`"));
+        self.status_row(&boundary, &format!("- Boundary: `{boundary}`"));
+        self.status_row(&target, &format!("- Repair target: `{target}`"));
+        self.status_row(&related, &format!("- Related test: `{related}`"));
+        self.status_row(&limit, &format!("- Static limit: `{limit}`"));
+        self.status_row(&verify, &format!("- {}: `{verify}`", labels.verify));
+        self.status_row(&receipt, &format!("- {}: `{receipt}`", labels.receipt));
+        self.status_row(&receipt_path, &format!("- Receipt path: `{receipt_path}`"));
+        self.status_row(
+            &receipt_state,
+            &format!("- Receipt state: `{receipt_state}`"),
+        );
+        self.status_row(&next, &format!("- Safe next action command: `{next}`"));
+        self.status_row(&warnings, &format!("- Warnings: `{warnings}`"));
+        self.line("- Artifacts: `start-here.json`, `start-here.md` in the `ripr-reports` artifact");
         self.line("- Boundary: start-here is advisory first-run guidance only; gate decision remains separate pass/fail authority when configured.");
         if self.is_file(START_HERE_MD) {
             self.blank();
@@ -465,12 +564,14 @@ impl Summary {
         let status = field(&["status"], "unknown");
         let action_kind = field(&["action_kind"], "unknown");
         let title = field(&["title"], "not_available");
-        let why = code_span(&doc.field(&["why"], "not_available", "unknown"));
-        let changed = code_span(&doc.field(
+        let why_raw = doc.field(&["why"], "not_available", "unknown");
+        let why = code_span(&why_raw);
+        let changed_raw = doc.field(
             &["selected.changed_behavior", "why"],
             "not_available",
             "unknown",
-        ));
+        );
+        let changed = code_span(&changed_raw);
         let evidence = field(
             &[
                 "selected.current_evidence_strength",
@@ -536,21 +637,27 @@ impl Summary {
         if led {
             self.repair_start("Repair start", &repair);
         }
-        self.line(&format!("- Status: `{status}`"));
-        self.line(&format!("- Safe next action: `{action_kind}`"));
-        self.line(&format!("- Title: `{title}`"));
-        self.line(&format!("- Why: {why}"));
-        self.line(&format!("- Changed behavior: {changed}"));
-        self.line(&format!("- Current evidence strength: `{evidence}`"));
-        self.line(&format!("- Missing discriminator: `{missing}`"));
-        self.line(&format!("- Focused proof intent: `{proof}`"));
-        self.line(&format!("- Gap: `{gap}`"));
-        self.line(&format!("- Repair target: `{target}`"));
-        self.line(&format!("- Agent packet: `{packet}`"));
-        self.line(&format!("- {}: `{verify}`", labels.verify));
-        self.line(&format!("- {}: `{receipt}`", labels.receipt));
-        self.line(&format!("- Fallback/no-action: `{fallback}`"));
-        self.line(&format!("- Warnings: `{warnings}`"));
+        self.status_row(&status, &format!("- Status: `{status}`"));
+        self.status_row(
+            &action_kind,
+            &format!("- Safe next action: `{action_kind}`"),
+        );
+        self.status_row(&title, &format!("- Title: `{title}`"));
+        self.status_row(&why_raw, &format!("- Why: {why}"));
+        self.status_row(&changed_raw, &format!("- Changed behavior: {changed}"));
+        self.status_row(
+            &evidence,
+            &format!("- Current evidence strength: `{evidence}`"),
+        );
+        self.status_row(&missing, &format!("- Missing discriminator: `{missing}`"));
+        self.status_row(&proof, &format!("- Focused proof intent: `{proof}`"));
+        self.status_row(&gap, &format!("- Gap: `{gap}`"));
+        self.status_row(&target, &format!("- Repair target: `{target}`"));
+        self.status_row(&packet, &format!("- Agent packet: `{packet}`"));
+        self.status_row(&verify, &format!("- {}: `{verify}`", labels.verify));
+        self.status_row(&receipt, &format!("- {}: `{receipt}`", labels.receipt));
+        self.status_row(&fallback, &format!("- Fallback/no-action: `{fallback}`"));
+        self.status_row(&warnings, &format!("- Warnings: `{warnings}`"));
         self.line(&format!(
             "- Artifacts: `target/ripr/reports/first-useful-action.json`, `target/ripr/reports/first-useful-action.md`, `{WORKFLOW_AGENT_PACKET_ARTIFACT}`"
         ));
@@ -1081,6 +1188,7 @@ impl Summary {
             let warnings = inline(&doc.length("warnings"));
             let unknowns = inline(&doc.length("unknowns"));
             let next = inline(&doc.field(&["next_policy_action"], "not_available", "unknown"));
+            self.note_attention(&doc, READINESS, &["warnings", "unknowns"]);
             self.line("#### Policy readiness at a glance");
             self.line(&format!("- Status: `{status}`"));
             self.line(&format!("- Recommended mode: `{mode}`"));
@@ -1111,6 +1219,11 @@ impl Summary {
             ));
             let warnings = inline(&doc.length("warnings"));
             let unknowns = inline(&doc.length("unknowns"));
+            self.note_attention(
+                &doc,
+                OPERATIONS,
+                &["promotion_blockers", "warnings", "unknowns"],
+            );
             self.line("#### Policy operations at a glance");
             self.line(&format!("- Current ceiling: `{ceiling}`"));
             self.line(&format!("- Next safe action: `{next}`"));
@@ -1145,6 +1258,7 @@ impl Summary {
             let preview = direction("trend.preview_boundary_state.direction");
             let warnings = inline(&doc.length("warnings"));
             let unknowns = inline(&doc.length("unknowns"));
+            self.note_attention(&doc, HISTORY, &["warnings", "unknowns"]);
             self.line("#### Policy history at a glance");
             self.line(&format!(
                 "- Current ceiling: `{ceiling}`; history entries: `{entries}`"
@@ -1176,6 +1290,7 @@ impl Summary {
             let warnings = inline(&doc.length("warnings"));
             let unknowns = inline(&doc.length("unknowns"));
             let reason = inline(&doc.field(&["why_or_why_not"], "not_available", "unknown"));
+            self.note_attention(&doc, PROMOTION, &["warnings", "unknowns"]);
             self.line(&format!("- `{target}`: allowed_now=`{allowed}`, repairs=`{repairs}`, receipts=`{receipts}`, warnings=`{warnings}`, unknowns=`{unknowns}`, why=`{reason}`"));
         }
         if found {
@@ -1208,6 +1323,7 @@ impl Summary {
             let supplied = inline(&doc.length("supplied_evidence"));
             let warnings = inline(&doc.length("warnings"));
             let unknowns = inline(&doc.length("unknowns"));
+            self.note_attention(&doc, PREVIEW, &["warnings", "unknowns"]);
             self.line(&format!("- `{language}`/`{class}`: allowed_now=`{allowed}`, supplied_evidence=`{supplied}`, missing_evidence=`{missing}`, warnings=`{warnings}`, unknowns=`{unknowns}`"));
         }
         if jsons.iter().any(|json| self.is_file(json)) {
@@ -1259,6 +1375,11 @@ impl Summary {
             let focused = count("summary.focused_test_candidates");
             let suppression = count("summary.durable_suppression_candidates");
             let warnings = count("summary.warnings");
+            self.note_attention(
+                &doc,
+                WAIVER,
+                &["summary.durable_suppression_candidates", "summary.warnings"],
+            );
             self.line("#### Waiver aging at a glance");
             self.line(&format!("- Status: `{status}`"));
             self.line(&format!("- Counts: waivers=`{waivers}`, identities=`{identities}`, repeated_seams=`{repeated_seams}`, repeated_files=`{repeated_files}`"));
@@ -1292,6 +1413,20 @@ impl Summary {
             let preview_gap = count("summary.preview_without_preview_label");
             let warnings = count("summary.warnings");
             let config_errors = count("summary.config_errors");
+            self.note_attention(
+                &doc,
+                SUPPRESSION,
+                &[
+                    "summary.missing_owner",
+                    "summary.missing_reason",
+                    "summary.stale",
+                    "summary.overbroad_scope",
+                    "summary.unknown_selector",
+                    "summary.preview_without_preview_label",
+                    "summary.warnings",
+                    "summary.config_errors",
+                ],
+            );
             self.line("#### Suppression health at a glance");
             self.line(&format!("- Status: `{status}`"));
             self.line(&format!("- Counts: suppressions=`{total}`, healthy=`{healthy}`, missing_owner=`{missing_owner}`, missing_reason=`{missing_reason}`"));
@@ -1589,6 +1724,52 @@ impl Summary {
         } else {
             self.line("- Inline comments are disabled by default. Set `RIPR_COMMENT_MODE` to `plan` to inspect a publish plan or `inline` to publish same-repo changed-line comments when permissions are safe.");
         }
+        self.blank();
+    }
+
+    /// A declined producer run, named from its own disclosure (#11161). The
+    /// check envelope carries the refusal identity the shared gate predicate
+    /// reads (`output::gate::producer_refusal`): an explicit
+    /// non-consumable record plus the typed status, message, and repair
+    /// route when the producer wrote them. Renders nothing for a complete,
+    /// absent, or malformed check document — or for a consumable envelope
+    /// without an outcome — so those keep their downstream handling.
+    fn analysis_refusal_status(&mut self) {
+        let bytes = match fs::read(self.root.join(CHECK_JSON)) {
+            Ok(bytes) => bytes,
+            Err(_) => return,
+        };
+        let value: Value = match serde_json::from_slice(&bytes) {
+            Ok(value) => value,
+            Err(_) => return,
+        };
+        // A bounded, partial, or incomplete document is not a refusal: those
+        // keep their own named repairs and downstream states. Only a true
+        // non-consumable refusal renders this block.
+        if crate::output::gate::discloses_limited_findings_bound(&value)
+            || crate::output::gate::discloses_limited_partial_scope(&value)
+            || crate::output::gate::discloses_incomplete_analysis_outcome(&value)
+        {
+            return;
+        }
+        let Some(refusal) = crate::output::gate::producer_refusal(&value) else {
+            return;
+        };
+        let status = refusal.status.as_deref().unwrap_or("producer refusal");
+        self.line("#### PR analysis did not run");
+        self.line(&format!("- Producer run status: `{status}`"));
+        self.line(&format!(
+            "- Producer message: {}",
+            code_span(&refusal.message)
+        ));
+        self.line(
+            "- This is a declined run, not a clean result: nothing was analyzed, \
+             so downstream PR guidance, evidence, and gate packets carry missing or blocked states.",
+        );
+        self.line(&format!(
+            "- Next step: {}",
+            code_span(&refusal.repair_route)
+        ));
         self.blank();
     }
 

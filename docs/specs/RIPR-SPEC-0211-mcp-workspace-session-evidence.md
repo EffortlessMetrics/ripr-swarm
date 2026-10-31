@@ -239,24 +239,115 @@ official SDK transport:
     sequence cannot reuse the other kind's result. The identity is as strong
     as the producer's outcome identity (a diff-byte commitment) plus the
     canonical items; it is not a complete consumed-source commitment.
-  - A worktree snapshot discloses that limit instead of claiming
-    currentness: its `scope` always exists, with `analyzed` naming the
-    saved tracked-worktree diff, `uncommitted_edits: "saved tracked edits
-    included"`, `consumed_source_commitment: "not_established"` and
-    `repair_cards: "withheld"`. Because no consumed-source commitment spans
-    the findings and the later live-file seam inventory, a worktree refresh
-    gathers no inventory and binds no card producers: every item's
-    `repair_packet_ready` is false. Otherwise-ready items receive the typed
-    `worktree_source_not_committed` reason; existing finding-level refusal
-    reasons retain precedence. `ripr_prepare_repair` therefore creates no
-    attempt, and `ripr_get_repair_card` refuses with the
-    existing `incomplete_inventory` code and a detail naming the
-    tracked-worktree source. Findings, list and gap evidence are served as
-    for a committed snapshot. Committing the change and refreshing without
-    `source` restores cards and readiness. Establishing worktree repair
-    cards, same-HEAD edit invalidation by consumed bytes and
-    source-movement-between-producers controls remain open under #7357's
-    producer-seam prerequisites (#1765 / #1602).
+  - Producer custody (#7357). A worktree refresh runs the shared findings
+    producer and then the same diff-scoped seam inventory a committed refresh
+    runs, over the live saved files. The findings producer already records a
+    private SHA-256 of each raw Rust buffer it loads, before parsing or fact
+    cache access; the seam inventory records the same observation for each
+    corpus buffer while it is live in its hashing pass, which its index pass
+    must reproduce or the run fails. On a memory or persisted result reuse the
+    carrier is this invocation's validated observation, never an earlier
+    one. The two carriers are compared by the one shared source authority
+    (`ConsumedRustSources::establish_agreement`): every path the findings
+    producer consumed must be captured by both with the same digest, and every
+    inventory observation must be a captured one. A missing, unavailable,
+    conflicting, out-of-root or moved observation, a findings producer that
+    recorded nothing, or a `HEAD` that differs from the head the findings
+    producer observed, leaves custody not established. The server adds no Git
+    or worktree digest and never rescans the tree to mint one.
+  - Established custody enables exactly the committed path: the shared
+    seam-level repair validator, the owner-discriminated card bindings, card
+    reads and `ripr_prepare_repair`, all behind their existing per-item
+    gates. The producer's conservative Rust-context commitment (a digest over
+    the sorted per-path digests of everything the inventory read, so an edit
+    to any consumed helper or test changes it even when findings and the diff
+    are equal) is bound into the worktree snapshot identity. It is not a
+    complete portable dependency identity: it covers Rust sources only and
+    nothing outside the inventory corpus.
+  - Not-established custody (a source or head that moved between the two
+    producers, or any unobserved input) withholds readiness and cards instead:
+    every item's `repair_packet_ready` is false with the typed
+    `worktree_source_not_committed` reason (existing finding-level refusal
+    reasons retain precedence) whose detail names the cause,
+    `ripr_prepare_repair` creates no attempt, and `ripr_get_repair_card`
+    refuses with the existing `incomplete_inventory` code. Findings, list and
+    gap evidence are still served. A fresh refresh over the settled bytes
+    recovers.
+  - A worktree snapshot's `scope` always exists, with `analyzed` naming the
+    saved tracked-worktree diff and `uncommitted_edits: "saved tracked edits
+    included"`. `consumed_source_commitment` is `established` with
+    `repair_cards: "available"` when custody holds, and `not_established`
+    with `repair_cards: "withheld"` otherwise; the note names the cause.
+    Unsaved buffers and gitignored files stay outside either way, and
+    untracked files are never analyzed as findings; the seam inventory walks
+    disk, so an untracked Rust file it reads is bound into the commitment (see
+    the residuals). The server still does not watch the worktree. If the seam
+    inventory cannot be gathered after the findings producer ran, the refresh
+    still serves the findings with custody `not_established` and the failure
+    named, rather than failing the whole refresh (a cancelled attempt still
+    fails). A committed snapshot whose producers agree
+    makes no custody claim and keeps its unchanged contract.
+  - A committed refresh with findings reads committed bytes for the findings
+    and live checkout bytes for the inventory. On every such refresh the
+    shared `establish_agreement` owner compares what the findings producer
+    consumed with what the inventory read, whether or not the checkout was
+    dirty when the findings ran (an edit landing after the findings is caught
+    too), and a head the findings producer observed that differs from the
+    inventory's also withholds (an unobserved head is not compared on the
+    committed path, an existing residual). Because the agreement only covers
+    paths the findings consumed while the inventory reads its own selected Rust
+    files, any dirty tracked or untracked Rust-routed path (a `.rs` file,
+    including a helper or test outside the findings scope) also withholds when
+    there are Rust findings; if that list cannot be established the refresh
+    withholds (and its remedy is to refresh again). A dirty non-Rust file
+    (README, `.py`) does not withhold Rust cards, and with no findings no
+    custody claim is made. Withholding refuses `ripr_get_repair_card` with
+    `incomplete_inventory` and the `scope` adds
+    `consumed_source_commitment: "not_established"` and
+    `repair_cards: "withheld"`. Per item, an item that was repair-ready
+    becomes `repair_packet_ready: false` with the typed
+    `worktree_source_not_committed` reason; an item already not ready keeps
+    its first-failing finding-level reason. The cause names the moved path
+    when the owner can (a consumed file edited, staged or deleted, or an
+    untracked Rust file the committed findings could not capture) and
+    otherwise says an uncommitted Rust source or test file is read by the
+    inventory. Findings, list and gap evidence are still served; the remedy is
+    to commit the uncommitted Rust source or test files (untracked ones
+    included) and refresh again, or refresh with source `worktree`. No
+    commitment is bound into a committed identity.
+  - Card currentness at request time (#7357). The refresh-time git-status
+    probe and custody are not re-run per read, and the server does not watch
+    the worktree, so `ripr_get_repair_card` re-verifies, on every read, the
+    captured SHA-256 of only the files the card's evidence is bound to (the
+    seam file, its related tests and the recommended test file) through the one
+    shared `ConsumedRustSources::first_drift` owner. A captured file whose
+    bytes now differ, or that can no longer be read, refuses with the existing
+    `stale_snapshot` code (carrying `current_snapshot_id`), names the path, and
+    says to run `ripr_refresh` again; this covers an uncommitted edit, a commit
+    made after the refresh, and a deletion, for committed and worktree
+    snapshots alike. Files with no captured commitment (non-Rust, outside the
+    inventory corpus) make no claim, edits to unrelated files keep the card,
+    and restored bytes keep it. The clean path costs one read-and-hash of those
+    few files and runs no git child. Residual: only the evidence-bound Rust
+    files are re-verified; a `HEAD` move that changes no bound file is not
+    detected per read, and the card's `currentness.basis` remains the
+    refresh-time statement.
+  - Residuals under #7357 / #1765 / #1602, worktree mode: a Rust file
+    that only the inventory read and the findings producer did not (a new file
+    or one the findings scope did not select) is bound into the commitment but
+    cannot contradict the findings; an untracked (not intent-to-add) Rust file
+    is not analyzed as a finding but is read by the inventory, so editing it
+    changes the commitment and snapshot identity. In committed mode those same
+    tracked-dirty and untracked files withhold instead (see above). Both
+    modes: gitignored Rust files can be read by the inventory (workspace
+    discovery does not apply `.gitignore`) but are not claimed; committed mode
+    does not list them because their enumeration is capped and would
+    over-withhold clean checkouts. Unsupported, generated,
+    `include!` and mixed-language dependencies are not claimed; a deleted or
+    renamed tracked Rust file in the findings scope has no captured bytes and
+    may refuse custody (fail-closed, cards withheld with the cause). A
+    non-normal (empty, absolute or escaping) observed path is recorded as an
+    uncaptured observation and refuses.
 - The snapshot identity is `snapshot:sha256:` over the typed outcome digest,
   the sorted canonical item identities, and each item's evidence digest:
   equivalent roots at equivalent inputs share one portable identity, while
@@ -742,5 +833,6 @@ with an explicit non-command limitation rather than truncating executable text.
 For failed saved-worktree refresh, MCP retry examples retain the requested
 worktree source when the operator corrects or omits a base. Discovery states
 the committed default separately from opt-in saved tracked edits. Unsaved and
-untracked exclusions, withheld worktree cards/readiness and the consumed-source
-commitment limitation remain unchanged.
+untracked exclusions remain unchanged. Worktree cards and readiness follow the
+producer-custody rules above: offered only with an established agreement,
+withheld with the cause otherwise.
