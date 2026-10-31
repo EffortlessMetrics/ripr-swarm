@@ -31595,7 +31595,9 @@ fn plus_partial_zero_cannot_be_used_as_a_current_quality_gate() -> Result<(), St
         }))
         .err()
         .as_deref(),
-        Some("RIPR+ receipt warnings must be an array")
+        Some(
+            "RIPR+ receipt warnings must be an array; this is a ripr bug, report it with the command you ran"
+        )
     );
     let ledger = include_str!(
         "../../../fixtures/first_successful_pr/empty-diff/inputs/reports/gap-decision-ledger.json"
