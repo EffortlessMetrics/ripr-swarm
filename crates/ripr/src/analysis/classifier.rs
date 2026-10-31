@@ -63,6 +63,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
     )
 }
 
+#[cfg(test)]
 #[allow(
     clippy::too_many_arguments,
     reason = "classification inputs plus origin context"
