@@ -651,7 +651,7 @@ fn observer_local(assertion: &ast::MacroCall, source: &str) -> Option<(String, S
 fn dispatch_statement(statement: &ast::Stmt, receiver: &str, method: &str) -> bool {
     let text = compact(&statement.syntax().text().to_string());
     match method {
-        "next" | "into_iter" => {
+        "next" => {
             text == format!("for_in{receiver}{{}}")
                 || text == format!("{receiver}.for_each(|_|{{}});")
                 || text == format!("while{receiver}.next().is_some(){{}}")
@@ -1210,6 +1210,45 @@ fn implicit_observer() {
             let source = edit(&source, "for _ in counter {}", form)?;
             assert!(observes(&source, "next", "next", DIRECT)?, "{form}");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn into_iter_observer_is_refused() -> Result<(), String> {
+        // This is valid Rust: the side effect belongs to IntoIterator, not Iterator.
+        let source = r#"use std::{cell::Cell, rc::Rc};
+struct Counter { sink: Rc<Cell<usize>> }
+impl IntoIterator for Counter {
+    type Item = ();
+    type IntoIter = std::iter::Empty<()>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.sink.set(1);
+        std::iter::empty()
+    }
+}
+#[derive(Debug, PartialEq)] struct Observation { cell: Rc<Cell<usize>> }
+#[test]
+fn implicit_observer() {
+    let state = Rc::new(Cell::new(0));
+    let counter = Counter { sink: state.clone() };
+    for _ in counter {}
+    assert_eq!(Observation { cell: state }, Observation { cell: Rc::new(Cell::new(1)) });
+}
+"#;
+        assert!(!observes(source, "into_iter", "into_iter", DIRECT)?);
+        let surface = ExpansionSurface::scan([source]);
+        assert!(surface.excluded_receivers.contains("Counter"));
+
+        let parse = parse_clean_source_file(source).ok_or("invalid fixture")?;
+        let statement = parse
+            .tree()
+            .syntax()
+            .descendants()
+            .filter_map(ast::Stmt::cast)
+            .find(|s| compact(&s.syntax().text().to_string()) == "for_incounter{}")
+            .ok_or("missing loop")?;
+        assert!(!dispatch_statement(&statement, "counter", "into_iter"));
+        assert!(dispatch_statement(&statement, "counter", "next"));
         Ok(())
     }
 
