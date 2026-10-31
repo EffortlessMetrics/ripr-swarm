@@ -176,12 +176,16 @@ related only by naming the owner; it never has to call it). Only the
 finding related solely by `owner_named_test`, and any set that also holds a
 non-proximity relation (`import_path_affinity`, `fixture_owner_affinity`, a
 direct or helper owner call), stays unlimited. The `weakly_exposed` asymmetry is
-a decided, fail-closed boundary (#11481 follow-up), not a pending extension:
-`weakly_exposed` exists only because a related test carries a credited weak
-assertion, and an owner-named test is the strongest name-only sign that the
-assertion is about the owner. The witness is repo-wide and not tied to that
-test, so limiting the finding would replace a real weak-assertion gap with
-"reach unresolved". The pinned pair
+a decided, fail-closed boundary (#11481 follow-up), not a pending extension.
+Whether an owner-named test runs the owner is equally unknown for both classes.
+The difference is the claim at stake: `infection_unknown` makes no assertion
+claim, while `weakly_exposed` exists only because a related test carries a
+credited weak assertion and publishes a gap for it. The witness is repo-wide
+and not tied to that test, so limiting the finding would withdraw that gap and
+its next step on name evidence alone, a change to actionable output that no
+corpus case justifies. Soundness of the extension is therefore not established
+and the finding is left unchanged; a corpus case showing a mislabeled gap would
+reopen it. The pinned pair
 `a_weakly_exposed_owner_named_weak_assertion_keeps_its_gap_while_proximity_is_limited`
 shows the owner-named shape unlimited and the proximity-only twin limited. The
 witness walk is name-only, so a same-named function in another module can name

@@ -1708,6 +1708,10 @@ fn a_self_qualified_call_from_the_single_caller_behaves_as_the_plain_call() -> R
 // lines could hide a weak assertion the test really holds. The pair below
 // differs only in the test's name, so the relation alone decides.
 fn weak_assertion_fixture(test_name: &str) -> Result<Finding, String> {
+    assert!(
+        MACRO_ROUTED.contains("fn outer_triples() {\n        assert_eq!(outer(4), 12);"),
+        "fixture template drifted"
+    );
     let lib = format!(
         "{}}}\n",
         MACRO_ROUTED.replace(
@@ -1715,6 +1719,7 @@ fn weak_assertion_fixture(test_name: &str) -> Result<Finding, String> {
             &format!("fn {test_name}() {{\n        assert!(outer(4) > 0);")
         )
     );
+    assert!(lib.contains(&format!("fn {test_name}()")), "{lib}");
     Fixture::new(test_name, &lib)?.rate_finding()
 }
 
