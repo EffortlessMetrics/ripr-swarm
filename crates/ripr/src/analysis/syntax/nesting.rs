@@ -921,7 +921,7 @@ mod tests {
             "let c = '\\u{1F600}';",
             "let l = 'outer: loop {};",
         ] {
-            let at = ok.find('\'').unwrap();
+            let at = ok.find('\'').unwrap_or(0);
             assert!(skip_char_or_lifetime(ok, at) > at, "{ok}");
         }
         assert_eq!(skip_char_or_lifetime("'a' x", 0), 3);
