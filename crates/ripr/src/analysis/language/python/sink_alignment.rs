@@ -1350,13 +1350,17 @@ fn asserted_attribute_receivers(text: &str, attr: &str) -> Vec<String> {
             // Keep only the callee head before the argument list.
             let head = before[..before.rfind('(').unwrap_or(before.len())].trim_end();
             let start = head
-                .rfind(|ch: char| !(ch == '_' || ch.is_ascii_alphanumeric() || ch == '.'))
-                .map_or(0, |idx| idx + 1);
+                .char_indices()
+                .rev()
+                .find(|(_, ch)| !(*ch == '_' || ch.is_ascii_alphanumeric() || *ch == '.'))
+                .map_or(0, |(idx, ch)| idx + ch.len_utf8());
             format!("{}()", &head[start..])
         } else {
             let start = before
-                .rfind(|ch: char| !(ch == '_' || ch.is_ascii_alphanumeric() || ch == '.'))
-                .map_or(0, |idx| idx + 1);
+                .char_indices()
+                .rev()
+                .find(|(_, ch)| !(*ch == '_' || ch.is_ascii_alphanumeric() || *ch == '.'))
+                .map_or(0, |(idx, ch)| idx + ch.len_utf8());
             before[start..].to_string()
         };
         if !receiver.is_empty() && !receivers.contains(&receiver) {
@@ -1784,6 +1788,20 @@ mod helper_origin_tests {
     use super::*;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
+
+    #[test]
+    fn asserted_receivers_after_multibyte_text_do_not_panic() {
+        // A multibyte char before the receiver is a delimiter; the receiver
+        // start must advance past the whole char, not into its UTF-8 bytes.
+        assert_eq!(
+            asserted_attribute_receivers("assert '\u{e9}conn.status' == 'active'", "status"),
+            vec!["conn".to_string()]
+        );
+        assert_eq!(
+            asserted_attribute_receivers("assert '\u{e9}Session().status' == 'active'", "status"),
+            vec!["Session()".to_string()]
+        );
+    }
 
     #[test]
     fn helper_fallback_keeps_one_origin_and_prefers_reported_raw_text() -> Result<(), String> {
