@@ -11107,6 +11107,71 @@ fn protocol_entry_receiver_reads_that_resemble_a_rebind_stay_credited() -> Resul
 }
 
 #[test]
+fn protocol_entry_receiver_unbound_or_redeclared_by_global_del_or_type_is_not_credited()
+-> Result<(), String> {
+    for middle in [
+        // `global` names the receiver as a module binding, `del` unbinds it, and
+        // a `type` statement (3.12) rebinds it as an alias (#9992).
+        "    global r\n",
+        "    global  r\n",
+        "    global\tr\n",
+        "    global \\\n        r\n",
+        "    del r\n",
+        "    del  r\n",
+        "    del\tr\n",
+        "    del r, items\n",
+        "    z = 1; del r\n",
+        "    if z: del r\n",
+        "    type r = int\n",
+    ] {
+        let src = reversed_receiver_src(middle);
+        let (finding, relations) = classify_reversed_guard(&src)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{middle:?}");
+        assert!(
+            relations
+                .iter()
+                .all(|(_, kind)| *kind != "protocol_entry_call"),
+            "{middle:?}: {relations:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn protocol_entry_receiver_reads_that_resemble_global_del_or_type_stay_credited()
+-> Result<(), String> {
+    for middle in [
+        // A comment or string that spells the keyword is text.
+        "    # global r\n",
+        "    # del r\n",
+        "    assert 'del r' or 'global r' or 'type r'\n",
+        // Longer names and attributes that merely contain the keyword.
+        "    delete = 1\n    assert delete\n",
+        "    del_r = 1\n",
+        "    global_r = 1\n",
+        "    type_r = 1\n",
+        "    q = items.del_r\n",
+        // Another name after the keyword is not the receiver.
+        "    global rr\n",
+        "    del rr\n",
+        "    del items\n",
+        "    type rr = int\n",
+        // `type(r)` is a call that reads the receiver.
+        "    assert type(r) is not None\n",
+    ] {
+        let src = reversed_receiver_src(middle);
+        let (finding, relations) = classify_reversed_guard(&src)?;
+        assert_eq!(
+            relations,
+            vec![("test_x".to_string(), "protocol_entry_call")],
+            "{middle:?}"
+        );
+        assert_eq!(finding.class, ExposureClass::Exposed, "{middle:?}");
+    }
+    Ok(())
+}
+
+#[test]
 fn match_case_capture_of_the_receiver_counts_as_a_binding_target() {
     use super::related_tests::binds_in_target_list;
     for body in [
