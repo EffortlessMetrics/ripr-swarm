@@ -794,6 +794,30 @@ mod tests {
     }
 
     #[test]
+    fn ast_shape_block_arrow_inside_concise_arrow_keeps_side_effect() {
+        // The inner block-bodied arrow starts a fresh statement context:
+        // `foo(y);` is a side-effect statement, not the outer concise
+        // arrow's returned value.
+        let source =
+            "export const f = (items: number[]): void => items.forEach((y) => {\n  foo(y);\n});\n";
+        assert_eq!(
+            ast_shape_at(source, 2).map(|shape| shape.family),
+            Some(ProbeFamily::SideEffect)
+        );
+    }
+
+    #[test]
+    fn ast_shape_catch_body_statement_is_not_error_path() {
+        // Only the catch header is the error-path shape; a plain statement
+        // in the body must not be stamped ErrorPath by the enclosing clause.
+        let source = "export function f(): number {\n  try { g(); } catch (e) {\n    const x = 1;\n    return x;\n  }\n}\n";
+        assert_ne!(
+            ast_shape_at(source, 3).map(|shape| shape.family),
+            Some(ProbeFamily::ErrorPath)
+        );
+    }
+
+    #[test]
     fn ast_shape_minified_line_with_disjoint_owners_is_none() {
         // Several exports share one line: no single AST shape describes a
         // change on that line, so the classifier must keep its line-text

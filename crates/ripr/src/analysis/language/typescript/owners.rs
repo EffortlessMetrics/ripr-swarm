@@ -2003,6 +2003,7 @@ fn collect_probe_shapes(
         source: &'s SourceText<'s>,
         candidates: Vec<(u8, usize, usize, usize, TypeScriptProbeShape)>,
         concise_arrow_depth: usize,
+        keep_concise_arrow_body: bool,
         top_start: usize,
     }
     impl Collector<'_> {
@@ -2099,14 +2100,32 @@ fn collect_probe_shapes(
             it: &oxc_ast::ast::ArrowFunctionExpression<'a>,
         ) {
             // A concise body is represented as an expression statement;
-            // it is a returned value, not a bare call statement.
-            if it.expression {
-                self.concise_arrow_depth += 1;
-                oxc_ast_visit::walk::walk_arrow_function_expression(self, it);
-                self.concise_arrow_depth -= 1;
-            } else {
-                oxc_ast_visit::walk::walk_arrow_function_expression(self, it);
+            // it is a returned value, not a bare call statement. A block
+            // body starts a fresh statement context: reset the depth while
+            // walking it and restore it afterwards, so statements inside a
+            // nested block-bodied arrow or function are not mistaken for
+            // the concise body's returned value.
+            let saved = self.concise_arrow_depth;
+            self.concise_arrow_depth = if it.expression { saved + 1 } else { 0 };
+            self.keep_concise_arrow_body = it.expression;
+            oxc_ast_visit::walk::walk_arrow_function_expression(self, it);
+            self.keep_concise_arrow_body = false;
+            self.concise_arrow_depth = saved;
+        }
+        fn visit_function_body(&mut self, it: &oxc_ast::ast::FunctionBody<'a>) {
+            // A function body is a fresh statement context, like a block
+            // arrow body: statements inside it are not a concise arrow's
+            // returned value. The one exception is a concise arrow's own
+            // body, which the arrow visitor marks so its single expression
+            // statement keeps the returned-value treatment.
+            if self.keep_concise_arrow_body {
+                self.keep_concise_arrow_body = false;
+                oxc_ast_visit::walk::walk_function_body(self, it);
+                return;
             }
+            let saved = std::mem::take(&mut self.concise_arrow_depth);
+            oxc_ast_visit::walk::walk_function_body(self, it);
+            self.concise_arrow_depth = saved;
         }
         fn visit_throw_statement(&mut self, it: &oxc_ast::ast::ThrowStatement<'a>) {
             self.push(
@@ -2144,8 +2163,11 @@ fn collect_probe_shapes(
             oxc_ast_visit::walk::walk_switch_case(self, it);
         }
         fn visit_catch_clause(&mut self, it: &oxc_ast::ast::CatchClause<'a>) {
+            // Only the catch header (`catch (e)`) is the error-path shape;
+            // statements in the body carry their own candidates and must
+            // not be stamped ErrorPath by the enclosing clause.
             self.push(
-                it.span,
+                oxc_span::Span::new(it.span.start, it.body.span.start),
                 TypeScriptProbeShape::new(ProbeFamily::ErrorPath, DeltaKind::Control),
             );
             oxc_ast_visit::walk::walk_catch_clause(self, it);
@@ -2234,6 +2256,7 @@ fn collect_probe_shapes(
         source,
         candidates: Vec::new(),
         concise_arrow_depth: 0,
+        keep_concise_arrow_body: false,
         top_start: 0,
     };
     oxc_ast_visit::Visit::visit_program(&mut collector, program);
