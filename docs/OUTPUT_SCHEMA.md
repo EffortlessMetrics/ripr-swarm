@@ -3664,6 +3664,7 @@ Every result carries:
 - a primary physical location when file and line are known;
 - `partialFingerprints.riprFingerprintV1`;
 - `properties.kind` (`finding` or `seam`);
+- finding `properties.confidence`, rounded to the contract's two decimals through `domain::contract_confidence` (the same value `check` JSON prints; the `f32` is never widened to `f64`, #10717);
 - stable IDs (`finding_id`, `probe_id`, or `seam_id`) when available;
 - class metadata (`classification`, `probe_family`, `grip_class`, or
   `seam_kind`) when available.
@@ -3858,6 +3859,7 @@ it as an empty list. An explicit `null` or malformed limitations list is
 rejected. Unknown witness properties are accepted and ignored by the typed
 reader, so typed reserialization does not preserve those properties. Consumers
 that need to forward unknown properties must retain the complete JSON value.
+`witness.confidence.value` is rendered at the contract's two-decimal precision, matching SARIF `properties.confidence` and the finding `confidence` (#10717).
 Renderers must not infer evidence from paths, lines, classes, or prose.
 `probe.owner_signature` (#7796) carries the changed
 function's observed call shape — the same producer-owned signature `ripr
