@@ -162,7 +162,7 @@ fn identity_invocations(
         else {
             continue;
         };
-        if shadowed_by_local_fn(&call, &identity_names, &text, foreign_macro, &[]) {
+        if shadowed_by_local_fn(&call, &identity_names, &text, foreign_macro, &[], false) {
             continue;
         }
         accepted.push((call, name, text));
@@ -198,11 +198,11 @@ fn is_test_fn(function: &ast::Fn) -> bool {
     })
 }
 
-/// Names a file-level item or import binds, other than the one non-test `fn`
-/// per name that sits directly at the file root (the probed owner's usual
-/// home, reached from a test module through `use super::*`). A glob import
-/// other than `super::*` contributes the sentinel `*`.
-fn collect_bindings(node: &SyntaxNode, at_file_root: bool, names: &mut BTreeSet<String>) {
+/// Non-test `fn` names other than the one file-root item per name (the
+/// probed owner's usual home, reached from a test module through
+/// `use super::*`). Shared by pass-through binding collection and the
+/// generator-path #9967 check.
+fn collect_fn_bindings(node: &SyntaxNode, at_file_root: bool, names: &mut BTreeSet<String>) {
     for descendant in node.descendants() {
         // Bindings inside a function body are scoped to it; the expansion's
         // own summary already sees those.
@@ -213,17 +213,38 @@ fn collect_bindings(node: &SyntaxNode, at_file_root: bool, names: &mut BTreeSet<
         {
             continue;
         }
-        if let Some(function) = ast::Fn::cast(descendant.clone()) {
-            let direct_root = at_file_root
-                && descendant
-                    .parent()
-                    .is_some_and(|parent| ast::SourceFile::can_cast(parent.kind()));
-            if !direct_root
-                && !is_test_fn(&function)
-                && let Some(name) = function.name()
-            {
-                names.insert(plain(name.text()));
-            }
+        let Some(function) = ast::Fn::cast(descendant.clone()) else {
+            continue;
+        };
+        let direct_root = at_file_root
+            && descendant
+                .parent()
+                .is_some_and(|parent| ast::SourceFile::can_cast(parent.kind()));
+        if !direct_root
+            && !is_test_fn(&function)
+            && let Some(name) = function.name()
+        {
+            names.insert(plain(name.text()));
+        }
+    }
+}
+
+/// Names a file-level item or import binds, other than the one non-test `fn`
+/// per name that sits directly at the file root (the probed owner's usual
+/// home, reached from a test module through `use super::*`). A glob import
+/// other than `super::*` contributes the sentinel `*`.
+fn collect_bindings(node: &SyntaxNode, at_file_root: bool, names: &mut BTreeSet<String>) {
+    collect_fn_bindings(node, at_file_root, names);
+    for descendant in node.descendants() {
+        if descendant
+            .ancestors()
+            .skip(1)
+            .any(|ancestor| ast::Fn::can_cast(ancestor.kind()))
+        {
+            continue;
+        }
+        if ast::Fn::can_cast(descendant.kind()) {
+            continue;
         } else if let Some(name) = declared_name(&descendant) {
             names.insert(name);
         } else if let Some(tree) = ast::UseTree::cast(descendant.clone()) {
@@ -347,6 +368,26 @@ fn collect_emitted_source_bindings(
     false
 }
 
+/// Non-test `fn` names declared by already-substituted generator or identity
+/// tokens. `true` refuses when the tokens do not parse cleanly.
+fn collect_emitted_fn_bindings(source: &str, bound: &mut BTreeSet<String>) -> bool {
+    let Some(parse) = parse_clean_source_file(source) else {
+        return true;
+    };
+    collect_fn_bindings(&parse.syntax_node(), false, bound);
+    false
+}
+
+fn expansion_mentions_bound_name(text: &str, bound: &BTreeSet<String>) -> bool {
+    parse_clean_source_file(text).is_some_and(|parse| {
+        parse
+            .syntax_node()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .any(|token| token.kind() == SyntaxKind::IDENT && bound.contains(&plain(token.text())))
+    })
+}
+
 /// Whether anything in the file could bind an identifier the wrapped tests
 /// mention to something other than the glob-imported file-root item: any
 /// non-root `fn`, `const`, `static`, type, module or import of that name
@@ -359,14 +400,21 @@ fn collect_emitted_source_bindings(
 /// file. Pass-through callers pass an empty slice so their admission is
 /// unchanged; the generator path supplies every expansion so a sibling
 /// `fn` the isolated body cannot see still refuses.
+///
+/// `fn_only` is the generator #9967 path: only a non-test `fn` in the
+/// invocation's module, a sibling expansion, or an identity invocation
+/// refuses. Imports, globs, a rebound `#[test]` attribute, and other
+/// item-position macros stay visible — those are pass-through authority,
+/// not generator-path shadow.
 pub(super) fn shadowed_by_local_fn(
     call: &ast::MacroCall,
     identity_names: &BTreeSet<String>,
     text: &str,
     foreign_macro: bool,
     extra_expansions: &[&str],
+    fn_only: bool,
 ) -> bool {
-    if foreign_macro {
+    if !fn_only && foreign_macro {
         return true;
     }
     let Some(root) = call.syntax().ancestors().last() else {
@@ -375,7 +423,11 @@ pub(super) fn shadowed_by_local_fn(
     let mut bound = BTreeSet::new();
     let mut idents: Vec<String> = Vec::new();
     let mut test_names: Vec<String> = Vec::new();
-    collect_bindings(&root, true, &mut bound);
+    if fn_only {
+        collect_fn_bindings(&root, true, &mut bound);
+    } else {
+        collect_bindings(&root, true, &mut bound);
+    }
     // Every identity invocation in the file, whatever its macro name, is
     // inspected: its tokens are items in this file. A nested item-position
     // macro call inside them has an unseen expansion, so refuse.
@@ -393,14 +445,30 @@ pub(super) fn shadowed_by_local_fn(
         let Some(inner_text) = full.get(1..full.len().saturating_sub(1)) else {
             return true;
         };
-        if collect_emitted_source_bindings(inner_text, &mut bound, &mut idents, &mut test_names) {
+        if fn_only {
+            if collect_emitted_fn_bindings(inner_text, &mut bound) {
+                return true;
+            }
+        } else if collect_emitted_source_bindings(
+            inner_text,
+            &mut bound,
+            &mut idents,
+            &mut test_names,
+        ) {
             return true;
         }
     }
     for extra in extra_expansions {
-        if collect_emitted_source_bindings(extra, &mut bound, &mut idents, &mut test_names) {
+        if fn_only {
+            if collect_emitted_fn_bindings(extra, &mut bound) {
+                return true;
+            }
+        } else if collect_emitted_source_bindings(extra, &mut bound, &mut idents, &mut test_names) {
             return true;
         }
+    }
+    if fn_only {
+        return expansion_mentions_bound_name(text, &bound);
     }
     if test_names.iter().any(|name| {
         idents.iter().filter(|ident| *ident == name).count()
@@ -432,13 +500,7 @@ pub(super) fn shadowed_by_local_fn(
     {
         return true;
     }
-    parse_clean_source_file(text).is_some_and(|parse| {
-        parse
-            .syntax_node()
-            .descendants_with_tokens()
-            .filter_map(|element| element.into_token())
-            .any(|token| token.kind() == SyntaxKind::IDENT && bound.contains(&plain(token.text())))
-    })
+    expansion_mentions_bound_name(text, &bound)
 }
 
 /// Whether another item-position macro call sits between the definition and
