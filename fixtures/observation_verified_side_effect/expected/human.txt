@@ -15,7 +15,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:rust:src/lib.rs:process_order:return_value:return_value:notifier.send_order_id
   Changed behavior: notifier.send(order_id)
-  Missing check: No strong discriminator was detected
+  Missing check: No strong assertion was detected
   Related test: tests/process_tests.rs:4 process_order_sends_exact_order_id (ripr could not confirm that this assertion observes the changed behavior)
   Next step: The related test `process_order_sends_exact_order_id` already has an exact assertion;
     this does not establish observation of the returned value. Check whether the change can affect
@@ -39,7 +39,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/observation_verified_side_effect/input --diff <cwd>/fixtures/observation_verified_side_effect/diff.patch --mode fast probe:src_lib.rs:return_value:880ed6e6
   ripr context --root <cwd>/fixtures/observation_verified_side_effect/input --diff <cwd>/fixtures/observation_verified_side_effect/diff.patch --mode fast --at probe:src_lib.rs:return_value:880ed6e6
-  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the whole seam and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the whole seam) and ripr does not start a repair on conflicting evidence; follow the Next step above
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/observation_verified_side_effect/input --at src/lib.rs:18 --kind return_value
 
