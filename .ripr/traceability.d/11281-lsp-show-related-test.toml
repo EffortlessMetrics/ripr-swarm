@@ -1,0 +1,10 @@
+# Generic-client related-test navigation through window/showDocument (#11281).
+[[extend]]
+id = "RIPR-SPEC-0129"
+tests = [
+  "crates/ripr/src/lsp/tests.rs::show_document_client_gets_server_navigation_and_never_the_client_command",
+  "crates/ripr/src/lsp/tests.rs::client_without_show_document_or_open_location_gets_no_navigation_action",
+  "crates/ripr/src/lsp/tests.rs::open_location_client_keeps_its_client_command_without_a_duplicate",
+  "crates/ripr/src/lsp/tests.rs::show_related_test_params_are_fail_closed",
+]
+code = ["crates/ripr/src/lsp/actions.rs", "crates/ripr/src/lsp/backend.rs"]

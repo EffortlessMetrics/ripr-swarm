@@ -49,7 +49,7 @@ use super::{
     COPY_AGENT_PACKET_COMMAND, COPY_AGENT_RECEIPT_COMMAND, COPY_AGENT_REPAIR_COMMAND,
     COPY_AGENT_VERIFY_COMMAND, COPY_CONTEXT_COMMAND, COPY_SUGGESTED_ASSERTION_COMMAND,
     COPY_TARGETED_TEST_BRIEF_COMMAND, HOVER_TEXT, OPEN_RELATED_TEST_COMMAND, REFRESH_COMMAND,
-    build_service,
+    SHOW_RELATED_TEST_COMMAND, build_service,
 };
 use crate::analysis::cancellation::AnalysisCancellationToken;
 use crate::analysis::is_test_surface_path;
@@ -146,6 +146,7 @@ fn initialize_result_exposes_existing_lsp_capabilities() -> Result<(), String> {
             COLLECT_REPAIR_PACKET_COMMAND,
             COLLECT_TOP_LIMITATION_COMMAND,
             COLLECT_RECEIPT_STATUS_COMMAND,
+            SHOW_RELATED_TEST_COMMAND,
         ]
     );
     Ok(())
@@ -20524,8 +20525,8 @@ fn execute_command_collect_repair_packet_registered_in_capabilities() -> Result<
     };
     assert_eq!(
         provider.commands.len(),
-        7,
-        "expected 7 registered commands (REFRESH, COLLECT_CONTEXT, COLLECT_EVIDENCE_CONTEXT, COLLECT_WORKSPACE_STATUS, COLLECT_REPAIR_PACKET, COLLECT_TOP_LIMITATION, COLLECT_RECEIPT_STATUS), got {:?}",
+        8,
+        "expected 8 registered commands (REFRESH, COLLECT_CONTEXT, COLLECT_EVIDENCE_CONTEXT, COLLECT_WORKSPACE_STATUS, COLLECT_REPAIR_PACKET, COLLECT_TOP_LIMITATION, COLLECT_RECEIPT_STATUS, SHOW_RELATED_TEST), got {:?}",
         provider.commands
     );
     assert!(
@@ -20674,8 +20675,8 @@ fn execute_command_collect_top_limitation_registered_in_capabilities() -> Result
     };
     assert_eq!(
         provider.commands.len(),
-        7,
-        "expected 7 registered commands (REFRESH, COLLECT_CONTEXT, COLLECT_EVIDENCE_CONTEXT, COLLECT_WORKSPACE_STATUS, COLLECT_REPAIR_PACKET, COLLECT_TOP_LIMITATION, COLLECT_RECEIPT_STATUS), got {:?}",
+        8,
+        "expected 8 registered commands (REFRESH, COLLECT_CONTEXT, COLLECT_EVIDENCE_CONTEXT, COLLECT_WORKSPACE_STATUS, COLLECT_REPAIR_PACKET, COLLECT_TOP_LIMITATION, COLLECT_RECEIPT_STATUS, SHOW_RELATED_TEST), got {:?}",
         provider.commands
     );
     assert!(
@@ -29769,4 +29770,142 @@ async fn real_refresh_binds_a_disabled_language_document_not_analyzed() -> Resul
 fn real_refresh_records_an_uncompiled_language_as_not_selected() -> Result<(), String> {
     let (_root, diagnostics) = real_refresh_with_python_changed()?;
     assert_python_recorded_not_selected(&diagnostics)
+}
+
+/// A generic client that advertises `window/showDocument` and no `riprEditor`
+/// block (Helix, Neovim, Zed shape).
+fn show_document_client_features(show_document: bool) -> Result<ClientFeatureProfile, String> {
+    let params: InitializeParams = serde_json::from_value(serde_json::json!({
+        "capabilities": { "window": { "showDocument": { "support": show_document } } }
+    }))
+    .map_err(|err| format!("fixture params must parse: {err}"))?;
+    Ok(ClientFeatureProfile::from_initialize_params(&params))
+}
+
+fn navigation_commands(
+    profile: &ClientFeatureProfile,
+) -> Result<Vec<(String, Vec<serde_json::Value>)>, String> {
+    let (params, snapshot) = seam_code_action_request()?;
+    Ok(
+        code_action_commands(&code_action_response(&params, Some(&snapshot), profile))?
+            .into_iter()
+            .filter(|(_, command, _)| {
+                command == SHOW_RELATED_TEST_COMMAND || command == OPEN_RELATED_TEST_COMMAND
+            })
+            .map(|(_, command, args)| (command, args))
+            .collect(),
+    )
+}
+
+#[test]
+fn show_document_client_gets_server_navigation_and_never_the_client_command() -> Result<(), String>
+{
+    let commands = navigation_commands(&show_document_client_features(true)?)?;
+    assert_eq!(
+        commands.len(),
+        1,
+        "exactly one navigation action: {commands:?}"
+    );
+    assert_eq!(commands[0].0, SHOW_RELATED_TEST_COMMAND);
+    let target = &commands[0].1[0];
+    assert_eq!(target["uri"], "file:///workspace/tests/pricing.rs");
+    assert_eq!(target["line"], 12);
+    assert!(
+        SERVER_EXECUTED_COMMANDS.contains(&SHOW_RELATED_TEST_COMMAND),
+        "the navigation command must be server-executed"
+    );
+    Ok(())
+}
+
+#[test]
+fn client_without_show_document_or_open_location_gets_no_navigation_action() -> Result<(), String> {
+    // Discriminating negative: no `window/showDocument` capability means no
+    // navigation action of either kind, rather than one that cannot run.
+    assert!(navigation_commands(&show_document_client_features(false)?)?.is_empty());
+    assert!(navigation_commands(&ClientFeatureProfile::unsupported())?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn open_location_client_keeps_its_client_command_without_a_duplicate() -> Result<(), String> {
+    for profile in [
+        client_features_with_commands(&[OPEN_RELATED_TEST_COMMAND])?,
+        vscode_client_features()?,
+    ] {
+        let commands = navigation_commands(&profile)?;
+        assert_eq!(commands.len(), 1, "no duplicate navigation: {commands:?}");
+        assert_eq!(commands[0].0, OPEN_RELATED_TEST_COMMAND);
+    }
+    Ok(())
+}
+
+#[test]
+fn show_related_test_params_are_fail_closed() -> Result<(), String> {
+    use super::actions::show_related_test_params;
+    let root = unique_lsp_test_root("show-related-test")?;
+    fs::create_dir_all(root.path().join("tests")).map_err(|err| err.to_string())?;
+    fs::write(root.path().join("tests/pricing.rs"), "#[test]\nfn t() {}\n")
+        .map_err(|err| err.to_string())?;
+    let (_, snapshot) = retained_seam_action_request_at(root.path())?;
+    let uri = file_uri_for_path(&root.path().join("tests/pricing.rs"))?;
+    let identity = snapshot.input_identity_id();
+    let target = |uri: &str, line: u64, identity: &Option<String>| {
+        vec![serde_json::json!({"uri": uri, "line": line, "input_identity": identity})]
+    };
+    let capable = show_document_client_features(true)?;
+    let refused = |result: Result<_, String>| -> Result<(), String> {
+        match result {
+            Ok(_) => Err("expected the request to be refused".to_string()),
+            Err(_) => Ok(()),
+        }
+    };
+
+    let params = show_related_test_params(
+        &target(uri.as_str(), 2, &identity),
+        Some(&snapshot),
+        &capable,
+    )?;
+    assert_eq!(params.uri, uri);
+    assert_eq!(params.selection.map(|range| range.start.line), Some(1));
+    assert_eq!(params.external, Some(false));
+
+    // Client did not advertise showDocument.
+    refused(show_related_test_params(
+        &target(uri.as_str(), 2, &identity),
+        Some(&snapshot),
+        &show_document_client_features(false)?,
+    ))?;
+    // No current snapshot.
+    refused(show_related_test_params(
+        &target(uri.as_str(), 2, &identity),
+        None,
+        &capable,
+    ))?;
+    // Stale action: the analysis input moved on, so the old line is refused.
+    let stale = Some("input:fnv1a64:stale".to_string());
+    let error =
+        show_related_test_params(&target(uri.as_str(), 2, &stale), Some(&snapshot), &capable)
+            .err()
+            .ok_or("a stale input identity must be refused")?;
+    assert!(error.contains("stale"), "{error}");
+    // Outside the workspace root, and a missing file inside it.
+    let outside = file_uri_for_path(&std::env::temp_dir().join("elsewhere.rs"))?;
+    refused(show_related_test_params(
+        &target(outside.as_str(), 2, &identity),
+        Some(&snapshot),
+        &capable,
+    ))?;
+    let missing = file_uri_for_path(&root.path().join("tests/gone.rs"))?;
+    refused(show_related_test_params(
+        &target(missing.as_str(), 2, &identity),
+        Some(&snapshot),
+        &capable,
+    ))?;
+    // Line 0 is not a 1-based line.
+    refused(show_related_test_params(
+        &target(uri.as_str(), 0, &identity),
+        Some(&snapshot),
+        &capable,
+    ))?;
+    Ok(())
 }

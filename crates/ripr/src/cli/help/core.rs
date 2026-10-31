@@ -761,6 +761,8 @@ Server-executed commands (workspace/executeCommand), with their arguments:
   ripr.collectWorkspaceStatus   no arguments
   ripr.collectTopLimitation     no arguments
   ripr.collectReceiptStatus     no arguments
+  ripr.showRelatedTest          one object: {"uri": "file:///...", "line": N, "input_identity": "..."};
+                                asks the client to open the related test via window/showDocument
 
   Copy ids and evidence_identity from a ripr diagnostic's data. A shape the
   server cannot read, or an id missing from the current snapshot, is a
