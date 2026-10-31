@@ -78,9 +78,9 @@ use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equali
 use crate::analysis::syntax::{
     AssertionContextRefusal, GeneratedTestPins, HelperLoan, ItemNesting, MacroBindingCandidates,
     MacroBindingKind, MacroBindingSite, OwnerPinAssertions, PatternPins, RootShadow,
-    TRUSTED_MACRO_NAMES, attribute_settles_test_outcome, drop_in_assertion_leaf,
-    empty_macro_binding_ambiguities, err_return_guard_key, generated_test_pins,
-    local_empty_macro_names, macro_binding_scan, owner_pin_assertions,
+    TRUSTED_MACRO_NAMES, attribute_settles_test_outcome, cfg_if_module_name,
+    drop_in_assertion_leaf, empty_macro_binding_ambiguities, err_return_guard_key,
+    generated_test_pins, local_empty_macro_names, macro_binding_scan, owner_pin_assertions,
     owner_pin_matches_assertions, parse_clean_source_file, pattern_pins, qualified_matches_paths,
     returns_leave_the_function, source_binds_value_name, source_declares_value_name,
     source_imported_claims_macros, trusted_macro_binding_site_sets, trusted_macro_binding_sites,
@@ -1103,7 +1103,7 @@ impl OwnerPinSyntax {
     ) -> Option<(PathBuf, MacroBindingSite)> {
         let resolved_modules = self.resolved_module_declarations(index);
         let resolved = |path: &Path, line: usize, declaration: &str| {
-            resolved_modules.contains(&(path.to_path_buf(), line, declaration.to_string()))
+            module_declaration_resolved(resolved_modules, index, path, line, declaration)
         };
         let test_roots = self.target_roots(index).roots(&test.file, index);
         // #8255: the single ambiguity pass retained the earliest
@@ -1354,7 +1354,7 @@ impl OwnerPinSyntax {
     fn trusted_macro_ambiguities(&self, index: &RustIndex) -> BTreeSet<String> {
         let resolved_modules = self.resolved_module_declarations(index);
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
-            resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
+            module_declaration_resolved(resolved_modules, index, file, line, declaration)
         };
         let mut ambiguous = self.ambiguous_macro_bindings.borrow_mut();
         ambiguous
@@ -1478,7 +1478,7 @@ impl OwnerPinSyntax {
         }
         let resolved_modules = self.resolved_module_declarations(index);
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
-            resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
+            module_declaration_resolved(resolved_modules, index, file, line, declaration)
         };
         let (_, rest) = partition_macro_scan_files(index);
         let sites = scan_macro_sites(&rest, index, self.target_roots(index), &module_resolved);
@@ -1606,7 +1606,7 @@ impl OwnerPinSyntax {
         }
         let resolved_modules = self.resolved_module_declarations(index);
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
-            resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
+            module_declaration_resolved(resolved_modules, index, file, line, declaration)
         };
         let ambiguous = self.trusted_macro_ambiguities(index);
         let Some(facts) = index
@@ -2935,6 +2935,48 @@ fn workspace_macro_binding_site_for(
         }
     }
     first
+}
+
+/// Whether the module declaration `declaration` on `line` of `file` resolves
+/// to an indexed file. A parsed `mod NAME;` is answered by the module edges;
+/// a [`cfg_if_module_declaration`] key (#5993), which exists only as tokens in
+/// a `cfg_if!`, by the default layout: the one `NAME.rs` or `NAME/mod.rs`
+/// beside a crate-root-named or `mod.rs` declaring file. Other declaring
+/// files nest their children one directory deeper, which this does not model.
+fn module_declaration_resolved(
+    resolved: &BTreeSet<(PathBuf, usize, String)>,
+    index: &RustIndex,
+    file: &Path,
+    line: usize,
+    declaration: &str,
+) -> bool {
+    let Some(name) = cfg_if_module_name(declaration) else {
+        return resolved.contains(&(file.to_path_buf(), line, declaration.to_string()));
+    };
+    if !cfg_if_layout_file(file) {
+        return false;
+    }
+    let directory = file.parent().unwrap_or(Path::new(""));
+    let files = index.files();
+    let flat = files.get(&directory.join(format!("{name}.rs"))).is_some();
+    let nested = files.get(&directory.join(name).join("mod.rs")).is_some();
+    // Both layouts present is a rustc error (E0761), never one module.
+    flat != nested
+}
+
+/// Whether `file` places its child modules in its own directory: `mod.rs`,
+/// or a `lib.rs`/`main.rs` that is an actual crate root (`src/lib.rs`,
+/// `src/main.rs`, `src/bin/NAME/main.rs`). A `lib.rs` or `main.rs` declared by
+/// `mod lib;` nests children under `lib/`, so file name alone is not enough.
+fn cfg_if_layout_file(file: &Path) -> bool {
+    let parts: Vec<&str> = file
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .collect();
+    matches!(
+        parts.as_slice(),
+        [.., "mod.rs"] | [.., "src", "lib.rs" | "main.rs"] | [.., "src", "bin", _, "main.rs"]
+    )
 }
 
 /// A definition or `use` of the name: a real rebinding, not one that only

@@ -80,7 +80,7 @@ Updated:
 ## Pending — rust_test_case_arrow_coincident_row (7)
 
 Reason:
-RIPR-SPEC-0122: plain wording for seam and state token in the check digest
+RIPR-SPEC-0122: #10691 plain wording for the default digest's missing-assertion entry and the catch-all change type
 
 Command:
 `cargo xtask goldens bless rust_test_case_arrow_coincident_row --reason "..."`
