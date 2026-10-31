@@ -330,6 +330,7 @@ fn ts_credit_gaps_scoped_to_credited_test_files() {
         file: PathBuf::from(file),
         sample_line: 4,
         condition: "flag".to_string(),
+        sites: Vec::new(),
     };
     let gaps = vec![
         gap("tests/credited.test.ts"),
@@ -373,6 +374,7 @@ fn ts_conditional_credit_limitation_kind_is_unevaluated_condition() -> Result<()
         file: PathBuf::from("tests/lib.test.ts"),
         sample_line: 5,
         condition: "ok".to_string(),
+        sites: Vec::new(),
     };
     let summary = conditional_assertion_credit_summary(&[&gap])?
         .ok_or_else(|| "a single consulted gap must produce a limitation".to_string())?;
@@ -729,6 +731,164 @@ fn ts_dead_assertion_after_return_does_not_expose() -> Result<(), String> {
         got.class,
         ExposureClass::Exposed,
         "an unreachable assertion must not expose the change: {got:?}"
+    );
+    Ok(())
+}
+
+const TWO_TESTS: &str = concat!(
+    "import { price } from \"../src/lib\";\n", // 1
+    "\n",                                      // 2
+    "test(\"flagged\", () => {\n",             // 3
+    "  if (ok) {\n",                           // 4
+    "    expect(price(150)).toBe(130);\n",     // 5
+    "  }\n",                                   // 6
+    "});\n",                                   // 7
+    "\n",                                      // 8
+    "test(\"plain\", () => {\n",               // 9
+    "  expect(price(50)).toBe(50);\n",         // 10
+    "});\n",                                   // 11
+);
+
+fn two_test_gap(
+    source: &str,
+) -> Result<(Vec<TypeScriptTest>, TypeScriptConditionalCreditGap), String> {
+    let (tests, gap) =
+        extract_tests_and_conditional_credit_gap(Path::new("tests/lib.test.ts"), source);
+    assert_eq!(
+        tests.len(),
+        2,
+        "fixture must register both tests: {tests:?}"
+    );
+    let gap = gap.ok_or_else(|| "fixture must disclose its conditional".to_string())?;
+    Ok((tests, gap))
+}
+
+fn consulted(lines: &[usize]) -> std::collections::BTreeSet<(String, usize)> {
+    lines
+        .iter()
+        .map(|line| ("tests/lib.test.ts".to_string(), *line))
+        .collect()
+}
+
+/// The walker records every unevaluated branch with the registration call
+/// enclosing it, not just the first (RIPR-SPEC-0243 rule 11).
+#[test]
+fn ts_credit_gap_records_each_site_with_its_enclosing_test() -> Result<(), String> {
+    let source = format!(
+        "{TWO_TESTS}\ntest(\"late\", () => {{\n  if (other) {{\n    expect(price(1)).toBe(1);\n  }}\n}});\n"
+    );
+    let (tests, gap) =
+        extract_tests_and_conditional_credit_gap(Path::new("tests/lib.test.ts"), &source);
+    assert_eq!(tests.len(), 3, "fixture must register three tests");
+    let gap = gap.ok_or_else(|| "fixture must disclose its conditionals".to_string())?;
+    assert_eq!(
+        gap.sample_line, 4,
+        "the sample stays the first site: {gap:?}"
+    );
+    assert_eq!(gap.condition, "ok");
+    let sites: Vec<(usize, &str, Vec<usize>)> = gap
+        .sites
+        .iter()
+        .map(|site| {
+            (
+                site.line,
+                site.condition.as_str(),
+                site.enclosing_call_lines.clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        sites,
+        vec![(4, "ok", vec![3]), (14, "other", vec![13])],
+        "each site must name the call that registers its test"
+    );
+    Ok(())
+}
+
+/// A conditional assertion in a test no finding consulted does not make the
+/// consulted test's analysis incomplete: the gap is dropped when only other
+/// registered tests enclose it.
+#[test]
+fn ts_credit_gap_in_an_unconsulted_test_is_dropped() -> Result<(), String> {
+    let (tests, gap) = two_test_gap(TWO_TESTS)?;
+    let kept = credit_gaps_in_consulted_tests(&[&gap], &tests, &consulted(&[9]));
+    assert!(
+        kept.is_empty(),
+        "the flagged test was never consulted, so its conditional must not count: {kept:?}"
+    );
+    Ok(())
+}
+
+/// Discriminating negative: the same file, but the finding consulted the
+/// conditional test, so the disclosure stays.
+#[test]
+fn ts_credit_gap_in_a_consulted_test_is_kept() -> Result<(), String> {
+    let (tests, gap) = two_test_gap(TWO_TESTS)?;
+    for consulted_lines in [consulted(&[3]), consulted(&[3, 9])] {
+        let kept = credit_gaps_in_consulted_tests(&[&gap], &tests, &consulted_lines);
+        assert_eq!(kept.len(), 1, "{consulted_lines:?}: {kept:?}");
+        assert_eq!(kept[0].sample_line, 4, "{kept:?}");
+    }
+    Ok(())
+}
+
+/// With several sites, only the sites in consulted tests (or in no
+/// registered test) survive, and the sample moves to the first of them.
+#[test]
+fn ts_credit_gap_keeps_only_the_sites_that_concern_consulted_tests() -> Result<(), String> {
+    let source = format!(
+        "{TWO_TESTS}\ntest(\"late\", () => {{\n  if (other) {{\n    expect(price(1)).toBe(1);\n  }}\n}});\n"
+    );
+    let (tests, gap) =
+        extract_tests_and_conditional_credit_gap(Path::new("tests/lib.test.ts"), &source);
+    let gap = gap.ok_or_else(|| "fixture must disclose its conditionals".to_string())?;
+    let kept = credit_gaps_in_consulted_tests(&[&gap], &tests, &consulted(&[13]));
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    assert_eq!(kept[0].sample_line, 14, "{kept:?}");
+    assert_eq!(kept[0].condition, "other", "{kept:?}");
+    assert_eq!(kept[0].sites.len(), 1, "{kept:?}");
+    Ok(())
+}
+
+/// Fail-closed: a branch outside every registered test (a hook, a helper)
+/// cannot be attributed to one test, a gap without recorded sites cannot be
+/// narrowed, and an expanded suite factory reports lines the walk never saw.
+#[test]
+fn ts_credit_gap_that_cannot_be_attributed_keeps_the_whole_file() -> Result<(), String> {
+    let (tests, gap) = two_test_gap(TWO_TESTS)?;
+    let unattributed = TypeScriptConditionalCreditGap {
+        sites: vec![TypeScriptCreditSite {
+            line: 2,
+            condition: "ok".to_string(),
+            enclosing_call_lines: vec![1],
+        }],
+        ..gap.clone()
+    };
+    let kept = credit_gaps_in_consulted_tests(&[&unattributed], &tests, &consulted(&[9]));
+    assert_eq!(
+        kept.len(),
+        1,
+        "a site in no registered test must stay: {kept:?}"
+    );
+
+    let unknown = TypeScriptConditionalCreditGap {
+        sites: Vec::new(),
+        ..gap.clone()
+    };
+    let kept = credit_gaps_in_consulted_tests(&[&unknown], &tests, &consulted(&[9]));
+    assert_eq!(
+        kept.len(),
+        1,
+        "a gap with unknown sites must stay: {kept:?}"
+    );
+
+    let mut factory_tests = tests.clone();
+    factory_tests[1].factory_call_line = Some(1);
+    let kept = credit_gaps_in_consulted_tests(&[&gap], &factory_tests, &consulted(&[9]));
+    assert_eq!(
+        kept.len(),
+        1,
+        "an expanded factory file must stay: {kept:?}"
     );
     Ok(())
 }
