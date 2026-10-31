@@ -1083,12 +1083,7 @@ fn seam_fingerprint(rule_id: &str, entry: &ClassifiedSeam, file: &str, ordinal: 
 /// Canonical identity text with length-prefixed fields so no field can bleed
 /// into its neighbour (`a|b` + `c` never equals `a` + `b|c`).
 fn seam_identity_text(entry: &ClassifiedSeam, file: &str) -> String {
-    let expression = entry
-        .seam
-        .expression()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let expression = collapse_whitespace_outside_strings(entry.seam.expression());
     let kind = entry.seam.kind().as_str();
     let owner = entry.seam.owner();
     format!(
@@ -1098,6 +1093,77 @@ fn seam_identity_text(entry: &ClassifiedSeam, file: &str) -> String {
         kind.len(),
         expression.len()
     )
+}
+
+/// Collapses runs of whitespace between tokens to one space and trims the ends,
+/// but keeps the contents of string literals byte for byte: `"a  b"` and
+/// `"a b"` are different expressions, so a baseline must not conflate them.
+/// Handles `"..."` with backslash escapes and raw strings (`r"..."`,
+/// `r#"..."#`); an unterminated literal keeps the rest of the text verbatim
+/// (fail closed toward distinct fingerprints).
+fn collapse_whitespace_outside_strings(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut index = 0;
+    let mut pending_space = false;
+    while index < chars.len() {
+        let current = chars[index];
+        if current.is_whitespace() {
+            pending_space = true;
+            index += 1;
+            continue;
+        }
+        if pending_space && !out.is_empty() {
+            out.push(' ');
+        }
+        pending_space = false;
+        let end = string_literal_end(&chars, index).unwrap_or(index + 1);
+        out.extend(&chars[index..end]);
+        index = end;
+    }
+    out
+}
+
+/// End (exclusive) of the string literal starting at `start`, if one starts
+/// there; an unterminated literal runs to the end of the text.
+fn string_literal_end(chars: &[char], start: usize) -> Option<usize> {
+    let mut cursor = start;
+    let mut hashes = 0;
+    let raw = chars[cursor] == 'r' || (chars[cursor] == 'b' && chars.get(cursor + 1) == Some(&'r'));
+    if raw {
+        cursor += if chars[cursor] == 'b' { 2 } else { 1 };
+        while chars.get(cursor) == Some(&'#') {
+            hashes += 1;
+            cursor += 1;
+        }
+        if chars.get(cursor) != Some(&'"') {
+            return None;
+        }
+        cursor += 1;
+        while cursor < chars.len() {
+            let closing = chars.get(cursor + 1..cursor + 1 + hashes);
+            if chars[cursor] == '"' && closing.is_some_and(|run| run.iter().all(|c| *c == '#')) {
+                return Some(cursor + 1 + hashes);
+            }
+            cursor += 1;
+        }
+        return Some(chars.len());
+    }
+    if chars[cursor] == 'b' && chars.get(cursor + 1) == Some(&'"') {
+        cursor += 1;
+    }
+    if chars[cursor] != '"' {
+        return None;
+    }
+    cursor += 1;
+    while cursor < chars.len() {
+        match chars[cursor] {
+            '\\' => cursor += 2,
+            '"' => return Some(cursor + 1),
+            _ => cursor += 1,
+        }
+    }
+    Some(chars.len())
 }
 
 /// 128-bit identity: two FNV-1a passes with distinct offset bases, rendered as
@@ -2903,6 +2969,29 @@ weakly_gripped = "note"
         let spread = weak_seam("m::f", SeamKind::ReturnValue, (10, 2), "a  >=\n    b");
         assert_ne!(tight.seam.expression(), spread.seam.expression());
         assert_eq!(seam_fingerprints(&[tight])?, seam_fingerprints(&[spread])?);
+        Ok(())
+    }
+
+    #[test]
+    fn seam_fingerprint_keeps_string_literal_contents_distinct() -> Result<(), String> {
+        let seam = |expression: &str| weak_seam("m::f", SeamKind::ReturnValue, (10, 2), expression);
+        let literals = [
+            seam("pick(\"a  b\")"),
+            seam("pick(\"a b\")"),
+            seam("pick(\"a\\\" b\")"),
+            seam("pick(r#\"a  b\"#)"),
+            seam("pick(r#\"a b\"#)"),
+        ];
+        // The fixture really holds literals that differ only by inner spacing.
+        assert_eq!(literals[0].seam.expression(), "pick(\"a  b\")");
+        assert_eq!(literals[3].seam.expression(), "pick(r#\"a  b\"#)");
+        let fingerprints = seam_fingerprints(&literals)?;
+        let unique: std::collections::BTreeSet<_> = fingerprints.iter().collect();
+        assert_eq!(unique.len(), literals.len(), "{fingerprints:?}");
+        // Whitespace outside the literal still collapses.
+        let loose = seam("pick(  \"a  b\"\n)");
+        let tight = seam("pick( \"a  b\" )");
+        assert_eq!(seam_fingerprints(&[loose])?, seam_fingerprints(&[tight])?);
         Ok(())
     }
 
