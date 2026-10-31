@@ -248,7 +248,6 @@ pub(crate) fn probes_for_file_with_relations(
             || text.starts_with("//")
             || skip_added[added_index]
             || added_block_comments.contains(&added.new_side_line)
-            || skip_added_string_continuation(added.new_side_line, text)
         {
             continue;
         }
@@ -456,6 +455,11 @@ pub(crate) fn probes_for_file_with_relations(
                 }
                 emitted_parser_shapes.insert(key, probes.len());
                 let canonical_text = canonical_probe_text(text, shape.text);
+                if shape.family == ProbeFamily::StaticUnknown
+                    && skip_added_string_continuation(shape.start_line, text)
+                {
+                    continue;
+                }
                 let parser_span = parser_span_for_canonical_shape(&canonical_text, &shape);
                 let canonical_line = ChangedLine {
                     line: shape.start_line,
@@ -528,6 +532,11 @@ pub(crate) fn probes_for_file_with_relations(
         }
         if !parser_shapes.is_empty() {
             for shape in parser_shapes {
+                if shape.family == ProbeFamily::StaticUnknown
+                    && skip_added_string_continuation(added.new_side_line, text)
+                {
+                    continue;
+                }
                 let before = removed_before(added.new_side_line, text, changed, &added_run_starts)
                     .map(|line| arm_before(&shape.family, line, changed, old_source));
                 probes.push(SeededProbe::from_probe(build_probe(
@@ -551,6 +560,11 @@ pub(crate) fn probes_for_file_with_relations(
         // names the actual behavioral predicate instead of a generic
         // changed-syntax limitation.
         if families == [ProbeFamily::StaticUnknown]
+            && skip_added_string_continuation(added.new_side_line, text)
+        {
+            continue;
+        }
+        if families == [ProbeFamily::StaticUnknown]
             && let Some(retargeted) =
                 retarget_changed_binding_predicates(&build_context, added, text, &changed_lines)
         {
@@ -564,6 +578,11 @@ pub(crate) fn probes_for_file_with_relations(
             .then(|| changed_binding_return_flow(&build_context, added, text))
             .flatten();
         for family in families {
+            if family == ProbeFamily::StaticUnknown
+                && skip_added_string_continuation(added.new_side_line, text)
+            {
+                continue;
+            }
             let before = removed_before(added.new_side_line, text, changed, &added_run_starts)
                 .map(|line| arm_before(&family, line, changed, old_source));
             let mut seeded = SeededProbe::from_probe(build_probe(
@@ -639,10 +658,7 @@ pub(crate) fn probes_for_file_with_relations(
             }
             continue;
         }
-        if should_ignore_changed_line(text)
-            || removed_attribute_lines.contains(&removed.line)
-            || skip_removed_string_continuation(removed, text)
-        {
+        if should_ignore_changed_line(text) || removed_attribute_lines.contains(&removed.line) {
             continue;
         }
         let families = if removed_bounds.lines[removed_index] {
@@ -651,6 +667,11 @@ pub(crate) fn probes_for_file_with_relations(
             classify_changed_line(text)
         };
         for family in families {
+            if family == ProbeFamily::StaticUnknown
+                && skip_removed_string_continuation(removed, text)
+            {
+                continue;
+            }
             // A bound replacement may collapse several old predicates into one.
             // Shared identifiers alone do not establish that the old subject
             // remained in the replacement's evidence.
