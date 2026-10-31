@@ -63,3 +63,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_mock_count_optional (6)
+
+Reason:
+RIPR-SPEC-0243: refresh stale mock-count fixture goldens to the current main output contract after the main merge; plain summary wording and confidence-basis keys from main, classifications unchanged
+
+Command:
+`cargo xtask goldens bless typescript_mock_count_optional --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
