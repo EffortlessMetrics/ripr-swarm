@@ -997,6 +997,29 @@ count. `summary.changed_rust_files` stays Rust-adapter-only (#2103):
 preview-language files never inflate it, so it is `0` for a Python-only diff
 by design; read `changed_files_by_language` for other languages.
 
+`language_completeness` (additive, no `schema_version` bump, #11272) is the
+per-language projection of the shared completeness view that the editor, MCP
+and SARIF surfaces already read. It is emitted on every `check --json` run
+that built the view, as one compact member after the other optional members:
+
+```json
+"language_completeness": {"schema_version":"language_completeness.v1","mode":"diff","completeness":"complete","total_findings":0,"languages":[{"language":"rust","status":"complete_zero","findings":0,"limitations":[],"disclosure":"silent"}]}
+```
+
+- `mode` is `diff` or `repo`; `completeness` is the aggregate's `complete` or
+  `incomplete` (fail closed when no language evidenced anything).
+- `languages[].status` is the sealed child status: `complete`, `complete_zero`
+  (the adapter ran and found nothing), `partial`, `unavailable`, `invalid`,
+  `failed`, `unsupported`, `not_selected` or `no_current_scope`. An empty
+  `findings` array alone cannot tell `complete_zero` from `not_selected`; this
+  row can.
+- `languages[].disclosure` says where else the row is public: `silent`,
+  `language_run` (a non-success `language_runs` row), `typed_limitation` or
+  `advisory_only`.
+- The projection never strengthens a child. It reads the same rows the
+  `language_runs` compatibility projection is derived from, and it carries no
+  correctness, test-adequacy or mutation claim.
+
 `canonical_next_action` (additive, no `schema_version` bump, #7258) is the
 same DTO RepairCard and agent-status JSON already embed. Check JSON carries
 it only when the CLI render path has a declared diff provenance.
