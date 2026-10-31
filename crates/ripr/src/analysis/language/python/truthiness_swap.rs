@@ -640,6 +640,7 @@ fn bind_init_param(arglist: &str, params: &[InitParam], wanted: &str) -> Option<
     }
     let mut bound = Vec::new();
     let mut positional = 0usize;
+    let mut seen_keyword = false;
     for segment in split_top_level_args(arglist) {
         let segment = segment.trim();
         if segment.is_empty() {
@@ -649,13 +650,35 @@ fn bind_init_param(arglist: &str, params: &[InitParam], wanted: &str) -> Option<
             return None;
         }
         if let Some(name) = call_segment_keyword_name(segment) {
+            seen_keyword = true;
+            if !params.iter().any(|param| param.name == name) {
+                return None;
+            }
+            if bound.iter().any(|(bound_name, _)| bound_name == name) {
+                return None;
+            }
             let value = segment.split_once('=')?.1.trim();
+            if value.is_empty() {
+                return None;
+            }
             bound.push((name.to_string(), value.to_string()));
         } else {
+            if seen_keyword {
+                return None;
+            }
             let name = params.get(positional)?.name.clone();
+            if bound.iter().any(|(bound_name, _)| bound_name == &name) {
+                return None;
+            }
             positional += 1;
             bound.push((name, segment.to_string()));
         }
+    }
+    for param in params {
+        if bound.iter().any(|(name, _)| name == &param.name) {
+            continue;
+        }
+        param.default.as_ref()?;
     }
     if let Some((_, value)) = bound.iter().find(|(name, _)| name == wanted) {
         return Some((value.clone(), false));
@@ -1520,6 +1543,59 @@ mod tests {
             "tests/test_lib.py",
         )?;
         assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+        Ok(())
+    }
+
+    // Keyword names must match `__init__`; an extra name is an unreadable
+    // construction and must not demote (#11890 fail-open).
+    #[test]
+    fn self_attr_compound_truthiness_swap_stays_exposed_on_an_unknown_constructor_keyword()
+    -> Result<(), String> {
+        let tests = concat!(
+            "from src.addr import Addr\n",
+            "\n",
+            "def test_authority():\n",
+            "    assert Addr(\"h\", extra=1).authority() == \"h\"\n",
+            "    assert Addr(\"h\", 8080).authority() == \"h:8080\"\n",
+        );
+        let finding = addr_finding(ADDR_SOURCE, tests)?;
+        assert_ne!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+        Ok(())
+    }
+
+    // A missing required constructor argument is unreadable even when the
+    // wanted parameter is a keyword literal.
+    #[test]
+    fn self_attr_compound_truthiness_swap_stays_exposed_when_a_required_constructor_arg_is_missing()
+    -> Result<(), String> {
+        let tests = concat!(
+            "from src.addr import Addr\n",
+            "\n",
+            "def test_authority():\n",
+            "    assert Addr(port=8080).authority() == \":8080\"\n",
+        );
+        let finding = addr_finding(ADDR_SOURCE, tests)?;
+        assert_ne!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+        Ok(())
+    }
+
+    // Keyword order is readable when every `__init__` parameter is bound
+    // exactly once, including an omitted default.
+    #[test]
+    fn self_attr_compound_keyword_constructor_literals_are_weakly_exposed() -> Result<(), String> {
+        let tests = concat!(
+            "from src.addr import Addr\n",
+            "\n",
+            "def test_authority():\n",
+            "    assert Addr(port=8080, host=\"h\").authority() == \"h:8080\"\n",
+            "    assert Addr(host=\"example.com\").authority() == \"example.com\"\n",
+        );
+        let finding = addr_finding(ADDR_SOURCE, tests)?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+        assert!(
+            discriminator_names_self_port_zero(&finding),
+            "expected a falsy-value discriminator naming self.port = 0, got {finding:?}"
+        );
         Ok(())
     }
 }
