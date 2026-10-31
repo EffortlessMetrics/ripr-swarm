@@ -545,3 +545,6 @@ mod tests {
         assert!(summary.omission_classes.is_empty());
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs;

@@ -1092,3 +1092,6 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs;
