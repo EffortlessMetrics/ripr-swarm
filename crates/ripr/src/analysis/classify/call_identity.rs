@@ -4920,8 +4920,11 @@ mod tests {
         let resolves = |owner: &FunctionSummary, text: &str| {
             qualified_owner_calls_resolve(&index, owner, test, text, test.start_line)
         };
-        // An unbound bare call declines; type paths keep their reading.
-        assert!(!resolves(&thr, "assert!(thr(1));"));
+        // An unbound bare call settles nowhere and no rival claims the name,
+        // so it keeps the historic name-only admission (#9218); a rival
+        // qualifier beside it still declines (below). Type paths keep their
+        // reading.
+        assert!(resolves(&thr, "assert!(thr(1));"));
         assert!(resolves(&thr, "assert!(Type::thr(1));"));
         // The owner's module path resolves, spelled absolutely or through
         // an in-file module name; a different module or an unbound one
