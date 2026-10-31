@@ -7365,7 +7365,11 @@ mod tests {
             "",
         ];
         for line in lines {
-            assert_eq!(super::looks_like_builder_method(line), legacy(line), "{line}");
+            assert_eq!(
+                super::looks_like_builder_method(line),
+                legacy(line),
+                "{line}"
+            );
         }
         assert_eq!(
             super::BuilderPattern::of("Request::builder().build()"),
