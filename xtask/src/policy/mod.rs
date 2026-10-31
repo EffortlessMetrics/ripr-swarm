@@ -22,6 +22,7 @@ mod product_copy;
 pub(crate) mod proof_packs;
 mod release_selection;
 mod release_targets;
+mod user_text;
 
 pub(crate) use release_targets::{CandidateAuthoritySnapshot, capture_candidate_authority};
 mod static_language;
@@ -54,6 +55,7 @@ pub(crate) use product_copy::check_product_copy;
 pub(crate) use proof_packs::check_proof_packs;
 pub(crate) use static_language::check_static_language;
 pub(crate) use text_encoding::check_text_encoding;
+pub(crate) use user_text::{check_user_text, check_user_text_with_args};
 pub(crate) use workflows::check_workflows;
 
 pub(crate) fn check_release_targets() -> Result<(), String> {

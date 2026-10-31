@@ -180,6 +180,7 @@ cargo xtask check-positioning-language
 cargo xtask check-pr
 cargo xtask check-process-policy
 cargo xtask check-product-copy
+cargo xtask check-user-text [--ripr <path>] [--ratchet]
 cargo xtask check-proof-packs
 cargo xtask check-pr-shape
 cargo xtask check-public-api

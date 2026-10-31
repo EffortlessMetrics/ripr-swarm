@@ -172,6 +172,7 @@ Current reference docs:
 - [Configuration](CONFIGURATION.md)
 - [Exit codes](EXIT_CODES.md)
 - [Terminology](TERMINOLOGY.md)
+- [User text glossary](USER_TEXT_GLOSSARY.md)
 - [Repair attempt identity](REPAIR_ATTEMPT.md)
 - [MCP workspace status server](interop/mcp.md)
 - [Support tiers](status/SUPPORT_TIERS.md)
