@@ -275,7 +275,11 @@ rejected alternative. Any can be reversed later without touching the rest.
    neither `#[ignore]`d nor `#[should_panic]`. A sibling-field read, a read on
    another binding, a later write and no read never credit it. Repository
    scope resolves no `self` methods, so a later `self.m()` call counts as a
-   possible write and the write gets no seam. A builder's tail `self` hands the
+   possible write and the write gets no seam. Only a field this file declares
+   plain `pub` gets the seam: a private or `pub(crate)` field is observed
+   through a getter or `Display`, so a missing direct read is not a gap a test
+   can close and the pilot ranking would recommend a well-observed setter
+   (bytesize's `format` setters displaced confirmed picks). A builder's tail `self` hands the
    value to the caller; it is not a later write, for the diff probe and the
    seam alike. A field write offers no repair start (no new start policy):
    `ripr check` and `ripr repair` both refuse with "a test assertion that

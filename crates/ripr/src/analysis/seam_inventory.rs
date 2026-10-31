@@ -3818,6 +3818,7 @@ fn build_seam_from_shape(
         Some(written_field_of_shape(
             owners.owner(shape.start_line)?,
             shape,
+            source,
         )?)
     } else {
         None
@@ -3895,6 +3896,7 @@ fn build_seam_from_shape(
 fn written_field_of_shape(
     owner: &crate::analysis::facts::FunctionFact,
     shape: &ProbeShapeFact,
+    source: &str,
 ) -> Option<String> {
     crate::analysis::classify::assigned_field_path(
         owner.body.as_str(),
@@ -3904,6 +3906,34 @@ fn written_field_of_shape(
         &|_| None,
     )
     .filter(|path| !path.contains('.'))
+    .filter(|field| field_declared_public(source, field))
+}
+
+/// Whether this file declares `field` with plain `pub` visibility (a scoped
+/// `pub(crate)` field is out of reach of a test under `tests/`). The seam's required check is a test read of the
+/// field, which only a field a test can name makes possible: a private field
+/// is observed through a getter, `Display` or another method, so a missing
+/// direct read is not a gap a test author can close and grading it would call
+/// a well-observed write weakly gripped (the pilot ranking put bytesize's
+/// private `format` setters first, #11398). A declaration this file does not
+/// show stays ungraded, the fail-closed side.
+fn field_declared_public(source: &str, field: &str) -> bool {
+    source.match_indices("pub").any(|(at, _)| {
+        let word_start = source[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|before| !(before.is_alphanumeric() || before == '_'));
+        let rest = &source[at + 3..];
+        let Some(after_name) = rest
+            .strip_prefix(char::is_whitespace)
+            .map(str::trim_start)
+            .and_then(|named| named.strip_prefix(field))
+        else {
+            return false;
+        };
+        let after_name = after_name.trim_start();
+        word_start && after_name.starts_with(':') && !after_name.starts_with("::")
+    })
 }
 
 /// The seam kind a `ripr check` finding's probe family names (#5471). Probe
@@ -5061,6 +5091,18 @@ pub fn build_quote(amount: i32, fee: i32) -> Quote {
         assert_eq!(
             written_field_seams(&wrap("        self.count += 1;\n        self.count = 0;"))?,
             vec![("self.count = 0".to_string(), "count".to_string())]
+        );
+        // A private or crate-scoped field is out of a test's reach, so its
+        // write has no seam.
+        assert_eq!(
+            written_field_seams(
+                &wrap("        self.count += 1;").replace("pub count", "pub(crate) count")
+            )?,
+            Vec::<(String, String)>::new()
+        );
+        assert_eq!(
+            written_field_seams(&wrap("        self.count += 1;").replace("pub count", "count"))?,
+            Vec::<(String, String)>::new()
         );
         // No seam where the write is not the owner's last word on the field,
         // is conditional, or sits on a nested path.

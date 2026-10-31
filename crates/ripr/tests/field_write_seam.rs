@@ -243,3 +243,23 @@ fn builder_tail_self_is_not_a_later_write() -> Result<(), String> {
         "use fw::Req;\n\n#[test]\nfn sets_url() {\n    let r = Req::new().timeout(5);\n    assert_eq!(r.url, 0);\n}\n",
     )
 }
+
+/// A private field cannot be read by a test, so its write has no seam: the
+/// pilot ranking put bytesize's private `format` setters first as a weak gap
+/// whose tests observe the field through `Display` (#11398).
+#[test]
+fn private_field_write_has_no_seam() -> Result<(), String> {
+    let old = COUNTER_OLD.replace("pub count", "count");
+    let new = COUNTER_NEW.replace("pub count", "count");
+    let repo = Repo::create(
+        &old,
+        &new,
+        "use fw::Counter;\n\n#[test]\nfn bumps() {\n    let mut c = Counter::default();\n    c.bump();\n}\n",
+    )?;
+    let (_, repair) = repo.repair_text()?;
+    assert!(
+        !repair.contains(FIELD_CHECK),
+        "a private field has no readable check:\n{repair}"
+    );
+    Ok(())
+}
