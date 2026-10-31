@@ -175,6 +175,12 @@ pub(crate) fn probes_for_file_with_relations(
     let removed_block_comments = old_source
         .map(crate::analysis::syntax::block_comment_only_lines)
         .unwrap_or_default();
+    let added_string_continuations = find_file_facts(index, &changed.path)
+        .map(|facts| crate::analysis::syntax::string_literal_continuation_lines(&facts.source))
+        .unwrap_or_default();
+    let removed_string_continuations = old_source
+        .map(crate::analysis::syntax::string_literal_continuation_lines)
+        .unwrap_or_default();
     // #10089: the entries of a multi-line `#![allow(..)]`/`#[derive(..)]` sit
     // on lines that do not start with `#`, but they are attribute text, like
     // the single-line form `should_ignore_changed_line` already skips.
@@ -207,6 +213,21 @@ pub(crate) fn probes_for_file_with_relations(
     let mut added_macro_seeded = std::collections::BTreeSet::<(String, usize)>::new();
     let mut removed_macro_seeded = std::collections::BTreeSet::<(String, usize)>::new();
 
+    let skip_added_string_continuation = |line: usize, text: &str| {
+        added_string_continuations.contains(&line)
+            && !changed
+                .removed_lines
+                .iter()
+                .any(|removed| removed.new_side_line == line && removed.text.trim() != text.trim())
+    };
+    let skip_removed_string_continuation = |removed: &crate::analysis::diff::ChangedLine,
+                                            text: &str| {
+        removed_string_continuations.contains(&removed.line)
+            && !changed.added_lines.iter().any(|added| {
+                added.new_side_line == removed.new_side_line && added.text.trim() != text.trim()
+            })
+    };
+
     // Type-bound lines of a wrapped signature are declarations of their own
     // (one visible `static_unknown` each) and are never grouped away; parsed
     // lazily, only when a line sits in a wrapped signature (#8999).
@@ -227,6 +248,7 @@ pub(crate) fn probes_for_file_with_relations(
             || text.starts_with("//")
             || skip_added[added_index]
             || added_block_comments.contains(&added.new_side_line)
+            || skip_added_string_continuation(added.new_side_line, text)
         {
             continue;
         }
@@ -617,7 +639,10 @@ pub(crate) fn probes_for_file_with_relations(
             }
             continue;
         }
-        if should_ignore_changed_line(text) || removed_attribute_lines.contains(&removed.line) {
+        if should_ignore_changed_line(text)
+            || removed_attribute_lines.contains(&removed.line)
+            || skip_removed_string_continuation(removed, text)
+        {
             continue;
         }
         let families = if removed_bounds.lines[removed_index] {
@@ -2617,6 +2642,33 @@ mod tests {
         );
         let in_comment = probes_for("/*\n limit: threshold,\n*/\n");
         assert!(in_comment.is_empty(), "{in_comment:?}");
+    }
+
+    #[test]
+    fn multiline_string_literal_continuation_lines_seed_one_probe_on_the_opening_line() {
+        // #9174: string literal text is data, not behavior.
+        let source = "pub fn value() -> u32 { 1 }\npub const TEMPLATE: &str = \"\\\npub mod generated {\n    pub use crate::value;\n}\n\";\n";
+        let probes = block_probes(
+            source,
+            &[
+                (2, "pub const TEMPLATE: &str = \"\\"),
+                (3, "pub mod generated {"),
+                (4, "    pub use crate::value;"),
+                (5, "}"),
+                (6, "\";"),
+            ],
+            &[],
+        );
+        assert_eq!(probes.len(), 1, "{probes:?}");
+        assert_eq!(probes[0].location.line, 2);
+    }
+
+    #[test]
+    fn code_after_a_multiline_string_closing_quote_on_the_same_line_still_seeds_a_probe() {
+        let source = "let s = \"a\nb\"; let live = 1;\n";
+        let probes = block_probes(source, &[(3, "b\"; let live = 1;")], &[]);
+        assert_eq!(probes.len(), 1, "{probes:?}");
+        assert_eq!(probes[0].location.line, 3);
     }
 
     #[test]
