@@ -346,10 +346,17 @@ fn route_not_ready_reason(
     // route, so the bare label stays. The seam inventory this
     // gate reads is Rust-only, so the kind check is also the
     // language check.
-    if let [missing] = missing_evidence
-        && missing.starts_with("producer-owned missing discriminator fact: boundary_value")
-        && entry.seam.kind() == crate::analysis::seams::SeamKind::PredicateBoundary
-    {
+    // No missing fact left once the module blocker is routed means the seam
+    // already has its boundary input (#11466): only the test home is absent,
+    // and the stub adds it, so the predicate route applies there too.
+    let boundary_route = match missing_evidence {
+        [missing] => {
+            missing.starts_with("producer-owned missing discriminator fact: boundary_value")
+        }
+        [] => adds_module,
+        _ => false,
+    };
+    if boundary_route && entry.seam.kind() == crate::analysis::seams::SeamKind::PredicateBoundary {
         let file = crate::analysis::stable_path_text(entry.seam.file());
         let at = shell_arg(&format!("{file}:{}", entry.seam.display_line()));
         let root_flag = root.map_or_else(String::new, |root| {
@@ -3436,6 +3443,49 @@ pub(crate) mod tests {
         more.push("safe test target".to_string());
         let reason = route_not_ready_reason(&none, "repair route not ready", &more, root);
         assert!(!reason.contains("--kind predicate"), "{reason}");
+    }
+
+    /// #11466: a predicate seam whose only blocker is the missing test module
+    /// names the stub route (it adds the module); another blocker still keeps
+    /// the bare label.
+    #[test]
+    fn module_only_blocker_names_the_predicate_stub_route() -> Result<(), String> {
+        use crate::analysis::new_test_target::{NewTestProposalBlocker, NewTestTargetAdmission};
+        use crate::analysis::seams::SeamGripClass;
+        let root = Some(Path::new("/repo"));
+        let mut entry = gate_entry(SeamGripClass::Ungripped, Vec::new());
+        entry.evidence.new_test_target = Some(NewTestTargetAdmission {
+            blocker: Some(NewTestProposalBlocker::NoTestModule),
+            ..NewTestTargetAdmission::default()
+        });
+        let blocked = entry
+            .evidence
+            .new_test_target
+            .as_ref()
+            .and_then(|admission| admission.missing_reason())
+            .ok_or("the module blocker must name a missing reason")?;
+        let only_target = vec![
+            crate::analysis::repair_route::SAFE_TEST_TARGET_EVIDENCE.to_string(),
+            blocked.clone(),
+        ];
+        let reason = route_not_ready_reason(&entry, "repair route not ready", &only_target, root);
+        assert!(
+            reason.contains("--at src/pricing.rs:88 --kind predicate")
+                && reason.contains("no test module yet"),
+            "{reason}"
+        );
+
+        // Negative: an unrelated extra fact keeps the bare label.
+        let mut more = only_target.clone();
+        more.push("incomplete evidence stage: propagation".to_string());
+        let reason = route_not_ready_reason(&entry, "repair route not ready", &more, root);
+        assert!(!reason.contains("--kind predicate"), "{reason}");
+
+        // Negative: an empty list without the module blocker names no route.
+        let plain = gate_entry(SeamGripClass::Ungripped, Vec::new());
+        let reason = route_not_ready_reason(&plain, "repair route not ready", &[], root);
+        assert!(!reason.contains("--kind predicate"), "{reason}");
+        Ok(())
     }
 
     /// #10622: a predicate boundary whose only missing evidence is the
