@@ -617,6 +617,17 @@ fn parse_config(text: &str) -> Result<RiprConfig, String> {
 /// The diagnostic is boxed: it is deliberately rich (spans, expected values),
 /// which would otherwise trip `clippy::result_large_err` on every parser hop.
 pub(crate) fn parse_config_diagnostic(text: &str) -> Result<RiprConfig, Box<ConfigDiagnostic>> {
+    // Every caller (worktree load, candidate-tree blob, editor transports) goes
+    // through here, so the cap holds even when the text did not come from the
+    // bounded file read (#11563).
+    if text.len() as u64 > crate::bounded_input::MAX_METADATA_TOML_BYTES {
+        return Err(Box::new(ConfigDiagnostic::structural(format!(
+            "invalid ripr.toml: {} bytes exceeds the {} byte metadata limit ({} MiB); ripr parses repository metadata fully into memory, so trim the file",
+            text.len(),
+            crate::bounded_input::MAX_METADATA_TOML_BYTES,
+            crate::bounded_input::MAX_METADATA_TOML_BYTES / (1024 * 1024)
+        ))));
+    }
     let raw: RawConfig = toml::from_str(text).map_err(|err| {
         // A valid key in the wrong table names its table (#4534). The hint is
         // built from the fixed KEY_HOME_TABLES allowlist, never from file text.
