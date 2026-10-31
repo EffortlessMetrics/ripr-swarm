@@ -1177,3 +1177,124 @@ fn deleted_nested_header_inside_a_callback_is_not_stolen() -> Result<(), String>
     );
     Ok(())
 }
+
+/// #7705 residual 2: a deleted regex literal whose pattern holds `(` must
+/// stay a live-owner behavior line. The `(` is not code, so a following
+/// removed method in the same run is its own header and does not join the
+/// regex line's group.
+#[test]
+fn deleted_regex_literal_does_not_join_a_header_group() -> Result<(), String> {
+    let findings = analyze(
+        "regex-literal-paren",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "-  const re = /\\(/;",
+            "-  save(id: string) {",
+            "-    audit(id);",
+            "-  }",
+            "   return items.length;",
+            " }",
+        ],
+    )?;
+    let regex_records = findings
+        .iter()
+        .filter(|finding| {
+            finding.source_currentness.is_base_side()
+                && finding.probe.before.as_deref().map(str::trim) == Some("const re = /\\(/;")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        regex_records.len(),
+        1,
+        "deleted regex assignment must stay on the live owner: {findings:?}"
+    );
+    assert_eq!(
+        regex_records[0].probe.owner.as_ref().map(|owner| owner
+            .0
+            .rsplit("::")
+            .next()
+            .unwrap_or_default()),
+        Some("cappedTotal"),
+        "{findings:?}"
+    );
+    let stolen = findings.iter().any(|finding| {
+        finding.source_currentness.is_base_side()
+            && finding
+                .probe
+                .before
+                .as_deref()
+                .is_some_and(|text| text.contains("save(id") || text.contains("audit(id)"))
+    });
+    assert!(
+        !stolen,
+        "regex parens joined save/audit into cappedTotal: {findings:?}"
+    );
+    assert!(
+        findings
+            .iter()
+            .filter(|finding| finding.source_currentness.is_base_side())
+            .all(|finding| !finding.is_candidate_actionable()),
+        "base-side records must stay non-actionable: {findings:?}"
+    );
+    Ok(())
+}
+
+/// Division is still code: `(a + b) / (c)` keeps both paren pairs and the
+/// deleted line remains base-side evidence on the live owner.
+#[test]
+fn deleted_division_expression_stays_on_the_live_owner() -> Result<(), String> {
+    let findings = analyze(
+        "division-vs-regex",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "-  total = (a + b) / (c);",
+            "   return items.length;",
+            " }",
+        ],
+    )?;
+    assert_eq!(
+        base_side(&findings),
+        vec![record(2, "cappedTotal")],
+        "{findings:?}"
+    );
+    let finding = findings
+        .iter()
+        .find(|finding| finding.source_currentness.is_base_side())
+        .ok_or("no base-side finding")?;
+    assert_eq!(
+        finding.probe.before.as_deref().map(str::trim),
+        Some("total = (a + b) / (c);")
+    );
+    assert!(!finding.is_candidate_actionable());
+    Ok(())
+}
+
+/// A `/(` sequence inside a string is string contents, already stripped, and
+/// must not be read as a regex literal that eats the rest of the line.
+#[test]
+fn deleted_slash_inside_a_string_does_not_open_a_regex() -> Result<(), String> {
+    let findings = analyze(
+        "slash-in-string",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            r#"-  const msg = "/(/";"#,
+            "   return items.length;",
+            " }",
+        ],
+    )?;
+    assert_eq!(
+        base_side(&findings),
+        vec![record(2, "cappedTotal")],
+        "{findings:?}"
+    );
+    let finding = findings
+        .iter()
+        .find(|finding| finding.source_currentness.is_base_side())
+        .ok_or("no base-side finding")?;
+    assert_eq!(
+        finding.probe.before.as_deref().map(str::trim),
+        Some(r#"const msg = "/(/";"#)
+    );
+    assert!(!finding.is_candidate_actionable());
+    Ok(())
+}
