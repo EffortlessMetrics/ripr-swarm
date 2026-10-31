@@ -1581,6 +1581,36 @@ fn edit_leaves_imported_symbols_untouched(old: &str, new: &str, imports: &[Pytho
     let new_after = &new_tokens[new_tokens.len() - suffix..];
     !span_touches_import(old_span, old_before, old_after)
         && !span_touches_import(new_span, new_before, new_after)
+        && !edits_lookup_fallback(&old_tokens, prefix)
+        && !edits_lookup_fallback(&new_tokens, prefix)
+}
+
+/// Whether the token at `start` is a fallback argument of a lookup call
+/// (`os.environ.get("KEY", fallback)`, `os.getenv("KEY", fallback)`). A fallback
+/// is read only when the key is absent, and a test that sets the key never
+/// observes it, so the bypass above must not turn that unexercised path into
+/// credit: keep the missing-import-graph limit.
+fn edits_lookup_fallback(tokens: &[String], start: usize) -> bool {
+    let mut depth = 0usize;
+    let mut commas = 0usize;
+    let mut index = start;
+    while index > 0 {
+        index -= 1;
+        match tokens[index].as_str() {
+            ")" | "]" | "}" => depth += 1,
+            "(" | "[" | "{" if depth > 0 => depth -= 1,
+            "," if depth == 0 => commas += 1,
+            "(" => {
+                if commas > 0 && index > 0 && matches!(tokens[index - 1].as_str(), "get" | "getenv")
+                {
+                    return true;
+                }
+                commas = 0;
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Whether `token` is a string literal, with or without a `r`/`b`/`f`/`u`
@@ -2435,6 +2465,31 @@ pub(super) mod tests {
             Some(StaticLimitKind::MissingImportGraph)
         );
         assert_eq!(import_limit(Some(old), new), None);
+    }
+
+    #[test]
+    fn lookup_fallback_edit_keeps_the_import_limit() {
+        let os = vec![PythonImport {
+            imported: "os".to_string(),
+            alias: "os".to_string(),
+            source_module: String::new(),
+        }];
+        let untouched =
+            |old: &str, new: &str| edit_leaves_imported_symbols_untouched(old, new, &os);
+        assert!(!untouched(
+            "return os.environ.get(\"HOME_DIR\", \"/tmp\")",
+            "return os.environ.get(\"HOME_DIR\", \"/var\")"
+        ));
+        assert!(!untouched(
+            "return os.getenv(\"HOME_DIR\", \"/tmp\")",
+            "return os.getenv(\"HOME_DIR\", \"/var\")"
+        ));
+        // The lookup key is observed by any test that sets it; only the
+        // fallback is unexercised, so a key edit stays a plain literal edit.
+        assert!(untouched(
+            "return os.environ.get(\"A\", \"/tmp\")",
+            "return os.environ.get(\"B\", \"/tmp\")"
+        ));
     }
 
     #[test]
