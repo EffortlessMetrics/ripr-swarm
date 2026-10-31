@@ -1581,14 +1581,20 @@ mod tests {
 
         let mut out = String::new();
         finding_json(&mut out, &finding, 0);
-        // The summary is the first `oracle_kind` the finding emits; it must be
-        // the first tied row's kind, not the last tied row's.
-        let first_kind = out
-            .find("\"oracle_kind\": \"")
-            .map(|at| &out[at..])
-            .unwrap_or_default();
-        assert!(
-            first_kind.starts_with("\"oracle_kind\": \"exact_value\""),
+        // The finding emits one `oracle_kind` per related-test row and then
+        // the summary. Two rows (exact_value, exact_error_variant) plus a
+        // summary naming the first tied row gives two exact_value and one
+        // exact_error_variant; a summary naming the last tied row flips the
+        // counts.
+        assert_eq!(
+            out.matches("\"oracle_kind\": \"exact_value\"").count(),
+            2,
+            "{out}"
+        );
+        assert_eq!(
+            out.matches("\"oracle_kind\": \"exact_error_variant\"")
+                .count(),
+            1,
             "{out}"
         );
     }
