@@ -70,9 +70,10 @@ pub(crate) use diff::{
     artifact_root_gitignore_entry, artifact_root_pathspec, is_shallow_repository, load_diff,
     load_diff_core, load_diff_range_with_deadline_core, load_diff_with_effective_base_core,
     load_worktree_diff, load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis,
-    parse_unified_diff, probe_head_ref_state, probe_working_tree_tracked_changes_within,
-    resolve_base_commit, resolve_effective_base, resolve_effective_base_core, ripr_artifact_roots,
-    working_tree_has_tracked_changes, working_tree_has_uncommitted_changes,
+    not_a_work_tree_message, parse_unified_diff, probe_head_ref_state,
+    probe_working_tree_tracked_changes_within, resolve_base_commit, resolve_effective_base,
+    resolve_effective_base_core, ripr_artifact_roots, working_tree_has_tracked_changes,
+    working_tree_has_uncommitted_changes,
 };
 /// Shared RIPR-SPEC-0084 default-base authority and pinned analysis-range
 /// diff assembly (#4003): the one named owner for badge input base/diff,

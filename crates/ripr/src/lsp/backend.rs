@@ -2301,7 +2301,7 @@ impl Backend {
         self.client
             .send_notification::<ShowMessage>(ShowMessageParams {
                 typ: MessageType::WARNING,
-                message: bounded_failure_message(&format!("ripr analysis failed: {message}")),
+                message: analysis_failure_shown_message(message),
             })
             .await;
     }
@@ -5297,16 +5297,71 @@ fn bounded_failure_message(message: &str) -> String {
     super::component_outcome::bounded_message(message)
 }
 
+/// The `window/showMessage` text for a failed analysis (#8583), bounded and
+/// path-redacted like every client-visible failure message.
+fn analysis_failure_shown_message(message: &str) -> String {
+    bounded_failure_message(&format!("ripr analysis failed: {message}"))
+}
+
 #[cfg(test)]
 mod interactive_debounce_fold_tests;
 
 #[cfg(test)]
 mod bounded_failure_message_tests {
-    use super::bounded_failure_message;
+    use super::{analysis_failure_shown_message, bounded_failure_message};
 
     /// #8584: `ripr/analysisStatus` copies `AnalysisFailure.message`, which
     /// is bounded here. The wrapper must keep the truncation marker inside
     /// the 240-character summary bound and still redact path tokens.
+    /// A workspace that is not a Git work tree: the shown warning must keep
+    /// the remedy (where to run, `--root`, the no-history pilot command)
+    /// within the 240-character bound, shortening only the cause. The long
+    /// root has spaces so the path redaction cannot absorb it.
+    #[test]
+    fn non_git_workspace_warning_keeps_the_remedy_inside_the_bound() -> Result<(), String> {
+        let root = crate::lsp::tests::unique_lsp_test_root("non-git-remedy")?;
+        let deep = root
+            .path()
+            .join("a long folder name with spaces ".repeat(6))
+            .join("another long folder name");
+        std::fs::create_dir_all(&deep).map_err(|error| format!("create root failed: {error}"))?;
+        // The production builder of the non-Git refusal; a non-Git temp root
+        // is not constructible here because unit-test temp roots sit inside
+        // the checkout's own work tree.
+        let error = crate::core_error::CoreError::repository_root_unusable(
+            crate::analysis::not_a_work_tree_message(&deep),
+        );
+        let shown = analysis_failure_shown_message(
+            &error.with_context("workspace analysis failed").to_string(),
+        );
+        assert!(shown.contains("is not inside a Git work tree"), "{shown}");
+        for remedy in [
+            "pass `--root <path>` at one",
+            "`ripr pilot --root .` works without Git history",
+        ] {
+            assert!(shown.contains(remedy), "remedy {remedy:?} cut: {shown}");
+        }
+        assert!(
+            shown.chars().count()
+                <= super::super::component_outcome::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND,
+            "{shown}"
+        );
+        assert!(
+            shown.ends_with('…'),
+            "the long root cause must be the part shortened: {shown}"
+        );
+        Ok(())
+    }
+
+    /// Negative control: a short failure is shown whole and unchanged.
+    #[test]
+    fn short_analysis_failure_warning_is_unchanged() {
+        assert_eq!(
+            analysis_failure_shown_message("workspace analysis failed: Cargo.toml not found"),
+            "ripr analysis failed: workspace analysis failed: Cargo.toml not found"
+        );
+    }
+
     #[test]
     fn analysis_status_failure_message_marks_truncation_inside_the_bound() {
         let message = format!("cargo config error: {}", "x".repeat(400));
