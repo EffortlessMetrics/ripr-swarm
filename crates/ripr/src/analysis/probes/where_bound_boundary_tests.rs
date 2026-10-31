@@ -52,12 +52,21 @@ fn removed_kani_source_preserves_external_include_refusal() -> Result<(), String
             .iter()
             .any(|limit| limit.code == "included_source_unit_unsupported")
     );
-    assert!(
+    assert_eq!(
         rebuilt
             .functions()
             .iter()
-            .all(|function| function.source_role
-                == crate::analysis::facts::FunctionSourceRole::Production)
+            .map(|function| (function.name.as_str(), function.source_role))
+            .collect::<Vec<_>>(),
+        vec![(
+            "proof",
+            crate::analysis::facts::FunctionSourceRole::ProofHarness
+        )],
+        "refused native context must retain the unconditional proof-harness floor"
+    );
+    assert!(
+        rebuilt.tests().is_empty(),
+        "proof refusal cannot register a test"
     );
     Ok(())
 }
