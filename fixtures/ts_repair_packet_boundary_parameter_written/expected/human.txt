@@ -12,7 +12,7 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: this TypeScript preview finding's repair packet is not ready (boundary operand `threshold` in the missing discriminator `amount == threshold` is not bound to a concrete value by the observed call input `discount(50, 100)`, so that input is…); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
+  Safe next action: this TypeScript preview finding's repair packet is not ready (derive an input where `amount == threshold` holds before this repair can be handed to an agent: boundary operand `threshold` is not bound to a concrete value by the observed call…); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
   File: src/pricing.ts:3
   Language: typescript
   Language status: preview
