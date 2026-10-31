@@ -191,6 +191,8 @@ fn the_repair_is_an_input_that_enters_the_guard_never_an_assertion() -> Result<(
         if !explained.contains("use an input that enters `if price > 1_000_000`") {
             return Err(format!("explain must name the input route:\n{explained}"));
         }
+        // The error-variant assertion stays a need for after the guard is
+        // entered; the guard itself is never the thing to assert.
         if explained.contains("assert the exact `if") {
             return Err(format!(
                 "the guard must never be an assertion:\n{explained}"
@@ -252,6 +254,56 @@ fn shared_refusals_keep_the_exposed_reading_for_error_returns() -> Result<(), St
             .any(|(class, named)| *named || *class != ExposureClass::Exposed)
         {
             return Err(format!("{label} must stay exposed and unnamed: {found:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_predicate_in_an_unentered_guard_with_a_later_err_names_no_guard() -> Result<(), String> {
+    // Every Predicate probe gets an error-variant flow sink when the owner
+    // returns `Err(` later; that must not lend it the guard reading.
+    let source = "pub fn f(price: i64, qty: u32) -> Result<bool, String> {\n    if qty > 100 {\n        let bulk = price > 40;\n        let _ = bulk;\n    }\n    if price < 0 {\n        return Err(\"neg\".to_string());\n    }\n    Ok(true)\n}\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2,3 +2,3 @@\n     if qty > 100 {\n-        let bulk = price > 50;\n+        let bulk = price > 40;\n         let _ = bulk;\n";
+    let root = std::env::temp_dir().join(format!("ripr-guarded-predicate-{}", std::process::id()));
+    let setup = || -> std::io::Result<()> {
+        std::fs::create_dir_all(root.join("src"))?;
+        std::fs::create_dir_all(root.join("tests"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"guarded-predicate\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
+        )?;
+        std::fs::write(root.join("src/lib.rs"), source)?;
+        std::fs::write(
+            root.join("tests/f.rs"),
+            "use guarded_predicate::f;\n\n#[test]\nfn small() {\n    assert_eq!(f(10, 1), Ok(true));\n}\n",
+        )?;
+        std::fs::write(root.join("diff.patch"), diff)
+    };
+    setup().map_err(|error| format!("setup failed: {error}"))?;
+    let output = check_workspace(CheckInput {
+        root: root.clone(),
+        base: None,
+        diff_file: Some(root.join("diff.patch")),
+        mode: Mode::Ready,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    });
+    let _ = std::fs::remove_dir_all(&root);
+    let output = output?;
+    let on_line = output
+        .findings
+        .iter()
+        .filter(|finding| finding.probe.location.line == 3)
+        .collect::<Vec<_>>();
+    if on_line.is_empty() {
+        return Err("expected a finding on the changed predicate".to_string());
+    }
+    for finding in on_line {
+        let step = finding.recommended_next_step.as_deref().unwrap_or_default();
+        if names_guard(finding) || step.contains("enters `if") {
+            return Err(format!("a predicate must not read the guard: {finding:?}"));
         }
     }
     Ok(())

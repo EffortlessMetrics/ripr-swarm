@@ -1868,9 +1868,10 @@ fn missing_discriminator_facts(
     if (matches!(
         probe.family,
         ProbeFamily::SideEffect | ProbeFamily::CallDeletion | ProbeFamily::ErrorPath
-    ) || flow_sinks
-        .iter()
-        .any(|sink| sink.kind == FlowSinkKind::ErrorVariant))
+    ) || (matches!(probe.family, ProbeFamily::ReturnValue)
+        && flow_sinks
+            .iter()
+            .any(|sink| sink.kind == FlowSinkKind::ErrorVariant)))
         && let Some(fact) = missing_guard_entry_discriminator(
             probe,
             owner_fn,

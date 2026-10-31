@@ -52,8 +52,8 @@ counterpart for side effects.
 ## Behavior
 
 1. **Scope.** The rule applies to `side_effect`, `call_deletion` and
-   `error_path` probes, and to any probe carrying an error-variant flow sink
-   (the `return_value` twin of a changed `return Err(X)`, #11147), whose
+   `error_path` probes, and to a `return_value` probe carrying an error-variant flow sink
+   (the twin of a changed `return Err(X)`, #11147), whose
    changed line sits directly in the block of an `if` (or `else if`).
    The `if` must open the innermost `{` around the line, so a line in a
    nested closure, loop or `else` block is out of scope. A changed line
@@ -214,7 +214,9 @@ counterpart for side effects.
    The repair is the same input route as a side effect: the next step asks
    for an input that enters the guard, the strong rows read `missing_input`
    (never `missing_exact_assertion`), and the explain text says "use an input
-   that enters `if price > 1_000_000`", never "assert the exact `if ...`".
+   that enters `if price > 1_000_000`" and never treats the guard as the thing to
+   assert (the exact error-variant assertion remains a separate need once the
+   guard is entered).
    For these probes the only movement is `exposed` to `weakly_exposed`
    (infection `Yes` to `Weak`, confidence lower); `infection_unknown` cannot
    move, because the guard fact is built only when a related test exists and
@@ -237,7 +239,8 @@ counterpart for side effects.
   `a_call_that_enters_the_guard_keeps_the_exposed_reading` and
   `a_changed_error_return_in_a_guard_the_tests_enter_names_nothing`,
   `the_repair_is_an_input_that_enters_the_guard_never_an_assertion` and
-  `shared_refusals_keep_the_exposed_reading_for_error_returns`.
+  `shared_refusals_keep_the_exposed_reading_for_error_returns` and
+  `a_predicate_in_an_unentered_guard_with_a_later_err_names_no_guard`.
 - `analysis::classify::arm_selection::guard_entry::tests` covers the guard
   parser, the comparison semantics and the rebinding refusals.
 - The corpus case `rust-guarded-push-unentered-branch` is the labeled
