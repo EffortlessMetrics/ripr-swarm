@@ -60,7 +60,7 @@ pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
                 format!("upgrade ripr, then {refresh}")
             };
             eprintln!(
-                "ripr: note: this build of ripr ({generator}) is a development version, so the generated workflow installs ripr {pinned}, the latest published release. Nothing is needed now; once {generator} is published, {follow_up}"
+                "ripr: note: this build of ripr ({generator}) is a development version, so the generated workflow installs ripr {pinned}, the latest published release. That release lacks commands this workflow runs (`ripr reports ci-packet`, `ripr pr-comments summary`), so its CI run fails until {generator} is published: hold off committing the workflow, or use it only to review the template. Once {generator} is published, {follow_up}"
             );
         }
     }
