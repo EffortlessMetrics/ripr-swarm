@@ -1,0 +1,3 @@
+crates/ripr/src/output/baseline_delta.rs|failed to render baseline debt delta JSON: {err}
+crates/ripr/src/output/baseline_delta.rs|required {input_name} input {path} is invalid: {error}
+crates/ripr/src/output/baseline_delta.rs|required {input_name} input {path} is invalid: {error} identity
