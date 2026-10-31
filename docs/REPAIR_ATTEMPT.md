@@ -278,7 +278,7 @@ By default the after phase's stdout is a short summary: the movement line (for e
 - the path is not the selected target, an authored edit surface, or a forbidden path;
 - the bound verdict did not list the path.
 
-Such a path cannot satisfy or violate the cage. Any other movement after the after phase still refuses the rerun with `after verdict binding is tampered or stale`. That includes a new or edited source, test, or root file, a changed kind for a bound path, and a bound change that disappeared. Leaving out every operational write would also hide the disappearance of a bound change, so that alternative was rejected. Recording a second digest in the manifest would change the published manifest schema and the Python binding's `patch_sha256`, so that alternative was rejected too.
+Such a path cannot satisfy or violate the cage. Any other movement after the after phase still refuses the rerun with `after verdict binding is tampered or stale`. That includes a new or edited source, test, or root file, a changed kind for a bound path, and a bound change that disappeared. Redirecting a `ripr` command's own stdout or stderr into a repository file while it runs, including a file under `target/ripr`, has been observed to cause this refusal (#11337); write that output outside the repository. Leaving out every operational write would also hide the disappearance of a bound change, so that alternative was rejected. Recording a second digest in the manifest would change the published manifest schema and the Python binding's `patch_sha256`, so that alternative was rejected too.
 
 ## Failure behavior
 
