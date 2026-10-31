@@ -976,13 +976,23 @@ export class RiprClientController {
    * workspace folder" without any UI to do so. The warning names the action;
    * accepting it runs the same flow as the palette command.
    */
+  private workspaceRootOfferPending = false;
+
   private async offerWorkspaceRootSelection(): Promise<void> {
-    const selection = await this.runtime.showWarningMessage(
-      'ripr cannot tell which workspace folder to analyze. Select one workspace folder to start the ripr server.',
-      SELECT_WORKSPACE_ROOT_ACTION
-    );
-    if (selection === SELECT_WORKSPACE_ROOT_ACTION) {
-      await this.selectWorkspaceRoot();
+    if (this.workspaceRootOfferPending) {
+      return;
+    }
+    this.workspaceRootOfferPending = true;
+    try {
+      const selection = await this.runtime.showWarningMessage(
+        'ripr cannot tell which workspace folder to analyze. Select one workspace folder to start the ripr server.',
+        SELECT_WORKSPACE_ROOT_ACTION
+      );
+      if (selection === SELECT_WORKSPACE_ROOT_ACTION) {
+        await this.selectWorkspaceRoot();
+      }
+    } finally {
+      this.workspaceRootOfferPending = false;
     }
   }
 
@@ -2318,8 +2328,9 @@ export class RiprClientController {
         this.output.appendLine(`ripr collectWorkspaceStatus failed: ${message}`);
       }
     }
+    // One surface: the output channel already has the status summary. A toast
+    // would duplicate the same line (#5319).
     this.output.show();
-    this.runtime.showInformationMessage(statusSummary(this.status, this.firstUsefulAction));
   }
 
   // ---------------------------------------------------------------------------
@@ -2619,7 +2630,13 @@ export class RiprClientController {
     const status = typeof packet['status'] === 'string' ? packet['status'] : undefined;
     if (status === 'not_actionable_or_incomplete' || packet['kind'] !== 'repair_packet') {
       const reason = typeof packet['reason'] === 'string' ? packet['reason'] : undefined;
-      this.runtime.showInformationMessage(reason ?? 'No complete repair packet available.');
+      // #4427: the server says whether a refresh is in flight (retry shortly)
+      // or ended without a result (recover); surface its guidance.
+      const recovery = typeof packet['recovery'] === 'string' ? packet['recovery'] : undefined;
+      // Show only the hint when present; the raw reason token is not user text.
+      this.runtime.showInformationMessage(
+        recovery ?? reason ?? 'No complete repair packet available.',
+      );
       return;
     }
     try {

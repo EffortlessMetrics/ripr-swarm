@@ -102,3 +102,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_nested_use_cfg (9)
+
+Reason:
+RIPR-SPEC-0122: plain wording for seam and state token in the check digest
+
+Command:
+`cargo xtask goldens bless rust_nested_use_cfg --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

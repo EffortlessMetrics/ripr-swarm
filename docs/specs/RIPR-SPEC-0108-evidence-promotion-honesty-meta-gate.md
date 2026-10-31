@@ -765,10 +765,18 @@ FAIL: evidence promotion honesty control case `rust_strong_error_oracle_control`
 the gate has over-corrected or the fixture needs re-blessing
 ```
 
+Typed `expected_partial_analysis` assertions require `analysis_complete: false`,
+`partial_with_limitations`, and exactly one limitation matching the named kind,
+producer stage, path, affected-item count and bounded-detail substring. A generic
+preview-language advisory does not satisfy this assertion. This pins unsupported
+private-member extraction without accepting a complete empty re-bless.
+
 ## Test Mapping
 
 | Test | Spec control |
 |---|---|
+| `nested_private_corpus_rejects_lost_partial_outcome_despite_preview_advisory` | Typed partial outcome and limitation mutations fail despite the retained generic advisory |
+| `partial_analysis_assertion_requires_every_identity_and_count_field` | Missing typed limitation identity or count is rejected |
 | `cargo run -p xtask -- check-evidence-promotion-honesty` | End-to-end gate pass |
 | Flip charter golden to `exposed` → gate fails naming it | Dishonest re-bless proof |
 | Flip control golden to `weakly_exposed` → gate fails naming it | Over-correct guard proof |
