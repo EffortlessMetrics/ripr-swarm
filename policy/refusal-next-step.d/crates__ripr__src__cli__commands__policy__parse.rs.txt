@@ -1,6 +1,0 @@
-crates/ripr/src/cli/commands/policy/parse.rs|policy history requires --current <path>
-crates/ripr/src/cli/commands/policy/parse.rs|policy operations requires --policy-readiness <path>
-crates/ripr/src/cli/commands/policy/parse.rs|policy preview-promote requires --class <class>
-crates/ripr/src/cli/commands/policy/parse.rs|policy preview-promote requires --language <language>
-crates/ripr/src/cli/commands/policy/parse.rs|policy promote requires --operations <path>
-crates/ripr/src/cli/commands/policy/parse.rs|policy promote requires --to <mode>

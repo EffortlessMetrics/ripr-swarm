@@ -68,10 +68,10 @@ fn store_raw_copy(root: &Path, bytes: &[u8]) -> Result<(), String> {
     let raw_copy = root.join(DEFAULT_RAW);
     if let Some(parent) = raw_copy.parent() {
         fs::create_dir_all(parent)
-            .map_err(|err| format!("{EXISTING} could not create {}: {err}", parent.display()))?;
+            .map_err(|err| format!("{EXISTING} could not create {}: {err}; check the path exists and you can access it, then rerun", parent.display()))?;
     }
     crate::output::file_write::write(&raw_copy, bytes)
-        .map_err(|err| format!("{EXISTING} could not write {}: {err}", raw_copy.display()))
+        .map_err(|err| format!("{EXISTING} could not write {}: {err}; check the path exists and you can access it, then rerun", raw_copy.display()))
 }
 
 pub(super) fn pr_comments_existing(args: &[String]) -> Result<(), String> {
@@ -82,10 +82,10 @@ pub(super) fn pr_comments_existing(args: &[String]) -> Result<(), String> {
         // the normalized file so the uploaded artifact still shows them.
         let mut bytes = Vec::new();
         std::io::Read::read_to_end(&mut std::io::stdin(), &mut bytes)
-            .map_err(|err| format!("{EXISTING} could not read standard input: {err}"))?;
+            .map_err(|err| format!("{EXISTING} could not read standard input: {err}; pipe the JSON into the command, or check the step that produces it ran"))?;
         store_raw_copy(&options.root, &bytes)?;
         serde_json::from_slice(&bytes)
-            .map_err(|err| format!("{EXISTING}: standard input is not JSON: {err}"))?
+            .map_err(|err| format!("{EXISTING}: standard input is not JSON: {err}; pass the JSON the earlier step wrote on standard input"))?
     } else {
         read_json(&options.root.join(&options.raw), EXISTING)?
     };
@@ -181,13 +181,13 @@ fn is_relative_inside_root(path: &Path) -> bool {
 fn validate_out_dir_for(command: &str, out_dir: &Path) -> Result<(), String> {
     if !is_relative_inside_root(out_dir) {
         return Err(format!(
-            "{command} --out-dir must be a relative directory inside --root (got {}); the run replaces its request files",
+            "{command} --out-dir must be a relative directory inside --root (got {}); the run replaces its request files; pass a relative `--out-dir` under the root",
             out_dir.display()
         ));
     }
     if out_dir.to_string_lossy().contains(['\t', '\r', '\n']) {
         return Err(format!(
-            "{command} --out-dir cannot contain a tab or line break: the request manifest is tab-separated"
+            "{command} --out-dir cannot contain a tab or line break: the request manifest is tab-separated; use a plain relative path without tabs or line breaks"
         ));
     }
     Ok(())
@@ -198,13 +198,13 @@ fn validate_out_dir_for(command: &str, out_dir: &Path) -> Result<(), String> {
 fn validate_out_file(out: &Path) -> Result<(), String> {
     if !is_relative_inside_root(out) {
         return Err(format!(
-            "{EXISTING} --out must be a relative file path inside --root (got {})",
+            "{EXISTING} --out must be a relative file path inside --root (got {}); pass a relative `--out` path under the root",
             out.display()
         ));
     }
     if out.to_string_lossy().contains(['\t', '\r', '\n']) {
         return Err(format!(
-            "{EXISTING} --out cannot contain a tab or line break"
+            "{EXISTING} --out cannot contain a tab or line break; use a plain relative path without tabs or line breaks"
         ));
     }
     Ok(())
@@ -223,10 +223,10 @@ pub(super) fn pr_comments_requests(args: &[String]) -> Result<(), String> {
     // lose anything else.
     if out_dir.is_dir() {
         let entries = fs::read_dir(&out_dir)
-            .map_err(|err| format!("{REQUESTS} could not read {}: {err}", out_dir.display()))?;
+            .map_err(|err| format!("{REQUESTS} could not read {}: {err}; check the path exists and you can access it, then rerun", out_dir.display()))?;
         for entry in entries {
             let path = entry
-                .map_err(|err| format!("{REQUESTS} could not read {}: {err}", out_dir.display()))?
+                .map_err(|err| format!("{REQUESTS} could not read {}: {err}; check the path exists and you can access it, then rerun", out_dir.display()))?
                 .path();
             let owned = path
                 .file_name()
@@ -238,13 +238,13 @@ pub(super) fn pr_comments_requests(args: &[String]) -> Result<(), String> {
                 fs::symlink_metadata(&path).is_ok_and(|metadata| !metadata.file_type().is_dir());
             if owned && removable {
                 fs::remove_file(&path).map_err(|err| {
-                    format!("{REQUESTS} could not remove {}: {err}", path.display())
+                    format!("{REQUESTS} could not remove {}: {err}; check the path exists and you can access it, then rerun", path.display())
                 })?;
             }
         }
     }
     fs::create_dir_all(&out_dir)
-        .map_err(|err| format!("{REQUESTS} could not create {}: {err}", out_dir.display()))?;
+        .map_err(|err| format!("{REQUESTS} could not create {}: {err}; check the path exists and you can access it, then rerun", out_dir.display()))?;
     let mut manifest = String::new();
     for (index, request) in planned.requests.iter().enumerate() {
         let file = options.out_dir.join(format!(
@@ -340,9 +340,9 @@ pub(super) fn pr_comments_summary(args: &[String]) -> Result<(), String> {
         Some(raw) if raw.as_os_str() == "-" => {
             let mut bytes = Vec::new();
             std::io::Read::read_to_end(&mut std::io::stdin(), &mut bytes)
-                .map_err(|err| format!("{SUMMARY} could not read standard input: {err}"))?;
+                .map_err(|err| format!("{SUMMARY} could not read standard input: {err}; pipe the JSON into the command, or check the step that produces it ran"))?;
             serde_json::from_slice(&bytes)
-                .map_err(|err| format!("{SUMMARY}: standard input is not JSON: {err}"))?
+                .map_err(|err| format!("{SUMMARY}: standard input is not JSON: {err}; pass the JSON the earlier step wrote on standard input"))?
         }
         Some(raw) => read_json(&options.root.join(raw), SUMMARY)?,
     };
@@ -357,13 +357,13 @@ pub(super) fn pr_comments_summary(args: &[String]) -> Result<(), String> {
     refuse_linked_out_dir(&options.root, &options.out_dir)?;
     let out_dir = options.root.join(&options.out_dir);
     fs::create_dir_all(&out_dir)
-        .map_err(|err| format!("{SUMMARY} could not create {}: {err}", out_dir.display()))?;
+        .map_err(|err| format!("{SUMMARY} could not create {}: {err}; check the path exists and you can access it, then rerun", out_dir.display()))?;
     // An earlier run's request must never be replayed.
     for name in [SUMMARY_MANIFEST, "summary-request.json"] {
         let path = out_dir.join(name);
         if fs::symlink_metadata(&path).is_ok_and(|metadata| !metadata.file_type().is_dir()) {
             fs::remove_file(&path)
-                .map_err(|err| format!("{SUMMARY} could not remove {}: {err}", path.display()))?;
+                .map_err(|err| format!("{SUMMARY} could not remove {}: {err}; check the path exists and you can access it, then rerun", path.display()))?;
         }
     }
     let manifest_path = out_dir.join(SUMMARY_MANIFEST);
@@ -387,7 +387,7 @@ pub(super) fn pr_comments_summary(args: &[String]) -> Result<(), String> {
 /// Write a request manifest through the symlink-refusing advisory writer.
 fn write_manifest(path: &Path, text: &str, command: &str) -> Result<(), String> {
     crate::output::file_write::write(path, text.as_bytes())
-        .map_err(|err| format!("{command} could not write {}: {err}", path.display()))
+        .map_err(|err| format!("{command} could not write {}: {err}; check the path exists and you can access it, then rerun", path.display()))
 }
 
 /// The lexical check in the parser keeps `--out-dir` under `--root` only if
@@ -429,14 +429,14 @@ fn refuse_linked_path(
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(err) => {
                 return Err(format!(
-                    "{command} could not inspect {}: {err}",
+                    "{command} could not inspect {}: {err}; check the path exists and you can access it, then rerun",
                     current.display()
                 ));
             }
         };
         if metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
             return Err(format!(
-                "{command} {flag} cannot pass through a link ({} is one); {why}",
+                "{command} {flag} cannot pass through a link ({} is one); {why}; replace the link with a real file or directory",
                 current.display()
             ));
         }
@@ -475,21 +475,25 @@ fn manifest_field(text: &str) -> String {
 
 fn read_json(path: &Path, command: &str) -> Result<Value, String> {
     let bytes = fs::read(path)
-        .map_err(|err| format!("{command} could not read {}: {err}", path.display()))?;
-    serde_json::from_slice(&bytes)
-        .map_err(|err| format!("{command}: {} is not JSON: {err}", path.display()))
+        .map_err(|err| format!("{command} could not read {}: {err}; check the path exists and you can access it, then rerun", path.display()))?;
+    serde_json::from_slice(&bytes).map_err(|err| {
+        format!(
+            "{command}: {} is not JSON: {err}; pass the JSON the earlier step wrote",
+            path.display()
+        )
+    })
 }
 
 fn write_json(path: &Path, value: &Value, command: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
-            .map_err(|err| format!("{command} could not create {}: {err}", parent.display()))?;
+            .map_err(|err| format!("{command} could not create {}: {err}; check the path exists and you can access it, then rerun", parent.display()))?;
     }
     let mut text = serde_json::to_string_pretty(value)
-        .map_err(|err| format!("{command} could not render {}: {err}", path.display()))?;
+        .map_err(|err| format!("{command} could not render {}: {err}; check the path exists and you can access it, then rerun", path.display()))?;
     text.push('\n');
     crate::output::file_write::write(path, text.as_bytes())
-        .map_err(|err| format!("{command} could not write {}: {err}", path.display()))
+        .map_err(|err| format!("{command} could not write {}: {err}; check the path exists and you can access it, then rerun", path.display()))
 }
 
 #[cfg(test)]

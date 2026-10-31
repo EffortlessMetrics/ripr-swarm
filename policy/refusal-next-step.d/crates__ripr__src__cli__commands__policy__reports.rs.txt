@@ -1,1 +1,0 @@
-crates/ripr/src/cli/commands/policy/reports.rs|policy history --out-jsonl refuses to append when current policy operations are unavailable or malformed

@@ -46,7 +46,7 @@ impl Custody {
     pub(super) fn capture(input: &CheckInput, destination: &Path) -> Result<Self, String> {
         let root = input.root.canonicalize().map_err(|e| e.to_string())?;
         if root.ancestors().take(65).count() > 64 {
-            return Err("--output-dir input ancestry exceeds depth 64".into());
+            return Err("--output-dir input ancestry exceeds depth 64; run from a shallower workspace path, or drop --output-dir".into());
         }
         let requested_destination = destination.to_path_buf();
         let parent = destination
@@ -55,15 +55,15 @@ impl Custody {
             .unwrap_or(Path::new("."));
         let destination = parent
             .canonicalize()
-            .map_err(|e| format!("--output-dir parent: {e}"))?
+            .map_err(|e| format!("--output-dir parent: {e}; create the parent directory first, then rerun"))?
             .join(
                 destination
                     .file_name()
-                    .ok_or("--output-dir requires a new directory name")?,
+                    .ok_or("--output-dir requires a new directory name; pass a directory name such as `--output-dir target/ripr/out`")?,
             );
         if std::fs::symlink_metadata(&destination).is_ok() {
             return Err(
-                "--output-dir must name a new directory; existing output sets are never replaced"
+                "--output-dir must name a new directory; existing output sets are never replaced; pass a directory that does not exist yet, such as `--output-dir target/ripr/out-2`"
                     .into(),
             );
         }
@@ -86,7 +86,7 @@ impl Custody {
             files: BTreeMap::new(),
             today: crate::output::suppressions::current_iso_date(),
             cargo: crate::analysis::cargo_input_identity(&input.root)
-                .ok_or("--output-dir cannot capture Cargo input identity")?,
+                .ok_or("--output-dir cannot capture Cargo input identity; run from a workspace with a readable Cargo.toml and Cargo.lock, or drop --output-dir")?,
             budget: std::env::var_os("RIPR_CHECK_FINDINGS_BYTES"),
         };
         custody.files = custody.observe()?;
@@ -146,7 +146,7 @@ impl Custody {
         let mut visited = 0;
         while let Some((dir, depth)) = pending.pop() {
             if depth > 64 {
-                return Err("--output-dir input directory depth exceeds 64".into());
+                return Err("--output-dir input directory depth exceeds 64; flatten the nested inputs, or drop --output-dir".into());
             }
             for entry in
                 std::fs::read_dir(&dir).map_err(|e| format!("inspect {}: {e}", dir.display()))?
@@ -154,7 +154,7 @@ impl Custody {
                 let entry = entry.map_err(|e| e.to_string())?;
                 visited += 1;
                 if visited > MAX_ENTRIES {
-                    return Err("--output-dir input inventory exceeds 16384 entries".into());
+                    return Err("--output-dir input inventory exceeds 16384 entries; run on a smaller workspace, or drop --output-dir".into());
                 }
                 let path = entry.path();
                 if path == self.destination {
@@ -180,7 +180,7 @@ impl Custody {
         paths.dedup();
         if paths.len() > MAX_ENTRIES {
             return Err(
-                "--output-dir input inventory including auxiliary paths exceeds 16384 entries"
+                "--output-dir input inventory including auxiliary paths exceeds 16384 entries; run on a smaller workspace, or drop --output-dir"
                     .into(),
             );
         }
@@ -269,12 +269,12 @@ fn observe_file(path: &Path, bytes_left: &mut u64) -> Result<Option<Observation>
     }
     if !meta.is_file() {
         return Err(format!(
-            "--output-dir requires regular input files: {}",
+            "--output-dir requires regular input files: {}; replace that path with a regular file, or drop --output-dir",
             path.display()
         ));
     }
     if meta.len() > *bytes_left {
-        return Err("--output-dir input custody exceeds 128 MiB".into());
+        return Err("--output-dir input custody exceeds 128 MiB; run on a smaller workspace, or drop --output-dir".into());
     }
     let mut bytes = Vec::new();
     std::fs::File::open(path)
@@ -283,7 +283,7 @@ fn observe_file(path: &Path, bytes_left: &mut u64) -> Result<Option<Observation>
         .read_to_end(&mut bytes)
         .map_err(|e| e.to_string())?;
     if bytes.len() as u64 > *bytes_left {
-        return Err("--output-dir input custody exceeds 128 MiB".into());
+        return Err("--output-dir input custody exceeds 128 MiB; run on a smaller workspace, or drop --output-dir".into());
     }
     *bytes_left -= bytes.len() as u64;
     let after = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
@@ -316,7 +316,7 @@ pub(super) fn publish(
         );
     }
     if documents.iter().map(|(_, text)| text.len()).sum::<usize>() > MAX_OUTPUT_BYTES {
-        return Err("--output-dir rendered output exceeds 32 MiB".into());
+        return Err("--output-dir rendered output exceeds 32 MiB; narrow the diff, or drop --output-dir to print the report instead".into());
     }
     std::fs::create_dir(destination)
         .map_err(|e| format!("create new --output-dir {}: {e}", destination.display()))?;
@@ -333,14 +333,14 @@ pub(super) fn publish(
     let member_bytes = documents.iter().map(|(_, text)| text.len()).sum::<usize>();
     if bytes.len() > MAX_OUTPUT_BYTES.saturating_sub(member_bytes) {
         return Err(
-            "--output-dir members plus manifest exceed 32 MiB; output set is incomplete".into(),
+            "--output-dir members plus manifest exceed 32 MiB; output set is incomplete; narrow the diff, or drop --output-dir to print the report instead".into(),
         );
     }
     let pending = destination.join("manifest.pending");
     write_new(&pending, &bytes)?;
     final_check()?;
     std::fs::rename(&pending, destination.join("manifest.json"))
-        .map_err(|e| format!("publish manifest: {e}; output set is incomplete"))
+        .map_err(|e| format!("publish manifest: {e}; output set is incomplete; narrow the diff, or drop --output-dir to print the report instead"))
 }
 
 fn write_new(path: &Path, bytes: &[u8]) -> Result<(), String> {
@@ -350,7 +350,7 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<(), String> {
         .open(path)
         .map_err(|e| {
             format!(
-                "create output {}: {e}; output set is incomplete",
+                "create output {}: {e}; output set is incomplete; narrow the diff, or drop --output-dir to print the report instead",
                 path.display()
             )
         })?;
@@ -358,7 +358,7 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<(), String> {
         .and_then(|()| file.flush())
         .map_err(|e| {
             format!(
-                "write output {}: {e}; output set is incomplete",
+                "write output {}: {e}; output set is incomplete; narrow the diff, or drop --output-dir to print the report instead",
                 path.display()
             )
         })

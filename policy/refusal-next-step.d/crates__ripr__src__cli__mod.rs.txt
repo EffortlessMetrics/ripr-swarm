@@ -1,9 +1,0 @@
-crates/ripr/src/cli/mod.rs|agent packet is not UTF-8: {error}
-crates/ripr/src/cli/mod.rs|before-phase repair attempt is missing its seam identity
-crates/ripr/src/cli/mod.rs|create {} failed: {error}
-crates/ripr/src/cli/mod.rs|lock {} failed: {error}
-crates/ripr/src/cli/mod.rs|parse {} failed: {error}
-crates/ripr/src/cli/mod.rs|read {} failed: {error}
-crates/ripr/src/cli/mod.rs|usage: ripr help --json (this route accepts no other arguments)
-crates/ripr/src/cli/mod.rs|{error} No repair attempt was started.
-crates/ripr/src/cli/mod.rs|{original}; failed to restore prior workflow artifacts: {restore_error}

@@ -72,7 +72,7 @@ impl CliCommand {
             Some("--help" | "-h") if wants_all(&command_args) => match command_args.len() {
                 1 => Ok(Self::HelpAll),
                 _ => Err(
-                    "usage: ripr --help --all (this route accepts no other arguments)".to_string(),
+                    "usage: ripr --help --all (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands".to_string(),
                 ),
             },
             None | Some("--help" | "-h") => Ok(Self::Help),
@@ -89,7 +89,7 @@ impl CliCommand {
                     return match command_args.len() {
                         1 => Ok(Self::HelpAll),
                         _ => Err(
-                            "usage: ripr help --all (this route accepts no other arguments)"
+                            "usage: ripr help --all (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands"
                                 .to_string(),
                         ),
                     };
@@ -100,7 +100,7 @@ impl CliCommand {
                     return match command_args.len() {
                         1 => Ok(Self::HelpJson),
                         _ => Err(
-                            "usage: ripr help --json (this route accepts no other arguments)"
+                            "usage: ripr help --json (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands"
                                 .to_string(),
                         ),
                     };
@@ -189,7 +189,7 @@ fn help_workflow_command(args: &[String]) -> Result<CliCommand, String> {
         [] => Ok(CliCommand::HelpWorkflow(None)),
         [name] if !name.starts_with('-') => Ok(CliCommand::HelpWorkflow(Some(name.clone()))),
         _ => Err(
-            "usage: ripr help workflow [<workflow-name>] (this route accepts no flags)".to_string(),
+            "usage: ripr help workflow [<workflow-name>] (this route accepts no flags); drop the flags, or run `ripr help workflow` to list workflows".to_string(),
         ),
     }
 }
@@ -432,7 +432,7 @@ mod tests {
     /// usage error naming the accepted form.
     #[test]
     fn help_all_rejects_trailing_arguments() {
-        let usage = "usage: ripr help --all (this route accepts no other arguments)";
+        let usage = "usage: ripr help --all (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands";
         for bad in [
             args(&["--all", "check"]),
             args(&["--all", "foo", "bar"]),
@@ -443,7 +443,7 @@ mod tests {
                 Err(usage.to_string())
             );
         }
-        let flag_usage = "usage: ripr --help --all (this route accepts no other arguments)";
+        let flag_usage = "usage: ripr --help --all (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands";
         assert_eq!(
             CliCommand::from_parts(Some("--help"), args(&["--all", "check"])),
             Err(flag_usage.to_string())
@@ -827,7 +827,7 @@ mod tests {
         );
         // Flag-shaped names and extra arguments are usage errors, keeping the
         // failure family distinct from the unknown-workflow family.
-        let usage = "usage: ripr help workflow [<workflow-name>] (this route accepts no flags)";
+        let usage = "usage: ripr help workflow [<workflow-name>] (this route accepts no flags); drop the flags, or run `ripr help workflow` to list workflows";
         for bad in [
             args(&["workflow", "--json"]),
             args(&["workflow", "repair-gap", "extra"]),
@@ -848,7 +848,7 @@ mod tests {
             CliCommand::from_parts(Some("help"), args(&["--json"])),
             Ok(CliCommand::HelpJson)
         );
-        let usage = "usage: ripr help --json (this route accepts no other arguments)";
+        let usage = "usage: ripr help --json (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands";
         for bad in [
             args(&["--json", "extra"]),
             args(&["--json", "--quiet"]),

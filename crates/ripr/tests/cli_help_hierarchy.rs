@@ -1053,7 +1053,7 @@ fn help_all_rejects_trailing_arguments() -> Result<(), String> {
         assert_contains(
             "ripr help --all trailing-argument error",
             &String::from_utf8_lossy(&output.stderr),
-            "usage: ripr help --all (this route accepts no other arguments)",
+            "usage: ripr help --all (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands",
         )?;
     }
     // The bare selector is unchanged on both spellings.

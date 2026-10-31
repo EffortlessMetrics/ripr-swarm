@@ -469,7 +469,7 @@ fn check_timeout_environment_is_a_fallback_and_fails_closed() -> Result<(), Stri
                 "x"
             )))
         ),
-        Err("RIPR_CHECK_TIMEOUT must be valid UTF-8".to_string())
+        Err("RIPR_CHECK_TIMEOUT must be valid UTF-8; set it to a whole number of seconds, or unset it".to_string())
     );
     Ok(())
 }
