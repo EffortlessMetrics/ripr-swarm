@@ -51,7 +51,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testexception-lives-and-is.json",
-    "sha256": "8f50bf0968f6dbf3959415a0ffd0baa03cdea12dc6b06b3bc40f7289fa906275",
+    "sha256": "e2fb42775f93919b5f8d21aba2f832547ae20b797c2fb6b5edf69d7352da0c2d",
     "provenance": "producer"
   }
 }

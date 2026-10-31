@@ -77,9 +77,9 @@ use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equali
 use crate::analysis::syntax::{
     AssertionContextRefusal, GeneratedTestPins, HelperLoan, ItemNesting, MacroBindingCandidates,
     MacroBindingKind, MacroBindingSite, OwnerPinAssertions, PatternPins, RootShadow,
-    TRUSTED_MACRO_NAMES, attribute_settles_test_outcome, drop_in_assertion_leaf,
-    empty_macro_binding_ambiguities, err_return_guard_key, generated_test_pins,
-    local_empty_macro_names, macro_binding_scan, owner_pin_assertions,
+    TRUSTED_MACRO_NAMES, attribute_settles_test_outcome, cfg_if_module_name,
+    drop_in_assertion_leaf, empty_macro_binding_ambiguities, err_return_guard_key,
+    generated_test_pins, local_empty_macro_names, macro_binding_scan, owner_pin_assertions,
     owner_pin_matches_assertions, parse_clean_source_file, pattern_pins, qualified_matches_paths,
     returns_leave_the_function, source_binds_value_name, source_declares_value_name,
     source_imported_claims_macros, trusted_macro_binding_site_sets, trusted_macro_binding_sites,
@@ -308,8 +308,17 @@ const STD_ROOTED_ASSERT_EQ: [&str; 24] = [
     "::core::debug_assert",
 ];
 
+#[cfg(test)]
+thread_local! {
+    static PROJECTED_WORKSPACE_FILE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static PROJECTED_WORKSPACE_FILE_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static STD_ROOTED_FILE_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl StdRootedCalls {
     fn of(source: &str) -> Self {
+        #[cfg(test)]
+        STD_ROOTED_FILE_PARSES.with(|count| count.set(count.get() + 1));
         let Some(file) = parse_clean_source_file(source) else {
             return Self::default();
         };
@@ -412,6 +421,9 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// probe, test and assertion, and each input below scans the workspace,
     /// so every answer is kept for the run under the key it depends on.
     path_memo: SyncMemo<PathCallMemo>,
+    /// Pure workspace-source checks for projected collection equality,
+    /// keyed by the retained source identities of the indexed files.
+    projected_collection_workspace: SyncMemo<ProjectedCollectionWorkspaceMemo>,
     /// #7097: bare-call binding verdicts per [`BareCallKey`].
     bare_call_memo: SyncMemo<BTreeMap<BareCallKey, bool>>,
     /// #7097: out-of-line module children per (parent file, `mod` name):
@@ -453,8 +465,7 @@ struct PathCallMemo {
     /// Per (owner file, owner start line, owner name, path prefix, test
     /// file, test line): the verdict.
     verdicts: BTreeMap<(PathBuf, usize, String, String, PathBuf, usize), bool>,
-    /// Per (file, fn name, start line): the inline modules enclosing that
-    /// item, or `None` when ripr cannot place it.
+    /// Per (file, name, line): the pure item-nesting facts (#6974).
     nesting: BTreeMap<(PathBuf, String, usize), Option<ItemNesting>>,
     /// Per (owner crate root, owner name): whether the crate may hold an
     /// item of the name ripr cannot see.
@@ -464,6 +475,63 @@ struct PathCallMemo {
     /// Per (test crate root, path root): whether the test's crate may bind
     /// the root itself.
     test_crate_binds: BTreeMap<(PathBuf, String), bool>,
+}
+
+/// Only pure workspace-source verdicts belong here. The retained strong
+/// references prevent address reuse from making a different source look equal.
+#[derive(Clone, Debug, Default)]
+struct ProjectedCollectionWorkspaceMemo {
+    sources: Vec<(PathBuf, std::sync::Arc<str>)>,
+    verdicts: BTreeMap<ProjectedCollectionWorkspaceKey, bool>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum ProjectedCollectionWorkspaceKey {
+    StandardRoots,
+    Constructor(PathBuf, String),
+}
+
+impl ProjectedCollectionWorkspaceMemo {
+    fn refresh(&mut self, index: &RustIndex) {
+        let files = index.files();
+        if self.sources.len() != files.len()
+            || !self
+                .sources
+                .iter()
+                .zip(files.iter())
+                .all(|((path, source), (file, facts))| {
+                    path == file && std::sync::Arc::ptr_eq(source, &facts.source)
+                })
+        {
+            self.sources = files
+                .iter()
+                .map(|(path, facts)| (path.clone(), facts.source.clone()))
+                .collect();
+            self.verdicts.clear();
+        }
+    }
+
+    fn verdict(
+        memo: &SyncMemo<Self>,
+        index: &RustIndex,
+        key: ProjectedCollectionWorkspaceKey,
+        scan: impl FnOnce() -> bool,
+    ) -> bool {
+        {
+            let mut memo = memo.borrow_mut();
+            memo.refresh(index);
+            if let Some(verdict) = memo.verdicts.get(&key) {
+                return *verdict;
+            }
+        }
+        // A resolver may itself consult syntax. Never hold a memo lock while
+        // computing a miss, including a refused/invalid-source verdict.
+        let verdict = scan();
+        let mut memo = memo.borrow_mut();
+        memo.refresh(index);
+        memo.verdicts.insert(key, verdict);
+        verdict
+    }
 }
 
 /// The macro bindings of files a narrowed diff index withheld (#5320).
@@ -715,7 +783,7 @@ impl OwnerPinSyntax {
         }
     }
 
-    /// #6974: [`item_nesting`], kept per (file, name, line).
+    /// #6974: reuse compact nesting facts only for the same retained source.
     fn item_nesting(
         &self,
         index: &RustIndex,
@@ -1034,7 +1102,7 @@ impl OwnerPinSyntax {
     ) -> Option<(PathBuf, MacroBindingSite)> {
         let resolved_modules = self.resolved_module_declarations(index);
         let resolved = |path: &Path, line: usize, declaration: &str| {
-            resolved_modules.contains(&(path.to_path_buf(), line, declaration.to_string()))
+            module_declaration_resolved(resolved_modules, index, path, line, declaration)
         };
         let test_roots = self.target_roots(index).roots(&test.file, index);
         // #8255: the single ambiguity pass retained the earliest
@@ -1285,7 +1353,7 @@ impl OwnerPinSyntax {
     fn trusted_macro_ambiguities(&self, index: &RustIndex) -> BTreeSet<String> {
         let resolved_modules = self.resolved_module_declarations(index);
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
-            resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
+            module_declaration_resolved(resolved_modules, index, file, line, declaration)
         };
         let mut ambiguous = self.ambiguous_macro_bindings.borrow_mut();
         ambiguous
@@ -1409,7 +1477,7 @@ impl OwnerPinSyntax {
         }
         let resolved_modules = self.resolved_module_declarations(index);
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
-            resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
+            module_declaration_resolved(resolved_modules, index, file, line, declaration)
         };
         let (_, rest) = partition_macro_scan_files(index);
         let sites = scan_macro_sites(&rest, index, self.target_roots(index), &module_resolved);
@@ -1537,7 +1605,7 @@ impl OwnerPinSyntax {
         }
         let resolved_modules = self.resolved_module_declarations(index);
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
-            resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
+            module_declaration_resolved(resolved_modules, index, file, line, declaration)
         };
         let ambiguous = self.trusted_macro_ambiguities(index);
         let Some(facts) = index
@@ -2866,6 +2934,48 @@ fn workspace_macro_binding_site_for(
         }
     }
     first
+}
+
+/// Whether the module declaration `declaration` on `line` of `file` resolves
+/// to an indexed file. A parsed `mod NAME;` is answered by the module edges;
+/// a [`cfg_if_module_declaration`] key (#5993), which exists only as tokens in
+/// a `cfg_if!`, by the default layout: the one `NAME.rs` or `NAME/mod.rs`
+/// beside a crate-root-named or `mod.rs` declaring file. Other declaring
+/// files nest their children one directory deeper, which this does not model.
+fn module_declaration_resolved(
+    resolved: &BTreeSet<(PathBuf, usize, String)>,
+    index: &RustIndex,
+    file: &Path,
+    line: usize,
+    declaration: &str,
+) -> bool {
+    let Some(name) = cfg_if_module_name(declaration) else {
+        return resolved.contains(&(file.to_path_buf(), line, declaration.to_string()));
+    };
+    if !cfg_if_layout_file(file) {
+        return false;
+    }
+    let directory = file.parent().unwrap_or(Path::new(""));
+    let files = index.files();
+    let flat = files.get(&directory.join(format!("{name}.rs"))).is_some();
+    let nested = files.get(&directory.join(name).join("mod.rs")).is_some();
+    // Both layouts present is a rustc error (E0761), never one module.
+    flat != nested
+}
+
+/// Whether `file` places its child modules in its own directory: `mod.rs`,
+/// or a `lib.rs`/`main.rs` that is an actual crate root (`src/lib.rs`,
+/// `src/main.rs`, `src/bin/NAME/main.rs`). A `lib.rs` or `main.rs` declared by
+/// `mod lib;` nests children under `lib/`, so file name alone is not enough.
+fn cfg_if_layout_file(file: &Path) -> bool {
+    let parts: Vec<&str> = file
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .collect();
+    matches!(
+        parts.as_slice(),
+        [.., "mod.rs"] | [.., "src", "lib.rs" | "main.rs"] | [.., "src", "bin", _, "main.rs"]
+    )
 }
 
 /// A definition or `use` of the name: a real rebinding, not one that only
@@ -8163,20 +8273,12 @@ pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
         || !index
             .drop_in_manifests
             .unbound_standard_root(&test.file, "core")
-        || index.files().values().any(|facts| {
-            let masked = mask_comments_and_strings(&facts.source).replace("r#", "");
-            let modules = declared_module_names(&masked);
-            let imports = file_use_statements(&masked);
-            STD_ROOTS.iter().any(|root| {
-                modules.contains(root)
-                    || declares_type(&masked, root)
-                    || binds_extern_crate(&masked, root)
-                    || file_renames_to(&masked, root)
-                    || imports
-                        .iter()
-                        .any(|item| use_statement_binds_name(item, root))
-            })
-        })
+        || ProjectedCollectionWorkspaceMemo::verdict(
+            &syntax.projected_collection_workspace,
+            index,
+            ProjectedCollectionWorkspaceKey::StandardRoots,
+            || projected_standard_roots_shadowed(index),
+        )
     {
         return false;
     }
@@ -8195,74 +8297,12 @@ pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
     // tuple constructor. A competing local, function, constant or static
     // keeps this deliberately bounded binding unestablished.
     let names_constructor = |name: String| name.strip_prefix("r#").unwrap_or(&name) == constructor;
-    if index.files().iter().any(|(file, facts)| {
-        let masked = mask_comments_and_strings(&facts.source).replace("r#", "");
-        if file_aliases_type(&masked, constructor)
-            || file_renames_to(&masked, constructor)
-            || !fn_definition_offsets(&masked, constructor).is_empty()
-            || file_use_statements(&masked).iter().any(|import| {
-                ["test", "cfg"]
-                    .iter()
-                    .any(|name| use_statement_binds_name(import, name))
-            })
-            || flattened_use_paths(&masked).iter().any(|import| {
-                let segments: Vec<_> = import.path.trim_start_matches("::").split("::").collect();
-                if !segments
-                    .last()
-                    .is_some_and(|name| *name == constructor || *name == "*")
-                {
-                    return false;
-                }
-                // A constructor reached through another module may be a
-                // callable re-export whose defining bytes were not indexed.
-                // Only direct local namespace imports establish this bounded
-                // same-file construction; a missing companion cannot clear it.
-                !matches!(segments.as_slice(), ["crate" | "self" | "super", _])
-            })
-        {
-            return true;
-        }
-        let Some(parsed) = parse_clean_source_file(&facts.source) else {
-            return true;
-        };
-        parsed.tree().syntax().descendants().any(|node| {
-            // Attribute/derive expansion can also manufacture a binding.
-            // This bounded construction admits only the ordinary test
-            // harness attributes; expansion is not type-identity evidence.
-            ast::Attr::cast(node.clone()).is_some_and(|attr| {
-                let text = attr.syntax().text().to_string();
-                collapse_whitespace(&text) != "#[test]"
-                    && !crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate(&text)
-            }) ||
-            // Arbitrary expansion can introduce a constructor binding that
-            // the parsed item index never saw. The two observation macros
-            // still require their carried canonical binding authority.
-            ast::MacroCall::cast(node.clone()).is_some_and(|call| {
-                call.path().is_none_or(|path| {
-                    let path = collapse_whitespace(&path.syntax().text().to_string());
-                    !matches!(
-                        path.as_str(),
-                        "assert_eq" | "vec" | "std::vec" | "::std::vec"
-                    ) && !STD_ROOTED_ASSERT_EQ.contains(&path.as_str())
-                })
-            }) || (file != &test.file
-                && ast::Adt::cast(node.clone())
-                    .and_then(|item| item.name())
-                    .is_some_and(|name| names_constructor(name.text().to_string())))
-                || ast::Fn::cast(node.clone())
-                    .and_then(|item| item.name())
-                    .is_some_and(|name| names_constructor(name.text().to_string()))
-                || ast::Const::cast(node.clone())
-                    .and_then(|item| item.name())
-                    .is_some_and(|name| names_constructor(name.text().to_string()))
-                || ast::Static::cast(node.clone())
-                    .and_then(|item| item.name())
-                    .is_some_and(|name| names_constructor(name.text().to_string()))
-                || ast::IdentPat::cast(node)
-                    .and_then(|item| item.name())
-                    .is_some_and(|name| names_constructor(name.text().to_string()))
-        })
-    }) {
+    if ProjectedCollectionWorkspaceMemo::verdict(
+        &syntax.projected_collection_workspace,
+        index,
+        ProjectedCollectionWorkspaceKey::Constructor(test.file.clone(), constructor.to_owned()),
+        || projected_constructor_shadowed(constructor, &test.file, index),
+    ) {
         return false;
     }
     let definitions: Vec<_> = parse
@@ -8349,6 +8389,101 @@ pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
     standard_vec(&selected.ty)
         .zip(standard_vec(receiver_type))
         .is_some_and(|(field, receiver)| field == receiver)
+}
+
+fn projected_standard_roots_shadowed(index: &RustIndex) -> bool {
+    index.files().values().any(|facts| {
+        #[cfg(test)]
+        PROJECTED_WORKSPACE_FILE_VISITS.with(|count| count.set(count.get() + 1));
+        let masked = mask_comments_and_strings(&facts.source).replace("r#", "");
+        let modules = declared_module_names(&masked);
+        let imports = file_use_statements(&masked);
+        STD_ROOTS.iter().any(|root| {
+            modules.contains(root)
+                || declares_type(&masked, root)
+                || binds_extern_crate(&masked, root)
+                || file_renames_to(&masked, root)
+                || imports
+                    .iter()
+                    .any(|item| use_statement_binds_name(item, root))
+        })
+    })
+}
+
+fn projected_constructor_shadowed(constructor: &str, test_file: &Path, index: &RustIndex) -> bool {
+    let names_constructor = |name: String| name.strip_prefix("r#").unwrap_or(&name) == constructor;
+    index.files().iter().any(|(file, facts)| {
+        #[cfg(test)]
+        PROJECTED_WORKSPACE_FILE_VISITS.with(|count| count.set(count.get() + 1));
+        let masked = mask_comments_and_strings(&facts.source).replace("r#", "");
+        if file_aliases_type(&masked, constructor)
+            || file_renames_to(&masked, constructor)
+            || !fn_definition_offsets(&masked, constructor).is_empty()
+            || file_use_statements(&masked).iter().any(|import| {
+                ["test", "cfg"]
+                    .iter()
+                    .any(|name| use_statement_binds_name(import, name))
+            })
+            || flattened_use_paths(&masked).iter().any(|import| {
+                let segments: Vec<_> = import.path.trim_start_matches("::").split("::").collect();
+                if !segments
+                    .last()
+                    .is_some_and(|name| *name == constructor || *name == "*")
+                {
+                    return false;
+                }
+                // A constructor reached through another module may be a
+                // callable re-export whose defining bytes were not indexed.
+                // Only direct local namespace imports establish this bounded
+                // same-file construction; a missing companion cannot clear it.
+                !matches!(segments.as_slice(), ["crate" | "self" | "super", _])
+            })
+        {
+            return true;
+        }
+        #[cfg(test)]
+        PROJECTED_WORKSPACE_FILE_PARSES.with(|count| count.set(count.get() + 1));
+        let Some(parsed) = parse_clean_source_file(&facts.source) else {
+            return true;
+        };
+        parsed.tree().syntax().descendants().any(|node| {
+            // Attribute/derive expansion can also manufacture a binding.
+            // This bounded construction admits only the ordinary test
+            // harness attributes; expansion is not type-identity evidence.
+            ast::Attr::cast(node.clone()).is_some_and(|attr| {
+                let text = attr.syntax().text().to_string();
+                collapse_whitespace(&text) != "#[test]"
+                    && !crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate(&text)
+            }) ||
+            // Arbitrary expansion can introduce a constructor binding that
+            // the parsed item index never saw. The two observation macros
+            // still require their carried canonical binding authority.
+            ast::MacroCall::cast(node.clone()).is_some_and(|call| {
+                call.path().is_none_or(|path| {
+                    let path = collapse_whitespace(&path.syntax().text().to_string());
+                    !matches!(
+                        path.as_str(),
+                        "assert_eq" | "vec" | "std::vec" | "::std::vec"
+                    ) && !STD_ROOTED_ASSERT_EQ.contains(&path.as_str())
+                })
+            }) || (file != test_file
+                && ast::Adt::cast(node.clone())
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string())))
+                || ast::Fn::cast(node.clone())
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string()))
+                || ast::Const::cast(node.clone())
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string()))
+                || ast::Static::cast(node.clone())
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string()))
+                || ast::IdentPat::cast(node)
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string()))
+        })
+    })
 }
 
 /// RIPR-SPEC-0225 rule 4: whether a field type compares by value: a

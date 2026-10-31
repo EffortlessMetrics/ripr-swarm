@@ -35,6 +35,9 @@ fn review_summary_commands_retain_literal_unix_root_and_redirect() -> Result<(),
     ] {
         std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
     }
+    // #11395: a root with no manifest and no source gets no pilot route.
+    std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"x\"\n")
+        .map_err(|error| error.to_string())?;
     let selected_metadata = std::fs::metadata(&root).map_err(|error| error.to_string())?;
     let decoy_metadata = std::fs::metadata(&decoy).map_err(|error| error.to_string())?;
     assert_ne!(

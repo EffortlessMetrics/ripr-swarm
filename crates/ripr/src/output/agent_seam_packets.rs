@@ -294,7 +294,11 @@ fn render_agent_seam_packets_json_with_root(
     }
 
     let mut limitations = Vec::new();
-    if let Some(limit) = limit_info {
+    for limit in limit_info
+        .into_iter()
+        .flat_map(RepoExposureLimit::parts)
+        .flatten()
+    {
         let info = limit.info();
         let repair_route = limit.repair_route();
         limitations.push(format!(
@@ -559,7 +563,7 @@ pub(crate) fn render_agent_seam_packet_json_with_context(
 /// cannot score (#7204): the rendered document discloses it and the plain
 /// summary replaces the after-edit directive with the ambiguity warning
 /// and the clean-state restart route.
-pub(crate) const TYPESCRIPT_TEST_CACHE_GUIDANCE: &str = "Some TypeScript test runners write ignored cache files that the edit cage still observes. To avoid a terminal cache-only refusal, run the focused test after continue succeeds and record its result separately; the receipt reports static evidence and does not record a test run. Cache writes may make that receipt stale in agent status, even if HEAD did not change.";
+pub(crate) const TYPESCRIPT_TEST_CACHE_GUIDANCE: &str = "Some TypeScript test runners write ignored cache files that the edit cage still observes. To avoid a terminal cache-only refusal, run the focused test after continue succeeds and record its result separately; the receipt reports static evidence and does not record a test run. Vitest cache files written after continue do not make the receipt stale in agent status.";
 
 pub(crate) struct BeforePhaseAttemptContinuation {
     pub(crate) attempt_id: String,

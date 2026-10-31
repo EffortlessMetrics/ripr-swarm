@@ -56,6 +56,13 @@ git rev-list --first-parent --reverse MERGE_BASE..PARENT
 UTF-8 SHA lines joined with LF, then SHA-256
 ```
 
+The receipt retains `path_inventories` (`source_changed`, `swarm_changed`,
+`swarm_only`), each with `path_record_count`, `path_record_sha256` and its
+recipe: decoded `git diff --name-only -z` paths sorted bytewise, deduplicated,
+each NUL-terminated, SHA-256 (#4006 item 6). The NUL-terminated recipe keeps
+paths with embedded newlines unambiguous. Consumers compare the retained
+count and digest instead of re-deriving the denominator from text.
+
 The receipt records source-survivor candidates, a set-differenced inventory of
 paths changed only on the swarm side, and a non-dispositive inventory of
 swarm-authority resolution candidates, exact-parent version/changelog

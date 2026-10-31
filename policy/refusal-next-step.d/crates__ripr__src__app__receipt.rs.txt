@@ -1,0 +1,12 @@
+crates/ripr/src/app/receipt.rs|invalid --status {:?}; valid values are: {} ,
+crates/ripr/src/app/receipt.rs|receipt --current-head `{declared_head}` does not match actual repository HEAD `{actual_head}`
+crates/ripr/src/app/receipt.rs|receipt --current-head {current_head} does not match the actual git HEAD at {} ({actual_head}); \
+crates/ripr/src/app/receipt.rs|receipt at {} is malformed: `canonical_gap_id` must be a string
+crates/ripr/src/app/receipt.rs|receipt at {} is malformed: `canonical_gap_id` must not be blank
+crates/ripr/src/app/receipt.rs|receipt at {} is malformed: `verify_status` {status:?} is not a valid value; \              expected one of: {
+crates/ripr/src/app/receipt.rs|receipt at {} is malformed: missing required field `{field}`
+crates/ripr/src/app/receipt.rs|receipt check requires --path <receipt_path> or --gap <canonical_gap_id>
+crates/ripr/src/app/receipt.rs|receipt requires --status ({}) |
+crates/ripr/src/app/receipt.rs|receipt write --current-head requires a 40-character hexadecimal SHA
+crates/ripr/src/app/receipt.rs|receipt write requires --verify-command
+crates/ripr/src/app/receipt.rs|resolve receipt repository root failed: {err}
