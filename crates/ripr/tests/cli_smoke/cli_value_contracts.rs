@@ -105,9 +105,9 @@ fn doctor_profile_help_agrees_with_accepted_values() {
 }
 
 #[test]
-fn doctor_and_gate_value_errors_suggest_without_writes() {
+fn doctor_and_gate_value_errors_suggest_without_writes() -> Result<(), Box<dyn std::error::Error>> {
     let root = super::unique_temp_workspace("value-errors");
-    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&root)?;
     for (args, diagnostic) in [
         (
             vec!["doctor", "--profile", "analysi"],
@@ -145,10 +145,9 @@ fn doctor_and_gate_value_errors_suggest_without_writes() {
         let output = std::process::Command::new(env!("CARGO_BIN_EXE_ripr"))
             .current_dir(&root)
             .args(args)
-            .output()
-            .unwrap();
+            .output()?;
         assert_usage_error(output, diagnostic);
-        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+        assert_eq!(std::fs::read_dir(&root)?.count(), 0);
     }
     for value in [
         "visible-only",
@@ -159,10 +158,10 @@ fn doctor_and_gate_value_errors_suggest_without_writes() {
         let output = std::process::Command::new(env!("CARGO_BIN_EXE_ripr"))
             .current_dir(&root)
             .args(["gate", "evaluate", "--mode", value, "--out"])
-            .output()
-            .unwrap();
+            .output()?;
         assert_usage_error(output, "missing value for --out");
-        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+        assert_eq!(std::fs::read_dir(&root)?.count(), 0);
     }
-    std::fs::remove_dir(root).unwrap();
+    std::fs::remove_dir(root)?;
+    Ok(())
 }
