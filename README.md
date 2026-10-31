@@ -44,7 +44,7 @@ Tests below and above the threshold can pass in both versions. The case that
 separates them is `amount == discount_threshold`, with an assertion on the
 result. ripr calls that missing case or assertion a *discriminator*.
 
-Selected lines from the development [boundary example's checked output](fixtures/boundary_gap/expected/human.txt):
+Selected lines from the [boundary example's checked output](fixtures/boundary_gap/expected/human.txt):
 
 ```text
   Changed behavior: amount >= discount_threshold
@@ -59,11 +59,11 @@ mutants, and it does not prove that a test would fail.
 ## The first useful run
 
 Try it in a Rust repository on a branch with committed changes. This installs
-the checksummed prebuilt 0.10.0 CLI (no Rust toolchain needed; Linux x86-64
+the checksummed prebuilt 0.11.0 CLI (no Rust toolchain needed; Linux x86-64
 shown) and runs ripr on your change:
 
 ```bash
-v=0.10.0; t=x86_64-unknown-linux-gnu; f=ripr-server-v$v-$t.tar.gz
+v=0.11.0; t=x86_64-unknown-linux-gnu; f=ripr-server-v$v-$t.tar.gz
 b=https://github.com/EffortlessMetrics/ripr/releases/download/v$v
 curl -fsSLO $b/$f && curl -fsSLO $b/$f.sha256
 echo "$(cat $f.sha256)  $f" | { sha256sum -c - || shasum -a 256 -c -; } && tar xzf $f \
@@ -84,21 +84,16 @@ files, and ripr says so. A result with no findings or limited evidence is not a
 clean bill of health. If a check cannot complete, run `ripr doctor` (standalone;
 it exits 3 when a check fails).
 
-The example output above and `--worktree` come from the 0.11 development build,
-which is not yet the published release. In it, `ripr check` uses uncommitted
-tracked edits when present, otherwise committed history against the default
-base. On a clean checkout of the base branch, edit a tracked source file, then
-run `ripr check` to inspect that change. Stage a new file with
-`git add -N PATH` to include it. No commit or configuration file is needed for
-this edit-and-check loop. Install it with:
-
-```bash
-cargo install --locked --git https://github.com/EffortlessMetrics/ripr-swarm ripr
-```
+`ripr check` uses uncommitted tracked edits when present, otherwise committed
+history against the default base. On a clean checkout of the base branch, edit
+a tracked source file, then run `ripr check` to inspect that change. Stage a new
+file with `git add -N PATH` to include it. No commit or configuration file is
+needed for this edit-and-check loop. Upgrading from 0.10? See the
+[upgrade guide](docs/INSTALL_CHANNELS.md#upgrading-from-010-to-011).
 
 The [CLI quickstart](docs/QUICKSTART.md#cli-first-hour) covers choosing a base
 and diagnosing setup; [Installation](docs/QUICKSTART.md#installation) has the
-published-versus-development split and build times.
+other install routes and build times.
 
 <a id="start-from-the-surface-you-already-use"></a>
 
@@ -152,8 +147,8 @@ and [terminology](docs/TERMINOLOGY.md) for the precise model and classifications
 
 ## Status
 
-ripr is alpha software. The following describes this development checkout, not
-a promise that every surface is available from the published package.
+ripr 0.11.0 is alpha software. The table gives the support tier of each
+language in this release.
 
 | Language | Current scope |
 | --- | --- |

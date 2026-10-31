@@ -10,9 +10,9 @@ ripr uses static analysis; it does not run mutants or write the test for you.
 
 ## Installation
 
-Fastest, with no Rust toolchain: download the checksummed prebuilt 0.10.0
-archive (about a second on Linux). Pick your platform; the
-[release](https://github.com/EffortlessMetrics/ripr/releases/tag/v0.10.0) has
+Fastest, with no Rust toolchain: download the checksummed prebuilt 0.11.0
+archive. Pick your platform; the
+[release](https://github.com/EffortlessMetrics/ripr/releases/tag/v0.11.0) has
 archives for Linux and macOS on x86-64 and ARM64 and for Windows on x86-64.
 `.github/workflows/first-run-archive.yml` runs exactly these two snippets on
 hosted runners and records the timings (#5311).
@@ -21,7 +21,7 @@ Linux and macOS (Bash or zsh):
 
 <!-- prebuilt-snippet:unix -->
 ```bash
-v=0.10.0; case "$(uname -s)-$(uname -m)" in
+v=0.11.0; case "$(uname -s)-$(uname -m)" in
   Linux-x86_64) t=x86_64-unknown-linux-gnu;; Linux-aarch64) t=aarch64-unknown-linux-gnu;;
   Darwin-x86_64) t=x86_64-apple-darwin;; Darwin-arm64) t=aarch64-apple-darwin;;
   *) echo "no prebuilt archive for this platform; install with cargo install ripr or build from source" >&2; exit 1;; esac
@@ -36,7 +36,7 @@ Windows (PowerShell):
 
 <!-- prebuilt-snippet:powershell -->
 ```powershell
-$v='0.10.0'; $t='x86_64-pc-windows-msvc'; $f="ripr-server-v$v-$t.zip"
+$v='0.11.0'; $t='x86_64-pc-windows-msvc'; $f="ripr-server-v$v-$t.zip"
 $b="https://github.com/EffortlessMetrics/ripr/releases/download/v$v"
 Invoke-WebRequest "$b/$f" -OutFile $f; Invoke-WebRequest "$b/$f.sha256" -OutFile "$f.sha256"
 if ((Get-FileHash $f -Algorithm SHA256).Hash -ne ((Get-Content "$f.sha256") -split '\s+')[0].ToUpper()) { throw 'checksum mismatch' }
@@ -80,42 +80,34 @@ toolchain can still be analyzed. Your own tests still run with that repository's
 `ripr doctor --profile source-build` checks what building ripr needs and names
 an install route if cargo or rustc is missing. It does not recommend `ripr check`.
 
-The latest GitHub release is [0.10.0](https://github.com/EffortlessMetrics/ripr/releases/tag/v0.10.0).
-This guide describes **0.11 development**, including `--worktree`, bounded
-`Start here:` output, and durable repair attempts. Those instructions are not a
-claim that the published package has these features. For a released install,
-use the [versioned README](https://github.com/EffortlessMetrics/ripr/blob/v0.10.0/README.md)
-and that binary's help. The 0.10 CLI resolves its default base by trying
-`origin/HEAD`, then `origin/main`, `origin/master`, `main`, and `master`; use
-`--base REF` with another existing branch or commit when needed.
+The latest GitHub release is [0.11.0](https://github.com/EffortlessMetrics/ripr/releases/tag/v0.11.0).
+This guide describes 0.11, including `--worktree`, bounded `Start here:`
+output, and durable repair attempts. Upgrading from 0.10? See the
+[0.10 to 0.11 upgrade guide](INSTALL_CHANNELS.md#upgrading-from-010-to-011).
+The 0.10 CLI resolves its default base by trying `origin/HEAD`, then
+`origin/main`, `origin/master`, `main`, and `master`; use `--base REF` with
+another existing branch or commit when needed.
 
-To use this guide's development features, install the development build
-(Rust 1.95 or newer):
+To build from source instead (Rust 1.95 or newer), install the published crate:
 
 ```bash
-cargo install --locked --git https://github.com/EffortlessMetrics/ripr-swarm ripr
+cargo install ripr --locked
 ```
 
-From a `ripr-swarm` checkout, `cargo install --path crates/ripr` does the same.
-Either route compiles from source. A cold `cargo build --release` of the
-workspace (thin LTO, 16 codegen units) took about 6 minutes (366 s) on a 4-core
-Linux container in October 2026, against 17 minutes (1037 s) for the earlier
-fat-LTO, single-codegen-unit profile; `cargo install ripr` for 0.10.0 took about
-2 minutes on an earlier run. The packaged 0.11.0 crate carries no profile
-section, so `cargo install ripr --locked` should build in about 4.6 minutes
-(275 s) once 0.11.0 is on crates.io (measured by building the packaged crate with
-`cargo build --release` on the same container, not a download). In that walk,
-`doctor` and `check` each took under 3 seconds on small crates; `ripr pilot`
-takes longer on large repositories. The prebuilt 0.10.0 archive downloads in
-about a second, against about two minutes to compile 0.10.0 from source. There is
-no prebuilt 0.11 archive until 0.11.0 is published.
-`cargo xtask first-run --install-archive 0.10.0` replays the archive route end
+To try changes that have merged since the release, install from the development
+repository (`cargo install --locked --git https://github.com/EffortlessMetrics/ripr-swarm ripr`,
+or `cargo install --path crates/ripr` from a `ripr-swarm` checkout). Either
+route compiles from source. A cold `cargo build --release` of the workspace
+(thin LTO, 16 codegen units) took about 6 minutes (366 s) on a 4-core Linux
+container in October 2026. `doctor` and `check` each took under 3 seconds on
+small crates; `ripr pilot` takes longer on large repositories.
+`cargo xtask first-run --install-archive 0.11.0` replays the archive route end
 to end and times it; the [first-run scoreboard](../benchmarks/dx_scoreboard/README.md)
 tracks the install time so a rise shows.
 
 With [cargo-binstall](https://github.com/cargo-bins/cargo-binstall) installed,
-`cargo binstall ripr` uses the prebuilt 0.11.0 release archive when that asset is
-published, and compiles from source when it is not. Releases before 0.11.0 carry
+`cargo binstall ripr` uses the prebuilt 0.11.0 release archive and compiles from
+source if the asset is unavailable. Releases before 0.11.0 carry
 no binstall metadata. See [Install channels](INSTALL_CHANNELS.md) for what
 each channel serves today.
 
@@ -130,7 +122,7 @@ From a Rust repository with a change to inspect:
 ripr check
 ```
 
-In this development build, `check` uses uncommitted tracked edits when present,
+In 0.11, `check` uses uncommitted tracked edits when present,
 otherwise committed history against the default base. On a clean checkout of
 the base branch, edit a tracked source file and run `ripr check` again. For a new
 file, first use `git add -N PATH` so it enters the tracked diff. See
@@ -142,7 +134,7 @@ standalone — it does not chain with `&&`.) To explore a clean repository witho
 use the separate [repository exploration](#explore-the-repository) path,
 `ripr pilot --root .`.
 
-No `ripr.toml` is required. The development CLI prints a summary and a bounded
+No `ripr.toml` is required. The CLI prints a summary and a bounded
 `Start here:` section with a finding, a no-action result, or the limitation
 preventing useful guidance. Read the changed behavior, related test, and
 suggested next test. No findings does not mean the tests are complete.
@@ -237,7 +229,7 @@ output format, and environment variable.
 ### Check, test, and refresh the same change
 
 Use this loop while developing a change or reviewing a test improvement. It
-uses the installed development CLI described above and the project's own test
+uses the installed CLI described above and the project's own test
 runner; it does not require a repair attempt.
 
 **Keep the production comparison fixed.** From the repository root, choose a
@@ -450,7 +442,7 @@ related test, and missing assertion. Use the available focused-test actions to
 open the test or copy a brief for an agent. You write the test in your editor;
 ripr does not apply it.
 
-The development extension can start a supported attempt with
+The extension can start a supported attempt with
 `ripr: Start Current Repair`. A source-built extension needs a compatible
 server; do not assume an unreleased matching server is downloadable. Follow
 [Editor extension](EDITOR_EXTENSION.md) and [Server provisioning](SERVER_PROVISIONING.md)
@@ -503,7 +495,7 @@ choosing a gate.
 
 ## Agent Or Reviewer First Hour
 
-This is the **development Rust repair path**. Start from a current supported
+This is the **Rust repair path**. Start from a current supported
 route, not an arbitrary finding ID:
 
 ```bash
@@ -653,7 +645,7 @@ It also appears when no repairable PR-local gap was selected; read the printed
 | --- | --- |
 | Cargo installation fails. | Check the first Cargo error and `rustc --version` (Rust 1.95 or newer). Fix the reported build or download problem before retrying. |
 | ripr is installed, but repository setup fails. | Run `ripr doctor` and inspect its individual capability results. |
-| `check` sees no change after an edit. | Uncommitted tracked edits are included by default in this development build. Confirm the resolved base (`--base REF`). Untracked files stay out of the diff until `git add` or `git add -N`. Pass `--committed` to analyze committed history only. A published 0.10 install still needs `--worktree`. |
+| `check` sees no change after an edit. | Uncommitted tracked edits are included by default in 0.11. Confirm the resolved base (`--base REF`). Untracked files stay out of the diff until `git add` or `git add -N`. Pass `--committed` to analyze committed history only. A published 0.10 install still needs `--worktree`. |
 | The wrong base is selected. | Use `--base REF` with an existing reference in this repository. |
 | Configuration is rejected. | Run `ripr config validate` and fix the named setting. Configuration is optional, but an invalid file is not ignored. |
 | Editor diagnostics are missing or stale. | Check `ripr: Show Status`, save the file, and use the extension's refresh action. |
@@ -679,7 +671,7 @@ TypeScript is enabled automatically for TypeScript-shaped repositories without a
 .ts  .tsx  .mts  .cts  .js  .jsx  .mjs  .cjs
 ```
 
-In the development build, these extensions also share the language
+In 0.11, these extensions also share the language
 classification used by repair eligibility, related-test packet labels, and
 targeted reruns. Recognizing a file does not make its findings repairable:
 a complete supported route and sufficient evidence are still required. Read
