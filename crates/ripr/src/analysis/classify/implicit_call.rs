@@ -304,44 +304,59 @@ fn reached_only_through_syntax(
     if direct_rows.is_none() && capped {
         return true;
     }
+    // Large capped relation sets must not scan the full test index once per
+    // row. Preserve `find`'s first-match behavior for duplicate identities.
+    // Small sets retain the cheap linear path without building a map.
+    let lookup = (capped && direct_rows.is_some_and(|rows| rows.len() > 8)).then(|| {
+        let mut lookup = std::collections::HashMap::new();
+        for test in index.tests().iter() {
+            lookup
+                .entry((test.name.as_str(), test.file.as_path(), test.start_line))
+                .or_insert(test);
+        }
+        lookup
+    });
     direct.all(|related| {
-        index
-            .tests()
-            .iter()
-            .find(|test| {
+        let test = if let Some(lookup) = &lookup {
+            lookup
+                .get(&(related.name.as_str(), related.file.as_path(), related.line))
+                .copied()
+        } else {
+            index.tests().iter().find(|test| {
                 test.name == related.name
                     && test.file == related.file
                     && test.start_line == related.line
             })
-            .is_none_or(|test| {
-                if is_ignored(test) {
-                    return true;
-                }
-                let code = crate::analysis::extract::mask_comments_and_strings(&test.body);
-                let scope_is_clear =
-                    |path: &TypePathOwner| type_path_scope_is_clear(test, owner, index, path);
-                // Previously a capped finding was withheld outright. Do not
-                // lift that safety on a same-named call of another receiver.
-                // Preserve the existing uncapped reading.
-                let names_method = calls_method_named(&code, &owner.name)
-                    && (!capped
-                        || path_owner.as_ref().is_some_and(|path| {
-                            path.sole_method
-                                && path.trait_unique
-                                && scope_is_clear(path)
-                                && inherent_receiver_call_resolves(
-                                    test,
-                                    &owner.name,
-                                    &path.self_type,
-                                    Some(index),
-                                    Some(owner),
-                                )
-                        }));
-                !names_method
-                    && !path_owner.as_ref().is_some_and(|path| {
-                        scope_is_clear(path) && calls_by_type_path(&code, &owner.name, path)
-                    })
-            })
+        };
+        test.is_none_or(|test| {
+            if is_ignored(test) {
+                return true;
+            }
+            let code = crate::analysis::extract::mask_comments_and_strings(&test.body);
+            let scope_is_clear =
+                |path: &TypePathOwner| type_path_scope_is_clear(test, owner, index, path);
+            // Previously a capped finding was withheld outright. Do not
+            // lift that safety on a same-named call of another receiver.
+            // Preserve the existing uncapped reading.
+            let names_method = calls_method_named(&code, &owner.name)
+                && (!capped
+                    || path_owner.as_ref().is_some_and(|path| {
+                        path.sole_method
+                            && path.trait_unique
+                            && scope_is_clear(path)
+                            && inherent_receiver_call_resolves(
+                                test,
+                                &owner.name,
+                                &path.self_type,
+                                Some(index),
+                                Some(owner),
+                            )
+                    }));
+            !names_method
+                && !path_owner.as_ref().is_some_and(|path| {
+                    scope_is_clear(path) && calls_by_type_path(&code, &owner.name, path)
+                })
+        })
     })
 }
 
