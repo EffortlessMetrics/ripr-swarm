@@ -68,6 +68,24 @@ binary and runs about 25 commands, so locally a change that touches nothing unde
 and its baseline scans the goldens only (`precommit`). Hosted CI (`ci-policy`,
 `check-pr`), `--full`, `--ripr` and `--ratchet` always run both halves.
 
+## Refusals name a next step
+
+Wording is not the only rule: every error, refusal and abstention says why and
+what to do next (a flag to pass, a command to run, a file to create). The
+`refusal_next_step` integration test enforces a floor:
+
+- a string literal feeding `CommandError`, `Err(..)`, `map_err(..)` or
+  `ok_or(_else)(..)` that names a failure but no action fails the test;
+- a table of real bad invocations of the built binary must exit with its
+  documented code and carry a next step on stderr.
+
+The cue is a clause that starts with an action (`pass ...`, `run ...`, `set
+...`), or a named command, flag or `--help`. It proves the message offers
+something to do, not that it is the right thing. Existing messages without a
+cue are listed per source file in `policy/refusal-next-step.d/`; fixing one
+means deleting its line (`RIPR_PRUNE_REFUSAL_BASELINE=1` drops fixed lines and
+never adds any). Tracking: #11539.
+
 ## Baseline ceilings
 
 `main` still contains some banned terms in default output. They are recorded by

@@ -1,0 +1,1 @@
+crates/ripr/src/output/gate/presentation.rs|failed to render gate decision JSON: {err} content_hash

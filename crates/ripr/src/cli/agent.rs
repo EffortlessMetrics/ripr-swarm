@@ -838,7 +838,7 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
 
     if !json {
         return Err(
-            "agent brief requires --json (the supported output for this subcommand)".to_string(),
+            "agent brief requires --json (the supported output for this subcommand); add --json to the command".to_string(),
         );
     }
 
@@ -924,7 +924,7 @@ pub(super) fn parse_agent_packet_options(args: &[String]) -> Result<AgentPacketO
 
     if !json {
         return Err(
-            "agent packet requires --json (the supported output for this subcommand)".to_string(),
+            "agent packet requires --json (the supported output for this subcommand); add --json to the command".to_string(),
         );
     }
 
@@ -1089,11 +1089,11 @@ pub(super) fn parse_agent_verify_options(args: &[String]) -> Result<AgentVerifyO
         i += 1;
     }
 
-    let before = before.ok_or_else(|| "agent verify requires --before <path>".to_string())?;
-    let after = after.ok_or_else(|| "agent verify requires --after <path>".to_string())?;
+    let before = before.ok_or_else(|| "agent verify requires --before <path>; pass the snapshot saved before the edit (`ripr agent verify --help` shows the loop)".to_string())?;
+    let after = after.ok_or_else(|| "agent verify requires --after <path>; pass the snapshot saved after the edit (`ripr agent verify --help` shows the loop)".to_string())?;
     if !json {
         return Err(
-            "agent verify requires --json (the supported output for this subcommand)".to_string(),
+            "agent verify requires --json (the supported output for this subcommand); add --json to the command".to_string(),
         );
     }
 
@@ -1160,7 +1160,7 @@ pub(super) fn parse_agent_verify_execute_options(
     }
     if !json {
         return Err(
-            "agent verify-execute requires --json (the supported output for this subcommand)"
+            "agent verify-execute requires --json (the supported output for this subcommand); add --json to the command"
                 .to_string(),
         );
     }
@@ -1256,7 +1256,7 @@ pub(super) fn parse_agent_receipt_options(args: &[String]) -> Result<AgentReceip
     let seam_id = seam_id.ok_or_else(|| "agent receipt requires --seam-id".to_string())?;
     if !json {
         return Err(
-            "agent receipt requires --json (the supported output for this subcommand)".to_string(),
+            "agent receipt requires --json (the supported output for this subcommand); add --json to the command".to_string(),
         );
     }
 
@@ -1700,7 +1700,7 @@ mod tests {
         assert_eq!(
             parse_agent_args(&args(&["packet", "--seam-id", "abc"])),
             Err(
-                "agent packet requires --json (the supported output for this subcommand)"
+                "agent packet requires --json (the supported output for this subcommand); add --json to the command"
                     .to_string()
             )
         );
@@ -2405,7 +2405,7 @@ mod tests {
         assert_eq!(
             parse_agent_brief_options(&args(&["--diff", "change.diff"])),
             Err(
-                "agent brief requires --json (the supported output for this subcommand)"
+                "agent brief requires --json (the supported output for this subcommand); add --json to the command"
                     .to_string()
             )
         );
@@ -2538,7 +2538,7 @@ mod tests {
         assert_eq!(
             parse_agent_packet_options(&args(&["--seam-id", "abc"])),
             Err(
-                "agent packet requires --json (the supported output for this subcommand)"
+                "agent packet requires --json (the supported output for this subcommand); add --json to the command"
                     .to_string()
             )
         );
@@ -2742,17 +2742,17 @@ mod tests {
                 "after.json",
             ])),
             Err(
-                "agent verify requires --json (the supported output for this subcommand)"
+                "agent verify requires --json (the supported output for this subcommand); add --json to the command"
                     .to_string()
             )
         );
         assert_eq!(
             parse_agent_verify_options(&args(&["--after", "after.json", "--json"])),
-            Err("agent verify requires --before <path>".to_string())
+            Err("agent verify requires --before <path>; pass the snapshot saved before the edit (`ripr agent verify --help` shows the loop)".to_string())
         );
         assert_eq!(
             parse_agent_verify_options(&args(&["--before", "before.json", "--json"])),
-            Err("agent verify requires --after <path>".to_string())
+            Err("agent verify requires --after <path>; pass the snapshot saved after the edit (`ripr agent verify --help` shows the loop)".to_string())
         );
     }
 
@@ -2864,7 +2864,7 @@ mod tests {
                 "abc",
             ])),
             Err(
-                "agent receipt requires --json (the supported output for this subcommand)"
+                "agent receipt requires --json (the supported output for this subcommand); add --json to the command"
                     .to_string()
             )
         );
