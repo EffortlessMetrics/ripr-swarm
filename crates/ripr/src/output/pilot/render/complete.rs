@@ -30,13 +30,14 @@ use crate::output::python_repair_card::PythonRepairCard;
 
 /// The actual ranking order, stated once and shared by both constants
 /// through the macro so the header and the note cannot drift at compile
-/// time (#9368 item 3): change-touched seams first, then grip class, then
+/// time (#9368 item 3): change-touched seams first, then seams with a repair
+/// route ahead of those without (#11292), then grip class, then
 /// owner rounds — every function's first seam ranks before any function's
 /// second, whatever its evidence (`spread_across_owners`, #5770) — and the
 /// evidence key breaks ties inside each round.
 macro_rules! ranking_order_sentence {
     () => {
-        "Order: change-touched seams first, then grip class, then one pick per owning function per round, then missing-discriminator evidence, related tests, and assertion readiness."
+        "Order: change-touched seams first, then seams ripr can start a repair for, then grip class, then one pick per owning function per round, then missing-discriminator evidence, related tests, and assertion readiness."
     };
 }
 const RANKING_ORDER_SENTENCE: &str = ranking_order_sentence!();
@@ -1693,12 +1694,11 @@ fn terminal_why_line(entry: &ClassifiedSeam) -> String {
     terminal_grip_phrase(entry.class).to_string()
 }
 
-/// Shown when no actionable gap has a repair route (#11292). The remedy is the
-/// real one: the tests such a crate has (out-of-line `mod tests;` files such as
-/// `src/tests.rs`, doctests, tests that only reach private code through the
-/// public API) are not places the repair attempt may edit, so the loop
-/// cannot start; the work is by hand.
-const NO_ROUTABLE_GAP_NOTE: &str = "none of the gaps pilot found has a route to a repair attempt, so ripr will not start one (for example, the tests live in `src/tests.rs`-style `mod tests;` files or doctests, which are not repair targets); add the tests by hand, for example in the crate's existing test module or under `tests/`, then compare with `ripr check` and `ripr outcome`";
+/// Shown when no actionable gap has a repair route (#11292). It names no
+/// cause: why a route is missing varies per gap (no tests at all, `mod tests;`
+/// files, doctests, no exact check named) and the top gap's own reason is
+/// already printed on its `test to add` line. The remedy is by hand.
+const NO_ROUTABLE_GAP_NOTE: &str = "none of the gaps pilot found has a route to a repair attempt, so ripr will not start one (the top gap's own reason is on the `test to add` line above); add the tests by hand, in the crate's test module or under `tests/`, then compare with `ripr check` and `ripr outcome`";
 
 const TERMINAL_NO_REPAIR_TARGET_TEST: &str = "none: `ripr agent repair` has no test file to use for this gap (for example, the only tests are inline `#[cfg(test)]` in a file outside the test paths, or live in another crate), so it will not start a repair here";
 
