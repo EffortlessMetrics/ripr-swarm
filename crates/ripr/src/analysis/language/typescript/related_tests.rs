@@ -5184,7 +5184,10 @@ pub(super) fn walk_body_lexical<'a>(
                 '{' => {
                     scopes.push((idx, usize::MAX));
                     open_scopes.push(scopes.len() - 1);
-                    at_line_start = false;
+                    // A `{` opens a statement position: a declaration that
+                    // follows on the SAME line (`test('x', () => { function f()
+                    // {...} ...`) binds exactly like one on its own line.
+                    at_line_start = true;
                 }
                 '}' => {
                     if interpolation_returns.last() == Some(&open_scopes.len()) {
@@ -5195,7 +5198,13 @@ pub(super) fn walk_body_lexical<'a>(
                     } else if let Some(frame) = open_scopes.pop() {
                         scopes[frame].1 = idx;
                     }
-                    at_line_start = false;
+                    // A `}` ends a statement/block, so a same-line declaration
+                    // after it is a statement start too.
+                    at_line_start = true;
+                }
+                ';' => {
+                    visit(BodyWalkEvent::CodePosition { idx });
+                    at_line_start = true;
                 }
                 _ => {
                     if at_line_start
@@ -5516,6 +5525,46 @@ mod spread_call_boundary_tests {
             let actual = contains_call_name(text, "steps");
             if actual != expected {
                 return Err(format!("{text}: expected call={expected}, got {actual}"));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod same_line_shadow_tests {
+    use super::local_identifier_declared_in_test_body;
+
+    #[test]
+    fn same_line_declarations_shadow_like_multiline_ones() -> Result<(), String> {
+        let shadows = [
+            "() => { function f(n) { return false; } expect(f(100)).toBe(false); }",
+            "() => { let f = (n) => false; expect(f(100)).toBe(false); }",
+            "() => { const f = function(n) { return false; }; expect(f(100)).toBe(false); }",
+            "() => { const a = 1; const f = () => false; expect(f(100)).toBe(false); }",
+            "() => {\n  function f(n) {\n return false; }\n  expect(f(100)).toBe(false);\n}",
+        ];
+        for body in shadows {
+            if !local_identifier_declared_in_test_body(body, "f") {
+                return Err(format!("expected a shadow of f in: {body}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn same_line_declaration_in_another_block_or_name_does_not_shadow() -> Result<(), String> {
+        let clear = [
+            // Declared in a sibling block that closed before the use.
+            "() => { { function f() { return 1; } } expect(f(100)).toBe(true); }",
+            // A different name sharing a prefix.
+            "() => { function fx(n) { return false; } expect(f(100)).toBe(true); }",
+            // The name only appears as a member and in a string.
+            "() => { const o = { f: 1 }; expect(f(100)).toBe(true); const s = 'function f()'; }",
+        ];
+        for body in clear {
+            if local_identifier_declared_in_test_body(body, "f") {
+                return Err(format!("unexpected shadow of f in: {body}"));
             }
         }
         Ok(())
