@@ -276,7 +276,7 @@ reached the caller.
   | `attempt_ended_without_receipt` | 3 | `terminal` | the attempt failed, went stale, or is incomparable |
   | `attempt_completion_unconfirmed` | 3 | `terminal` | finished, but no compliant receipt confirms it |
   | `edit_cage_violation` | 2 | `terminal` | the edit cage rejected the edit |
-  | `attempt_stale` | 2 | `terminal` | HEAD moved after the repair started |
+  | `attempt_stale` | 2 | `terminal` | the cage rejected the edit and HEAD had moved after the repair started |
   | `attempt_incomparable` | 2 | `terminal` | the cage could not compare the files |
 
   A repeated `ripr continue` after a confirmed-complete attempt reports
