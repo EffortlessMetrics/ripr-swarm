@@ -4019,6 +4019,10 @@ tests = [
   "crates/ripr/src/analysis/language/python/trailing_comment_tests.rs::a_changed_token_keeps_its_probe",
   "crates/ripr/src/analysis/language/python/trailing_comment_tests.rs::the_edit_predicate_is_token_exact_and_fails_closed",
   "crates/ripr/src/analysis/language/python/trailing_comment_tests.rs::string_content_lines_are_found_from_the_whole_file",
+  "crates/ripr/src/analysis/language/python/test_local_literal_tests.rs::a_single_assignment_local_places_the_boundary_input",
+  "crates/ripr/src/analysis/language/python/test_local_literal_tests.rs::a_local_that_is_not_the_boundary_value_does_not_credit",
+  "crates/ripr/src/analysis/language/python/test_local_literal_tests.rs::every_other_way_the_name_can_differ_keeps_the_weak_verdict",
+  "crates/ripr/src/analysis/language/python/test_local_literal_tests.rs::a_parameter_of_the_test_is_not_a_local_literal",
 ]
 fixtures = [
   "fixtures/python_dynamic_namespace_dunder_setattr",
@@ -4098,6 +4102,8 @@ fixtures = [
   "fixtures/python_noop_trailing_comment",
   "fixtures/python_noop_trailing_whitespace",
   "fixtures/python_trailing_whitespace_in_multiline_string",
+  "fixtures/python_boundary_local_input_credited",
+  "fixtures/python_boundary_local_rebound_not_credited",
   "fixtures/python_dynamic_dispatch_limit",
   "fixtures/python_decorator_indirection_limit",
   "fixtures/python_functools_memoization_not_indirection",
