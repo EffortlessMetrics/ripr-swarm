@@ -17947,7 +17947,7 @@ fn parse_worker_injection_is_scoped_to_the_arming_analysis() -> Result<(), Strin
     // The other analysis completes while the first analysis's injection remains armed.
     let other = std::thread::spawn(move || run(other_root))
         .join()
-        .map_err(|_| "other analysis panicked".to_string())??;
+        .map_err(|_panic| "other analysis panicked".to_string())??;
     assert!(
         other.limitations.is_empty(),
         "unrelated analysis: {:?}",
