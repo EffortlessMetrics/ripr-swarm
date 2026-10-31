@@ -158,6 +158,11 @@ pub(crate) struct SeamInventory {
     pub(crate) completeness: super::repair_admission::InventoryCompleteness,
     /// The configuration the inventory ran under, carried to the card read.
     pub(crate) config: RiprConfig,
+    /// The raw Rust bytes this inventory run observed over its corpus (#7357),
+    /// as the producer recorded them. Empty when no inventory ran or the
+    /// no-impact fast path read no Rust content; consumers treat empty as
+    /// unobserved, never as agreement.
+    pub(crate) consumed_sources: crate::analysis::consumed_source::ConsumedRustSources,
 }
 
 /// Gather the refresh's seam inventory. This runs inside the refresh attempt
@@ -186,6 +191,7 @@ pub(crate) fn gather_seam_inventory(
         .trim()
         .to_string();
     let mut candidate_seams = Vec::new();
+    let mut consumed_sources = crate::analysis::consumed_source::ConsumedRustSources::default();
     let mut completeness = super::repair_admission::InventoryCompleteness::Complete;
     if !findings.is_empty() {
         // The CLI resolves a repair item against the repo-wide inventory and
@@ -223,6 +229,7 @@ pub(crate) fn gather_seam_inventory(
                     .map(|(_, limit_info)| limit_info),
             ),
         };
+        consumed_sources = scoped.consumed_sources;
         candidate_seams = scoped.classified;
     }
     Ok(SeamInventory {
@@ -230,6 +237,7 @@ pub(crate) fn gather_seam_inventory(
         candidate_seams,
         completeness,
         config: config.clone(),
+        consumed_sources,
     })
 }
 
@@ -248,6 +256,7 @@ pub(crate) fn bind_snapshot_card_producers(
         candidate_seams,
         completeness,
         config,
+        consumed_sources: _,
     } = inventory;
     let mut bindings = Vec::new();
     let mut all_candidate_seams = Vec::new();
@@ -454,13 +463,40 @@ impl WorkspaceSession {
                 "list the current canonical ids with ripr_list_gaps, then retry",
             ));
         };
-        if snapshot.source == super::workspace::RefreshSource::Worktree {
+        // A saved tracked-worktree snapshot serves a card only when its source
+        // custody was established at refresh (#7357): the findings and the seam
+        // inventory consumed the same Rust bytes. Anything else refuses with
+        // the recorded cause instead of pairing two saved states.
+        if snapshot.source == super::workspace::RefreshSource::Worktree
+            && !matches!(
+                snapshot.custody,
+                super::workspace::SourceCustody::Established { .. }
+            )
+        {
+            let reason = match &snapshot.custody {
+                super::workspace::SourceCustody::NotEstablished { reason } => reason.as_str(),
+                _ => "source custody was not recorded for this worktree snapshot",
+            };
             return Err(agent_card_failure(AgentCardError::refusal(
                 AgentCardRefusalKind::IncompleteInventory,
                 format!(
                     "repair card for canonical item {} is unavailable: {}",
                     item.canonical_id,
-                    super::workspace::WORKTREE_CARD_WITHHELD_DETAIL
+                    super::workspace::worktree_card_withheld_detail(reason)
+                ),
+            )));
+        }
+        // A committed snapshot over uncommitted tracked edits withholds cards
+        // for the same reason: the findings read HEAD, the cards live files.
+        if let super::workspace::SourceCustody::CommittedOverUncommitted { reason } =
+            &snapshot.custody
+        {
+            return Err(agent_card_failure(AgentCardError::refusal(
+                AgentCardRefusalKind::IncompleteInventory,
+                format!(
+                    "repair card for canonical item {} is unavailable: {}",
+                    item.canonical_id,
+                    super::workspace::committed_card_withheld_detail(reason)
                 ),
             )));
         }

@@ -43,6 +43,7 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     pub(in crate::analysis) activation: ActivationEvidence,
     pub(in crate::analysis) related_tests: Vec<RelatedTest>,
     pub(in crate::analysis) related_tests_matched_total: usize,
+    pub(in crate::analysis) direct_rows: Vec<RelatedTest>,
     pub(in crate::analysis) reach: StageEvidence,
     pub(in crate::analysis) infect: StageEvidence,
     pub(in crate::analysis) propagate: StageEvidence,
@@ -1178,6 +1179,7 @@ impl ClassifiedProbeEvidence {
             reveal.related,
             reveal.related_total,
         );
+        let direct_rows = reveal.direct_rows;
         // #6692: a clone-field pin (`assert_eq!(recv.clone(), recv)` through
         // a derived `PartialEq`) observes the constructed field, so the
         // missing-field fact below no longer stands for this probe. Only an
@@ -1701,6 +1703,7 @@ impl ClassifiedProbeEvidence {
             activation,
             related_tests,
             related_tests_matched_total: matched_total,
+            direct_rows,
             reach,
             infect,
             propagate,

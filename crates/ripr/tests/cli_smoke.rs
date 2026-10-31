@@ -9463,6 +9463,140 @@ fn rerun_repair_receipt(root: &Path, out: bool) -> Result<Output, std::io::Error
     run_command(env!("CARGO_BIN_EXE_ripr"), Some(root), &args)
 }
 
+/// #11337: the after phase's stderr redirected into a file inside the repo
+/// (even under `target/ripr`) breaks the verdict binding it just recorded. The
+/// refusal names the after-phase route (the verdict is recorded, so a rerun
+/// reports `already finished` and only a new attempt recovers), and the rerun
+/// points at the restart command. The printed status and restart commands are
+/// run; the restart works once the test restores the pre-edit test content.
+#[test]
+fn agent_repair_after_phase_stderr_redirected_into_repo_names_new_attempt_route()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unbuilt_repair_fixture("agent-repair-after-redirect")?;
+    let outside = root.with_file_name(format!(
+        "{}-outside",
+        root.file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("fixture root has no name")?
+    ));
+    std::fs::create_dir_all(&outside)?;
+    // Drop-based cleanup runs when an assertion panics too.
+    let _cleanup = RemoveDirsOnDrop(vec![outside.clone(), root.clone()]);
+    after_phase_redirect_scenario(&root, &outside)
+}
+
+struct RemoveDirsOnDrop(Vec<PathBuf>);
+
+impl Drop for RemoveDirsOnDrop {
+    fn drop(&mut self) {
+        for dir in &self.0 {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+}
+
+fn after_phase_redirect_scenario(
+    root: &Path,
+    outside: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let root = root.to_path_buf();
+    assert_success(&run_repair_phase(
+        &root,
+        &["--seam-id", BOUNDARY_GAP_SEAM_ID],
+        "before",
+    )?);
+    let (attempt_id, _) = sole_repair_attempt(&root)?;
+    let test_file = root.join("tests/pricing.rs");
+    let pre_edit = std::fs::read_to_string(&test_file)?;
+    add_boundary_test(&root)?;
+    let edited = std::fs::read_to_string(&test_file)?;
+
+    let in_repo_err = root.join("target/ripr/cont.txt");
+    let after = run_repair_phase_redirected(
+        &root,
+        &["--attempt", &attempt_id],
+        "after",
+        &outside.join("out.json"),
+        &in_repo_err,
+    )?;
+    let refusal = std::fs::read_to_string(&in_repo_err)?;
+    assert_failure(&after);
+    assert!(
+        refusal.contains("repair attempt after verdict binding is tampered or stale")
+            && refusal.contains("the verdict is already recorded")
+            && refusal.contains("only a new attempt recovers it")
+            && refusal.contains("your repair edit is present")
+            && refusal.contains("check the copy is complete")
+            && refusal.contains("put your copy back")
+            && !refusal.contains("git stash"),
+        "{refusal}"
+    );
+    // Run the printed commands: the status command is bound to this root, and
+    // the restart refuses while the repair edit is present but works once the
+    // test restores the pre-edit test content (as the message tells the user).
+    // Build the argument vectors from the known root and seam instead of
+    // splitting the printed text (a quoted root may contain spaces), and
+    // check the message prints those commands with the rendered root.
+    let root_arg = root.display().to_string();
+    assert!(
+        refusal.contains(&format!("`ripr agent status --root {root_arg}"))
+            && refusal.contains(&format!("`ripr agent repair --root {root_arg}"))
+            && refusal.contains(&format!("--seam-id {BOUNDARY_GAP_SEAM_ID} --phase before`")),
+        "{refusal}"
+    );
+    let status_refs = ["agent", "status", "--root", root_arg.as_str()];
+    let status = run_command(env!("CARGO_BIN_EXE_ripr"), Some(outside), &status_refs)?;
+    assert_success(&status);
+    let status_text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&status.stdout),
+        String::from_utf8_lossy(&status.stderr)
+    );
+    assert!(
+        status_text.contains(&attempt_id) && status_text.contains("ready_to_finish"),
+        "status must report this attempt's state: {status_text}"
+    );
+    let restart_refs = [
+        "agent",
+        "repair",
+        "--root",
+        root_arg.as_str(),
+        "--seam-id",
+        BOUNDARY_GAP_SEAM_ID,
+        "--phase",
+        "before",
+    ];
+    let blocked = run_command(env!("CARGO_BIN_EXE_ripr"), Some(outside), &restart_refs)?;
+    assert_failure(&blocked);
+    let blocked_err = String::from_utf8_lossy(&blocked.stderr);
+    assert!(
+        blocked_err.contains("is configured off for strongly_gripped seams"),
+        "the blocked restart must say why: {blocked_err}"
+    );
+    // The printed guidance: restore the pre-edit test content, restart, then
+    // re-apply the edit. The test does this by writing the saved contents.
+    std::fs::write(&test_file, &pre_edit)?;
+    assert_success(&run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(outside),
+        &restart_refs,
+    )?);
+    std::fs::write(&test_file, &edited)?;
+
+    // Removing the file does not revive the attempt: the rerun reports it
+    // finished and names the restart command.
+    std::fs::remove_file(&in_repo_err)?;
+    let rerun = run_repair_phase(&root, &["--attempt", &attempt_id], "after")?;
+    assert_failure(&rerun);
+    let rerun_err = String::from_utf8_lossy(&rerun.stderr);
+    assert!(
+        rerun_err.contains("already finished") && rerun_err.contains(" --phase before`"),
+        "{rerun_err}"
+    );
+
+    Ok(())
+}
+
 const INCLUDE_RECEIPT_LINE: &str = "ripr: next: Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review.";
 
 /// F15-1/F15-3: the printed loop on a library crate that does not commit
@@ -9567,6 +9701,26 @@ fn agent_repair_admits_a_cargo_lock_first_generated_between_the_phases()
             .contains("repair attempt after verdict binding is tampered or stale"),
         "{}",
         String::from_utf8_lossy(&moved.stderr)
+    );
+    // The refusal names what is known and both routes out, including the
+    // full restart command.
+    let moved_stderr = String::from_utf8_lossy(&moved.stderr);
+    assert!(
+        moved_stderr.contains("the recorded binding no longer matches the attempt")
+            && moved_stderr.contains("`ripr agent status --root ")
+            && moved_stderr.contains("remove the stray file or the later edit (keep a copy first")
+            && moved_stderr.contains("Write command output outside the repository.")
+            && moved_stderr.contains("Restore each file's pre-edit content yourself")
+            && moved_stderr.contains("git restore --staged <file>")
+            && !moved_stderr.contains("git stash")
+            && moved_stderr.contains("`ripr agent repair --root ")
+            && moved_stderr.contains(" --seam-id ")
+            && moved_stderr.contains(" --phase before`"),
+        "{moved_stderr}"
+    );
+    assert!(
+        !moved_stderr.contains("usual cause"),
+        "no unsupported cause claim: {moved_stderr}"
     );
     std::fs::remove_file(root.join("notes.txt"))?;
     assert_success(&rerun_repair_receipt(&root, true)?);
@@ -19770,7 +19924,7 @@ fn check_python_finding_with_repair_card_points_at_the_card() -> Result<(), Stri
     )?;
     assert_eq!(
         line,
-        "  Safe next action: preview-language evidence is advisory; apply the next step below to the suggested test and run its verify command before relying on it"
+        "  Safe next action: preview-language evidence is advisory. Recommended: start the repair with the `ripr agent repair` command under Next; alternative, by hand: apply the next step below to the suggested test and run its verify command before relying on it"
     );
     Ok(())
 }
@@ -20351,6 +20505,79 @@ fn pilot_says_it_withholds_the_seam_on_the_current_change() -> Result<(), String
             "current change: not part of it. Pilot withholds the analyzed seam on a line changed since origin/main: its static evidence is unknown or opaque"
         ),
         "{stdout}"
+    );
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
+/// #5863: the pilot seam budget keeps a changed seam past the cut only when
+/// pilot can recommend it (`keeps_past_budget`, not `touches`). Here the
+/// change touches only `is_large`, whose boundary is discriminated by its
+/// tests, and it sits after the untouched, weakly tested `discounted` seam in
+/// inventory order. With the budget at one, a solved changed seam must not
+/// take the only slot: pilot still recommends `discounted` and reports that
+/// the change does not contain it.
+#[test]
+fn pilot_budget_does_not_keep_a_solved_changed_seam_over_an_actionable_one() -> Result<(), String> {
+    let lib = "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n\npub fn is_large(amount: u32) -> bool {\n    amount > 1000\n}\n";
+    let root = pilot_language_fixture_repo(
+        "pilot-budget-solved-change",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"two_fns\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            ),
+            ("src/lib.rs", lib),
+            (
+                "tests/pricing.rs",
+                "use two_fns::{discounted, is_large};\n\n#[test]\nfn big_orders_get_a_discount() {\n    assert_eq!(discounted(200), 190);\n}\n\n#[test]\nfn the_large_boundary_is_exclusive() {\n    assert_eq!(is_large(1000), false);\n    assert_eq!(is_large(1001), true);\n}\n",
+            ),
+        ],
+        (
+            "src/lib.rs",
+            &lib.replace("amount > 1000", "amount >= 1000"),
+        ),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-budget-solved-change-out");
+    let root_arg = root.display().to_string();
+    let out_arg = out_dir.display().to_string();
+    let run = |budget: &str| -> Result<serde_json::Value, String> {
+        let output = run_ripr_with_env(
+            &["pilot", "--root", &root_arg, "--out", &out_arg],
+            &[("RIPR_PILOT_SEAM_BUDGET", budget)],
+        );
+        assert_success(&output);
+        serde_json::from_str(
+            &std::fs::read_to_string(out_dir.join("pilot-summary.json"))
+                .map_err(|err| format!("read pilot summary json: {err}"))?,
+        )
+        .map_err(|err| format!("parse pilot summary json: {err}"))
+    };
+    // Unbudgeted precondition: the fixture really is "untouched actionable
+    // seam first, changed seam solved".
+    let full = run("0")?;
+    assert_eq!(full["current_change"]["state"], "changed", "{full}");
+    assert_eq!(full["top_actionable_seams"][0]["line"], 2, "{full}");
+    assert_eq!(
+        full["current_change"]["actionable_seams_in_change"], 0,
+        "{full}"
+    );
+    assert_eq!(
+        full["current_change"]["withheld_seams_in_change"], 0,
+        "{full}"
+    );
+    assert_eq!(
+        full["current_change"]["top_recommendation_in_change"], false,
+        "{full}"
+    );
+    // Budget one: the solved changed seam must not displace `discounted`.
+    let budgeted = run("1")?;
+    assert_eq!(budgeted["current_change"]["state"], "changed", "{budgeted}");
+    assert_eq!(budgeted["top_actionable_seams"][0]["line"], 2, "{budgeted}");
+    assert_eq!(
+        budgeted["current_change"]["top_recommendation_in_change"], false,
+        "{budgeted}"
     );
     ignore_remove_dir_all(&root);
     ignore_remove_dir_all(&out_dir);
