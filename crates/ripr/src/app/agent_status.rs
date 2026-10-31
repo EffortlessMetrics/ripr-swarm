@@ -2175,8 +2175,9 @@ fn legacy_next_command(
                 kind: "no_workspace_to_inspect".to_string(),
                 artifact: root_display.to_string(),
                 message: format!(
-                    "{} has no Cargo.toml and no source files to inspect, so there is nothing to repair yet. Run `ripr doctor` to see what is missing, or pass `--root <dir>` for the directory that contains your workspace",
-                    root_display
+                    "{} has no Cargo.toml and no source files to inspect, so there is nothing to repair yet. Run `ripr doctor --root {}` to see what is missing, or pass `--root <dir>` for the directory that contains your workspace",
+                    root_display,
+                    shell_arg(root_display)
                 ),
             });
             return None;
@@ -3860,6 +3861,30 @@ mod tests {
             warning.message
         );
         assert!(warning.message.contains("--root"), "{}", warning.message);
+        // The suggested doctor command is bound to the selected root (a root
+        // with a space is shell-quoted), not left to default to `.`.
+        let spaced = unique_agent_status_test_dir("no workspace spaced");
+        write_file(&spaced.join("README.md"), "hi\n")?;
+        let spaced_display = spaced.to_string_lossy().into_owned();
+        let report = build_agent_status_report(&spaced, &spaced);
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "no_workspace_to_inspect")
+            .ok_or_else(|| "expected a warning for the spaced root".to_string())?;
+        assert!(
+            warning.message.contains(&format!(
+                "`ripr doctor --root {}`",
+                shell_arg(&spaced_display)
+            )),
+            "{}",
+            warning.message
+        );
+        assert!(
+            shell_arg(&spaced_display).starts_with('\''),
+            "the spaced root must be quoted: {spaced_display}"
+        );
+        std::fs::remove_dir_all(&spaced).map_err(|err| format!("remove: {err}"))?;
 
         let cargo = unique_agent_status_test_dir("with-cargo");
         write_file(&cargo.join("Cargo.toml"), "[package]\nname = \"x\"\n")?;
