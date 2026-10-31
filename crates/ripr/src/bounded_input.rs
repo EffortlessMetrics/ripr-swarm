@@ -414,7 +414,7 @@ mod tests {
         });
         let outcome = rx
             .recv_timeout(std::time::Duration::from_secs(10))
-            .map_err(|_| "reading a FIFO as metadata TOML blocked".to_string())?;
+            .map_err(|err| format!("reading a FIFO as metadata TOML blocked: {err}"))?;
         let err = outcome.err().ok_or("a FIFO must be refused")?;
         assert!(err.contains("is not a regular file"), "{err}");
         let err = read_metadata_toml("/dev/zero")
