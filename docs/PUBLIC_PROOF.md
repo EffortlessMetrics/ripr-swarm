@@ -17,7 +17,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 | `metrics/public-proof/mutation-spot-check.json` | Agreement with real mutation runs | 5 repositories at pinned revisions | cargo-mutants 27.1.0 |
 | `metrics/public-proof/first-run-previous.json` | New-developer walk, earlier release | ripr 0.10.0 | 3 crates |
 | `metrics/public-proof/first-run-current.json` | New-developer walk, later build | ripr 0.11.0 (a7a089e) | 3 crates |
-| `metrics/public-proof/agent-as-user.json` | An agent using only ripr's help to close a real test gap | agent-as-user | docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f) |
+| `metrics/public-proof/agent-as-user.json` | An agent using only ripr's help to close a real test gap | agent-as-user | docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch) |
 | `metrics/public-proof/install.json` | Time to install a prebuilt release | install | one cloud container, not hosted CI |
 | `metrics/public-proof/corpus-manifest.json` | Pinned reference corpus of real repositories | corpus 2026-10-04.5 | copy of the pinned manifest |
 
@@ -1039,12 +1039,12 @@ Install, from its own receipt:
 
 ## An agent using only ripr's help
 
-One agent per crate was given a real test gap and only ripr's own help output, and was scored against a mutation answer key. This is one run per crate, not a rate. The last two columns are scripted, not agent behaviour: what the first `ripr check` writes (stdout plus stderr) and how many gaps `--format agent` names on the unfixed gap commit. Evidence: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f).
+One agent per crate was given a real test gap and only ripr's own help output, and was scored against a mutation answer key. This is one run per crate, not a rate. The last two columns are scripted, not agent behaviour: what the first `ripr check` writes (stdout plus stderr) and how many gaps `--format agent` names on the unfixed gap commit. Evidence: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch).
 
-| Crate | Answer-key mutants caught | ripr commands to fix | Tool steps to fix | False weak findings after the fix | Gaps `--format agent` names before the fix | First `check` bytes: human / agent / JSON |
+| Crate | Answer-key mutants caught | ripr commands to fix | Tool steps to fix | False weak findings after the fix | Gap or open lines `--format agent` names before the fix | First `check` bytes: human / agent / JSON |
 | --- | --- | --- | --- | --- | --- | --- |
 | bytesize | 3 | 7 | 8 | 0 | 2 | 3773 / 773 / 57586 |
-| humantime | 3 | 8 | 9 | 4 | 0 | 3797 / 391 / 110467 |
+| humantime | 3 | 8 | 9 | 4 | 4 | 3797 / 391 / 110467 |
 | semver | 3 | 10 | 9 | 1 | 4 | 3155 / 984 / 70880 |
 
 Across the runs: fix success 100.0%, stale re-check cycles n/a, white-box tests written only to satisfy ripr 0.
