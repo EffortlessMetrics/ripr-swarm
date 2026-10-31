@@ -13,6 +13,20 @@ tests = [
   "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_and_worktree_refreshes_do_not_share_custody_or_identity",
   "crates/ripr/src/mcp/worktree_custody_tests.rs::inventory_failure_degrades_to_withheld_custody_and_keeps_findings",
   "crates/ripr/src/mcp/worktree_custody_tests.rs::deleted_tracked_rust_file_keeps_custody_and_card_producers_consistent",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_over_edited_consumed_rust_file_withholds_naming_the_path",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_with_source_moved_after_findings_withholds_the_card",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_with_deleted_consumed_rust_file_withholds",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_over_unrelated_dirty_files_keeps_the_card",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_over_untracked_rust_file_withholds_with_a_commit_remedy",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::withheld_verdict_keeps_an_earlier_finding_level_reason",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_with_no_findings_over_dirty_tree_makes_no_custody_claim",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_over_dirty_rust_helper_outside_the_diff_withholds",
+  "crates/ripr/src/mcp/workspace.rs::tests::committed_refusal_dirty_rust_rule_is_isolated_from_the_agreement",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_with_head_moved_after_findings_withholds_the_card",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::card_request_refuses_after_an_unrefreshed_edit_to_a_bound_file",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::card_request_refuses_after_a_commit_that_moved_a_bound_file",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::card_request_survives_edits_outside_the_evidence_scope_and_restored_bytes",
+  "crates/ripr/src/analysis/consumed_source.rs::tests::first_drift_flags_changed_or_unreadable_captured_paths_only",
 ]
 
 [[extend]]

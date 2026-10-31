@@ -47,7 +47,7 @@ use super::repair_attempt::{
     RepairAttemptInventoryEntry, RepairAttemptManifest, inventory_repair_attempts,
 };
 use super::repair_card::{RepairCardInput, build_repair_card};
-use super::{CheckInput, check_workspace_with_config};
+use super::{CheckInput, check_workspace_with_config, check_workspace_worktree_with_config};
 
 /// Producer failure of the `ripr agent card` handoff, split into the two
 /// machine states an orchestrator branches on (#5007, RIPR-SPEC-0202):
@@ -155,12 +155,15 @@ pub(crate) fn repair_card_for_entry(
     candidate_seams: &[ClassifiedSeam],
 ) -> Result<RepairCardV1, AgentCardError> {
     let eligibility = repair_packet_eligibility(entry);
+    let currentness =
+        evidence_tree_currentness(root, entry).map_err(AgentCardError::operational)?;
     let witness_pack = witness_for_seam(
         root,
         config,
         entry,
         eligibility.readiness.canonical_gap_id.as_deref(),
         candidate_seams,
+        currentness == RepairCardSnapshotCurrentness::AcceptedDirtyDraft,
     )
     .map_err(AgentCardError::witness_unavailable)?;
     let SeamWitnessBinding {
@@ -191,8 +194,6 @@ pub(crate) fn repair_card_for_entry(
     )
     .map_err(AgentCardError::identity_unnameable)?;
     let attempt = latest_attempt_for_seam(root, &seam_id).map_err(AgentCardError::operational)?;
-    let currentness =
-        evidence_tree_currentness(root, entry).map_err(AgentCardError::operational)?;
     let packet_json = card_packet_json(entry);
     // The typed args stay portable (`--root .`); only the display a CLI user
     // pastes binds the selected root (#3999). Display never enters identity.
@@ -426,7 +427,7 @@ fn currentness_comparison_key(path: &str) -> String {
 /// presentation renderer (it percent-encodes `%` and rewrites separators);
 /// feeding a display spelling to git would probe a path that does not exist
 /// and silently read a dirty scope as clean.
-fn evidence_probe_paths(entry: &ClassifiedSeam) -> Vec<std::path::PathBuf> {
+pub(crate) fn evidence_probe_paths(entry: &ClassifiedSeam) -> Vec<std::path::PathBuf> {
     let mut paths: Vec<std::path::PathBuf> = vec![entry.seam.file().to_path_buf()];
     for related in &entry.evidence.related_tests {
         if !paths.contains(&related.file) {
@@ -775,20 +776,27 @@ fn witness_for_seam(
     entry: &ClassifiedSeam,
     canonical_gap_id: Option<&str>,
     candidate_seams: &[ClassifiedSeam],
+    worktree: bool,
 ) -> Result<SeamWitnessBinding, String> {
     // The expensive workspace check only feeds the canonical-gap match; with
     // no gap id the match cannot bind, so skip the analysis entirely.
     if canonical_gap_id.is_none() {
         return Ok(SeamWitnessBinding::default());
     }
-    let output = check_workspace_with_config(
-        CheckInput {
-            root: root.to_path_buf(),
-            git_timeout: Some(super::default_cli_git_timeout()),
-            ..Default::default()
-        },
-        config,
-    )
+    let input = CheckInput {
+        root: root.to_path_buf(),
+        git_timeout: Some(super::default_cli_git_timeout()),
+        ..Default::default()
+    };
+    // #11397: the seam inventory this card was bound from reads the working
+    // tree. When the card's evidence has uncommitted edits, the witness pass
+    // must read them too; a committed-history pass finds "0 findings" for a
+    // gap `ripr check` reports and the card then says it has no witness.
+    let output = if worktree {
+        check_workspace_worktree_with_config(input, config)
+    } else {
+        check_workspace_with_config(input, config)
+    }
     .map_err(|error| format!("agent card could not run the witness analysis: {error}"))?;
     Ok(SeamWitnessBinding {
         witness: witness_from_findings(&output.findings, entry, canonical_gap_id, candidate_seams),

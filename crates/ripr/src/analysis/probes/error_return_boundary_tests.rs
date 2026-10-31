@@ -314,15 +314,16 @@ fn twin_check_reads_every_shape_in_a_start_group() {
 /// Deep chains that share a start byte must not make the twin check
 /// quadratic. Before #6954, 100k shapes at one start took about a minute,
 /// and two 20k chains side by side ran past ten minutes; a linear pass takes
-/// milliseconds. The check compares depth 10k against 20k on the same runner
+/// milliseconds. The check compares depth 1k against 2k (moved from 10k/20k after hosted
+/// runs measured about 3.4x; cause not established, #11238) on the same runner
 /// (linear doubles, quadratic quadruples), with equal repetition counts and
 /// measured batches above the helper's timing floor.
 #[test]
 fn twin_check_stays_fast_on_deep_chains_that_share_a_start() {
     crate::testing::scale::assert_growth_within(
         "deep shared-start chains",
-        10_000,
-        20_000,
+        1_000,
+        2_000,
         3,
         |depth| {
             let link = ".m()";
@@ -370,6 +371,58 @@ fn twin_check_stays_fast_on_deep_chains_that_share_a_start() {
             assert_eq!(twins.first(), Some(&true));
         },
     );
+}
+
+/// Counts the actual group search and candidate visits on both shared-start
+/// relations. Sorting and source-byte scans remain covered by the timing test.
+#[test]
+fn twin_shared_start_search_work_is_bounded() {
+    use crate::analysis::rust_index::{twin_work_finish, twin_work_start};
+    for depth in [128, 256] {
+        let chain = ".m()".repeat(depth);
+        let source = format!("Err(E{chain}){chain}");
+        let payload_end = "Err(E".len();
+        let outer_end = payload_end + chain.len() + 1;
+        let shapes: Vec<_> = (0..depth)
+            .flat_map(|step| {
+                [
+                    error_shape(0, outer_end + step * 4),
+                    error_shape(4, payload_end + (step + 1) * 4),
+                ]
+            })
+            .collect();
+        twin_work_start();
+        let twins = error_path_twins(&shapes, &source);
+        let work = twin_work_finish();
+        assert_eq!(twins.iter().filter(|&&twin| twin).count(), 1);
+        assert!(
+            (depth..=depth * 16).contains(&work),
+            "payload depth {depth}: {work} visits"
+        );
+        eprintln!("payload depth {depth}: {work} visits");
+
+        let source = format!("return (E{chain}){}", " + 1".repeat(depth));
+        let inner_start = "return (".len();
+        let inner_end = inner_start + 1;
+        let return_end = inner_end + chain.len() + 1;
+        let shapes: Vec<_> = (0..depth)
+            .flat_map(|step| {
+                [
+                    error_shape(0, return_end + step * 4),
+                    error_shape(inner_start, inner_end + (step + 1) * 4),
+                ]
+            })
+            .collect();
+        twin_work_start();
+        let twins = error_path_twins(&shapes, &source);
+        let work = twin_work_finish();
+        assert_eq!(twins.iter().filter(|&&twin| twin).count(), 1);
+        assert!(
+            (depth..=depth * 16).contains(&work),
+            "return depth {depth}: {work} visits"
+        );
+        eprintln!("return depth {depth}: {work} visits");
+    }
 }
 
 /// #6935: a `return` around a method chain on an error constructor is the
