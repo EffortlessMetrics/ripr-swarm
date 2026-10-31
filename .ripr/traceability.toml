@@ -4940,6 +4940,13 @@ tests = [
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_matches_smoke_fixture",
   "crates/ripr/tests/cli_smoke.rs::init_ci_github_dry_run_prints_config_and_workflow_without_writing",
   "crates/ripr/tests/cli_smoke.rs::init_ci_github_writes_non_blocking_report_workflow",
+  "crates/ripr/src/cli/commands/init.rs::tests::generated_workflow_installs_the_checksummed_release_binary",
+  "crates/ripr/tests/generated_review_workflow.rs::generated_install_failure_explanation_is_consistent_on_every_host",
+  "crates/ripr/tests/generated_review_workflow.rs::generated_install_windows_zip_route_replays_securely",
+  "crates/ripr/tests/generated_review_workflow.rs::generated_install_unix_routes_keep_their_target_mapping_and_fail_closed",
+  "xtask/src/policy/distribution/tests.rs::generated_install_step_mapping_matches_distribution_contract",
+  "xtask/src/policy/distribution/tests.rs::generated_install_step_archive_and_executable_follow_the_contract",
+  "xtask/src/policy/distribution/tests.rs::windows_x64_identity_is_contract_owned_and_mapped",
   "xtask/src/main.rs::tests::dogfood_generated_ci_cockpit_receipts_are_checked",
 ]
 fixtures = [
