@@ -1,0 +1,1 @@
+crates/ripr/tests/fuzz_panic_freedom.rs|Command::new|1|11439-fuzz-panic-freedom|Fuzz harness runs the built ripr binary on hostile inputs in a child process so aborts and hangs are contained; stopped at a deadline, output discarded, no shell or network.
