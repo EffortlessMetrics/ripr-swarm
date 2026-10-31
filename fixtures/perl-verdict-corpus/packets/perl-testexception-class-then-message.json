@@ -158,7 +158,7 @@
         "start_column": 0,
         "start_line": 6
       },
-      "strength": "weak_broad",
+      "strength": "strong_exact",
       "target_owner_id": null,
       "test_id": "test:t/forms.t"
     },
@@ -178,7 +178,7 @@
         "start_column": 0,
         "start_line": 8
       },
-      "strength": "weak_broad",
+      "strength": "strong_exact",
       "target_owner_id": null,
       "test_id": "test:t/forms.t"
     },
@@ -198,7 +198,7 @@
         "start_column": 0,
         "start_line": 10
       },
-      "strength": "weak_broad",
+      "strength": "strong_exact",
       "target_owner_id": "owner:lib/Forms.pm:sub:Forms::class_then_message:418-549",
       "test_id": "test:t/forms.t"
     },
@@ -490,7 +490,8 @@
       "verify_commands",
       "limitations",
       "provenance",
-      "test_facts"
+      "test_facts",
+      "oracle_matcher_grading"
     ],
     "name": "perl-lsp",
     "version": "0.17.0"
