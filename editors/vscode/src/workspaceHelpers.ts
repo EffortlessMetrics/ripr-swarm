@@ -139,8 +139,10 @@ async function folderRootHasAnalyzableProjectMarker(
 ): Promise<boolean> {
   for (const marker of ANALYZABLE_PROJECT_MARKERS) {
     try {
-      await vscode.workspace.fs.stat(vscode.Uri.joinPath(folderUri, marker));
-      return true;
+      const stat = await vscode.workspace.fs.stat(vscode.Uri.joinPath(folderUri, marker));
+      if ((stat.type & vscode.FileType.File) !== 0) {
+        return true;
+      }
     } catch {
       // missing or unreadable marker
     }

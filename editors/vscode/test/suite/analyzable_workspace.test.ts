@@ -4,7 +4,6 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import {
-  PYTHON_PROJECT_MARKERS,
   workspaceHasAnalyzableProject,
 } from '../../src/workspaceHelpers';
 import {
@@ -59,7 +58,7 @@ suite('Analyzable workspace markers', () => {
   test('a Python project marker at the folder root is analyzable', async () => {
     const root = tempWorkspaceDir('ripr-analyzable-python-');
     try {
-      await writeMarker(root, PYTHON_PROJECT_MARKERS[0]);
+      await writeMarker(root, 'pyproject.toml');
       assert.strictEqual(await workspaceHasAnalyzableProject([workspaceFolder(root)]), true);
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
@@ -71,6 +70,16 @@ suite('Analyzable workspace markers', () => {
     try {
       fs.mkdirSync(path.join(root, 'src'), { recursive: true });
       fs.writeFileSync(path.join(root, 'src', 'index.ts'), 'export const x = 1;\n');
+      assert.strictEqual(await workspaceHasAnalyzableProject([workspaceFolder(root)]), false);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test('a directory named like a Python marker is not analyzable', async () => {
+    const root = tempWorkspaceDir('ripr-analyzable-marker-dir-');
+    try {
+      fs.mkdirSync(path.join(root, 'pyproject.toml'), { recursive: true });
       assert.strictEqual(await workspaceHasAnalyzableProject([workspaceFolder(root)]), false);
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
