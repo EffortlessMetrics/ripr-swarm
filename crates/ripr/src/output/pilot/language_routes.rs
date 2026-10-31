@@ -119,6 +119,9 @@ pub(crate) struct PilotLanguageRoutes {
     /// result. Empty renders nothing anywhere.
     pub(crate) declined_rust_files: Vec<crate::analysis::DeclinedRustFile>,
     rust_seams_present: bool,
+    /// True only when `with_unanalyzed` was told the repository has no Rust
+    /// source and pilot found no Rust seam. Default false keeps Rust wording.
+    no_rust_source: bool,
 }
 
 impl PilotLanguageRoutes {
@@ -159,6 +162,7 @@ impl PilotLanguageRoutes {
             rust_excluded_file_count: None,
             declined_rust_files: Vec::new(),
             rust_seams_present,
+            no_rust_source: false,
         }
     }
 
@@ -179,8 +183,14 @@ impl PilotLanguageRoutes {
         {
             self.state = PilotLanguageRoutesState::UnanalyzedOnly;
         }
+        self.no_rust_source = !self.rust_seams_present && !rust_source_present;
         self.unanalyzed = unanalyzed;
         self
+    }
+
+    /// The repository has no Rust source, so Rust-scan wording does not apply.
+    pub(crate) fn no_rust_source(&self) -> bool {
+        self.no_rust_source
     }
 
     /// Record Rust files excluded by `[languages] enabled` (#5205). Pass

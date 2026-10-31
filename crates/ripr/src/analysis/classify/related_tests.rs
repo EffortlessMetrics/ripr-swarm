@@ -33,6 +33,7 @@ mod equality_dispatch;
 mod implicit_dispatch;
 mod iterator_dispatch;
 mod operator_dispatch;
+mod path_arg;
 mod std_receiver;
 pub(in crate::analysis::classify) use operator_dispatch::stringified_ranges;
 
@@ -899,6 +900,30 @@ fn find_related_tests_with_candidates<'a>(
         }
     }
     let owner_name_is_unique = workspace_complete && same_name_function_count == 1;
+    // #11199: an inherent `Type::method` path value a helper runs. Established
+    // once per probe; it needs the owner's same-named definitions to prove no
+    // other impl or type could be the target of the path.
+    let path_arg_owner = owner_fn.and_then(|owner| {
+        if owner_name.is_empty()
+            || !matches!(owner.item.container, FunctionContainer::Inherent { .. })
+        {
+            return None;
+        }
+        let same_name: Vec<&FunctionSummary> = match candidates {
+            RelatedTestCandidates::Indexed(candidate_index) => candidate_index
+                .function_indices(owner_name)
+                .iter()
+                .map(|&function_index| index.functions().at(function_index))
+                .collect(),
+            #[cfg(test)]
+            RelatedTestCandidates::FullScan => index
+                .functions()
+                .iter()
+                .filter(|function| function.name == owner_name)
+                .collect(),
+        };
+        path_arg::PathArgOwner::new(owner, &same_name)
+    });
     // #8999: a user `PartialEq::eq`/`ne` a comparison macro runs unnamed.
     let equality_owner = owner_fn.and_then(|owner| equality_dispatch::equality_owner(owner, index));
     // #9567: a user operator, `Iterator::next` or `Drop::drop` that syntax runs
@@ -1529,12 +1554,22 @@ fn find_related_tests_with_candidates<'a>(
             && helper_chain.is_some_and(|chain| {
                 super::helper_transfer::test_calls_method_entry(index, test, chain)
             });
+        // #11199: the test hands `Type::method` to a same-file helper that
+        // provably runs the argument. In-file by construction, so it rides no
+        // cross-package bypass; a property-only call never reaches here.
+        let hands_owner_path_to_helper = !calls_owner
+            && !calls_helper_entry
+            && !property_only_owner_call
+            && path_arg_owner
+                .as_ref()
+                .is_some_and(|owner| owner.test_hands_path_to_invoking_helper(test, index));
         let helper_chain_reaches = !calls_owner
             && !assertions_reference_owner
             && (calls_helper_entry
                 || calls_method_entry
                 || dispatches_to_helper_fmt_entry
-                || calls_helper_method_entry);
+                || calls_helper_method_entry
+                || hands_owner_path_to_helper);
 
         if !calls_owner
             && !equality_asserts_owner
@@ -5587,33 +5622,15 @@ fn owner_impl_is_root_item_of(index: &RustIndex, owner: &FunctionSummary, file: 
     if owner.file != file {
         return false;
     }
-    let Some(tree) = index.source_syntax.get(index, file).and_then(|s| s.tree()) else {
+    let Some(snapshot) = index.source_syntax.get(index, file) else {
         return false;
     };
-    let syntax = tree.syntax();
-    let source = syntax.text().to_string();
-    let line_of = |offset: usize| {
-        1 + source.as_bytes()[..offset.min(source.len())]
-            .iter()
-            .filter(|byte| **byte == b'\n')
-            .count()
-    };
-    syntax
-        .descendants()
-        .filter_map(ast::Impl::cast)
-        .any(|item| {
-            let range = item.syntax().text_range();
-            let (start, end) = (
-                line_of(u32::from(range.start()) as usize),
-                line_of(u32::from(range.end()) as usize),
-            );
-            start <= owner.start_line
-                && owner.start_line <= end
-                && item
-                    .syntax()
-                    .parent()
-                    .is_some_and(|parent| ast::SourceFile::can_cast(parent.kind()))
-        })
+    // The ranges are read once per file snapshot. Rebuilding them per probe
+    // copied the whole file text and recounted its newlines for every `impl`.
+    snapshot
+        .root_impl_lines()
+        .iter()
+        .any(|&(start, end)| start <= owner.start_line && owner.start_line <= end)
 }
 
 /// Whether `file` has a `use` that names `ty` or a glob other than `self::*` /

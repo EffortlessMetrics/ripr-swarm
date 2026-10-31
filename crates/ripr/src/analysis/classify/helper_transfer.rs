@@ -2576,10 +2576,148 @@ pub(crate) fn chain_forwards_return_to_observed_hops(
         return true;
     }
     let hops = observed_hops(chain, related_tests);
-    hops_forward_owner_result_with(owner_name, hops, true)
-        && owner_and_hops_return_builtin_integers(owner_name, hops, index)
-        && *identity.get_or_init(|| {
+    let identity_bound = || {
+        *identity.get_or_init(|| {
             free_call_chain_is_identity_bound(owner_name, chain, related_tests, index)
+        })
+    };
+    (hops_forward_owner_result_with(owner_name, hops, true)
+        && owner_and_hops_return_builtin_integers(owner_name, hops, index)
+        && identity_bound())
+        || (hops_carry_owner_string_data(owner_name, hops, index) && identity_bound())
+}
+
+/// Every observed hop hands its callee's std string or scalar value on as
+/// injective data (#11248): the caller is one tail expression that carries the
+/// callee through `format!` with only plain `{}` placeholders,
+/// `to_string`/`to_owned`/`clone`, `+ "lit"` or a `Some`/`Ok`/`String::from`
+/// wrapper ([`caller_carries_callee_as_data`]), so an exact value at the entry
+/// moves with the owner's. A width, precision or `{:?}` spec can truncate or
+/// re-render the value, and a user type's `Display`/`From` can decide on it, so
+/// both fail closed. The owner and every hop caller declare a std data return
+/// type no workspace type or import shadows.
+fn hops_carry_owner_string_data(owner_name: &str, hops: &[HelperHop], index: &RustIndex) -> bool {
+    let std_data_return = |function: &FunctionSummary| {
+        super::owner_pin::declared_return_type(&function.body).is_some_and(|returned| {
+            let returned = returned.trim();
+            returns_std_scalar_or_string(&function.body)
+                && super::owner_pin::workspace_type_name_count(returned, index) == 0
+                && !index.files().get(&function.file).is_some_and(|file| {
+                    let masked =
+                        crate::analysis::language::mask_rust_comments_and_strings(&file.source);
+                    let scopes = scopes_enclosing_fn(&masked, function.start_line, &function.name);
+                    file_use_binds_name(&file.source, returned, scopes.as_deref())
+                })
+        })
+    };
+    let owners: Vec<&FunctionSummary> = index
+        .functions()
+        .iter()
+        .filter(|function| function.name == owner_name)
+        .collect();
+    let [owner] = owners.as_slice() else {
+        return false;
+    };
+    // A value the owner builds with a macro (`concat!("ri", "pr")`) is not
+    // expanded here, so what the exact value at the entry pins stays unknown.
+    let owner_builds_with_macro = || {
+        crate::analysis::syntax::parse_clean_source_file(&owner.body).is_none_or(|parse| {
+            use ra_ap_syntax::{AstNode, SyntaxKind};
+            parse
+                .tree()
+                .syntax()
+                .descendants()
+                .any(|node| node.kind() == SyntaxKind::MACRO_CALL)
+        })
+    };
+    !hops.is_empty()
+        && std_data_return(owner)
+        && !owner_builds_with_macro()
+        && hops.iter().enumerate().all(|(step, hop)| {
+            let callee = match step.checked_sub(1) {
+                None => *owner,
+                Some(below) => match hops.get(below) {
+                    Some(lower) => &lower.caller,
+                    None => return false,
+                },
+            };
+            !hop.through_macro
+                && !hop.module_qualified
+                && hop.receiver.is_none()
+                && !hop.transparent_macros_rebound
+                && hop.caller.source_role == crate::analysis::facts::FunctionSourceRole::Production
+                && std_data_return(&hop.caller)
+                && caller_carries_callee_as_data(&hop.caller.body, &callee.name)
+                && format_placeholders_are_plain(&hop.caller.body)
+                && carried_value_stays_injective(&hop.caller.body, &callee.name)
+                && !caller_rebinds_parameter(&hop.caller.body, &callee.name)
+                && !caller_invokes_opaque_macro(&hop.caller.body, hop.transparent_macros_rebound)
+        })
+}
+
+/// The callee's value reaches the caller's result through nothing that can
+/// collapse it (#11248): the callee is named once (so it is never nested in
+/// its own arguments), a macro argument's `&` is a unary borrow, never a
+/// bitwise and, and a `.name` is one of the value-preserving methods, not
+/// a caller parameter that happens to share a method's name.
+fn carried_value_stays_injective(body: &str, callee: &str) -> bool {
+    use ra_ap_syntax::{AstNode, SyntaxKind};
+    const METHODS: [&str; 3] = ["to_string", "to_owned", "clone"];
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(body) else {
+        return false;
+    };
+    let tokens: Vec<_> = parse
+        .tree()
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| token.kind() != SyntaxKind::WHITESPACE)
+        .collect();
+    // The signature names the function, not a call of the callee.
+    let body_start = tokens
+        .iter()
+        .position(|token| token.kind() == SyntaxKind::L_CURLY)
+        .unwrap_or(0);
+    let body_tokens = &tokens[body_start..];
+    let callee_mentions = body_tokens
+        .iter()
+        .filter(|token| token.kind() == SyntaxKind::IDENT && token.text() == callee)
+        .count();
+    callee_mentions == 1
+        && body_tokens.iter().enumerate().all(|(at, token)| {
+            let previous = at.checked_sub(1).map(|before| body_tokens[before].kind());
+            match token.kind() {
+                SyntaxKind::AMP => matches!(
+                    previous,
+                    None | Some(SyntaxKind::L_PAREN | SyntaxKind::COMMA | SyntaxKind::L_CURLY)
+                ),
+                SyntaxKind::IDENT if previous == Some(SyntaxKind::DOT) => {
+                    METHODS.contains(&token.text())
+                }
+                _ => true,
+            }
+        })
+}
+
+/// Every string literal in `body` uses only the plain `{}` placeholder (and
+/// `{{`/`}}` escapes): no width, precision, fill, radix or `{:?}` spec that
+/// could drop or re-render part of an interpolated value.
+fn format_placeholders_are_plain(body: &str) -> bool {
+    use ra_ap_syntax::{AstNode, SyntaxKind};
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(body) else {
+        return false;
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| token.kind() == SyntaxKind::STRING)
+        .all(|token| {
+            let text = token.text().replace("{{", "").replace("}}", "");
+            text.replace("{}", "")
+                .chars()
+                .all(|ch| ch != '{' && ch != '}')
         })
 }
 
@@ -5224,6 +5362,49 @@ mod tests {
         )]));
         assert!(!helper_only_reach(&[(&near, RelationReason::SameTestFile)]));
         assert!(!helper_only_reach(&[]));
+    }
+
+    /// #11248: the carried value must reach the result unmerged.
+    #[test]
+    fn carried_value_must_stay_injective() {
+        let ok = |body: &str| carried_value_stays_injective(body, "base");
+        assert!(ok("fn f() -> String {\n    format!(\"{}\", base())\n}"));
+        assert!(ok("fn f() -> String {\n    base().to_string()\n}"));
+        assert!(ok(
+            "fn f(x: &str) -> String {\n    format!(\"{}{}\", &x, base())\n}"
+        ));
+        // A bitwise and collapses the value; so does nesting the callee.
+        assert!(!ok(
+            "fn f() -> String {\n    format!(\"{}\", base() & 1)\n}"
+        ));
+        assert!(!ok(
+            "fn f(mask: u32) -> String {\n    format!(\"{}\", base() & mask)\n}"
+        ));
+        assert!(!ok("fn f() -> String {\n    base(base(1)).to_string()\n}"));
+        // A parameter named like a method is not that method.
+        assert!(!ok(
+            "fn f(len: usize) -> String {\n    format!(\"{}{}\", len, base().len())\n}"
+        ));
+    }
+
+    /// #11248: only a plain `{}` placeholder keeps the whole interpolated value.
+    #[test]
+    fn format_data_forwarding_needs_plain_placeholders() {
+        let body = |literal: &str| {
+            format!("fn banner() -> String {{\n    format!({literal}, title())\n}}")
+        };
+        assert!(format_placeholders_are_plain(&body("\"[{}]\"")));
+        assert!(format_placeholders_are_plain(&body("\"{{}} {}\"")));
+        for spec in [
+            "\"{:.1}\"",
+            "\"{:?}\"",
+            "\"{:>5}\"",
+            "\"{:x}\"",
+            "\"{0}\"",
+            "\"{name}\"",
+        ] {
+            assert!(!format_placeholders_are_plain(&body(spec)), "{spec}");
+        }
     }
 
     #[test]
