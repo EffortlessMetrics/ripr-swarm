@@ -365,10 +365,21 @@ fn dead_let_bound_comparison(probe: &Probe, owner_fn: Option<&FunctionSummary>) 
     if expression.is_empty() || !expression.contains(&comparison) {
         return None;
     }
+    // The same comparison text elsewhere on the line (an `if` condition ahead
+    // of the `let`) may be the changed probe, so the line must hold it once.
+    let line = owner.body.lines().nth(offset)?;
+    if code(line).matches(comparison.as_str()).count() != 1 {
+        return None;
+    }
     match statement.pat()? {
         ast::Pat::WildcardPat(_) => Some("_".to_string()),
         ast::Pat::IdentPat(ident) if ident.ref_token().is_none() && ident.at_token().is_none() => {
             let name = ident.name()?.text().to_string();
+            // `r#flag` is read as plain `flag`, a spelling the scan below
+            // would not count.
+            if name.starts_with("r#") {
+                return None;
+            }
             let bytes = owner.body.as_bytes();
             let uses = owner
                 .body
@@ -2999,6 +3010,10 @@ mod tests {
                 "n == 5",
             ),
             (
+                "pub fn score(n: u32) -> u32 {\n    let _ = n == 5;\n    7\n}",
+                "n == 5",
+            ),
+            (
                 "pub fn score(n: u32) -> u32 {\n    let _flag = n == 5;\n    let _other = 1;\n    7\n}",
                 "n == 5",
             ),
@@ -3032,6 +3047,11 @@ mod tests {
             "pub fn score(n: u32) -> String {\n    let flag = n == 5;\n    format!(\"{flag}\")\n}",
             // The initializer is not the bare comparison.
             "pub fn score(n: u32) -> u32 {\n    let _g = guard(n == 5);\n    7\n}",
+            // A raw identifier is read as its plain spelling.
+            "pub fn score(n: u32) -> u32 {\n    let r#flag = n == 5;\n    if flag { 7 } else { 8 }\n}",
+            // The same comparison also guards the line, so the probe may be
+            // the `if` condition rather than the `let`.
+            "pub fn score(n: u32) -> u32 {\n    if n == 5 { let _t = n == 5; return 1; }\n    7\n}",
         ] {
             let owner = tail_owner(body);
             let probe = probe(ProbeFamily::Predicate, "n == 5", 2);
