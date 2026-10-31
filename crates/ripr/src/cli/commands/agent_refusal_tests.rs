@@ -326,8 +326,8 @@ fn before_phase_refuses_dirty_production_premise_before_the_seam_inventory() -> 
             Err(error) => require_contains(
                 &error,
                 &[
-                    "differ from HEAD: src/lib.rs",
-                    "No workflow was prepared and no repair attempt was started.",
+                    "Uncommitted: src/lib.rs",
+                    "Nothing was started.",
                 ],
             ),
             Ok(()) => Err("a dirty production premise must refuse the before phase".to_string()),
@@ -355,8 +355,8 @@ fn gap_premise_exercise(root: &Path) -> Result<(), String> {
         Err(error) => require_contains(
             &error,
             &[
-                "differ from HEAD: src/lib.rs",
-                "No workflow was prepared and no repair attempt was started.",
+                "Uncommitted: src/lib.rs",
+                "Nothing was started.",
             ],
         ),
         Ok(()) => Err("a dirty production premise must refuse the gap start".to_string()),
