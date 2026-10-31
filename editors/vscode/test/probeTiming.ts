@@ -231,6 +231,16 @@ function median(values: number[]): number | null {
   return sorted.length % 2 ? sorted[mid] : Math.round(((sorted[mid - 1] + sorted[mid]) / 2) * 10) / 10;
 }
 
+/**
+ * Why the report cannot be trusted as a measurement, or null. Every measured arm
+ * needs at least one valid trial: a wrapped probe that never succeeded must not
+ * pass just because the direct target did.
+ */
+export function instrumentFailure(summary: Partial<Record<ArmName, ArmSummary>>): string | null {
+  const empty = (Object.keys(summary) as ArmName[]).filter((arm) => summary[arm]?.valid === 0);
+  return empty.length > 0 ? `no valid trial for: ${empty.join(', ')}` : null;
+}
+
 export async function runTimingInstrument(options: TimingOptions): Promise<TimingReport> {
   const rounds = options.rounds ?? 5;
   const deadlineMs = options.deadlineMs ?? 60000;
@@ -291,8 +301,9 @@ if (require.main === module) {
   runTimingInstrument({ server }).then((report) => {
     fs.writeFileSync(outPath, JSON.stringify(report, null, 2));
     console.log(JSON.stringify({ summary: report.summary, identities: report.identities }, null, 2));
-    if (report.summary.ripr_version?.valid === 0) {
-      console.error('instrument invalid: no successful direct ripr --version trial');
+    const failure = instrumentFailure(report.summary);
+    if (failure) {
+      console.error(`instrument invalid: ${failure}`);
       process.exit(1);
     }
   });

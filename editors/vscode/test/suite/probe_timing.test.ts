@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { runTimingInstrument } from '../probeTiming';
+import { instrumentFailure, runTimingInstrument } from '../probeTiming';
 
 // #9631: the timing instrument must never turn an unsuccessful target into a
 // valid timing row. POSIX shell fakes stand in for ripr; the Windows wrapper
@@ -68,5 +68,26 @@ suite('Probe timing instrument', () => {
     const report = await runTimingInstrument({ server: path.join(dir, 'absent'), rounds: 1 });
     assert.ok(report.rows.every((row) => !row.valid && row.spawn_error !== null));
     assert.ok(report.identities.target?.error);
+  });
+
+  test('the failure gate trips when any measured arm has no valid trial, not only the direct target', () => {
+    const arm = (valid: number) => ({
+      valid,
+      invalid: 5 - valid,
+      min_ms: null,
+      median_ms: null,
+      max_ms: null,
+      first_round_valid_ms: [],
+      later_rounds_median_ms: null
+    });
+    assert.strictEqual(instrumentFailure({ ripr_version: arm(5), extension_probe: arm(5) }), null);
+    assert.strictEqual(
+      instrumentFailure({ ripr_version: arm(5), extension_probe: arm(0) }),
+      'no valid trial for: extension_probe'
+    );
+    assert.strictEqual(
+      instrumentFailure({ ripr_version: arm(0), powershell_empty: arm(0), extension_probe: arm(5) }),
+      'no valid trial for: ripr_version, powershell_empty'
+    );
   });
 });
