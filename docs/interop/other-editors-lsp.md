@@ -108,7 +108,13 @@ for the snippet below. Older versions can use `vim.lsp.start` with the same
 
 ## Helix
 
-Read from Helix master source on 2026-09-28; not run in a Helix binary.
+Read from Helix master source on 2026-09-28, then run in Helix 25.07.1 on Linux on
+2026-10-31 against a development build of `ripr` (0.11.0, 4753a6d): `hx --health rust`
+lists `ripr` as resolved, the `[language-server.ripr.config.ripr]` table is
+answered to `workspace/configuration`, the first-open pending diagnostic is
+followed by a pushed `weakly_exposed` diagnostic, and
+`:lsp-workspace-command ripr.refresh` reaches the server. This is a setup
+check, not a reviewed journey receipt.
 
 Add to `~/.config/helix/languages.toml` (or `.helix/languages.toml` in the
 repository):
@@ -159,8 +165,10 @@ vim.lsp.enable("ripr")
 any root, which would stop with `root_unavailable`. Refresh with the
 `exec_cmd` call in the recipe's step 4.
 
-Neovim v0.12.5 does not redraw refreshed pull diagnostics in an open buffer on
-its own; the recipe's
+Neovim v0.12.5 and v0.12.6 (checked 2026-10-31 on Linux with the snippet above,
+`ripr.refresh` through `exec_cmd`) do not show refreshed pull diagnostics in an
+open buffer on their own, though one manual `textDocument/diagnostic` request
+afterwards returns the `weakly_exposed` finding; the recipe's
 [measured compatibility limit](neovim-lsp.md#measured-compatibility-limit)
 records the run and the upstream fix. On that release, re-open the buffer or
 request document diagnostics after a refresh.
