@@ -2522,20 +2522,16 @@ mod tests {
             "{dirty}"
         );
 
-        assert!(
-            dirty.contains("Then start the recommended repair:"),
-            "{dirty}"
-        );
+        // #10709: this Rust finding is not a Python/TypeScript preview gap, so
+        // its Safe next action does not name the start and nothing is labelled
+        // recommended; the start keeps its plain "Then start the repair:".
+        assert!(dirty.contains("Then start the repair:"), "{dirty}");
+        assert!(!dirty.contains("Recommended"), "{dirty}");
 
         let clean = render_with(Vec::new());
         assert!(clean.contains(start), "{clean}");
         assert!(!clean.contains("git commit"), "{clean}");
-        // #10709: exactly one start is labelled as the recommended route.
-        assert_eq!(
-            clean.matches("Recommended follow-through").count(),
-            1,
-            "{clean}"
-        );
+        assert!(!clean.contains("Recommended"), "{clean}");
     }
 
     /// #10709: when `Next` prints a gap-bound start, the Safe next action
@@ -2574,7 +2570,7 @@ mod tests {
         );
         assert!(
             with_route.contains(
-                "Recommended follow-through (start the repair):\n  ripr agent repair --gap-id gap:typescript:typescript_preview:abcd1234 --base HEAD~1 --phase before"
+                "Recommended follow-through (start the repair):\n  ripr agent repair --gap-id gap:typescript:typescript_preview:abcd1234 --base 'HEAD~1' --phase before"
             ),
             "{with_route}"
         );

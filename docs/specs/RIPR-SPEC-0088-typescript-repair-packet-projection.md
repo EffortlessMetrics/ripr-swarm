@@ -369,10 +369,14 @@ accepts, three surfaces agree on one recommended follow-through:
   with the by-hand test edit as the single alternative. When the start is
   withheld (static limit, incomplete run, validator refusal), no route is
   recommended and the by-hand `Safe next action` stands alone.
-- `ripr first-pr`'s top-gap `Safe next action` and `selected.
-  recommended_repair_command` name the same command, built only when the
-  ledger record parses as a `GapRecord` and passes
-  `validate_agent_gap_record_packet`; otherwise the field is absent.
+- `ripr first-pr`'s top-gap `Safe next action` and
+  `selected.recommended_repair_command` name the same command spelling,
+  built only when the ledger record parses as a `GapRecord` and passes
+  `validate_agent_gap_record_packet` (which includes a current candidate);
+  otherwise the field is absent. first-pr judges the ledger record only: it
+  cannot see the working tree or the producing run, so it does not decide
+  whether the start is currently available, and the start still refuses a
+  dirty tree or an incomplete run.
 - A TypeScript preview card whose `repair_packet_ready` is `true` no longer
   states "This card is advisory and is not a repair packet."; it says the card
   is an advisory summary and the complete packet is projected separately. A

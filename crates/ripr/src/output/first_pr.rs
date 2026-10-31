@@ -2470,10 +2470,11 @@ fn top_gap_from_record(
 /// `validate_agent_gap_record_packet`; nothing is decided here. A record that
 /// does not parse, has no canonical gap id, is another language, or fails the
 /// validator yields `None` and keeps the by-hand route alone. The command is
-/// spelled as `check` spells it (`--base`, `--root`, `--phase before`). Unlike
-/// `check`, first-pr does not inspect the working tree or the producing run's
-/// analysis outcome, so the start itself still refuses a dirty tree or an
-/// incomplete run; the rendered text says to commit first.
+/// spelled as `check` spells it (`--base`, `--root`, `--phase before`). This
+/// judges the ledger record only. Unlike `check`, first-pr cannot see the
+/// working tree or the producing run's analysis outcome, so it does not decide
+/// whether the start is currently available: the start itself still refuses a
+/// dirty tree or an incomplete run, and the rendered text says to commit first.
 fn recommended_gap_repair_command(record: &Value, options: &FirstPrOptions) -> Option<String> {
     use crate::output::agent_seam_packets::validate_agent_gap_record_packet;
     use crate::output::gap_decision_ledger::GapRecord;
@@ -7971,6 +7972,8 @@ mod tests {
         record["projection_eligibility"] = json!({
             "agent_packet": {"eligible": true, "reason": "bounded_repair_route"}
         });
+        // The shared projection check also requires a current candidate.
+        record["source_currentness"] = json!("candidate_current");
         let options = FirstPrOptions {
             base: "HEAD~1".to_string(),
             ..FirstPrOptions::default()
