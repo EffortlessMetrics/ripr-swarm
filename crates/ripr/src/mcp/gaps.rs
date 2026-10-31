@@ -404,7 +404,8 @@ impl GapItem {
         let advisory_next_step = guidance
             .get("recommended_next_step")
             .and_then(Value::as_str);
-        let refresh_recovery = "call ripr_refresh and re-read this limitation against the new snapshot";
+        let refresh_recovery =
+            "call ripr_refresh and re-read this limitation against the new snapshot";
         let limitation = if let Some(kind) = self.static_limit {
             let kind_token = serde_json::to_value(kind)
                 .ok()
@@ -429,7 +430,9 @@ impl GapItem {
             } else if let Some(step) = advisory_next_step {
                 format!("{step}; then {refresh_recovery}")
             } else {
-                format!("read the item's evidence with ripr_get_gap, make the test change it implies, then {refresh_recovery}")
+                format!(
+                    "read the item's evidence with ripr_get_gap, make the test change it implies, then {refresh_recovery}"
+                )
             };
             json!({
                 "kind": code,
