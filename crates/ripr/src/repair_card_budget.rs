@@ -73,7 +73,7 @@ pub(crate) fn apply_repair_card_budget(
 
     if sources.len() > budget.max_detail_items {
         return Err(format!(
-            "{} detail families exceed the reviewed item bound {}",
+            "{} detail families exceed the reviewed item bound {}; report this as a ripr bug with the command that produced it",
             sources.len(),
             budget.max_detail_items
         ));
@@ -142,7 +142,7 @@ pub(crate) fn apply_repair_card_budget(
     let selected_bytes = normalized_len(&measured)?;
     if selected_bytes > budget.max_serialized_bytes {
         return Err(format!(
-            "wire card needs {selected_bytes} normalized bytes, exceeding the reviewed byte bound {}",
+            "wire card needs {selected_bytes} normalized bytes, exceeding the reviewed byte bound {}; report this as a ripr bug with the command that produced it",
             budget.max_serialized_bytes
         ));
     }
@@ -221,7 +221,7 @@ fn normalize_source(source: &RepairCardDetailSource) -> Result<(String, usize), 
     if unavailable {
         if source.route.is_some() {
             return Err(format!(
-                "unavailable family {} must not carry a retrieval route",
+                "unavailable family {} must not carry a retrieval route; report this as a ripr bug with the command that produced it",
                 family_key(source.family)
             ));
         }
@@ -232,20 +232,20 @@ fn normalize_source(source: &RepairCardDetailSource) -> Result<(String, usize), 
             .trim();
         if reason.is_empty() {
             return Err(format!(
-                "unavailable family {} must record an exact unavailable reason",
+                "unavailable family {} must record an exact unavailable reason; report this as a ripr bug with the command that produced it",
                 family_key(source.family)
             ));
         }
         if !source.content.is_null() {
             return Err(format!(
-                "unavailable family {} must not claim content",
+                "unavailable family {} must not claim content; report this as a ripr bug with the command that produced it",
                 family_key(source.family)
             ));
         }
     } else {
         if source.unavailable_reason.is_some() {
             return Err(format!(
-                "family {} with state {:?} must not carry an unavailable reason",
+                "family {} with state {:?} must not carry an unavailable reason; report this as a ripr bug with the command that produced it",
                 family_key(source.family),
                 source.state
             ));
@@ -253,7 +253,7 @@ fn normalize_source(source: &RepairCardDetailSource) -> Result<(String, usize), 
         let route = source.route.as_deref().unwrap_or_default().trim();
         if route.is_empty() {
             return Err(format!(
-                "family {} with state {:?} must carry a stable retrieval route",
+                "family {} with state {:?} must carry a stable retrieval route; report this as a ripr bug with the command that produced it",
                 family_key(source.family),
                 source.state
             ));
@@ -262,14 +262,14 @@ fn normalize_source(source: &RepairCardDetailSource) -> Result<(String, usize), 
         let expects_content = source.state != RepairCardDetailState::Missing;
         if expects_content && source.content.is_null() {
             return Err(format!(
-                "family {} with state {:?} must carry authority-owned content",
+                "family {} with state {:?} must carry authority-owned content; report this as a ripr bug with the command that produced it",
                 family_key(source.family),
                 source.state
             ));
         }
         if !expects_content && !source.content.is_null() {
             return Err(format!(
-                "missing family {} must not claim content",
+                "missing family {} must not claim content; report this as a ripr bug with the command that produced it",
                 family_key(source.family)
             ));
         }
@@ -298,7 +298,7 @@ fn reject_root_specific_route(family: RepairCardDetailFamily, route: &str) -> Re
             && matches!(route.as_bytes().get(2), Some(b'/') | Some(b'\\'));
     if root_specific {
         return Err(format!(
-            "family {} route is a root-specific spelling, not a portable route",
+            "family {} route is a root-specific spelling, not a portable route; report this as a ripr bug with the command that produced it",
             family_key(family)
         ));
     }
