@@ -742,9 +742,15 @@
       "claim_id": "distribution-rehearsal-wheel",
       "owner_issue": 9274,
       "materiality": "release_required",
-      "resolution": "pending",
-      "candidate_effect": "Wheelhouse (never run) and wheel rehearsal has not run.",
-      "next": "Run the wheelhouse and wheel rehearsal; stage the Windows packaged run for the candidate ref. Owner: Wheel and Windows packaged rehearsal thread."
+      "resolution": "final_candidate_execution_only",
+      "candidate_effect": "Python wheelhouse qualification (never run before) and read-only wheel qualification both passed on main 9f5ee1cc (0.11.0); the same workflows run against the frozen candidate under #2769.",
+      "execution_refs": [
+        "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/41199282855",
+        "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/41199285392",
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/9274",
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/2769"
+      ],
+      "non_claim": "The release does not claim the wheel or wheelhouse for the final candidate until the same workflows run against the frozen candidate ref; wheel-versus-archive binary identity (#4624) and the Windows packaged run are separate rows."
     },
     {
       "claim_id": "candidate-harness",
