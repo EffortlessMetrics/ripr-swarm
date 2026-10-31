@@ -136,7 +136,7 @@ pub(crate) fn ensure_path_within_root(
         .any(|part| matches!(part, std::path::Component::ParentDir))
     {
         return Err(format!(
-            "refusing to write {what}: {} contains a `..` component",
+            "refusing to write {what}: {} contains a `..` component; remove it and pass a path inside the workspace",
             target.display()
         ));
     }
