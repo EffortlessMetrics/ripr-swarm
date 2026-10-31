@@ -126,7 +126,7 @@ run reads as success (#9368).
 "#;
 pub(super) const OUTCOME_HELP: &str = r#"Compare before/after static evidence after adding a focused test.
 
-Usage: ripr outcome --before PATH --after PATH [--format md|json] [--out PATH]
+Usage: ripr outcome --before PATH --after PATH [--format md|markdown|text|json] [--out PATH]
 
 Options:
   --before PATH    Static snapshot before the focused test: repo exposure or check JSON.
