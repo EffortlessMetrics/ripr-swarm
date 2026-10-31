@@ -59,7 +59,9 @@ impl Check {
     }
 
     fn names_any_comparison(&self) -> bool {
-        self.missing().iter().any(|missing| missing.contains(" == "))
+        self.missing()
+            .iter()
+            .any(|missing| missing.contains(" == "))
     }
 }
 

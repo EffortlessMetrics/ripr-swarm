@@ -780,7 +780,11 @@ fn single_token_substitutions_keep_their_label() {
         ("  if (x > y) {", "  if (x > z) {", "x == z"),
         ("  if (a > 1 && ok) {", "  if (a >= 1 && ok) {", "a == 1"),
         ("  if (a > 1 && ok) {", "  if (a > 2 && ok) {", "a == 2"),
-        ("  if (ok && a > 1 && b < 2) {", "  if (ok && a > 1 && b <= 2) {", "b == 2"),
+        (
+            "  if (ok && a > 1 && b < 2) {",
+            "  if (ok && a > 1 && b <= 2) {",
+            "b == 2",
+        ),
     ] {
         assert_eq!(
             boundary_label(Some(old), new).as_deref(),
