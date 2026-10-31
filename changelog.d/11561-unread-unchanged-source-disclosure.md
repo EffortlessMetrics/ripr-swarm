@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr check` on a diff that depends on Python or TypeScript no longer reports "analysis complete" (and no longer aborts a debug build on the language-reconcile assertion) when an unchanged source file in the workspace is unreadable, such as a non-UTF-8 file: the result now carries a typed `language_scope_unsupported` limitation naming how many files were not read, while a diff in another language is unaffected (#11561).

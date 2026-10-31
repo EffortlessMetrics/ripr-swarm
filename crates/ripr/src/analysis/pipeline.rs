@@ -1667,7 +1667,14 @@ fn run_pipeline_for_diff_text_with_language_config(
                     .any(|file| route(&file.path) == Some(adapter_language));
                 let keeps_limitations =
                     reads_only_supplied_evidence || diff_touches_language || produced_findings;
-                diff_outcomes.extend(LanguageAnalysisOutcomeV1::from_diff_result(
+                // Unreadable (for example non-UTF-8) unchanged sources are
+                // counted in `skipped_files`, never in `result.limitations`.
+                // The language child turns that count into a partial
+                // denominator, so a diff that depends on this language must
+                // carry the matching top-level limitation; a diff that
+                // cannot depend on it keeps the child out of scope.
+                let unread_sources = result.skipped_files > 0;
+                let outcomes = LanguageAnalysisOutcomeV1::from_diff_result(
                     *language,
                     &result,
                     &if keeps_limitations {
@@ -1677,7 +1684,18 @@ fn run_pipeline_for_diff_text_with_language_config(
                     },
                     &routed_outcome_labels(preview_changed_files),
                     &scope_label,
-                ));
+                );
+                diff_outcomes.extend(if unread_sources && !keeps_limitations {
+                    outcomes
+                        .iter()
+                        .map(LanguageAnalysisOutcomeV1::without_scope)
+                        .collect()
+                } else {
+                    outcomes
+                });
+                if unread_sources && keeps_limitations {
+                    limitations.push(unread_sources_limitation(*language, result.skipped_files)?);
+                }
                 if repeat_typescript_pass {
                     continue;
                 }
@@ -3189,6 +3207,28 @@ fn rebase_finding_paths_to_repository(
     for finding in &mut result.findings {
         finding.probe.location.file = rebase(&finding.probe.location.file);
     }
+}
+
+/// The analysis-outcome limitation for unchanged source files a preview
+/// adapter could not read (non-UTF-8, permissions): tests living in them are
+/// not part of the evidence, so the result cannot claim a complete denominator.
+fn unread_sources_limitation(
+    language: LanguageId,
+    unread: usize,
+) -> Result<AnalysisLimitation, String> {
+    AnalysisLimitation::new(
+        AnalysisLimitationKind::LanguageScopeUnsupported,
+        AnalysisStage::LanguageAdapter,
+        AnalysisRecovery::new(
+            AnalysisRecoveryKind::Retry,
+            "Restore read access to the files or re-encode them as UTF-8, then re-run the analysis.",
+        )?,
+    )
+    .with_affected_items(unread as u64)?
+    .with_detail(format!(
+        "{unread} {} source file(s) could not be read (permissions or non-UTF-8 encoding) and are not part of the evidence; a test in them is not considered.",
+        language.as_str()
+    ))
 }
 
 /// The analysis-outcome limitation for a `limited_partial_scope` run. Its
