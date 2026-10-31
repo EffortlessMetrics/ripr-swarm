@@ -363,8 +363,8 @@ pub(super) fn humanize_route_evidence(evidence: &str) -> String {
 }
 
 fn ineligibility_label(reason: RepairPacketIneligibility) -> &'static str {
-    // Sentence-style labels: these render directly in "none repair-eligible
-    // (...)" lists and refusal notes, so an internal-enum spelling reads as a
+    // Sentence-style labels: these render directly in "none is ready for an
+    // automatic repair (...)" lists and refusal notes, so an internal-enum spelling reads as a
     // bug to the user (#9604).
     match reason {
         RepairPacketIneligibility::ClassNotHeadlineEligible => {
@@ -463,14 +463,16 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
         Some(ChangeScope::TouchesNoSeam(_)) => true,
         None => false,
     };
-    let gripped_siblings: Vec<&crate::analysis::ClassifiedSeam> = classified
+    // The shared gate runs once per seam; the wrapper match and the loop below
+    // both read these results.
+    let refusals: Vec<_> = classified
         .iter()
-        .filter(|entry| {
-            matches!(
-                repair_refusal(entry, policy, Some(root)),
-                Some((RefusalKind::AlreadyGripped, _))
-            )
-        })
+        .map(|entry| (entry, repair_refusal(entry, policy, Some(root))))
+        .collect();
+    let gripped_siblings: Vec<&crate::analysis::ClassifiedSeam> = refusals
+        .iter()
+        .filter(|(_, refusal)| matches!(refusal, Some((RefusalKind::AlreadyGripped, _))))
+        .map(|(entry, _)| *entry)
         .collect();
     // For each gripped refusal: whether the spot is outside the change, and why.
     let mut gripped_reasons: Vec<(bool, String)> = Vec::new();
@@ -480,9 +482,9 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
     // Distinct refusal reasons in first-seen order, each with the first seam
     // that has it and how many seams share it.
     let mut blocked_groups: Vec<(String, String, usize)> = Vec::new();
-    for entry in &classified {
+    for (entry, refusal) in &refusals {
         let off = off_change(entry);
-        match repair_refusal(entry, policy, Some(root)) {
+        match refusal {
             None if off => eligible_off_change += 1,
             None => {
                 eligible_ids.push(entry.seam.id().as_str().to_string());
@@ -493,28 +495,28 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
             Some((RefusalKind::AlreadyGripped, reason)) => {
                 gripped_reasons.push((off, format!("{}: {reason}", seam_label(entry))));
             }
+            // A `return Err(V)` wrapper of an error variant that is already
+            // gripped is the same behavior, not an open check of its own. It
+            // is classified before any off-change blocked counting.
+            Some(_) if wraps_gripped_error_variant(entry, &gripped_siblings) => {
+                gripped_reasons.push((
+                    off,
+                    format!("{}: {GRIPPED_WRAPPER_REASON}", seam_label(entry)),
+                ));
+            }
             // A seam the diff does not touch says nothing about the change
             // (#11111 group 4): its "not ready" or "no gap here" reason is
             // counted, not listed beside the verdict on the changed seam.
-            Some(_) if off_change(entry) => blocked_off_change += 1,
+            Some(_) if off => blocked_off_change += 1,
             // Name the shared gate's own reason among the no-eligible
             // reasons so the limitation is diagnosable, with the seam it
             // is about, so two reasons about two seams never read as two
-            // verdicts on one change. A `return Err(V)` wrapper of an error
-            // variant that is already gripped is the same behavior, not an
-            // open check of its own, so it is classified before counting.
+            // verdicts on one change.
             Some((_, reason)) => {
-                if wraps_gripped_error_variant(entry, &gripped_siblings) {
-                    gripped_reasons.push((
-                        off,
-                        format!("{}: {GRIPPED_WRAPPER_REASON}", seam_label(entry)),
-                    ));
-                } else {
-                    open_on_change += 1;
-                    match blocked_groups.iter_mut().find(|group| group.0 == reason) {
-                        Some(group) => group.2 += 1,
-                        None => blocked_groups.push((reason, seam_label(entry), 1)),
-                    }
+                open_on_change += 1;
+                match blocked_groups.iter_mut().find(|group| group.0 == *reason) {
+                    Some(group) => group.2 += 1,
+                    None => blocked_groups.push((reason.clone(), seam_label(entry), 1)),
                 }
             }
         }
@@ -748,7 +750,7 @@ fn normalized_relative_path(path: &Path) -> String {
     text.strip_prefix("./").unwrap_or(&text).to_string()
 }
 
-/// `seam src/lib.rs:6 `acc``: where a refused seam is and its own code, so a
+/// `the code at src/lib.rs:6 `acc``: where a refused seam is and its own code, so a
 /// whole-seam reason is never read as the verdict on another line.
 fn seam_label(entry: &crate::analysis::ClassifiedSeam) -> String {
     let file = crate::analysis::stable_path_text(entry.seam.file());

@@ -339,7 +339,7 @@ fn exposed_boolean_tail_is_gripped_for_both_check_and_repair() -> Result<(), Str
         "repair must not start on a change check reads as exposed:\n{repair}"
     );
     assert!(
-        repair.contains("already grip it") && !repair.contains("repair_ready=true"),
+        repair.contains("already grip it") && !repair.contains("Ready to repair."),
         "repair must agree that no gap remains:\n{repair}"
     );
     Ok(())
@@ -519,9 +519,13 @@ fn exposed_error_variant_change_repair_says_only_gripped() -> Result<(), String>
         "precondition, check reads the working-tree change as exposed:\n{check}"
     );
     let repair = refused_repair(&repo)?;
+    // Since #11277 the changed return-value seam is graded gripped directly, so
+    // the wrapper wording is not expected here (the wrapper match is pinned by
+    // `wrapper_match_is_exact_and_never_looser`). This still discriminates the
+    // all-gripped-only presentation: the unscoped control above has not-ready
+    // spots, the scoped output must not.
     assert!(
         repair.contains("already grip it")
-            && repair.contains("restates behavior the existing tests already grip")
             && !repair.contains("missing evidence")
             && !repair.contains("tests/ layout")
             && !repair.contains("repair route not ready"),
@@ -624,6 +628,20 @@ fn assert_limited_change_is_not_called_gripped(
         repair.contains(gripped_note),
         "the gripped spot must be counted, not cited:\n{repair}"
     );
+    // Location-specific: a spot counted as outside the change must not also
+    // read as a different check on it, and the reverse.
+    let on_change = gripped_note.contains("different check");
+    assert_eq!(
+        repair.contains("different check than the one still open"),
+        on_change,
+        "the gripped spot must be counted only where it sits:\n{repair}"
+    );
+    assert_eq!(
+        repair.contains("outside your changed lines")
+            && repair.contains("already noticed by existing tests and not listed"),
+        !on_change,
+        "the gripped spot must be counted only where it sits:\n{repair}"
+    );
     assert_plain(&repair);
     Ok(())
 }
@@ -635,7 +653,7 @@ fn limited_loop_change_is_not_called_gripped_by_repair() -> Result<(), String> {
         LOOP_NEW,
         LOOP_TEST,
         "Changed behavior: for i in 1..n",
-        "is already noticed by existing tests and not listed",
+        "outside your changed lines is already noticed by existing tests and not listed",
     )
 }
 
@@ -646,7 +664,7 @@ fn limited_builder_change_is_not_called_gripped_by_repair() -> Result<(), String
         BUILDER_NEW,
         BUILDER_TEST,
         "Changed behavior: self.timeout = t * 2",
-        "are already noticed by existing tests and not listed",
+        "outside your changed lines are already noticed by existing tests and not listed",
     )
 }
 
@@ -668,7 +686,7 @@ fn limited_generic_change_is_not_called_gripped_by_repair() -> Result<(), String
         GENERIC_NEW,
         GENERIC_TEST,
         "Changed behavior: *x >= best",
-        "is already noticed by existing tests and not listed",
+        "outside your changed lines is already noticed by existing tests and not listed",
     )
 }
 
@@ -756,6 +774,67 @@ fn whole_repository_refusals_name_the_seam_each_reason_is_about() -> Result<(), 
     assert!(
         !repair.contains("outside your changed lines"),
         "without a diff nothing is scoped:\n{repair}"
+    );
+    Ok(())
+}
+
+const EXACT_ERR_OLD: &str = "#[derive(Debug, PartialEq)]\npub enum E {\n    Neg,\n    Bad,\n}\n\npub fn fail(x: i32) -> Result<i32, E> {\n    return Err(E::Neg);\n}\n";
+const EXACT_ERR_NEW: &str = "#[derive(Debug, PartialEq)]\npub enum E {\n    Neg,\n    Bad,\n}\n\npub fn fail(x: i32) -> Result<i32, E> {\n    return Err(E::Bad);\n}\n";
+
+/// A changed `return Err(E::Bad)` whose test pins exactly `E::Bad`: the
+/// error-variant seam is strongly gripped and check reads the change as
+/// exposed, so repair must grade the return-value seam over the same
+/// expression as gripped too, not as "missing evidence" (#11111,
+/// error-variant-strong).
+#[test]
+fn exact_err_variant_pin_grips_the_return_value_seam_for_check_and_repair() -> Result<(), String> {
+    let repo = Repo::create(
+        EXACT_ERR_OLD,
+        EXACT_ERR_NEW,
+        "use ar::{fail, E};\n\n#[test]\nfn fails_bad() {\n    assert!(matches!(fail(1), Err(E::Bad)));\n}\n",
+    )?;
+    let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
+    assert!(
+        check.contains("Static exposure: exposed")
+            && check.contains("no repair start offered: nothing to repair here"),
+        "precondition, check reads the change as exposed:\n{check}"
+    );
+    let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    assert_eq!(
+        code,
+        Some(3),
+        "repair must not start on a change check reads as exposed:\n{repair}"
+    );
+    assert!(
+        repair.contains(
+            "the code at src/lib.rs:8 `return Err(E::Bad)`: existing tests already grip it"
+        ) && !repair.contains("missing evidence")
+            && !repair.contains("repair_ready=true"),
+        "repair must agree that no gap remains on the return-value seam:\n{repair}"
+    );
+    Ok(())
+}
+
+/// Discriminating negative: a pin on the sibling variant does not grip the
+/// changed `Err(E::Bad)`, so the return-value seam keeps its missing-evidence
+/// refusal exactly as before and no start is added.
+#[test]
+fn sibling_err_variant_pin_leaves_the_return_value_seam_weak() -> Result<(), String> {
+    let repo = Repo::create(
+        EXACT_ERR_OLD,
+        EXACT_ERR_NEW,
+        "use ar::{fail, E};\n\n#[test]\nfn fails_neg() {\n    assert!(matches!(fail(1), Err(E::Neg)));\n}\n",
+    )?;
+    let (_, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    assert!(
+        repair.contains(
+            "the code at src/lib.rs:8 `return Err(E::Bad)`: repair route not ready (missing evidence: a test assertion that checks the changed return value)"
+        ),
+        "a sibling-variant pin must not grip the changed return value:\n{repair}"
+    );
+    assert!(
+        !repair.contains("repair_ready=true"),
+        "no start is added:\n{repair}"
     );
     Ok(())
 }

@@ -43,27 +43,55 @@ pub(super) fn join_language_labels(labels: &[String]) -> String {
     }
 }
 
-/// The no-evidence hover, aware of whether any analysis has committed and
-/// which languages the workspace analyzes (#9604 finding 32). Before the
-/// first successful analysis the generic "run the CLI" pointer names the
-/// wrong recovery — the `ripr.refresh` editor command is the route that
-/// populates this server — and the language list comes from the session
+/// What the server knows when a hover has no evidence to show.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum NoEvidenceState {
+    /// No snapshot has committed and no analysis attempt is queued or running.
+    NotAnalyzed,
+    /// No snapshot has committed yet and an attempt is queued or running.
+    Analyzing,
+    /// A snapshot committed and its producer outcome is `no_changed_lines`:
+    /// the diff against the base has no changed lines.
+    AnalyzedNoChanges { base: Option<String> },
+    /// A snapshot committed; this position simply has no evidence.
+    Analyzed,
+}
+
+/// The no-evidence hover, aware of whether any analysis has committed or is
+/// running, and which languages the workspace analyzes (#9604 finding 32).
+/// Before the first successful analysis the generic "run the CLI" pointer
+/// names the wrong recovery, and while an attempt is running no action is
+/// needed at all (#11253). The language list comes from the session
 /// configuration instead of a hardcoded `Rust`.
-pub(super) fn hover_response_without_evidence(has_analyzed: bool, languages: &[String]) -> Hover {
-    // The analyzed, Rust-only workspace renders the exact legacy text so the
-    // long-standing generic hover stays byte-identical.
-    if has_analyzed && languages.len() == 1 && languages[0] == "Rust" {
-        return markdown_hover(HOVER_TEXT.to_string());
-    }
+pub(super) fn hover_response_without_evidence(
+    state: NoEvidenceState,
+    languages: &[String],
+) -> Hover {
     let language_text = join_language_labels(languages);
-    let value = if has_analyzed {
-        format!(
+    let value = match state {
+        // The analyzed, Rust-only workspace renders the exact legacy text so
+        // the long-standing generic hover stays byte-identical.
+        NoEvidenceState::Analyzed if languages.len() == 1 && languages[0] == "Rust" => {
+            HOVER_TEXT.to_string()
+        }
+        NoEvidenceState::Analyzed => format!(
             "ripr estimates static RIPR exposure for changed {language_text} behavior. Run `ripr check --format json` for current findings."
-        )
-    } else {
-        format!(
+        ),
+        NoEvidenceState::AnalyzedNoChanges { base } => {
+            let base_text = base.map_or_else(
+                || "the base ref".to_string(),
+                |base| format!("the base ref `{base}`"),
+            );
+            format!(
+                "**ripr** found no changed lines against {base_text} at its last analysis, so there is nothing to grade. ripr estimates static RIPR exposure for changed {language_text} behavior; findings appear here after a change against the base is saved and analyzed."
+            )
+        }
+        NoEvidenceState::Analyzing => format!(
+            "**ripr** analysis is in progress. ripr estimates static RIPR exposure for changed {language_text} behavior, and the result will appear here when the analysis completes (the first analysis of a large repository can take a while). No action is needed."
+        ),
+        NoEvidenceState::NotAnalyzed => format!(
             "ripr estimates static RIPR exposure for changed {language_text} behavior, but has not analyzed this workspace yet. Run the `ripr.refresh` editor command (or `ripr check --format json`) to obtain findings."
-        )
+        ),
     };
     markdown_hover(value)
 }
@@ -109,7 +137,7 @@ const MAX_LINE_HOVER_FINDINGS: usize = 5;
 const ACTIONABLE_PROFILE_UNPUBLISHED_FINDINGS_GUIDANCE: &str = "The `actionable` diagnostic profile publishes only current `weakly_exposed`, `reachable_unrevealed` or `no_static_path` findings with a producer-backed repair route (a named missing value or check and a fix site), so these are not diagnostics. Set `diagnosticProfile` to `full` (VS Code setting `ripr.diagnosticProfile`) or `[lsp] diagnostic_profile = \"full\"` in `ripr.toml` to publish them with their Inspect finding quick fix.";
 
 /// Hover for a position with no published diagnostic but with snapshot
-/// findings on its line — the findings the code lens on that line shows.
+/// findings on its line — the findings the code lens on that line summarizes.
 /// Under the `actionable` profile these are route-less or exposed findings
 /// the profile does not publish; describing them here keeps the editor
 /// surfaces consistent instead of sending the reader to the CLI.
@@ -121,7 +149,7 @@ pub(super) fn line_findings_hover_response(
         "**ripr** no published diagnostic at this position".to_string(),
         String::new(),
         format!(
-            "The current analysis snapshot has {} finding(s) on this line; the code lens shows the same findings.",
+            "The current analysis snapshot has {} finding(s) on this line; the code lens on this line summarizes them (one lens per distinct title).",
             findings.len()
         ),
     ];

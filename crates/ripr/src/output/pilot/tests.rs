@@ -1528,6 +1528,20 @@ fn timeout_summary_json_is_partial_and_points_to_retry() {
     assert!(json.contains("--timeout-ms 120000"));
 }
 
+/// #11205: the CI step summary names a pilot deadline from exactly these
+/// producer fields (`status`, `reason`, numeric `timeout_ms`); renaming one
+/// here must fail this test instead of silently silencing that notice.
+#[test]
+fn timeout_summary_json_carries_the_fields_the_ci_summary_reads() -> Result<(), String> {
+    let artifacts = pilot_artifacts();
+    let json = render_pilot_timeout_summary_json(pilot_context(&artifacts));
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    assert_eq!(value["status"], "partial");
+    assert_eq!(value["reason"], "timeout");
+    assert!(value["timeout_ms"].as_u64().is_some(), "{json}");
+    Ok(())
+}
+
 #[test]
 fn timeout_summary_json_records_loaded_config_path() {
     let artifacts = pilot_artifacts();
@@ -4608,4 +4622,47 @@ fn route_command() -> String {
         "ripr check --root {}",
         crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root("."))
     )
+}
+
+#[test]
+fn pilot_not_scanned_block_omits_python_pilot_analyzed() {
+    use crate::domain::LanguageId;
+
+    let artifacts = pilot_artifacts();
+    let root = Path::new(".");
+    let py = python_first_use();
+    let files = discovered_files(&[(LanguageId::Python, "app/a.py")]);
+    let routes = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Python], &files);
+    let analyzed = PilotSummaryContext {
+        language_routes: Some(&routes),
+        ..pilot_context_with_python(&artifacts, &py)
+    };
+    let terminal = render_pilot_terminal(&[], analyzed);
+    assert!(terminal.contains("Python preview:"), "{terminal}");
+    assert!(!terminal.contains("Not scanned by pilot"), "{terminal}");
+
+    // Python analysis unavailable: pilot did not analyze it, so it stays listed.
+    let unavailable = PilotPythonFirstUse::analysis_unavailable("boom".to_string());
+    let not_analyzed = PilotSummaryContext {
+        language_routes: Some(&routes),
+        ..pilot_context_with_python(&artifacts, &unavailable)
+    };
+    let terminal = render_pilot_terminal(&[], not_analyzed);
+    assert!(terminal.contains("Not scanned by pilot"), "{terminal}");
+    assert!(terminal.contains("python:"), "{terminal}");
+
+    // An unscanned language stays listed next to analyzed Python.
+    let mixed = discovered_files(&[
+        (LanguageId::Python, "app/a.py"),
+        (LanguageId::Perl, "lib/App.pm"),
+    ]);
+    let routes = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Python], &mixed);
+    let context = PilotSummaryContext {
+        language_routes: Some(&routes),
+        ..pilot_context_with_python(&artifacts, &py)
+    };
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(terminal.contains("Not scanned by pilot"), "{terminal}");
+    assert!(terminal.contains("perl:"), "{terminal}");
+    assert!(!terminal.contains("  python:"), "{terminal}");
 }
