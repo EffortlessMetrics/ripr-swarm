@@ -27,7 +27,7 @@ Start here:
   Suggested test file: tests/test_constants.py
   Suggested test: test_constants
   Test node: tests/test_constants.py::test_constants
-  Verify command: python -m pytest tests/test_constants.py::test_constants (high)
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_empty_sink_module_comparison/input && python -m pytest tests/test_constants.py::test_constants) (high)
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

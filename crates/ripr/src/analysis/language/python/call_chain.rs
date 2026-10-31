@@ -353,7 +353,7 @@ fn return_text(text: &str) -> String {
         .to_string()
 }
 
-fn has_dynamic_word(source: &str) -> bool {
+pub(super) fn has_dynamic_word(source: &str) -> bool {
     source
         .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
         .any(|word| DYNAMIC_WORDS.contains(&word))

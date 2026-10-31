@@ -29,7 +29,7 @@ Start here:
   Suggested test file: tests/test_check.py
   Suggested test: test_negative_is_rejected
   Test node: tests/test_check.py::test_negative_is_rejected
-  Verify command: python -m pytest tests/test_check.py::test_negative_is_rejected (high)
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_message_pin_no_exposed_credit/input && python -m pytest tests/test_check.py::test_negative_is_rejected) (high)
   Next step — Python preview: strengthen the existing related test with an exception assertion for missing discriminator `message "negative value: must be at most zero"`
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

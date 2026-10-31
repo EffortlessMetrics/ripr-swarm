@@ -27,7 +27,7 @@ Start here:
   Suggested test file: tests/test_checkout.py
   Suggested test: test_checkout_payload_smoke
   Test node: tests/test_checkout.py::test_checkout_payload_smoke
-  Verify command: python -m pytest tests/test_checkout.py::test_checkout_payload_smoke (high)
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_same_line_duplicate_collapse/input && python -m pytest tests/test_checkout.py::test_checkout_payload_smoke) (high)
   Next step — Python preview: strengthen the existing related test with a field/object assertion for missing discriminator `status == "paid"`
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

@@ -1,0 +1,44 @@
+{
+  "case_id": "eq-divert-else-if-chain-old-constant",
+  "subject_id": "authored-eq-divert",
+  "diff": "cases/eq-divert-else-if-chain-old-constant.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 8
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "equality_row_diverted_before_the_changed_line",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "else if n == 6 {",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the edit changes which input takes the branch, but no executed assertion observes it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The only row, 5, takes the first branch (`n >= 3`) and returns 7, so the `else if n == 5` line is never reached for it: moving its constant to 6 changes nothing the test sees. A row on the replaced constant that an earlier branch handles must not credit the swap.",
+  "labeling_observation": {
+    "ripr_commit": "fd684cecd",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
