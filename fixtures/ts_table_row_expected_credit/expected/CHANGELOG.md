@@ -11,3 +11,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_table_row_expected_credit (2)
+
+Reason:
+RIPR-SPEC-0243: human hidden-class summary rendering changed upstream, re-bless after merging main
+
+Command:
+`cargo xtask goldens bless ts_table_row_expected_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

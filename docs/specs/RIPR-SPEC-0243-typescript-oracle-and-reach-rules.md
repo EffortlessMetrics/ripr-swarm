@@ -407,7 +407,13 @@ a direct argument of the call that is the whole argument of `expect(` or of
 the matcher call; a second read, a read wrapped in parentheses, through a
 further member, or as an argument of any other call or statement
 (`Object.assign(t.input, ..)`, `fix(t.input)`, `(t.input).pop()`)
-refuses the table. Scalar cells are unaffected. The assertions of a
+refuses the table. The `expect` it names must be a whole word (not
+`myexpect(` or `x.expect(`). A pattern that repeats a row key
+(`({ input: a, input: b })`) refuses the table, and in the `for...of` form
+the loop parameter may not appear in the registration's callee or in any
+argument outside the callback, except a title that is exactly `t.key` or
+`t.key.toString()` over a scalar cell in every row. Scalar cells are
+otherwise unaffected. The assertions of a
 resolved table are the concatenation over its rows, each with that
 row's literals, so the credit is an aggregate over the row set and the
 existing classifier decides whether any row's input reaches the changed

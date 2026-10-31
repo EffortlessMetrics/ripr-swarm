@@ -163,9 +163,12 @@ pub(crate) fn row_loop_of(
     let [only] = loop_body else {
         return None;
     };
-    if !matches!(only, Statement::ExpressionStatement(_)) {
+    let Statement::ExpressionStatement(registration) = only else {
         return None;
-    }
+    };
+    let Expression::CallExpression(call) = &registration.expression else {
+        return None;
+    };
     let (first, last) = (statements.first()?, statements.last()?);
     let text: &str = source;
     let list_text = text.get(first.span().start as usize..last.span().end as usize)?;
@@ -205,11 +208,69 @@ pub(crate) fn row_loop_of(
             table = object_array_rows(array, source);
         }
     }
-    Some(RowLoop {
-        depth,
-        param,
-        rows: table?,
-    })
+    let rows = table?;
+    if !registration_arguments_are_pure(call, &param, &rows, source) {
+        return None;
+    }
+    Some(RowLoop { depth, param, rows })
+}
+
+/// The registration's callee and every argument other than the callback must
+/// not use the loop parameter, because `test(fix(t), ..)` or
+/// `test(String(Object.assign(t.input, ..)), ..)` could change the shared
+/// row before the callback runs. The one allowed use is a title that is
+/// exactly `t.key` or `t.key.toString()` over a scalar cell in every row.
+fn registration_arguments_are_pure(
+    call: &oxc_ast::ast::CallExpression<'_>,
+    param: &str,
+    rows: &[ObjectRow],
+    source: &SourceText<'_>,
+) -> bool {
+    use super::match_object_guard::whole_word_count;
+    let text: &str = source;
+    let slice = |span: oxc_span::Span| text.get(span.start as usize..span.end as usize);
+    let Some(callee) = slice(call.callee.span()) else {
+        return false;
+    };
+    if whole_word_count(callee, param) > 0 {
+        return false;
+    }
+    let callback_index = call.arguments.iter().rposition(|argument| {
+        matches!(
+            argument,
+            oxc_ast::ast::Argument::ArrowFunctionExpression(_)
+                | oxc_ast::ast::Argument::FunctionExpression(_)
+        )
+    });
+    for (index, argument) in call.arguments.iter().enumerate() {
+        if Some(index) == callback_index {
+            continue;
+        }
+        let Some(argument_text) = slice(argument.span()) else {
+            return false;
+        };
+        if whole_word_count(argument_text, param) == 0 {
+            continue;
+        }
+        let compact: String = argument_text.split_whitespace().collect();
+        let Some(rest) = compact
+            .strip_prefix(param)
+            .and_then(|r| r.strip_prefix('.'))
+        else {
+            return false;
+        };
+        let key = rest.strip_suffix(".toString()").unwrap_or(rest);
+        let plain_key = !key.is_empty() && key.bytes().all(ident_part);
+        if !plain_key
+            || !rows.iter().all(|row| {
+                row.cell(key)
+                    .is_some_and(|cell| !cell.starts_with(['[', '{']))
+            })
+        {
+            return false;
+        }
+    }
+    true
 }
 
 /// The assertions of a registration inside a [`RowLoop`] read once per row,
@@ -290,6 +351,13 @@ pub(crate) fn object_each_assertions(
                     return None;
                 };
                 if !local.name.is_ascii() || !key.name.is_ascii() {
+                    return None;
+                }
+                // A repeated key (`{ input: a, input: b }`) binds two names to
+                // one shared cell: refuse it.
+                if locals.iter().any(|(name, row_key)| {
+                    name.as_str() == local.name.as_str() || row_key.as_str() == key.name.as_str()
+                }) {
                     return None;
                 }
                 locals.push((local.name.to_string(), key.name.to_string()));
@@ -625,7 +693,9 @@ pub(crate) fn container_read_is_direct(
     }
     let before_name = head[..name_start].trim_end();
     // `expect(owner(<read>))`: the callee is the whole argument of expect(.
-    if before_name.ends_with("expect(") {
+    if before_name.strip_suffix("expect(").is_some_and(|rest| {
+        !rest.ends_with(|c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '$' | '.'))
+    }) {
         return true;
     }
     // `expect(..).matcher(<read>)`.
@@ -633,4 +703,49 @@ pub(crate) fn container_read_is_direct(
         && before_name
             .strip_suffix('.')
             .is_some_and(|b| b.ends_with(')'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn single_expect_statement_accepts_only_one_expect_chain() {
+        for body in [
+            "{ expect(f(x)).toBe(y); }",
+            "expect(f(x)).toEqual(y)",
+            "{ await expect(f(x)).resolves.toBe(y) }",
+            "{ return expect(f(x)).not.toBe(y); }",
+        ] {
+            assert!(single_expect_statement(body), "{body}");
+        }
+        for body in [
+            "{ Object.assign(a, b); expect(f(a)).toBe(y); }",
+            "{ fix(a)\n expect(f(a)).toBe(y) }",
+            "{ expect(f(a)).toBe(y); expect(g(a)).toBe(y); }",
+            "{ const z = 1; expect(f(a)).toBe(z); }",
+            "{ if (a) expect(f(a)).toBe(y); }",
+            "{ expect(f(a)).toBe(y) // note\n }",
+            "{ \"s\"; expect(f(a)).toBe(y); }",
+            "{ }",
+            "{ foo(expect(f(a)).toBe(y)); }",
+        ] {
+            assert!(!single_expect_statement(body), "{body}");
+        }
+    }
+
+    #[test]
+    fn container_read_needs_a_word_bounded_direct_expect_or_matcher() {
+        let direct = |body: &str, key: &str| {
+            let at = body.find(key).unwrap_or(0);
+            let open = body[..at].rfind('(');
+            container_read_is_direct(body, at, at + key.len(), open)
+        };
+        assert!(direct("expect(f(t.input)).toEqual(1)", "t.input"));
+        assert!(direct("expect(f(1)).toEqual(t.out)", "t.out"));
+        assert!(!direct("myexpect(f(t.input)).toEqual(1)", "t.input"));
+        assert!(!direct("x.expect(f(t.input)).toEqual(1)", "t.input"));
+        assert!(!direct("expect(f(g(t.input))).toEqual(1)", "t.input"));
+        assert!(!direct("expect(f((t.input).pop())).toEqual(1)", "t.input"));
+    }
 }

@@ -352,6 +352,86 @@ fn only_a_plain_row_key_read_in_a_lone_registration_resolves() -> Result<(), Str
     Ok(())
 }
 
+/// R1: a pattern that repeats a row key binds two names to one cell.
+#[test]
+fn a_destructuring_pattern_repeating_a_key_is_never_resolved() -> Result<(), String> {
+    let source = format!(
+        "{PREAMBLE}describe(\"e\", () => {{\n  test.each([{{ input: [3, 1, 2] }}, {{ input: [2, 1] }}])(\"x\", ({{ input: a, input: b }}) => {{ expect(encode(a)).toEqual(b); }});\n}});\n"
+    );
+    assert!(all_dynamic(&assertions_of(&source)?));
+    // Control: distinct keys over distinct cells resolve.
+    let ok = format!(
+        "{PREAMBLE}describe(\"e\", () => {{\n  test.each([{{ input: [3, 1], out: [1, 3] }}])(\"x\", ({{ input: a, out: b }}) => {{ expect(encode(a)).toEqual(b); }});\n}});\n"
+    );
+    assert!(!all_dynamic(&assertions_of(&ok)?));
+    Ok(())
+}
+
+/// R2: the loop parameter may not reach the registration's callee or any
+/// argument outside the callback, except a pure scalar title.
+#[test]
+fn loop_parameter_in_registration_arguments_is_never_resolved() -> Result<(), String> {
+    let table = "[\n    { input: [\"a\"], out: \"A\", name: \"n1\" },\n    { input: [\"b\"], out: \"B\", name: \"n2\" },\n  ]";
+    let callback = "() => { expect(encode(...t.input)).toBe(t.out); }";
+    for (label, registration, resolves) in [
+        (
+            "a scalar key title",
+            format!("test(t.name, {callback});"),
+            true,
+        ),
+        (
+            "a toString title",
+            format!("test(t.name.toString(), {callback});"),
+            true,
+        ),
+        ("no use", format!("test(\"x\", {callback});"), true),
+        (
+            "Object.assign in the title",
+            format!("test(String(Object.assign(t.input, [9])), {callback});"),
+            false,
+        ),
+        (
+            "a helper over the row",
+            format!("test(fix(t), {callback});"),
+            false,
+        ),
+        (
+            "a container key as the title",
+            format!("test(t.input, {callback});"),
+            false,
+        ),
+        (
+            "a key the rows lack",
+            format!("test(t.title, {callback});"),
+            false,
+        ),
+        (
+            "the row in the options argument",
+            format!("test(\"x\", {{ timeout: t.out }}, {callback});"),
+            false,
+        ),
+        (
+            "a row method callee",
+            format!("t.run(\"x\", {callback});"),
+            false,
+        ),
+    ] {
+        let tests = extract_tests(
+            Path::new("tests/encode.test.ts"),
+            &describe_source(table, "", LOOP, &registration),
+        );
+        // A registration the extractor does not index at all credits nothing.
+        let assertions: Vec<_> = tests.iter().flat_map(|t| t.assertions.clone()).collect();
+        let resolved = assertions
+            .iter()
+            .any(|a| a.expected_value_or_variant.as_deref() == Some("\"A\""));
+        if resolved != resolves {
+            return Err(format!("{label}: resolved={resolved}: {assertions:?}"));
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn inline_each_object_rows_resolve_for_one_parameter_or_a_plain_pattern() -> Result<(), String> {
     let each = |table: &str, callback: &str| {

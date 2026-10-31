@@ -4,7 +4,7 @@ Spec: RIPR-SPEC-0243
 
 ## Given
 
-Eight TypeScript owners whose changed predicate `points > 1000` becomes
+Ten TypeScript owners whose changed predicate `points > 1000` becomes
 `points >= 1000` (issue #11196), each with one related test whose expected
 value is a `row.key` read from a table that is NOT provably a never-touched
 `const` array of all-literal object rows:
@@ -19,6 +19,10 @@ value is a `row.key` read from a table that is NOT provably a never-touched
 - `mutatedContainer`: a container cell (`input: { points }`) is changed by
   `Object.assign(t.input, ...)` before it is asserted, so the row literal is
   not what the owner sees;
+- `titleMutation`: the loop row is mutated in the registration title,
+  outside the callback;
+- `aliasedKeys`: a destructuring pattern repeats the `input` key, so two
+  names share one cell;
 - `offBoundary`: a clean all-literal table whose rows (`100`, `5000`) never
   reach the changed boundary.
 
@@ -33,7 +37,7 @@ ripr check \
 
 ## Then
 
-None is `exposed`. `pushedTable`, `missingKey`, `identifierCell` and `mutatedContainer` keep the
+None is `exposed`. `pushedTable`, `missingKey`, `identifierCell`, `mutatedContainer`, `titleMutation` and `aliasedKeys` keep the
 dynamic-assertion refusal ("compares against a variable or computed value,
 not a literal"); `letTable`, `derivedTable` and `exportedTable` are loops
 over data static analysis cannot enumerate, so their registrations stay

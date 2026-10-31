@@ -35,3 +35,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_table_row_expected_refused (4)
+
+Reason:
+RIPR-SPEC-0243 #11196: add titleMutation and aliasedKeys refusals (R1, R2)
+
+Command:
+`cargo xtask goldens bless ts_table_row_expected_refused --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
