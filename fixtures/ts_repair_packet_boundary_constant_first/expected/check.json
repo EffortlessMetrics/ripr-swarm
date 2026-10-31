@@ -102,7 +102,7 @@
         "limits": [
           "Syntax-first TypeScript/JavaScript preview evidence only.",
           "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
-          "This card is advisory and is not a repair packet."
+          "This card is an advisory summary; the complete repair packet is projected separately and is also advisory."
         ],
         "missing_discriminator": "DISCOUNT_THRESHOLD == amount",
         "oracle_kind": "exact_value",
