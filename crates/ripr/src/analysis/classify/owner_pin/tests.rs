@@ -5688,6 +5688,10 @@ fn a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted() {
         format!("{definition}{definition}{call}"),
         format!("use other::case;\n{definition}{call}"),
         format!("use other::wrap as case;\n{definition}{call}"),
+        // Raw-identifier spellings and nested lists bind the same name.
+        format!("use other::r#case;\n{definition}{call}"),
+        format!("use other::wrap as r#case;\n{definition}{call}"),
+        format!("use other::{{inner::{{case}}}};\n{definition}{call}"),
         // Reached by path, so not the textual definition.
         format!("{definition}crate::case!(one, |v| {{ assert_eq!(v, 1); }});\n"),
         // The definition invokes a macro or holds a binding word.
@@ -11216,6 +11220,8 @@ fn test_crate_bindings_of_the_root_are_read_from_that_crate_only() {
 mod claims_direction;
 mod expect_test_pins;
 mod helper_pins;
+#[cfg(test)]
+mod projected_workspace_memo;
 
 /// One `#[test]` over `weight`, with `body` as its statements.
 fn weight_test(signature: &str, body: &str) -> String {

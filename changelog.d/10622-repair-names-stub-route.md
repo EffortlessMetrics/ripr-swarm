@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- `ripr repair` refusal for a Rust predicate boundary whose only missing repair evidence is the boundary discriminator now names the concrete manual route — `ripr agent stub --at <file>:<line> --kind predicate` writes a fill-in skeleton for the changed comparison, prefilling the boundary input when it derives — instead of stopping at the internal jargon dead end; seams that are also missing a safe test target keep the bare refusal, because the stub alone would not ready that route (#10622).
