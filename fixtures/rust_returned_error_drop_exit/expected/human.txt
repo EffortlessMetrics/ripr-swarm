@@ -45,7 +45,7 @@ Write a test for it:
 Hidden:
   2 lower-priority finding(s) omitted from default human output.
     - ./src/lib.rs:13 (weak); kind: field_construction; reason: Missing discriminator value: n: x * 3
-    - ./src/lib.rs:13 (weak); kind: return_value; reason: No strong discriminator was detected
+    - ./src/lib.rs:13 (weak); kind: return_value; reason: No strong assertion was detected
   Hidden classes:
     weak = tests reach it but check it only loosely
   Full evidence: rerun with --format human-full
