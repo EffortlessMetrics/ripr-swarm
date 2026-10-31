@@ -4049,6 +4049,10 @@ tests = [
   "crates/ripr/src/analysis/language/python/test_local_literal_tests.rs::a_local_that_is_not_the_boundary_value_does_not_credit",
   "crates/ripr/src/analysis/language/python/test_local_literal_tests.rs::every_other_way_the_name_can_differ_keeps_the_weak_verdict",
   "crates/ripr/src/analysis/language/python/test_local_literal_tests.rs::a_parameter_of_the_test_is_not_a_local_literal",
+  "crates/ripr/src/analysis/language/python/test_module_constant_tests.rs::a_module_constant_places_the_boundary_input",
+  "crates/ripr/src/analysis/language/python/test_module_constant_tests.rs::a_constant_that_is_not_the_boundary_value_does_not_credit",
+  "crates/ripr/src/analysis/language/python/test_module_constant_tests.rs::every_other_way_the_constant_can_differ_never_reads_exposed",
+  "crates/ripr/src/analysis/language/python/test_module_constant_tests.rs::a_parameter_of_the_test_is_not_the_module_constant",
 ]
 fixtures = [
   "fixtures/python_truthiness_swap_no_exposed_credit",
@@ -4134,6 +4138,8 @@ fixtures = [
   "fixtures/python_trailing_whitespace_in_multiline_string",
   "fixtures/python_boundary_local_input_credited",
   "fixtures/python_boundary_local_rebound_not_credited",
+  "fixtures/python_boundary_module_constant_credited",
+  "fixtures/python_boundary_module_constant_rebound_not_credited",
   "fixtures/python_dynamic_dispatch_limit",
   "fixtures/python_decorator_indirection_limit",
   "fixtures/python_functools_memoization_not_indirection",
