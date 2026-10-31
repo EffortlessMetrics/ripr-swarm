@@ -48,8 +48,11 @@ mod fallible_check;
 mod helper_arguments;
 pub(super) mod result_map;
 pub(super) mod returned_closure;
+mod shared_macro_scan;
 pub(super) mod short_circuit;
 pub(in crate::analysis) use fallible_check::{FallibleCheckReceipt, fallible_check_receipt};
+use shared_macro_scan::ScanPart;
+pub(in crate::analysis) use shared_macro_scan::SharedMacroScans;
 
 use super::super::rust_index::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use super::call_identity::{CallTarget, ConstantTable, OwnerCallIdentity};
@@ -77,9 +80,9 @@ use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equali
 use crate::analysis::syntax::{
     AssertionContextRefusal, GeneratedTestPins, HelperLoan, ItemNesting, MacroBindingCandidates,
     MacroBindingKind, MacroBindingSite, OwnerPinAssertions, PatternPins, RootShadow,
-    TRUSTED_MACRO_NAMES, attribute_settles_test_outcome, drop_in_assertion_leaf,
-    empty_macro_binding_ambiguities, err_return_guard_key, generated_test_pins,
-    local_empty_macro_names, macro_binding_scan, owner_pin_assertions,
+    TRUSTED_MACRO_NAMES, attribute_settles_test_outcome, cfg_if_module_name,
+    drop_in_assertion_leaf, empty_macro_binding_ambiguities, err_return_guard_key,
+    generated_test_pins, local_empty_macro_names, macro_binding_scan, owner_pin_assertions,
     owner_pin_matches_assertions, parse_clean_source_file, pattern_pins, qualified_matches_paths,
     returns_leave_the_function, source_binds_value_name, source_declares_value_name,
     source_imported_claims_macros, trusted_macro_binding_site_sets, trusted_macro_binding_sites,
@@ -1029,25 +1032,18 @@ impl OwnerPinSyntax {
                         .is_none()
             }
             // Field construction: only a real shadow (a definition or import
-            // of the assertion name) or an opaque in-scope expansion that
-            // mentions it refuses credit. A site that only may rebind it
-            // (`#[macro_use] extern crate`, a glob import) does not, matching
-            // the operand-whitespace contracts on main; the return family
-            // keeps refusing on those sites.
+            // of the assertion name) or an opaque in-scope expansion that mentions
+            // it refuses credit. A `#[macro_use] extern crate` or a foreign glob
+            // alone remains admitted for the operand-whitespace field contracts;
+            // the return family keeps refusing on these ambiguous sites.
             Some(AssertionRefusal::Syntax(AssertionContextRefusal::MacroBinding(name))) => {
                 family == ProbeFamily::FieldConstruction
                     && self
                         .macro_binding_site(test, assertion.line, &name, index)
-                        .is_some_and(|(_, site)| {
-                            !rebinds(&site)
-                                && !matches!(
-                                    site.kind,
-                                    MacroBindingKind::MacroArgument(_)
-                                        | MacroBindingKind::MacroBody(_)
-                                        | MacroBindingKind::BodyBindsAny { .. }
-                                        | MacroBindingKind::ArgumentAttribute { .. }
-                                )
-                        })
+                        .is_some()
+                    && self
+                        .field_blocking_macro_site(test, assertion.line, &name, index)
+                        .is_none()
             }
             Some(_) => false,
         }
@@ -1084,7 +1080,12 @@ impl OwnerPinSyntax {
         ));
         Some(match refusal {
             AssertionRefusal::Syntax(AssertionContextRefusal::MacroBinding(name)) => {
-                let site = self.macro_binding_site(test, assertion.line, &name, index);
+                let site = if probe.family == ProbeFamily::FieldConstruction {
+                    self.field_blocking_macro_site(test, assertion.line, &name, index)
+                        .or_else(|| self.macro_binding_site(test, assertion.line, &name, index))
+                } else {
+                    self.macro_binding_site(test, assertion.line, &name, index)
+                };
                 AssertionRefusal::MacroBinding { name, site }
             }
             refusal => refusal,
@@ -1102,7 +1103,7 @@ impl OwnerPinSyntax {
     ) -> Option<(PathBuf, MacroBindingSite)> {
         let resolved_modules = self.resolved_module_declarations(index);
         let resolved = |path: &Path, line: usize, declaration: &str| {
-            resolved_modules.contains(&(path.to_path_buf(), line, declaration.to_string()))
+            module_declaration_resolved(resolved_modules, index, path, line, declaration)
         };
         let test_roots = self.target_roots(index).roots(&test.file, index);
         // #8255: the single ambiguity pass retained the earliest
@@ -1140,6 +1141,56 @@ impl OwnerPinSyntax {
         } else {
             workspace.or(local)
         }
+    }
+
+    // Unlike disclosure's single selected site, admission must consider every
+    // relevant blocking kind. Withheld scans retain only one site and can stop
+    // early, so any reaching withheld ambiguity cannot establish absence.
+    fn field_blocking_macro_site(
+        &self,
+        test: &TestSummary,
+        assertion_line: usize,
+        name: &str,
+        index: &RustIndex,
+    ) -> Option<(PathBuf, MacroBindingSite)> {
+        let roots = self.target_roots(index).roots(&test.file, index);
+        let resolved_modules = self.resolved_module_declarations(index);
+        let resolved = |path: &Path, line: usize, declaration: &str| {
+            resolved_modules.contains(&(path.to_path_buf(), line, declaration.to_string()))
+        };
+        self.workspace_macro_site_in_mode(name, roots.as_ref(), Some(&test.file), index, true)
+            .or_else(|| self.withheld.sites.get(name).cloned())
+            .or_else(|| {
+                self.withheld
+                    .root_sites
+                    .iter()
+                    .find_map(|((site_name, root), site)| {
+                        (site_name == name && roots.as_ref().is_none_or(|r| r.contains(root)))
+                            .then(|| site.clone())
+                    })
+            })
+            .or_else(|| {
+                let facts = index.files().get(&test.file)?;
+                self.test_file_macro_sites
+                    .borrow_mut()
+                    .entry((name.to_string(), test.file.clone()))
+                    .or_insert_with(|| {
+                        macro_binding_sites(
+                            name,
+                            &test.file,
+                            &facts.source,
+                            facts.macro_candidates.as_deref(),
+                            index,
+                            self.target_roots(index),
+                            &resolved,
+                        )
+                    })
+                    .iter()
+                    .find(|(_, site)| {
+                        site_covers_assertion(site, test, assertion_line) && field_site_blocks(site)
+                    })
+                    .map(|(_, site)| (test.file.clone(), site.clone()))
+            })
     }
 
     fn execution_context(
@@ -1353,7 +1404,7 @@ impl OwnerPinSyntax {
     fn trusted_macro_ambiguities(&self, index: &RustIndex) -> BTreeSet<String> {
         let resolved_modules = self.resolved_module_declarations(index);
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
-            resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
+            module_declaration_resolved(resolved_modules, index, file, line, declaration)
         };
         let mut ambiguous = self.ambiguous_macro_bindings.borrow_mut();
         ambiguous
@@ -1418,6 +1469,17 @@ impl OwnerPinSyntax {
         test_file: Option<&Path>,
         index: &RustIndex,
     ) -> Option<(PathBuf, MacroBindingSite)> {
+        self.workspace_macro_site_in_mode(name, test_roots, test_file, index, false)
+    }
+
+    fn workspace_macro_site_in_mode(
+        &self,
+        name: &str,
+        test_roots: Option<&BTreeSet<PathBuf>>,
+        test_file: Option<&Path>,
+        index: &RustIndex,
+        field_only: bool,
+    ) -> Option<(PathBuf, MacroBindingSite)> {
         if !assertion_context_macros().contains(&name) {
             return None;
         }
@@ -1430,14 +1492,17 @@ impl OwnerPinSyntax {
         let retained = scan.as_ref()?;
         let mut rebinding: Option<&OrderedMacroSite> = None;
         let mut may_rebind: Option<&OrderedMacroSite> = None;
+        let mut field_blocking: Option<&OrderedMacroSite> = None;
         if let Some(rank) = retained.global.get(name) {
             merge_macro_site_rank(&mut rebinding, &mut may_rebind, rank);
+            keep_earliest_site(&mut field_blocking, rank.field_blocking.as_ref());
         }
         for (root, names) in &retained.by_root {
             if test_roots.is_none_or(|roots| roots.contains(root))
                 && let Some(rank) = names.get(name)
             {
                 merge_macro_site_rank(&mut rebinding, &mut may_rebind, rank);
+                keep_earliest_site(&mut field_blocking, rank.field_blocking.as_ref());
             }
         }
         for (file, binding) in &retained.by_module {
@@ -1445,11 +1510,15 @@ impl OwnerPinSyntax {
                 && let Some(rank) = binding.sites.get(name)
             {
                 merge_macro_site_rank(&mut rebinding, &mut may_rebind, rank);
+                keep_earliest_site(&mut field_blocking, rank.field_blocking.as_ref());
             }
         }
-        rebinding
-            .or(may_rebind)
-            .map(|site| (site.path.clone(), site.site.clone()))
+        let selected = if field_only {
+            field_blocking
+        } else {
+            rebinding.or(may_rebind)
+        };
+        selected.map(|site| (site.path.clone(), site.site.clone()))
     }
 
     /// #8255: finish the retained-site scan the ambiguity pass skipped. It
@@ -1477,10 +1546,15 @@ impl OwnerPinSyntax {
         }
         let resolved_modules = self.resolved_module_declarations(index);
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
-            resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
+            module_declaration_resolved(resolved_modules, index, file, line, declaration)
         };
-        let (_, rest) = partition_macro_scan_files(index);
-        let sites = scan_macro_sites(&rest, index, self.target_roots(index), &module_resolved);
+        // #11509: the index-owned scan, shared with every other instance.
+        let sites = index.call_identity_memos.macro_site_scans.scan(
+            ScanPart::Rest,
+            index,
+            self.target_roots(index),
+            &module_resolved,
+        );
         // Resolved before the map borrow: target roots never re-enter the
         // site scan, and the mutable borrow must not outlive its purpose.
         let roots = self.target_roots(index);
@@ -1491,7 +1565,7 @@ impl OwnerPinSyntax {
         if retained.complete {
             return;
         }
-        retain_macro_sites(sites.retained, retained, roots, index);
+        retain_macro_sites(&sites.retained, retained, roots, index);
         retained.complete = true;
         #[cfg(test)]
         {
@@ -1605,7 +1679,7 @@ impl OwnerPinSyntax {
         }
         let resolved_modules = self.resolved_module_declarations(index);
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
-            resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
+            module_declaration_resolved(resolved_modules, index, file, line, declaration)
         };
         let ambiguous = self.trusted_macro_ambiguities(index);
         let Some(facts) = index
@@ -2234,6 +2308,7 @@ fn module_ancestry(
 struct MacroSiteRank {
     rebinding: Option<OrderedMacroSite>,
     may_rebind: Option<OrderedMacroSite>,
+    field_blocking: Option<OrderedMacroSite>,
 }
 
 /// Producer position, rather than line number, preserves same-line order
@@ -2252,6 +2327,18 @@ impl OrderedMacroSite {
 }
 impl MacroSiteRank {
     fn absorb(&mut self, path: &Path, position: usize, site: &MacroBindingSite) {
+        if field_site_blocks(site)
+            && self
+                .field_blocking
+                .as_ref()
+                .is_none_or(|kept| (path, position) < (kept.path.as_path(), kept.position))
+        {
+            self.field_blocking = Some(OrderedMacroSite {
+                path: path.to_path_buf(),
+                position,
+                site: site.clone(),
+            });
+        }
         let slot = if rebinds(site) {
             &mut self.rebinding
         } else {
@@ -2936,6 +3023,59 @@ fn workspace_macro_binding_site_for(
     first
 }
 
+fn field_site_blocks(site: &MacroBindingSite) -> bool {
+    rebinds(site)
+        || matches!(
+            site.kind,
+            MacroBindingKind::MacroArgument(_)
+                | MacroBindingKind::MacroBody(_)
+                | MacroBindingKind::BodyBindsAny { .. }
+                | MacroBindingKind::ArgumentAttribute { .. }
+        )
+}
+
+/// Whether the module declaration `declaration` on `line` of `file` resolves
+/// to an indexed file. A parsed `mod NAME;` is answered by the module edges;
+/// a [`cfg_if_module_declaration`] key (#5993), which exists only as tokens in
+/// a `cfg_if!`, by the default layout: the one `NAME.rs` or `NAME/mod.rs`
+/// beside a crate-root-named or `mod.rs` declaring file. Other declaring
+/// files nest their children one directory deeper, which this does not model.
+fn module_declaration_resolved(
+    resolved: &BTreeSet<(PathBuf, usize, String)>,
+    index: &RustIndex,
+    file: &Path,
+    line: usize,
+    declaration: &str,
+) -> bool {
+    let Some(name) = cfg_if_module_name(declaration) else {
+        return resolved.contains(&(file.to_path_buf(), line, declaration.to_string()));
+    };
+    if !cfg_if_layout_file(file) {
+        return false;
+    }
+    let directory = file.parent().unwrap_or(Path::new(""));
+    let files = index.files();
+    let flat = files.get(&directory.join(format!("{name}.rs"))).is_some();
+    let nested = files.get(&directory.join(name).join("mod.rs")).is_some();
+    // Both layouts present is a rustc error (E0761), never one module.
+    flat != nested
+}
+
+/// Whether `file` places its child modules in its own directory: `mod.rs`,
+/// or a `lib.rs`/`main.rs` that is an actual crate root (`src/lib.rs`,
+/// `src/main.rs`, `src/bin/NAME/main.rs`). A `lib.rs` or `main.rs` declared by
+/// `mod lib;` nests children under `lib/`, so file name alone is not enough.
+fn cfg_if_layout_file(file: &Path) -> bool {
+    let parts: Vec<&str> = file
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .collect();
+    matches!(
+        parts.as_slice(),
+        [.., "mod.rs"] | [.., "src", "lib.rs" | "main.rs"] | [.., "src", "bin", _, "main.rs"]
+    )
+}
+
 /// A definition or `use` of the name: a real rebinding, not one that only
 /// may rebind it.
 fn rebinds(site: &MacroBindingSite) -> bool {
@@ -3063,9 +3203,9 @@ fn trusted_macro_sites_in(
     // every test, no later file (scoped sites included) changes an answer,
     // so the rest are skipped. A refusal that needs a site completes the
     // retained scan once instead (#8255).
-    let (likely, rest) = partition_macro_scan_files(index);
+    let shared = &index.call_identity_memos.macro_site_scans;
     absorb_macro_sites(
-        scan_macro_sites(&likely, index, roots, module_resolved),
+        &shared.scan(ScanPart::Likely, index, roots, module_resolved),
         &mut global,
         &mut scoped,
         &mut by_root,
@@ -3075,7 +3215,7 @@ fn trusted_macro_sites_in(
     );
     if global.len() < assertion_context_macros().len() {
         absorb_macro_sites(
-            scan_macro_sites(&rest, index, roots, module_resolved),
+            &shared.scan(ScanPart::Rest, index, roots, module_resolved),
             &mut global,
             &mut scoped,
             &mut by_root,
@@ -3180,7 +3320,7 @@ fn scan_macro_sites(
 
 /// Both initial absorption and deferred completion exclude every scoped site.
 fn retain_macro_sites(
-    sites: Vec<(PathBuf, String, usize, MacroBindingSite)>,
+    sites: &[(PathBuf, String, usize, MacroBindingSite)],
     retained: &mut WorkspaceMacroSiteIndex,
     roots: &TargetRoots,
     index: &RustIndex,
@@ -3189,17 +3329,17 @@ fn retain_macro_sites(
         if site.scope.is_some() {
             continue;
         }
-        if module_confined(&site, &path, roots, index) {
+        if module_confined(site, path, roots, index) {
             let binding = retained.by_module.entry(path.clone()).or_default();
-            binding.roots = roots.roots(&path, index);
+            binding.roots = roots.roots(path, index);
             binding
                 .sites
-                .entry(name)
+                .entry(name.clone())
                 .or_default()
-                .absorb(&path, position, &site);
+                .absorb(path, *position, site);
             continue;
         }
-        if let Some(contexts) = roots.binding_roots(&path, &site, index) {
+        if let Some(contexts) = roots.binding_roots(path, site, index) {
             for root in contexts {
                 retained
                     .by_root
@@ -3207,14 +3347,14 @@ fn retain_macro_sites(
                     .or_default()
                     .entry(name.clone())
                     .or_default()
-                    .absorb(&path, position, &site);
+                    .absorb(path, *position, site);
             }
         } else {
             retained
                 .global
-                .entry(name)
+                .entry(name.clone())
                 .or_default()
-                .absorb(&path, position, &site);
+                .absorb(path, *position, site);
         }
     }
 }
@@ -3295,7 +3435,7 @@ pub(in crate::analysis) fn nested_parallelism_allowed() -> bool {
     reason = "one ordered fold over four run-scoped ambiguity outputs and the retention index"
 )]
 fn absorb_macro_sites(
-    sites: ScannedMacroSites,
+    sites: &ScannedMacroSites,
     global: &mut BTreeSet<String>,
     scoped: &mut ScopedMacroBindings,
     by_root: &mut CrateMacroBindings,
@@ -3303,24 +3443,27 @@ fn absorb_macro_sites(
     roots: &TargetRoots,
     index: &RustIndex,
 ) {
-    retain_macro_sites(sites.retained, retained, roots, index);
-    for (path, name, site) in sites.ambiguities {
+    retain_macro_sites(&sites.retained, retained, roots, index);
+    for (path, name, site) in &sites.ambiguities {
         if site.scope.is_some() {
-            scoped.entry(path).or_default().push((name, site));
+            scoped
+                .entry(path.clone())
+                .or_default()
+                .push((name.clone(), site.clone()));
             continue;
         }
-        if module_confined(&site, &path, roots, index) {
+        if module_confined(site, path, roots, index) {
             let binding = retained.by_module.entry(path.clone()).or_default();
-            binding.roots = roots.roots(&path, index);
-            binding.names.insert(name);
+            binding.roots = roots.roots(path, index);
+            binding.names.insert(name.clone());
             continue;
         }
-        if let Some(contexts) = roots.binding_roots(&path, &site, index) {
+        if let Some(contexts) = roots.binding_roots(path, site, index) {
             for root in contexts {
                 by_root.entry(root).or_default().insert(name.clone());
             }
         } else {
-            global.insert(name);
+            global.insert(name.clone());
         }
     }
 }

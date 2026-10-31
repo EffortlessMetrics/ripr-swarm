@@ -1281,12 +1281,13 @@ fn off_boundary_strong_row_is_missing_input_and_a_weak_sibling_is_not() -> Resul
 }
 
 /// #5564: only the row whose own omission proof holds carries the boundary as
-/// `miss_support`; a weak or unresolved sibling carries none, and the
-/// finding-wide fact is not copied onto rows that did not establish it.
+/// `miss_support`; a weak sibling carries none, and the finding-wide fact is
+/// not copied onto rows that did not establish it. An unresolved strong
+/// sibling instead withholds the fact entirely (#10990, next test).
 #[test]
 fn missing_input_support_belongs_to_the_row_that_proved_the_omission() -> Result<(), String> {
     let finding = reserve_case(
-        "def test_off_boundary():\n    assert can_reserve(5, 3) == True\n\ndef test_weak_on_boundary():\n    assert can_reserve(4, 4)\n\ndef test_unresolved(n):\n    assert can_reserve(n, 3) == True\n",
+        "def test_off_boundary():\n    assert can_reserve(5, 3) == True\n\ndef test_weak_on_boundary():\n    assert can_reserve(4, 4)\n",
     )?;
     let support_of = |name: &str| {
         finding
@@ -1307,10 +1308,9 @@ fn missing_input_support_belongs_to_the_row_that_proved_the_omission() -> Result
         .ok_or("the omitting row carries support")?;
     assert_eq!(owner.value, fact.value);
     assert_eq!(owner.flow_sink, fact.flow_sink);
-    // Discriminating negatives: the weak sibling and the unresolved row keep
-    // their own (or no) miss and no borrowed support.
+    // Discriminating negative: the weak sibling keeps its own miss and no
+    // borrowed support.
     assert_eq!(support_of("test_weak_on_boundary"), Some(None));
-    assert_eq!(support_of("test_unresolved"), Some(None));
     for row in &finding.related_tests {
         if row.miss != Some(RelatedTestMiss::MissingInput) {
             assert_eq!(row.miss_support, None, "{}", row.name);
@@ -1332,6 +1332,22 @@ fn unresolved_row_inside_a_boundary_gap_does_not_borrow_a_sibling_fact() -> Resu
     assert_eq!(
         miss_of(&finding, "test_unresolved"),
         None,
+        "{:?}",
+        misses(&finding)
+    );
+    // #10990: the unresolved strong call could sit on the boundary, so the
+    // finding names no concrete discriminator and no row borrows support
+    // from a withheld fact; the proving row keeps its own miss alone.
+    assert!(
+        finding.activation.missing_discriminators.is_empty(),
+        "{:?}",
+        finding.activation.missing_discriminators
+    );
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .all(|row| row.miss_support.is_none()),
         "{:?}",
         misses(&finding)
     );
@@ -2081,6 +2097,16 @@ mod direct {
             &reserve("def test_a():\n    assert can_reserve(5, 3) == True\n")?,
             0
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn bool_numeric_relational_boundary_does_not_fabricate_missing_equality() -> Result<(), String>
+    {
+        let source = "def eligible(x):\n    if x > 1:\n        return True\n    return False\n";
+        let tests = "from src.subject import eligible\n\ndef test_a():\n    assert eligible(True) == True\n";
+        let case = case(source, tests, 2, "    if x > 1:", "    if x >= 1:")?;
+        assert_no_missing_input(&case, "True on x == 1 boundary");
         Ok(())
     }
 

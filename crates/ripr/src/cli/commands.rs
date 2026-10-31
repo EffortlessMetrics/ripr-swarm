@@ -163,6 +163,8 @@ use init::parse_init_options;
 
 // The generated `ripr init --ci github` workflow template lives beside the
 // init command; its tests here pin rendered placeholders against it.
+#[path = "commands/init_agents.rs"]
+mod init_agents;
 #[path = "commands/init_workflow.rs"]
 mod init_workflow;
 #[cfg(test)]
@@ -3326,7 +3328,7 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // looked like a hang. The same stderr-only stage lines `ripr check`
     // projects disclose the work without touching machine stdout. The
     // `--from` artifact path runs no pipeline and wires no sink.
-    let progress = (!quiet).then(|| {
+    let progress = (!crate::cli::progress::progress_silenced(quiet)).then(|| {
         crate::cli::progress::CliProgressSink::for_stderr(
             std::io::IsTerminal::is_terminal(&std::io::stderr()),
             crate::cli::progress::ProgressPolicy::STANDARD,
@@ -7925,6 +7927,7 @@ language = "rust"
                 force: true,
                 ci: Some(InitCi::Github),
                 mcp: false,
+                agents: Vec::new(),
             })
         );
     }

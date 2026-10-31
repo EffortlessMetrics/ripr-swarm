@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- The `languages.enabled` unavailable-adapter config error and the preview-language advisory's build-gap recovery now come from the shared `LanguageAvailabilityReport` resolver instead of re-deriving availability from `is_available`; message text is unchanged. Check/JSON/diff-report text is unaffected; per-surface exposure of the full report follows in later slices (#2960, #2615).

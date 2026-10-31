@@ -1,6 +1,6 @@
 pub(super) const INIT_HELP: &str = r#"Write an optional repo policy file (ripr.toml) and, with --ci github, a non-blocking advisory workflow.
 
-Usage: ripr init [--root PATH] [--ci github] [--mcp] [--dry-run] [--force]
+Usage: ripr init [--root PATH] [--ci github] [--mcp] [--agents claude|codex|cursor|all] [--dry-run] [--force]
 
 `ripr init` is optional. It writes the built-in defaults to a repo-local
 ripr.toml so teams can commit, review, and tune policy. Missing ripr.toml is
@@ -18,14 +18,24 @@ Options:
                    ripr.toml and --force does not reset it. Codex config is
                    user-global and is never written: init prints the
                    `codex mcp add` command.
-  --dry-run        Show the plan and the file bodies without writing anything.
+  --agents TARGET  Also add a short ripr loop (find a gap, write a test, verify,
+                   explicit done and stop rules) for your coding agent: claude
+                   -> CLAUDE.md, codex -> AGENTS.md, cursor ->
+                   .cursor/rules/ripr.mdc, all -> all three. Repeatable. The
+                   text goes in a marked section appended to your file; your
+                   other content is never touched, a rerun changes nothing,
+                   and an edited section is kept unless --force refreshes it.
+                   A symlink, an unreadable file or an unterminated marker is
+                   refused. With cursor, --mcp also writes .cursor/mcp.json.
+                   Guide: docs/AGENT_QUICKSTART.md.
+  --dry-run       Show the plan and the file bodies without writing anything.
                    Resolves the same preconditions as the real run, so it
                    fails the same way (existing file without --force, root
                    that is not a directory) instead of reporting success.
   --force          Replace what init would otherwise refuse or keep. Plain `ripr init --force`
-                   resets an existing ripr.toml. With --ci or --mcp, ripr.toml is
-                   always kept; --force then only replaces the generated workflow
-                   or the `ripr` entry in .mcp.json.
+                   resets an existing ripr.toml. With --ci, --mcp or --agents, ripr.toml is
+                   always kept; --force then only replaces the generated workflow,
+                   the `ripr` entry in .mcp.json, or the marked agent section.
 
 Generated config:
   - uses draft analysis mode and includes unchanged tests
@@ -272,6 +282,7 @@ Options:
                            Choose by task: eye review -> human (the default);
                            every finding with drill-in commands -> human-full;
                            machine consumer (jq, CI scripts) -> json (--json);
+                           compact report for a coding agent -> agent;
                            file annotations in Actions logs -> github; code
                            scanning upload -> sarif; README badge ->
                            repo-badge-shields (repo ledger); PR/CI status
@@ -279,7 +290,7 @@ Options:
                            inventory -> repo-exposure-json; agent repair
                            evidence -> agent-seam-packets-json. Groups:
                              Analysis (diff-scoped):
-                               human, human-full, json, github, sarif,
+                               human, human-full, json, github, sarif, agent,
                                check-findings-json (identified snapshot
                                for `agent verify`)
                              Badge (diff-scoped, for PR/CI status):
@@ -392,7 +403,8 @@ Progress:
   they do not disable stderr progress. Unknown totals never become a
   percentage or ETA. Progress does not mean analysis is faster or
   that the command will succeed. `--quiet` turns this stream off; agents
-  and scripts reading json should pass it.
+  and scripts reading json should pass it. Setting `RIPR_QUIET` to anything
+  but empty, `0` or `false` does the same.
 
 Environment variables:
   RIPR_MAX_DIFF_CHANGED_RUST_LINES        Maximum added plus removed Rust diff lines
@@ -450,6 +462,11 @@ Environment variables:
                                           to remove the cap (unbounded); an
                                           unparseable value fails the run.
                                           Default: 1000000 (1 MB).
+  RIPR_QUIET                              Silence the stderr `ripr progress:` stream
+                                          like --quiet (check, explain, context,
+                                          pilot). Any value except empty, 0 or
+                                          false silences it; stdout, exit codes and
+                                          errors are unchanged.
   RIPR_GIT_TIMEOUT                        Cooperative deadline in seconds for each
                                           git invocation in the diff-load path. A
                                           git command that exceeds the deadline is

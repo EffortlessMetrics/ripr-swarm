@@ -1,1 +1,1 @@
-| [RIPR-SPEC-0367](../specs/RIPR-SPEC-0367-kani-bounded-model-checking-lane.md) | proposed | Kani bounded model checking lane: per-harness VERIFIED, FAILED or NOT-ESTABLISHED, never a pass by absence, and an explicit statement of what a bounded proof does not claim |
+| [RIPR-SPEC-0367](../specs/RIPR-SPEC-0367-proof-harness-is-not-a-test-or-production-seam.md) | proposed | Kani proof harness is neither a test nor a production seam; ripr discloses it as not evaluated (#10686) |

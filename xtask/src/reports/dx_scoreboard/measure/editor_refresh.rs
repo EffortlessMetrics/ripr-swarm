@@ -144,6 +144,155 @@ pub(super) fn measure_editor_refresh(
     }))
 }
 
+/// Outcome of the two resilience checks run against one changed Rust file.
+#[derive(Debug, PartialEq)]
+pub(super) struct EditorResilience {
+    pub(super) file: String,
+    /// Reason each failed check failed; empty when both held.
+    pub(super) failures: Vec<String>,
+}
+
+/// Saves sent back to back in the burst check.
+const BURST_SAVES: u32 = 4;
+
+/// Gap between burst saves: shorter than any analysis, so each save lands
+/// while the previous refresh is still in flight, as fast typing-and-saving does.
+const BURST_GAP: Duration = Duration::from_millis(100);
+
+/// How long the terminated server runs into its refresh before it is terminated.
+const KILL_AFTER: Duration = Duration::from_millis(500);
+
+/// Two failure modes a long editor session meets that a single clean save
+/// never does. A burst of saves must settle on one `succeeded` refresh (the
+/// stale ones `superseded`, none stuck), and a server terminated mid-refresh must
+/// leave nothing behind that stops the next server from refreshing the same
+/// checkout. `Ok(None)` when the change holds no Rust file to open.
+pub(super) fn measure_editor_resilience(
+    binary: &Path,
+    checkout: &Path,
+    base: &str,
+    envs: &[(&str, &str)],
+    timeout: Duration,
+) -> Result<Option<EditorResilience>, String> {
+    let Some(relative) = changed_rust_file(checkout, base)? else {
+        return Ok(None);
+    };
+    let path = checkout.join(&relative);
+    let original = fs::read_to_string(&path)
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+    let _restore = RestoreFile {
+        path: path.clone(),
+        original: original.clone(),
+    };
+    let uri = file_uri(&path);
+    let deadline = Instant::now() + timeout;
+    let mut failures = Vec::new();
+
+    let mut session = Session::start(binary, checkout, envs, base, ProgressReply::Answer)?;
+    session.initialize(checkout, deadline)?;
+    open_and_warm(&mut session, &uri, &original, deadline)?;
+
+    // Burst: several edited saves, each before the last refresh can finish.
+    let mut version = 2;
+    for index in 0..BURST_SAVES {
+        let text = format!("{original}\n// ripr dx-scoreboard burst edit {index}\n");
+        save_edit(&mut session, &path, &uri, &text, version)?;
+        version += 1;
+        std::thread::sleep(BURST_GAP);
+    }
+    match session.wait_attempt(deadline, Some("did_save"), None) {
+        Wait::Terminal(state) if state == "succeeded" => {}
+        Wait::Terminal(state) => {
+            failures.push(format!("burst of {BURST_SAVES} saves ended `{state}`"));
+        }
+        Wait::NoAttempt | Wait::Deadline => {
+            failures.push(format!(
+                "burst of {BURST_SAVES} saves never reached a terminal status"
+            ));
+        }
+        Wait::Closed => failures.push("server closed during the save burst".to_string()),
+    }
+
+    // Crash: kill the server while a refresh is running, then refresh again
+    // from a fresh process on the same checkout.
+    let text = format!("{original}\n// ripr dx-scoreboard kill edit\n");
+    if save_edit(&mut session, &path, &uri, &text, version).is_ok() {
+        std::thread::sleep(KILL_AFTER);
+    }
+    let _ = session.child.kill();
+    drop(session);
+    let mut next = Session::start(binary, checkout, envs, base, ProgressReply::Answer)?;
+    next.initialize(checkout, deadline)?;
+    open_and_warm(&mut next, &uri, &original, deadline)?;
+    save_edit(
+        &mut next,
+        &path,
+        &uri,
+        &format!("{original}{EDIT_MARKER}"),
+        2,
+    )?;
+    match next.wait_attempt(deadline, Some("did_save"), None) {
+        Wait::Terminal(state) if state == "succeeded" => {}
+        Wait::Terminal(state) => {
+            failures.push(format!("refresh after a terminated server ended `{state}`"));
+        }
+        Wait::NoAttempt | Wait::Deadline => {
+            failures
+                .push("refresh after a terminated server never reached a terminal status".into());
+        }
+        Wait::Closed => failures.push("restarted server closed during its refresh".to_string()),
+    }
+    next.shutdown();
+    Ok(Some(EditorResilience {
+        file: relative.display().to_string(),
+        failures,
+    }))
+}
+
+/// Open the document and wait out the opening refresh, as the timed check does.
+fn open_and_warm(
+    session: &mut Session,
+    uri: &str,
+    original: &str,
+    deadline: Instant,
+) -> Result<(), String> {
+    session.notify(
+        "textDocument/didOpen",
+        json!({"textDocument": {
+            "uri": uri, "languageId": "rust", "version": 1, "text": original,
+        }}),
+    )?;
+    match session.wait_attempt(deadline, None, Some(OPENING_GRACE)) {
+        Wait::Terminal(state) if state != "succeeded" => {
+            Err(format!("opening refresh ended `{state}`"))
+        }
+        Wait::Terminal(_) | Wait::NoAttempt => Ok(()),
+        Wait::Deadline => Err("opening refresh did not finish before the deadline".into()),
+        Wait::Closed => Err("lsp child closed its output during the opening refresh".into()),
+    }
+}
+
+fn save_edit(
+    session: &mut Session,
+    path: &Path,
+    uri: &str,
+    text: &str,
+    version: u32,
+) -> Result<(), String> {
+    fs::write(path, text).map_err(|err| format!("failed to write {}: {err}", path.display()))?;
+    session.notify(
+        "textDocument/didChange",
+        json!({
+            "textDocument": {"uri": uri, "version": version},
+            "contentChanges": [{"text": text}],
+        }),
+    )?;
+    session.notify(
+        "textDocument/didSave",
+        json!({"textDocument": {"uri": uri}}),
+    )
+}
+
 /// First Rust file the base..HEAD change touches that still exists.
 fn changed_rust_file(checkout: &Path, base: &str) -> Result<Option<PathBuf>, String> {
     let names = super::git(
@@ -555,6 +704,62 @@ fn read_frame(reader: &mut impl BufRead) -> Result<Option<Value>, String> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Real-server check of the resilience instrument. Needs a built binary,
+    /// so it runs only when `RIPR_DX_EDITOR_BINARY` names one (CI builds none
+    /// for xtask tests); the instrument's logic is otherwise unexercised.
+    #[test]
+    fn resilience_holds_for_a_small_workspace_with_a_real_server() -> Result<(), String> {
+        let Some(binary) = std::env::var_os("RIPR_DX_EDITOR_BINARY") else {
+            return Ok(());
+        };
+        let dir = std::env::temp_dir().join(format!("ripr-resilience-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src")).map_err(|err| err.to_string())?;
+        let write = |body: &str| fs::write(dir.join("src/lib.rs"), body).map_err(|e| e.to_string());
+        fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"resfix\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .map_err(|err| err.to_string())?;
+        write("pub fn f(x: u32) -> u32 { x }\n")?;
+        let git = |args: &[&str]| super::super::git(Some(&dir), args).map(|_| ());
+        git(&["init", "-q", "-b", "main"])?;
+        git(&["-c", "user.name=t", "-c", "user.email=t@t", "add", "-A"])?;
+        git(&[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "-m",
+            "base",
+        ])?;
+        write(
+            "pub fn f(x: u32) -> u32 { if x > 1 { x + 1 } else { x } }\n#[cfg(test)]\nmod t { #[test] fn a() { assert_eq!(super::f(1), 1); } }\n",
+        )?;
+        git(&[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-qam",
+            "change",
+        ])?;
+        let result = measure_editor_resilience(
+            Path::new(&binary),
+            &dir,
+            "HEAD~1",
+            &[],
+            Duration::from_mins(2),
+        );
+        let _ = fs::remove_dir_all(&dir);
+        let resilience = result?.ok_or("fixture changed no Rust file")?;
+        assert!(resilience.failures.is_empty(), "{:?}", resilience.failures);
+        Ok(())
+    }
     use super::*;
     use std::io::Cursor;
 

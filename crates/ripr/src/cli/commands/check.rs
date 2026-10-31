@@ -123,7 +123,7 @@ fn implicit_git_boundary(dir: &Path) -> Result<Option<WorkTreeRootProbe>, String
 }
 
 fn manifest_declares_workspace(manifest: &Path) -> bool {
-    std::fs::read_to_string(manifest)
+    crate::bounded_input::read_metadata_toml(manifest)
         .ok()
         .and_then(|contents| toml::from_str::<toml::Value>(&contents).ok())
         .is_some_and(|document| document.get("workspace").is_some_and(toml::Value::is_table))
@@ -200,11 +200,20 @@ pub(super) fn resolve_project_root(
     Ok(None)
 }
 
+/// Read a probe file only when it is a regular file. Opening a FIFO named
+/// like a manifest would block this implicit-root probe forever (#11579).
+fn read_regular_file_to_string(path: &Path) -> std::io::Result<String> {
+    if !std::fs::metadata(path)?.is_file() {
+        return Err(std::io::Error::other("not a regular file"));
+    }
+    std::fs::read_to_string(path)
+}
+
 fn non_cargo_workspace_marker(dir: &Path) -> Option<ImplicitRootReason> {
     if dir.join("pnpm-workspace.yaml").is_file() {
         return Some(ImplicitRootReason::PnpmWorkspace);
     }
-    if std::fs::read_to_string(dir.join("package.json"))
+    if read_regular_file_to_string(&dir.join("package.json"))
         .ok()
         .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
         .as_ref()
@@ -212,7 +221,7 @@ fn non_cargo_workspace_marker(dir: &Path) -> Option<ImplicitRootReason> {
     {
         return Some(ImplicitRootReason::PackageJsonWorkspaces);
     }
-    if std::fs::read_to_string(dir.join("pyproject.toml"))
+    if crate::bounded_input::read_metadata_toml(dir.join("pyproject.toml"))
         .ok()
         .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
         .is_some_and(|document| {
@@ -1584,7 +1593,7 @@ fn check_inner(
     // diff-scoped path promises (`ripr progress: <stage> [<scope>]`,
     // throttled heartbeats included). Both the audit-path disclosure and the
     // stage lines are stderr-only and cannot change machine stdout.
-    let progress = (!quiet).then(|| {
+    let progress = (!crate::cli::progress::progress_silenced(quiet)).then(|| {
         std::sync::Arc::new(crate::cli::progress::CliProgressSink::for_stderr(
             std::io::stderr().is_terminal(),
             crate::cli::progress::ProgressPolicy::STANDARD,

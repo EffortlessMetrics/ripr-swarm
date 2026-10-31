@@ -17,7 +17,7 @@ impl StaticLimitKind {
     /// Every kind, so tests can walk the vocabulary. The ordinal test keeps
     /// this list in step with the enum.
     #[cfg(test)]
-    pub(crate) const ALL: [StaticLimitKind; 30] = [
+    pub(crate) const ALL: [StaticLimitKind; 32] = [
         StaticLimitKind::DynamicDispatch,
         StaticLimitKind::Metaprogramming,
         StaticLimitKind::MissingImportGraph,
@@ -48,6 +48,8 @@ impl StaticLimitKind {
         StaticLimitKind::RustImplicitCallUnresolved,
         StaticLimitKind::RustIndirectOwnerCallUnresolved,
         StaticLimitKind::RustCallerLoopSelectorUnresolved,
+        StaticLimitKind::ProofHarnessNotEvaluated,
+        StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated,
     ];
 
     /// What to do so ripr can settle this limitation. One imperative
@@ -180,6 +182,15 @@ impl StaticLimitKind {
                 "Add a test that drives the iterator with one concrete input and asserts the \
                  changed arm's item directly, rather than only comparing the collected sequence."
             }
+            StaticLimitKind::ProofHarnessNotEvaluated => {
+                "Run the verifier for the harness that calls the changed owner, or add a test \
+                 that calls it and asserts on its result; ripr does not evaluate the proof."
+            }
+            StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => {
+                "Run ripr from a narrower root, or raise RIPR_TS_MAX_WORKSPACE_FILES (and \
+                 RIPR_TS_MAX_WORKSPACE_READ_BYTES if the run then reports a read budget), then \
+                 check again."
+            }
         }
     }
 }
@@ -255,9 +266,9 @@ impl StopReason {
                 "Add a test that calls the changed code and asserts an exact result."
             }
             StopReason::TransitiveReachUnresolved => {
-                "Call the changed owner directly from a test if tests can name it; if the path \
-                 runs through private helpers ripr only matched by name, the edge can stay \
-                 unresolved even with an exact assertion."
+                "Call the changed owner directly from a test if tests can name it; if it is \
+                 private or reached only through private helpers, ripr cannot finish the call \
+                 chain, so the edge can stay unresolved even with an exact assertion."
             }
             StopReason::MacroReachUnresolved => {
                 "Call the changed owner directly from a plain `#[test]` body if tests can name \
@@ -330,9 +341,11 @@ mod tests {
                 StaticLimitKind::RustImplicitCallUnresolved => 27,
                 StaticLimitKind::RustIndirectOwnerCallUnresolved => 28,
                 StaticLimitKind::RustCallerLoopSelectorUnresolved => 29,
+                StaticLimitKind::ProofHarnessNotEvaluated => 30,
+                StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => 31,
             }
         }
-        const COUNT: usize = 30;
+        const COUNT: usize = 32;
         assert_eq!(StaticLimitKind::ALL.len(), COUNT);
         let ordinals: Vec<usize> = StaticLimitKind::ALL.iter().copied().map(ordinal).collect();
         assert_eq!(
