@@ -49,6 +49,7 @@ mod release_ledger;
 mod release_negative;
 #[cfg(all(test, unix))]
 pub(crate) use release_negative::capture_with_owned_root_for_test;
+mod path_inventory;
 mod release_scope;
 pub(crate) mod release_server;
 mod repair_card_usability;
