@@ -3576,6 +3576,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/boundary_label_tests.rs::finding_names_the_changed_comparison_in_discriminator_and_limitation",
   "crates/ripr/src/analysis/language/typescript/boundary_label_tests.rs::finding_for_non_comparison_edit_omits_the_boundary_label",
   "crates/ripr/src/analysis/language/typescript/boundary_label_tests.rs::compound_line_boundary_fact_reads_the_source_line_identity",
+  "crates/ripr/src/analysis/language/typescript/boundary_label_tests.rs::typeof_comparison_edit_names_its_kind_boundary",
   "crates/ripr/src/analysis/language/typescript/mod.rs",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::analyze_diff_credits_cross_extension_related_test_oracle_for_mts_sources",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::classify_probe_shape_reads_a_returned_ternary_as_its_condition_boundary",

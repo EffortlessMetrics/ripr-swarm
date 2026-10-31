@@ -106,6 +106,13 @@ fn admitted_operand(expression: &Expression<'_>) -> bool {
         Expression::UnaryExpression(unary) if matches!(unary.operator.as_str(), "+" | "-") => {
             matches!(&unary.argument, Expression::NumericLiteral(_))
         }
+        // `typeof x === "function"` is the kind check main's whole-line
+        // reader labeled (`typeof x == "function"`); the selector must keep
+        // naming it instead of refusing the boundary (#10399 qualification
+        // golden drift on typescript_typeof_kind_*).
+        Expression::UnaryExpression(unary) if unary.operator.as_str() == "typeof" => {
+            admitted_operand(&unary.argument)
+        }
         _ => false,
     }
 }

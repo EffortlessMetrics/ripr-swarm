@@ -581,6 +581,32 @@ fn optional_static_member_comparison_keeps_its_boundary() {
     );
 }
 
+/// A `typeof` operand is a comparable kind boundary: the whole-line reader
+/// labeled it `typeof input == "function"` and the parser-owned selector must
+/// keep naming it, not refuse the boundary (the typescript_typeof_kind_*
+/// fixtures pin the credited classification, #10399 qualification).
+#[test]
+fn typeof_comparison_edit_names_its_kind_boundary() {
+    assert_eq!(
+        boundary_label(
+            Some("  return typeof input === \"function\" ? a : b;"),
+            "  return typeof input !== \"function\" ? a : b;"
+        )
+        .as_deref(),
+        Some("typeof input == \"function\"")
+    );
+    // A nested typeof operand still refuses; only a plain admitted operand
+    // under typeof keeps its site.
+    assert_eq!(
+        boundary_label(
+            Some("  if (typeof order.total === \"number\") {"),
+            "  if (typeof order.total !== \"number\") {"
+        )
+        .as_deref(),
+        Some("typeof order.total == \"number\"")
+    );
+}
+
 /// The module-bound boundary-input fact reads the full changed source line,
 /// not the narrowed label text: the fact gates' whole-side and verbatim-line
 /// rules need the source line's statement context, which the selected
