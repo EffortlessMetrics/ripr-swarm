@@ -744,6 +744,12 @@ fn a_persisted_envelope_grows_linearly_with_the_entries_of_one_file() -> Result<
 fn a_malformed_shared_list_reference_fails_to_decode() {
     use super::types::{Shared, SharedWireScope};
 
+    // `assert!(x.is_err())` trips clippy::assertions_on_result_states; the
+    // helper keeps the intent without an `unwrap_err` on an opaque payload.
+    fn fails<T>(result: Result<T, serde_json::Error>) -> bool {
+        result.is_err()
+    }
+
     let decode = |json: &str| {
         let _scope = SharedWireScope::open();
         serde_json::from_str::<Vec<Shared<u32>>>(json)
@@ -754,11 +760,13 @@ fn a_malformed_shared_list_reference_fails_to_decode() {
     assert!(ok.is_ok_and(|lists| lists.len() == 2 && lists[0].same_list(&lists[1])));
 
     // A forward or unknown reference.
-    assert!(decode(r#"[{"shared":1}]"#).is_err());
-    assert!(decode(r#"[{"shared":2},{"shared":2,"items":[1]}]"#).is_err());
+    assert!(fails(decode(r#"[{"shared":1}]"#)));
+    assert!(fails(decode(r#"[{"shared":2},{"shared":2,"items":[1]}]"#)));
     // An unexpected field, and a map without the `shared` key.
-    assert!(decode(r#"[{"shared":1,"other":[1]}]"#).is_err());
-    assert!(decode(r#"[{"items":[1]}]"#).is_err());
+    assert!(fails(decode(r#"[{"shared":1,"other":[1]}]"#)));
+    assert!(fails(decode(r#"[{"items":[1]}]"#)));
     // The wire form is refused outside a scope.
-    assert!(serde_json::from_str::<Vec<Shared<u32>>>(r#"[{"shared":1,"items":[1]}]"#).is_err());
+    assert!(fails(serde_json::from_str::<Vec<Shared<u32>>>(
+        r#"[{"shared":1,"items":[1]}]"#
+    )));
 }
