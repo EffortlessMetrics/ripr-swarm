@@ -103,3 +103,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_pointer_invisible_input (9)
+
+Reason:
+RIPR-SPEC-0108: plain wording 'spot' for 'seam' in the check/repair disagreement note (#10880)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_pointer_invisible_input --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

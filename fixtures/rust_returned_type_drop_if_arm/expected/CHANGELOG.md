@@ -155,3 +155,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_returned_type_drop_if_arm (13)
+
+Reason:
+RIPR-SPEC-0108: plain wording 'spot' for 'seam' in the check/repair disagreement note (#10880)
+
+Command:
+`cargo xtask goldens bless rust_returned_type_drop_if_arm --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
