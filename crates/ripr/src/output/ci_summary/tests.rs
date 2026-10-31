@@ -131,6 +131,7 @@ impl Fixture {
             base_ref: base_ref.to_string(),
             upload_sarif: upload_sarif == "true",
             gate_baseline: !gate_baseline.is_empty(),
+            gate_configured: false,
             comment_mode: comment_mode.to_string(),
             configured_languages: languages.iter().map(|name| (*name).to_string()).collect(),
         };
@@ -1130,4 +1131,78 @@ fn comment_mode_trims_and_reads_empty_as_off() {
     assert_eq!(effective_comment_mode(" inline "), "inline");
     assert_eq!(effective_comment_mode("plan"), "plan");
     assert_eq!(effective_comment_mode("post"), "post");
+}
+
+#[test]
+fn governance_sections_fold_unless_a_gate_is_configured() -> TestResult {
+    let fixture = Fixture::complete("fold-governance")?;
+    let render = |gate_configured: bool| -> Result<String, Box<dyn std::error::Error>> {
+        let input = CiSummaryInput {
+            root: fixture.root.clone(),
+            base_ref: "trunk".to_string(),
+            upload_sarif: true,
+            gate_baseline: false,
+            gate_configured,
+            comment_mode: String::new(),
+            configured_languages: vec!["rust".to_string()],
+        };
+        Ok(String::from_utf8(render_ci_summary(&input))?)
+    };
+    let folded = render(false)?;
+    let open = render(true)?;
+    let fold = "<details><summary>Policy and governance (advisory; no gate configured)</summary>";
+    let start = folded.find(fold).ok_or("governance fold is missing")?;
+    let end = start
+        + folded[start..]
+            .find("\n</details>\n")
+            .ok_or("fold is not closed")?;
+    let readiness = folded
+        .find("### Policy readiness\n")
+        .ok_or("policy readiness is missing")?;
+    assert!(start < readiness && readiness < end, "{folded}");
+    // Content is folded, not dropped, and the gate section stays visible.
+    assert!(open.contains("### Policy readiness\n"), "{open}");
+    assert!(!open.contains(fold), "{open}");
+    let gate = folded
+        .find("#### Gate decision at a glance")
+        .ok_or("gate decision is missing")?;
+    assert!(gate > end, "gate decision must stay outside the fold");
+    Ok(())
+}
+
+#[test]
+fn first_run_status_omits_only_the_not_available_placeholder() -> TestResult {
+    let fixture = Fixture::new("status-rows")?;
+    fixture.json(
+        "target/ripr/reports/start-here.json",
+        &json!({"status": "no_action", "selected": {"state": "no_action"}}),
+    )?;
+    let summary = fixture.render(&[])?;
+    assert!(summary.contains("- Status: `no_action`"), "{summary}");
+    assert!(
+        summary.contains("- Selected state: `no_action`"),
+        "{summary}"
+    );
+    assert!(summary.contains("- Top gap/no-action: `none`"), "{summary}");
+    let status = block(&summary, "#### First-run status");
+    assert!(!status.contains("`not_available`"), "{status}");
+    assert!(!status.contains("- Repair target:"), "{status}");
+    Ok(())
+}
+
+#[test]
+fn start_here_is_named_by_artifact_not_a_target_path() -> TestResult {
+    let fixture = Fixture::new("artifact-name")?;
+    fixture.write("target/ripr/reports/start-here.md", "# Start\n")?;
+    let summary = fixture.render(&[])?;
+    let start = block(&summary, "### Start here");
+    assert!(
+        start.contains("`start-here.md` in the `ripr-reports` artifact"),
+        "{start}"
+    );
+    assert!(
+        !start.contains("Open `target/ripr/reports/start-here.md`"),
+        "{start}"
+    );
+    Ok(())
 }

@@ -32,6 +32,7 @@ pub(super) fn ci_summary(args: &[String]) -> Result<(), String> {
         base_ref: options.base_ref,
         upload_sarif: options.upload_sarif == "true",
         gate_baseline: !options.gate_baseline.is_empty(),
+        gate_configured: !matches!(settings.gate_mode.trim(), "" | "off"),
         comment_mode: options.comment_mode,
     };
     let summary = render_ci_summary(&input);
