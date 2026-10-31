@@ -24,34 +24,6 @@ struct BoundaryLine {
     direct: bool,
 }
 
-fn operand_delimiter(text: &str) -> bool {
-    COMPARISON_OPERATORS.contains(&text)
-        || matches!(
-            text,
-            "??" | "&&"
-                | "||"
-                | "=>"
-                | "?"
-                | ":"
-                | "="
-                | "("
-                | ")"
-                | "{"
-                | "}"
-                | "["
-                | "]"
-                | ","
-                | ";"
-                | "return"
-                | "if"
-                | "else"
-                | "while"
-                | "for"
-                | "case"
-                | "yield"
-        )
-}
-
 fn ungroup<'a>(mut expression: &'a Expression<'a>) -> &'a Expression<'a> {
     while let Expression::ParenthesizedExpression(group) = expression {
         expression = &group.expression;
@@ -260,51 +232,31 @@ fn parse_line(file: &Path, line: &str, allocator: &Allocator) -> Option<Boundary
 
 fn selected_text(new: &BoundaryLine, old: Option<&BoundaryLine>) -> Option<String> {
     let touched: Vec<&BoundarySite> = if let Some(old) = old {
-        let shared = new.tokens.len().min(old.tokens.len());
-        let prefix = (0..shared)
-            .take_while(|&i| new.tokens[i].text == old.tokens[i].text)
-            .count();
-        if prefix == new.tokens.len() && new.tokens.len() == old.tokens.len() {
-            return None;
+        // Name a comparison only when exactly one token was substituted in
+        // place (#11442): same token count, one differing token, and the same
+        // comparison site already existing in the old line. Two tokens in one
+        // clause, an added comparison clause, or a removed/reordered clause
+        // cannot be steered to one boundary, so they keep the refusal.
+        let changed: Vec<usize> = if new.tokens.len() == old.tokens.len() {
+            (0..new.tokens.len())
+                .filter(|&i| new.tokens[i].text != old.tokens[i].text)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        match changed.as_slice() {
+            [index] => new
+                .sites
+                .iter()
+                .filter(|site| site.first <= *index && *index <= site.last)
+                .filter(|site| {
+                    old.sites
+                        .iter()
+                        .any(|prior| prior.first == site.first && prior.last == site.last)
+                })
+                .collect(),
+            _ => Vec::new(),
         }
-        let suffix = (0..shared - prefix)
-            .take_while(|&back| {
-                new.tokens[new.tokens.len() - 1 - back].text
-                    == old.tokens[old.tokens.len() - 1 - back].text
-            })
-            .count();
-        let end = new.tokens.len() - suffix;
-        let removed_delimiter = old.tokens[prefix..old.tokens.len() - suffix]
-            .iter()
-            .any(|token| operand_delimiter(&token.text));
-        new.sites
-            .iter()
-            .filter(|site| {
-                // Two edits may surround an unchanged comparison. The edit
-                // envelope alone cannot claim that middle comparison changed.
-                let site_tokens = &new.tokens[site.first..=site.last];
-                let unchanged_inside_edit = old.tokens[prefix..old.tokens.len() - suffix]
-                    .windows(site_tokens.len())
-                    .any(|window| {
-                        window
-                            .iter()
-                            .zip(site_tokens)
-                            .all(|(old, new)| old.text == new.text)
-                    });
-                if unchanged_inside_edit {
-                    return false;
-                }
-                if prefix == end {
-                    if removed_delimiter {
-                        site.first < prefix && prefix <= site.last
-                    } else {
-                        site.first <= prefix && prefix <= site.last + 1
-                    }
-                } else {
-                    prefix <= site.last && end > site.first
-                }
-            })
-            .collect()
     } else {
         new.sites.iter().collect()
     };
