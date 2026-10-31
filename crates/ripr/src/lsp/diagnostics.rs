@@ -133,13 +133,30 @@ pub(super) fn canonical_finding_groups(findings: &[Finding]) -> Vec<(Finding, Ve
 /// and class summaries can read the same group structure the listing and
 /// publishing paths see.
 pub(super) fn canonical_group_members(findings: &[Finding]) -> Vec<(&Finding, Vec<&Finding>)> {
+    // Gap-less findings that are one behavior seeded under several probe
+    // families (#11453) share the lowest member id as their group key, so a
+    // singleton keeps the `raw:<id>` key and ordering it always had.
+    let mut overlap_anchor = BTreeMap::<String, &str>::new();
+    for finding in findings {
+        if let Some(key) = overlap_signature(finding) {
+            let anchor = overlap_anchor.entry(key).or_insert(finding.id.as_str());
+            if finding.id.as_str() < *anchor {
+                *anchor = finding.id.as_str();
+            }
+        }
+    }
     let mut grouped = BTreeMap::<String, Vec<&Finding>>::new();
     for finding in findings {
         let key = finding
             .canonical_gap
             .as_ref()
             .map(|gap| format!("canonical:{}", gap.id))
-            .unwrap_or_else(|| format!("raw:{}", finding.id));
+            .unwrap_or_else(|| {
+                let anchor = overlap_signature(finding)
+                    .and_then(|key| overlap_anchor.get(&key).copied())
+                    .unwrap_or(finding.id.as_str());
+                format!("raw:{anchor}")
+            });
         grouped.entry(key).or_default().push(finding);
     }
 
@@ -151,6 +168,37 @@ pub(super) fn canonical_group_members(findings: &[Finding]) -> Vec<(&Finding, Ve
             Some((primary, group))
         })
         .collect()
+}
+
+/// Signature under which gap-less findings describe one behavior at one site
+/// (#11453): same file, line, column, owner and expression, and equal in every
+/// field other than the identity and the probe-family-derived seeding
+/// (`id`, `probe.id`, `probe.family`, `probe.delta`,
+/// `probe.expected_sinks`, `probe.required_oracles`). Everything else, including class, RIPR stages,
+/// confidence, evidence, missing facts, related tests, next step, static-limit
+/// and currentness state, must be equal, so any differing repair signal keeps
+/// the findings separate. Findings that carry a canonical gap are grouped by
+/// that gap instead and never take this path. `None` if the finding cannot be
+/// fingerprinted, which leaves it ungrouped.
+fn overlap_signature(finding: &Finding) -> Option<String> {
+    if finding.canonical_gap.is_some() {
+        return None;
+    }
+    let mut value = serde_json::to_value(finding).ok()?;
+    let object = value.as_object_mut()?;
+    object.remove("id");
+    object.remove("canonical_gap");
+    let probe = object.get_mut("probe")?.as_object_mut()?;
+    for field in [
+        "id",
+        "family",
+        "delta",
+        "expected_sinks",
+        "required_oracles",
+    ] {
+        probe.remove(field);
+    }
+    serde_json::to_string(&value).ok()
 }
 
 fn finding_primary_sort_key(finding: &Finding) -> String {
@@ -277,7 +325,9 @@ pub(super) fn add_canonical_group_data(
     data.insert("raw_signal_count".to_string(), serde_json::json!(raw.len()));
     data.insert(
         "group_reason".to_string(),
-        serde_json::json!(if raw.len() > 1 {
+        serde_json::json!(if raw.len() > 1 && primary.canonical_gap.is_none() {
+            "same_site_and_repair_signal"
+        } else if raw.len() > 1 {
             "same_canonical_owner_and_missing_discriminator"
         } else {
             "single_canonical_item"
@@ -432,7 +482,7 @@ pub(super) fn finding_diagnostics_by_uri_with_profile(
                 serde_json::Value::Bool(true),
             );
         }
-        if primary.canonical_gap.is_some() {
+        if primary.canonical_gap.is_some() || raw_findings.len() > 1 {
             add_canonical_group_data(root, &mut diagnostic, &primary, &raw_findings);
             if canonical_group_has_mixed_classes(&raw_findings) {
                 diagnostic.severity = Some(DiagnosticSeverity::INFORMATION);

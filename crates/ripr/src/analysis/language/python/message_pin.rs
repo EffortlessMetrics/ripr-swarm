@@ -18,11 +18,19 @@
 //! wildcard). Any regex syntax, non-literal pattern, f-string message,
 //! `str(exc.value) == ...` comparison or other assertion shape fails open and
 //! keeps the existing verdict.
+//!
+//! The same reading covers the two-step form `msg = "..."` then
+//! `raise Exc(msg)` (the attrs `default_if_none` instance of #9185). The
+//! changed line is then a plain assignment, and the message is resolved
+//! through the raise only when the owner mentions the name exactly twice: the
+//! assignment and one single-line `raise Exc(name)`. Any other mention (a
+//! rebind, a second use, a nested scope, a keyword) or dynamic scope access
+//! leaves the message unresolved and keeps the existing verdict.
 
-use super::PythonAssertion;
 use super::assertion_selection::PythonAssertionFocus;
 use super::related_tests::PythonRelatedCandidate;
 use super::source_facts::parse_module_result;
+use super::{PythonAssertion, PythonOwner};
 use crate::domain::{OracleKind, OracleStrength};
 use rustpython_parser::ast::{self, Expr, Mod, Stmt};
 use std::path::Path;
@@ -44,12 +52,15 @@ pub(super) struct MessagePinGap {
 pub(super) fn python_message_pin_gap(
     line_text: &str,
     old_line_text: Option<&str>,
+    owner: &PythonOwner,
+    owner_source: Option<&str>,
+    line: usize,
     related_candidates: &[PythonRelatedCandidate<'_>],
     focus: &PythonAssertionFocus,
 ) -> Option<MessagePinGap> {
-    let (old_exception, old_message) = single_raise_message(old_line_text?)?;
-    let (new_exception, new_message) = single_raise_message(line_text)?;
-    if old_exception != new_exception || old_message == new_message {
+    let (new_exception, old_message, new_message) =
+        changed_message(line_text, old_line_text?, owner, owner_source, line)?;
+    if old_message == new_message {
         return None;
     }
     let mut patterns: Vec<String> = Vec::new();
@@ -105,9 +116,135 @@ fn is_strong_error_variant(assertion: &PythonAssertion) -> bool {
         && matches!(assertion.oracle_kind, OracleKind::ExactErrorVariant)
 }
 
+/// The message argument of a one-line `raise Exc(argument)`.
+enum RaiseArgument {
+    Literal(String),
+    Name(String),
+}
+
 /// The exception expression text and the literal message of a line that is
 /// exactly `raise Exc("message")`.
 fn single_raise_message(line: &str) -> Option<(String, String)> {
+    match single_raise_argument(line)? {
+        (exception, RaiseArgument::Literal(message)) => Some((exception, message)),
+        _ => None,
+    }
+}
+
+/// The name and literal of a line that is exactly `name = "literal"`.
+fn assigned_message(line: &str) -> Option<(String, String)> {
+    let Ok(Mod::Module(module)) = parse_module_result(Path::new("<message-assign>"), line.trim())
+    else {
+        return None;
+    };
+    let [Stmt::Assign(assign)] = module.body.as_slice() else {
+        return None;
+    };
+    let [Expr::Name(name)] = assign.targets.as_slice() else {
+        return None;
+    };
+    let Expr::Constant(constant) = assign.value.as_ref() else {
+        return None;
+    };
+    let ast::Constant::Str(message) = &constant.value else {
+        return None;
+    };
+    Some((name.id.to_string(), message.clone()))
+}
+
+/// The raised exception and the old and new message of the changed line: a
+/// message-only edit of `raise Exc("...")`, or of the `name = "..."` the
+/// owner raises through `raise Exc(name)`.
+fn changed_message(
+    line_text: &str,
+    old_line_text: &str,
+    owner: &PythonOwner,
+    owner_source: Option<&str>,
+    line: usize,
+) -> Option<(String, String, String)> {
+    if let (Some((old_exception, old_message)), Some((new_exception, new_message))) = (
+        single_raise_message(old_line_text),
+        single_raise_message(line_text),
+    ) {
+        return (old_exception == new_exception).then_some((
+            new_exception,
+            old_message,
+            new_message,
+        ));
+    }
+    let (old_name, old_message) = assigned_message(old_line_text)?;
+    let (new_name, new_message) = assigned_message(line_text)?;
+    if old_name != new_name {
+        return None;
+    }
+    let exception = raised_through_local(owner, owner_source?, line, &new_name)?;
+    Some((exception, old_message, new_message))
+}
+
+/// How many times `text` mentions `name` as a whole identifier.
+fn mentions(text: &str, name: &str) -> usize {
+    let is_identifier = |ch: char| ch.is_alphanumeric() || ch == '_';
+    text.match_indices(name)
+        .filter(|(index, _)| {
+            let before = text[..*index].chars().next_back();
+            let after = text[index + name.len()..].chars().next();
+            !before.is_some_and(is_identifier) && !after.is_some_and(is_identifier)
+        })
+        .count()
+}
+
+/// The exception of the single `raise Exc(name)` an owner raises through the
+/// local `name` assigned on `line`. `None` unless the owner is a function
+/// whose source mentions `name` exactly twice (the assignment, then that one
+/// raise), so a rebind, a second use, a nested scope, a keyword argument or a
+/// dynamic scope read leaves the message unresolved.
+fn raised_through_local(
+    owner: &PythonOwner,
+    owner_source: &str,
+    line: usize,
+    name: &str,
+) -> Option<String> {
+    let lines: Vec<&str> = owner_source.lines().collect();
+    let start = owner.start_line.checked_sub(1)?;
+    let changed = line.checked_sub(1)?;
+    let end = owner.end_line.min(lines.len());
+    let header = lines.get(start)?.trim_start();
+    if !(header.starts_with("def ") || header.starts_with("async def "))
+        || changed <= start
+        || changed >= end
+    {
+        return None;
+    }
+    let body = lines.get(start..end)?;
+    if body.iter().any(|text| {
+        ["locals", "vars", "globals", "exec", "eval", "setattr"]
+            .iter()
+            .any(|dynamic| mentions(text, dynamic) > 0)
+    }) {
+        return None;
+    }
+    let mut raised: Option<(usize, &str)> = None;
+    for (offset, text) in body.iter().enumerate() {
+        let index = start + offset;
+        match (index == changed, mentions(text, name)) {
+            (_, 0) | (true, 1) => {}
+            (false, 1) if raised.is_none() => raised = Some((index, text)),
+            _ => return None,
+        }
+    }
+    let (index, text) = raised?;
+    if index <= changed {
+        return None;
+    }
+    match single_raise_argument(text)? {
+        (exception, RaiseArgument::Name(raised_name)) if raised_name == name => Some(exception),
+        _ => None,
+    }
+}
+
+/// The exception expression text and the message argument of a line that is
+/// exactly `raise Exc(<one string literal or one bare name>)`.
+fn single_raise_argument(line: &str) -> Option<(String, RaiseArgument)> {
     let text = line.trim();
     if !text.starts_with("raise ") {
         return None;
@@ -127,13 +264,17 @@ fn single_raise_message(line: &str) -> Option<(String, String)> {
     if !call.keywords.is_empty() {
         return None;
     }
-    let [Expr::Constant(constant)] = call.args.as_slice() else {
-        return None;
+    let argument = match call.args.as_slice() {
+        [Expr::Constant(constant)] => {
+            let ast::Constant::Str(message) = &constant.value else {
+                return None;
+            };
+            RaiseArgument::Literal(message.clone())
+        }
+        [Expr::Name(name)] => RaiseArgument::Name(name.id.to_string()),
+        _ => return None,
     };
-    let ast::Constant::Str(message) = &constant.value else {
-        return None;
-    };
-    Some((super::expr_full_name(&call.func)?, message.clone()))
+    Some((super::expr_full_name(&call.func)?, argument))
 }
 
 /// The literal message pattern of a `pytest.raises(E, match=...)` or
@@ -237,6 +378,62 @@ mod tests {
             "return ValueError(\"a\")",
         ] {
             assert_eq!(single_raise_message(line), None, "{line}");
+        }
+    }
+
+    #[test]
+    fn assigned_message_reads_only_one_name_and_literal() {
+        assert_eq!(
+            assigned_message("    msg = \"bad\""),
+            Some(("msg".to_string(), "bad".to_string()))
+        );
+        for line in [
+            "msg = bad",
+            "msg = f\"bad {x}\"",
+            "a = b = \"bad\"",
+            "self.msg = \"bad\"",
+            "msg += \"bad\"",
+            "msg: str = \"bad\"",
+            "raise ValueError(\"bad\")",
+        ] {
+            assert_eq!(assigned_message(line), None, "{line}");
+        }
+    }
+
+    #[test]
+    fn raised_through_local_resolves_only_a_single_raise_of_the_name() {
+        let owner = |source: &str| {
+            super::super::owners_tests::extract_owners(Path::new("src/subject.py"), source)
+                .into_iter()
+                .next()
+        };
+        let resolve = |source: &str| {
+            let owner = owner(source)?;
+            raised_through_local(&owner, source, 3, "msg")
+        };
+        assert_eq!(
+            resolve("def f(arg):\n    if arg:\n        msg = \"a\"\n        raise KeyError(msg)\n"),
+            Some("KeyError".to_string())
+        );
+        for source in [
+            "def f(arg):\n    if arg:\n        msg = \"a\"\n        raise KeyError(msg)\n        raise KeyError(msg)\n",
+            "def f(arg):\n    if arg:\n        msg = \"a\"\n        print(msg)\n        raise KeyError(msg)\n",
+            "def f(arg):\n    if arg:\n        msg = \"a\"\n        raise KeyError(msg + \"b\")\n",
+            "def f(arg):\n    if arg:\n        msg = \"a\"\n        raise KeyError(msg=msg)\n",
+            "def f(arg):\n    if arg:\n        msg = \"a\"\n        vars()\n        raise KeyError(msg)\n",
+            "def f(arg):\n    if arg:\n        msg = \"a\"\n    return msg\n",
+            // A walrus, for-target, with-target, except-target or augmented
+            // rebind adds a mention, so the name stays unresolved.
+            "def f(arg):\n    if arg:\n        msg = \"a\"\n        (msg := other())\n        raise KeyError(msg)\n",
+            "def f(arg):\n    if arg:\n        msg = \"a\"\n        for msg in items():\n            pass\n        raise KeyError(msg)\n",
+            "def f(arg):\n    if arg:\n        msg = \"a\"\n        with ctx() as msg:\n            pass\n        raise KeyError(msg)\n",
+            "def f(arg):\n    if arg:\n        msg = \"a\"\n        try:\n            go()\n        except Oops as msg:\n            pass\n        raise KeyError(msg)\n",
+            "def f(arg):\n    if arg:\n        msg = \"a\"\n        msg += \"b\"\n        raise KeyError(msg)\n",
+            // A comment or string mention is counted too (fail closed).
+            "def f(arg):\n    if arg:\n        msg = \"a\"\n        # msg is shown to the user\n        raise KeyError(msg)\n",
+            "def f(arg):\n    if arg:\n        msg = \"a\"\n        note = \"see msg\"\n        raise KeyError(msg)\n",
+        ] {
+            assert_eq!(resolve(source), None, "{source}");
         }
     }
 

@@ -1153,9 +1153,8 @@ mod pathed {
         [ExposureClass::WeaklyExposed]
     );
 
-    // The related rows are capped at eight for display; a path call among the
-    // cut rows cannot be seen, so the result must not depend on test names:
-    // renaming only the path-call test leaves the class unchanged (#10551).
+    // A path call beyond the display window still lifts the syntax-only limit;
+    // renaming the test does not change the classification (#10625).
     let crowded_path_call_last = Case {
         label: "crowded_path_call_last",
         old_line: "        Self(self.0 + other.0)",
@@ -1216,10 +1215,21 @@ mod crowded {
 ",
         ..ADD
     };
-    assert_eq!(
-        classes(&crowded_path_call_last)?,
-        [ExposureClass::StaticUnknown]
+    let crowded_last = findings_of(&crowded_path_call_last)?;
+    assert_eq!(crowded_last.len(), 1);
+    assert!(
+        crowded_last[0]
+            .related_tests_matched_total
+            .is_some_and(|total| total > 8)
     );
+    assert_eq!(crowded_last[0].related_tests.len(), 8);
+    assert!(
+        !crowded_last[0]
+            .related_tests
+            .iter()
+            .any(|test| test.name == "zz_pathed")
+    );
+    assert_eq!(crowded_last[0].class, ExposureClass::WeaklyExposed);
     let crowded_path_call_first = Case {
         label: "crowded_path_call_first",
         old_line: "        Self(self.0 + other.0)",
@@ -1282,7 +1292,7 @@ mod crowded {
     };
     assert_eq!(
         classes(&crowded_path_call_first)?,
-        [ExposureClass::StaticUnknown]
+        [ExposureClass::WeaklyExposed]
     );
 
     // `Type::method(..)` names the owner like `.method(..)`, so the finding is judged by that test's own evidence (#10551).
@@ -1806,5 +1816,180 @@ fn standalone_add_assign_keeps_typed_operand_and_unique_impl_gates() -> Result<(
         ..with_body(ADD, "Add is not AddAssign", assign.test_body)
     };
     assert!(direct_tests(&add)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn capped_rows_do_not_hide_a_named_operator_call() -> Result<(), String> {
+    let common = Case {
+        label: "uncapped_named_call",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "#[cfg(test)] mod extra { use super::*; #[test] fn operator_use() { let sum = Money(1) + Money(1); assert_eq!(sum.0, 2); } }",
+        test_body: "let sum = Money::add(Money(1), Money(1)); assert_ne!(sum.0, 3);",
+        ..ADD
+    };
+    assert_eq!(classes(&common)?, [ExposureClass::WeaklyExposed]);
+    let operator = Case {
+        label: "capped_operator_only",
+        test_body: "let sum = Money(1) + Money(1);\n        assert_ne!(sum.0, 3);\n        assert_ne!(sum.0, 4);\n        assert_ne!(sum.0, 5);\n        assert_ne!(sum.0, 6);\n        assert_ne!(sum.0, 7);\n        assert_ne!(sum.0, 8);\n        assert_ne!(sum.0, 9);\n        assert_ne!(sum.0, 10);\n        assert_ne!(sum.0, 11);",
+        ..common
+    };
+    let operator_findings = findings_of(&operator)?;
+    assert_eq!(operator_findings.len(), 1);
+    assert!(
+        operator_findings[0]
+            .related_tests_matched_total
+            .is_some_and(|total| total > 8)
+    );
+    assert_eq!(operator_findings[0].related_tests.len(), 8);
+    assert_eq!(operator_findings[0].class, ExposureClass::StaticUnknown);
+    let ignored_named = Case {
+        label: "capped_ignored_named_call",
+        test_body: "let sum = Money(1) + Money(1);\n        assert_eq!(sum.0, 2);\n        assert_eq!(sum.0, 1 + 1);\n        assert_eq!(sum.0, 3 - 1);\n        assert_eq!(sum.0, 4 - 2);\n        assert_eq!(sum.0, 5 - 3);\n        assert_eq!(sum.0, 6 - 4);\n        assert_eq!(sum.0, 7 - 5);\n        assert_eq!(sum.0, 8 - 6);\n        assert_eq!(sum.0, 9 - 7);",
+        extra_items: "
+#[cfg(test)]
+mod ignored {
+    use super::*;
+    #[test]
+    #[ignore]
+    fn named_call() {
+        let sum = Money::add(Money(1), Money(1));
+        assert_eq!(sum.0, 2);
+    }
+}",
+        ..operator
+    };
+    let ignored_findings = findings_of(&ignored_named)?;
+    assert_eq!(ignored_findings.len(), 1);
+    assert!(
+        ignored_findings[0]
+            .related_tests_matched_total
+            .is_some_and(|total| total > 8)
+    );
+    assert_eq!(ignored_findings[0].class, ExposureClass::StaticUnknown);
+    assert_eq!(
+        ignored_findings[0]
+            .static_limit_kind
+            .map(|kind| kind.as_str()),
+        Some("rust_implicit_call_unresolved")
+    );
+    let named = Case {
+        label: "capped_named_call",
+        test_body: "let sum = Money::add(Money(1), Money(1));\n        assert_ne!(sum.0, 3);\n        assert_ne!(sum.0, 4);\n        assert_ne!(sum.0, 5);\n        assert_ne!(sum.0, 6);\n        assert_ne!(sum.0, 7);\n        assert_ne!(sum.0, 8);\n        assert_ne!(sum.0, 9);\n        assert_ne!(sum.0, 10);\n        assert_ne!(sum.0, 11);",
+        ..common
+    };
+    let named_findings = findings_of(&named)?;
+    assert_eq!(named_findings.len(), 1);
+    assert!(
+        named_findings[0]
+            .related_tests_matched_total
+            .is_some_and(|total| total > 8)
+    );
+    assert_eq!(named_findings[0].related_tests.len(), 8);
+    assert!(
+        named_findings[0]
+            .related_tests
+            .iter()
+            .any(|test| test.name == "operator_under_test"
+                && test.relation_reason == Some(RelationReason::DirectOwnerCall))
+    );
+    assert_eq!(named_findings[0].class, ExposureClass::WeaklyExposed);
+    Ok(())
+}
+
+#[test]
+fn capped_method_call_must_bind_the_operator_owner() -> Result<(), String> {
+    fn check(label: &str, call: &str, operators: usize) -> Result<Vec<Finding>, String> {
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "ripr-cap-receiver-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+        let mut source = "use std::ops::*;\n#[derive(Debug, Clone, Copy, PartialEq)]\npub struct Money(pub i64);\nimpl Add for Money {\n    type Output = Money;\n    fn add(self, other: Money) -> Money {\n        Self(other.0 + self.0)\n    }\n}\n#[cfg(test)] mod tests {\n    use super::*;\n".to_string();
+        for i in 0..operators {
+            source.push_str(&format!("    #[test]\n    fn a{i:02}_operator() {{\n        let sum = Money(1) + Money(1);\n        assert_eq!(sum.0, 2);\n    }}\n"));
+        }
+        source.push_str(&format!("    #[test]\n    fn zz_test() {{\n        let sum = Money(1) + Money(1);\n        {call}\n        assert_eq!(sum.0, 2);\n    }}\n}}\n"));
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"cap-receiver\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n").map_err(|e| e.to_string())?;
+        std::fs::write(root.join("src/lib.rs"), source).map_err(|e| e.to_string())?;
+        std::fs::write(root.join("diff.patch"), "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -7,1 +7,1 @@\n-        Self(self.0 + other.0)\n+        Self(other.0 + self.0)\n").map_err(|e| e.to_string())?;
+        let output = check_workspace(CheckInput {
+            root: root.clone(),
+            base: None,
+            diff_file: Some(root.join("diff.patch")),
+            mode: Mode::Ready,
+            format: OutputFormat::Json,
+            include_unchanged_tests: false,
+            ..CheckInput::default()
+        })?;
+        let findings: Vec<_> = output
+            .findings
+            .into_iter()
+            .filter(|finding| finding.probe.location.line == 7)
+            .collect();
+        std::fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+        if findings.len() != 1 {
+            return Err(format!(
+                "{label}: expected one finding, got {}",
+                findings.len()
+            ));
+        }
+        Ok(findings)
+    }
+    let foreign = check(
+        "foreign",
+        "let n = 1i64.add(1);\n        assert_eq!(n, 2);",
+        8,
+    )?;
+    assert!(
+        foreign[0]
+            .related_tests_matched_total
+            .is_some_and(|total| total > 8)
+    );
+    assert_eq!(foreign[0].class, ExposureClass::StaticUnknown);
+    let foreign_binding = check(
+        "foreign-binding",
+        "let n: i64 = 1;\n        let value = n.add(1);\n        assert_eq!(value, 2);",
+        8,
+    )?;
+    assert_eq!(foreign_binding[0].class, ExposureClass::StaticUnknown);
+    let uncapped = check(
+        "uncapped-foreign",
+        "let n = 1i64.add(1);\n        assert_eq!(n, 2);",
+        1,
+    )?;
+    assert_eq!(uncapped[0].class, ExposureClass::WeaklyExposed);
+    let operator_only = check("operator-only", "", 8)?;
+    assert_eq!(operator_only[0].class, ExposureClass::StaticUnknown);
+    for (label, call) in [
+        (
+            "constructor",
+            "let result = Money(1).add(Money(1));\n        assert_eq!(result.0, 2);",
+        ),
+        (
+            "binding",
+            "let money = Money(1);\n        let result = money.add(Money(1));\n        assert_eq!(result.0, 2);",
+        ),
+        (
+            "mixed",
+            "let n = 1i64.add(1);\n        let result = Money(1).add(Money(1));\n        assert_eq!(n, 2);\n        assert_eq!(result.0, 2);",
+        ),
+        (
+            "type_path",
+            "let result = Money::add(Money(1), Money(1));\n        assert_eq!(result.0, 2);",
+        ),
+    ] {
+        let findings = check(label, call, 8)?;
+        assert!(
+            findings[0]
+                .related_tests_matched_total
+                .is_some_and(|total| total > 8),
+            "{label}"
+        );
+        assert_eq!(findings[0].class, ExposureClass::WeaklyExposed, "{label}");
+    }
     Ok(())
 }

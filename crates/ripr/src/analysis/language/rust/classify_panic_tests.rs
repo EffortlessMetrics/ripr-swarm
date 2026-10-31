@@ -177,3 +177,35 @@ fn every_panicking_probe_is_contained_on_a_single_thread_pool() -> Result<(), St
     assert!(!lib.is_empty() && lib.iter().all(|finding| !is_stand_in(finding)));
     Ok(())
 }
+
+#[test]
+fn a_panicking_macro_prime_fails_all_affected_probes_closed() -> Result<(), String> {
+    let fixture = Fixture::new("prime")?;
+    let control = fixture.run()?;
+    assert!(!control.findings.is_empty());
+    assert!(control.findings.iter().all(|finding| !is_stand_in(finding)));
+    let armed = injected_classify_panic::arm(&fixture.0, &fixture.0);
+    let result = fixture.run()?;
+    drop(armed);
+    assert_eq!(result.findings.len(), control.findings.len());
+    for file in ["src/lib.rs", "src/other.rs"] {
+        let findings = in_file(&result.findings, file);
+        assert!(!findings.is_empty());
+        assert!(findings.iter().all(|finding| is_stand_in(finding)
+            && finding.class == ExposureClass::StaticUnknown
+            && finding.related_tests.is_empty()
+            && finding.canonical_gap.is_none()));
+        assert!(result.limitations.iter().any(|limit| limit.kind
+            == AnalysisLimitationKind::ProducerFailure
+            && limit.path.as_deref() == Some(file)));
+    }
+    let recovered = fixture.run()?;
+    assert_eq!(recovered.findings.len(), control.findings.len());
+    assert!(
+        recovered
+            .findings
+            .iter()
+            .all(|finding| !is_stand_in(finding))
+    );
+    Ok(())
+}
