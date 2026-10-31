@@ -111,7 +111,7 @@
         "verify": {
           "command": "npx --no-install jest tests/auth.test.ts"
         },
-        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract; validator: is not agent-packet eligible: observed call input `login('alice')` does not reach the missing discriminator `user.length == 3`; derive an input that hits the boundary before the packet is delegatable"
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract; validator: is not agent-packet eligible: derive an input that hits the boundary before this repair can be handed to an agent: observed call input `login('alice')` does not reach the missing discriminator `user.length == 3`"
       },
       "preview_actionability": {
         "actionability_category": "incomplete_repair_packet",
@@ -144,7 +144,7 @@
         "repair_packet_ready": false,
         "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
         "unlock_condition": null,
-        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract; validator: is not agent-packet eligible: observed call input `login('alice')` does not reach the missing discriminator `user.length == 3`; derive an input that hits the boundary before the packet is delegatable"
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract; validator: is not agent-packet eligible: derive an input that hits the boundary before this repair can be handed to an agent: observed call input `login('alice')` does not reach the missing discriminator `user.length == 3`"
       },
       "stop_reasons": [],
       "oracle_kind": "relational_check",
