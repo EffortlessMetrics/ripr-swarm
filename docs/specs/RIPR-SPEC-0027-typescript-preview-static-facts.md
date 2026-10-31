@@ -426,6 +426,15 @@ Probes the adapter must generate (syntax-first):
 - mock-interaction probes for changed call surfaces against identifiers
   resolved through a syntactic `vi.fn()` / `jest.fn()` initializer
 
+A changed line whose old and new text differ only in a trailing `//` comment or
+in trailing whitespace emits no probe (#10706): the statement runs identically,
+so no gap id or discriminator can embed the comment text. The executable text
+of both lines, semicolon included, must be equal and both lines must split into
+code and comment reliably; a changed token, a dropped semicolon, a changed
+indentation, a `//` inside a string, a line inside a template literal, block
+comment, line-continued string or JSX text that crosses a line break, and a
+file that does not parse all keep the probe.
+
 Added lines that are blank, comment-only, or punctuation-only (`}`, `});`,
 `)`) produce no probe. Neither do lines inside a top-level ambient
 declaration found in the parsed syntax tree (`declare function`,
@@ -607,6 +616,24 @@ boundary without changing the guards (#4104 E):
   stays unwitnessed. The repair packet's assertion shape asks for a value of
   the kind in place of the argument and never reuses the observed input, and
   the "inputs on one side of the boundary" wording is not used for this shape.
+- **Faithful boundary discriminator** (#11256): a predicate's missing
+  discriminator reads its comparison in code spans only, and a quoted operand
+  is one operand whatever it holds. `arg !== "--"` and `mode === "a b"` are not
+  cut at the `-` or the space (`arg == "`); holding characters the
+  discriminator vocabulary does not carry, they name no discriminator and the
+  finding offers no repair start. A comparison operator inside a string literal
+  is no comparison. `if (arg === "stop")` still names `arg == "stop"`. Which
+  comparison of a compound condition changed is chosen from the old and new
+  line (#10399).
+- **Derived boundary operand** (#11256): when the compared side is a local the
+  owner binds only from a call (`const type = getType(key);`) whose arguments
+  name no owner parameter, and the other side is a literal, no test call can
+  set the value. The finding lists
+  `typescript_boundary_operand_derived_unresolved` and offers no repair start,
+  because the existing tests may already notice the change through the result.
+  A parameter operand, a call over a parameter (`kindOf(name)`), a non-call
+  initializer and an owner without a fixed positional signature keep their
+  previous reading.
 - **Open gap reason in the after phase** (#11196): when `agent verify` refuses
   a gap that still reads open, the refusal appends the missing discriminator
   the before and after check-findings artifacts already state (unchanged, or

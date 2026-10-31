@@ -267,6 +267,72 @@ fn watched_typescript_inputs_reload_config_and_refresh_analysis() -> Result<(), 
     Ok(())
 }
 
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn watched_package_led_javascript_inputs_reload_on_presence_only() -> Result<(), String> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let backend_root = root.clone();
+    let (service, _socket) =
+        LspService::new(move |client| Backend::new(client, backend_root.clone()));
+    let backend = service.inner();
+    backend.initialize_test_workspace_root();
+
+    // (path, event type, expect a config reload plus TypeScript refresh)
+    let cases = [
+        ("package.json", FileChangeType::CREATED, true),
+        ("package.json", FileChangeType::DELETED, true),
+        ("index.js", FileChangeType::CREATED, true),
+        ("index.js", FileChangeType::DELETED, true),
+        ("src/app.js", FileChangeType::CREATED, true),
+        ("test/app.test.js", FileChangeType::DELETED, true),
+        ("tests/deep/app.test.mjs", FileChangeType::CREATED, true),
+        // Content-only edits of an existing manifest or source are not inputs
+        // for the package-led detector: no reload and no refresh.
+        ("package.json", FileChangeType::CHANGED, false),
+        ("index.js", FileChangeType::CHANGED, false),
+        ("src/app.js", FileChangeType::CHANGED, false),
+        ("test/app.test.js", FileChangeType::CHANGED, false),
+    ];
+    for (relative, typ, reload) in cases {
+        let uri = file_uri_for_path(&root.join(relative))
+            .map_err(|err| format!("{relative} URI failed: {err}"))?;
+        let changes = vec![FileEvent { uri, typ }];
+        assert_eq!(
+            backend.watched_file_change_kinds(&changes),
+            WatchedFileChanges {
+                config_changed: reload,
+                typescript_input_changed: reload,
+                ..WatchedFileChanges::default()
+            },
+            "{relative} {typ:?}"
+        );
+    }
+
+    // Tooling config, generated bundles, excluded trees and nested manifests
+    // never change package-led detection.
+    for relative in [
+        "eslint.config.js",
+        ".eslintrc.cjs",
+        "app.min.js",
+        "src/node_modules/p/i.js",
+        "scripts/app.js",
+        "pkg/package.json",
+    ] {
+        let uri = file_uri_for_path(&root.join(relative))
+            .map_err(|err| format!("{relative} URI failed: {err}"))?;
+        let changes = vec![FileEvent {
+            uri,
+            typ: FileChangeType::CREATED,
+        }];
+        assert_eq!(
+            backend.watched_file_change_kinds(&changes),
+            WatchedFileChanges::default(),
+            "{relative} must not invalidate anything"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn watched_python_source_batch_routes_to_config_reload_only() -> Result<(), String> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");

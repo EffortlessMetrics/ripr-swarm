@@ -427,3 +427,16 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending — error_path_diagnostic_escaped (32)
+
+Reason:
+RIPR-SPEC-0001: human normalizer keeps source-text backslashes (#11178)
+
+Command:
+`cargo xtask goldens bless error_path_diagnostic_escaped --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
