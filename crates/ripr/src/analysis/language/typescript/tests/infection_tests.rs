@@ -131,12 +131,6 @@ fn unmodeled_shapes_read_infection_unknown_and_never_a_packet() -> Result<(), St
             "  return n ?? 20;",
             "fallback_literal",
         ),
-        (
-            "comment",
-            "  return n;",
-            "  return n; // fallback",
-            "comment_only",
-        ),
         ("noop", "  return n;", "  return n + 0;", "arithmetic_noop"),
     ] {
         let finding = shape_change(label, old, new)?;
@@ -220,7 +214,8 @@ fn a_dropped_semicolon_before_a_comment_is_never_a_neutral_comment_edit() -> Res
         "{:?}",
         finding.evidence
     );
-    // Control: the same edit with the semicolon kept is a comment-only edit.
+    // Control: the same edit with the semicolon kept is a comment-only edit,
+    // which emits no probe at all (#10706).
     let kept = finding_for(
         "infect-comment-kept",
         "export function price(n: number): number {\n  const f = (x: number) => x + n;\n  return f; // note\n}\n",
@@ -228,7 +223,104 @@ fn a_dropped_semicolon_before_a_comment_is_never_a_neutral_comment_edit() -> Res
         "  return f;",
         "  return f; // note",
         &weak_test("price(2)"),
-    )?;
-    assert_eq!(kept.class, ExposureClass::InfectionUnknown);
+    );
+    assert!(kept.is_err(), "{kept:?}");
+    Ok(())
+}
+
+#[test]
+fn a_trailing_comment_or_whitespace_edit_emits_no_probe_but_a_changed_token_keeps_it() {
+    let test = weak_test("price(2)");
+    let source_with =
+        |line: &str| format!("export function price(n: number): number {{\n{line}\n}}\n");
+    for (label, new) in [
+        ("noop-comment", "  return n; // fallback"),
+        ("noop-comment-edit", "  return n; // other"),
+        ("noop-space", "  return n;   "),
+    ] {
+        let found = finding_for(label, &source_with(new), 2, "  return n;", new, &test);
+        assert!(found.is_err(), "{label}: {found:?}");
+    }
+    // Controls through the same production path: a changed token (with or
+    // without a comment) still reads as an edit.
+    for (label, new) in [
+        ("edit-token", "  return n + 1;"),
+        ("edit-token-comment", "  return n + 1; // fallback"),
+    ] {
+        let found = finding_for(label, &source_with(new), 2, "  return n;", new, &test);
+        assert!(found.is_ok(), "{label}: {found:?}");
+    }
+}
+
+#[test]
+fn a_paired_old_line_inside_a_template_keeps_its_probe_when_the_new_line_is_code()
+-> Result<(), String> {
+    // The real diff pairing sends new line 3 (`return 7;` plus trailing
+    // spaces) to old line 3 (`return 7;`, template content). Equal trimmed
+    // text is not a no-op: the old line was string content.
+    let new_source = "export function price(): number {\n  const s = `old`;\n  return 7;   \n  // formerly the rest of a template\n}\n";
+    let patch = "--- a/src/price.ts\n+++ b/src/price.ts\n@@ -1,5 +1,5 @@\n export function price(): number {\n-  const s = `old\n-  return 7;\n-`; return 0;\n+  const s = `old`;\n+  return 7;   \n+  // formerly the rest of a template\n }\n";
+    let changed = crate::analysis::diff::parse_unified_diff(patch);
+    let file = changed.first().ok_or("no changed file")?;
+    let pairs = file.aligned_counterparts();
+    assert_eq!(
+        pairs.get(&3).map(|removed| removed.text.as_str()),
+        Some("  return 7;"),
+        "new line 3 must pair with old `  return 7;`"
+    );
+    let root = ts_unique_tempdir("infect-old-template")?;
+    ts_write_file(&root.join("src/price.ts"), new_source)?;
+    ts_write_file(&root.join("tests/price.test.ts"), &weak_test("price()"))?;
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &changed,
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let findings = result?.findings;
+    assert!(
+        findings.iter().any(|f| f.probe.location.line == 3),
+        "line 3 must stay reported: {:?}",
+        findings
+            .iter()
+            .map(|f| f.probe.location.line)
+            .collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
+#[test]
+fn old_template_content_is_found_through_a_two_hunk_diff() -> Result<(), String> {
+    // Hunk one edits line 1; hunk two (far below) is the template counterexample.
+    let pad: String = (1..=9).map(|n| format!("const pad{n} = {n};\n")).collect();
+    let new_source = format!(
+        "// v2\n{pad}export function price(): number {{\n  const s = `old`;\n  return 7;   \n  // rest\n}}\n"
+    );
+    let ctx_top: String = (1..=3).map(|n| format!(" const pad{n} = {n};\n")).collect();
+    let ctx_mid: String = (7..=9).map(|n| format!(" const pad{n} = {n};\n")).collect();
+    let patch = format!(
+        "--- a/src/price.ts\n+++ b/src/price.ts\n@@ -1,4 +1,4 @@\n-// v1\n+// v2\n{ctx_top}@@ -8,9 +8,9 @@\n{ctx_mid} export function price(): number {{\n-  const s = `old\n-  return 7;\n-`; return 0;\n+  const s = `old`;\n+  return 7;   \n+  // rest\n }}\n"
+    );
+    let changed = crate::analysis::diff::parse_unified_diff(&patch);
+    let file = changed.first().ok_or("no changed file")?;
+    assert_eq!(
+        file.aligned_counterparts()
+            .get(&13)
+            .map(|removed| removed.text.as_str()),
+        Some("  return 7;")
+    );
+    let root = ts_unique_tempdir("infect-old-template-2")?;
+    ts_write_file(&root.join("src/price.ts"), &new_source)?;
+    ts_write_file(&root.join("tests/price.test.ts"), &weak_test("price()"))?;
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &changed,
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(
+        result?.findings.iter().any(|f| f.probe.location.line == 13),
+        "line 13 must stay reported"
+    );
     Ok(())
 }

@@ -127,8 +127,9 @@ impl SeamAdmission {
     }
 
     /// Refuse every finding with one typed reason without consulting any
-    /// seam inventory (#7357): a saved tracked-worktree snapshot gathers no
-    /// inventory, so no verdict can be derived from it.
+    /// seam inventory (#7357): a saved tracked-worktree snapshot whose source
+    /// custody was not established cannot trust its inventory, so no verdict
+    /// is derived from it.
     pub(crate) fn withheld(findings: &[Finding], code: &'static str, detail: &str) -> Self {
         let by_finding = findings
             .iter()

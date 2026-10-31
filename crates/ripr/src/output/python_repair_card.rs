@@ -634,10 +634,13 @@ fn is_boundary_value_candidate(value: &str) -> bool {
 
 fn boundary_candidate_values(value: &str) -> Option<(String, String, String)> {
     if let Ok(number) = value.parse::<i64>() {
+        // Python integers are not limited to i64. Widen before finding the
+        // neighbors so an endpoint does not duplicate the equality row.
+        let number = i128::from(number);
         return Some((
-            number.saturating_sub(1).to_string(),
+            (number - 1).to_string(),
             number.to_string(),
-            number.saturating_add(1).to_string(),
+            (number + 1).to_string(),
         ));
     }
     is_python_identifier(value).then(|| {
@@ -990,5 +993,38 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn pytest_boundary_rows_remain_distinct_at_i64_limits() -> Result<(), String> {
+        for (boundary, below, above) in [
+            ("20", "19", "21"),
+            (
+                "9223372036854775807",
+                "9223372036854775806",
+                "9223372036854775808",
+            ),
+            (
+                "-9223372036854775808",
+                "-9223372036854775809",
+                "-9223372036854775807",
+            ),
+        ] {
+            let discriminator = format!("units == {boundary}");
+            let command = "python -m pytest tests/test_pricing.py::test_price";
+            let candidate = pytest_boundary_parametrization(&discriminator, command)
+                .ok_or_else(|| format!("no pytest guidance for {discriminator}"))?;
+            assert_eq!(candidate.below, below);
+            assert_eq!(candidate.equal_value, boundary);
+            assert_eq!(candidate.above, above);
+            let rendered = suggested_assertion(&ProbeFamily::Predicate, &discriminator, command);
+            assert!(
+                rendered.contains(&format!(
+                    "[({below}, ...), ({boundary}, ...), ({above}, ...)]"
+                )),
+                "{rendered}"
+            );
+        }
+        Ok(())
     }
 }

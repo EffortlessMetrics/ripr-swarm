@@ -166,7 +166,7 @@ fn render_body(
     body
 }
 
-fn is_plain_command(command: &str) -> bool {
+pub(crate) fn is_plain_command(command: &str) -> bool {
     command.len() <= 400
         && command.chars().all(|c| {
             c.is_ascii_alphanumeric() || matches!(c, ' ' | '.' | '_' | '/' | ':' | '=' | '-')
