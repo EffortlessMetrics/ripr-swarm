@@ -2101,6 +2101,16 @@ mod direct {
     }
 
     #[test]
+    fn bool_numeric_relational_boundary_does_not_fabricate_missing_equality() -> Result<(), String>
+    {
+        let source = "def eligible(x):\n    if x > 1:\n        return True\n    return False\n";
+        let tests = "from src.subject import eligible\n\ndef test_a():\n    assert eligible(True) == True\n";
+        let case = case(source, tests, 2, "    if x > 1:", "    if x >= 1:")?;
+        assert_no_missing_input(&case, "True on x == 1 boundary");
+        Ok(())
+    }
+
+    #[test]
     fn mixed_kind_or_escaped_literals_are_unknown_not_unequal() -> Result<(), String> {
         let flag = "def f(flag):\n    if flag == 1:\n        return True\n    return False\n";
         for (label, tests) in [
