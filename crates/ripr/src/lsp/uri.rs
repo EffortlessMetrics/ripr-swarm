@@ -257,6 +257,99 @@ pub(super) fn path_is_within_root(root: &Path, path: &Path) -> bool {
 /// when available, so distinct in-workspace source aliases are not collapsed;
 /// otherwise use the canonical-relative key for an aliased workspace root.
 fn path_relative_to_root(root: &Path, path: &Path) -> Option<PathBuf> {
+    path_relative_to_root_with(
+        root,
+        &canonical_or_normalized(root),
+        path,
+        &mut |candidate| canonical_or_normalized(candidate),
+    )
+}
+
+/// The workspace-relative keys of many documents under one root (#11763).
+/// Equivalent to calling [`file_uri_relative_to_root`] for each URI, but the
+/// root is canonicalized once and, on hosts where a regular file's canonical
+/// path is its parent's canonical path plus its name, each directory once for
+/// the projector's lifetime. Nothing outlives the projector, so a symlink
+/// changed between two refreshes is still seen.
+pub(super) struct RelativeKeyProjector<'a> {
+    root: &'a Path,
+    canonical_root: PathBuf,
+    directories: std::collections::HashMap<PathBuf, Option<PathBuf>>,
+}
+
+impl<'a> RelativeKeyProjector<'a> {
+    pub(super) fn new(root: &'a Path) -> Self {
+        Self {
+            root,
+            canonical_root: canonical_or_normalized(root),
+            directories: Default::default(),
+        }
+    }
+
+    pub(super) fn relative(&mut self, uri: &Uri) -> Option<PathBuf> {
+        let path = path_from_file_uri(uri)?;
+        let directories = &mut self.directories;
+        path_relative_to_root_with(self.root, &self.canonical_root, &path, &mut |candidate| {
+            canonical_candidate_with_directory_cache(candidate, directories)
+                .unwrap_or_else(|| canonical_or_normalized(candidate))
+        })
+    }
+}
+
+pub(super) fn file_uris_relative_to_root<'a>(
+    root: &Path,
+    uris: impl IntoIterator<Item = &'a Uri>,
+) -> Vec<PathBuf> {
+    let mut projector = RelativeKeyProjector::new(root);
+    uris.into_iter()
+        .filter_map(|uri| projector.relative(uri))
+        .collect()
+}
+
+/// `canonical_or_normalized(candidate)` for a candidate that is not a symlink
+/// and has no `.`/`..` segment: its parent's canonical path plus its name.
+/// Declines (`None`) for anything else, so the caller canonicalizes in full.
+/// Case-insensitive hosts can normalize the file name's case, so they always
+/// decline.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn canonical_candidate_with_directory_cache(
+    candidate: &Path,
+    directories: &mut std::collections::HashMap<PathBuf, Option<PathBuf>>,
+) -> Option<PathBuf> {
+    if !candidate.is_absolute()
+        || !candidate
+            .components()
+            .all(|component| matches!(component, Component::RootDir | Component::Normal(_)))
+    {
+        return None;
+    }
+    let (parent, name) = (candidate.parent()?, candidate.file_name()?);
+    match std::fs::symlink_metadata(candidate) {
+        Ok(metadata) if !metadata.file_type().is_symlink() => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        _ => return None,
+    }
+    let canonical_parent = directories
+        .entry(parent.to_path_buf())
+        .or_insert_with(|| canonicalize_with_missing_tail(parent))
+        .as_ref()?;
+    Some(canonical_parent.join(name))
+}
+
+#[cfg(not(all(unix, not(target_os = "macos"))))]
+fn canonical_candidate_with_directory_cache(
+    _candidate: &Path,
+    _directories: &mut std::collections::HashMap<PathBuf, Option<PathBuf>>,
+) -> Option<PathBuf> {
+    None
+}
+
+fn path_relative_to_root_with(
+    root: &Path,
+    canonical_root: &Path,
+    path: &Path,
+    canonicalize: &mut dyn FnMut(&Path) -> PathBuf,
+) -> Option<PathBuf> {
     if !path.is_absolute() && carries_uri_separator(path) {
         return None;
     }
@@ -265,8 +358,8 @@ fn path_relative_to_root(root: &Path, path: &Path) -> Option<PathBuf> {
     } else {
         root.join(path)
     };
-    let canonical_root = canonical_or_normalized(root);
-    let canonical_candidate = canonical_or_normalized(&candidate);
+    let canonical_candidate = canonicalize(&candidate);
+    let canonical_root = canonical_root.to_path_buf();
     let canonical_relative = relative_path_below(&canonical_root, &canonical_candidate)?;
     // Lexical collapse of `symlink/..` can name a different root or child.
     // Preserve the physical key for path/API callers carrying parent segments.

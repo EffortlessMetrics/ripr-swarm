@@ -1111,10 +1111,10 @@ impl Backend {
         let Ok(documents) = self.quarantine.documents.lock() else {
             return Default::default();
         };
-        documents
-            .documents
-            .keys()
-            .filter_map(|uri| super::uri::file_uri_relative_to_root(root, uri))
+        // One batch per refresh: the root and each directory are canonicalized
+        // once, not once per open document (#11763).
+        super::uri::file_uris_relative_to_root(root, documents.documents.keys())
+            .into_iter()
             .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
             .collect()
     }

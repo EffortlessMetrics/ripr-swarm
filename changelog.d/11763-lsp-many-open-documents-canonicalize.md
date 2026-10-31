@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr lsp` no longer canonicalizes the workspace root and every open document on every refresh: the open-document key projection canonicalizes the root once and each directory once per refresh (nothing is cached across refreshes, so a changed symlink is still seen). A flood of 20,000 distinct `didOpen`s answers a probe in about 2 s instead of about 18 s on a release build (#11763).
