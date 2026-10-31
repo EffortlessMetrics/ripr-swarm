@@ -3002,8 +3002,8 @@ fn preemptive_artifact_ignore(
     }
 }
 
-/// The one-line stderr note `check` and `pilot` print after a run that wrote
-/// under `target/ripr` in a non-Cargo project whose git ignore rules do not
+/// The one-line stderr note `check` prints in a non-Cargo project (ripr keeps
+/// its reports and caches under `target/ripr`) whose git ignore rules do not
 /// cover it (#11879, #9858). `None` for Cargo projects (the `target/`
 /// convention applies), covered rules, or a probe that cannot establish
 /// coverage: the note never claims a fact ripr did not check.

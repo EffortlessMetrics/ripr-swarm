@@ -1828,8 +1828,8 @@ fn check_inner(
             "ripr: detected .ripr/suppressions.toml under the analyzed root; it was not applied to this check. Rerun this check with --suppression-policy .ripr/suppressions.toml to apply it."
         );
     }
-    // #11879: a first `check` in a Python or TypeScript project writes
-    // `target/ripr`, which those projects' `.gitignore` templates never cover,
+    // #11879: `check` in a Python or TypeScript project keeps reports and
+    // caches under `target/ripr`, which those projects' `.gitignore` templates never cover,
     // so `git status` shows an untracked `target/` with no hint. One stderr
     // line with the exact entry; silent once the rule exists, for Cargo
     // projects, for machine formats and under `--quiet`. It never edits
