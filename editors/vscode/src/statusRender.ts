@@ -86,15 +86,17 @@ export interface StatusBarColors {
 /**
  * Whether the main status-bar item should occupy shared status-bar space.
  *
- * Hide only `disabled`: `ripr.enabled` already documents that it controls
- * status, and the user has explicitly opted out of editor analysis. Keep
- * `noWorkspace` visible. Opening a loose file is not an opt-out; the item
+ * Hide `disabled`: `ripr.enabled` already documents that it controls status,
+ * and the user has explicitly opted out of editor analysis. Hide
+ * `serverUnavailable`: the missing-server warning already names the recovery,
+ * so a persistent red item is a second surface for the same failure (#5319).
+ * Keep `noWorkspace` visible. Opening a loose file is not an opt-out; the item
  * remains the persistent next-step cue (`ripr: open workspace`) because the
  * walkthrough is one-shot and this change adds no visibility setting.
- * Error and warning states stay visible so they can still demand attention.
+ * Other error and warning states stay visible so they can still demand attention.
  */
 export function shouldShowMainStatusBar(kind: RiprStatusKind): boolean {
-  return kind !== 'disabled';
+  return kind !== 'disabled' && kind !== 'serverUnavailable';
 }
 
 /**
