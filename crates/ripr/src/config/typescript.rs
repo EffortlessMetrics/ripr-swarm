@@ -138,7 +138,60 @@ pub(crate) const TYPESCRIPT_SOURCE_DIR_MARKERS: &[&str] = &["src", "tests"];
 /// marker file, or detectable TypeScript source below root `src`/`tests`.
 #[cfg(any(feature = "lang-typescript", test))]
 pub(crate) fn detect_typescript_project(root: &Path) -> bool {
-    detect_typescript_package_root(root, false) || detect_nested_typescript_package(root)
+    detect_typescript_package_root(root, false)
+        || detect_nested_typescript_package(root)
+        || detect_javascript_led_root(root)
+}
+
+/// A plain JavaScript package (#11336): `package.json` at the root, JavaScript
+/// source at the root or under `src`/`test`/`tests`, and no `Cargo.toml` or
+/// Python project marker. `package.json` alone stays a non-marker (#10941):
+/// Rust and Python repositories carry one for docs or tooling, so the root
+/// must be JavaScript-led, not merely contain a manifest.
+#[cfg(any(feature = "lang-typescript", test))]
+fn detect_javascript_led_root(root: &Path) -> bool {
+    root.join("package.json").is_file()
+        && !root.join("Cargo.toml").is_file()
+        && !crate::config::detect_python_project(root)
+        && (dir_has_javascript_file(root)
+            || ["src", "test", "tests"]
+                .iter()
+                .any(|dir| dir_contains_javascript_source(&root.join(dir))))
+}
+
+#[cfg(any(feature = "lang-typescript", test))]
+fn is_detectable_javascript_source_name(name: &str) -> bool {
+    Path::new(name)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            crate::analysis::ts_js_source_kind(extension)
+                == Some(crate::analysis::TsJsSourceKind::JavaScript)
+        })
+        && !is_detectable_generated_typescript_name(name)
+}
+
+/// Direct children only: root-level `index.js` / `test.js` style packages.
+#[cfg(any(feature = "lang-typescript", test))]
+fn dir_has_javascript_file(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        entry.file_type().is_ok_and(|kind| kind.is_file())
+            && entry
+                .file_name()
+                .to_str()
+                .is_some_and(is_detectable_javascript_source_name)
+    })
+}
+
+#[cfg(any(feature = "lang-typescript", test))]
+fn dir_contains_javascript_source(dir: &Path) -> bool {
+    dir_has_javascript_file(dir)
+        || child_directories(dir)
+            .iter()
+            .any(|child| dir_contains_javascript_source(child))
 }
 
 #[cfg(any(feature = "lang-typescript", test))]
@@ -404,10 +457,9 @@ mod tests {
         let root = detection_root("shape")?;
         assert!(!detect_typescript_project(&root), "empty root");
         write(&root, "package.json")?;
-        write(&root, "src/app.js")?;
         assert!(
             !detect_typescript_project(&root),
-            "package.json and plain JavaScript do not select the adapter"
+            "package.json alone does not select the adapter"
         );
         write(&root, "tsconfig.json")?;
         assert!(detect_typescript_project(&root), "tsconfig.json marker");
@@ -422,6 +474,36 @@ mod tests {
             std::fs::remove_file(root.join(&file)).map_err(|err| err.to_string())?;
             assert!(!detect_typescript_project(&root), "removed {extension}");
         }
+        std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
+    }
+
+    /// #11336: a JavaScript-led root (manifest plus JavaScript source, no
+    /// Cargo or Python project) selects the adapter; a manifest next to a
+    /// Rust or Python project, or next to excluded/generated JavaScript, does
+    /// not (#10941).
+    #[test]
+    fn javascript_led_roots_select_the_adapter() -> Result<(), String> {
+        let root = detection_root("js-led")?;
+        write(&root, "package.json")?;
+        assert!(!detect_typescript_project(&root), "manifest only");
+        write(&root, "node_modules/dep/index.js")?;
+        write(&root, "dist/bundle.js")?;
+        write(&root, "public/app.min.js")?;
+        assert!(
+            !detect_typescript_project(&root),
+            "excluded and generated JavaScript"
+        );
+        write(&root, "index.js")?;
+        assert!(detect_typescript_project(&root), "root-level JavaScript");
+        write(&root, "Cargo.toml")?;
+        assert!(!detect_typescript_project(&root), "Rust project root");
+        std::fs::remove_file(root.join("Cargo.toml")).map_err(|err| err.to_string())?;
+        write(&root, "pyproject.toml")?;
+        assert!(!detect_typescript_project(&root), "Python project root");
+        std::fs::remove_file(root.join("pyproject.toml")).map_err(|err| err.to_string())?;
+        std::fs::remove_file(root.join("index.js")).map_err(|err| err.to_string())?;
+        write(&root, "test/unit.mjs")?;
+        assert!(detect_typescript_project(&root), "JavaScript under test/");
         std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
     }
 

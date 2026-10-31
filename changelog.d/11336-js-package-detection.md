@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A plain JavaScript package (a `package.json` with JavaScript source at the root or under `src/`, `test/` or `tests/`, and no `Cargo.toml` or Python project) is now analyzed with no `ripr.toml`. Before this, `ripr doctor` detected the language and `ripr check` then reported "not analyzed" until you hand-enabled `typescript`. A manifest alone, or JavaScript next to a Rust or Python project, still selects nothing (#11336).
