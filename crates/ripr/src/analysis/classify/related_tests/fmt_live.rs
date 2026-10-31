@@ -32,10 +32,10 @@ pub(super) fn live_body(body: &str) -> String {
     let mut dead: Vec<(usize, usize)> = Vec::new();
     dead_conditions(bytes, &mut dead);
     dead_cfg_statements(bytes, &mut dead);
-    let (scope, wrapper) = outer_scope(bytes);
-    dead_nested_fns(bytes, wrapper, &mut dead);
+    let scope = outer_scope(bytes);
+    dead_nested_fns(bytes, &scope, &mut dead);
     dead_closures(bytes, &mut dead);
-    dead_after_return(bytes, scope, &mut dead);
+    dead_after_return(bytes, scope.statements, &mut dead);
     if dead.is_empty() {
         return body.to_string();
     }
@@ -170,9 +170,19 @@ fn occurrences(bytes: &[u8], name: &str) -> Vec<usize> {
         .collect()
 }
 
-fn dead_nested_fns(bytes: &[u8], wrapper: Option<usize>, dead: &mut Vec<(usize, usize)>) {
+fn dead_nested_fns(bytes: &[u8], scope: &Scope, dead: &mut Vec<(usize, usize)>) {
+    // A leading fn header this reader did not parse may hide the test's own
+    // name: judge no nested fn rather than blank the test.
+    if scope.unrecognised_header {
+        return;
+    }
+    let containers = container_bodies(bytes);
     for at in 0..bytes.len() {
-        if !whole_word_at(bytes, at, "fn") || wrapper == Some(at) || inside_impl_or_trait(bytes, at)
+        if !whole_word_at(bytes, at, "fn")
+            || scope.wrapper == Some(at)
+            || containers
+                .iter()
+                .any(|&(start, end)| start < at && at < end)
         {
             continue;
         }
@@ -196,65 +206,94 @@ fn dead_nested_fns(bytes: &[u8], wrapper: Option<usize>, dead: &mut Vec<(usize, 
     }
 }
 
-/// Whether `at` sits inside the body of an item-level `impl` or `trait`
-/// block. Those methods (`Drop::drop`, `Iterator::next`, `Deref::deref`,
-/// `From::from`) are called implicitly, never by name, so an unmentioned name
-/// proves nothing about them. A `-> impl Trait` in a fn header is not an item
-/// `impl`: only a header that starts with the keyword counts.
-fn inside_impl_or_trait(bytes: &[u8], at: usize) -> bool {
-    let mut headers: Vec<usize> = Vec::new();
-    let mut header_start = 0usize;
-    for (index, byte) in bytes.iter().enumerate().take(at) {
-        match byte {
-            b'{' => {
-                headers.push(header_start);
-                header_start = index + 1;
+fn prev_non_ws(bytes: &[u8], at: usize) -> Option<usize> {
+    bytes[..at]
+        .iter()
+        .rposition(|byte| !byte.is_ascii_whitespace())
+}
+
+/// Whether the `impl`/`trait`/`mod` keyword at `at` starts an item rather
+/// than naming a type (`-> impl Trait`, `x: impl Trait`): it follows a
+/// statement or item boundary, an attribute or visibility group, or one of
+/// the item modifiers.
+fn at_item_position(bytes: &[u8], at: usize) -> bool {
+    let Some(prev) = prev_non_ws(bytes, at) else {
+        return true;
+    };
+    if matches!(bytes[prev], b';' | b'{' | b'}' | b']' | b')') {
+        return true;
+    }
+    let start = bytes[..=prev]
+        .iter()
+        .rposition(|byte| !is_ident_byte(*byte))
+        .map_or(0, |found| found + 1);
+    matches!(
+        &bytes[start..=prev],
+        b"pub" | b"unsafe" | b"auto" | b"default"
+    )
+}
+
+/// What ends the header of the item at `at`.
+enum ItemBody {
+    Open(usize),
+    Semicolon,
+    Missing,
+}
+
+/// The `{` that opens the body of the `impl`/`trait`/`mod` at `at`. A `;`
+/// inside brackets (`G<[u8; 4]>`) does not end the header, and a brace that
+/// follows `<`, `,` or `=` is a const generic argument (`Foo<{ 1 }>`), not the
+/// body.
+fn item_body(bytes: &[u8], at: usize) -> ItemBody {
+    let mut depth = 0usize;
+    for index in at..bytes.len() {
+        match bytes[index] {
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => depth = depth.saturating_sub(1),
+            b';' if depth == 0 => return ItemBody::Semicolon,
+            b'{' if depth == 0 => {
+                let const_argument = prev_non_ws(bytes, index)
+                    .is_some_and(|prev| matches!(bytes[prev], b'<' | b',' | b'='));
+                if const_argument {
+                    match close_of(bytes, index) {
+                        Some(end) => {
+                            return item_body(bytes, end);
+                        }
+                        None => return ItemBody::Missing,
+                    }
+                }
+                return ItemBody::Open(index);
             }
-            b'}' => {
-                headers.pop();
-                header_start = index + 1;
-            }
-            b';' => header_start = index + 1,
             _ => {}
         }
     }
-    // `headers` holds the start of the header of each still-open block; a
-    // header ends at its own `{`.
-    headers.iter().any(|&start| {
-        let end = bytes[start..]
-            .iter()
-            .position(|byte| *byte == b'{')
-            .map_or(bytes.len(), |offset| start + offset);
-        starts_with_item_keyword(&bytes[start..end])
-    })
+    ItemBody::Missing
 }
 
-fn starts_with_item_keyword(header: &[u8]) -> bool {
-    let mut at = skip_ws(header, 0);
-    loop {
-        if header.get(at..at + 2) == Some(b"#[") {
-            match close_of(header, at + 1) {
-                Some(end) => at = skip_ws(header, end),
-                None => return false,
+/// Body ranges `(keyword, end)` of item-level `impl`, `trait` and `mod`
+/// blocks. Methods in `impl`/`trait` blocks (`Drop::drop`, `Iterator::next`,
+/// `From::from`) are called implicitly and never named, and a `#[test]` in a
+/// nested `mod` is run by the harness, so an unmentioned name proves nothing
+/// about a fn there. A body that cannot be delimited extends to the end of the
+/// text, so every doubt keeps the code live.
+fn container_bodies(bytes: &[u8]) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    for at in 0..bytes.len() {
+        let keyword = ["impl", "trait", "mod"]
+            .iter()
+            .any(|word| whole_word_at(bytes, at, word));
+        if !keyword || !at_item_position(bytes, at) {
+            continue;
+        }
+        match item_body(bytes, at) {
+            ItemBody::Open(open) => {
+                ranges.push((at, close_of(bytes, open).unwrap_or(bytes.len())));
             }
-            continue;
+            ItemBody::Missing => ranges.push((at, bytes.len())),
+            ItemBody::Semicolon => {}
         }
-        if whole_word_at(header, at, "pub") {
-            at = skip_ws(header, at + 3);
-            if header.get(at) == Some(&b'(') {
-                match close_of(header, at) {
-                    Some(end) => at = skip_ws(header, end),
-                    None => return false,
-                }
-            }
-            continue;
-        }
-        if whole_word_at(header, at, "unsafe") {
-            at = skip_ws(header, at + 6);
-            continue;
-        }
-        return whole_word_at(header, at, "impl") || whole_word_at(header, at, "trait");
     }
+    ranges
 }
 
 /// The `{` opening a fn body: the first `{` at depth 0 after the name, unless
@@ -306,38 +345,81 @@ fn dead_closures(bytes: &[u8], dead: &mut Vec<(usize, usize)>) {
     }
 }
 
-/// The statements of the test: the inside of a wrapping `{ .. }` or of the
-/// test's own `fn name() { .. }` (with its attributes), else the whole text.
-/// The second value is the wrapping `fn` keyword's offset, which is the test
-/// itself and never a nested fn.
-fn outer_scope(bytes: &[u8]) -> ((usize, usize), Option<usize>) {
-    let whole = (0, bytes.len());
+/// Where the test's statements are, and what its leading fn header looked like.
+struct Scope {
+    /// The inside of a wrapping `{ .. }` or of the test's own `fn name() { .. }`
+    /// (with its attributes), else the whole text.
+    statements: (usize, usize),
+    /// The wrapping `fn` keyword's offset: the test itself, never a nested fn.
+    wrapper: Option<usize>,
+    /// The text starts like a fn header (modifiers or `fn`) that was not
+    /// parsed as the test's own fn.
+    unrecognised_header: bool,
+}
+
+fn outer_scope(bytes: &[u8]) -> Scope {
+    let plain = Scope {
+        statements: (0, bytes.len()),
+        wrapper: None,
+        unrecognised_header: false,
+    };
     let mut at = skip_ws(bytes, 0);
     while bytes.get(at..at + 2) == Some(b"#[") {
         let Some(end) = close_of(bytes, at + 1) else {
-            return (whole, None);
+            return plain;
         };
         at = skip_ws(bytes, end);
     }
     if bytes.get(at) == Some(&b'{') {
         return match close_of(bytes, at) {
-            Some(end) if skip_ws(bytes, end) == bytes.len() => ((at + 1, end - 1), None),
-            _ => (whole, None),
+            Some(end) if skip_ws(bytes, end) == bytes.len() => Scope {
+                statements: (at + 1, end - 1),
+                ..plain
+            },
+            _ => plain,
         };
     }
-    while ["pub", "async", "unsafe"]
-        .iter()
-        .any(|word| whole_word_at(bytes, at, word))
-    {
-        at = skip_ws(bytes, at + ident_at(bytes, at).len());
+    let header_start = at;
+    loop {
+        if whole_word_at(bytes, at, "pub") {
+            at = skip_ws(bytes, at + 3);
+            if bytes.get(at) == Some(&b'(') {
+                match close_of(bytes, at) {
+                    Some(end) => at = skip_ws(bytes, end),
+                    None => break,
+                }
+            }
+        } else if ["const", "async", "unsafe"]
+            .iter()
+            .any(|word| whole_word_at(bytes, at, word))
+        {
+            at = skip_ws(bytes, at + ident_at(bytes, at).len());
+        } else if whole_word_at(bytes, at, "extern") {
+            at = skip_ws(bytes, at + 6);
+            if bytes.get(at) == Some(&b'"') {
+                match bytes[at + 1..].iter().position(|byte| *byte == b'"') {
+                    Some(offset) => at = skip_ws(bytes, at + 1 + offset + 1),
+                    None => break,
+                }
+            }
+        } else {
+            break;
+        }
     }
     if !whole_word_at(bytes, at, "fn") {
-        return (whole, None);
+        return Scope {
+            unrecognised_header: at != header_start,
+            ..plain
+        };
     }
     let open = fn_body_open(bytes, at + 2);
     match open.and_then(|open| close_of(bytes, open).map(|end| (open, end))) {
-        Some((open, end)) if skip_ws(bytes, end) == bytes.len() => ((open + 1, end - 1), Some(at)),
-        _ => (whole, None),
+        Some((open, end)) if skip_ws(bytes, end) == bytes.len() => Scope {
+            statements: (open + 1, end - 1),
+            wrapper: Some(at),
+            ..plain
+        },
+        _ => plain,
     }
 }
 
@@ -364,9 +446,117 @@ fn dead_after_return(bytes: &[u8], scope: (usize, usize), dead: &mut Vec<(usize,
         if let Some(end) = statement_end(bytes, at, true)
             && end <= limit
         {
-            dead.push((end, limit));
+            blank_statements(bytes, end, limit, dead);
             return;
         }
+    }
+}
+
+/// The keyword of an item starting at `at` (`fn`, `impl`, `struct`, ..), after
+/// attributes and modifiers. Items are hoisted: an item after a `return` is
+/// still in scope for the code before it, so it is never dead.
+fn item_keyword(bytes: &[u8], mut at: usize) -> Option<&'static str> {
+    const KEYWORDS: [&str; 12] = [
+        "fn",
+        "impl",
+        "trait",
+        "struct",
+        "enum",
+        "union",
+        "const",
+        "static",
+        "mod",
+        "macro_rules",
+        "use",
+        "type",
+    ];
+    loop {
+        if bytes.get(at..at + 2) == Some(b"#[") {
+            at = skip_ws(bytes, close_of(bytes, at + 1)?);
+        } else if whole_word_at(bytes, at, "pub") {
+            at = skip_ws(bytes, at + 3);
+            if bytes.get(at) == Some(&b'(') {
+                at = skip_ws(bytes, close_of(bytes, at)?);
+            }
+        } else if ["unsafe", "async", "default"]
+            .iter()
+            .any(|word| whole_word_at(bytes, at, word))
+        {
+            at = skip_ws(bytes, at + ident_at(bytes, at).len());
+        } else if whole_word_at(bytes, at, "extern") {
+            at = skip_ws(bytes, at + 6);
+            if bytes.get(at) == Some(&b'"') {
+                let offset = bytes[at + 1..].iter().position(|byte| *byte == b'"')?;
+                at = skip_ws(bytes, at + 1 + offset + 1);
+            }
+        } else if whole_word_at(bytes, at, "const") {
+            let next = skip_ws(bytes, at + 5);
+            if ["fn", "unsafe", "async", "extern"]
+                .iter()
+                .any(|word| whole_word_at(bytes, next, word))
+            {
+                at = next;
+            } else {
+                return Some("const");
+            }
+        } else {
+            return KEYWORDS
+                .iter()
+                .copied()
+                .find(|word| whole_word_at(bytes, at, word));
+        }
+    }
+}
+
+/// The offset just past the item that starts at `at`, or `limit`.
+fn item_end(bytes: &[u8], at: usize, keyword: &str, limit: usize) -> usize {
+    if matches!(keyword, "use" | "const" | "static" | "type") {
+        return statement_end(bytes, at, true).map_or(limit, |end| end.min(limit));
+    }
+    let mut depth = 0usize;
+    for index in at..limit {
+        match bytes[index] {
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => depth = depth.saturating_sub(1),
+            b';' if depth == 0 => return index + 1,
+            b'{' if depth == 0 => {
+                return close_of(bytes, index).map_or(limit, |end| end.min(limit));
+            }
+            _ => {}
+        }
+    }
+    limit
+}
+
+/// Marks `from..limit` dead except the items declared in it.
+fn blank_statements(bytes: &[u8], from: usize, limit: usize, dead: &mut Vec<(usize, usize)>) {
+    let mut cursor = from;
+    let mut depth = 0usize;
+    let mut at = from;
+    while at < limit {
+        match bytes[at] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        let boundary = prev_non_ws(bytes, at)
+            .is_none_or(|prev| prev < from || matches!(bytes[prev], b';' | b'{' | b'}' | b']'));
+        if depth == 0
+            && boundary
+            && let Some(keyword) = item_keyword(bytes, at)
+        {
+            let end = item_end(bytes, at, keyword, limit).max(at + 1);
+            if cursor < at {
+                dead.push((cursor, at));
+            }
+            cursor = end;
+            at = end;
+            continue;
+        }
+        at += 1;
+    }
+    if cursor < limit {
+        dead.push((cursor, limit));
     }
 }
 
@@ -490,6 +680,69 @@ mod tests {
         assert!(!out.contains("m.to_string"), "{out}");
         let out = live("a(); fn unused() -> impl Fn() { fn inner() { m.to_string(); } || {} }");
         assert!(!out.contains("m.to_string"), "{out}");
+    }
+
+    #[test]
+    fn a_test_fn_with_any_modifier_is_the_wrapper_not_a_nested_fn() {
+        for body in [
+            "pub(crate) fn t() { m.to_string(); }",
+            "pub(in crate::a) fn t() { m.to_string(); }",
+            "const fn t() { m.to_string(); }",
+            "extern \"C\" fn t() { m.to_string(); }",
+            "#[test]\npub const unsafe extern \"C\" fn t() { m.to_string(); }",
+            "#[test]\npub(crate) async fn t() { m.to_string(); }",
+            // A leading header this reader cannot parse judges no nested fn.
+            "const X: u32 = 1; fn unused() { m.to_string(); }",
+        ] {
+            assert_eq!(live(body), body, "{body}");
+        }
+        // The same wrapper still has its own dead code judged.
+        let out = live("pub(crate) fn t() { a.to_string(); return; b.to_string(); }");
+        assert!(
+            out.contains("a.to_string") && !out.contains("b.to_string"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn impl_headers_with_brackets_or_const_braces_still_shield_their_methods() {
+        for body in [
+            "a(); impl Drop for G<[u8; 4]> { fn drop(&mut self) { m.to_string(); } }",
+            "a(); impl Iterator for S where X: Y<[u8; 2]> { fn next(&mut self) -> Option<u8> { m.to_string(); None } }",
+            "a(); impl Foo<{ 1 }> for G { fn go(&self) { m.to_string(); } }",
+            "a(); impl<const N: usize> Foo<{ N }> for G { fn go(&self) { m.to_string(); } }",
+        ] {
+            assert_eq!(live(body), body, "{body}");
+        }
+        let out =
+            live("a(); impl Foo<{ 1 }> for G { fn go(&self) {} } fn unused() { m.to_string(); }");
+        assert!(!out.contains("m.to_string"), "{out}");
+    }
+
+    #[test]
+    fn items_after_a_return_are_hoisted_and_stay_live() {
+        for body in [
+            "let s = helper(); return; fn helper() -> String { m.to_string() }",
+            "a(); return; impl Drop for G { fn drop(&mut self) { m.to_string(); } }",
+        ] {
+            assert_eq!(live(body), body, "{body}");
+        }
+        let out = live("helper(); return; b.to_string(); fn helper() { c.to_string(); }");
+        assert!(
+            !out.contains("b.to_string") && out.contains("c.to_string"),
+            "{out}"
+        );
+        let out = live("a(); return; #[derive(Debug)] struct S; b.to_string();");
+        assert!(
+            out.contains("struct S") && !out.contains("b.to_string"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn a_nested_mod_is_not_judged() {
+        let body = "a(); mod tests { #[test] fn t() { m.to_string(); } }";
+        assert_eq!(live(body), body);
     }
 
     #[test]
