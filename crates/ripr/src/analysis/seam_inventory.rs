@@ -3812,14 +3812,14 @@ fn build_seam_from_shape(
     // would grade a well-tested write as weakly gripped.
     if kind == SeamKind::FieldConstruction
         && crate::analysis::classify::field_assignment_target(&shape.text).is_some()
-        && !crate::analysis::classify::assigned_field_path(
+        && crate::analysis::classify::assigned_field_path(
             &owner_fact.body,
             owner_fact.start_line,
             shape.start_line,
             &shape.text,
             &|_| None,
         )
-        .is_some_and(|field| !field.contains('.'))
+        .is_none_or(|field| field.contains('.'))
     {
         return None;
     }
