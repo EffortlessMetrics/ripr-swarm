@@ -20989,6 +20989,42 @@ fn match_arm_patterns_and_scanners_read_only_plain_literals() {
     assert_eq!(skip_literal("'}' x", 0), 3);
 }
 
+/// A match on a derived value (`n + 1`) is not a match on the parameter: the
+/// whole-body reader refuses it by itself, while the bare twin is read.
+#[test]
+fn whole_body_match_reads_only_a_bare_identifier_scrutinee() -> Result<(), String> {
+    let source = |scrutinee: &str| {
+        format!(
+            "pub fn rate(n: u32) -> u32 {{\n    match {scrutinee} {{\n        3 => 5,\n        _ => 0,\n    }}\n}}\n"
+        )
+    };
+    for (scrutinee, read) in [("n", true), ("n + 1", false), ("(n)", false)] {
+        let text = source(scrutinee);
+        let index = index_from_files(&[(PathBuf::from("src/lib.rs"), text.as_str())])?;
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "rate")
+            .ok_or("fixture must hold `rate`")?;
+        let arms = whole_body_match_arms(owner);
+        assert_eq!(arms.is_some(), read, "{scrutinee}: {arms:?}");
+    }
+    Ok(())
+}
+
+/// A call runs unconditionally only outside blocks, closures, branches and
+/// short-circuits.
+#[test]
+fn arm_call_runs_unconditionally_only_outside_blocks_and_branches() {
+    let body = "fn t() {\n    let a = rate(1);\n    let b = if c { rate(1) } else { 0 };\n    let f = || rate(1);\n    let g = c && rate(1) > 0;\n    assert!(rate(1) > 0);\n}\n";
+    let at = |needle: &str| body.find(needle).map_or(0, |at| at + needle.len());
+    assert!(call_runs_unconditionally(body, at("let a = ")));
+    assert!(call_runs_unconditionally(body, at("assert!(")));
+    for needle in ["if c { ", "|| ", "c && "] {
+        assert!(!call_runs_unconditionally(body, at(needle)), "{needle}");
+    }
+}
+
 /// The shadow guard counts whole-word item declarations only.
 #[test]
 fn item_declarations_are_counted_as_whole_words() {

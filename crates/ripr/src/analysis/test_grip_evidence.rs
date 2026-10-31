@@ -472,28 +472,19 @@ fn evidence_for_seam_with_context(
         .filter(|test| test_has_contradicted_assertion(test, owner_fn))
         .count();
 
-    // For a changed match arm: which related tests pass the arm's own literal
-    // in the argument the arm's match reads (aligned with `related_tests`).
-    // Empty when the arm is not a plain literal arm of the owner's top-level
-    // match on a bare parameter, so the start withholds.
+    // For a changed match arm: which related tests run the arm through their
+    // one call of the owner, passing the arm's own literal in the argument
+    // the arm's match reads (aligned with `related_tests`). Empty when the arm
+    // is not a plain literal arm of the owner's top-level match on a bare
+    // parameter, so the start withholds.
     let arm_literal_tests: Vec<bool> = owner_fn
         .filter(|_| seam.kind() == SeamKind::MatchArm)
         .and_then(|owner| arm_scrutinee_argument(seam, owner).map(|arm| (owner, arm)))
         .map(|(owner, (parameter, literal))| {
-            let selection =
-                ObservedArgumentSelection::ArgumentOperands(vec![ObservedArgumentOperand {
-                    index: parameter,
-                    projection: None,
-                }]);
             related_with_reason
                 .iter()
                 .map(|(indexed, _)| {
-                    observed_value_facts_for_test(seam, indexed, context, owner, &selection)
-                        .iter()
-                        .any(|fact| {
-                            fact.context == ValueContext::FunctionArgument
-                                && fact.value.trim() == literal
-                        })
+                    test_runs_arm_in_its_one_owner_call(indexed.test, owner, parameter, &literal)
                 })
                 .collect()
         })
@@ -1188,11 +1179,162 @@ fn arm_scrutinee_argument(seam: &RepoSeam, owner: &FunctionSummary) -> Option<(u
         if line == seam.display_line() && pattern.trim() == target {
             return Some((parameter, target.to_string()));
         }
-        if !pattern.split('|').all(is_plain_literal_pattern) {
+        // An earlier arm naming the same literal (alone or in a `|`
+        // alternation) takes that input first, so the changed arm never runs.
+        if !pattern.split('|').all(is_plain_literal_pattern)
+            || pattern
+                .split('|')
+                .any(|alternative| alternative.trim() == target)
+        {
             return None;
         }
     }
     None
+}
+
+/// Whether `test` runs the changed arm through its one call of `owner`: the
+/// call's argument at `parameter` (as the owner's parameter list counts it,
+/// without `self`) is the arm's literal written directly in the call. A
+/// local, constant or computed argument refuses, since a later `let` or
+/// assignment may give the call another value; every other shape refuses
+/// too: see [`arm_owner_call_argument`].
+fn test_runs_arm_in_its_one_owner_call(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    parameter: usize,
+    literal: &str,
+) -> bool {
+    arm_owner_call_argument(test, owner, parameter).is_some_and(|argument| argument == literal)
+}
+
+/// The argument text at `parameter` of the ONE call of `owner` in `test`, so
+/// the result an assertion reads can only be the result of that call. `None`
+/// (refuse) when the owner's name is written anywhere else in the test body
+/// or a credited helper also calls it; when the call is inside a block,
+/// closure, conditional or short-circuit (it may never run); or when the
+/// call form does not line its arguments up with the owner's parameters (a
+/// `self` method reached by `Type::method(receiver, ..)`, or a non-`self`
+/// owner reached as `value.method(..)`).
+fn arm_owner_call_argument(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    parameter: usize,
+) -> Option<String> {
+    let name = owner.name.as_str();
+    if name.is_empty() || test.calls.iter().filter(|call| call.name == name).count() > 1 {
+        return None;
+    }
+    let body: &str = &test.body;
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let part = |ch: Option<char>| ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
+    let mut mentions = masked.match_indices(name).filter(|(at, _)| {
+        !part(masked[..*at].chars().next_back()) && !part(masked[at + name.len()..].chars().next())
+    });
+    let (at, _) = mentions.next()?;
+    if mentions.next().is_some() {
+        return None;
+    }
+    let method_form = masked[..at].trim_end().ends_with('.');
+    if method_form != owner_takes_self(owner)? {
+        return None;
+    }
+    let after = at + name.len();
+    let open = after + (masked[after..].len() - masked[after..].trim_start().len());
+    if !masked[open..].starts_with('(') || !call_runs_unconditionally(&masked, at) {
+        return None;
+    }
+    let close = matching_close(&masked, open)?;
+    let mut arguments = Vec::new();
+    let mut from = open + 1;
+    while let Some(comma) = find_top_level(&masked, from, close, ",") {
+        arguments.push(body.get(from..comma)?.trim());
+        from = comma + 1;
+    }
+    let last = body.get(from..close)?.trim();
+    if !last.is_empty() {
+        arguments.push(last);
+    }
+    arguments
+        .get(parameter)
+        .map(|argument| argument.to_string())
+}
+
+/// Whether the owner's signature (its first line) takes a `self` receiver;
+/// `None` when the parameter list cannot be read.
+fn owner_takes_self(owner: &FunctionSummary) -> Option<bool> {
+    let signature = owner.body.lines().next()?;
+    let open = signature.find('(')?;
+    let close = open + signature[open..].find(')')?;
+    let first = signature[open + 1..close].split(',').next()?;
+    let receiver = first
+        .split(':')
+        .next()?
+        .trim()
+        .trim_start_matches('&')
+        .trim();
+    let receiver = match receiver.strip_prefix('\'') {
+        Some(lifetime) => lifetime
+            .trim_start_matches(|ch: char| ch.is_alphanumeric() || ch == '_')
+            .trim(),
+        None => receiver,
+    };
+    let receiver = receiver.strip_prefix("mut ").unwrap_or(receiver).trim();
+    Some(receiver == "self")
+}
+
+/// Whether the code at `at` in a masked test body runs whenever the test
+/// does: no block (`if`/`match`/loop/closure body/nested item) encloses it,
+/// and its statement before it holds no closure bar, short-circuit, `?`, or
+/// branching, looping, returning or deferring keyword.
+fn call_runs_unconditionally(masked: &str, at: usize) -> bool {
+    // A body that starts with its `fn` header has its own `{` around every
+    // statement; that one brace is the body, not a block.
+    let header = masked.find('{').map_or("", |brace| &masked[..brace]);
+    let base = usize::from(mentions_identifier(header, "fn"));
+    let mut stack: Vec<char> = Vec::new();
+    let mut statement = 0usize;
+    let mut cursor = 0usize;
+    while cursor < at {
+        cursor = skip_literal(masked, cursor);
+        if cursor >= at {
+            break;
+        }
+        let Some(ch) = masked[cursor..].chars().next() else {
+            return false;
+        };
+        match ch {
+            '(' | '[' | '{' => {
+                stack.push(ch);
+                if ch == '{' && stack.len() == base {
+                    statement = cursor + 1;
+                }
+            }
+            ')' | ']' | '}' => {
+                if stack.pop().is_none() {
+                    return false;
+                }
+                if ch == '}' && stack.len() == base {
+                    statement = cursor + 1;
+                }
+            }
+            ';' if stack.len() == base => statement = cursor + 1,
+            _ => {}
+        }
+        cursor += ch.len_utf8();
+    }
+    let braces = stack.iter().filter(|ch| **ch == '{').count();
+    if braces != base || (base == 1 && stack.first() != Some(&'{')) {
+        return false;
+    }
+    let prefix = &masked[statement.min(at)..at];
+    !prefix.contains(['|', '?'])
+        && !prefix.contains("&&")
+        && ![
+            "if", "else", "match", "while", "for", "loop", "return", "break", "continue", "async",
+            "move", "fn",
+        ]
+        .iter()
+        .any(|keyword| mentions_identifier(prefix, keyword))
 }
 
 /// The scrutinee and top-level arms (pattern text, 1-based file line) of an

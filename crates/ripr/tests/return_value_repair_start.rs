@@ -1128,15 +1128,24 @@ fn arm_literal_in_the_scrutinee_argument_reaches_repair() -> Result<(), String> 
     )
 }
 
-/// A derived scrutinee (`n + 1`) does not equal the argument.
+/// A derived scrutinee (`kind.trim()`) does not equal the argument; the bare
+/// `match kind` twin with the same test starts, so only the scrutinee differs.
+/// (The whole-body reader's own refusal is isolated by a unit test.)
 #[test]
 fn derived_scrutinee_is_not_a_start() -> Result<(), String> {
-    let old = "pub fn rate(n: u32) -> u32 {\n    match n + 1 {\n        2 => 10,\n        3 => 5,\n        _ => 0,\n    }\n}\n";
+    let old = |scrutinee: &str| {
+        format!(
+            "pub fn rate(kind: &str) -> u32 {{\n    match {scrutinee} {{\n        \"gold\" => 10,\n        \"silver\" => 5,\n        _ => 0,\n    }}\n}}\n"
+        )
+    };
+    let new = |scrutinee: &str| old(scrutinee).replace("\"silver\" => 5", "\"silver\" => 7");
+    let test = "use ar::rate;\n\n#[test]\nfn runs() {\n    assert!(rate(\"silver\") < 100);\n}\n";
+    assert_repair_ready("arm-bare-scrutinee", &old("kind"), &new("kind"), test)?;
     assert_no_start_at(
         "arm-derived-scrutinee",
-        old,
-        &old.replace("3 => 5", "3 => 7"),
-        "use ar::rate;\n\n#[test]\nfn runs() {\n    assert!(rate(3) < 100);\n}\n",
+        &old("kind.trim()"),
+        &new("kind.trim()"),
+        test,
         "src/lib.rs:4",
     )
 }
@@ -1167,16 +1176,166 @@ fn earlier_guard_arm_is_not_a_start() -> Result<(), String> {
     )
 }
 
-/// A builder call naming the literal never reaches the owner's argument.
+/// A builder call naming the literal never reaches the owner's argument: only
+/// the owner call's own argument counts, so the twin that differs only by
+/// passing `"silver"` to `rate` starts and the builder one does not.
 #[test]
 fn builder_literal_that_never_reaches_the_owner_is_not_a_start() -> Result<(), String> {
+    let test = |argument: &str| {
+        format!(
+            "use ar::rate;\n\nstruct B;\nimpl B {{\n    fn silver(self, _s: &str) -> Self {{\n        self\n    }}\n}}\n\n#[test]\nfn runs() {{\n    let _b = B.silver(\"silver\");\n    let k = String::from(\"gold\");\n    assert!(rate({argument}) < 100);\n}}\n"
+        )
+    };
+    assert_repair_ready("arm-builder-twin", ARM_OLD, ARM_NEW, &test("\"silver\""))?;
     assert_no_start_at(
         "arm-builder-literal",
         ARM_OLD,
         ARM_NEW,
-        "use ar::rate;\n\nstruct B;\nimpl B {\n    fn silver(self, _s: &str) -> Self {\n        self\n    }\n}\n\n#[test]\nfn runs() {\n    let _b = B.silver(\"silver\");\n    let k = String::from(\"gold\");\n    assert!(rate(&k) < 100);\n}\n",
+        &test("&k"),
         "src/lib.rs:4",
     )
+}
+
+fn rate_test(body: &str) -> String {
+    format!("use ar::rate;\n\n#[test]\nfn runs() {{\n{body}}}\n")
+}
+
+/// Only the arm's literal written in the call itself counts: a local first
+/// bound to it and then rebound by a second `let` or reassigned through `mut`
+/// gives the call another value, so neither starts, while the twin passing the
+/// literal directly does.
+#[test]
+fn rebound_or_reassigned_let_literal_is_not_a_match_arm_start() -> Result<(), String> {
+    assert_repair_ready(
+        "arm-direct-literal",
+        ARM_OLD,
+        ARM_NEW,
+        &rate_test("    let _k = \"silver\";\n    assert!(rate(\"silver\") < 100);\n"),
+    )?;
+    for (case, body) in [
+        (
+            "arm-let-rebound",
+            "    let k = \"silver\";\n    let k = if k.is_empty() { k } else { \"gold\" };\n    assert!(rate(k) < 100);\n",
+        ),
+        (
+            "arm-let-reassigned",
+            "    let mut k = \"silver\";\n    k = \"gold\";\n    assert!(rate(k) < 100);\n",
+        ),
+        (
+            "arm-let-once",
+            "    let k = \"silver\";\n    assert!(rate(k) < 100);\n",
+        ),
+    ] {
+        assert_no_start_at(case, ARM_OLD, ARM_NEW, &rate_test(body), "src/lib.rs:4")?;
+    }
+    Ok(())
+}
+
+/// The literal and the asserted result must come from the same one call: a
+/// second call of the owner, a call that may never run (inside a branch or a
+/// closure), or a same-named call on another receiver refuses.
+#[test]
+fn literal_and_asserted_result_from_different_calls_are_not_a_start() -> Result<(), String> {
+    assert_repair_ready(
+        "arm-one-call",
+        ARM_OLD,
+        ARM_NEW,
+        &rate_test("    let r = rate(\"silver\");\n    assert!(r < 100);\n"),
+    )?;
+    for (case, body) in [
+        (
+            "arm-second-call",
+            "    let _r = rate(\"silver\");\n    let r = rate(\"gold\");\n    assert!(r < 100);\n",
+        ),
+        (
+            "arm-dead-branch",
+            "    if false {\n        rate(\"silver\");\n    }\n    let r = rate(\"gold\");\n    assert!(r < 100);\n",
+        ),
+        (
+            "arm-branch-only",
+            "    let r = if false { rate(\"silver\") } else { 0 };\n    assert!(r < 100);\n",
+        ),
+        (
+            "arm-closure",
+            "    let f = || rate(\"silver\");\n    assert!(f() < 100);\n",
+        ),
+    ] {
+        assert_no_start_at(case, ARM_OLD, ARM_NEW, &rate_test(body), "src/lib.rs:4")?;
+    }
+    Ok(())
+}
+
+const TWO_ARG_METHOD_OLD: &str = "pub struct Window {\n    pub tier: u32,\n}\n\nimpl Window {\n    pub fn rate(&self, tier: &str, kind: &str) -> u32 {\n        match kind {\n            \"gold\" => 10,\n            \"silver\" => 5,\n            _ => self.tier + tier.len() as u32,\n        }\n    }\n}\n";
+
+fn method_test(body: &str) -> String {
+    format!(
+        "use ar::Window;\n\nstruct Other;\nimpl Other {{\n    fn rate(&self, _k: &str) -> u32 {{\n        1\n    }}\n}}\n\n#[test]\nfn runs() {{\n    let window = Window {{ tier: 1 }};\n{body}}}\n"
+    )
+}
+
+/// `Window::rate(&window, ..)` keeps the receiver as its first argument, so
+/// its arguments do not line up with the method's parameters: `"silver"` there
+/// is `tier`, not `kind`. The method-call twin passing `"silver"` as `kind`
+/// starts; the path call and a same-named call on another receiver do not.
+#[test]
+fn path_qualified_method_call_or_other_receiver_is_not_a_start() -> Result<(), String> {
+    let new = TWO_ARG_METHOD_OLD.replace("\"silver\" => 5", "\"silver\" => 7");
+    assert_repair_ready(
+        "method-call-twin",
+        TWO_ARG_METHOD_OLD,
+        &new,
+        &method_test("    assert!(window.rate(\"gold\", \"silver\") < 100);\n"),
+    )?;
+    for (case, body) in [
+        (
+            "path-qualified-method",
+            "    assert!(Window::rate(&window, \"silver\", \"gold\") < 100);\n",
+        ),
+        (
+            "other-receiver",
+            "    let _o = Other.rate(\"silver\");\n    assert!(window.rate(\"silver\", \"gold\") < 100);\n",
+        ),
+    ] {
+        assert_no_start_at(
+            case,
+            TWO_ARG_METHOD_OLD,
+            &new,
+            &method_test(body),
+            "src/lib.rs:9",
+        )?;
+    }
+    Ok(())
+}
+
+/// An earlier arm naming the same literal, alone or in a `|` alternation,
+/// takes the input first; the twin without it starts.
+#[test]
+fn earlier_arm_repeating_the_literal_is_not_a_start() -> Result<(), String> {
+    let test = rate_test("    assert!(rate(\"silver\") < 100);\n");
+    let lib = |first: &str| {
+        format!(
+            "pub fn rate(kind: &str) -> u32 {{\n    match kind {{\n        {first} => 1,\n        \"silver\" => 5,\n        _ => 0,\n    }}\n}}\n"
+        )
+    };
+    assert_repair_ready(
+        "arm-distinct-earlier",
+        &lib("\"gold\""),
+        &lib("\"gold\"").replace("\"silver\" => 5", "\"silver\" => 7"),
+        &test,
+    )?;
+    for (case, first) in [
+        ("arm-repeated-earlier", "\"silver\""),
+        ("arm-alternation-earlier", "\"gold\" | \"silver\""),
+    ] {
+        assert_no_start_at(
+            case,
+            &lib(first),
+            &lib(first).replace("\"silver\" => 5", "\"silver\" => 7"),
+            &test,
+            "src/lib.rs:4",
+        )?;
+    }
+    Ok(())
 }
 
 const METHOD_ARM_OLD: &str = "pub struct Window {\n    pub tier: u32,\n}\n\nimpl Window {\n    pub fn rate(&self, kind: &str) -> u32 {\n        match kind {\n            \"gold\" => 10,\n            \"silver\" => 5,\n            _ => self.tier,\n        }\n    }\n}\n";
