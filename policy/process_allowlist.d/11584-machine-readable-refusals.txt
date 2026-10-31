@@ -1,0 +1,1 @@
+crates/ripr/tests/cli_smoke/refusal_envelope.rs|Command::new|1|11584-machine-readable-refusals|Runs the ripr binary with stdout bound to /dev/full to prove a refusal that cannot be delivered reports the write failure; no shell or network.
