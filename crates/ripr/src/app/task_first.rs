@@ -433,19 +433,26 @@ fn reaching_test_guidance(
     ) {
         return None;
     }
-    let test = entry.evidence.related_tests.iter().find(|test| {
-        matches!(
-            test.relation_reason,
-            RelationReason::DirectOwnerCall
-                | RelationReason::HelperOwnerCall
-                | RelationReason::ReExportChainFollowed
-        )
-    })?;
+    // Same pick as `RepairStartRefusal::related_test` (a direct owner call
+    // first), so one refusal never names two different tests.
+    let related = &entry.evidence.related_tests;
+    let test = related
+        .iter()
+        .find(|test| test.relation_reason == RelationReason::DirectOwnerCall)
+        .or_else(|| related.first())?;
+    if !matches!(
+        test.relation_reason,
+        RelationReason::DirectOwnerCall
+            | RelationReason::HelperOwnerCall
+            | RelationReason::ReExportChainFollowed
+    ) {
+        return None;
+    }
     let file = root
         .and_then(|root| test.file.strip_prefix(root).ok())
         .unwrap_or(&test.file);
     Some(format!(
-        "`{}` ({}:{}) already runs this code, but ripr cannot follow the changed value to an assertion on it. Check by hand that it asserts on the result of the change and add the assertion there",
+        "`{}` ({}:{}) calls this code, but ripr cannot follow the changed value to an assertion on it. Check by hand that it exercises the changed branch and asserts on its result, and add the assertion there",
         test.test_name,
         crate::analysis::stable_path_text(file),
         test.line
@@ -3582,22 +3589,37 @@ pub(crate) mod tests {
         let entry = gate_entry(SeamGripClass::PropagationUnknown, vec![weak_related_test()]);
         let reason = route_not_ready_reason(&entry, "repair route not ready", &missing, root);
         assert!(
-            reason.contains("`at_threshold_runs` (tests/pricing.rs:12) already runs this code"),
+            reason.contains("`at_threshold_runs` (tests/pricing.rs:12) calls this code"),
             "{reason}"
         );
+
+        // The refusal's own pick wins: a direct owner call listed after a
+        // helper call is the one named, and other unknown stages name it too.
+        let mut helper = weak_related_test();
+        helper.test_name = "via_helper".to_string();
+        helper.relation_reason = crate::domain::RelationReason::HelperOwnerCall;
+        for class in [
+            SeamGripClass::ObservationUnknown,
+            SeamGripClass::DiscriminationUnknown,
+        ] {
+            let both = gate_entry(class, vec![helper.clone(), weak_related_test()]);
+            let reason = route_not_ready_reason(&both, "repair route not ready", &missing, root);
+            assert!(reason.contains("`at_threshold_runs`"), "{reason}");
+            assert!(!reason.contains("`via_helper`"), "{reason}");
+        }
 
         // Negatives: no related test, a non-reaching relation, another class.
         let none = gate_entry(SeamGripClass::PropagationUnknown, Vec::new());
         let reason = route_not_ready_reason(&none, "repair route not ready", &missing, root);
-        assert!(!reason.contains("already runs"), "{reason}");
+        assert!(!reason.contains("calls this code"), "{reason}");
         let mut weak = weak_related_test();
         weak.relation_reason = crate::domain::RelationReason::SameModule;
         let same_module = gate_entry(SeamGripClass::PropagationUnknown, vec![weak]);
         let reason = route_not_ready_reason(&same_module, "repair route not ready", &missing, root);
-        assert!(!reason.contains("already runs"), "{reason}");
+        assert!(!reason.contains("calls this code"), "{reason}");
         let weakly = gate_entry(SeamGripClass::WeaklyGripped, vec![weak_related_test()]);
         let reason = route_not_ready_reason(&weakly, "repair route not ready", &missing, root);
-        assert!(!reason.contains("already runs"), "{reason}");
+        assert!(!reason.contains("calls this code"), "{reason}");
     }
 
     /// #10622: a predicate boundary whose only missing evidence is the
