@@ -2351,7 +2351,11 @@ receiving call is itself resolved.
   `cfg_if` is a manifest-verified registry crate no module, alias or
   workspace package takes the name of: that is the same item written
   directly, admitted when `NAME.rs` or `NAME/mod.rs` beside the declaring
-  crate-root or `mod.rs` file is indexed. An `extern crate`, an inline module
+  crate-root or `mod.rs` file is indexed. The `cfg_if!` call must sit at the
+  declaring file's top level (inside an inline module the file is
+  `inner/NAME.rs`, which stays ambiguous), and a file with a glob `use`, a
+  `use` naming `cfg_if`, or an `include!` stays ambiguous because any of them
+  could bind `cfg_if` to something else. An `extern crate`, an inline module
   body, a `#[path]` or other attribute on the item, a bare `cfg_if!`, any
   `no_implicit_prelude`, and a mention of the assertion in the arguments stay
   ambiguous. A

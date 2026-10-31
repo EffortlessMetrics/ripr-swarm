@@ -5572,6 +5572,8 @@ fn cfg_if_macro_use_module_is_admitted_only_as_the_plain_item() {
         "::cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
         "cfg_if::cfg_if! {\n    if #[cfg(unix)] {\n        #[macro_use]\n        mod macros;\n    } else if #[cfg(windows)] {\n        #[macro_use]\n        mod win;\n        fn f() {}\n    } else {\n        #[macro_use]\n        mod other;\n    }\n}",
         "cfg_if::cfg_if! { if #[cfg(unix)] { mod a; #[macro_use] mod macros; mod b; } }",
+        // A glob scoped to an inline module cannot bind the top-level name.
+        "cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }\nmod tests { use super::*; }",
         // No `macro_use` at all was never an argument attribute.
         "cfg_if::cfg_if! { if #[cfg(unix)] { mod macros; } }",
     ] {
@@ -5610,6 +5612,16 @@ fn cfg_if_macro_use_module_is_admitted_only_as_the_plain_item() {
         "cfg_if::cfg_if! { if #[cfg(unix)] { inner! { #[macro_use] mod macros; } } }",
         "cfg_if::cfg_if! { if #[cfg(unix)] { mod m { #[macro_use] mod macros; } } }",
         "cfg_if::cfg_if! { if #[cfg(unix)] { fn f() { #[macro_use] mod macros; } } }",
+        // Inside an inline module the file is `inner/macros.rs`, not the
+        // `macros.rs` beside the declaring file.
+        "mod inner { cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } } }",
+        "#[path = \"x\"] mod inner { cfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } } }",
+        // Another binding of the name `cfg_if` in this file.
+        "use crate::compat::cfg_if;\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        "use crate::compat::*;\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        "use crate::compat::{self, *};\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        "use crate::{compat::cfg_if};\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
+        "include!(\"shadow.rs\");\ncfg_if::cfg_if! { if #[cfg(unix)] { #[macro_use] mod macros; } }",
         // Not the `if #[cfg(..)] { .. } else { .. }` shape.
         "cfg_if::cfg_if! { #[macro_use] mod macros; }",
         "cfg_if::cfg_if! { if cfg!(unix) { #[macro_use] mod macros; } }",

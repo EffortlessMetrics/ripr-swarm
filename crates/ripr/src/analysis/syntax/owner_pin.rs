@@ -1051,7 +1051,48 @@ fn macro_binding_sites_in_tree(
                 let wrapper = path.syntax().text().to_string();
                 let wrapper: String = wrapper.chars().filter(|c| !c.is_whitespace()).collect();
                 let external = wrapper.starts_with("::");
+                // The module file is looked up beside the declaring file, so
+                // the call must sit at the file's top level: inside an inline
+                // module (`mod inner { cfg_if! { .. } }`, `#[path]` included)
+                // the file is `inner/NAME.rs`, which that lookup does not
+                // model. An import or glob that could bind `cfg_if` to
+                // something else, or an `include!` that could add such a
+                // binding unseen, keeps the attribute ambiguous.
+                let top_level = node
+                    .parent()
+                    .is_some_and(|parent| parent.kind() == ra_ap_syntax::SyntaxKind::SOURCE_FILE);
+                // Only a top-level `use` scopes with the call; one inside a
+                // module or body binds in that scope alone.
+                let cfg_if_rebindable = binding_free
+                    .uses
+                    .iter()
+                    .filter(|item| {
+                        item.syntax()
+                            .ancestors()
+                            .find_map(ast::Use::cast)
+                            .is_some_and(|item| {
+                                item.syntax().parent().is_some_and(|parent| {
+                                    parent.kind() == ra_ap_syntax::SyntaxKind::SOURCE_FILE
+                                })
+                            })
+                    })
+                    .any(|item| {
+                        item.star_token().is_some()
+                            || item
+                                .syntax()
+                                .descendants_with_tokens()
+                                .filter_map(|element| element.into_token())
+                                .any(|token| token.text().trim_start_matches("r#") == "cfg_if")
+                    })
+                    || binding_free.calls.iter().any(|call| {
+                        call.path()
+                            .and_then(|path| path.segment())
+                            .and_then(|segment| segment.name_ref())
+                            .is_some_and(|name| name.text() == "include")
+                    });
                 let cfg_if_admitted = matches!(wrapper.trim_start_matches("::"), "cfg_if::cfg_if")
+                    && top_level
+                    && !cfg_if_rebindable
                     && !drop_in_shadowed("cfg_if", external)
                     && drop_in_verified("cfg_if")
                     && cfg_if_macro_use_modules(&tree).is_some_and(|modules| {
