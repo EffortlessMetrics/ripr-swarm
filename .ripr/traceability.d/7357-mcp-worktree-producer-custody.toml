@@ -21,7 +21,6 @@ tests = [
   "crates/ripr/src/mcp/worktree_custody_tests.rs::withheld_verdict_keeps_an_earlier_finding_level_reason",
   "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_with_no_findings_over_dirty_tree_makes_no_custody_claim",
   "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_over_dirty_rust_helper_outside_the_diff_withholds",
-  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_over_gitignored_rust_file_withholds",
   "crates/ripr/src/mcp/workspace.rs::tests::committed_refusal_dirty_rust_rule_is_isolated_from_the_agreement",
   "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_with_head_moved_after_findings_withholds_the_card",
 ]

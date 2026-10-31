@@ -295,16 +295,13 @@ official SDK transport:
     too), and a head the findings producer observed that differs from the
     inventory's also withholds (an unobserved head is not compared on the
     committed path, an existing residual). Because the agreement only covers
-    paths the findings consumed while the inventory reads the whole
-    analyzable Rust corpus, any dirty, untracked or gitignored Rust-routed path (a
-    `.rs` file, including a helper or test outside the findings scope) also
-    withholds when there are Rust findings (gitignored files only outside the
-    directories the discovery walk never enters: `target`, `.git`, `.ripr`,
-    `.direnv`, `fixtures`, `node_modules`, so a built Cargo project keeps its
-    cards); if that list cannot be
-    established the refresh withholds. A dirty non-Rust file (README, `.py`)
-    does not withhold Rust cards, and with no findings no custody claim is
-    made. Withholding refuses `ripr_get_repair_card` with
+    paths the findings consumed while the inventory reads its own selected Rust
+    files, any dirty tracked or untracked Rust-routed path (a `.rs` file,
+    including a helper or test outside the findings scope) also withholds when
+    there are Rust findings; if that list cannot be established the refresh
+    withholds (and its remedy is to refresh again). A dirty non-Rust file
+    (README, `.py`) does not withhold Rust cards, and with no findings no
+    custody claim is made. Withholding refuses `ripr_get_repair_card` with
     `incomplete_inventory` and the `scope` adds
     `consumed_source_commitment: "not_established"` and
     `repair_cards: "withheld"`. Per item, an item that was repair-ready
@@ -315,16 +312,20 @@ official SDK transport:
     untracked Rust file the committed findings could not capture) and
     otherwise says an uncommitted Rust source or test file is read by the
     inventory. Findings, list and gap evidence are still served; the remedy is
-    to commit the uncommitted Rust source or test files (untracked and gitignored ones
+    to commit the uncommitted Rust source or test files (untracked ones
     included) and refresh again, or refresh with source `worktree`. No
     commitment is bound into a committed identity.
-  - Residuals under #7357 / #1765 / #1602, worktree mode only: a Rust file
+  - Residuals under #7357 / #1765 / #1602, worktree mode: a Rust file
     that only the inventory read and the findings producer did not (a new file
     or one the findings scope did not select) is bound into the commitment but
     cannot contradict the findings; an untracked (not intent-to-add) Rust file
     is not analyzed as a finding but is read by the inventory, so editing it
     changes the commitment and snapshot identity. In committed mode those same
-    files withhold instead (see above). Both modes: unsupported, generated,
+    tracked-dirty and untracked files withhold instead (see above). Both
+    modes: gitignored Rust files can be read by the inventory (workspace
+    discovery does not apply `.gitignore`) but are not claimed; committed mode
+    does not list them because their enumeration is capped and would
+    over-withhold clean checkouts. Unsupported, generated,
     `include!` and mixed-language dependencies are not claimed; a deleted or
     renamed tracked Rust file in the findings scope has no captured bytes and
     may refuse custody (fail-closed, cards withheld with the cause). A

@@ -2151,10 +2151,11 @@ fn worktree_custody(
 /// every committed refresh with findings, so a checkout that changed after the
 /// findings ran is caught even when it was clean at that time, and it names the
 /// moved path when it can. The agreement only covers paths the findings
-/// consumed, but the inventory reads the whole analyzable Rust corpus, so with
-/// Rust findings any dirty or untracked Rust-routed path also withholds
+/// consumed, but the inventory reads its own selected Rust files, so with
+/// Rust findings any dirty tracked or untracked Rust-routed path also withholds
 /// (`dirty_rust` lists them; it is evaluated only when needed and an
-/// unestablishable list fails closed). Dirty non-Rust files never withhold. A
+/// unestablishable list fails closed). Dirty non-Rust files never withhold, and
+/// gitignored Rust files are a stated residual, not claimed. A
 /// head the findings producer observed that differs from the inventory's also
 /// withholds; an unobserved head is not compared on the committed path.
 ///
@@ -2188,9 +2189,7 @@ fn committed_over_uncommitted_refusal(
         return None;
     }
     match dirty_rust() {
-        Err(error) => Some(format!(
-            "the checkout's uncommitted Rust files could not be established ({error})"
-        )),
+        Err(error) => Some(format!("{COMMITTED_DIRTY_LIST_UNESTABLISHED} ({error})")),
         Ok(paths) if paths.is_empty() => None,
         Ok(paths) => {
             let named = paths.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
@@ -2207,8 +2206,9 @@ fn committed_over_uncommitted_refusal(
     }
 }
 
-/// The dirty and untracked Rust-routed paths of the checkout, from the same
-/// committed-source probe the committed findings producer uses.
+/// The dirty tracked and untracked Rust-routed paths of the checkout, from the
+/// same committed-source probe the committed findings producer uses. Gitignored
+/// files are excluded (see the comment below).
 fn dirty_rust_routed_paths(root: &Path) -> Result<Vec<String>, String> {
     let overlay =
         crate::analysis::committed_source::probe(root, Some(crate::app::default_cli_git_timeout()))
@@ -2216,20 +2216,12 @@ fn dirty_rust_routed_paths(root: &Path) -> Result<Vec<String>, String> {
     let Some(overlay) = overlay else {
         return Ok(Vec::new());
     };
+    // Gitignored Rust files are deliberately not listed: the inventory can
+    // read them, but their enumeration is capped and descends into skipped
+    // directories, so including them would over-withhold clean checkouts. They
+    // are a stated residual (RIPR-SPEC-0211), as in worktree mode.
     let mut paths = overlay.dirty_source_paths();
     paths.extend(overlay.untracked_source_paths());
-    // Workspace discovery does not apply `.gitignore`, so the inventory can
-    // read a gitignored Rust file the committed findings never analyzed. It
-    // never enters `target`, `.git`, `.ripr`, `.direnv`, `fixtures` or
-    // `node_modules` (the discovery walk's one skip predicate), so ignored
-    // files below those directories (Cargo build output, vendored JS) are not
-    // read and must not withhold a built Cargo project's cards.
-    paths.extend(
-        overlay
-            .ignored_source_paths()
-            .into_iter()
-            .filter(|path| !crate::analysis::path_enters_ignored_dir(path)),
-    );
     paths.retain(|path| {
         crate::analysis::language::route(Path::new(path)) == Some(crate::domain::LanguageId::Rust)
     });
@@ -2242,13 +2234,20 @@ fn dirty_rust_routed_paths(root: &Path) -> Result<Vec<String>, String> {
 /// findings and the inventory.
 const COMMITTED_HEAD_MOVED_REASON: &str = "the repository head the findings producer observed does not match the head the seam inventory bound";
 
-/// The recovery that matches a committed withheld reason: a moved head needs
-/// only another refresh, uncommitted Rust files need committing first.
+/// The reason prefix when the dirty Rust path list could not be established.
+const COMMITTED_DIRTY_LIST_UNESTABLISHED: &str =
+    "the checkout's uncommitted Rust files could not be established";
+
+/// The recovery that matches a committed withheld reason: a moved head or an
+/// unestablishable list needs another refresh, uncommitted Rust files need
+/// committing first.
 fn committed_withheld_remedy(reason: &str) -> &'static str {
     if reason == COMMITTED_HEAD_MOVED_REASON {
         "Run ripr_refresh again once the repository head settles"
+    } else if reason.starts_with(COMMITTED_DIRTY_LIST_UNESTABLISHED) {
+        "Run ripr_refresh again; if it keeps failing, check that git can read the repository"
     } else {
-        "Commit the uncommitted Rust source or test files (untracked and gitignored ones included) and run ripr_refresh again, or run ripr_refresh with source `worktree` to analyze saved edits"
+        "Commit the uncommitted Rust source or test files (untracked ones included) and run ripr_refresh again, or run ripr_refresh with source `worktree` to analyze saved edits"
     }
 }
 
@@ -4874,7 +4873,9 @@ mod tests {
         // An unestablishable list fails closed.
         let failed = reason(Rust, Some("head-a"), Err("git failed".to_string()))?
             .ok_or("an unestablishable dirty list must withhold")?;
-        if !failed.contains("could not be established") {
+        if !failed.contains("could not be established")
+            || committed_withheld_remedy(&failed).contains("Commit the uncommitted")
+        {
             return Err(format!("unexpected probe-failure reason: {failed}"));
         }
         // Rust findings and no dirty path: no withholding.
