@@ -1,0 +1,1 @@
+- The non-Git workspace warning now leads with its remedy and trails the root path, so the LSP `window/showMessage` 240-character bound shortens the cause instead of cutting the `ripr pilot --root .` route (#11408).

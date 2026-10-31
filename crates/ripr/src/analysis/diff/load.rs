@@ -985,14 +985,18 @@ fn classify_git_root_probe(spawn: Result<bool, &str>) -> GitRootProbe {
     }
 }
 
+/// The remedy leads and the root trails (#11408): the LSP `showMessage`
+/// warning wraps this text and cuts it at the shared client-visible bound
+/// (240 scalars), so the cause (the root path) is what gets shortened, never
+/// the remedy. The leading clause keeps the stable `is not inside a Git work
+/// tree` diagnosis that consumers match on.
 fn not_a_work_tree_message(root: &Path) -> String {
     format!(
-        "`{}` is not inside a Git work tree (the analysis did not run). ripr diffs \
-         committed history, so run it from inside your repository, or pass `--root <path>` \
-         pointing at one. For whole-repository exploration of the current sources \
-         without Git history, use `{}`.",
-        root.display(),
+        "This root is not inside a Git work tree (the analysis did not run). Run ripr in a \
+         repository or pass `--root <path>` at one; `{}` explores without Git history. \
+         Root: `{}`.",
         crate::domain::WHOLE_REPO_PILOT_COMMAND,
+        root.display(),
     )
 }
 
@@ -2700,6 +2704,18 @@ mod tests {
                 .is_some_and(|text| !text.contains("git was not found on PATH")),
             "a git that ran must not steal the PATH diagnosis: {message:?}"
         );
+    }
+
+    #[test]
+    fn not_a_work_tree_message_leads_with_the_remedy_and_trails_the_root() -> Result<(), String> {
+        let message = not_a_work_tree_message(Path::new("/tmp/not-a-repo"));
+        let remedy = message
+            .find(crate::domain::WHOLE_REPO_PILOT_COMMAND)
+            .ok_or("remedy present")?;
+        let shown_root = message.find("/tmp/not-a-repo").ok_or("root present")?;
+        assert!(remedy < shown_root, "remedy must precede root: {message}");
+        assert!(message.starts_with("This root is not inside a Git work tree"));
+        Ok(())
     }
 
     #[test]

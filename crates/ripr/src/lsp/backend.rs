@@ -5515,6 +5515,48 @@ mod bounded_failure_message_tests {
             "{bounded}"
         );
     }
+
+    /// #11408: the non-Git `showMessage` warning keeps its remedy inside the
+    /// client-visible bound for a long root; the cause (root) is what gives.
+    /// The production loader builds the text; this wraps it exactly as the
+    /// backend does before sending.
+    #[test]
+    fn non_git_workspace_warning_keeps_the_remedy_for_a_long_root() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!("ripr-11408-{}", std::process::id()));
+        let root = base
+            .join("a-very-long-workspace-directory-name-".repeat(3))
+            .join("another-deeply-nested-project-folder");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let outcome = crate::analysis::load_diff(&root, Some("main"), None, None);
+        let _ = std::fs::remove_dir_all(&base);
+        let message = match outcome {
+            Err(message) => message,
+            Ok(_) => return Err("a non-Git root must not load a diff".to_string()),
+        };
+        let shown = bounded_failure_message(&format!(
+            "ripr analysis failed: workspace analysis failed: {message}"
+        ));
+        assert!(
+            shown.contains("is not inside a Git work tree")
+                && shown.contains("`--root <path>`")
+                && shown.contains("`ripr pilot --root .`"),
+            "the remedy must survive the bound: {shown}"
+        );
+        assert!(
+            shown.chars().count()
+                <= super::super::component_outcome::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND,
+            "{shown}"
+        );
+        Ok(())
+    }
+
+    /// #11408 negative control: a short failure is byte-identical, not
+    /// reshaped by the bound.
+    #[test]
+    fn short_failure_warning_is_unchanged_by_the_bound() {
+        let message = "ripr analysis failed: workspace analysis failed: Cargo.toml not found";
+        assert_eq!(bounded_failure_message(message), message);
+    }
 }
 
 /// #4860: whether a refresh analysis error is the attempt's cancellation.

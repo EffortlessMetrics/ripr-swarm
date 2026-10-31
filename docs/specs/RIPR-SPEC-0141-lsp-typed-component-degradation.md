@@ -126,6 +126,11 @@ remain published and usable (`findings_trustworthy: true`).
 - `window/showMessage` remains reserved for reviewed hard setup/analysis
   failures. Routine partial evidence stays in status/output channels, and
   passive diagnostics carry no per-file status spam.
+- A hard-failure `showMessage` text is bounded at the shared 240-scalar
+  client-visible bound. Where the failure has both a cause and a remedy, the
+  builder leads with the remedy and trails the cause, so the bound shortens the
+  cause (for example the root path of a non-Git workspace), never the remedy
+  (#11408). Short failure messages stay byte-identical.
 - Hard failure (no snapshot), recoverable limitation, cancellation, and
   deferment stay distinct: a failed attempt records `AnalysisFailure` on
   health; a degraded component records `limited`/`failed`; a cancelled
