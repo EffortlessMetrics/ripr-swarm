@@ -1,6 +1,6 @@
 ---
 name: finish-pr
-description: Publish or resume one PR, require substantive exact-head review, address current review and CI evidence, perform the protected merge when ready, and reconcile after merge. Use when a coherent candidate exists or a PR already owns the claim.
+description: Publish or resume one PR, require substantive exact-head review, address current review and CI evidence, arm merge when ready, and reconcile after merge. Use when a coherent candidate exists or a PR already owns the claim.
 ---
 
 # Useful result
@@ -80,7 +80,7 @@ change settings to obtain a merge.
 8. Refresh only proof and review dimensions affected by the repair, then obtain a new or amended `review-pr` disposition for the exact head.
 9. Distinguish candidate-head proof from integration proof:
    - the PR head is the implementation/review subject;
-   - current `main` and any actual prerequisite composition are the integration basis;
+   - current `main` or queued predecessors are the integration basis;
    - the ordinary squash result is the combined-tree subject.
 10. Do not update a behind-only branch. Unrelated movement on `main` is normal and does not require restacking, force-pushing, or rerunning unaffected proof. Reconcile only an actual conflict, explicit stack change, material prerequisite change, failed combined-tree proof, or exact-base policy that applies to this candidate.
 11. Before spending time on conflict repair, re-run the claim-identity search. When upstream or another PR already delivered the same claim, stop, compare for unique residuals, record the winning implementation, and close or disposition the duplicate rather than resolving a dead candidate.
@@ -116,20 +116,18 @@ The root selects the smallest useful repair route and one writer per candidate:
 
 Record the exact parent/head, child-only delta, writer, proof basis, and landing
 route for a stack. Parent/child CI is stack-local evidence, not protected-main
-acceptance. Never merge a child into an unprotected feature branch to bypass
+acceptance. Never arm child auto-merge into an unprotected feature branch to bypass
 that boundary. A contiguous independently safe, reviewed, and proved prefix may
 land normally; do not flatten every stack into a giant PR. Preserve unique work
 and findings across squash, retarget, and incorporation, and close only the
 acceptance actually satisfied by the landed result.
 
-A new material finding withdraws readiness even on an unchanged head. Contain any
-existing pending merge authority; if inherited auto-merge is already armed, disarm
-it through the available authorized GitHub operation and verify the readback before
-resolving the blocking thread. This recovery grants no authority to arm it again.
-An unavailable or failed disarm is an integration-control blocker; do not claim the
-merge is contained. After repair, refresh affected proof and cumulative review
-before another qualification request or final merge decision. Old green, an
-unrelated later comment, or a completed agent run cannot restore readiness.
+A new material finding withdraws readiness even on an unchanged head. If auto-merge
+is armed, disarm it through the available authorized GitHub operation and verify the
+readback before resolving the blocking thread. An unavailable or failed disarm is
+an integration-control blocker; do not claim the merge is contained. After repair,
+affected proof and cumulative rereview must restore `REVIEW_READY` before arming.
+Old green, an unrelated later comment, or a completed agent run cannot restore it.
 
 Keep disjoint work moving. For the selected claim, usable repair/proof work outranks
 passive waiting; genuine remote waits name their owner and decision-changing event
@@ -154,6 +152,7 @@ Quota, unavailable, skipped, failed, or stale review-provider output is missing 
 
 - `PR_MERGED`
 - `PR_IN_FLIGHT`
+- `AUTO_MERGE_ARMED`
 - `WAITING_REQUIRED_CHECKS`
 - `WAITING_EXTERNAL_REVIEW`
 - `WAITING_INTEGRATION_PROOF`

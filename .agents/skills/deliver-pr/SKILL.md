@@ -130,6 +130,7 @@ The owner normally inspects authority, tests, correctness, security, compatibili
 
 - `PR_MERGED`
 - `PR_IN_FLIGHT`
+- `AUTO_MERGE_ARMED`
 - `WAITING_REQUIRED_CHECKS`
 - `WAITING_EXTERNAL_REVIEW`
 - `WAITING_INTEGRATION_PROOF`
@@ -140,4 +141,4 @@ The owner normally inspects authority, tests, correctness, security, compatibili
 - `NEEDS_OWNER_DECISION`
 - `NOT_ESTABLISHED`
 
-The accountable owner normally retains context through a bounded qualification wait, actual-result inspection, final judgment and protected merge. A real interruption or exhausted window yields an exact continuation to the goal loop; it does not require tight polling or a resident polling worker.
+A remote-owned wait yields to the goal loop; it does not keep the root polling unchanged state.
