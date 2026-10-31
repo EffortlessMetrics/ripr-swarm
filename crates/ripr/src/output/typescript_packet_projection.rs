@@ -264,10 +264,10 @@ impl TargetAssertionShape {
                 constant,
                 ..
             } => Some(format!(
-                "boundary constant `{constant}` in the missing discriminator \
+                "derive an input equal to `{constant}` before this repair can be handed \
+                 to an agent: boundary constant `{constant}` in the missing discriminator \
                  `{discriminator}` is not resolved to a concrete value, so the observed \
-                 call input `{observed_call}` is not shown to hit it; derive an input \
-                 equal to `{constant}` before the packet is delegatable"
+                 call input `{observed_call}` is not shown to hit it"
             )),
             Self::UnboundOperand {
                 observed_call,
