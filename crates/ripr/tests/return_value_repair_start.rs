@@ -1544,14 +1544,10 @@ fn rebound_assert_macro_is_not_a_match_arm_start() -> Result<(), String> {
             ),
         ),
     ] {
-        // The `use .. as assert` forms read as weak, so only the rebound
-        // check refuses them; a file-local `macro_rules! assert` is already
-        // withheld by the assertion reader.
-        if case == "arm-macro-rules-assert" {
-            assert_no_start_at(case, &lib, &new, &test, "src/lib.rs:4")?;
-        } else {
-            assert_weak_no_start_at(case, &lib, &new, &test, "src/lib.rs:4")?;
-        }
+        // Check itself now reads all three as unrevealed (it cannot establish
+        // that the standard `assert!` runs), so this pins the outcome; the
+        // rebound check in the start is a second, independent refusal.
+        assert_no_start_at(case, &lib, &new, &test, "src/lib.rs:4")?;
     }
     Ok(())
 }
