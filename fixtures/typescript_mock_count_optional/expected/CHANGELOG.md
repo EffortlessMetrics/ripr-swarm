@@ -102,3 +102,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_mock_count_optional (9)
+
+Reason:
+RIPR-SPEC-0243 re-bless after #11828: non-promotable TS preview finding reports gap_state unknown instead of advisory; mock-count demotion unchanged, no move toward actionable
+
+Command:
+`cargo xtask goldens bless typescript_mock_count_optional --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
