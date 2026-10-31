@@ -19770,7 +19770,7 @@ fn check_python_finding_with_repair_card_points_at_the_card() -> Result<(), Stri
     )?;
     assert_eq!(
         line,
-        "  Safe next action: preview-language evidence is advisory; apply the next step below to the suggested test and run its verify command before relying on it"
+        "  Safe next action: preview-language evidence is advisory. Recommended: start the repair with the `ripr agent repair` command under Next; alternative, by hand: apply the next step below to the suggested test and run its verify command before relying on it"
     );
     Ok(())
 }
