@@ -2528,6 +2528,19 @@ fn measured(subject: &CaseSubject, kind: &str) -> Value {
                 "identity": {"input_identity": format!("sha256:{}", subject.diff_sha256)},
             }
         },
+        "language_completeness": {
+            "schema_version": "language_completeness.v1",
+            "mode": "diff",
+            "completeness": "complete",
+            "total_findings": 0,
+            "languages": [{
+                "language": subject.language,
+                "status": "complete_zero",
+                "findings": 0,
+                "limitations": [],
+                "disclosure": "silent",
+            }],
+        },
         "findings": [],
     })
 }
@@ -2607,6 +2620,39 @@ fn case_output_requires_affirmative_expected_language_evidence() -> Result<(), S
     let mut unbound = measured(&subject, "complete_no_findings");
     unbound["analysis_outcome"]["outcome"]["identity"] = json!({});
     refused("an unbound result", unbound, "input identity")?;
+
+    // Per-language completeness (#11272): the aggregate can read complete while
+    // the expected language's own row is not evidence of a run.
+    for status in [
+        "unavailable",
+        "invalid",
+        "failed",
+        "unsupported",
+        "not_selected",
+        "no_current_scope",
+    ] {
+        let mut skipped = measured(&subject, "complete_no_findings");
+        skipped["language_completeness"]["languages"][0]["status"] = json!(status);
+        refused(status, skipped, status)?;
+    }
+    for status in ["complete", "complete_zero", "partial"] {
+        let mut evidenced = measured(&subject, "complete_no_findings");
+        evidenced["language_completeness"]["languages"][0]["status"] = json!(status);
+        admit(&evidenced)?;
+    }
+    let mut no_projection = measured(&subject, "complete_no_findings");
+    no_projection
+        .as_object_mut()
+        .ok_or("measured output is not an object")?
+        .remove("language_completeness");
+    refused(
+        "a result without the projection",
+        no_projection,
+        "language_completeness",
+    )?;
+    let mut sibling_only = measured(&subject, "complete_no_findings");
+    sibling_only["language_completeness"]["languages"][0]["language"] = json!("perl");
+    refused("a sibling language's row", sibling_only, "no single row")?;
     Ok(())
 }
 
