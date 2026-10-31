@@ -140,6 +140,12 @@ fn production_producer_preserves_all_native_commands_oracles_and_cleanup() -> Re
         .replace(
             "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2",
             "Swatinem/rust-cache@v2",
+        )
+        // The embedded Python assertions search the workflow for the pinned
+        // `uses:` spelling, so they carry the commit with no trailing comment.
+        .replace(
+            "uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0'",
+            "uses: Swatinem/rust-cache@v2'",
         );
     assert_eq!(unpinned, expected_job_with_recovery_quote_repair()?);
     Ok(())

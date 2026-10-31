@@ -1,2 +1,2 @@
 <!-- section: Internal / CI -->
-- Wire explicit native merge-ready admission, current readiness refresh, event-bound required naming, outstanding-review and workflow-cancellation refusal, and native duplicate readback with the extracted Windows subset; preserve protected result identity and advisory/native-evidence distinctions (#4987).
+- Add the Windows subset qualification leaf (workflow oracle pin, convergence fixtures and leaf contract test) split out of #8082; the explicit native merge-ready admission caller wiring lands in later slices (#4987).
