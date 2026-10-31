@@ -347,7 +347,39 @@ fn route_not_ready_reason(
             ": write the test by hand, or run `ripr agent stub{root_flag} --at {at} --kind {kind}` for a fill-in skeleton{module_note}, then rerun `ripr repair`"
         ));
     }
+    if let Some(guidance) = owner_call_absent_guidance(entry) {
+        label.push_str(&format!(": {guidance}"));
+    }
     label
+}
+
+/// The most common refusal on real crates: no test calls the changed owner
+/// directly (a private or internal owner reached through a public call), so
+/// activation is unknown. Name the closest related test so the reader has a
+/// place to look; ripr cannot show that test runs the code, so the wording
+/// stays a by-hand check. Refusal text only; eligibility is unchanged.
+fn owner_call_absent_guidance(entry: &crate::analysis::ClassifiedSeam) -> Option<String> {
+    use crate::domain::RelationReason;
+    if entry.class != crate::analysis::seams::SeamGripClass::ActivationUnknown
+        || !entry
+            .evidence
+            .activate
+            .summary
+            .starts_with("No direct owner call observed")
+    {
+        return None;
+    }
+    let related = &entry.evidence.related_tests;
+    let test = related
+        .iter()
+        .find(|test| test.relation_reason == RelationReason::AssertionTargetAffinity)
+        .or_else(|| related.first())?;
+    Some(format!(
+        "no test calls this code directly; the closest related test is `{}` ({}:{}). If it runs the changed code through a public call, add the assertion there, otherwise write a new test",
+        test.test_name,
+        crate::analysis::stable_path_text(&test.file),
+        test.line
+    ))
 }
 
 const NO_TEST_MODULE_STUB_NOTE: &str =
@@ -3061,6 +3093,55 @@ pub(crate) mod tests {
             bare.reason
         );
 
+        Ok(())
+    }
+
+    /// #11427: an activation-unknown seam with no direct owner call names the
+    /// closest related test as a by-hand check, without promising a repair.
+    #[test]
+    fn owner_call_absent_refusal_names_the_related_test() -> Result<(), String> {
+        use crate::analysis::seams::SeamGripClass;
+        use crate::domain::RelationReason;
+        let config = crate::config::RiprConfig::default();
+        let policy = AgentBriefPolicy::from_config(&config);
+        let root = Path::new("/repo");
+        let summary = "No direct owner call observed for value-insensitive seam";
+
+        let mut affinity = weak_related_test();
+        affinity.relation_reason = RelationReason::AssertionTargetAffinity;
+        let mut entry = gate_entry(SeamGripClass::ActivationUnknown, vec![affinity]);
+        entry.evidence.activate.summary = summary.to_string();
+        let refusal = repair_start_refusal_for_entry(root, &entry, policy)
+            .ok_or("an activation-unknown seam must be refused")?;
+        assert!(
+            refusal
+                .reason
+                .contains("the closest related test is `at_threshold_runs` (tests/pricing.rs:12)")
+                && refusal.reason.contains("otherwise write a new test"),
+            "{}",
+            refusal.reason
+        );
+
+        // Negatives: no related test, or a different activate summary, keeps
+        // the bare label.
+        let mut none = gate_entry(SeamGripClass::ActivationUnknown, Vec::new());
+        none.evidence.activate.summary = summary.to_string();
+        let bare = repair_start_refusal_for_entry(root, &none, policy)
+            .ok_or("an activation-unknown seam must be refused")?;
+        assert!(
+            !bare.reason.contains("closest related test"),
+            "{}",
+            bare.reason
+        );
+        let mut other = gate_entry(SeamGripClass::ActivationUnknown, vec![weak_related_test()]);
+        other.evidence.activate.summary = "test stage".to_string();
+        let bare = repair_start_refusal_for_entry(root, &other, policy)
+            .ok_or("an activation-unknown seam must be refused")?;
+        assert!(
+            !bare.reason.contains("closest related test"),
+            "{}",
+            bare.reason
+        );
         Ok(())
     }
 
