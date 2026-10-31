@@ -572,6 +572,24 @@ fn repair_single_item_matches_advanced_card() -> Result<(), String> {
     let fixture = Fixture::boundary("facade-single")?;
     let root = &fixture.root;
     let root_arg = root.to_string_lossy().into_owned();
+    let before = run_ripr(
+        root,
+        &[
+            "agent",
+            "card",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            FIXTURE_SEAM,
+        ],
+    )?;
+    assert_exit(&before, 0, "card before repair");
+    assert!(
+        !stdout_text(&before).contains("--attempt "),
+        "{}",
+        stdout_text(&before)
+    );
+    assert!(attempt_ids(root).is_empty());
     let repair = run_ripr(root, &["repair", "--root", &root_arg])?;
     assert_exit(&repair, 0, "repair with one actionable item");
     let ids = attempt_ids(root);
@@ -688,6 +706,91 @@ fn repair_explicit_eligible_seam_starts_one_attempt() -> Result<(), String> {
     let ids = attempt_ids(root);
     assert_eq!(ids.len(), 1, "exactly one attempt must be created");
     assert_eq!(read_manifest(root, &ids[0])?["seam_id"], FIXTURE_SEAM);
+    Ok(())
+}
+
+#[test]
+fn started_trait_repair_brief_gives_attempt_continuation() -> Result<(), String> {
+    let fixture = Fixture::dir("trait-started-brief")?;
+    let root = &fixture.root;
+    std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    let source = "pub trait Shape { fn area(&self) -> u32; }\npub struct Rect { pub w: u32, pub h: u32 }\nimpl Shape for Rect {\n    fn area(&self) -> u32 { self.w * self.h }\n}\n";
+    std::fs::write(root.join("src/lib.rs"), source).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("tests/t.rs"), "use boundary_gap_fixture::{Rect, Shape};\n#[test]\nfn area_is_positive() { let r = Rect { w: 2, h: 3 }; assert!(r.area() > 0); }\n").map_err(|e| e.to_string())?;
+    init_repo(root)?;
+    run_git(root, &["add", "Cargo.toml", "src", "tests"])?;
+    git_commit(root, "base")?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        source.replace("self.w * self.h }", "self.w * self.h + 1 }"),
+    )
+    .map_err(|e| e.to_string())?;
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "change area")?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let output = run_ripr(root, &["repair", "--root", &root_arg])?;
+    assert_exit(&output, 0, "trait repair");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1);
+    let text = stdout_text(&output);
+    assert!(text.contains(&format!("--attempt {}", ids[0])), "{text}");
+    let brief = text
+        .split("Repair brief for gap")
+        .nth(1)
+        .ok_or("missing brief")?;
+    assert!(
+        brief.contains(&format!("--attempt {}", ids[0]))
+            && brief.contains("after editing the test, run ripr continue"),
+        "{brief}"
+    );
+    assert!(!text.contains("no bounded repair route"), "{text}");
+    assert!(!text.contains("no ready command"), "{text}");
+    assert!(!text.contains("missing discriminator:"), "{text}");
+    assert!(!text.contains("The producer"), "{text}");
+    let seam = read_manifest(root, &ids[0])?["seam_id"]
+        .as_str()
+        .ok_or("missing seam")?
+        .to_string();
+    let verbose = run_ripr(
+        root,
+        &[
+            "--verbose",
+            "agent",
+            "card",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            &seam,
+        ],
+    )?;
+    assert_exit(&verbose, 0, "verbose card");
+    let verbose_text = stdout_text(&verbose);
+    assert!(
+        verbose_text.contains(&format!("--attempt {}", ids[0])),
+        "{verbose_text}"
+    );
+    assert!(!verbose_text.contains("no ready command"), "{verbose_text}");
+    let manifest = read_manifest(root, &ids[0])?;
+    let baseline = manifest["artifacts"]
+        .as_array()
+        .ok_or("missing artifacts")?
+        .iter()
+        .find(|item| item["role"] == "edit_cage_baseline")
+        .and_then(|item| item["path"].as_str())
+        .ok_or("missing baseline")?;
+    std::fs::write(root.join(baseline), "{}\n").map_err(|e| e.to_string())?;
+    let damaged = run_ripr(
+        root,
+        &["agent", "card", "--root", &root_arg, "--seam-id", &seam],
+    )?;
+    assert_exit(&damaged, 0, "card with damaged baseline");
+    let damaged_text = stdout_text(&damaged);
+    assert!(
+        !damaged_text.contains("after editing the test, run ripr continue"),
+        "{damaged_text}"
+    );
     Ok(())
 }
 

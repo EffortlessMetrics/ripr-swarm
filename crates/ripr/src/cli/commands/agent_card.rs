@@ -90,13 +90,53 @@ pub(super) fn agent_card_stdout(options: AgentCardOptions) -> Result<String, Com
     }
     let packet_command =
         crate::app::repair_card_handoff::bound_packet_command(&options.root, &options.seam_id);
+    let started = card
+        .attempt
+        .as_ref()
+        .and_then(|card_attempt| {
+            crate::app::task_first::card_awaiting_attempt(
+                &options.root,
+                &options.seam_id,
+                &card_attempt.attempt_id,
+            )
+        })
+        .map(|(attempt, baseline_is_clear)| {
+            if baseline_is_clear {
+                format!(
+                    "after editing the test, run {}",
+                    crate::agent::human_after_phase_follow_up(&attempt.next_command)
+                )
+            } else {
+                format!(
+                    "inspect this attempt with ripr status --root {} --attempt {}",
+                    crate::agent::loop_commands::shell_arg(
+                        &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy())
+                    ),
+                    attempt.attempt_id
+                )
+            }
+        });
     let mut rendered = String::new();
     // Default: the short plain brief. `--verbose` keeps the full field ledger
     // (producer, subject, non-claim, detail routes); `--json` is the contract.
-    let lines = if crate::is_verbose() {
+    let lines = if crate::is_verbose() && started.is_none() {
         agent_card_prose_lines(&card, &packet_command, Some(&options.root))
-    } else {
+    } else if crate::is_verbose() {
+        agent_card_prose_lines_for_attempt(
+            &card,
+            &packet_command,
+            Some(&options.root),
+            started.as_deref(),
+        )
+    } else if started.is_none() {
         agent_card_plain_lines(&card, &packet_command, Some(&options.root))
+    } else {
+        agent_card_plain_lines_for_attempt(
+            &card,
+            &packet_command,
+            Some(&options.root),
+            started.as_deref(),
+        )
     };
     for line in lines {
         rendered.push_str(&line);
@@ -264,6 +304,15 @@ pub(crate) fn agent_card_prose_lines(
     packet_command: &str,
     paste_root: Option<&std::path::Path>,
 ) -> Vec<String> {
+    agent_card_prose_lines_for_attempt(card, packet_command, paste_root, None)
+}
+
+fn agent_card_prose_lines_for_attempt(
+    card: &RepairCardV1,
+    packet_command: &str,
+    paste_root: Option<&std::path::Path>,
+    started: Option<&str>,
+) -> Vec<String> {
     let mut lines = Vec::new();
     lines.push(format!("Repair card {}", card.repair_card_id));
     // The `repair_card.v1` schema identity is a machine contract: `--json`
@@ -341,7 +390,10 @@ pub(crate) fn agent_card_prose_lines(
     // The next-action section renders the canonical decision (#6304), so the
     // human prose and the wire DTO share one authority. Cards minted before
     // the canonical field keep the legacy reference-only rendering.
-    match &card.canonical_next_action {
+    if let Some(next) = started {
+        lines.push(format!("  next action: {next}"));
+    } else {
+        match &card.canonical_next_action {
         Some(action) => {
             let block = match paste_root {
                 Some(root) => {
@@ -363,6 +415,7 @@ pub(crate) fn agent_card_prose_lines(
                 card.readiness.repair_ready
             )),
         },
+    }
     }
     if !card.allowed_files.is_empty() || !card.forbidden_files.is_empty() {
         lines.push(format!(
@@ -454,6 +507,15 @@ pub(crate) fn agent_card_plain_lines(
     packet_command: &str,
     paste_root: Option<&std::path::Path>,
 ) -> Vec<String> {
+    agent_card_plain_lines_for_attempt(card, packet_command, paste_root, None)
+}
+
+fn agent_card_plain_lines_for_attempt(
+    card: &RepairCardV1,
+    packet_command: &str,
+    paste_root: Option<&std::path::Path>,
+    started: Option<&str>,
+) -> Vec<String> {
     let mut lines = vec![format!("Repair brief for gap {}", card.subject.seam_id)];
     lines.push(format!("  Changed behavior: {}", card.changed_behavior));
     if card.readiness.repair_ready {
@@ -485,6 +547,7 @@ pub(crate) fn agent_card_plain_lines(
             card.instruction.has_suggested_assertion
         ) {
             (Some(detail), true) => detail.clone(),
+            _ if started.is_some() => "ripr has no exact assertion to suggest.".to_string(),
             _ => instruction_plain_words(card.instruction.state).to_string(),
         }
     ));
@@ -497,18 +560,24 @@ pub(crate) fn agent_card_plain_lines(
         }
         None => {}
     }
-    match &card.canonical_next_action {
-        Some(action) => {
-            lines.extend(
-                crate::output::next_action::render_next_action_plain_at_root(action, paste_root),
-            );
+    if let Some(next) = started {
+        lines.push(format!("  Next: {next}"));
+    } else {
+        match &card.canonical_next_action {
+            Some(action) => {
+                lines.extend(
+                    crate::output::next_action::render_next_action_plain_at_root(
+                        action, paste_root,
+                    ),
+                );
+            }
+            None => match &card.next_action {
+                Some(action) => lines.push(format!("  Next: {}", action.display)),
+                None => lines.push(
+                    "  Next: ripr has no ready command for this gap (see --verbose).".to_string(),
+                ),
+            },
         }
-        None => match &card.next_action {
-            Some(action) => lines.push(format!("  Next: {}", action.display)),
-            None => lines.push(
-                "  Next: ripr has no ready command for this gap (see --verbose).".to_string(),
-            ),
-        },
     }
     if !card.allowed_files.is_empty() {
         lines.push(format!(
@@ -544,7 +613,24 @@ pub(crate) fn agent_card_plain_lines(
         let shown = limits
             .iter()
             .take(2)
-            .copied()
+            .map(|limit| {
+                if started.is_some() {
+                    match *limit {
+                        "The producer did not resolve an exact missing discriminator." => {
+                            "ripr did not determine an exact assertion."
+                        }
+                        "The producer did not provide an exact assertion source location." => {
+                            "ripr did not determine an exact assertion location."
+                        }
+                        "The producer did not identify a related test target." => {
+                            "ripr did not identify a related test target."
+                        }
+                        other => other,
+                    }
+                } else {
+                    *limit
+                }
+            })
             .collect::<Vec<_>>()
             .join("; ");
         let more = limits.len().saturating_sub(2);

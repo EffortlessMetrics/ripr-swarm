@@ -2280,6 +2280,23 @@ pub(crate) fn reusable_awaiting_attempt(root: &Path, seam_id: &str) -> Option<Re
     pick_reusable_attempt(manifests, seam_id, &head)
 }
 
+/// Bind a card's attempt to the reusable attempt authority and check its
+/// retained baseline before offering the after-edit command.
+pub(crate) fn card_awaiting_attempt(
+    root: &Path,
+    seam_id: &str,
+    card_attempt_id: &str,
+) -> Option<(ReusableAttempt, bool)> {
+    let attempt = reusable_awaiting_attempt(root, seam_id)?;
+    if attempt.attempt_id != card_attempt_id {
+        return None;
+    }
+    let baseline_is_clear = crate::app::repair_attempt::RepairAttemptId::parse(&attempt.attempt_id)
+        .and_then(|id| crate::app::repair_attempt::load_edit_cage_baseline_from(root, None, &id))
+        .is_ok_and(|baseline| !baseline.is_ambiguous());
+    Some((attempt, baseline_is_clear))
+}
+
 /// Decision law of [`reusable_awaiting_attempt`], free of the filesystem.
 /// The newest matching attempt wins when earlier duplicates already exist.
 fn pick_reusable_attempt<'a>(

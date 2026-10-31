@@ -3983,8 +3983,10 @@ fn before_phase_summary(packet: &str, packet_path: &str, edit_directive: bool) -
     if let Some(expression) = text("/changed_expression") {
         lines.push(format!("  changed behavior: {expression}"));
     }
-    if let Some(missing) = text("/missing_discriminators/0/value") {
-        lines.push(format!("  missing discriminator: {missing}"));
+    if let Some(missing) = text("/missing_discriminators/0/value")
+        && Some(missing) != text("/changed_expression")
+    {
+        lines.push(format!("  test focus: {missing}"));
     }
     let inline_module_target = !crate::analysis::is_test_surface_path(test_file);
     // #7204: an unscorable attempt's summary may not hand out an unqualified
@@ -6013,7 +6015,7 @@ mod before_phase_stdout_tests {
         for expected in [
             "Repair prepared for seam 0d196886bad1b124 at src/lib.rs:11 in src/lib.rs::discounted_total.",
             "  changed behavior: amount >= DISCOUNT_THRESHOLD",
-            "  missing discriminator: DISCOUNT_THRESHOLD (equality boundary)",
+            "  test focus: DISCOUNT_THRESHOLD (equality boundary)",
             "  edit one test file: tests/pricing.rs (suggested test `discounted_total_boundary_discriminator`); leave production code unchanged",
             "  assertion shape: assert_eq!(discounted_total(10_000), 9_000)",
             "  full repair packet (JSON): target/ripr/workflow/agent-packet.json; add --json to print it here",
