@@ -864,7 +864,9 @@ fn optional_nonnegative_argument(
     optional_integer_argument(arguments, name, 0, u64::MAX)
 }
 
-/// A paging limit (#6021): a JSON integer `>= 1`.
+/// A paging limit (#6021): a JSON integer `>= 1`. Production list tools use
+/// the capped variant; this uncapped form pins the shared validator in tests.
+#[cfg(test)]
 fn optional_positive_argument(
     arguments: &Option<serde_json::Map<String, Value>>,
     name: &str,

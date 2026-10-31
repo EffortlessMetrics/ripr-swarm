@@ -4059,7 +4059,12 @@ fn limit_errors_state_the_real_constraint_and_recovery_over_stdio() -> Result<()
         "ripr_list_gaps",
         &format!("{{\"limit\":{platform_max}}}"),
     )?;
-    if reply.get("error").is_some() || reply.pointer("/result/isError") == Some(&json!(true)) {
+    // Accepted means the argument validated: the call may still fail for an
+    // unrelated reason (no snapshot here), but never as invalid_argument.
+    if reply.get("error").is_some()
+        || reply.pointer("/result/structuredContent/failure/code")
+            == Some(&json!("invalid_argument"))
+    {
         return Err(format!(
             "the working-set bound is an accepted limit: {reply}"
         ));
