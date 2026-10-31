@@ -409,8 +409,10 @@ f-string (any `f`/`rf`/`fr` prefix, either quote) whose quote pairing cannot be
 followed also hides the rest of the text: its own quote nested inside a
 replacement field (Python 3.12: `f"{ "helper(1)" }"`, `f"{y["helper(1)"]}"`) or
 a newline inside a field (`f"{\n y\n}  helper(1)"`). Pairing that does follow
-(`f"{x}"`, `f"{d['k']}"`, `f"{{"`, a nested spec field) keeps a real call after
-it visible (#9230). Known limits: inside
+(`f"{x}"`, `f"{d['k']}"`, `f"{{"`, a nested spec field) typically keeps a real call after
+it visible; a brace or quote inside a nested string literal in a field
+(`f"{'{'}"`) or a quote in format-spec text can over-hide, which is a miss and
+fails closed (#9230). Known limits: inside
 triple-quoted f-strings a replacement field on the same line as the opening
 quote is hidden by the line-prefix quote check, a real call after a field the
 scanner gave up on is hidden too, and a real call after a single-line f-string

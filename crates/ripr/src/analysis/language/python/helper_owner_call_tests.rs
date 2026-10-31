@@ -665,12 +665,59 @@ fn given_a_single_line_f_string_the_quote_pairing_can_follow_then_the_classifier
 
 #[test]
 fn given_degenerate_single_line_f_string_text_then_the_ambiguity_scan_never_panics() {
-    for text in [
-        "", "f\"", "f\"{", "f\"{\"", "f\"\\", "f\"{\\", "f\"}}{{", "f'{'",
+    // (text, ambiguous): only a nested own quote or a newline inside a field
+    // is ambiguous; unterminated or empty input is not (the open-string rule
+    // hides it).
+    for (text, ambiguous) in [
+        ("", false),
+        ("f\"", false),
+        ("f\"{", false),
+        ("f\"{\"", false),
+        ("f\"\\", false),
+        ("f\"{\\", false),
+        ("f\"}}{{", false),
+        ("f'{'", false),
+        ("\"{ \"", true),
+        ("'{\n", true),
     ] {
-        let _ = static_limits::single_line_fstring_is_ambiguous(text.chars());
+        assert_eq!(
+            static_limits::single_line_fstring_is_ambiguous(text.chars()),
+            ambiguous,
+            "{text:?}"
+        );
         let _ = static_limits::python_prefix_hides_code(text);
         let _ = related_tests::contains_call_name(text, "helper");
+    }
+}
+
+#[test]
+fn given_an_ambiguous_single_line_f_string_in_the_line_prefix_then_the_prefix_check_hides_it() {
+    // Direct pin of the `python_prefix_hides_code` hunk: the prefix is
+    // balanced by naive quote pairing yet the f-string is ambiguous.
+    for prefix in [
+        "x = f\"{ \"",
+        "x = f\"{y[\"",
+        "x = rf'{ '",
+        "assert F\"{ \"a\" }\" == ",
+    ] {
+        assert!(
+            static_limits::python_prefix_hides_code(prefix),
+            "{prefix:?}"
+        );
+    }
+    // Controls: cleanly paired f-strings, a plain string and a longer name
+    // ending in `f` leave what follows visible.
+    for prefix in [
+        "x = f\"{y}\" + ",
+        "x = f\"{d['k']}\" + ",
+        "x = f\"{{\" + ",
+        "x = \"{ \" + ",
+        "x = perf\"{y}\" + ",
+    ] {
+        assert!(
+            !static_limits::python_prefix_hides_code(prefix),
+            "{prefix:?}"
+        );
     }
 }
 

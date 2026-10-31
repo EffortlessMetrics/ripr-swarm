@@ -4004,6 +4004,7 @@ tests = [
   "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_an_f_string_the_quote_pairing_can_follow_then_a_real_call_stays_visible",
   "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_a_single_line_f_string_the_quote_pairing_can_follow_then_the_classifier_credits_a_real_call",
   "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_degenerate_single_line_f_string_text_then_the_ambiguity_scan_never_panics",
+  "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_an_ambiguous_single_line_f_string_in_the_line_prefix_then_the_prefix_check_hides_it",
   "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_receiver_rebound_by_a_spelling_the_scan_missed_is_not_credited",
   "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_receiver_reads_that_resemble_a_rebind_stay_credited",
   "crates/ripr/src/analysis/language/python/tests.rs::match_case_capture_of_the_receiver_counts_as_a_binding_target",
