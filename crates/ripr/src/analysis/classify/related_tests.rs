@@ -5354,12 +5354,15 @@ pub(super) fn node_executes_in(node: &SyntaxNode, function: &SyntaxNode) -> bool
         })
 }
 
+/// A bare-spelling probe: whether the name is a value of the owner's type.
+type BareValueProbe<'a> = &'a dyn Fn(&str) -> bool;
+
 fn inherent_call_node_resolves(
     node: SyntaxNode,
     original_scope: Option<&SyntaxNode>,
     method: &str,
     impl_type: &str,
-    (unit_struct, unit_variant): (&dyn Fn(&str) -> bool, &dyn Fn(&str) -> bool),
+    (unit_struct, unit_variant): (BareValueProbe<'_>, BareValueProbe<'_>),
     factory: &dyn Fn(&str, &str) -> bool,
     owner_unrebound: &dyn Fn() -> bool,
 ) -> bool {
