@@ -80,6 +80,9 @@ pub(crate) struct GateOptions {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct BaselineCreateOptions {
     pub(crate) from: PathBuf,
+    /// `from` is a whole-repository `ripr check` JSON artifact
+    /// (`--from-check`), not a gate decision (`--from`).
+    pub(crate) from_check: bool,
     pub(crate) out: PathBuf,
     pub(crate) dry_run: bool,
     pub(crate) force: bool,
