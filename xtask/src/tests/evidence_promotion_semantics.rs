@@ -1295,11 +1295,11 @@ fn evidence_promotion_semantic_assertions_retain_related_test_identity() -> Resu
         },
     ];
     let original: serde_json::Value = serde_json::from_str(include_str!(
-        "../../fixtures/wildcard_oracle_wildcard_original/expected/check.json"
+        "../../../fixtures/wildcard_oracle_wildcard_original/expected/check.json"
     ))
     .map_err(|err| format!("invalid canonical wildcard golden: {err}"))?;
     let human =
-        include_str!("../../fixtures/wildcard_oracle_wildcard_original/expected/human-full.txt");
+        include_str!("../../../fixtures/wildcard_oracle_wildcard_original/expected/human-full.txt");
     let inspect = |json: &serde_json::Value| {
         crate::evidence_promotion_semantic_violations(
             "related_test_identity",
@@ -1360,11 +1360,11 @@ fn evidence_promotion_related_test_relation_pin_is_optional_and_exact() -> Resul
         ]
     };
     let original: serde_json::Value = serde_json::from_str(include_str!(
-        "../../fixtures/wildcard_oracle_wildcard_original/expected/check.json"
+        "../../../fixtures/wildcard_oracle_wildcard_original/expected/check.json"
     ))
     .map_err(|err| format!("invalid canonical wildcard golden: {err}"))?;
     let human =
-        include_str!("../../fixtures/wildcard_oracle_wildcard_original/expected/human-full.txt");
+        include_str!("../../../fixtures/wildcard_oracle_wildcard_original/expected/human-full.txt");
     let inspect = |assertions: &[_], json: &serde_json::Value| {
         crate::evidence_promotion_semantic_violations(
             "related_test_relation",
