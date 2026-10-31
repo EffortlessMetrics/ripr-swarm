@@ -389,6 +389,21 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         helper_owner_call_candidates(owner, owners, all_tests)
     };
     related_candidates.extend(helper_callers.iter().map(|helper| helper.candidate));
+    // `f(g(x)) == g(x)` pins `f` but not `g` (#9814): the exact reading is
+    // per finding, so a test with such an assertion is replaced by its
+    // owner-resolved copy for this finding only.
+    let owner_exact: Vec<Option<PythonTest>> = related_candidates
+        .iter()
+        .map(|candidate| super::owner_exact::owner_exact_test(candidate.test, owner))
+        .collect();
+    let mut related_candidates: Vec<PythonRelatedCandidate<'_>> = related_candidates
+        .into_iter()
+        .zip(&owner_exact)
+        .map(|(candidate, resolved)| PythonRelatedCandidate {
+            test: resolved.as_ref().unwrap_or(candidate.test),
+            relation: candidate.relation,
+        })
+        .collect();
     // A module-level constant edit has no callable owner. A test whose
     // assertion provably holds under the old value and fails under the new one
     // (`module_value.rs`, #9423) is related through that value, and its
