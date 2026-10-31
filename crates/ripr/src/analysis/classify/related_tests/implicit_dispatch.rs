@@ -77,7 +77,45 @@ pub(super) fn at_test_top_level(masked: &str, at: usize) -> bool {
         Some(open) if masked[..open].split_whitespace().any(|word| word == "fn") => 1,
         _ => 0,
     };
-    depth_at(at) == base && statement_runs_unconditionally(masked, at)
+    depth_at(at) == base
+        && statement_runs_unconditionally(masked, at)
+        && !may_exit_before(masked, at)
+}
+
+/// Whether an earlier statement can end the test before byte `at`: a `return`,
+/// a `?`, or a panicking macro, at any depth (`if c { return; }` is the usual
+/// shape). Conservative: it also refuses an exit inside a closure or an
+/// unrelated branch, since the relation may only raise reach, never lower it.
+fn may_exit_before(masked: &str, at: usize) -> bool {
+    let body_start = match masked.find('{') {
+        Some(open) if masked[..open].split_whitespace().any(|word| word == "fn") => open + 1,
+        _ => 0,
+    };
+    let Some(prefix) = masked.get(body_start..at) else {
+        return false;
+    };
+    if prefix.contains('?') {
+        return true;
+    }
+    let bytes = prefix.as_bytes();
+    let is_word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let has_word = |word: &str, followed_by_bang: bool| {
+        prefix.match_indices(word).any(|(start, _)| {
+            let end = start + word.len();
+            let before_ok = start == 0 || !is_word(bytes[start - 1]);
+            let after = prefix[end..].trim_start();
+            let after_ok = if followed_by_bang {
+                after.starts_with('!')
+            } else {
+                end >= bytes.len() || !is_word(bytes[end])
+            };
+            before_ok && after_ok
+        })
+    };
+    has_word("return", false)
+        || ["panic", "unreachable", "todo", "unimplemented"]
+            .iter()
+            .any(|name| has_word(name, true))
 }
 
 /// Whether the statement that holds byte `at` is neither disabled by an
@@ -130,5 +168,24 @@ mod tests {
         let bare = "a(); { b(); }";
         assert!(at_test_top_level(bare, 0));
         assert!(!at_test_top_level(bare, offset(bare, "b()")));
+    }
+
+    #[test]
+    fn an_earlier_exit_refuses_the_top_level() {
+        let offset = |text: &str, needle: &str| text.split(needle).next().map_or(0, str::len);
+        let top_level = |exit: &str| {
+            let body = format!("fn t() {{\n    {exit}\n    drop(g);\n}}");
+            at_test_top_level(&body, offset(&body, "drop(g"))
+        };
+        assert!(!top_level("if c.get() == 0 { return; }"));
+        assert!(!top_level("let v = parse()?;"));
+        assert!(!top_level("if c { panic!(\"no\"); }"));
+        assert!(!top_level("if c { unreachable!(); }"));
+        // Names that merely contain an exit word do not refuse.
+        assert!(top_level("let returned = 1; let not_panic = 2;"));
+        assert!(top_level("keep(k);"));
+        // An exit after the point does not refuse it.
+        let after = "fn t() {\n    drop(g);\n    if c { return; }\n}";
+        assert!(at_test_top_level(after, offset(after, "drop(g")));
     }
 }

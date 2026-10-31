@@ -1560,6 +1560,39 @@ fn tag_source(mut summary: Value, snapshot: &Snapshot) -> Value {
     summary
 }
 
+/// #11213: a committed snapshot that analyzed nothing (`no_scope`,
+/// `no_changed_lines`, `no_behavioral_candidates` with zero items) reads like
+/// an all-clear unless it says why and which arguments widen it. The hint is
+/// additive and never changes the outcome kind or any verdict: it names the
+/// two honest causes (the default base resolved to the analyzed commit, or the
+/// diff holds no analyzable change) and the `base`/`source` arguments to pass.
+fn empty_scope_hint(session: &WorkspaceSession) -> Option<Value> {
+    let snapshot = session.last_good.as_ref()?;
+    let empty_kind = matches!(
+        snapshot.outcome.kind,
+        AnalysisOutcomeKind::NoScope
+            | AnalysisOutcomeKind::NoChangedLines
+            | AnalysisOutcomeKind::NoBehavioralCandidates
+    );
+    if !empty_kind || !snapshot.items.is_empty() || snapshot.source != RefreshSource::Committed {
+        return None;
+    }
+    let why = match &session.desired_base {
+        Some(base) => format!(
+            "the committed diff against requested base `{base}` holds no analyzable behavior change; this is not an all-clear for changes outside that diff"
+        ),
+        None => match snapshot.outcome.kind {
+            AnalysisOutcomeKind::NoBehavioralCandidates => "no base was passed, so the default base was used; the diff has changed lines but none holds a behavior candidate to analyze (a different base may widen it). This is not an all-clear".to_string(),
+            _ => "no base was passed, so the default base was used; when it resolves to the analyzed commit (detached HEAD, or origin/HEAD pointing at HEAD) the diff is empty and nothing was analyzed. This is not an all-clear".to_string(),
+        },
+    };
+    Some(json!({
+        "why": why,
+        "pass_base": "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"base\": \"origin/main\"}",
+        "pass_source": "for saved uncommitted tracked edits retry with {\"source\": \"worktree\"}; that source reports findings but withholds repair cards",
+    }))
+}
+
 /// The refresh-time attempt document returned by `ripr_refresh`.
 pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
     let snapshot = session.last_good.as_ref().map(|snapshot| {
@@ -1605,6 +1638,9 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
     });
     if let Some(base) = &session.desired_base {
         document["requested_base"] = json!(base);
+    }
+    if let Some(hint) = empty_scope_hint(session) {
+        document["empty_scope_hint"] = hint;
     }
     // #7357: requested and captured source are distinct facts. Both appear
     // only once a worktree source is involved, so source-less callers keep
@@ -1753,55 +1789,82 @@ pub(crate) fn run_check(
     base: Option<&str>,
     source: RefreshSource,
 ) -> Result<Snapshot, AttemptFailure> {
-    let config = crate::config::load_for_root(root).map_err(|error| {
-        AttemptFailure::new(
-            CODE_CONFIG_INVALID,
-            format!("the workspace configuration could not be loaded: {error}"),
-            format!(
-                "address the configuration error above (the detail names the cause), then {}",
-                check_retry_recovery(root, base, source)
-            ),
-        )
-    })?;
-    let input = crate::app::CheckInput {
-        root: PathBuf::from(root),
-        base: base.map(str::to_string),
-        git_timeout: Some(crate::app::default_cli_git_timeout()),
-        ..Default::default()
+    // Config refusal is a terminal attempt too: install its context before
+    // loading configuration so a pending signal cannot poison later retries.
+    let attempt = || -> Result<Snapshot, AttemptFailure> {
+        let config = crate::config::load_for_root(root).map_err(|error| {
+            AttemptFailure::new(
+                CODE_CONFIG_INVALID,
+                format!("the workspace configuration could not be loaded: {error}"),
+                format!(
+                    "address the configuration error above (the detail names the cause), then {}",
+                    check_retry_recovery(root, base, source)
+                ),
+            )
+        })?;
+        let input = crate::app::CheckInput {
+            root: PathBuf::from(root),
+            base: base.map(str::to_string),
+            git_timeout: Some(crate::app::default_cli_git_timeout()),
+            ..Default::default()
+        };
+        if source == RefreshSource::Worktree {
+            return run_worktree_check(input, &config, root_identity, base);
+        }
+        let (output, language_view) = crate::app::check_workspace_with_config_typed(input, &config)
+            .map_err(|error| check_failure(&error, root, base, RefreshSource::Committed))?;
+        // The seam inventory is gathered once inside this bounded attempt and
+        // feeds both consumers: the shared repair validator that decides each
+        // item's repair readiness (#8717) and the repair-card seam bindings
+        // (RIPR-SPEC-0215). Readiness is projected before the snapshot identity
+        // is computed, so the identity binds the admission decision.
+        let inventory = super::repair_card::gather_seam_inventory(root, &config, &output.findings)?;
+        let admission = super::repair_admission::SeamAdmission::evaluate(
+            &output.findings,
+            &inventory.candidate_seams,
+            crate::app::agent_brief::AgentBriefPolicy::from_config(&config),
+            &inventory.completeness,
+        );
+        let mut snapshot = Snapshot::from_output_admitted(
+            &output,
+            root_identity,
+            &admission,
+            RefreshSource::Committed,
+        )?;
+        snapshot.base = base.map(str::to_string);
+        snapshot.language_view = language_view;
+        // Bind the repair-card producers inside the same bounded attempt, after
+        // the shared check authority completed: the snapshot commits complete —
+        // items, findings, head, and card seams — or not at all (RIPR-SPEC-0215).
+        // The card producers consume the same resolved workspace configuration
+        // as the findings (#6825 review), so one committed snapshot cannot
+        // disagree with itself across the two producers.
+        super::repair_card::bind_snapshot_card_producers(root, inventory, &mut snapshot)?;
+        Ok(snapshot)
     };
-    if source == RefreshSource::Worktree {
-        return run_worktree_check(input, &config, root_identity, base);
+    #[cfg(unix)]
+    if let Some(interrupted) = crate::cli::interrupt::server_interrupt_flag() {
+        use crate::analysis::cancellation::{
+            self, AnalysisAbortKind, AnalysisCancellation, AnalysisCancellationToken,
+        };
+        let token = AnalysisCancellationToken::with_server_interrupt(interrupted.clone());
+        let result = cancellation::with_token(&token, attempt);
+        // This exchange is the terminal boundary. A signal observed even after
+        // the final child/checkpoint refuses success; a later signal remains
+        // pending for the next attempt. Preserve a prior diagnostic on errors.
+        return crate::cli::interrupt::settle_server_attempt(&interrupted, result, || {
+            check_failure(
+                &AnalysisCancellation {
+                    kind: AnalysisAbortKind::Cancelled,
+                }
+                .into(),
+                root,
+                base,
+                source,
+            )
+        });
     }
-    let (output, language_view) = crate::app::check_workspace_with_config_typed(input, &config)
-        .map_err(|error| check_failure(&error, root, base, RefreshSource::Committed))?;
-    // The seam inventory is gathered once inside this bounded attempt and
-    // feeds both consumers: the shared repair validator that decides each
-    // item's repair readiness (#8717) and the repair-card seam bindings
-    // (RIPR-SPEC-0215). Readiness is projected before the snapshot identity
-    // is computed, so the identity binds the admission decision.
-    let inventory = super::repair_card::gather_seam_inventory(root, &config, &output.findings)?;
-    let admission = super::repair_admission::SeamAdmission::evaluate(
-        &output.findings,
-        &inventory.candidate_seams,
-        crate::app::agent_brief::AgentBriefPolicy::from_config(&config),
-        &inventory.completeness,
-    );
-    let mut snapshot = Snapshot::from_output_admitted(
-        &output,
-        root_identity,
-        &admission,
-        RefreshSource::Committed,
-    )?;
-    snapshot.base = base.map(str::to_string);
-    snapshot.language_view = language_view;
-    // Bind the repair-card producers inside the same bounded attempt, after
-    // the shared check authority completed: the snapshot commits complete —
-    // items, findings, head, and card seams — or not at all (RIPR-SPEC-0215).
-    // The card producers consume the same resolved workspace configuration
-    // as the findings (#6825 review), so one committed snapshot cannot
-    // disagree with itself across the two producers.
-    super::repair_card::bind_snapshot_card_producers(root, inventory, &mut snapshot)?;
-    Ok(snapshot)
+    attempt()
 }
 
 /// The saved tracked-worktree refresh (#7357): the shared worktree check
@@ -4532,6 +4595,70 @@ mod tests {
             Some(&json!(1)),
             "{dirty}"
         );
+        Ok(())
+    }
+
+    /// #11213: an empty committed snapshot says why and what to pass; a
+    /// populated or complete-clean one invents no hint.
+    #[test]
+    fn refresh_document_explains_an_empty_scope() -> Result<(), String> {
+        for kind in [
+            AnalysisOutcomeKind::NoScope,
+            AnalysisOutcomeKind::NoChangedLines,
+            AnalysisOutcomeKind::NoBehavioralCandidates,
+        ] {
+            let counts = if kind == AnalysisOutcomeKind::NoBehavioralCandidates {
+                AnalysisOutcomeCounts {
+                    changed_file_count: 1,
+                    changed_line_count: 2,
+                    ..Default::default()
+                }
+            } else {
+                AnalysisOutcomeCounts::default()
+            };
+            let mut empty = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
+            empty.analysis_outcome = Some(AnalysisOutcome::new(
+                kind,
+                Default::default(),
+                counts,
+                Vec::new(),
+            )?);
+            let snapshot = Snapshot::from_output(&empty, Some("root:sha256:test"))
+                .map_err(|failure| failure.detail)?;
+            let mut session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+            session.last_good = Some(Arc::new(snapshot));
+            let document = refresh_document(&session);
+            let hint = document
+                .get("empty_scope_hint")
+                .ok_or_else(|| format!("{kind:?} must carry a hint: {document}"))?;
+            let text = hint.to_string();
+            if !text.contains("default base")
+                || !text.contains("\\\"base\\\"")
+                || !text.contains("worktree")
+            {
+                return Err(format!("hint must name why, base and source: {text}"));
+            }
+            let default_why = document["empty_scope_hint"]["why"].to_string();
+            if (kind == AnalysisOutcomeKind::NoBehavioralCandidates)
+                == default_why.contains("the diff is empty")
+            {
+                return Err(format!("why must match the outcome kind: {default_why}"));
+            }
+            session.desired_base = Some("origin/main".to_string());
+            let named = refresh_document(&session)["empty_scope_hint"]["why"].to_string();
+            if !named.contains("origin/main") {
+                return Err(format!("requested base must be named: {named}"));
+            }
+        }
+        for (kind, findings) in [
+            (AnalysisOutcomeKind::CompleteNoFindings, 0),
+            (AnalysisOutcomeKind::CompleteWithFindings, 1),
+        ] {
+            let document = refresh_document(&session_with(kind, findings)?);
+            if document.get("empty_scope_hint").is_some() {
+                return Err(format!("{kind:?} must not carry a hint: {document}"));
+            }
+        }
         Ok(())
     }
 }

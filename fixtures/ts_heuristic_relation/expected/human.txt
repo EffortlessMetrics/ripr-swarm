@@ -17,6 +17,7 @@ Start here:
   Language: typescript
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: if (amount <= 0) {
   Missing check: Only heuristic TypeScript test links were found for `formatCurrency`; verify the

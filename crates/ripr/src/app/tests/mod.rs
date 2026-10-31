@@ -25,11 +25,14 @@ mod rendering_contracts;
 #[cfg(feature = "lang-typescript")]
 mod typescript_family_selection_packets;
 #[cfg(feature = "lang-typescript")]
+mod typescript_literal_container_packets;
+#[cfg(feature = "lang-typescript")]
 mod typescript_repo_mode_repair_failclosed;
 
 fn sample_finding(file: &str, line: usize) -> Finding {
     Finding {
         analysis_scope: crate::domain::AnalysisScope::Diff,
+        confidence_basis: Vec::new(),
         id: "probe:src_lib_rs:42:error_path".to_string(),
         canonical_gap: None,
         probe: Probe {

@@ -1,5 +1,6 @@
 //! Change classifier for the TypeScript preview adapter.
 
+use super::local_constant::{BodyConstant, test_body_integer_constant, test_file_integer_constant};
 use super::*;
 
 // ── Observation guard (RIPR-SPEC-0098) ───────────────────────────────────────
@@ -1860,7 +1861,11 @@ pub(crate) fn ts_predicate_boundary_row_activation(
                 alias_map,
                 workspace_root,
             );
-            let witnessed = if nullish_boundary {
+            let witnessed = if let Some(operand) = left.strip_prefix("typeof ") {
+                // #11196: a `typeof <param> == "<kind>"` guard is witnessed by
+                // an input of that kind, never by the kind's name as a string.
+                typeof_kind_input_reaches_read_argument(&arguments, operand, right, owner)
+            } else if nullish_boundary {
                 // #4104-E2 repair (review thread PRRT_kwDOSiSx0c6mUkkI):
                 // for a nullish-coalescing boundary only the NULLISH
                 // input — `null` / `undefined` at the LEFT operand's read
@@ -1905,6 +1910,7 @@ pub(crate) fn ts_predicate_boundary_row_activation(
                 continue;
             }
             if let Some(expected) = assertion.expected_value_or_variant.as_deref()
+                && !left.starts_with("typeof ")
                 && expected_side_is_live(
                     owner,
                     line_text,
@@ -1932,6 +1938,132 @@ pub(crate) fn ts_predicate_boundary_row_activation(
         alias_map,
         workspace_root,
     )
+}
+
+/// A zero or empty expected value is treated as matching a field's initial
+/// state, so pinning it cannot show an update ran: a scalar
+/// zero/empty/false/null/undefined, or an array or object holding only such
+/// values at every depth (`[]`, `[0, 0]`, `[[], '']`, `{}`, `{ _: [], n: 0 }`).
+/// Conservative by design: a container of zero-like values may under-credit a
+/// real pin, never over-credit one.
+pub(crate) fn ts_expected_is_zero_like(expected: &str) -> bool {
+    let compact: String = expected.split_whitespace().collect();
+    if matches!(
+        compact.as_str(),
+        "0" | "\"\"" | "''" | "``" | "false" | "null" | "undefined"
+    ) {
+        return true;
+    }
+    (compact.starts_with('{') || compact.starts_with('[')) && zero_like_container(expected)
+}
+
+/// Whether every leaf of an all-literal array or object text is zero-like.
+/// Reads the literal grammar (`[..]`, `{ key: value }`, quoted strings, bare
+/// scalars) with a tiny scanner; anything it cannot read is not zero-like.
+fn zero_like_container(text: &str) -> bool {
+    let chars: Vec<char> = text.chars().collect();
+    let mut at = 0;
+    let ok = zero_like_value(&chars, &mut at);
+    skip_ws(&chars, &mut at);
+    ok && at == chars.len()
+}
+
+fn skip_ws(chars: &[char], at: &mut usize) {
+    while chars.get(*at).is_some_and(|ch| ch.is_whitespace()) {
+        *at += 1;
+    }
+}
+
+fn zero_like_value(chars: &[char], at: &mut usize) -> bool {
+    skip_ws(chars, at);
+    match chars.get(*at) {
+        Some('[') => {
+            *at += 1;
+            loop {
+                skip_ws(chars, at);
+                match chars.get(*at) {
+                    Some(']') => {
+                        *at += 1;
+                        return true;
+                    }
+                    Some(',') => *at += 1,
+                    Some(_) => {
+                        if !zero_like_value(chars, at) {
+                            return false;
+                        }
+                    }
+                    None => return false,
+                }
+            }
+        }
+        Some('{') => {
+            *at += 1;
+            loop {
+                skip_ws(chars, at);
+                match chars.get(*at) {
+                    Some('}') => {
+                        *at += 1;
+                        return true;
+                    }
+                    Some(',') => *at += 1,
+                    Some(_) => {
+                        // The key carries no value; skip it up to its colon.
+                        if matches!(chars.get(*at), Some('"' | '\'')) {
+                            if scan_quoted(chars, at).is_none() {
+                                return false;
+                            }
+                        } else {
+                            while chars.get(*at).is_some_and(|ch| *ch != ':') {
+                                *at += 1;
+                            }
+                        }
+                        skip_ws(chars, at);
+                        if chars.get(*at) != Some(&':') {
+                            return false;
+                        }
+                        *at += 1;
+                        if !zero_like_value(chars, at) {
+                            return false;
+                        }
+                    }
+                    None => return false,
+                }
+            }
+        }
+        Some('"' | '\'' | '`') => scan_quoted(chars, at).is_some_and(|inner| inner.is_empty()),
+        Some(_) => {
+            let start = *at;
+            while chars
+                .get(*at)
+                .is_some_and(|ch| !matches!(ch, ',' | ']' | '}') && !ch.is_whitespace())
+            {
+                *at += 1;
+            }
+            let token: String = chars[start..*at].iter().collect();
+            matches!(token.as_str(), "0" | "false" | "null" | "undefined")
+        }
+        None => false,
+    }
+}
+
+/// Consume a quoted string at `at` and return its inner text.
+fn scan_quoted(chars: &[char], at: &mut usize) -> Option<String> {
+    let quote = *chars.get(*at)?;
+    *at += 1;
+    let mut inner = String::new();
+    while let Some(&ch) = chars.get(*at) {
+        *at += 1;
+        if ch == '\\' {
+            inner.push(ch);
+            inner.push(*chars.get(*at)?);
+            *at += 1;
+        } else if ch == quote {
+            return Some(inner);
+        } else {
+            inner.push(ch);
+        }
+    }
+    None
 }
 
 /// RIPR-SPEC-0243 decision 18: whether some strong, pinned, exact-value assertion
@@ -1981,12 +2113,7 @@ pub(crate) fn ts_field_update_witnessed(
             if assertion
                 .expected_value_or_variant
                 .as_deref()
-                .is_some_and(|expected| {
-                    matches!(
-                        expected.trim(),
-                        "0" | "\"\"" | "''" | "``" | "false" | "null" | "undefined"
-                    )
-                })
+                .is_some_and(ts_expected_is_zero_like)
             {
                 return false;
             }
@@ -2741,7 +2868,7 @@ fn top_level_statements(block: &str) -> Option<Vec<String>> {
 }
 
 /// True when `text` is one identifier (`[A-Za-z_$][A-Za-z0-9_$]*`).
-fn is_bare_identifier(text: &str) -> bool {
+pub(super) fn is_bare_identifier(text: &str) -> bool {
     let mut chars = text.chars();
     chars
         .next()
@@ -3030,7 +3157,7 @@ pub(crate) fn substitute_constant_arguments(
         .into_iter()
         .map(|argument| {
             let trimmed = argument.trim();
-            if is_constant_shaped_operand(trimmed)
+            if is_bare_identifier(trimmed)
                 && let Some(value) =
                     ts_test_scope_constant_value(trimmed, test, owner, alias_map, workspace_root)
             {
@@ -3280,12 +3407,22 @@ fn ts_test_scope_constant_value(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> Option<String> {
-    if !is_constant_shaped_operand(name) {
+    if !is_bare_identifier(name) {
         return None;
     }
-    let (const_value, shadowed) = scan_test_body_constant_declarations(&test.body_text, name);
-    if const_value.is_some() || shadowed {
-        return const_value;
+    if is_constant_shaped_operand(name) {
+        let (const_value, shadowed) = scan_test_body_constant_declarations(&test.body_text, name);
+        if const_value.is_some() || shadowed {
+            return const_value;
+        }
+    }
+    // #10707, #10706: the callback's own single immutable local (any
+    // spelling), decided on the token stream. A declaration or binding it
+    // refuses is never rescued by an outer scope.
+    match test_body_integer_constant(&test.file, &test.body_text, name) {
+        BodyConstant::Resolved(value) => return Some(value),
+        BodyConstant::Refused => return None,
+        BodyConstant::Undeclared => {}
     }
     // No test-body declaration: resolve through the import record to the
     // owner's own module. Ambiguous or unrelated imports fail closed.
@@ -3294,7 +3431,11 @@ fn ts_test_scope_constant_value(
         .iter()
         .filter(|import| !import.namespace && import.local == name)
         .collect();
-    if imports.len() != 1 {
+    if imports.is_empty() {
+        // #10707, #10706: a module-level constant of the test file itself.
+        return test_file_integer_constant(test, name, workspace_root);
+    }
+    if imports.len() != 1 || !is_constant_shaped_operand(name) {
         return None;
     }
     let import = imports[0];
@@ -4141,6 +4282,9 @@ pub(crate) fn ts_predicate_boundary_limitation(
         None
     };
     match boundary {
+        Some(boundary) if boundary.starts_with("typeof ") => format!(
+            "Related tests reach `{owner_name}` with a strong oracle, but no strong assertion observes a `{owner_name}(...)` call whose argument is written as a value of the kind the changed test checks (`{boundary}`); a call that passes a value of another kind, or the kind's name as a string, does not discriminate the changed comparison."
+        ),
         Some(boundary) => format!(
             "Related tests reach `{owner_name}` with a strong oracle, but no strong assertion observes a `{owner_name}(...)` call at the changed predicate boundary `{boundary}`; inputs on one side of the boundary do not discriminate the changed comparison."
         ),
@@ -4774,6 +4918,33 @@ fn last_identifier_segment(operand: &str) -> &str {
     operand.trim().rsplit('.').next().unwrap_or(operand).trim()
 }
 
+/// `true` when the argument at the parameter a `typeof <param> == "<kind>"`
+/// guard reads is written as a value of exactly that kind (#11196): a function
+/// for `"function"`, a number literal for `"number"`. An input of another kind
+/// can still flip a changed operator, but it cannot tell an edited kind apart,
+/// and the kind's name as a string literal is a string input, not the kind it
+/// names. The parameter must be named by the owner's own signature, and a
+/// type assertion on the argument does not change the value it carries.
+fn typeof_kind_input_reaches_read_argument(
+    arguments: &[String],
+    operand: &str,
+    kind: &str,
+    owner: &TypeScriptOwner,
+) -> bool {
+    let kind = kind.trim().trim_matches(['"', '\'']);
+    let Some(position) = owner
+        .params
+        .iter()
+        .position(|param| param == operand.trim())
+    else {
+        return false;
+    };
+    arguments
+        .get(position)
+        .and_then(|argument| super::typeof_kind::literal_argument_typeof_kind(argument))
+        .is_some_and(|argument_kind| argument_kind == kind)
+}
+
 /// `true` when the boundary literal reaches the argument position the changed
 /// comparison reads (#4102 guards 1 and 2). The literal must stand alone as
 /// the argument value — the whole argument tokenizes to the literal, or an
@@ -4980,7 +5151,18 @@ pub(crate) fn expected_side_is_live(
     expected: &str,
 ) -> Option<bool> {
     let source = owner.source_text.as_deref()?;
-    let expected_value = signed_numeric_expected_value(expected)?;
+    // An array literal is never a scalar branch value; it is judged below,
+    // once the branches are known to be scalar-foldable.
+    let expected_is_array = {
+        let trimmed = expected.trim();
+        (trimmed.starts_with('[') && trimmed.ends_with(']'))
+            || (trimmed.starts_with('{') && trimmed.ends_with('}'))
+    };
+    let expected_value = if expected_is_array {
+        None
+    } else {
+        Some(signed_numeric_expected_value(expected)?)
+    };
     let operator = changed_comparison_operator(line_text)?;
     let lines: Vec<&str> = source.lines().collect();
     // Locate the changed line inside the owner body. Uniqueness runs before
@@ -5029,6 +5211,11 @@ pub(crate) fn expected_side_is_live(
     };
     let new_value = fold_numeric_expression(new_expr, &bindings)?;
     let old_value = fold_numeric_expression(old_expr, &bindings)?;
+    // Both branches fold to numbers, so an array expectation equals neither:
+    // the pin is dead on both versions and cannot show the change.
+    let Some(expected_value) = expected_value else {
+        return Some(false);
+    };
     // Jest `toBe` uses `Object.is`, which distinguishes `+0` from `-0`.
     // Epsilon equality would credit `toBe(-0)` against a `return 0` branch.
     if expected_value == 0.0 || new_value == 0.0 || old_value == 0.0 {
@@ -6696,7 +6883,7 @@ pub(crate) fn classify_resolved_owner(
     // there is no static_limit. We always compute them; they are empty when there
     // are no oracle-eligible candidates or no qualifying assertions.
     let named_limitations_from_oracle =
-        named_limitations_for_oracle_candidates(owner, related_candidates);
+        named_limitations_for_oracle_candidates(owner, related_candidates, &probe_shape.family);
     // Oracle metadata evidence lines (RIPR-SPEC-0085 §PR5).
     // Emitted from the strongest owner-call-observing assertion across
     // candidates. ADDITIVE: does not change oracle_kind, oracle_strength,
@@ -7162,30 +7349,27 @@ pub(crate) fn classify_resolved_owner(
     // callback, is what static analysis cannot resolve (#10438, #10501).
     let conditional_registration_unknown =
         ladder_unresolved_unknown && only_conditionally_registered_tests(related_candidates);
-    ts_apply_post_ladder_rules(
-        &mut verdict,
-        &mut static_limit,
-        &TsPostLadderContext {
-            all_tests,
-            line,
-            probe_shape: &probe_shape,
-            line_text,
-            old_line_text,
-            owner,
-            candidates: related_candidates,
-            ladder: Rule8LadderFacts {
-                boundary: &predicate_boundary,
-                activations: &predicate_activations,
-                error_facts: &error_facts,
-                mock_facts: &mock_facts,
-                pin_facts: &pin_facts,
-                changed_field: changed_field.as_ref(),
-            },
-            mock_paths: &context.mock_paths,
-            alias_map,
-            workspace_root,
+    let post_ladder_context = TsPostLadderContext {
+        all_tests,
+        line,
+        probe_shape: &probe_shape,
+        line_text,
+        old_line_text,
+        owner,
+        candidates: related_candidates,
+        ladder: Rule8LadderFacts {
+            boundary: &predicate_boundary,
+            activations: &predicate_activations,
+            error_facts: &error_facts,
+            mock_facts: &mock_facts,
+            pin_facts: &pin_facts,
+            changed_field: changed_field.as_ref(),
         },
-    );
+        mock_paths: &context.mock_paths,
+        alias_map,
+        workspace_root,
+    };
+    ts_apply_post_ladder_rules(&mut verdict, &mut static_limit, &post_ladder_context);
     // RIPR-SPEC-0246 rule 7: a setup hook that calls the owner outside every
     // test body. It reads an actionable gap, never a credit.
     let hook_owner_unknown = !ladder_exposed
@@ -7233,12 +7417,65 @@ pub(crate) fn classify_resolved_owner(
             owner.name
         )];
     }
+    // #10704: infection the adapter can state. An unmodeled change shape
+    // fails closed to `infection_unknown`; a changed line under an `if` arm
+    // no related test call enters reads `reachable_unrevealed` with infection
+    // `no`, never `weakly_exposed` with an "assertion too weak" row.
+    let mut infection: Option<TsInfectionVerdict> = None;
+    if static_limit.is_none() {
+        let weak = matches!(verdict.class, ExposureClass::WeaklyExposed);
+        let exposed = matches!(verdict.class, ExposureClass::Exposed);
+        let is_predicate = matches!(probe_shape.family, ProbeFamily::Predicate);
+        // The stronger fact wins: a changed line no test input enters is
+        // infection `no`, whatever shape the edit has.
+        let untaken = if weak && !is_predicate {
+            ts_unentered_guard(&post_ladder_context)
+        } else {
+            None
+        };
+        if let Some(guard) = untaken {
+            verdict.class = ExposureClass::ReachableUnrevealed;
+            verdict.discriminate_state = StageState::Unknown;
+            verdict.missing = vec![format!(
+                "The change to `{}` sits inside `{}`, and no related test call enters it: {}. The changed line never runs under the tests, so no assertion can observe it. Add a test input that enters the guard.",
+                owner.name, guard.condition, guard.observed
+            )];
+            infection = Some(TsInfectionVerdict {
+                state: StageState::No,
+                shape: "branch_not_entered",
+                summary: format!(
+                    "No related test call enters `{}`: {}.",
+                    guard.condition, guard.observed
+                ),
+            });
+        } else if let Some(shape) =
+            super::infection_shape::ts_unmodeled_infection(old_line_text, line_text, is_predicate)
+            && (weak || (exposed && shape.behavior_neutral))
+        {
+            verdict.class = ExposureClass::InfectionUnknown;
+            verdict.observe_state = StageState::Unknown;
+            verdict.discriminate_state = StageState::Unknown;
+            verdict.missing = vec![format!(
+                "The change to `{}` is a `{}` edit: {}. No assertion is requested until a test input is shown to change the behavior.",
+                owner.name, shape.shape, shape.reason
+            )];
+            infection = Some(TsInfectionVerdict {
+                state: StageState::Unknown,
+                shape: shape.shape,
+                summary: format!(
+                    "TypeScript preview adapter does not model infection for this `{}` edit: {}.",
+                    shape.shape, shape.reason
+                ),
+            });
+        }
+    }
     let TsLadderVerdict {
         class,
         observe_state,
         discriminate_state,
         mut missing,
     } = verdict;
+    let infection_unknown_class = matches!(class, ExposureClass::InfectionUnknown);
     let static_unknown_by_mock = matches!(class, ExposureClass::StaticUnknown)
         && !ladder_unresolved_unknown
         && !ladder_entry_unknown
@@ -7351,11 +7588,16 @@ pub(crate) fn classify_resolved_owner(
         related_count, owner.name
     );
     let reach = StageEvidence::new(reach_state.clone(), Confidence::Low, &reach_summary);
-    let infect = StageEvidence::new(
-        StageState::Unknown,
-        Confidence::Low,
-        "TypeScript preview adapter does not yet model infection.",
-    );
+    let infect = match &infection {
+        Some(verdict) => {
+            StageEvidence::new(verdict.state.clone(), Confidence::Low, &verdict.summary)
+        }
+        None => StageEvidence::new(
+            StageState::Unknown,
+            Confidence::Low,
+            "TypeScript preview adapter does not yet model infection.",
+        ),
+    };
     let propagate = StageEvidence::new(
         StageState::Unknown,
         Confidence::Low,
@@ -7367,7 +7609,13 @@ pub(crate) fn classify_resolved_owner(
         strongest_strength
     );
     let observe = StageEvidence::new(observe_state, Confidence::Low, &observe_summary);
-    let discriminate_summary = if static_unknown_by_mock {
+    let discriminate_summary = if let Some(verdict) = &infection {
+        format!(
+            "TypeScript preview adapter: infection is `{}` for this `{}` edit, so whether an assertion discriminates the change is not asked (#10704).",
+            verdict.state.as_str(),
+            verdict.shape
+        )
+    } else if static_unknown_by_mock {
         "TypeScript preview adapter: every exposing test file mocks a module the changed line calls; discriminate unknown (RIPR-SPEC-0243 rule 8).".to_string()
     } else if loop_count_unknown {
         "TypeScript preview adapter: the changed counted-loop header is observed only through a mock call count; the iteration count is not modeled, so discriminate unknown (RIPR-SPEC-0246 rule 8).".to_string()
@@ -7446,6 +7694,12 @@ pub(crate) fn classify_resolved_owner(
         ExposureClass::Exposed => {
             "TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.".to_string()
         }
+        ExposureClass::InfectionUnknown if infection.is_some() => {
+            "TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first.".to_string()
+        }
+        ExposureClass::ReachableUnrevealed if infection.is_some() => {
+            "TypeScript preview advisory: no related test call enters the changed branch; add a test input that enters it before strengthening any assertion. No repair packet is emitted.".to_string()
+        }
         ExposureClass::StaticUnknown if ladder_entry_unknown => {
             "TypeScript preview advisory: the related test reaches the changed owner only through a same-module caller, so no new assertion is needed on that evidence; no repair packet is emitted.".to_string()
         }
@@ -7496,10 +7750,28 @@ pub(crate) fn classify_resolved_owner(
     } else {
         0.4
     };
+    // #10700: the score above is a per-class constant, so name why it is
+    // capped. Evidence-derived and explanatory only: it never changes the
+    // score or any actionability decision.
+    let confidence_basis = crate::domain::ConfidenceCap::for_preview(
+        &class,
+        &crate::domain::ConfidenceBasisInputs {
+            has_related_test: has_oracle_eligible_relation,
+            strong_oracle_present: strongest_strength >= OracleStrength::Strong.rank(),
+            boundary_input_matched: boundary_witnessed,
+        },
+    );
 
     let mut evidence = vec![format!("owner: {}", owner.name)];
     if !probe_shape.specific {
         evidence.push("probe_fact: ambiguous_fallback".to_string());
+    }
+    if let Some(verdict) = &infection {
+        evidence.push(format!(
+            "typescript_infection: {} ({})",
+            verdict.state.as_str(),
+            verdict.shape
+        ));
     }
     for discriminator in &missing_discriminators {
         evidence.push(format!("missing_discriminator: {}", discriminator.value));
@@ -7620,6 +7892,7 @@ pub(crate) fn classify_resolved_owner(
             },
         },
         confidence: confidence_value,
+        confidence_basis,
         evidence,
         missing,
         flow_sinks: flow_sink.into_iter().collect(),
@@ -7627,7 +7900,9 @@ pub(crate) fn classify_resolved_owner(
             observed_values: Vec::new(),
             missing_discriminators,
         },
-        stop_reasons: if static_unknown_by_mock {
+        stop_reasons: if infection_unknown_class {
+            vec![StopReason::InfectionEvidenceUnknown]
+        } else if static_unknown_by_mock {
             vec![StopReason::StaticProbeUnknown]
         } else if unresolved_callback_unknown || loop_count_unknown {
             vec![StopReason::GapEvidenceUnresolved]
@@ -7650,6 +7925,13 @@ pub(crate) fn classify_resolved_owner(
         // Resolved above, before the probe moved into the finding (#3281).
         source_currentness,
     })
+}
+
+/// Infection the classifier could state for a change (#10704).
+struct TsInfectionVerdict {
+    state: StageState,
+    shape: &'static str,
+    summary: String,
 }
 
 /// The ladder's verdict fields a post-ladder rule may rewrite.
@@ -9235,6 +9517,7 @@ fn module_entry_reach_summary(
     let called: Vec<String> = owner
         .module_entries
         .iter()
+        .filter(|entry| !entry.instance_factory)
         .filter(|entry| {
             let entry_owner = module_entry_owner(owner, entry);
             candidates.iter().any(|candidate| {

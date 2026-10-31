@@ -414,6 +414,7 @@ pub(super) struct FixtureSideEffects {
     /// Names the module uses other than to import or construct them
     /// (`CliRunner.invoke = fake`, `setattr(CliRunner, ...)`): a class touched
     /// this way no longer builds the object a fixture's shape suggests (#11016).
+    /// Only inert tool class names are kept: `inert_tool` is always one.
     pub(super) class_writes: Vec<String>,
     /// Dotted modules the file imports, plain and `from` alike, for the
     /// transitive read of what an imported workspace module does.
@@ -445,7 +446,10 @@ pub(super) fn collect_fixture_side_effects(
             })
             .cloned()
             .collect(),
-        class_writes: super::module_constants::names_used_beyond_construction(source),
+        class_writes: super::module_constants::watched_names_used_beyond_construction(
+            source,
+            &|name| INERT_TOOL_CLASSES.iter().any(|(_, class)| *class == name),
+        ),
         imported_modules: super::module_constants::imported_module_names(statements),
         ..FixtureSideEffects::default()
     };

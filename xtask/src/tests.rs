@@ -6,6 +6,7 @@
 mod build_feature_reuse;
 mod discarded_matcher_honesty;
 mod fixture_cache;
+mod fixture_variants;
 mod operand_callee_honesty;
 #[path = "precommit_source_oracle.rs"]
 mod precommit_source_oracle;
@@ -4586,7 +4587,11 @@ fn editor_first_run_usability_fixture_corpus_validator_reports_unsafe_states() -
         write_editor_first_run_status(root, "server_missing", "active", None);
         write_editor_first_run_actions(root, "setup_ok", &[]);
         write_editor_first_run_actions(root, "receipt_found", &[]);
-        write_editor_first_run_actions(root, "artifact_missing", &["Copy first repair packet"]);
+        write_editor_first_run_actions(
+            root,
+            "artifact_missing",
+            &["Copy repair instructions for an AI agent"],
+        );
         write(
             &root.join(
                 "fixtures/editor_first_run_usability/artifact_stale/expected/receipt-status.json",
@@ -4607,12 +4612,12 @@ fn editor_first_run_usability_fixture_corpus_validator_reports_unsafe_states() -
         }));
         assert!(violations.iter().any(|violation| {
             violation.contains(
-                "editor first-run usability case setup_ok must include Copy first repair packet",
+                "editor first-run usability case setup_ok must include Copy repair instructions for an AI agent",
             )
         }));
         assert!(violations.iter().any(|violation| {
                 violation.contains(
-                    "editor first-run usability case receipt_found must include Copy first repair packet",
+                    "editor first-run usability case receipt_found must include Copy repair instructions for an AI agent",
                 )
             }));
         assert!(violations.iter().any(|violation| {
@@ -4999,7 +5004,7 @@ fn editor_first_run_actions(case: &str) -> Vec<&'static str> {
     match case {
         "setup_ok" | "receipt_found" | "receipt_improved" | "receipt_unchanged" => {
             vec![
-                "Copy first repair packet",
+                "Copy repair instructions for an AI agent",
                 "Refresh Analysis - Saved Workspace Check",
             ]
         }
@@ -5046,12 +5051,12 @@ fn write_editor_first_run_actions(root: &Path, case: &str, titles: &[&str]) {
             .map(|title| {
                 serde_json::json!({
                     "title": title,
-                    "command": if *title == "Copy first repair packet" {
+                    "command": if *title == "Copy repair instructions for an AI agent" {
                         "ripr.copyContext"
                     } else {
                         "ripr.refresh"
                     },
-                    "arguments": if *title == "Copy first repair packet" {
+                    "arguments": if *title == "Copy repair instructions for an AI agent" {
                         serde_json::json!([{
                             "packet": "RIPR first repair packet\nGap identity: gap:test\nSuggested action:\n- Add one focused assertion.\nVerify command:\nripr agent verify --root <root> --json\nReceipt command:\nripr agent receipt --root <root> --json\nLimits and non-claims:\n- Static editor evidence only."
                         }])
@@ -12082,12 +12087,24 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             "[ \"$ref_sha\" = \"$head\" ] || [ \"$ref_sha\" = \"$GROUP_BASE_SHA\" ]",
         ),
         (
-            "check the live head is not newer",
-            "[ \"$ref_sha\" != \"$head\" ]",
+            "PR ref to still name the live head",
+            "[ \"$fetched\" = \"$head\" ]",
         ),
         (
-            "not older than the queued commit",
-            "[[ \"$pushed_at\" < \"$queued_at\" ]] || { echo \"::error::PR #${pr} head",
+            "tree to the live head merged onto the group base",
+            "[ \"${merged%%$'\\n'*}\" = \"$(git rev-parse \"${GROUP_HEAD_SHA}^{tree}\")\" ]",
+        ),
+        (
+            "same-head succession read as the last live eligibility check",
+            "            read_succession\n          }\n",
+        ),
+        (
+            "older run or a newer attempt of the same head",
+            ".id != $id and .run_number >= $number)] | length) == 0",
+        ),
+        (
+            "succession read to this run's own attempt",
+            ".id == $id and .run_attempt == $attempt and .head_sha == $head",
         ),
     ] {
         let mutated = workflow.replace(snippet, "removed");
@@ -13208,12 +13225,16 @@ fn first_line_difference_truncates_very_long_snapshot_lines() {
 
 #[test]
 fn fixture_output_normalization_keeps_json_escapes_readable() {
+    // Only a Windows host folds JSON `\\` path separators; elsewhere the
+    // backslash is source text and survives (#11119).
     let json =
         r#"{"file":"fixtures/example/input\\src/lib.rs","oracle":"assert!(value == \"x\")"}"#;
+    let folded =
+        r#"{"file":"fixtures/example/input/src/lib.rs","oracle":"assert!(value == \"x\")"}"#;
 
     assert_eq!(
         normalize_fixture_json_output(json),
-        r#"{"file":"fixtures/example/input/src/lib.rs","oracle":"assert!(value == \"x\")"}"#
+        if cfg!(windows) { folded } else { json }
     );
     assert_eq!(
         normalize_fixture_human_output("fixtures\\example\\input\\src/lib.rs"),
@@ -51936,7 +51957,7 @@ fn editor_lsp_workflow_fixture_pins_saved_workspace_loop() -> Result<(), String>
         .map_err(|err| format!("failed to read editor hover fixture: {err}"))?;
     for needle in [
         "## Evidence Path",
-        "## Missing discriminator",
+        "## Missing value or check",
         "## Suggested test shape",
         "## Handoff, verify, and receipt commands",
         "## Status projection",

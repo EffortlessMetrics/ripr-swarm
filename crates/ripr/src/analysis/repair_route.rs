@@ -42,6 +42,29 @@ pub(crate) fn humanize_evidence(evidence: &str) -> String {
     if evidence == "observable sink localization" {
         return "a way to follow the changed value to something a test can check".to_string();
     }
+    // #11025: the stage the static chain stopped at, in plain words. The
+    // machine list keeps the stable `incomplete evidence stage: <stage>` code;
+    // a stage this table does not know passes through unchanged.
+    if let Some(stage) = evidence.strip_prefix("incomplete evidence stage: ") {
+        let phrase = match stage {
+            "activation" => Some("a test input that reaches the changed code"),
+            "propagation" => {
+                Some("a test that follows the changed value through to something it can check")
+            }
+            "observation" => Some("a test that observes the changed behavior"),
+            "discrimination" => {
+                Some("a test assertion that would fail if the changed behavior were wrong")
+            }
+            "opaque" => {
+                Some("code ripr cannot see into statically, so a test must check it by hand")
+            }
+            "unknown" => Some("more static evidence about the changed behavior"),
+            _ => None,
+        };
+        if let Some(phrase) = phrase {
+            return phrase.to_string();
+        }
+    }
     if let Some(kind) = evidence.strip_prefix(FACT_PREFIX) {
         let phrase = match kind {
             "boundary_value" => "a test assertion that pins the changed boundary value exactly",
@@ -1087,6 +1110,35 @@ mod tests {
     }
 
     #[test]
+    fn humanize_evidence_maps_each_evidence_stage_to_plain_words() -> Result<(), String> {
+        let cases = [
+            ("activation", "a test input that reaches the changed code"),
+            (
+                "propagation",
+                "a test that follows the changed value through to something it can check",
+            ),
+            ("observation", "a test that observes the changed behavior"),
+            (
+                "discrimination",
+                "a test assertion that would fail if the changed behavior were wrong",
+            ),
+            (
+                "opaque",
+                "code ripr cannot see into statically, so a test must check it by hand",
+            ),
+            ("unknown", "more static evidence about the changed behavior"),
+        ];
+        for (stage, plain) in cases {
+            let internal = format!("incomplete evidence stage: {stage}");
+            let got = humanize_evidence(&internal);
+            if got != plain || got.contains("evidence stage") {
+                return Err(format!("{internal:?} must render {plain:?}, got {got:?}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn humanize_evidence_falls_back_and_passes_non_fact_strings_through() -> Result<(), String> {
         let unknown = humanize_evidence("producer-owned missing discriminator fact: future_kind");
         if unknown.contains("producer-owned") || unknown.contains("future_kind") {
@@ -1094,7 +1146,11 @@ mod tests {
                 "unknown kind must not leak internal spelling, got {unknown:?}"
             ));
         }
-        for already_plain in ["safe test target", "incomplete evidence stage: activation"] {
+        // #11025: a stage this table does not know passes through unchanged.
+        for already_plain in [
+            "safe test target",
+            "incomplete evidence stage: future_stage",
+        ] {
             if humanize_evidence(already_plain) != already_plain {
                 return Err(format!(
                     "non-fact evidence must pass through unchanged, got {:?}",

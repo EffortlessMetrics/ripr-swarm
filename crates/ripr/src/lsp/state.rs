@@ -964,6 +964,20 @@ impl AnalysisSnapshot {
                 )
             })
             .count();
+        // Not-analyzed markers (#10715) are governed, code-marked disclosures
+        // for a changed file whose language adapter is not enabled; they are
+        // not findings, seams, or gap records.
+        let language_not_analyzed_disclosures = self
+            .diagnostics_by_uri
+            .values()
+            .flatten()
+            .filter(|diagnostic| {
+                diagnostic_has_code(
+                    diagnostic,
+                    super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE,
+                )
+            })
+            .count();
         let published_finding_count = super::diagnostics::canonical_finding_groups(&self.findings)
             .into_iter()
             .filter(|(primary, _)| {
@@ -980,6 +994,7 @@ impl AnalysisSnapshot {
                 + surfacable_seams
                 + gap_diagnostics
                 + scope_guard_disclosures
+                + language_not_analyzed_disclosures
                 == diagnostic_count
             && self
                 .gap_artifacts

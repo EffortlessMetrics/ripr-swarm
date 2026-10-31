@@ -819,6 +819,50 @@ fn suppressed_guidance_via_warning_text_suppressed_keyword() -> Result<(), Strin
     Ok(())
 }
 
+/// SPEC-0020: suppressed items stay visible but do not outrank PR-local work.
+/// The default config turns `strongly_gripped` seams off, so `review-comments`
+/// warns about every well-tested neighbour; that must not hide a card that
+/// names a gap and carries its repair start.
+#[test]
+fn a_neighbouring_configured_off_note_does_not_hide_a_card_with_a_repair_start()
+-> Result<(), String> {
+    let mut comments = exact_line_comments()?;
+    assert_eq!(
+        comments
+            .pointer("/comments/0/llm_guidance/repair_command")
+            .and_then(Value::as_str),
+        Some(EXACT_LINE_REPAIR),
+        "fixture must carry a card with a repair start"
+    );
+    comments["warnings"] = serde_json::json!([{
+        "kind": "other",
+        "message": "seam de2db1459ec9c03b at src/auth.rs:3 is configured off for strongly_gripped seams and is not included in agent brief results"
+    }]);
+    comments["suppressed"] =
+        serde_json::json!([{"seam_id": "nearby", "reason": "nearby_test_changed"}]);
+    let report = build_first_useful_action_report(guidance_only_input(&comments)?);
+    let rendered = render_first_useful_action_json(&report)?;
+    assert!(
+        rendered.contains(r#""status": "actionable""#),
+        "expected the card's repair start, got: {rendered}"
+    );
+    assert!(rendered.contains(EXACT_LINE_REPAIR), "{rendered}");
+    assert!(
+        !rendered.contains("No first action for suppressed seam"),
+        "{rendered}"
+    );
+
+    // Control: the same notes with no card to act on are still `suppressed`.
+    comments["comments"] = serde_json::json!([]);
+    let report = build_first_useful_action_report(guidance_only_input(&comments)?);
+    let rendered = render_first_useful_action_json(&report)?;
+    assert!(
+        rendered.contains(r#""status": "suppressed""#),
+        "expected suppressed with nothing to act on, got: {rendered}"
+    );
+    Ok(())
+}
+
 // ── acknowledged_report via baseline_delta ───────────────────────────────
 
 #[test]
@@ -2056,22 +2100,124 @@ fn selected_from_receipt_uses_proof_seam_id_fallback() -> Result<(), String> {
 
 #[test]
 fn selected_from_guidance_uses_summary_only_item() -> Result<(), String> {
-    // suppressed items are absent but summary_only is present, and suppressed string in warnings
-    // forces suppressed route → guidance selected from summary_only fallback
+    // A summary-only limitation is not work to act on. A structural
+    // `suppressed[]` entry routes suppressed, and the report selects the seam
+    // from the summary_only fallback ahead of the suppressed entry.
     let pr_guidance_json = r#"{
-            "summary_only": [{"seam_id": "so-seam", "kind": "predicate_boundary"}],
-            "warnings": [{"kind": "other", "message": "seam configured off by policy"}]
+            "summary_only": [{"seam_id": "so-seam", "kind": "predicate_boundary", "gap_state": "static_limitation"}],
+            "suppressed": [{"seam_id": "sup-seam"}]
         }"#;
     let mut input = bare_input();
     input.pr_guidance_path = Some("g.json".to_string());
     input.pr_guidance_json = Some(Ok(pr_guidance_json.to_string()));
-    let report = build_first_useful_action_report(input);
-    let rendered = render_first_useful_action_json(&report)?;
-    // suppressed route triggered by warning text
-    assert!(
-        rendered.contains(r#""status": "suppressed""#),
-        "expected suppressed but got: {rendered}"
-    );
+    let value = report_json(input)?;
+    assert_eq!(value["status"], "suppressed", "{value}");
+    assert_eq!(value["selected"]["seam_id"], "so-seam", "{value}");
+    Ok(())
+}
+
+const CONFIGURED_OFF_NOTE: &str = "seam de2db1459ec9c03b at src/auth.rs:3 is configured off for strongly_gripped seams and is not included in agent brief results";
+
+fn with_configured_off_note(mut guidance: Value) -> Value {
+    guidance["warnings"] = serde_json::json!([{"kind": "other", "message": CONFIGURED_OFF_NOTE}]);
+    guidance
+}
+
+/// The default-config neighbour note is free text, not a suppression: next to
+/// an all-static-limitation PR it must not yield "suppressed".
+#[test]
+fn neighbour_note_next_to_only_limitation_cards_is_not_suppressed() -> Result<(), String> {
+    let guidance = with_configured_off_note(serde_json::json!({
+        "comments": [{"seam_id": "lim", "gap_state": "static_limitation"}]
+    }));
+    let value = report_json(guidance_only_input(&guidance)?)?;
+    assert_ne!(value["status"], "suppressed", "{value}");
+    assert_eq!(value["status"], "no_actionable_seam", "{value}");
+    Ok(())
+}
+
+/// Fail-closed: a non-limitation card with no repair command and no actionable
+/// state does not count as a card to act on, and the note still does not
+/// suppress. A declared non-actionable state routes to `no_actionable_seam`,
+/// never to a request for assistant proof.
+#[test]
+fn neighbour_note_next_to_non_actionable_card_is_neither_suppressed_nor_proof_request()
+-> Result<(), String> {
+    for state in ["already_observed", "internal_only", "future_state"] {
+        let guidance = with_configured_off_note(serde_json::json!({
+            "comments": [{"seam_id": "card", "gap_state": state}]
+        }));
+        assert!(!has_card_to_act_on(Some(&guidance)), "{state}");
+        let value = report_json(guidance_only_input(&guidance)?)?;
+        assert_eq!(value["status"], "no_actionable_seam", "{state}: {value}");
+    }
+    Ok(())
+}
+
+/// A card with no `gap_state` and no repair command is not a card to act on
+/// (fail-closed), so it is never selected as actionable. The note does not
+/// suppress it; the legacy "guidance awaits proof" route stands.
+#[test]
+fn card_without_gap_state_is_not_a_card_to_act_on() -> Result<(), String> {
+    let guidance = with_configured_off_note(serde_json::json!({
+        "comments": [{"seam_id": "bare"}]
+    }));
+    assert!(!has_card_to_act_on(Some(&guidance)));
+    let value = report_json(guidance_only_input(&guidance)?)?;
+    assert_ne!(value["status"], "suppressed", "{value}");
+    assert_eq!(value["status"], "missing_required_artifact", "{value}");
+    Ok(())
+}
+
+#[test]
+fn only_actionable_state_or_repair_command_is_a_card_to_act_on() {
+    let actionable = serde_json::json!({"comments": [{"gap_state": "actionable"}]});
+    let repair = serde_json::json!({"summary_only": [
+        {"gap_state": "already_observed", "llm_guidance": {"repair_command": "ripr agent repair"}}
+    ]});
+    let blank_repair = serde_json::json!({"comments": [
+        {"llm_guidance": {"repair_command": "  "}}
+    ]});
+    assert!(has_card_to_act_on(Some(&actionable)));
+    assert!(has_card_to_act_on(Some(&repair)));
+    assert!(!has_card_to_act_on(Some(&blank_repair)));
+}
+
+/// Selection scans past a leading limitation card to the card that names a gap.
+#[test]
+fn selection_skips_leading_limitation_card() -> Result<(), String> {
+    let guidance = serde_json::json!({
+        "comments": [
+            {"seam_id": "lim", "gap_state": "static_limitation",
+             "suggested_test": {"recommended_name": "limitation_test"}},
+            {"seam_id": "gap", "gap_state": "actionable",
+             "suggested_test": {"recommended_name": "gap_test"}}
+        ]
+    });
+    let mut input = guidance_only_input(&guidance)?;
+    input.assistant_proof_path = None;
+    let parsed = parse_sources(&input);
+    let selected =
+        selected_from_guidance(&input, &parsed, "pr_guidance").ok_or("expected a selected card")?;
+    assert_eq!(selected.seam_id.as_deref(), Some("gap"));
+    let target = target_from_sources(&parsed).ok_or("expected a target")?;
+    assert_eq!(target.suggested_test_name.as_deref(), Some("gap_test"));
+    assert_eq!(selected_seam_id(&parsed).as_deref(), Some("gap"));
+    Ok(())
+}
+
+/// A summary-only card that is actionable counts, with no inline comments.
+#[test]
+fn summary_only_actionable_card_counts() -> Result<(), String> {
+    let guidance = with_configured_off_note(serde_json::json!({
+        "comments": [{"seam_id": "lim", "gap_state": "static_limitation"}],
+        "summary_only": [{"seam_id": "gap", "gap_state": "actionable",
+            "llm_guidance": {"repair_command": "ripr agent repair --seam-id gap"}}]
+    }));
+    assert!(has_card_to_act_on(Some(&guidance)));
+    let value = report_json(guidance_only_input(&guidance)?)?;
+    assert_eq!(value["status"], "actionable", "{value}");
+    assert_eq!(value["selected"]["seam_id"], "gap", "{value}");
     Ok(())
 }
 

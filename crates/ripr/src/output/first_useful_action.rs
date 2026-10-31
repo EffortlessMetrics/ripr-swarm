@@ -536,6 +536,14 @@ fn suppressed_report(
     if !has_suppressed_guidance(parsed.pr_guidance.as_ref()) {
         return None;
     }
+    // SPEC-0020: suppressed items stay visible but do not outrank PR-local
+    // work. A suppressed entry, or the note that a neighbouring seam is
+    // "configured off for strongly_gripped seams" (the default config, so on
+    // any PR next to a well-tested seam), says nothing about the card that
+    // names a gap. Only guidance with nothing to act on is `suppressed`.
+    if has_card_to_act_on(parsed.pr_guidance.as_ref()) {
+        return None;
+    }
     Some(base_report(
         input,
         inputs,
@@ -1383,7 +1391,8 @@ fn selected_from_guidance(
     source: &str,
 ) -> Option<ActionSelected> {
     let guidance = parsed.pr_guidance.as_ref()?;
-    let item = first_guidance_item(Some(guidance))
+    let item = first_actionable_card(Some(guidance))
+        .or_else(|| first_guidance_item(Some(guidance)))
         .or_else(|| first_summary_only_item(Some(guidance)))
         .or_else(|| first_suppressed_item(Some(guidance)));
     selected_from_guidance_item(input, item, source)
@@ -1546,7 +1555,8 @@ fn weakly_exposed_boundary_selected(
 
 fn target_from_sources(parsed: &ParsedSources) -> Option<ActionTarget> {
     let proof = parsed.assistant_proof.as_ref();
-    let guidance_item = first_guidance_item(parsed.pr_guidance.as_ref())
+    let guidance_item = first_actionable_card(parsed.pr_guidance.as_ref())
+        .or_else(|| first_guidance_item(parsed.pr_guidance.as_ref()))
         .or_else(|| first_summary_only_item(parsed.pr_guidance.as_ref()));
     let related = string_from_sources(&[
         (proof, &["recommendation", "related_test"]),
@@ -1698,7 +1708,8 @@ fn selected_seam_id(parsed: &ParsedSources) -> Option<String> {
         (parsed.receipt.as_ref(), &["provenance", "seam_id"]),
         (parsed.receipt.as_ref(), &["seam", "seam_id"]),
         (
-            first_guidance_item(parsed.pr_guidance.as_ref()),
+            first_actionable_card(parsed.pr_guidance.as_ref())
+                .or_else(|| first_guidance_item(parsed.pr_guidance.as_ref())),
             &["seam_id"],
         ),
         (parsed.ledger.as_ref(), &["top_repair_route", "seam_id"]),
@@ -1713,28 +1724,74 @@ fn receipt_movement(receipt: &Value) -> Option<String> {
     ])
 }
 
+/// Whether guidance has a card that still awaits the repair loop (and so the
+/// assistant proof). A card that declares a non-actionable `gap_state`
+/// (`static_limitation`, `already_observed`, `internal_only`, unknown) does not
+/// request proof unless it carries a repair command; a card with no declared
+/// state keeps the legacy "guidance present" meaning.
 fn has_actionable_guidance(pr_guidance: Option<&Value>) -> bool {
+    let Some(guidance) = pr_guidance else {
+        return false;
+    };
+    ["comments", "summary_only"]
+        .into_iter()
+        .filter_map(|bucket| guidance.get(bucket).and_then(Value::as_array))
+        .flatten()
+        .any(|card| card.get("gap_state").is_none() || is_actionable_card(card))
+}
+
+/// A review card the author can act on. Fail-closed: only a card whose
+/// `gap_state` is `actionable`, or that carries a non-empty
+/// `llm_guidance.repair_command` (the test `first_card_with_repair_command`
+/// uses), counts. Static limitations and cards with a missing, unknown,
+/// `already_observed` or `internal_only` state do not.
+fn is_actionable_card(card: &Value) -> bool {
+    card.get("gap_state").and_then(Value::as_str) == Some("actionable")
+        || string_path(card, &["llm_guidance", "repair_command"])
+            .is_some_and(|command| !command.trim().is_empty())
+}
+
+/// The first actionable card, inline comments before summary-only. Scans past
+/// leading limitation cards so they never supply the selected seam or target.
+fn first_actionable_card(pr_guidance: Option<&Value>) -> Option<&Value> {
+    let guidance = pr_guidance?;
+    ["comments", "summary_only"]
+        .into_iter()
+        .filter_map(|bucket| guidance.get(bucket).and_then(Value::as_array))
+        .flatten()
+        .find(|card| is_actionable_card(card))
+}
+
+fn has_card_to_act_on(pr_guidance: Option<&Value>) -> bool {
+    first_actionable_card(pr_guidance).is_some()
+}
+
+fn has_any_card(pr_guidance: Option<&Value>) -> bool {
     first_guidance_item(pr_guidance).is_some() || first_summary_only_item(pr_guidance).is_some()
 }
 
+/// Suppression is structural: a `suppressed[]` entry. The free-text
+/// "configured off"/"suppressed" warning is only a signal when the guidance
+/// carries no review card at all; next to any card it is the default-config
+/// note about a well-tested neighbour and says nothing about that card.
 fn has_suppressed_guidance(pr_guidance: Option<&Value>) -> bool {
     let Some(value) = pr_guidance else {
         return false;
     };
     first_suppressed_item(Some(value)).is_some()
-        || value
-            .get("warnings")
-            .and_then(Value::as_array)
-            .is_some_and(|warnings| {
-                // review-comments warnings are objects `{ kind, message }`; match
-                // against the message text, not a bare string.
-                warnings
-                    .iter()
-                    .filter_map(|warning| warning.get("message").and_then(Value::as_str))
-                    .any(|warning| {
-                        warning.contains("configured off") || warning.contains("suppressed")
-                    })
-            })
+        || (!has_any_card(Some(value))
+            && value
+                .get("warnings")
+                .and_then(Value::as_array)
+                .is_some_and(|warnings| {
+                    // review-comments warnings are objects `{ kind, message }`.
+                    warnings
+                        .iter()
+                        .filter_map(|warning| warning.get("message").and_then(Value::as_str))
+                        .any(|warning| {
+                            warning.contains("configured off") || warning.contains("suppressed")
+                        })
+                }))
 }
 
 fn first_guidance_item(pr_guidance: Option<&Value>) -> Option<&Value> {

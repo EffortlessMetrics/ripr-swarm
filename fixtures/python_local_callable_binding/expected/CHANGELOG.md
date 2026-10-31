@@ -528,3 +528,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_local_callable_binding (30)
+
+Reason:
+RIPR-SPEC-0209: retain producer-qualified Python test identity for safe manual verification.
+
+Command:
+`cargo xtask goldens bless python_local_callable_binding --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

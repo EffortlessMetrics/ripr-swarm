@@ -26,7 +26,14 @@ impl<'a> BooleanBoundaryPin<'a> {
         owner: Option<&'a FunctionSummary>,
         index: &RustIndex,
     ) -> Option<Self> {
-        if seam.kind() != SeamKind::PredicateBoundary {
+        // #11111: a bool owner whose whole tail is the comparison carries it
+        // as both a predicate seam and a return-value seam; the same pinned,
+        // consistent, boundary-paired assertion observes both, so both read
+        // one verdict (`ripr check` already credits the return value).
+        if !matches!(
+            seam.kind(),
+            SeamKind::PredicateBoundary | SeamKind::ReturnValue
+        ) {
             return None;
         }
         let owner = owner?;

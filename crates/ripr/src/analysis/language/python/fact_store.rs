@@ -24,17 +24,19 @@
 //! corrupt-ignored, never served.
 
 use super::module_constants::PythonTestRebinding;
+use super::module_value::ForeignWrites;
 use super::source_facts::PythonSourceFacts;
 use super::{PythonImport, normalized_path};
 use crate::analysis::seam_cache::{self, CacheLayer, CacheLoad};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// On-disk schema version of a `python-file-facts` envelope. Any change to a
 /// serialized fact spelling (field rename, type change, new label) is a
 /// schema change: bump this so stale entries read as misses.
-pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "4";
+pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "9";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. The parse
 /// already happened by store time, so exhausting the budget only skips the
@@ -95,6 +97,22 @@ struct StoredFacts {
     owner_imports: Interned<Vec<PythonImport>>,
     test_imports: Interned<Vec<PythonImport>>,
     test_rebindings: Interned<PythonTestRebinding>,
+    /// The module-level lists every rebinding of a file repeats (#10914:
+    /// pandas test files hold hundreds of distinct per-test rebindings).
+    rebinding_modules: Interned<RebindingModuleLists>,
+    /// Owner fields the workspace pass fills after the store is read (the
+    /// foreign writes) or that every function of a module repeats (its module
+    /// objects).
+    owner_foreign_writes: Interned<ForeignWrites>,
+    owner_module_objects: Interned<Vec<String>>,
+}
+
+/// [`PythonTestRebinding`]'s module-level lists, as one interned value.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+struct RebindingModuleLists {
+    module_names: Arc<Vec<String>>,
+    module_bound: Arc<Vec<String>>,
+    attributes: Arc<Vec<String>>,
 }
 
 /// Distinct values and, per item, the index of its value.
@@ -154,17 +172,40 @@ impl StoredFacts {
                 .iter_mut()
                 .map(|test| std::mem::take(&mut test.imports)),
         );
+        let rebinding_modules = Interned::intern(facts.tests.iter_mut().map(|test| {
+            let rebinding = &mut test.constant_rebinding;
+            RebindingModuleLists {
+                module_names: std::mem::take(&mut rebinding.module_names),
+                module_bound: std::mem::take(&mut rebinding.module_bound),
+                attributes: std::mem::take(&mut rebinding.attributes),
+            }
+        }));
         let test_rebindings = Interned::intern(
             facts
                 .tests
                 .iter_mut()
                 .map(|test| std::mem::take(&mut test.constant_rebinding)),
         );
+        let owner_foreign_writes = Interned::intern(
+            facts
+                .owners
+                .iter_mut()
+                .map(|owner| std::mem::take(&mut owner.foreign_writes)),
+        );
+        let owner_module_objects = Interned::intern(
+            facts
+                .owners
+                .iter_mut()
+                .map(|owner| std::mem::take(&mut owner.class_facts.module_objects)),
+        );
         Self {
             facts,
             owner_imports,
             test_imports,
             test_rebindings,
+            rebinding_modules,
+            owner_foreign_writes,
+            owner_module_objects,
         }
     }
 
@@ -176,19 +217,42 @@ impl StoredFacts {
             owner_imports,
             test_imports,
             test_rebindings,
+            rebinding_modules,
+            owner_foreign_writes,
+            owner_module_objects,
         } = self;
         let owner_imports = owner_imports.expand(facts.owners.len())?;
+        let owner_foreign_writes = owner_foreign_writes.expand(facts.owners.len())?;
+        let owner_module_objects = owner_module_objects.expand(facts.owners.len())?;
         let test_imports = test_imports.expand(facts.tests.len())?;
         let test_rebindings = test_rebindings.expand(facts.tests.len())?;
-        for (owner, imports) in facts.owners.iter_mut().zip(owner_imports) {
+        let rebinding_modules = rebinding_modules.expand(facts.tests.len())?;
+        for (((owner, imports), foreign_writes), module_objects) in facts
+            .owners
+            .iter_mut()
+            .zip(owner_imports)
+            .zip(owner_foreign_writes)
+            .zip(owner_module_objects)
+        {
             owner.imports = imports;
+            owner.foreign_writes = foreign_writes;
+            owner.class_facts.module_objects = module_objects;
         }
-        for ((test, imports), rebinding) in facts
+        for (((test, imports), mut rebinding), lists) in facts
             .tests
             .iter_mut()
             .zip(test_imports)
             .zip(test_rebindings)
+            .zip(rebinding_modules)
         {
+            let RebindingModuleLists {
+                module_names,
+                module_bound,
+                attributes,
+            } = lists;
+            rebinding.module_names = module_names;
+            rebinding.module_bound = module_bound;
+            rebinding.attributes = attributes;
             test.imports = imports;
             test.constant_rebinding = rebinding;
         }
@@ -372,7 +436,7 @@ impl PythonFileFactStore {
         let approx_bytes = bytes.len();
         if self
             .remaining_store_bytes
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
                 remaining.checked_sub(approx_bytes)
             })
             .is_err()
@@ -397,5 +461,7 @@ pub(super) fn served_view(mut facts: PythonSourceFacts) -> PythonSourceFacts {
     facts
 }
 
+#[cfg(test)]
+mod budget_tests;
 #[cfg(test)]
 mod tests;

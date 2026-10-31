@@ -19,6 +19,12 @@ pub(crate) const REVIEW_COMMENTS_RECEIPT_SCHEMA_VERSION: &str = "0.1";
 /// when distinguishing an instrument-limited pass from a real gap.
 pub(crate) const REVIEW_GUIDANCE_OVERSIZED_LIMITATION_CATEGORY: &str = "review_guidance_oversized";
 
+/// Non-claim added when the budget expires inside `canonical_analysis` (#11107).
+/// Whether a partial classification may be stored and reused is an open design
+/// question (what it may claim, and the exact inputs each classification read);
+/// until it is settled nothing from the timed-out phase is kept.
+pub(crate) const CANONICAL_ANALYSIS_NOT_RESUMABLE_NON_CLAIM: &str = "canonical_analysis work done before the timeout is not persisted; an unchanged retry restarts it and no reuse is claimed";
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct ReviewCommentsReceiptLimitation {
     pub(crate) category: String,
@@ -41,6 +47,12 @@ pub(crate) struct ReviewCommentsRunReceipt {
     /// timeout can say which one spent the budget (#1604).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) active_step: Option<String>,
+    /// Seams `canonical_analysis` had classified when its budget expired. Work
+    /// done, not work kept: nothing classified in a timed-out run is persisted,
+    /// so an unchanged retry restarts the phase (#11107). Absent unless the
+    /// timeout landed in `canonical_analysis`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) canonical_analysis_evaluated_seams: Option<usize>,
     pub(crate) completed_artifacts: Vec<String>,
     pub(crate) missing_artifacts: Vec<String>,
     pub(crate) reusable_cache_identity: String,
@@ -92,6 +104,7 @@ impl ReviewCommentsRunReceipt {
             last_completed_phase: None,
             active_phase: Some("input_validation".to_string()),
             active_step: None,
+            canonical_analysis_evaluated_seams: None,
             completed_artifacts: Vec::new(),
             missing_artifacts: expected_artifacts.to_vec(),
             reusable_cache_identity,
@@ -108,6 +121,13 @@ impl ReviewCommentsRunReceipt {
         self.last_completed_phase = Some(completed.to_string());
         self.active_phase = Some(active.to_string());
         self.active_step = None;
+        self.canonical_analysis_evaluated_seams = None;
+    }
+
+    /// Records how many seams `canonical_analysis` had classified when the
+    /// budget stopped it. Cleared by the next phase transition.
+    pub(crate) fn canonical_analysis_progress(&mut self, evaluated_seams: usize) {
+        self.canonical_analysis_evaluated_seams = Some(evaluated_seams);
     }
 
     /// Names the pass now running inside the active phase.
@@ -120,6 +140,7 @@ impl ReviewCommentsRunReceipt {
         self.last_completed_phase = Some("artifact_io".to_string());
         self.active_phase = None;
         self.active_step = None;
+        self.canonical_analysis_evaluated_seams = None;
         self.completed_artifacts = artifacts.to_vec();
         self.missing_artifacts.clear();
     }
@@ -132,6 +153,12 @@ impl ReviewCommentsRunReceipt {
             repair_route: "rerun review-comments with a larger configured timeout".to_string(),
         });
         self.terminalize_non_claims();
+        if active_phase == "canonical_analysis" {
+            // Persisted reuse covers completed phases only, and this one did
+            // not complete. Say so, so a retry is not expected to resume.
+            self.non_claims
+                .push(CANONICAL_ANALYSIS_NOT_RESUMABLE_NON_CLAIM.to_string());
+        }
     }
 
     pub fn failed(&mut self, active_phase: &str, error: &str) {
@@ -358,6 +385,64 @@ mod tests {
         finished.step("owner_attribution");
         finished.complete(&["comments.json".to_string()]);
         assert_eq!(finished.active_step, None);
+        Ok(())
+    }
+
+    /// A budget spent in `canonical_analysis` discloses the work done and that
+    /// none of it is kept (#11107). The same disclosure must not appear for a
+    /// timeout in another phase, for a failure, or after the phase advances.
+    #[test]
+    fn canonical_analysis_timeout_discloses_progress_and_that_nothing_is_kept() -> Result<(), String>
+    {
+        let mut receipt = sample_receipt();
+        receipt.phase("language_facts", "canonical_analysis");
+        receipt.canonical_analysis_progress(7);
+        receipt.limited_timeout("canonical_analysis");
+        let value = serde_json::to_value(&receipt).map_err(|err| err.to_string())?;
+        assert_eq!(value["canonical_analysis_evaluated_seams"], 7);
+        let claims = value["non_claims"]
+            .as_array()
+            .ok_or("non_claims must be an array")?;
+        assert!(
+            claims
+                .iter()
+                .any(|claim| claim == CANONICAL_ANALYSIS_NOT_RESUMABLE_NON_CLAIM)
+        );
+        assert!(claims.iter().any(|claim| claim == "no all-clear"));
+
+        // Another phase's timeout carries no canonical disclosure.
+        let mut earlier = sample_receipt();
+        earlier.phase("diff_discovery", "language_facts");
+        earlier.limited_timeout("language_facts");
+        let value = serde_json::to_value(&earlier).map_err(|err| err.to_string())?;
+        assert!(value.get("canonical_analysis_evaluated_seams").is_none());
+        assert!(
+            !earlier
+                .non_claims
+                .iter()
+                .any(|claim| claim == CANONICAL_ANALYSIS_NOT_RESUMABLE_NON_CLAIM)
+        );
+
+        // A failure in the same phase is not a timeout.
+        let mut failed = sample_receipt();
+        failed.phase("language_facts", "canonical_analysis");
+        failed.failed("canonical_analysis", "read failed");
+        assert!(
+            !failed
+                .non_claims
+                .iter()
+                .any(|claim| claim == CANONICAL_ANALYSIS_NOT_RESUMABLE_NON_CLAIM)
+        );
+
+        // Progress never outlives the phase it describes.
+        let mut moved = sample_receipt();
+        moved.canonical_analysis_progress(3);
+        moved.phase("canonical_analysis", "route_construction");
+        assert_eq!(moved.canonical_analysis_evaluated_seams, None);
+        let mut finished = sample_receipt();
+        finished.canonical_analysis_progress(3);
+        finished.complete(&["comments.json".to_string()]);
+        assert_eq!(finished.canonical_analysis_evaluated_seams, None);
         Ok(())
     }
 

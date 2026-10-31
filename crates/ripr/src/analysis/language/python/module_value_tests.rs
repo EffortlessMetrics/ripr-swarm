@@ -1028,6 +1028,82 @@ fn subtracting_the_excluded_file_matches_rebuilding_every_write_set() {
 }
 
 #[test]
+fn reflective_files_of_one_component_each_count_toward_its_reach() {
+    // #10914: reflective files of one import component share one reach, and
+    // the totals count it once per file holding it, so excluding one of
+    // them keeps the reach the others still hold. The per-file rebuild is
+    // the independent oracle; a separate component's file stays its own.
+    let sources = [
+        (Path::new("c.py"), "TABLE = {\"a\": 1}\n"),
+        (Path::new("a.py"), "import c\nnames = dir(c)\n"),
+        (
+            Path::new("b.py"),
+            "import c\nvalue = getattr(c, \"TABLE\")\n",
+        ),
+        (Path::new("solo.py"), "names = dir(object)\n"),
+    ];
+    let index = super::module_value::ForeignIndex::build(sources.iter().copied(), false);
+    let module = Path::new("c.py");
+    for own in ["absent.py", "a.py", "b.py", "c.py", "solo.py"] {
+        let own = Path::new(own);
+        assert_eq!(
+            index.excluding(own),
+            index.rebuilt_excluding(own),
+            "{own:?}"
+        );
+    }
+    assert!(
+        index
+            .excluding(Path::new("a.py"))
+            .may_mutate_table("TABLE", module)
+    );
+    assert!(
+        index
+            .excluding(Path::new("b.py"))
+            .may_mutate_table("TABLE", module)
+    );
+}
+
+#[test]
+fn excluding_views_share_the_word_counts_and_keep_the_sorted_wire_form() -> Check {
+    // #10914: each changed file's view reads the workspace's shared per-word
+    // counts and hides only the words its own file alone holds, so a view
+    // is not a copy of every workspace word. It still serializes as the
+    // sorted word list, and reads back to an equal view.
+    let sources = [
+        (Path::new("c.py"), "LIMIT = 10\n"),
+        (
+            Path::new("a.py"),
+            "import c\nc.LIMIT = 1\nc.__defaults__ = ()\nc.__x__ = 0\nc._ = 1\n",
+        ),
+        (Path::new("b.py"), "import c\nc.LIMIT = 2\nc.RATE = 3\n"),
+    ];
+    let index = super::module_value::ForeignIndex::build(sources.iter().copied(), false);
+    let module = Path::new("c.py");
+    let without_a = index.excluding(Path::new("a.py"));
+    let without_b = index.excluding(Path::new("b.py"));
+    assert!(without_a.shares_word_counts(&without_b));
+    assert!(without_a.shares_word_counts(&without_a.clone()));
+    assert!(without_a.may_rebind("LIMIT", module) && without_a.may_rebind("RATE", module));
+    assert!(!without_a.may_rebind("_", module));
+    assert!(!without_a.writes_dunder() && !without_a.may_replace_reader_code());
+    assert!(without_b.writes_dunder() && without_b.may_replace_reader_code());
+    assert!(without_b.may_rebind("_", module) && !without_b.may_rebind("RATE", module));
+
+    let wire = serde_json::to_value(&without_b).map_err(|error| error.to_string())?;
+    assert_eq!(
+        wire["attributes"],
+        serde_json::json!(["LIMIT", "_", "__defaults__", "__x__"]),
+        "{wire}"
+    );
+    let read: super::module_value::ForeignWrites =
+        serde_json::from_value(wire).map_err(|error| error.to_string())?;
+    assert_eq!(read, without_b);
+    assert!(read.writes_dunder() && !read.may_rebind("RATE", module));
+    Ok(())
+}
+
+#[test]
 fn the_source_fact_parse_gives_the_foreign_index_the_same_attribute_writes() -> Check {
     // #10914: the workspace pass hands the index each file's assigned
     // attributes from its source-fact parse instead of parsing again. A test
@@ -2587,4 +2663,43 @@ fn a_dataclass_whose_creation_or_construction_may_raise_is_not_credited() -> Che
     let finding = classify_dc(&plain, DC_NEW, &[], DC_TEST)?;
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
+}
+
+#[test]
+fn persisted_lexes_carry_the_loose_name_answer_the_index_uses() {
+    // a.py spells a non-ASCII name, which only a lex finds. The workspace
+    // pass records that answer with the file's lexes and a warm run serves
+    // it from the fact store; the index built from it must match a fresh one.
+    let sources = [
+        (Path::new("a.py"), "import b\ncaf\u{e9} = 1\n"),
+        (Path::new("b.py"), "LIMIT = 10\n"),
+    ];
+    assert!(super::module_value::ForeignLexes::of(sources[0].1).loose_names);
+    assert!(!super::module_value::ForeignLexes::of("x = 'caf\u{e9}'\n").loose_names);
+    assert!(!super::module_value::ForeignLexes::of(sources[1].1).loose_names);
+    let parsed = super::module_value::ForeignIndex::build(sources.iter().copied(), false);
+    assert!(
+        parsed
+            .excluding(Path::new("b.py"))
+            .names_may_differ_elsewhere()
+    );
+    let prior: std::collections::BTreeMap<_, _> = sources
+        .iter()
+        .map(|(file, source)| {
+            let facts = super::source_facts::extract_workspace_source_facts(file, source);
+            (
+                file.to_path_buf(),
+                super::module_value::PriorFileFacts {
+                    assigned: facts.assigned_attributes,
+                    lexes: facts.foreign_lexes,
+                },
+            )
+        })
+        .collect();
+    assert!(prior.values().all(|prior| prior.lexes.is_some()));
+    let shared =
+        super::module_value::ForeignIndex::build_with_prior(sources.iter().copied(), false, &prior);
+    for (own, _) in &sources {
+        assert_eq!(shared.excluding(own), parsed.excluding(own), "{own:?}");
+    }
 }

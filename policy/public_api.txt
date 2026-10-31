@@ -298,6 +298,7 @@ pub use ripr::domain::CommandSpecValidationError
 pub use ripr::domain::ComparisonConfidence
 pub use ripr::domain::ComparisonCoverage
 pub use ripr::domain::Confidence
+pub use ripr::domain::ConfidenceCap
 pub use ripr::domain::DEFAULT_REPAIR_CARD_MAX_DETAIL_ITEMS
 pub use ripr::domain::DEFAULT_REPAIR_CARD_MAX_INLINE_DETAIL_BYTES
 pub use ripr::domain::DEFAULT_REPAIR_CARD_MAX_SERIALIZED_BYTES
