@@ -78,6 +78,15 @@ struct Commit {
 }
 
 pub(super) fn capture(args: &CaptureArgs<'_>) -> Result<GitFacts, String> {
+    // A shallow clone cannot enumerate `base..cut`; without this check git
+    // reports only an invalid revision range, which hides the cause.
+    if git_text(args.repo, &["rev-parse", "--is-shallow-repository"])?.trim() == "true" {
+        return Err(
+            "the repository is a shallow clone, so base..cut cannot be enumerated; \
+             run `git fetch --unshallow origin` (or use a full clone) and retry"
+                .to_string(),
+        );
+    }
     let base = rev_parse(args.repo, args.base)?;
     let cut = rev_parse(args.repo, args.cut)?;
     let main = rev_parse(args.repo, args.main)?;

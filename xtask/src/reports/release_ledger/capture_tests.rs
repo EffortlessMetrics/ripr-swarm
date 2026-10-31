@@ -573,3 +573,33 @@ fn blank_separators_beside_a_test_module_do_not_hide_a_test_only_edit() -> Resul
     let _ = fs::remove_dir_all(&root);
     result
 }
+
+#[test]
+fn capture_refuses_a_shallow_clone_with_the_cause() -> Result<(), String> {
+    let root = new_repo("shallow-origin")?;
+    let base = commit(&root, &[("a.txt", Some("1\n"))], "base")?;
+    commit(&root, &[("a.txt", Some("2\n"))], "feat: one (#1)")?;
+    let tip = commit(&root, &[("a.txt", Some("3\n"))], "feat: two (#2)")?;
+    let shallow = root.with_extension("shallow");
+    let result = (|| {
+        let url = format!("file://{}", root.display());
+        let target = shallow.display().to_string();
+        git(&root, &["clone", "--quiet", "--depth", "1", &url, &target])?;
+        match capture(&CaptureArgs {
+            repo: &shallow,
+            repository: "example/ledger",
+            base: &base,
+            cut: &tip,
+            main: &tip,
+        }) {
+            Ok(_) => Err("a shallow clone must be refused".to_string()),
+            Err(message) => require(
+                message.contains("shallow clone") && message.contains("--unshallow"),
+                "the refusal names the shallow clone and the fix",
+            ),
+        }
+    })();
+    let _ = fs::remove_dir_all(&root);
+    let _ = fs::remove_dir_all(&shallow);
+    result
+}
