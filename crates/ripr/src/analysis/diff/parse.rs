@@ -15,6 +15,9 @@ use super::path::{
 
 mod stream;
 
+#[cfg(kani)]
+mod hunk_kani;
+
 /// Default file-count limit for parsed diffs. Same default as the Rust adapter
 /// (`analysis/language/rust/mod.rs:DIFF_INDEX_FILE_LIMIT`); kept in sync so the
 /// parser-level guard is consistent with the adapter-level guard (#2398).
