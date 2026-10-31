@@ -290,13 +290,31 @@ fn drive_before_phase_inner(
     let stdout_document = match published {
         Ok(document) => document,
         Err(error) => {
-            if let Some(prior) = prior_artifacts {
-                prior.restore();
-            }
-            return Err(error);
+            return Err(restore_after_before_failure(error, prior_artifacts));
         }
     };
     Ok((identity.attempt_id().to_string(), stdout_document))
+}
+
+fn restore_after_before_failure(
+    error: BeforePhaseError,
+    prior: Option<GapWorkflowArtifactBackup>,
+) -> BeforePhaseError {
+    let Some(prior) = prior else {
+        return error;
+    };
+    match prior.restore() {
+        Ok(()) => error,
+        Err(restore_error) => {
+            let original = match error {
+                BeforePhaseError::Refused(message) => message,
+                BeforePhaseError::Other(error) => error.message().to_string(),
+            };
+            BeforePhaseError::Other(CommandError::Failure(format!(
+                "{original}; failed to restore workflow artifacts: {restore_error}"
+            )))
+        }
+    }
 }
 
 /// The shared workflow artifacts a gap-bound start may write, as found before
@@ -334,18 +352,29 @@ impl GapWorkflowArtifactBackup {
         Self { entries }
     }
 
-    fn restore(self) {
+    fn restore(self) -> Result<(), String> {
+        let mut failures = Vec::new();
         for (path, prior) in self.entries {
-            match prior {
+            let result = match prior {
                 Some(bytes) => {
-                    if std::fs::read(&path).ok().as_deref() != Some(bytes.as_slice()) {
-                        let _ = std::fs::write(&path, bytes);
+                    if std::fs::read(&path).ok().as_deref() == Some(bytes.as_slice()) {
+                        continue;
                     }
+                    std::fs::write(&path, bytes)
                 }
-                None => {
-                    let _ = std::fs::remove_file(&path);
-                }
+                None => match std::fs::remove_file(&path) {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                    result => result,
+                },
+            };
+            if let Err(error) = result {
+                failures.push(format!("{}: {error}", path.display()));
             }
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("; "))
         }
     }
 }
@@ -796,7 +825,7 @@ mod tests {
             // A failed start overwrote one prior file and created the other.
             std::fs::write(&snapshot, b"overwritten").map_err(|e| e.to_string())?;
             std::fs::write(&packet, b"new").map_err(|e| e.to_string())?;
-            backup.restore();
+            backup.restore()?;
             if std::fs::read(&snapshot).map_err(|e| e.to_string())? != b"sentinel-snapshot"
                 || std::fs::read(&baseline).map_err(|e| e.to_string())? != b"sentinel-baseline"
             {
@@ -810,6 +839,42 @@ mod tests {
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
         result
+    }
+
+    #[test]
+    fn gap_restore_failure_reports_original_and_continues() -> Result<(), String> {
+        let root = test_root("gap-restore-failure")?;
+        let blocked = root.join("blocked");
+        let other = root.join("other");
+        std::fs::create_dir(&blocked).map_err(|e| e.to_string())?;
+        std::fs::write(&other, b"new").map_err(|e| e.to_string())?;
+        let backup = GapWorkflowArtifactBackup {
+            entries: vec![
+                (blocked.clone(), Some(b"prior".to_vec())),
+                (other.clone(), None),
+            ],
+        };
+        let result = restore_after_before_failure(
+            BeforePhaseError::Refused("original refusal".into()),
+            Some(backup),
+        );
+        let message = match result {
+            BeforePhaseError::Other(CommandError::Failure(message)) => message,
+            _ => return Err("restore failure did not become an operational error".to_string()),
+        };
+        let outcome = if !message.contains("original refusal")
+            || !message.contains("restore")
+            || !message.contains("blocked")
+            || other.exists()
+        {
+            Err(format!(
+                "restore failure not reported or remaining cleanup skipped: {message}"
+            ))
+        } else {
+            Ok(())
+        };
+        std::fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+        outcome
     }
 
     #[test]
