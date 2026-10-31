@@ -1153,9 +1153,8 @@ mod pathed {
         [ExposureClass::WeaklyExposed]
     );
 
-    // The related rows are capped at eight for display; a path call among the
-    // cut rows cannot be seen, so the result must not depend on test names:
-    // renaming only the path-call test leaves the class unchanged (#10551).
+    // A path call beyond the display window still lifts the syntax-only limit;
+    // renaming the test does not change the classification (#10625).
     let crowded_path_call_last = Case {
         label: "crowded_path_call_last",
         old_line: "        Self(self.0 + other.0)",
@@ -1216,10 +1215,21 @@ mod crowded {
 ",
         ..ADD
     };
-    assert_eq!(
-        classes(&crowded_path_call_last)?,
-        [ExposureClass::StaticUnknown]
+    let crowded_last = findings_of(&crowded_path_call_last)?;
+    assert_eq!(crowded_last.len(), 1);
+    assert!(
+        crowded_last[0]
+            .related_tests_matched_total
+            .is_some_and(|total| total > 8)
     );
+    assert_eq!(crowded_last[0].related_tests.len(), 8);
+    assert!(
+        !crowded_last[0]
+            .related_tests
+            .iter()
+            .any(|test| test.name == "zz_pathed")
+    );
+    assert_eq!(crowded_last[0].class, ExposureClass::WeaklyExposed);
     let crowded_path_call_first = Case {
         label: "crowded_path_call_first",
         old_line: "        Self(self.0 + other.0)",
@@ -1282,7 +1292,7 @@ mod crowded {
     };
     assert_eq!(
         classes(&crowded_path_call_first)?,
-        [ExposureClass::StaticUnknown]
+        [ExposureClass::WeaklyExposed]
     );
 
     // `Type::method(..)` names the owner like `.method(..)`, so the finding is judged by that test's own evidence (#10551).

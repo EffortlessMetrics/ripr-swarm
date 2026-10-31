@@ -18921,6 +18921,7 @@ tests = [
   "crates/ripr/tests/operator_call_credit.rs::an_operator_inside_stringify_is_text_not_a_call",
   "crates/ripr/tests/operator_call_credit.rs::an_owned_operand_reaches_the_owned_impl_beside_a_reference_impl",
   "crates/ripr/tests/operator_call_credit.rs::a_credit_no_assertion_confirms_is_withheld_not_a_gap",
+  "crates/ripr/tests/operator_call_credit.rs::capped_rows_do_not_hide_a_named_operator_call",
   "crates/ripr/tests/operator_call_credit.rs::module_type_bindings_do_not_name_the_operator_owner",
   "crates/ripr/tests/operator_call_credit.rs::grouped_self_import_binds_the_enclosing_type_name",
   "crates/ripr/tests/operator_call_credit.rs::an_unresolved_macro_invocation_in_the_test_scope_withholds_the_credit",
