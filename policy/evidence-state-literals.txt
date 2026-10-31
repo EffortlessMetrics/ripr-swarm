@@ -1,0 +1,12 @@
+# Per-file ceiling of production lines spelling a gap-state word inline (#2958).
+# path|count. Enforced by `cargo xtask check-architecture` (xtask/src/policy/evidence_state_literals.rs).
+# Counts only fall: migrate a site to domain::EvidenceState, then lower or delete its entry.
+# Do not raise a ceiling or add a file; use EvidenceState::{as_str,parse,is_actionable_word}.
+crates/ripr/src/lsp/gap_artifacts.rs|4
+crates/ripr/src/output/evidence_record.rs|4
+crates/ripr/src/output/gap_decision_ledger.rs|16
+crates/ripr/src/output/json/finding_alignment.rs|27
+crates/ripr/src/output/perl_preview_card.rs|1
+crates/ripr/src/output/pr_evidence_ledger.rs|1
+crates/ripr/src/output/sarif.rs|1
+crates/ripr/src/output/typescript_false_actionable.rs|2
