@@ -2,6 +2,7 @@
 //! repair attempt (#5210): the production `capture_attempt_baseline` and
 //! `evaluate_repository_edit_cage_with_head_movement` path over real Git.
 
+use super::{InlineTargetCopies, InlineTestRegionBaseline, observe_attempt_inline_region};
 use crate::edit_cage::{
     AttemptDelta, AttemptPathChange, CagePathRule, EditCagePolicy, EditCageVerdictStatus,
     EditCageViolationKind, HeadMovement, capture_attempt_baseline, evaluate_edit_cage,
@@ -229,6 +230,153 @@ fn a_staged_production_edit_behind_a_clean_worktree_is_violated() -> Result<(), 
         "{verdict:?}"
     );
     Ok(())
+}
+
+/// #6310: a clean filter in repository-local Git configuration can turn the
+/// validated worktree bytes into a different staged blob while the filtered
+/// object id still equals that blob. The staged copy must be compared with
+/// the exact validated bytes, so the filtered stage is not admitted.
+#[cfg(unix)]
+#[test]
+fn a_clean_filter_cannot_launder_a_staged_production_edit() -> Result<(), String> {
+    let fixture = fixture("filter", LIB)?;
+    let baseline = capture_attempt_baseline(&fixture.root, &inline_policy()?)?;
+    write_lib(&fixture, &with_new_test(LIB))?;
+    git_ok(
+        &fixture.root,
+        &["config", "filter.launder.clean", "sed 's/- 10/- 9/'"],
+    )?;
+    fs::create_dir_all(fixture.root.join(".git/info")).map_err(|e| format!("info dir: {e}"))?;
+    fs::write(
+        fixture.root.join(".git/info/attributes"),
+        "src/lib.rs filter=launder\n",
+    )
+    .map_err(|e| format!("write attributes: {e}"))?;
+    git_ok(&fixture.root, &["add", "src/lib.rs"])?;
+    // Precondition: the filter really rewrote the staged blob.
+    let staged = crate::git::run_git_output_with_deadline_and_limit(
+        &fixture.root,
+        &["show", ":src/lib.rs"],
+        std::time::Duration::from_secs(10),
+        1024 * 1024,
+    )?;
+    let staged = String::from_utf8_lossy(&staged.stdout).into_owned();
+    assert!(staged.contains("cents - 9"), "{staged}");
+    let (_, verdict) = evaluate_repository_edit_cage_with_head_movement(
+        &baseline,
+        HeadMovement::RequireBaselineHead,
+    )?;
+    let reason = inline_violation_reason(&verdict).ok_or("expected an inline-region violation")?;
+    assert!(reason.contains("index_copy_not_validated"), "{reason}");
+    Ok(())
+}
+
+/// #6310: a clean filter that rewrites the validated bytes into a different
+/// blob must not make the COMMITTED copy match either. The filtered commit
+/// moves HEAD, and the worktree holds exactly the validated bytes. Without
+/// `--no-filters` the filtered object id equals the committed blob and the
+/// edit is admitted.
+#[cfg(unix)]
+#[test]
+fn a_clean_filter_cannot_launder_a_committed_production_edit() -> Result<(), String> {
+    let fixture = fixture("filter-commit", LIB)?;
+    let baseline = capture_attempt_baseline(&fixture.root, &inline_policy()?)?;
+    write_lib(&fixture, &with_new_test(LIB))?;
+    git_ok(
+        &fixture.root,
+        &["config", "filter.launder.clean", "sed 's/- 10/- 9/'"],
+    )?;
+    fs::create_dir_all(fixture.root.join(".git/info")).map_err(|e| format!("info dir: {e}"))?;
+    fs::write(
+        fixture.root.join(".git/info/attributes"),
+        "src/lib.rs filter=launder\n",
+    )
+    .map_err(|e| format!("write attributes: {e}"))?;
+    git_ok(&fixture.root, &["add", "src/lib.rs"])?;
+    git_ok(&fixture.root, &["commit", "-qm", "filtered commit"])?;
+    // Precondition: the filter really rewrote the committed blob.
+    let committed = crate::git::run_git_output_with_deadline_and_limit(
+        &fixture.root,
+        &["show", "HEAD:src/lib.rs"],
+        std::time::Duration::from_secs(10),
+        1024 * 1024,
+    )?;
+    let committed = String::from_utf8_lossy(&committed.stdout).into_owned();
+    assert!(committed.contains("cents - 9"), "{committed}");
+    let (_, verdict) = evaluate_repository_edit_cage_with_head_movement(
+        &baseline,
+        HeadMovement::AdmitDescendantCommits,
+    )?;
+    let reason = inline_violation_reason(&verdict).ok_or("expected an inline-region violation")?;
+    assert!(reason.contains("copy_not_validated"), "{reason}");
+    Ok(())
+}
+
+/// #6310: under `core.autocrlf=true` a staged CRLF target is stored
+/// LF-normalized, so it no longer equals the validated CRLF worktree bytes
+/// and is refused (fail closed) rather than admitted.
+#[test]
+fn an_autocrlf_normalized_staged_target_is_refused() -> Result<(), String> {
+    let fixture = fixture("autocrlf", LIB)?;
+    // HEAD holds the LF form. With autocrlf on, a CRLF worktree copy of the
+    // same text is "unchanged" to git, so the before phase accepts it and the
+    // only difference left is the staged-copy comparison.
+    git_ok(&fixture.root, &["config", "core.autocrlf", "true"])?;
+    write_lib(&fixture, &LIB.replace('\n', "\r\n"))?;
+    let baseline = capture_attempt_baseline(&fixture.root, &inline_policy()?)?;
+    let crlf = with_new_test(LIB).replace('\n', "\r\n");
+    write_lib(&fixture, &crlf)?;
+    git_ok(&fixture.root, &["add", "src/lib.rs"])?;
+    // Precondition: git really normalized the staged blob to LF.
+    let staged = crate::git::run_git_output_with_deadline_and_limit(
+        &fixture.root,
+        &["show", ":src/lib.rs"],
+        std::time::Duration::from_secs(10),
+        1024 * 1024,
+    )?;
+    assert!(!staged.stdout.contains(&b'\r'), "staged blob kept CR");
+    let (_, verdict) = evaluate_repository_edit_cage_with_head_movement(
+        &baseline,
+        HeadMovement::RequireBaselineHead,
+    )?;
+    let reason = inline_violation_reason(&verdict).ok_or("expected an inline-region violation")?;
+    assert!(reason.contains("index_copy_not_validated"), "{reason}");
+    Ok(())
+}
+
+/// #6310: a failed `hash-object` is its own refusal, not a copy that merely
+/// differs, and it outranks the copy comparisons it could not make.
+#[test]
+fn an_unreadable_worktree_object_id_is_refused_as_a_git_failure() {
+    let baseline = InlineTestRegionBaseline {
+        path: "src/lib.rs".to_string(),
+        module_name: "tests".to_string(),
+        package_identity: String::new(),
+        source: LIB.to_string(),
+    };
+    let observe = |object_unreadable: Option<String>| {
+        observe_attempt_inline_region(InlineTargetCopies {
+            worktree: Ok(with_new_test(LIB)),
+            index_matches: false,
+            head_matches: false,
+            object_unreadable,
+            baseline: &baseline,
+        })
+    };
+    let failed = observe(Some("git hash-object failed".to_string()));
+    assert!(!failed.admitted, "{failed:?}");
+    assert_eq!(
+        failed.reason.as_deref(),
+        Some("git_object_unreadable: git hash-object failed")
+    );
+    // Control: without the git failure the same copies read as a plain
+    // differing index copy.
+    let differs = observe(None);
+    assert_eq!(
+        differs.reason.as_deref(),
+        Some("index_copy_not_validated"),
+        "{differs:?}"
+    );
 }
 
 #[test]

@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- Rust: an exact pin no longer earns `exposed` when the owner's last operation (`>>`, `&`, `.clamp(..)`, `.saturating_sub(..)`, a divisor above ten) gives the old and the new expression the same value at the pinned literal input; the constant fold gains the bitwise operators, shifts, `clamp`, `saturating_add`/`saturating_sub` and radix literals, and a single-parameter owner searches a wider input grid for a separating call (#10737).

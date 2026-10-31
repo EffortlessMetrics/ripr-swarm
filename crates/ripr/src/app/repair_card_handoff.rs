@@ -427,7 +427,7 @@ fn currentness_comparison_key(path: &str) -> String {
 /// presentation renderer (it percent-encodes `%` and rewrites separators);
 /// feeding a display spelling to git would probe a path that does not exist
 /// and silently read a dirty scope as clean.
-fn evidence_probe_paths(entry: &ClassifiedSeam) -> Vec<std::path::PathBuf> {
+pub(crate) fn evidence_probe_paths(entry: &ClassifiedSeam) -> Vec<std::path::PathBuf> {
     let mut paths: Vec<std::path::PathBuf> = vec![entry.seam.file().to_path_buf()];
     for related in &entry.evidence.related_tests {
         if !paths.contains(&related.file) {

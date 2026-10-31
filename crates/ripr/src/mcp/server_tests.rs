@@ -542,9 +542,9 @@ fn sdk_server_metadata_preserves_bounded_status_instructions() -> Result<(), Str
         return Err("SDK metadata changed application identity or analysis authority".into());
     }
     let tools = &server.tools;
-    if tools.tools.len() != 9 {
+    if tools.tools.len() != 10 {
         return Err(format!(
-            "SDK descriptor must expose the nine-tool slice surface, got {} tools",
+            "SDK descriptor must expose the ten-tool slice surface, got {} tools",
             tools.tools.len()
         ));
     }
