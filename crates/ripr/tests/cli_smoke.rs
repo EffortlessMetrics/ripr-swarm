@@ -10872,7 +10872,7 @@ fn agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids()
             ("--seam-id", "agent receipt requires --seam-id"),
             (
                 "--json",
-                "agent receipt requires --json (the supported output for this subcommand)",
+                "agent receipt requires --json (the supported output for this subcommand); add --json to the command",
             ),
         ] {
             let mut incomplete = Vec::new();
@@ -20780,6 +20780,79 @@ fn pilot_says_it_withholds_the_seam_on_the_current_change() -> Result<(), String
             "current change: not part of it. Pilot withholds the analyzed seam on a line changed since origin/main: its static evidence is unknown or opaque"
         ),
         "{stdout}"
+    );
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
+/// #5863: the pilot seam budget keeps a changed seam past the cut only when
+/// pilot can recommend it (`keeps_past_budget`, not `touches`). Here the
+/// change touches only `is_large`, whose boundary is discriminated by its
+/// tests, and it sits after the untouched, weakly tested `discounted` seam in
+/// inventory order. With the budget at one, a solved changed seam must not
+/// take the only slot: pilot still recommends `discounted` and reports that
+/// the change does not contain it.
+#[test]
+fn pilot_budget_does_not_keep_a_solved_changed_seam_over_an_actionable_one() -> Result<(), String> {
+    let lib = "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n\npub fn is_large(amount: u32) -> bool {\n    amount > 1000\n}\n";
+    let root = pilot_language_fixture_repo(
+        "pilot-budget-solved-change",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"two_fns\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            ),
+            ("src/lib.rs", lib),
+            (
+                "tests/pricing.rs",
+                "use two_fns::{discounted, is_large};\n\n#[test]\nfn big_orders_get_a_discount() {\n    assert_eq!(discounted(200), 190);\n}\n\n#[test]\nfn the_large_boundary_is_exclusive() {\n    assert_eq!(is_large(1000), false);\n    assert_eq!(is_large(1001), true);\n}\n",
+            ),
+        ],
+        (
+            "src/lib.rs",
+            &lib.replace("amount > 1000", "amount >= 1000"),
+        ),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-budget-solved-change-out");
+    let root_arg = root.display().to_string();
+    let out_arg = out_dir.display().to_string();
+    let run = |budget: &str| -> Result<serde_json::Value, String> {
+        let output = run_ripr_with_env(
+            &["pilot", "--root", &root_arg, "--out", &out_arg],
+            &[("RIPR_PILOT_SEAM_BUDGET", budget)],
+        );
+        assert_success(&output);
+        serde_json::from_str(
+            &std::fs::read_to_string(out_dir.join("pilot-summary.json"))
+                .map_err(|err| format!("read pilot summary json: {err}"))?,
+        )
+        .map_err(|err| format!("parse pilot summary json: {err}"))
+    };
+    // Unbudgeted precondition: the fixture really is "untouched actionable
+    // seam first, changed seam solved".
+    let full = run("0")?;
+    assert_eq!(full["current_change"]["state"], "changed", "{full}");
+    assert_eq!(full["top_actionable_seams"][0]["line"], 2, "{full}");
+    assert_eq!(
+        full["current_change"]["actionable_seams_in_change"], 0,
+        "{full}"
+    );
+    assert_eq!(
+        full["current_change"]["withheld_seams_in_change"], 0,
+        "{full}"
+    );
+    assert_eq!(
+        full["current_change"]["top_recommendation_in_change"], false,
+        "{full}"
+    );
+    // Budget one: the solved changed seam must not displace `discounted`.
+    let budgeted = run("1")?;
+    assert_eq!(budgeted["current_change"]["state"], "changed", "{budgeted}");
+    assert_eq!(budgeted["top_actionable_seams"][0]["line"], 2, "{budgeted}");
+    assert_eq!(
+        budgeted["current_change"]["top_recommendation_in_change"], false,
+        "{budgeted}"
     );
     ignore_remove_dir_all(&root);
     ignore_remove_dir_all(&out_dir);

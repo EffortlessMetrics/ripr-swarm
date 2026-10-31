@@ -67,6 +67,9 @@ paths and shared command templates for the before snapshot, packet, brief,
 after snapshot, verify, and receipt steps. It remains advisory and static; it
 does not call an LLM API, run mutation testing, generate tests, edit files,
 change cache behavior, or touch LSP/MCP surfaces.
+
+A refusal (for example, an unknown seam or an unsupported language) exits `3`
+with the cause on stderr.
 "#;
 pub(super) const AGENT_BRIEF_HELP: &str = r#"Write a bounded brief for a coding agent over the current diff or change.
 
@@ -117,6 +120,9 @@ it renders one agent packet from an explicit agent-packet-eligible GapRecord
 without rerunning analysis. It remains advisory and static; it does not run
 mutation testing, generate tests, edit files, change cache behavior, or touch
 LSP/MCP surfaces.
+
+A refusal (for example, an unknown seam or gap) exits `3` with the cause on
+stderr and empty stdout.
 "#;
 pub(super) const AGENT_CARD_HELP: &str = r#"Hand off one seam as the compact default repair card.
 
@@ -509,6 +515,9 @@ Environment variables:
                                     recapture. Presence enables tracing even
                                     if the value is empty or 0; it does not
                                     change any verdict.
+
+A named refusal exits `3` with the cause on stderr; usage and operational
+errors exit `2`.
 "#;
 
 #[cfg(test)]
