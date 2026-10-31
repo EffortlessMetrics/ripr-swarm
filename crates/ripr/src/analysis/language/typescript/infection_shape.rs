@@ -159,6 +159,14 @@ fn is_undecidable_line(line: &str) -> bool {
             {
                 return true;
             }
+            // A trailing `//` comment ends the code; its text is not scanned.
+            '/' if chars.get(index + 1) == Some(&'/')
+                && index
+                    .checked_sub(1)
+                    .is_none_or(|p| chars[p].is_whitespace()) =>
+            {
+                break;
+            }
             // A `/` after an operator or opener starts a regex literal.
             '/' if chars.get(index + 1) != Some(&'/')
                 && (previous_code.is_none_or(|p| "(,=:[!&|?{};+-*%~^".contains(p))

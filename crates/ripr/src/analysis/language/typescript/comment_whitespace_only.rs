@@ -61,6 +61,16 @@ pub(crate) fn reconstruct_old_source(
     if removed_at.len() != removed.len() || removed_at.contains_key(&0) {
         return None;
     }
+    // Stale or quarantined source: an added line must be the text on disk.
+    let on_disk: Vec<&str> = new_source.lines().collect();
+    if added.iter().any(|line| {
+        line.line
+            .checked_sub(1)
+            .and_then(|index| on_disk.get(index))
+            .is_none_or(|text| text.trim_end_matches('\r') != line.text.trim_end_matches('\r'))
+    }) {
+        return None;
+    }
     let mut unchanged = new_source
         .lines()
         .enumerate()

@@ -53,7 +53,8 @@ fn a_line_inside_a_multiline_construct_on_either_side_is_never_a_no_op() {
 fn comment_shapes_that_ride_along_stay_edits() {
     // `//` inside a string, a regex or after a block comment is not a plain
     // trailing comment edit.
-    assert!(!noop("  return 'a';", "  return 'a'; // x // y'"));
+    // Text after the first `//` is comment, whatever it contains.
+    assert!(noop("  return 'a';", "  return 'a'; // x // y'"));
     assert!(!noop("  return /a/;", "  return /a/; // c"));
     // `//` inside a regex character class is not a comment start.
     assert!(!noop("  return /[ //a]/;", "  return /[ //b]/;"));
@@ -102,4 +103,26 @@ fn multiline_constructs_are_found_from_the_whole_file() {
         multiline_construct_lines(Path::new("a.ts"), "const = ;"),
         None
     );
+}
+
+#[test]
+fn a_stale_source_or_a_multi_hunk_diff_is_handled_when_rebuilding() {
+    // Two hunks: old lines 2 and 5 are replaced, lines between are unchanged.
+    let new_source = "a\nB\nc\nd\nE\nf\n";
+    let added = [line(2, "B"), line(5, "E")];
+    let removed = [line(2, "b"), line(5, "e")];
+    assert_eq!(
+        reconstruct_old_source(new_source, &added, &removed).as_deref(),
+        Some("a\nb\nc\nd\ne\nf\n")
+    );
+    // An added line that is not the on-disk text means a stale source.
+    assert_eq!(
+        reconstruct_old_source("a\nX\nc\nd\nE\nf\n", &added, &removed),
+        None
+    );
+}
+
+#[test]
+fn a_division_word_inside_a_trailing_comment_is_not_a_regex() {
+    assert!(noop("  return a;", "  return a; // in / out"));
 }

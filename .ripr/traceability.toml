@@ -3695,8 +3695,11 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/comment_whitespace_only_tests.rs::a_changed_token_semicolon_or_indent_is_still_an_edit",
   "crates/ripr/src/analysis/language/typescript/comment_whitespace_only_tests.rs::a_line_inside_a_multiline_construct_on_either_side_is_never_a_no_op",
   "crates/ripr/src/analysis/language/typescript/comment_whitespace_only_tests.rs::comment_shapes_that_ride_along_stay_edits",
+  "crates/ripr/src/analysis/language/typescript/comment_whitespace_only_tests.rs::a_stale_source_or_a_multi_hunk_diff_is_handled_when_rebuilding",
+  "crates/ripr/src/analysis/language/typescript/comment_whitespace_only_tests.rs::a_division_word_inside_a_trailing_comment_is_not_a_regex",
   "crates/ripr/src/analysis/language/typescript/comment_whitespace_only_tests.rs::the_old_source_is_rebuilt_from_the_diff_and_fails_closed_when_it_cannot_be",
   "crates/ripr/src/analysis/language/typescript/tests/infection_tests.rs::a_paired_old_line_inside_a_template_keeps_its_probe_when_the_new_line_is_code",
+  "crates/ripr/src/analysis/language/typescript/tests/infection_tests.rs::old_template_content_is_found_through_a_two_hunk_diff",
   "crates/ripr/src/analysis/language/typescript/comment_whitespace_only_tests.rs::multiline_constructs_are_found_from_the_whole_file"
 ]
 fixtures = [

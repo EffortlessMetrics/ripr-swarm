@@ -230,14 +230,15 @@ fn a_dropped_semicolon_before_a_comment_is_never_a_neutral_comment_edit() -> Res
 
 #[test]
 fn a_trailing_comment_or_whitespace_edit_emits_no_probe_but_a_changed_token_keeps_it() {
-    let source = "export function price(n: number): number {\n  return n;\n}\n";
     let test = weak_test("price(2)");
+    let source_with =
+        |line: &str| format!("export function price(n: number): number {{\n{line}\n}}\n");
     for (label, new) in [
         ("noop-comment", "  return n; // fallback"),
         ("noop-comment-edit", "  return n; // other"),
         ("noop-space", "  return n;   "),
     ] {
-        let found = finding_for(label, source, 2, "  return n;", new, &test);
+        let found = finding_for(label, &source_with(new), 2, "  return n;", new, &test);
         assert!(found.is_err(), "{label}: {found:?}");
     }
     // Controls through the same production path: a changed token (with or
@@ -246,7 +247,7 @@ fn a_trailing_comment_or_whitespace_edit_emits_no_probe_but_a_changed_token_keep
         ("edit-token", "  return n + 1;"),
         ("edit-token-comment", "  return n + 1; // fallback"),
     ] {
-        let found = finding_for(label, source, 2, "  return n;", new, &test);
+        let found = finding_for(label, &source_with(new), 2, "  return n;", new, &test);
         assert!(found.is_ok(), "{label}: {found:?}");
     }
 }
@@ -284,6 +285,42 @@ fn a_paired_old_line_inside_a_template_keeps_its_probe_when_the_new_line_is_code
             .iter()
             .map(|f| f.probe.location.line)
             .collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
+#[test]
+fn old_template_content_is_found_through_a_two_hunk_diff() -> Result<(), String> {
+    // Hunk one edits line 1; hunk two (far below) is the template counterexample.
+    let pad: String = (1..=9).map(|n| format!("const pad{n} = {n};\n")).collect();
+    let new_source = format!(
+        "// v2\n{pad}export function price(): number {{\n  const s = `old`;\n  return 7;   \n  // rest\n}}\n"
+    );
+    let ctx_top: String = (1..=3).map(|n| format!(" const pad{n} = {n};\n")).collect();
+    let ctx_mid: String = (7..=9).map(|n| format!(" const pad{n} = {n};\n")).collect();
+    let patch = format!(
+        "--- a/src/price.ts\n+++ b/src/price.ts\n@@ -1,4 +1,4 @@\n-// v1\n+// v2\n{ctx_top}@@ -8,9 +8,9 @@\n{ctx_mid} export function price(): number {{\n-  const s = `old\n-  return 7;\n-`; return 0;\n+  const s = `old`;\n+  return 7;   \n+  // rest\n }}\n"
+    );
+    let changed = crate::analysis::diff::parse_unified_diff(&patch);
+    let file = changed.first().ok_or("no changed file")?;
+    assert_eq!(
+        file.aligned_counterparts()
+            .get(&13)
+            .map(|removed| removed.text.as_str()),
+        Some("  return 7;")
+    );
+    let root = ts_unique_tempdir("infect-old-template-2")?;
+    ts_write_file(&root.join("src/price.ts"), &new_source)?;
+    ts_write_file(&root.join("tests/price.test.ts"), &weak_test("price()"))?;
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &changed,
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(
+        result?.findings.iter().any(|f| f.probe.location.line == 13),
+        "line 13 must stay reported"
     );
     Ok(())
 }
