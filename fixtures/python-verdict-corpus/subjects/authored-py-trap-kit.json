@@ -10,6 +10,10 @@
       "sha256": "6496746b6156059efa2fedf0823808faefde4c4031e78482f931f71b318a0f2f"
     },
     {
+      "path": "tests/test_conditional_exit.py",
+      "sha256": "48987d2e010e7f8356893a98a97a78ec57c504eaed1f40b13a493331771c485b"
+    },
+    {
       "path": "tests/test_dead_branch.py",
       "sha256": "1e4969d51fd41c701d143267826c93190eae55718b609714c78270477ee3330d"
     },
@@ -20,6 +24,10 @@
     {
       "path": "tests/test_empty_table.py",
       "sha256": "b67bd4e42703403b27f2443f49f84579e694984a9d1256c4246bf97cbe80dbe1"
+    },
+    {
+      "path": "tests/test_exit_before_assert.py",
+      "sha256": "a41c3f03fb9a7ced589c87a16501e5b5e8cbd2c1859cdf1748c0364a92a98e1a"
     },
     {
       "path": "tests/test_filled_table.py",
@@ -80,6 +88,10 @@
     {
       "path": "tests/test_result_asserted.py",
       "sha256": "65350ad82a37352a4fd5490bca76de6ce69cdbc64da5e09e19a0a27e110c5270"
+    },
+    {
+      "path": "tests/test_shadowed_test.py",
+      "sha256": "e1b45e9cf49dc8dd1bd85e10beab614b7851c82de367628feea4fb4412de7c09"
     },
     {
       "path": "tests/test_sibling_arm.py",
@@ -147,7 +159,7 @@
     },
     {
       "path": "trapkit/core.py",
-      "sha256": "495c92e233fd51cb0cc01bec843bec03ba695a3786bb5eb87ad723e7390f2a2a"
+      "sha256": "28ab5db287b77f36de5c0b254a1e155c5b6a640f75019b8f9d2283d9e027adbc"
     }
   ]
 }

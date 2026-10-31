@@ -5,8 +5,9 @@
 //! except a condition that is itself a boolean literal and so provably inert
 //! (`skipif(False)`), and `importorskip` of a module every interpreter has.
 
+use super::source_utils::{SourceText, text_for_range};
 use super::{PythonFramework, PythonImport, PythonTest, expr_full_name};
-use rustpython_parser::ast::{self, Expr, Stmt};
+use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) enum DeclarationSite {
@@ -201,6 +202,55 @@ pub(super) fn parametrize_collection_error_control(
         name: "pytest.mark.parametrize(collection error)".to_string(),
         site,
     }
+}
+
+/// A later binding of the same name in the same scope replaced this test
+/// definition before collection, so pytest and unittest never run its body.
+pub(super) fn shadowed_by_later_binding_control(site: DeclarationSite) -> PythonActivationControl {
+    PythonActivationControl {
+        name: "later binding of the test name".to_string(),
+        site,
+    }
+}
+
+/// Whether a statement after `index` in the same list rebinds `name` without
+/// reading the earlier definition (a wrapper such as `name = mark(name)` keeps
+/// it running).
+pub(super) fn rebound_later(
+    statements: &[Stmt],
+    index: usize,
+    name: &str,
+    source: &SourceText<'_>,
+) -> bool {
+    let reads_name = |range| text_for_range(source, range).contains(name);
+    let targets_name = |target: &Expr| match target {
+        Expr::Name(bound) => bound.id.as_str() == name,
+        Expr::Tuple(tuple) => tuple
+            .elts
+            .iter()
+            .any(|elt| matches!(elt, Expr::Name(bound) if bound.id.as_str() == name)),
+        _ => false,
+    };
+    statements[index + 1..].iter().any(|stmt| match stmt {
+        Stmt::FunctionDef(def) => {
+            def.name.as_str() == name && !def.decorator_list.iter().any(|d| reads_name(d.range()))
+        }
+        Stmt::AsyncFunctionDef(def) => {
+            def.name.as_str() == name && !def.decorator_list.iter().any(|d| reads_name(d.range()))
+        }
+        Stmt::ClassDef(def) => def.name.as_str() == name,
+        Stmt::Assign(assign) => {
+            assign.targets.iter().any(targets_name) && !reads_name(assign.value.range())
+        }
+        Stmt::AnnAssign(assign) => {
+            targets_name(assign.target.as_ref())
+                && assign
+                    .value
+                    .as_ref()
+                    .is_some_and(|value| !reads_name(value.range()))
+        }
+        _ => false,
+    })
 }
 
 /// Whether `controls` hold [`parametrize_collection_error_control`].
